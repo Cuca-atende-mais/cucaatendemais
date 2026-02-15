@@ -1,0 +1,41 @@
+# Documentação sensível (manter apenas local)
+*.md
+!README.md
+
+# Dependências
+node_modules/
+__pycache__/
+*.pyc
+.Python
+env/
+venv/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
