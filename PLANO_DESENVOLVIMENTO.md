@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 5.0 | **Atualizado**: 19/02/2026 (Refinamento Técnico Pós-Sprint 4)
-> **STATUS ATUAL**: Sprint 4 Concluído Técnico (100%) | Iniciando Sprint 5
+> **Versão**: 5.5 | **Atualizado**: 19/02/2026 (Refinamento Técnico Pós-Sprint 5 Início)
+> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5 em Execução (15%)**
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
 ---
@@ -565,6 +565,8 @@ NÍVEL 5 — Depende de tudo
 | S5-06 | **Resposta Manual**: Operador envia no portal → Worker dispara via UAZAPI | [ ] |
 | S5-07 | **Sincronização**: Marcar como lida no celular quando lida no portal | [ ] |
 | S5-08 | **Mídia Contextual**: Júlia envia flyer da vaga / Maria envia flyer do evento | [ ] |
+| S5-09 | **Scaffold do Worker**: Estrutura FastAPI + requirements + Dockerfile para Hostinger | [x] |
+| S5-10 | **UI Gestão Instâncias**: Página `/developer/instancias` com os 14 cards e status | [x] |
 
 ---
 

@@ -58,9 +58,9 @@ const consoleModules = [
         description: "Gerenciar 14 instâncias UAZAPI — criar, editar número banido, QR Code",
         icon: Wifi,
         href: "/developer/instancias",
-        badge: "Em breve",
-        badgeVariant: "secondary" as const,
-        status: "coming",
+        badge: "Fundação OK",
+        badgeVariant: "default" as const,
+        status: "active",
     },
     {
         title: "Gatilhos de Alerta",
