@@ -1,0 +1,811 @@
+# PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
+> **Versão**: 5.0 | **Atualizado**: 19/02/2026 (Refinamento Técnico Pós-Sprint 4)
+> **STATUS ATUAL**: Sprint 4 Concluído Técnico (100%) | Iniciando Sprint 5
+> **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
+
+---
+
+## SUMÁRIO
+
+1. [Stack Técnica](#1-stack)
+2. [Arquitetura Geral](#2-arquitetura)
+3. [Estrutura de 14 Canais WhatsApp (CORRIGIDA)](#3-canais)
+4. [Agentes IA, Personas e RAG](#4-agentes)
+5. [RBAC — 4 Níveis de Acesso](#5-rbac)
+6. [Schema do Banco de Dados (26 tabelas)](#6-schema)
+7. [Mapa de Dependências](#7-dependencias)
+8. [Roadmap: 5 Fases, 17 Sprints](#8-roadmap)
+9. [Status por Sprint com Tickets](#9-sprints)
+10. [Developer Console — Detalhamento](#10-devconsole)
+11. [Mapa de Reflexos (Ação → Impacto)](#11-reflexos)
+12. [Integrações Externas](#12-integracoes)
+13. [Riscos e Mitigações](#13-riscos)
+
+---
+
+## 1. STACK TÉCNICA {#1-stack}
+
+| Camada | Tecnologia | Obs |
+|--------|-----------|-----|
+| **Portal** | Next.js 15 (App Router) + shadcn/ui + Tailwind v4 | Vercel deploy |
+| **Banco** | Supabase (PostgreSQL 15+) + pgvector + pg_cron + pg_net | RLS nativo |
+| **Auth** | Supabase Auth (email/senha + JWT) | Integrado ao RLS |
+| **Storage** | Supabase Storage | CVs, flyers, mídias |
+| **Secrets** | Supabase Vault (pgsodium) | Tokens UAZAPI, OpenAI Key |
+| **Worker** | Python (FastAPI) + Celery + Redis (VPS Hostinger/Easypanel) | OCR, Whisper, disparos |
+| **WhatsApp** | UAZAPI v2 (14 instâncias) | REST + webhooks |
+| **LLM** | OpenAI GPT-4o | Agentes, OCR de CV, sentimento |
+| **Embeddings** | OpenAI `text-embedding-3-small` (vector 1536) | RAG — custo-benefício |
+| **Transcrição** | OpenAI Whisper (`whisper-1`) | Áudio → texto (limite 40s) |
+| **Gráficos** | Recharts | Dashboards |
+| **Deploy** | Vercel (portal) + Hostinger VPS (worker) | Cloudflare DNS |
+| **Cron** | pg_cron + pg_net | Sync mensal, limpeza 60d, auto-cancel 48h |
+| **Realtime** | Supabase Realtime | Chat espelhado em tempo real |
+
+---
+
+## 2. ARQUITETURA GERAL {#2-arquitetura}
+
+```
+WhatsApp (14 instâncias)  ←→  UAZAPI (webhooks: messages.upsert / messages.update / connection.update)
+                                         ↕
+                               Worker Python FastAPI (VPS Hostinger)
+                               ├── Webhook Handler → 200 OK imediato (OBRIGATÓRIO antes de processar)
+                               ├── Identificação de canal e persona ativa
+                               ├── OCR CV (GPT-4o Vision)
+                               ├── Whisper (áudio ≤40s → texto)
+                               ├── Motor de Agentes (3 camadas: persona + técnica + RAG)
+                               ├── Motor Anti-Ban (presence: composing, delay aleatório, horário 8h-22h)
+                               └── Celery Queues (Redis)
+                                         ↕
+                               Supabase (PostgreSQL 15 + pgvector)
+                               ├── 26 tabelas (ver seção 6)
+                               ├── rag_chunks (source_type + cuca_unit_id + vector 1536d)
+                               ├── ai_usage_logs (custo por modelo/feature)
+                               ├── system_config (delays, limites, configurações)
+                               ├── Vault (OpenAI Key, tokens UAZAPI)
+                               ├── Realtime (conversations, message_logs)
+                               └── pg_cron (3 jobs: sync mensal, limpeza 60d, auto-cancel 48h)
+                                         ↕
+                               Portal Next.js (Vercel)
+                               ├── Dashboard (por nível de acesso)
+                               ├── Chat espelhado (Realtime)
+                               ├── Módulos: Leads, Programação, Empregabilidade, Acesso CUCA, Ouvidoria
+                               ├── Import planilha CSV/Excel (Programação Mensal)
+                               ├── Formulários públicos: candidatura, Acesso CUCA, empresa
+                               └── Developer Console (exclusivo role 'super_admin')
+```
+
+---
+
+## 3. ESTRUTURA DE 14 CANAIS WHATSAPP ⚠️ NUMERAÇÃO CORRIGIDA {#3-canais}
+
+> **CORREÇÃO CRÍTICA**: Não existe "canal institucional" como entidade separada. Canais #1-5 são de **Empregabilidade** (por unidade). A informação geral é respondida por Maria nos canais **Pontuais** (#7-11) e no canal **Geral** (#14).
+
+| # | Canal | Agente/Persona | Gerenciado por | Tipo de Comunicação |
+|---|-------|---------------|----------------|---------------------|
+| 1 | Empregabilidade — CUCA Barra | Júlia (Barra) | Admin CUCA Barra | Passiva: vagas da Barra, orientação, CV |
+| 2 | Empregabilidade — CUCA Mondubim | Júlia (Mondubim) | Admin CUCA Mondubim | Passiva: vagas do Mondubim |
+| 3 | Empregabilidade — CUCA Jangurussu | Júlia (Jangurussu) | Admin CUCA Jangurussu | Passiva: vagas do Jangurussu |
+| 4 | Empregabilidade — CUCA José Walter | Júlia (J. Walter) | Admin CUCA J. Walter | Passiva: vagas de José Walter |
+| 5 | Empregabilidade — CUCA Pici | Júlia (Pici) | Admin CUCA Pici | Passiva: vagas do Pici |
+| 6 | **Empregabilidade Geral** | Júlia Geral | Super Admin/Dev | Passiva: vagas de **TODOS** os CUCAs, direciona ao canal certo |
+| 7 | Programação Pontual — CUCA Barra | Maria (Barra) | Admin CUCA Barra | **Ativa**: disparo de eventos + Passiva: dúvidas via RAG |
+| 8 | Programação Pontual — CUCA Mondubim | Maria (Mondubim) | Admin CUCA Mondubim | Ativa + Passiva |
+| 9 | Programação Pontual — CUCA Jangurussu | Maria (Jangurussu) | Admin CUCA Jangurussu | Ativa + Passiva |
+| 10 | Programação Pontual — CUCA José Walter | Maria (J. Walter) | Admin CUCA J. Walter | Ativa + Passiva |
+| 11 | Programação Pontual — CUCA Pici | Maria (Pici) | Admin CUCA Pici | Ativa + Passiva |
+| 12 | **Programação Mensal** | Maria (global) | Super Admin (exclusivo) | **Ativa**: disparo global ~20k leads + Passiva: dúvidas mensal |
+| 13 | **Ouvidoria Jovem** | Sofia | Super Admin (exclusivo) | Passiva: críticas anônimas, sugestões + Ativa: pesquisas/eventos |
+| 14 | **Info Gerais + Acesso CUCA** | Maria + Ana (routing) | Super Admin/Dev | Passiva: info qualquer CUCA + agendamento espaços |
+
+### Lógica do Canal de Empregabilidade Geral (#6)
+
+- Canal **passivo** — divulgado em redes sociais (Instagram, etc.), não por disparo
+- Lead chega por conta própria perguntando sobre vagas
+- Júlia Geral lista vagas abertas de **todas as unidades** (vagas com `status = 'aberta'`)
+- Responde: *"Esta vaga está no CUCA [X]. Fale com eles pelo número [link WhatsApp empregabilidade daquela unidade]"*
+- **NÃO coleta CV** — apenas direciona ao canal territorial correto
+
+### Lógica dos Canais Pontuais (#7-11)
+
+- Cada CUCA tem seu canal pontual gerenciado pelo próprio Admin
+- **Comunicação Ativa**: disparo de programações pontuais (após aprovação)
+- **Comunicação Passiva**: pós-disparo, lead responde → Maria usa RAG do evento para responder dúvidas
+- Maria também responde dúvidas gerais sobre aquela unidade (RAG de `knowledge_base` da unidade)
+
+### Lógica do Canal #14 — Routing Automático por Intenção
+
+```
+Lead envia mensagem para #14
+    │
+    ├── Intenção: dúvida geral / programação / cursos / horários / info dos CUCAs
+    │       └── Ativa persona MARIA
+    │               RAG: knowledge_base (global) + monthly_program + scheduled_program
+    │
+    └── Intenção: usar espaço / agendar / reservar / equipamento
+            └── Ativa persona ANA
+                    Ação: envia link público do formulário de solicitação
+                    RAG: spaces + equipment ativos (query direta no DB, não pgvector)
+```
+
+### Estratégia Anti-Ban (todos os canais de disparo)
+
+| Regra | Implementação |
+|-------|--------------|
+| Simulação de presença | `"presence": "composing"` em cada envio (`presence_duration: 2000-3000ms`) |
+| Delay dinâmico | Mensal: 15-45s / Pontual: 5-15s / Campanha: 10-30s (aleatório, nunca fixo) |
+| Horário comercial | Disparos apenas 08:00-22:00 |
+| Distribuição de carga | 20k leads entre instâncias (~4k cada) |
+| Personalização IA | Variações sutis no texto + nome do lead (sem detectação de spam) |
+| Warm-up gradual | 50→150→500→1k→4k msgs/dia, crescendo semanalmente (5 semanas) |
+| Opt-out fácil | "SAIR" ou "PARAR" em qualquer canal → opt_in = false imediato |
+| WhatsApp Business | Todos os números obrigatoriamente Business |
+| Monitoramento | Webhook `messages.update` → se erro subir, parar envio |
+
+---
+
+## 4. AGENTES IA, PERSONAS E RAG {#4-agentes}
+
+### As 3 Camadas do Prompt (obrigatório para todos os agentes)
+
+```
+CAMADA 1 — PERSONA (quem sou)
+  → personas_rede_cuca.md: nome, idade, tom de voz, frases características, competências
+  → "Você é a [Nome], [X] anos. [perfil]. Seu tom é [tom]. Use frases como: [exemplos]."
+
+CAMADA 2 — TÉCNICA (o que faço)
+  → Regras de negócio, rotas, ações proibidas, limites, fluxos
+  → Baseada nas seções funcionais da DOCUMENTACAO_FUNCIONAL.md
+
+CAMADA 3 — RAG DINÂMICO (o que sei agora)
+  → Chunks injetados via busca semântica no pgvector (à cada mensagem)
+  → Filtros: source_type + cuca_unit_id (quando aplicável)
+```
+
+> **Importante**: A persona (Camada 1) define a PERSONALIDADE. A camada técnica (Camada 2) define o COMPORTAMENTO e as REGRAS. Ela é quem "chama" a persona. A persona sozinha não sabe quais rotas seguir.
+
+### Tabela de Agentes com RAG por Canal
+
+| Canal | Persona | RAG — source_type | RAG — filtro cuca_unit_id |
+|-------|---------|-------------------|---------------------------|
+| #1-5 (Empregabilidade unidade) | Júlia | `job_posting` | Apenas a unidade do canal |
+| #6 (Empregabilidade Geral) | Júlia | `job_posting` | **Sem filtro** (todos os CUCAs) |
+| #7-11 (Pontual por unidade) | Maria | `scheduled_program` + `knowledge_base` | Apenas a unidade do canal |
+| #12 (Mensal) | Maria | `monthly_program` | Sem filtro (global) |
+| #13 (Ouvidoria) | Sofia | `ouvidoria_evento` (se ativo) | Conforme evento |
+| #14 (Geral — dúvidas) | Maria | `knowledge_base` + `monthly_program` | Sem filtro (global) |
+| #14 (Acesso CUCA — agendamento) | Ana | Query direta: `spaces` + `equipment` (status='ativo') | CUCA da solicitação |
+
+### Personas (resumo de personas_rede_cuca.md)
+
+| Persona | Idade | Tom | Frases características |
+|---------|-------|-----|----------------------|
+| **Maria** | 28 | Acolhedor, claro, didático | "Deixa eu te explicar direitinho..." / "Só para garantir que ficou claro..." |
+| **Ana** | 32 | Profissional, objetivo, cordial | "Vou precisar de alguns detalhes..." / "Quanto ao prazo, o processo leva..." |
+| **Sofia** | 35 | Acolhedor, respeitoso, validador | "Agradeço por compartilhar isso..." / "Vou registrar sua manifestação com cuidado..." |
+| **Júlia** | 30 | Encorajador, prático, respeitoso | "Vamos ver qual vaga se encaixa melhor..." / "Essa experiência pode ser um diferencial..." |
+
+### Regras Técnicas Críticas por Agente (Camada 2)
+
+**Júlia (Empregabilidade #1-5)**:
+- Lista APENAS vagas com `status = 'aberta'` da unidade
+- Confirma e certifica com o lead antes de enviar link: *"Você deseja se candidatar à vaga de [título]? Confirme para prosseguir."*
+- **NUNCA opina** se o candidato tem aptidão ou não — apenas lista vagas disponíveis
+- Se lead quer se candidatar a mais de uma: trata cada candidatura separadamente
+- Envia link público de candidatura (data nasc + upload CV)
+- Orienta carreira 24h quando não há candidatura em andamento
+
+**Júlia Geral (Empregabilidade #6)**:
+- Lista vagas de TODOS os CUCAs
+- Direciona ao WhatsApp da unidade correspondente (nunca coleta CV)
+
+**Maria (Pontual #7-11)**:
+- Responde dúvidas gerais da unidade + detalhes de eventos pontuais ativos (RAG)
+- Pós-disparo: contexto do evento carregado via RAG (`scheduled_program`)
+- Na primeira interação: avisa limite de áudio — *"Você pode enviar áudios de até 40 segundos."*
+
+**Maria (Mensal #12)** e **Maria (Geral #14)**:
+- Responde sobre qualquer CUCA no canal #14
+- Fornece links WhatsApp das unidades quando necessário
+- Se detectar intenção de agendamento: transfere para Ana (no #14)
+
+**Ana (Acesso CUCA — #14)**:
+- Envia link do formulário público de solicitação
+- Após aprovação: informa protocolo e cron de 48h
+- **NUNCA** compartilha: informações de contato de servidores, motivos de reprovação, detalhes internos
+- Se lead insiste após reprovação: *"Os detalhes só podem ser compartilhados presencialmente. Por favor, dirija-se à unidade [CUCA]."* (repete com variações)
+
+**Sofia (Ouvidoria #13)**:
+- Pergunta SEMPRE: *"Você quer fazer uma crítica ou uma sugestão?"*
+- Ativa **buffer de 15 segundos** antes de processar (lead pode enviar em mensagens fragmentadas)
+- **Crítica** → anônima: não coleta nome/telefone. Avisa: *"Não estamos coletando seus dados pessoais, apenas a mensagem."*
+- **Sugestão** → identificada: coleta nome + CUCA que frequenta
+- **Loop de continuidade**: após cada mensagem, pergunta se quer enviar mais. Encerra quando lead diz "não", "obrigado", "valeu", "era isso", etc.
+- Em **evento ativo**: responde EXCLUSIVAMENTE dentro do escopo da Descrição do Evento. Fora do escopo: *"Neste momento estamos coletando seu feedback sobre [tema]. Para dúvidas gerais, entre em contato pelo número de informações gerais."*
+
+### Transcrição de Áudio (todos os agentes)
+
+- Limite: **40 segundos**
+- Fluxo: Webhook `messages.upsert` → verificar `audioMessage.seconds`
+- **Regra crítica**: responder 200 OK ao webhook **IMEDIATAMENTE**, antes de qualquer processamento
+- Se `seconds > 40`: NÃO baixar mídia. Responder com delay+presence: *"Seu áudio ultrapassou o limite de 40 segundos. Por favor, envie um áudio mais curto ou descreva por texto."*
+- Se `seconds ≤ 40`: `GET /instance/downloadMedia` → buffer → Whisper → texto → LLM
+
+---
+
+## 5. RBAC — 4 NÍVEIS DE ACESSO {#5-rbac}
+
+### Nível 1 — Developer/Owner (`role = 'super_admin'` no schema atual)
+
+- Único com acesso ao **Developer Console** (`/developer`)
+- Gerencia prompts dos agentes (editar, versionar, testar)
+- Acessa `ai_usage_logs`: custo por modelo, feature, projeção mensal
+- Logs em tempo real do Worker (WebSocket, últimas 1000 linhas, filtros)
+- Métricas do Worker: health, uptime, fila Celery, latência, CPU/memória
+- Controle de instâncias UAZAPI (criar, editar, deletar, reconectar, QR Code)
+- Configura gatilhos de alerta (WhatsApp + e-mail para erros críticos)
+- Ajusta `system_config` (delays, limites, warm-up, modelos) sem restart
+- Cria usuários Super Admin
+
+### Nível 2 — Super Admin CUCA (`role = 'secretaria'` no schema)
+
+- Acesso global — todos os territórios
+- **Exclusivo**: criar e ver eventos de Ouvidoria, análise de sentimento
+- **Exclusivo**: Programação Mensal (import planilha + confirmação + disparo)
+- Visualiza relatórios consolidados de todos os CUCAs
+- Cria usuários Admin CUCA
+- **Não acessa** Developer Console
+
+### Nível 3 — Admin por CUCA (`role = 'gestor_unidade'` ou `'coordenador'`)
+
+- Visão restrita ao seu `cuca_unit_id`
+- Cria sub-usuários (colaboradores) com permissões granulares via checklist
+- **Programação Pontual**: criar, aprovar, disparar para a unidade. Pode ativar **filtro global** para evento unificar todos os CUCAs
+- **Empregabilidade**: criar/editar vagas, ver candidatos, aprovar agendamento nível 1
+- **Vagas Expansivas**: flag que faz a vaga aparecer no canal geral #6 (divulgação via redes)
+- Não vê Ouvidoria, Developer Console, dados de outros CUCAs
+
+### Nível 4 — Colaborador/Operador (`role = 'operador'`)
+
+- Criado pelo Admin CUCA com permissões específicas via checklist
+
+**Checklist de permissões por módulo** (Admin seleciona ao criar a função):
+
+| Módulo | Ações no checklist |
+|--------|--------------------|
+| Programação Pontual | Criar / Editar / Deletar / Aprovar / Visualizar |
+| Programação Mensal | Sincronizar / Visualizar |
+| Instâncias WhatsApp | Criar / Editar / Deletar / Conectar / Visualizar |
+| Mensagens | Enviar / Visualizar / Envio em Massa |
+| Vagas | Criar / Editar / Deletar / Visualizar / Gerenciar Candidatos |
+| Empresas | Criar / Editar / Deletar / Visualizar |
+| Leads | Criar / Editar / Deletar / Visualizar / Importar / Exportar |
+| Banco de Talentos | Visualizar / Fazer Match / Atribuir a Vaga |
+| Colaboradores | Criar / Editar / Deletar / Visualizar |
+| Funções | Criar / Editar / Deletar / Visualizar |
+| Categorias | Criar / Editar / Deletar / Visualizar |
+| Unidades CUCA | Editar / Visualizar |
+| Base de Conhecimento | Criar / Editar / Deletar / Visualizar |
+| Campanhas | Criar / Editar / Deletar / Aprovar / Visualizar |
+| Agendamento de Espaços | Visualizar / Aprovar Nível 1 / Aprovar Nível 2 |
+| Ouvidoria | Visualizar / Responder / Categorizar / Exportar |
+| Dashboard/Métricas | Visualizar Própria Unidade / Visualizar Global |
+| Pesquisas | Criar / Enviar / Visualizar Resultados |
+
+### Controle de Mensagens (Isolamento por Instância)
+
+| Perfil | O que vê no chat espelhado |
+|--------|---------------------------|
+| Operador de Empregabilidade (CUCA X) | Apenas conversas da instância empregabilidade do CUCA X |
+| Operador de Pontual (CUCA X) | Apenas conversas da instância pontual do CUCA X |
+| Gestor do CUCA X | Todas as conversas de todas as instâncias do CUCA X |
+| Admin/Gestão Central | Todas as conversas de todos os CUCAs + canais globais |
+
+---
+
+## 6. SCHEMA DO BANCO DE DADOS (26 TABELAS) {#6-schema}
+
+### Core (RBAC + Multi-tenancy)
+- `cuca_units` — 5 unidades (name, slug, address, opening_hours JSONB, lat/lng)
+- `roles` — funções (super_admin, secretaria, gestor_unidade, coordenador, operador)
+- `permissions` — permissões granulares (key: `leads:read`, `ouvidoria:manage`, `developer:access`, etc.)
+- `role_permissions` — N:N entre roles e permissions
+- `collaborators` — vinculado a `auth.users` + role_id + cuca_unit_id (NULL para globais)
+
+### Leads e Comunicação
+- `categories` — categorias de interesse (Esporte, Cultura, Hip Hop, Tecnologia...)
+- `leads` — remote_jid, phone, name, cuca_unit_id, opt_in, opt_in_date, opt_out_date, lat/lng
+- `lead_categories` — N:N leads × categories
+- `whatsapp_instances` — 14 instâncias (instance_name, phone, category, cuca_unit_id, token_vault_key, status, messages_sent_today)
+- `message_logs` — toda mensagem (instance_id, lead_id, direction, content_type, content, media_url, from_me, status) — **limpeza automática 60 dias**
+- `conversations` — estado da conversa (status: active/awaiting_human/human_responding/closed, assigned_to)
+
+### Programação
+- `scheduled_programs` — pontual (title, description, event_date, flyer_url, status: rascunho→aguardando_aprovacao→aprovado→enviado→cancelado, approved_by)
+- `scheduled_program_filters` — filtros N:N (category, age_range, gender, geo_radius como JSONB)
+- `monthly_programs` — cabeçalho mensal (month, year, source: api/manual_import)
+- `monthly_program_items` — atividades (activity_name, category, instructor, day_of_week, time_start, location, age_range, vacancies, enrollment_link)
+- `campaigns` — campanhas genéricas (message_template com variáveis {{nome}}, media_url, status, scheduled_for)
+- `campaign_filters` — filtros das campanhas
+
+### Empregabilidade
+- `companies` — CNPJ, access_token (para formulário público sem recadastro)
+- `job_postings` — vagas (title, description, requirements, salary, vacancies, status: pre_cadastro→aberta→preenchida→cancelada, cuca_unit_id)
+- `candidates` — (job_posting_id, lead_id, cv_url, ocr_data JSONB, status: pendente→selecionado→contratado/rejeitado→banco_talentos)
+- `talent_bank` — (candidate_id, skills JSONB, experience_years) — últimos 3 meses
+
+### Acesso CUCA
+- `spaces` — espaços (name, capacity, active, cuca_unit_id)
+- `equipment` — equipamentos (space_id, name, status: ativo/desativado/manutencao)
+- `space_requests` — solicitações (protocol_number, cpf, space_id, equipment_ids UUID[], status: aguardando_aprovacao_tecnica→aguardando_aprovacao_secretaria→aprovado/reprovado/cancelado, auto_canceled_at)
+
+### Ouvidoria
+- `ouvidoria_manifestacoes` — (tipo: critica/sugestao/ideia, conteudo, cuca_unit_id, nome/telefone/remote_jid/lead_id **APENAS para sugestões**, protocolo, sentiment, themes JSONB)
+- `ouvidoria_eventos` — eventos de escuta (titulo, descricao, start_date, end_date, status: ativo/encerrado)
+- `satisfaction_surveys` — pesquisas (tipo: quantitativa/qualitativa, pergunta, opcoes JSONB)
+- `survey_responses` — respostas (survey_id, lead_id, resposta)
+
+### RAG e IA
+- `rag_chunks` — chunks vetorizados (source_type: knowledge_base/monthly_program/scheduled_program/job_posting, source_id, cuca_unit_id, content, embedding vector(1536), metadata JSONB)
+- `knowledge_base` — base manual (title, content, cuca_unit_id [NULL=global], category)
+- `ai_usage_logs` — consumo OpenAI (model, feature: agent/ocr/transcription/matching/sentiment, tokens_input, tokens_output, cost_usd)
+
+### Logs, Auditoria e Config
+- `audit_logs` — (action, resource_type, resource_id, old_data JSONB, new_data JSONB, ip_address)
+- `worker_logs` — (level: INFO/WARNING/ERROR/CRITICAL, type: webhook/dispatch/ocr/transcribe/error, metadata JSONB)
+- `system_config` — chave/valor JSONB (delays, limites, warm-up, modelo Whisper, budget OpenAI)
+- `developer_alerts` — gatilhos de alerta (trigger_type, condition JSONB, channel: whatsapp/email, recipient)
+
+### pg_cron Jobs (3 agendados)
+
+```sql
+-- Sync Mensal (dia 1 de cada mês às 00:00)
+SELECT cron.schedule('sync_monthly_programs', '0 0 1 * *', 'SELECT sync_monthly_programs()');
+
+-- Limpeza de mensagens antigas (60 dias — todo dia às 02:00)
+SELECT cron.schedule('cleanup_old_messages', '0 2 * * *', 'SELECT cleanup_old_messages()');
+
+-- Auto-cancelamento de solicitações sem resposta (48h — a cada hora)
+SELECT cron.schedule('auto_cancel_space_requests', '0 */1 * * *', 'SELECT auto_cancel_space_requests()');
+```
+
+### RLS — Row Level Security
+
+Toda tabela com dados sensíveis tem RLS:
+- `super_admin` → acessa tudo (todas as tabelas, sem filtro de unidade)
+- `secretaria` → acessa tudo (igual super_admin, mas sem Developer Console)
+- `gestor_unidade` / `coordenador` / `operador` → acessa apenas registros onde `cuca_unit_id = colaborators.cuca_unit_id` do usuário logado
+- RLS é a barreira real de segurança — o frontend não pode confiar apenas em si mesmo
+
+---
+
+## 6.5 DECISÕES ARQUITETURAIS CRÍTICAS — O QUE NÃO EXISTE NO PORTAL {#65-decisoes}
+
+### RAG é invisível e automático
+
+Não existe módulo "Base de Conhecimento" no portal como item de menu ou página acessível ao usuário final. O RAG é alimentado **silenciosamente** pelo Worker sempre que o usuário faz o seu trabalho normal:
+
+| Usuário faz... | Worker faz automaticamente (invisível) |
+|----------------|----------------------------------------|
+| Salva/edita uma Programação Pontual | `indexar_conteudo('scheduled_program', id)` → chunking → embeddings → `rag_chunks` |
+| Importa Programação Mensal | `indexar_conteudo('monthly_program', id)` → embeddings → `rag_chunks` |
+| Cria/edita uma Vaga de Emprego | `indexar_conteudo('job_posting', id)` → embeddings → `rag_chunks` |
+| Cria um Evento de Ouvidoria | Sofia recebe a descrição do evento diretamente no contexto do prompt |
+
+O usuário **nunca vê, nunca toca, nunca configura** embeddings, `source_type`, `chunk_size`, ou qualquer detalhe técnico do RAG.
+
+### Prompts dos agentes são código, não configuração de usuário
+
+Os prompts completos das 4 personas (Maria, Ana, Sofia, Júlia) com as 3 camadas são **escritos pela IA e versionados como migration SQL**. Nenhum usuário final configura prompts. O fluxo é:
+
+```
+IA escreve prompt → migration SQL → banco (tabela system_config ou agent_prompts)
+                                          ↓
+                         Worker consulta prompt ao receber mensagem
+                         (invisível ao usuário)
+```
+
+O Owner/Developer pode **visualizar** os prompts ativos no Developer Console — mas sem edição de produção diretamente pela UI (mudanças passam por nova migration).
+
+### O que NÃO deve aparecer na sidebar do portal para usuário final
+
+| Item removido | Motivo |
+|---------------|--------|
+| `/base-conhecimento` | Não existe como módulo de usuário — RAG é automático |
+| `/agente-maria` | Configuração técnica — exclusiva do Developer Console |
+| Qualquer referência a "embeddings", "RAG", "prompt", "token" | Jargão técnico invisível para gestores |
+
+### Onde essas informações vivem (apenas para Developer/Owner)
+
+| O quê | Onde fica |
+|-------|-----------|
+| Logs de execução dos agentes | Developer Console → Logs em Tempo Real |
+| Consumo de tokens por agente | Developer Console → Consumo OpenAI |
+| Prompts ativos (visualização) | Developer Console → Agentes (read-only) |
+| Configuração de parâmetros RAG (top_k, threshold) | `system_config` no banco — editável só pelo Developer Console |
+
+---
+
+## 7. MAPA DE DEPENDÊNCIAS {#7-dependencias}
+
+```
+NÍVEL 0 — Fundação (sem dependências)
+├── Supabase: schema + RLS + Auth + Vault + pgvector + pg_cron
+├── RBAC: roles, permissions, collaborators, seeds
+└── UAZAPI: 14 instâncias configuradas, webhook 200 OK
+
+NÍVEL 1 — Depende do Nível 0
+├── Leads: CRUD, importação CSV, opt-in/opt-out LGPD
+├── Categorias CRUD
+├── Unidades CUCA CRUD
+├── Worker Python: scaffold FastAPI, rota /webhook → 200 OK imediato
+└── Base de Conhecimento + RAG (rag_chunks + knowledge_base + embeddings)
+
+NÍVEL 2 — Depende do Nível 1
+├── Agentes IA: 3 camadas de prompt, busca semântica pgvector
+├── Chat espelhado em tempo real (Supabase Realtime)
+├── Handover humano: notificação WhatsApp + resumo IA
+└── Transcrição áudio: validação de 40s + Whisper
+
+NÍVEL 3 — Depende do Nível 2
+├── Programação Pontual (CRUD + aprovação + disparo + filtro global + RAG auto)
+├── Programação Mensal (import planilha + embeddings + disparo Super Admin)
+├── Campanhas genéricas (workflow idêntico ao pontual)
+└── Espaços/Equipamentos CRUD (pré-requisito para Acesso CUCA)
+
+NÍVEL 4 — Depende do Nível 3
+├── Empregabilidade (vagas, link público, OCR, candidatos, banco talentos)
+├── Canal Geral #6 (vagas expansivas de todos os CUCAs)
+├── Acesso CUCA (formulário, protocolo, 2 aprovações, cron 48h, Ana)
+└── Ouvidoria (Sofia, crítica/sugestão, eventos de escuta, pesquisas)
+
+NÍVEL 5 — Depende de tudo
+├── Dashboards consolidados e métricas por território/global
+├── Análise de sentimento automática (IA) por evento
+├── Banco de Talentos + Matching IA (últimos 3 meses)
+└── Developer Console (ai_usage_logs, worker health, prompt control)
+```
+
+---
+
+## 8. ROADMAP: 5 FASES, 17 SPRINTS {#8-roadmap}
+
+> Cada sprint = **2 semanas**. Total: **~8,5 meses de desenvolvimento**
+
+| Fase | Sprints | Objetivo |
+|------|---------|----------|
+| **Fase 0** | 1-2 | Fundação: Supabase, RBAC, UAZAPI, Worker scaffold, Portal shell |
+| **Fase 1** | 3-5 | Comunicação base: Leads, RAG, Maria, Chat espelhado |
+| **Fase 2** | 6-8 | Programações, Disparos, Campanhas |
+| **Fase 3** | 9-11 | Empregabilidade completa (Júlia, OCR, canal geral) |
+| **Fase 4** | 12-14 | Acesso CUCA (Ana) + Ouvidoria (Sofia) |
+| **Fase 5** | 15-17 | Developer Console, Dashboards, Testes, Go-live |
+
+---
+
+## 9. STATUS POR SPRINT COM TICKETS {#9-sprints}
+
+### FASE 0 — FUNDAÇÃO
+
+#### Sprint 1 — Supabase + RBAC Base ✅ CONCLUÍDO
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S1-01 | Schema base: cuca_units, roles, permissions, role_permissions, collaborators | [x] |
+| S1-02 | Auth: login email/senha, middleware de sessão | [x] |
+| S1-03 | RLS: policies por cuca_unit_id e role | [x] |
+| S1-04 | Extensões: pgvector, pg_cron, pg_net, pgsodium | [x] |
+| S1-05 | Seeds: 5 unidades CUCA, roles padrão, permissions | [x] |
+
+#### Sprint 2 — Portal Shell + UAZAPI Primeiro Webhook 🔄 PARCIAL (60%)
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S2-01 | Layout portal: sidebar dinâmica, header, dark mode | [x] |
+| S2-02 | Auth flow: login page, middleware, redirect | [x] |
+| S2-03 | Dashboard inicial com StatCards | [x] |
+| S2-04 | Sidebar dinâmica por permissão (show/hide por módulo) | [ ] |
+| S2-05 | CRUD de funções (roles) com checklist de 19 permissões | [ ] |
+| S2-06 | CRUD de colaboradores: criar, editar, vincular função + CUCA | [ ] |
+| S2-07 | UAZAPI: 1ª instância de teste, webhook → 200 OK imediato | [ ] |
+| S2-08 | Worker Python: FastAPI scaffold, rota /webhook → 200 OK + log | [ ] |
+| S2-09 | **CORREÇÃO**: Remover `/base-conhecimento` e `/agente-maria` da sidebar geral do portal | [x] |
+| S2-10 | Criar Developer Console Hub em `/developer` e `/developer/agentes` | [x] |
+
+---
+
+### FASE 1 — COMUNICAÇÃO BASE
+
+#### Sprint 3 — Leads + Categories ✅ CONCLUÍDO
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S3-01 | Leads CRUD: cadastro, busca, filtros por unidade | [x] |
+| S3-02 | Importação CSV de leads | [x] |
+| S3-03 | Opt-in/Opt-out: detecção automática "SAIR"/"PARAR" + historico_opt_in | [x] |
+| S3-04 | Categorias CRUD (Cultura, Esporte, Tecnologia, Arte, etc.) | [x] |
+| S3-05 | Unidades CUCA CRUD com dados dos 5 equipamentos | [x] |
+
+#### Sprint 4 — RAG + Motor de Agentes MVP ✅ CONCLUÍDO (Técnico)
+
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S4-01 | Tabelas: rag_chunks, ai_usage_logs, conversations, message_logs | [x] |
+| S4-02 | Índice HNSW no embedding vector(1536) | [x] |
+| S4-03 | Function SQL `buscar_chunks_similares` corrigida com filtros unit/tipo | [x] |
+| S4-04 | **Seeds SQL**: Prompts 3 camadas para Maria, Júlia, Ana, Sofia | [x] |
+| S4-05 | Edge Function `processar-documento`: chunking (800 chars) + embeddings | [x] |
+| S4-06 | Trigger RAG automático: `documentos_rag` → via `pg_net` para Edge Function | [x] |
+| S4-07 | Trigger Automação Vagas: `vagas` → gera `documentos_rag` reativo | [x] |
+| S4-08 | Trigger Automação Eventos: `eventos_pontuais` → gera `documentos_rag` reativo | [x] |
+| S4-09 | Edge Function `motor-agente`: Identificação + RAG + GPT-4o + Métricas | [x] |
+| S4-10 | **Segurança**: Chave OpenAI no Supabase Vault + helpers SQL `get_openai_key` | [x] |
+| S4-11 | **IA Auditiva**: Integração OpenAI Whisper no motor (áudio < 40s) | [x] |
+| S4-12 | Página `/developer/agentes`: Visualização técnica dos prompts em 3 camadas | [x] |
+| S4-13 | Teste E2E (Simulado): Pergunta RAG Barra → Resposta Maria Persona ✅ | [x] |
+
+#### Sprint 5 — Chat Espelhado + Webhooks UAZAPI ⏳ (PRÓXIMO)
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S5-01 | **Webhook Master**: Worker FastAPI recebe, valida e salva em `message_logs` | [ ] |
+| S5-02 | **Routing Automático**: Worker consulta canal_id → envia para Edge Function `motor-agente` | [ ] |
+| S5-03 | **UI Chat Espelhado**: Página `/atendimento` com Supabase Realtime (viva) | [ ] |
+| S5-04 | **Controle Manual**: Botão IA ON/OFF por conversa (pausa motor temporariamente) | [ ] |
+| S5-05 | **Handover**: Detecção "humano" → Notificação Admin + status `awaiting_human` | [ ] |
+| S5-06 | **Resposta Manual**: Operador envia no portal → Worker dispara via UAZAPI | [ ] |
+| S5-07 | **Sincronização**: Marcar como lida no celular quando lida no portal | [ ] |
+| S5-08 | **Mídia Contextual**: Júlia envia flyer da vaga / Maria envia flyer do evento | [ ] |
+
+---
+
+### FASE 2 — PROGRAMAÇÕES E DISPAROS
+
+#### Sprint 6 — Programação Pontual ⏳
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S6-01 | CRUD programação pontual: título, descrição, categoria, data, horários, unidade | ⏳ |
+| S6-02 | Upload de flyer (imagem/vídeo) para Supabase Storage | ⏳ |
+| S6-03 | Filtros de envio: categoria (interesse), geolocalização, faixa etária | ⏳ |
+| S6-04 | Opção "filtro global" → evento vai para todos os CUCAs (Admin pode ativar) | ⏳ |
+| S6-05 | Fluxo de aprovação: rascunho → aguardando_aprovacao → aprovado | ⏳ |
+| S6-06 | Notificação Realtime para aprovadores quando evento fica pendente | ⏳ |
+| S6-07 | Preview de leads atingidos (contagem por filtro) antes de confirmar | ⏳ |
+| S6-08 | Indexação RAG automática do evento após criação (source_type='scheduled_program') | ⏳ |
+| S6-09 | Disparo gradual via Worker: delay 5-15s + presence + personalização IA | ⏳ |
+| S6-10 | Rastreamento: enviados / entregues / lidos / respondeu | ⏳ |
+
+#### Sprint 7 — Programação Mensal via Planilha ⏳
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S7-01 | Modal de import planilha CSV/Excel (exclusivo Super Admin) | ⏳ |
+| S7-02 | Preview dos dados importados antes de confirmar | ⏳ |
+| S7-03 | UPSERT em monthly_programs + monthly_program_items | ⏳ |
+| S7-04 | Indexação RAG automática (source_type='monthly_program') após import | ⏳ |
+| S7-05 | pg_cron: sincronização automática via API Portal da Juventude (dia 1/mês) | ⏳ |
+| S7-06 | Fallback: se API falhar → alertar gestor + manual import disponível | ⏳ |
+| S7-07 | DataTable: atividades filtráveis por CUCA, categoria, dia da semana | ⏳ |
+| S7-08 | Disparo global: delay 15-45s, distribuído entre instâncias, 8h-22h | ⏳ |
+| S7-09 | Dashboard de progresso do disparo em tempo real | ⏳ |
+
+#### Sprint 8 — Campanhas + Motor Anti-Ban completo ⏳
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S8-01 | Módulo Campanhas: CRUD (título, template com {{nome}}, mídia, público, agendamento) | ⏳ |
+| S8-02 | Fluxo aprovação de campanhas (idêntico ao pontual) | ⏳ |
+| S8-03 | system_config: delays configuráveis via Developer Console | ⏳ |
+| S8-04 | Warm-up: tabela de progressão (50→150→500→1k→4k msgs/dia por 5 semanas) | ⏳ |
+| S8-05 | Monitoramento: se taxa de erro > limite → parar disparo + alertar | ⏳ |
+
+---
+
+### FASE 3 — EMPREGABILIDADE
+
+#### Sprints 9-11 — Empregabilidade Completa ⏳
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S9-01 | Formulário público de cadastro de empresa (CNPJ lookup + access_token) | ⏳ |
+| S9-02 | CRUD vagas: título, descrição, requisitos, benefícios, salário, nº vagas, faixa etária | ⏳ |
+| S9-03 | Campo: local entrevista (na empresa / no CUCA) + tipo seleção | ⏳ |
+| S9-04 | Status lifecycle vaga: pre_cadastro → aberta → preenchida → cancelada | ⏳ |
+| S9-05 | Flag `expansiva`: vaga aparece no canal geral #6 (Júlia Geral no RAG) | ⏳ |
+| S9-06 | Indexação RAG automática ao criar vaga (source_type='job_posting', filtro cuca_unit_id) | ⏳ |
+| S9-07 | Link público de candidatura: data de nascimento + upload CV (PDF ou foto) | ⏳ |
+| S9-08 | Worker: OCR via GPT-4o Vision → JSON (nome, idade, endereço, tel, escolaridade, experiência) | ⏳ |
+| S9-09 | Aviso automático: preenche requisitos básicos? ✅/⚠️/❌ (informativo para gestor) | ⏳ |
+| S9-10 | Datatable de candidatos: nome, idade, tel, escolaridade, experiência, status, ícone 📄 CV | ⏳ |
+| S9-11 | Edição manual de dados OCR incorretos pelo gestor | ⏳ |
+| S9-12 | Status lifecycle candidato: pendente → selecionado → contratado / rejeitado → banco_talentos | ⏳ |
+| S9-13 | Rejeitado → automático para talent_bank com skills JSONB | ⏳ |
+| S9-14 | Contratado → se vagas=0, vaga muda para "Preenchida" | ⏳ |
+| S10-01 | Agente Júlia por unidade (#1-5): consulta RAG job_posting da unidade | ⏳ |
+| S10-02 | Júlia: confirma candidatura antes de enviar link | ⏳ |
+| S10-03 | Júlia Geral (#6): consulta RAG job_posting sem filtro de unidade | ⏳ |
+| S10-04 | Júlia Geral: direciona ao WhatsApp da unidade (não coleta CV) | ⏳ |
+| S10-05 | Orientação profissional 24h: dicas entrevista, currículo (sem candidatura ativa) | ⏳ |
+| S11-01 | Banco de Talentos: matching IA ao criar nova vaga (habilidades × requisitos, últimos 3 meses) | ⏳ |
+| S11-02 | Aba "Banco de Talentos" dentro da vaga: candidatos sugeridos por score | ⏳ |
+| S11-03 | Gestor pode adicionar talento como candidato com 1 clique | ⏳ |
+
+---
+
+### FASE 4 — ACESSO CUCA + OUVIDORIA
+
+#### Sprint 12 — Acesso CUCA (Ana) ⏳
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S12-01 | CRUD de Espaços e Equipamentos (status: ativo/desativado/manutencao) | ⏳ |
+| S12-02 | Formulário público: CUCA → espaço → equipamentos (checkboxes dinâmicos — só ativos) | ⏳ |
+| S12-03 | Campos: nome, CPF, telefone, data, horário, natureza do evento | ⏳ |
+| S12-04 | Geração automática de protocolo (#XXXXX) + status initial | ⏳ |
+| S12-05 | Agente Ana: identifica intenção de agendamento → envia link formulário | ⏳ |
+| S12-06 | Após submissão: Ana envia protocolo via WhatsApp ao solicitante | ⏳ |
+| S12-07 | Aprovação Nível 1 (técnico): notificação WhatsApp + interface portal | ⏳ |
+| S12-08 | Aprovação Nível 2 (secretaria): notificação + aprovação final | ⏳ |
+| S12-09 | Aprovado: Ana informa + ativa cron de 48h auto-cancelamento | ⏳ |
+| S12-10 | Reprovado: Ana responde sem compartilhar motivos/contatos | ⏳ |
+| S12-11 | Insistência pós-reprovação: Ana repete redirecionamento à unidade (variações de texto) | ⏳ |
+| S12-12 | Ana identifica solicitação por protocolo ou CPF em contato posterior | ⏳ |
+
+#### Sprint 13 — Ouvidoria (Sofia) ⏳
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S13-01 | Criação de Eventos de Escuta (Super Admin): título, descrição, datas, filtro CUCA | ⏳ |
+| S13-02 | Sofia: sempre pergunta "crítica ou sugestão?" na primeira mensagem | ⏳ |
+| S13-03 | Buffer 15s entre mensagens (lead pode fragmentar o texto) | ⏳ |
+| S13-04 | Fluxo crítica: anônima (sem remote_jid, sem nome), pergunta CUCA (opcional) | ⏳ |
+| S13-05 | Aviso de anonimato: *"Não estamos coletando seus dados pessoais."* | ⏳ |
+| S13-06 | Fluxo sugestão: coleta nome + CUCA + gera protocolo | ⏳ |
+| S13-07 | Loop de continuidade após cada mensagem ("Deseja enviar mais alguma?") | ⏳ |
+| S13-08 | Enceramento gracioso: "não"/"obrigado"/"valeu"/"era isso" → agradece e finaliza | ⏳ |
+| S13-09 | Em evento ativo: Sofia responde EXCLUSIVAMENTE dentro do escopo da descrição do evento | ⏳ |
+| S13-10 | Portal: páginas "Críticas" (anônimas) e "Sugestões" (identificadas) separadas | ⏳ |
+| S13-11 | Análise de sentimento: botão por evento → GPT-4o classifica positivo/negativo/neutro | ⏳ |
+| S13-12 | Temas recorrentes + resumo executivo + gráficos (pizza, linha, barras) | ⏳ |
+| S13-13 | Pesquisas de satisfação: quantitativa (botões WhatsApp) + qualitativa (texto/áudio) | ⏳ |
+
+#### Sprint 14 — Pesquisas, LGPD e Governança ⏳
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S14-01 | Opt-in na primeira interação: *"Para continuar, preciso que aceite receber mensagens. [Sim] [Não]"* | ⏳ |
+| S14-02 | Se "Não": lead cadastrado mas nunca recebe disparos ativos | ⏳ |
+| S14-03 | Anonimização de dados: funcionalidade de "direito ao esquecimento" | ⏳ |
+| S14-04 | Audit logs automáticos em toda ação do portal (action, resource, user_id, old_data, new_data) | ⏳ |
+| S14-05 | pg_cron limpeza 60 dias em message_logs (02:00 AM) | ⏳ |
+
+---
+
+### FASE 5 — DEVELOPER CONSOLE + DASHBOARDS + GO-LIVE
+
+#### Sprints 15-17 ⏳
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S15-01 | Rota `/developer` (exclusivo role super_admin no banco) | ⏳ |
+| S15-02 | Dashboard consumo OpenAI: tokens/dia, custo/modelo, breakdown por feature, projeção mensal | ⏳ |
+| S15-03 | Alertas de budget: 🟡 80% e 🔴 100% em ai_usage_logs | ⏳ |
+| S15-04 | Logs Worker em tempo real: WebSocket, últimas 1000 linhas, filtros (tipo, instância, lead, período) | ⏳ |
+| S15-05 | Download logs: últimos 7 dias em .txt/.json | ⏳ |
+| S15-06 | Métricas Worker: status, uptime, fila Celery (pendentes/executando/falhas), latência, CPU/memória | ⏳ |
+| S15-07 | Controle instâncias: tabela 14 instâncias, status 🟢/🔴/⚠️, criar, editar, deletar, QR Code | ⏳ |
+| S15-08 | Gatilhos de alerta: worker offline, erro alto, instância desconectada, budget alto, fila travada | ⏳ |
+| S15-09 | system_config UI: editar delays, limites, warm-up, modelo Whisper, budget — sem restart | ⏳ |
+| S15-10 | Audit log do Developer Console (toda ação registrada) | ⏳ |
+| S16-01 | Dashboards por CUCA: atendimentos, horários de pico, % IA vs humano, tempo médio resposta | ⏳ |
+| S16-02 | Dashboards globais (Super Admin): consolidado + comparativo entre unidades | ⏳ |
+| S16-03 | Dashboard Empregabilidade: vagas, candidaturas, taxa de contratação, tempo médio | ⏳ |
+| S16-04 | Dashboard Acesso CUCA: espaços demandados, taxa aprovação, no-shows | ⏳ |
+| S16-05 | Dashboard Ouvidoria: sentimento geral, temas, taxa resposta da gestão | ⏳ |
+| S17-01 | Testes E2E (Playwright): todas as rotas e fluxos principais | ⏳ |
+| S17-02 | Load testing: disparo 20k mensagens simultâneas | ⏳ |
+| S17-03 | Documentação: guia do gestor + guia do admin + guia de API interna | ⏳ |
+| S17-04 | Go-live: deploy produção, Cloudflare, 14 instâncias conectadas, warm-up iniciado | ⏳ |
+
+---
+
+## 10. DEVELOPER CONSOLE — DETALHAMENTO {#10-devconsole}
+
+### Rota e Controle de Acesso
+
+- Rota: `/developer` — oculta do menu geral
+- Permissão: `developer:access` (apenas `role = 'super_admin'`)
+- RLS: verificação no banco, não apenas no frontend
+
+### Módulos do Console
+
+**16.3.1 — Consumo OpenAI** (`ai_usage_logs`):
+- Tokens input/output por dia (gráfico linha)
+- Custo estimado por modelo: GPT-4o, whisper-1, text-embedding-3-small (pizza)
+- Breakdown por feature: agent, ocr, transcription, matching, sentiment (tabela com % do total)
+- Projeção mensal (baseada nos últimos 7 dias) + card de alerta se > 80% do budget
+
+**16.3.2 — Logs em Tempo Real** (WebSocket):
+- Últimas 1000 linhas em tempo real
+- Filtros: tipo (webhook/dispatch/ocr/transcribe/error) + instância + lead + período
+- Busca textual por message_id, instance_id, conteúdo
+- Exemplo de linha: `[2026-02-15 18:45:32] [INFO] [webhook] Instance: cuca_barra_pontual | Lead: 55859... | Response: 200 OK | Latency: 1.2s`
+
+**16.3.3 — Métricas do Worker** (endpoint `/health` do FastAPI):
+- Status online/offline | Uptime | Fila Celery (pendentes/executando/falhas) | Latência avg | Taxa erro 24h | CPU/Memória
+- Alertas visuais: 🟡 se > limites, 🔴 se crítico
+
+**16.3.4 — Controle de Instâncias UAZAPI**:
+- Criar: `POST /instance/create` + `POST /webhook/set` + `GET /instance/connect` → QR Code
+- Editar (número banido): `DELETE /instance/logout` + novo `GET /instance/connect` → novo QR Code
+- Leads vinculados continuam recebendo — apenas o número muda
+
+**16.3.5 — Gatilhos de Aviso** (`developer_alerts`):
+| Gatilho | Condição | Canal |
+|---------|----------|-------|
+| Worker offline | > 5 min | WhatsApp + E-mail |
+| Taxa de erro alta | > 10% em 1h | WhatsApp |
+| Instância desconectada | Qualquer instância | WhatsApp |
+| Budget OpenAI | > 80% do mensal | E-mail |
+| Fila Celery travada | > 1000 pendentes | WhatsApp |
+
+**16.3.6 — Configurações** (`system_config`):
+- Delays de disparo por tipo (mensal/pontual/campanha): min, max, presence, horário ativo
+- Máximo de mensagens/instância/dia
+- Warm-up: ativo/inativo + semanas
+- Limite áudio: 40 segundos (editável)
+- Budget mensal OpenAI em USD
+- Worker **recarrega configurações automaticamente** sem restart
+
+---
+
+## 11. MAPA DE REFLEXOS CRÍTICOS {#11-reflexos}
+
+| Ação | Reflexo Imediato | Reflexo RAG | Reflexo em Dados |
+|------|-----------------|-------------|-----------------|
+| Criar lead | Lead disponível para disparos | — | +1 na base por território |
+| Lead envia "SAIR" | opt_in = false imediato | Removido de todos os disparos | Taxa opt-out |
+| Criar programação pontual | Dados → rag_chunks (source_type='scheduled_program') | Agente pode responder sobre o evento | Aguarda aprovação |
+| Aprovar programação pontual | Disparo inicia via canais #7-11 | RAG atualizado | Métricas de envio |
+| Criar vaga | rag_chunks (source_type='job_posting', cuca_unit_id da unidade) + canal #6 se expansiva | Júlia passa a responder | Indicadores empregabilidade |
+| Lead envia CV via link público | OCR automático (GPT-4o Vision) → ocr_data JSONB | — | +1 candidatura |
+| Rejeitar candidato | Movido para talent_bank com skills | — | Banco talentos |
+| Contratar candidato | Se vagas=0, vaga → "Preenchida" | — | Taxa contratação |
+| Lead solicita agendamento (#14) | Ana identifica intenção → envia link formulário | — | — |
+| Submeter formulário Acesso CUCA | Protocolo gerado, status "aguardando_aprovacao_tecnica" | — | Espaços demandados |
+| Aprovação nível 2 | Ana notifica solicitante + cron 48h ativado | — | Tempo médio aprovação |
+| Solicitante não aparece em 48h | status = "cancelado", auto_canceled_at = NOW() | — | Taxa no-show |
+| Insistência pós-reprovação | Ana redireciona à unidade (nunca motivos/contatos) | — | — |
+| Lead critica (ouvidoria) | Registro anônimo (sem remote_jid, nome, tel) | — | Sentimento + temas |
+| Lead sugere (ouvidoria) | Registro identificado + protocolo | — | Temas recorrentes |
+| Criar evento de escuta | Sofia responde APENAS com base na descrição do evento | RAG='ouvidoria_evento' ativo | Aguarda respostas |
+| Clicar "Análise Sentimento" | GPT-4o classifica mensagens do evento | — | Gráficos positivo/negativo/neutro |
+| Gestor cadastra base conhecimento | Chunking → embeddings → rag_chunks (source_type='knowledge_base') | Agentes respondem sobre o tema | — |
+| Áudio > 40s | NÃO baixar mídia. Responder com aviso. Log rejected. | — | Metadados de rejeição |
+| Lead pede humano | IA para + conversa="awaiting_human" + notificação WhatsApp (resumo IA) | — | % handover |
+| Operador intervém | IA para imediatamente + fromMe sincronizado portal ↔ celular | — | % intervenções |
+| Número banido | Webhook connection.update → alerta + DELETE /instance/logout | — | Histórico banimentos |
+
+---
+
+## 12. INTEGRAÇÕES EXTERNAS {#12-integracoes}
+
+| Sistema | Tipo | A partir de | Status |
+|---------|------|-------------|--------|
+| **UAZAPI** | REST + Webhooks (14 instâncias) | Sprint 2 | 🔴 Crítica |
+| **OpenAI** (GPT-4o, Embeddings, Whisper) | REST | Sprint 4 | 🔴 Crítica |
+| **Supabase Vault** (OPENAI_API_KEY) | Supabase | Sprint 4 | ⚠️ **PENDENTE** |
+| **Portal da Juventude** (API REST GET) | pg_cron + pg_net | Sprint 7 | 🟡 Média — fallback planilha |
+| **WhatsApp Business** | Via UAZAPI | Sprint 2 | 🔴 Crítica |
+
+---
+
+## 13. RISCOS E MITIGAÇÕES {#13-riscos}
+
+| Risco | Prob. | Impacto | Mitigação |
+|-------|:-----:|:-------:|-----------|
+| Ban de números WhatsApp | Alta | Alto | Warm-up 5 semanas, delay 5-45s, presence, Business, conteúdo personalizado |
+| Custos OpenAI imprevistos | Média | Alto | ai_usage_logs + budget alerts (80%/100%) no Developer Console |
+| OPENAI_API_KEY faltando | Alta | Crítico | **Bloqueador atual** — adicionar no Vault antes de continuar |
+| API Portal da Juventude indisponível | Média | Médio | Fallback: import manual CSV/Excel já planejado (S7-01) |
+| Volume 20k leads simultâneos | Alta | Médio | Celery queue + disparo gradual + distribuição entre instâncias |
+| LGPD — críticas na ouvidoria | Baixa | Crítico | remote_jid=NULL em críticas, RLS, Vault, sem coleta de dados pessoais |
+| RBAC apenas no frontend | Média | Crítico | RLS no banco é a barreira real — configurar em TODAS as tabelas |
+| Numeração dos 14 canais confusa | Alta | Alto | **CORRIGIDA neste documento**: #1-5 Empregabilidade, #6 Geral, #7-11 Pontual, #12 Mensal, #13 Ouvidoria, #14 Info+Acesso |
+| Worker não retorna 200 OK imediato | Alta | Alto | UAZAPI faz retry infinito — 200 OK deve ser a PRIMEIRA coisa que o worker faz |
+
+---
+
+> **Versão 4.0 — 19/02/2026**
+> Todos os 6 documentos de planejamento foram lidos integralmente e consolidados aqui.
+> **Próxima ação**: Adicionar OPENAI_API_KEY no Supabase Vault para liberar Sprint 4 completo.

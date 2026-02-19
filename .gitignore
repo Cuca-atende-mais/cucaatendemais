@@ -1,6 +1,6 @@
 # Documentação sensível (manter apenas local)
 *.md
-!README.md
+!PLANO_DESENVOLVIMENTO.md
 
 # Dependências
 node_modules/
