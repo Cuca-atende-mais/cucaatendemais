@@ -1,6 +1,7 @@
 # Documentação sensível (manter apenas local)
 *.md
 !PLANO_DESENVOLVIMENTO.md
+*.xlsx
 
 # Dependências
 node_modules/

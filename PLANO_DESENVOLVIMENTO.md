@@ -95,7 +95,7 @@ WhatsApp (14 instâncias)  ←→  UAZAPI (webhooks: messages.upsert / messages.
 | 9 | Programação Pontual — CUCA Jangurussu | Maria (Jangurussu) | Admin CUCA Jangurussu | Ativa + Passiva |
 | 10 | Programação Pontual — CUCA José Walter | Maria (J. Walter) | Admin CUCA J. Walter | Ativa + Passiva |
 | 11 | Programação Pontual — CUCA Pici | Maria (Pici) | Admin CUCA Pici | Ativa + Passiva |
-| 12 | **Programação Mensal** | Maria (global) | Super Admin (exclusivo) | **Ativa**: disparo global ~20k leads + Passiva: dúvidas mensal |
+| 12 | **Programação Mensal** | Maria (global) | Super Admin (exclusivo) | **Ativa**: Aviso de nova programação + Link Portal Juventude |
 | 13 | **Ouvidoria Jovem** | Sofia | Super Admin (exclusivo) | Passiva: críticas anônimas, sugestões + Ativa: pesquisas/eventos |
 | 14 | **Info Gerais + Acesso CUCA** | Maria + Ana (routing) | Super Admin/Dev | Passiva: info qualquer CUCA + agendamento espaços |
 
@@ -206,9 +206,11 @@ CAMADA 3 — RAG DINÂMICO (o que sei agora)
 - Na primeira interação: avisa limite de áudio — *"Você pode enviar áudios de até 40 segundos."*
 
 **Maria (Mensal #12)** e **Maria (Geral #14)**:
-- Responde sobre qualquer CUCA no canal #14
-- Fornece links WhatsApp das unidades quando necessário
-- Se detectar intenção de agendamento: transfere para Ana (no #14)
+- **Consultora de Programação**: Responde dúvidas detalhadas sobre cursos e horários baseada no RAG do Excel importado.
+- **Chamada para Ação (CTA)**: Sempre enfatiza: *"Se quiser saber mais detalhes sobre qualquer atividade da programação, pode me perguntar por aqui mesmo! Estarei pronta para te ajudar."*
+- **Redirecionamento**: Sempre reforça que a matrícula é feita exclusivamente pelo link do Portal da Juventude (enviado no aviso inicial).
+- Fornece links WhatsApp das unidades quando necessário.
+- Se detectar intenção de agendamento: transfere para Ana (no #14).
 
 **Ana (Acesso CUCA — #14)**:
 - Envia link do formulário público de solicitação
@@ -389,7 +391,7 @@ Não existe módulo "Base de Conhecimento" no portal como item de menu ou págin
 | Usuário faz... | Worker faz automaticamente (invisível) |
 |----------------|----------------------------------------|
 | Salva/edita uma Programação Pontual | `indexar_conteudo('scheduled_program', id)` → chunking → embeddings → `rag_chunks` |
-| Importa Programação Mensal | `indexar_conteudo('monthly_program', id)` → embeddings → `rag_chunks` |
+| Importa Programação Mensal | `indexar_conteudo('monthly_program', id)` → embeddings → `rag_chunks`. **Nota**: Processo exclusivo para consulta via IA, sem gestão de matrículas interna. |
 | Cria/edita uma Vaga de Emprego | `indexar_conteudo('job_posting', id)` → embeddings → `rag_chunks` |
 | Cria um Evento de Ouvidoria | Sofia recebe a descrição do evento diretamente no contexto do prompt |
 
@@ -450,7 +452,7 @@ NÍVEL 2 — Depende do Nível 1
 
 NÍVEL 3 — Depende do Nível 2
 ├── Programação Pontual (CRUD + aprovação + disparo + filtro global + RAG auto)
-├── Programação Mensal (import planilha + embeddings + disparo Super Admin)
+├── Programação Mensal (**RAG-Only**: import planilha + embeddings + disparo de aviso com link externo)
 ├── Campanhas genéricas (workflow idêntico ao pontual)
 └── Espaços/Equipamentos CRUD (pré-requisito para Acesso CUCA)
 
@@ -572,18 +574,16 @@ NÍVEL 5 — Depende de tudo
 | S6-09 | Disparo gradual via Worker: delay 5-15s + presence + personalização IA | ⏳ |
 | S6-10 | Rastreamento: enviados / entregues / lidos / respondeu | ⏳ |
 
-#### Sprint 7 — Programação Mensal via Planilha ⏳
+#### Sprint 7 — Programação Mensal (RAG-Only) ⏳
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S7-01 | Modal de import planilha CSV/Excel (exclusivo Super Admin) | ⏳ |
-| S7-02 | Preview dos dados importados antes de confirmar | ⏳ |
-| S7-03 | UPSERT em monthly_programs + monthly_program_items | ⏳ |
-| S7-04 | Indexação RAG automática (source_type='monthly_program') após import | ⏳ |
-| S7-05 | pg_cron: sincronização automática via API Portal da Juventude (dia 1/mês) | ⏳ |
-| S7-06 | Fallback: se API falhar → alertar gestor + manual import disponível | ⏳ |
-| S7-07 | DataTable: atividades filtráveis por CUCA, categoria, dia da semana | ⏳ |
-| S7-08 | Disparo global: delay 15-45s, distribuído entre instâncias, 8h-22h | ⏳ |
-| S7-09 | Dashboard de progresso do disparo em tempo real | ⏳ |
+| S7-01 | **Interface de Importação**: Modal com seleção de Unidade (cuca_unit_id) + Seleção de Mês/Ano + Dropzone para arquivo .xlsx | [ ] |
+| S7-02 | **Processamento Multi-Abas**: Parser inteligente que identifica e lê via código as abas: `CURSOS`, `ESPORTES`, `DIA A DIA` e `ESPECIAIS` (filtrando pelo mês selecionado) | [ ] |
+| S7-03 | **Mapeamento de Campos (Cursos/Esportes)**: Extração de: Título, Instrutor, Local, Horário, Período/Dias, Meta, Faixa Etária e Descrição/Objetivo | [ ] |
+| S7-04 | **Armazenamento reativo**: Os dados são convertidos em texto narrativo e salvos em `rag_chunks` com as tags de unidade e categoria para indexação imediata | [ ] |
+| S7-05 | **Maria Expert**: Atualização da camada técnica para convidar ativamente o lead a tirar dúvidas: *"Estou com a programação completa aqui, pode me perguntar qualquer coisa!"* | [ ] |
+| S7-06 | **Template de Disparo**: *"Olá! A programação de [Mês] já saiu! 🚀 Confira tudo no link: [Link]. Ficou com dúvida sobre algum horário ou curso? Me pergunta aqui que eu te respondo na hora!"* | [ ] |
+| S7-07 | **Disparo Global**: Aviso em massa para base (~20k) convidando para consulta/matrícula externa | [ ] |
 
 #### Sprint 8 — Campanhas + Motor Anti-Ban completo ⏳
 | Ticket | Entregável | Status |
@@ -755,8 +755,8 @@ NÍVEL 5 — Depende de tudo
 |------|-----------------|-------------|-----------------|
 | Criar lead | Lead disponível para disparos | — | +1 na base por território |
 | Lead envia "SAIR" | opt_in = false imediato | Removido de todos os disparos | Taxa opt-out |
-| Criar programação pontual | Dados → rag_chunks (source_type='scheduled_program') | Agente pode responder sobre o evento | Aguarda aprovação |
-| Aprovar programação pontual | Disparo inicia via canais #7-11 | RAG atualizado | Métricas de envio |
+| Importar programação mensal | Dados → rag_chunks (source_type='monthly_program') | Maria tira dúvidas baseada na planilha | Consulta IA liberada |
+| Aprovar programação mensal | Disparo de aviso em massa com link externo | RAG atualizado | Aviso enviado |
 | Criar vaga | rag_chunks (source_type='job_posting', cuca_unit_id da unidade) + canal #6 se expansiva | Júlia passa a responder | Indicadores empregabilidade |
 | Lead envia CV via link público | OCR automático (GPT-4o Vision) → ocr_data JSONB | — | +1 candidatura |
 | Rejeitar candidato | Movido para talent_bank com skills | — | Banco talentos |
