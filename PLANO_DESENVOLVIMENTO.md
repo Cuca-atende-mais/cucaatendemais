@@ -132,17 +132,17 @@ Lead envia mensagem para #14
 
 ### Estratégia Anti-Ban (todos os canais de disparo)
 
-| Regra | Implementação |
-|-------|--------------|
-| Simulação de presença | `"presence": "composing"` em cada envio (`presence_duration: 2000-3000ms`) |
-| Delay dinâmico | Mensal: 15-45s / Pontual: 5-15s / Campanha: 10-30s (aleatório, nunca fixo) |
-| Horário comercial | Disparos apenas 08:00-22:00 |
-| Distribuição de carga | 20k leads entre instâncias (~4k cada) |
-| Personalização IA | Variações sutis no texto + nome do lead (sem detectação de spam) |
-| Warm-up gradual | 50→150→500→1k→4k msgs/dia, crescendo semanalmente (5 semanas) |
-| Opt-out fácil | "SAIR" ou "PARAR" em qualquer canal → opt_in = false imediato |
-| WhatsApp Business | Todos os números obrigatoriamente Business |
-| Monitoramento | Webhook `messages.update` → se erro subir, parar envio |
+| Regra | Implementação Técnica | Detalhe Crucial |
+|-------|-----------------------|-----------------|
+| Simulação de presença | `"presence": "composing"` | Simula "digitando..." por 2-3s antes de cada disparo |
+| Delay dinâmico | 5s a 45s (conforme canal) | Nunca usar delays fixos; o Worker deve gerar atraso aleatório |
+| Horário comercial | Bloqueio 22:01 às 07:59 | Evita detecção de comportamento robótico noturno |
+| Distribuição de carga | Segmentação por 3 instâncias | 20k leads → ~6.6k por número p/ reduzir estresse individual |
+| Personalização IA | Variáveis `{{nome}}` + RAG | Mensagens únicas por lead evitam o hash de spam da Meta |
+| Warm-up gradual | Escalonamento em 5 semanas | 50 (S1) → 150 (S2) → 500 (S3) → 1.5k (S4) → 6k+ (S5) msgs/dia |
+| Webhook Health Check | Monitoramento `messages.update` | Ponto crítico: **Pausar envio** se taxa de erro (failed) > 8% |
+| Logout Seguro | `DELETE /instance/logout` | Sempre realizar logout antes de remover ou trocar números |
+| Tipo de Conta | WhatsApp Business | Uso obrigatório de contas comerciais para maior tolerância |
 
 ---
 
@@ -739,9 +739,13 @@ NÍVEL 5 — Depende de tudo
 - Alertas visuais: 🟡 se > limites, 🔴 se crítico
 
 **16.3.4 — Controle de Instâncias UAZAPI**:
-- Criar: `POST /instance/create` + `POST /webhook/set` + `GET /instance/connect` → QR Code
-- Editar (número banido): `DELETE /instance/logout` + novo `GET /instance/connect` → novo QR Code
-- Leads vinculados continuam recebendo — apenas o número muda
+- **Fluxo de Criação Seguro**:
+    1. `POST /instance/create` (Cria instância vazia)
+    2. `POST /webhook/set` (Configura eventos: `messages.upsert`, `messages.update`, `connection.update`)
+    3. `GET /instance/connect` (Gera QR Code consumindo o webhook para detectar 'CONNECTED' em tempo real)
+- **Gestão de Crise (Logout)**:
+    - Botão de "Desconectar Número": aciona `DELETE /instance/logout` para limpar sessão no WhatsApp antes de deletar a instância no sistema.
+- **Vínculo Persistente**: Leads vinculados continuam recebendo mensagens mesmo se o número/instância mudar (o sistema reatribui a fila).
 
 **16.3.5 — Gatilhos de Aviso** (`developer_alerts`):
 | Gatilho | Condição | Canal |
