@@ -38,6 +38,7 @@
 | **Embeddings** | OpenAI `text-embedding-3-small` (vector 1536) | RAG — custo-benefício |
 | **Transcrição** | OpenAI Whisper (`whisper-1`) | Áudio → texto (limite 40s) |
 | **Gráficos** | Recharts | Dashboards |
+| **Monitoramento** | Sentry | Rastreamento de erros (Frontend/Backend) |
 | **Deploy** | Vercel (portal) + Hostinger VPS (worker) | Cloudflare DNS |
 | **Cron** | pg_cron + pg_net | Sync mensal, limpeza 60d, auto-cancel 48h |
 | **Realtime** | Supabase Realtime | Chat espelhado em tempo real |
@@ -185,6 +186,15 @@ CAMADA 3 — RAG DINÂMICO (o que sei agora)
 | **Ana** | 32 | Profissional, objetivo, cordial | "Vou precisar de alguns detalhes..." / "Quanto ao prazo, o processo leva..." |
 | **Sofia** | 35 | Acolhedor, respeitoso, validador | "Agradeço por compartilhar isso..." / "Vou registrar sua manifestação com cuidado..." |
 | **Júlia** | 30 | Encorajador, prático, respeitoso | "Vamos ver qual vaga se encaixa melhor..." / "Essa experiência pode ser um diferencial..." |
+| **Expert** | — | Técnico, analítico, vigilante | "Detectada anomalia na API..." / "Saúde do sistema em 98.5%..." |
+
+### Agente de Observabilidade (Especialista Técnico)
+Novo agente focado na saúde do ecossistema, medindo as duas fontes de verdade:
+
+1. **Fonte Interna**: `ai_usage_logs`, `worker_logs`, `audit_logs` e métricas do Supabase.
+2. **Fonte Externa**: Sentry (erros de frontend e exceções de backend).
+
+**Objetivo**: Realizar a correlação entre falhas de código (Sentry) e comportamento da IA/Worker, gerando relatórios de estabilidade e sugerindo otimizações de tokens ou correção de bugs de fluxo.
 
 ### Regras Técnicas Críticas por Agente (Camada 2)
 
@@ -686,7 +696,10 @@ NÍVEL 5 — Depende de tudo
 | S15-07 | Controle instâncias: tabela 14 instâncias, status 🟢/🔴/⚠️, criar, editar, deletar, QR Code | ⏳ |
 | S15-08 | Gatilhos de alerta: worker offline, erro alto, instância desconectada, budget alto, fila travada | ⏳ |
 | S15-09 | system_config UI: editar delays, limites, warm-up, modelo Whisper, budget — sem restart | ⏳ |
-| S15-10 | Audit log do Developer Console (toda ação registrada) | ⏳ |
+| S15-10 | **Sentry Integration**: Configuração no Portal (Vercel) e no Worker (FastAPI) para captura de erros | [ ] |
+| S15-11 | **Agente de Observabilidade**: Seed SQL do prompt especialista e integração com APIs de logs | [ ] |
+| S15-12 | **Dashboard Observabilidade**: Visão consolidada IA (Saúde System) + Erros Sentry | [ ] |
+| S15-13 | Audit log do Developer Console (toda ação registrada) | [ ] |
 | S16-01 | Dashboards por CUCA: atendimentos, horários de pico, % IA vs humano, tempo médio resposta | ⏳ |
 | S16-02 | Dashboards globais (Super Admin): consolidado + comparativo entre unidades | ⏳ |
 | S16-03 | Dashboard Empregabilidade: vagas, candidaturas, taxa de contratação, tempo médio | ⏳ |
@@ -745,7 +758,13 @@ NÍVEL 5 — Depende de tudo
 - Warm-up: ativo/inativo + semanas
 - Limite áudio: 40 segundos (editável)
 - Budget mensal OpenAI em USD
+- DSN do Sentry
 - Worker **recarrega configurações automaticamente** sem restart
+
+**16.3.7 — Agente Expert de Observabilidade**:
+- IA que "lê" os logs e o Sentry para dar o diagnóstico final.
+- Mede o "Índice de Confiança" do sistema.
+- Disponível no Developer Console para responder perguntas técnicas sobre erros.
 
 ---
 
