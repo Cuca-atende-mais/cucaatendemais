@@ -43,6 +43,7 @@ export const menuItems = [
         url: "/configuracoes",
         icon: "Settings",
         items: [
+            { title: "WhatsApp", url: "/configuracoes/whatsapp" },
             { title: "Unidades", url: "/unidades" },
             { title: "Categorias", url: "/categorias" },
         ],

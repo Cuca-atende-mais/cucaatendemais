@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 5.6 | **Atualizado**: 19/02/2026 (Governança Descentralizada de Instâncias)
-> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Redesenho de Gestão (15%)**
+> **Versão**: 5.7 | **Atualizado**: 19/02/2026 (Gestão Descentralizada Concluída)
+> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Autonomia de Unidade (30%)**
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
 ---
@@ -582,8 +582,8 @@ NÍVEL 5 — Depende de tudo
 | S5-08 | **Mídia Contextual**: Júlia envia flyer da vaga / Maria envia flyer do evento | [ ] |
 | S5-09 | **Scaffold do Worker**: Estrutura FastAPI + requirements + Dockerfile para Hostinger | [x] |
 | S5-10 | **UI Gestão Instâncias (Global)**: Página `/developer/instancias` para Super Admin | [x] |
-| S5-11 | **UI Gestão Instâncias (Local)**: Página `/configuracoes/whatsapp` para Admins de Unidade | [ ] |
-| S5-12 | **Filtros RBAC**: Garantir que Admin local veja apenas instâncias da sua Unidade | [ ] |
+| S5-11 | **UI Gestão Instâncias (Local)**: Página `/configuracoes/whatsapp` para Admins de Unidade | [x] |
+| S5-12 | **Filtros RBAC**: Garantir que Admin local veja apenas instâncias da sua Unidade | [x] |
 
 ---
 
