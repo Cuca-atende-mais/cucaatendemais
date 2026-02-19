@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 5.5 | **Atualizado**: 19/02/2026 (Refinamento Técnico Pós-Sprint 5 Início)
-> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5 em Execução (15%)**
+> **Versão**: 5.6 | **Atualizado**: 19/02/2026 (Governança Descentralizada de Instâncias)
+> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Redesenho de Gestão (15%)**
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
 ---
@@ -143,6 +143,21 @@ Lead envia mensagem para #14
 | Webhook Health Check | Monitoramento `messages.update` | Ponto crítico: **Pausar envio** se taxa de erro (failed) > 8% |
 | Logout Seguro | `DELETE /instance/logout` | Sempre realizar logout antes de remover ou trocar números |
 | Tipo de Conta | WhatsApp Business | Uso obrigatório de contas comerciais para maior tolerância |
+
+### Gestão Descentralizada e Recuperação de Ban (Self-Service)
+
+Para evitar deslocamentos físicos e chamadas constantes, o sistema adota a **Autonomia de Unidade**:
+
+1.  **Portal da Unidade**: Administradores locais (`admin_cuca_[unidade]`) terão acesso a uma página de "Configurações de Conexão".
+2.  **Visibilidade Filtrada**: O Admin do CUCA Pici vê apenas as instâncias #5 (Empregabilidade Pici) e #11 (Pontual Pici).
+3.  **Independência de Número**: A automação (agentes e lógica) está vinculada ao **Token da Instância**, não ao chip físico.
+4.  **Recuperação Zero-Support**:
+    - Se o número for banido, o Admin da unidade abre seu portal.
+    - Clica em **"Alterar Aparelho/Recuperar Ban"** (executa `logout` da instância atual).
+    - Escaneia o novo QR Code com um chip reserva diretamente da unidade.
+    - O sistema volta a operar imediatamente com o novo número, mantendo todo o histórico de conversas e prompts.
+
+---
 
 ---
 
@@ -566,7 +581,9 @@ NÍVEL 5 — Depende de tudo
 | S5-07 | **Sincronização**: Marcar como lida no celular quando lida no portal | [ ] |
 | S5-08 | **Mídia Contextual**: Júlia envia flyer da vaga / Maria envia flyer do evento | [ ] |
 | S5-09 | **Scaffold do Worker**: Estrutura FastAPI + requirements + Dockerfile para Hostinger | [x] |
-| S5-10 | **UI Gestão Instâncias**: Página `/developer/instancias` com os 14 cards e status | [x] |
+| S5-10 | **UI Gestão Instâncias (Global)**: Página `/developer/instancias` para Super Admin | [x] |
+| S5-11 | **UI Gestão Instâncias (Local)**: Página `/configuracoes/whatsapp` para Admins de Unidade | [ ] |
+| S5-12 | **Filtros RBAC**: Garantir que Admin local veja apenas instâncias da sua Unidade | [ ] |
 
 ---
 
