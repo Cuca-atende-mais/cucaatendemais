@@ -45,8 +45,8 @@ type InstanceType = {
 
 // Lista filtrada apenas para o Cuca Pici
 const INITIAL_INSTANCES: InstanceType[] = [
-    { id: "5", name: "Empregabilidade Pici", category: "Empregabilidade", unit: "Pici", status: "disconnected" },
-    { id: "11", name: "Pontual Pici", category: "Pontual", unit: "Pici", status: "disconnected" },
+    { id: "5", name: "Empregabilidade Pici", category: "Empregabilidade", unit: "Pici", status: "connected", phone: "5585999999999" },
+    { id: "11", name: "Pontual Pici", category: "Pontual", unit: "Pici", status: "error", phone: "5585888888888" },
 ]
 
 export default function WhatsAppUnidadePage() {
