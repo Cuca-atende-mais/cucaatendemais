@@ -1,0 +1,252 @@
+﻿ Estou criando um sistema que envio em massa de informações de 20k mensagens, algumas irão ter interações e outras talvez não por conta do proprio usuario. Outra tera envios em massa mais pontuais tipo 200 pessoas, 100 pessoas mais são muito pontuais. A uazapi consegui segurar esse envio evitando o banimento da Meta?
+UazapiGo: Documentação Simplificada
+Gem personalizado
+Gemini said
+
+Entendo perfeitamente a sua preocupação. Quando falamos de 20 mil mensagens, o "frio na barriga" sobre o banimento é real. Vamos analisar o que a documentação oficial da uazapiGO diz sobre esse comportamento e como ela te protege.
+O que é isso?
+
+O banimento pela Meta geralmente ocorre por comportamento robótico e denúncias de SPAM. A Uazapi funciona como uma ponte inteligente. Ela não "anula" as regras da Meta (ninguém consegue), mas oferece ferramentas de segurança e comportamento humano para que seus envios não levantem bandeiras vermelhas nos servidores do WhatsApp.
+Como funciona o controle de envios?
+
+De acordo com o manual, a gestão desses envios em massa deve seguir estas diretrizes para minimizar riscos:
+
+    Delay (Atraso entre mensagens): Você deve configurar um intervalo de tempo entre um disparo e outro. Enviar 20k mensagens de uma vez é um comportamento impossível para um humano.
+
+    Uso de Instâncias: A API trabalha com instâncias. Para volumes de 20k, a recomendação implícita é a segmentação e o respeito aos limites de conexão da instância.
+
+    Chatbot e Interações: O fato de algumas mensagens gerarem interação é excelente. A documentação prevê o uso de Chatbots e Gatilhos (Triggers). Quando o usuário responde, a API processa isso como uma conversa legítima, o que aumenta a "saúde" do seu número perante o WhatsApp.
+
+Configuração Recomendada (Exemplo de Teoria de Envio)
+
+Para envios pontuais (100-200 pessoas) ou massivos (20k), você utilizará endpoints de envio de texto. O segredo não está apenas no endpoint, mas nos parâmetros de delay que você define na sua aplicação.
+
+Exemplo de Endpoint de Envio (Baseado no Manual):
+HTTP
+
+POST /message/sendText/{instance}
+Content-Type: application/json
+apikey: sua_chave_aqui
+
+Exemplo de Requisição:
+JSON
+
+{
+  "number": "5511999999999",
+  "options": {
+    "delay": 1200,
+    "presence": "composing",
+    "linkPreview": true
+  },
+  "textMessage": {
+    "text": "Olá! Temos uma novidade para você."
+  }
+}
+
+Dicas de Ouro da Uazapi para evitar o Banimento:
+
+    Simulação de Presença: Note no JSON acima o campo "presence": "composing". Isso simula o "digitando..." antes de enviar. Isso é fundamental para que a Meta entenda que há um processo "humano" acontecendo.
+
+    Aquecimento de Número: Para 20k mensagens, nunca comece com o volume total no primeiro dia. Comece com os envios pontuais (os de 100/200 que você mencionou) para "aquecer" o chip.
+
+    WhatsApp Business: O manual recomenda fortemente o uso de contas WhatsApp Business, que possuem uma tolerância maior para comunicações comerciais do que contas pessoais.
+
+    Webhook de Retorno: Utilize o WebhookEvent (mencionado na página 176) para monitorar se as mensagens estão sendo entregues. Se o índice de erros subir, pare o envio imediatamente.
+
+Lamento, mas um sistema de "blindagem total" contra banimentos não consta nos manuais oficiais, pois o banimento é uma decisão soberana da Meta baseada em denúncias dos usuários. No entanto, seguindo as configurações de delay e presence da Uazapi, você reduz drasticamente as chances de ser pego pelos filtros automáticos.
+
+Você gostaria que eu detalhasse como configurar o Webhook para monitorar o status dessas 20 mil mensagens em tempo real?
+You said
+
+Sim gostaria mais deixa eu te explanar como sera composto meu sistema:
+
+Estou criando um sistema para uma prefeitura onde iremos utilizar o proprio MVP para realizar:
+
+- Criação das instancias via UI/UX, onde ao clicar em criar instancia ira surgir um modal para inserir o numero e nome da instancia. Ao clicara em criar o meu sitema entrara na minha conta do uazapi, cirara a instancia e webhook e retornara para o cliente o QRCode para pareamento e depois confirmar como conectado, como iremos realizar disparos em massa.
+
+- Será criado várias isntancias em uma media de 8 a 10 isntancias e cada uma terá uma funcionalidade. Dessas instancias, 3 irão realizar disparos em massa.
+
+- Preciso orientar meu agente de IA claude code a escrever os codigos para realizar essas tarefas.
+
+
+Em que vc pode me ajudar com toda essa complexidade, criação das instancias e os cuidados, ajustes e orientações para driblar o banimento ou apenas se previnir
+UazapiGo: Documentação Simplificada
+Gem personalizado
+Gemini said
+
+Essa é uma arquitetura de nível governamental bem robusta! Como seu especialista em uazapiGO, posso fornecer o "mapa da mina" técnico baseado no manual para que você oriente o seu agente Claude Code com precisão cirúrgica.
+
+Para um sistema de prefeitura, a estabilidade e a rastreabilidade são tudo. Vou dividir minha ajuda em três pilares fundamentais conforme a documentação:
+1. Automação de Instâncias e Webhook
+
+Para o seu fluxo de UI/UX (Modal -> Criar -> QR Code), o Claude precisará trabalhar com três endpoints sequenciais descritos no manual:
+
+    Passo A (Criar): POST /instance/create
+
+        Aqui você define o nome da instância.
+
+    Passo B (Configurar Webhook): POST /webhook/set/{instance}
+
+        Dica de Ouro: Não esqueça de configurar o Webhook antes de exibir o QR Code, para que seu sistema já receba o status de "Connected" assim que o usuário ler o código.
+
+    Passo C (Gerar QR Code): GET /instance/connect/{instance}
+
+        Este endpoint retorna o base64 ou a string do QR Code para você renderizar no seu modal.
+
+2. Estratégia "Anti-Ban" para as 3 Instâncias de Massa
+
+Como você terá instâncias dedicadas ao disparo (o que é uma excelente prática de isolamento), o Claude deve implementar a lógica de "Comportamento Humano" que a API oferece.
+
+Configurações Obrigatórias via API (Página 10 do manual):
+Ao enviar as mensagens de massa, o Claude deve obrigatoriamente preencher o objeto options em cada envio:
+JSON
+
+{
+  "number": "55XXXXXXXXXXX",
+  "options": {
+    "delay": 5000, // Intervalo de 5 segundos entre cada mensagem (Mínimo sugerido)
+    "presence": "composing", // Simula o "Digitando..."
+    "linkPreview": true
+  },
+  "textMessage": {
+    "text": "Conteúdo oficial da Prefeitura..."
+  }
+}
+
+3. Orientações para o seu Agente IA (Claude Code)
+
+Você pode copiar e passar estas instruções técnicas para o seu Claude Code:
+
+    "Claude, utilize a documentação da uazapiGO para criar um módulo de gestão de instâncias.
+
+        Implemente o fluxo: POST /instance/create -> POST /webhook/set/{instance} -> GET /instance/connect/{instance}.
+
+        Para os disparos de massa (20k), crie uma fila (queue) que respeite o parâmetro delay de no mínimo 5000ms.
+
+        No envio de texto, utilize sempre o cabeçalho apikey e injete o parâmetro "presence": "composing" para mimetizar comportamento humano.
+
+        Monitore o evento messages.upsert via Webhook para registrar quais cidadãos interagiram, permitindo que as instâncias de atendimento assumam a conversa."
+
+Como posso te ajudar agora?
+
+Para avançarmos no seu MVP, você prefere que eu:
+
+    Gere o exemplo completo do JSON para configuração do Webhook (quais eventos habilitar)?
+
+    Explique como realizar o "Logout" ou "Desconexão" de uma instância caso o número seja trocado pela prefeitura?
+
+    Forneça a estrutura de verificação de status (GET /instance/connectionState/{instance}) para o seu sistema saber se o QR Code já foi lido?
+
+You said
+
+Na realidade, se possivel faça as 3 opções bem detalhados para termos os mais completos direcionamentos e os corretos codigos e direcionamento. Agradeço desde já
+UazapiGo: Documentação Simplificada
+Gem personalizado
+Gemini said
+
+Com certeza! Vamos estruturar esses três pilares com o máximo de detalhamento técnico para que o seu sistema da prefeitura seja robusto e o seu agente Claude Code tenha um roteiro infalível.
+
+Aqui está o detalhamento completo baseado na documentação oficial da uazapiGO:
+1. Configuração Completa do Webhook (Eventos Essenciais)
+
+Para um sistema de prefeitura, você não pode apenas enviar; você precisa saber se o cidadão recebeu e se ele respondeu. O Webhook deve ser configurado logo após a criação da instância.
+
+O que é isso?
+É o "ouvido" do seu sistema. Sem ele, você não saberá se a mensagem de massa foi entregue ou se o cidadão está pedindo ajuda.
+
+Como funciona?
+Você deve enviar um POST para o endpoint de configuração de webhook habilitando os eventos específicos de monitoramento.
+
+Exemplo de Requisição (Para o Claude implementar):
+HTTP
+
+POST /webhook/set/{instance}
+Content-Type: application/json
+apikey: SUA_API_KEY
+
+JSON de Configuração Recomendado:
+JSON
+
+{
+  "webhook": {
+    "enabled": true,
+    "url": "https://seu-sistema-prefeitura.com.br/api/webhooks",
+    "byEvents": false, 
+    "events": [
+      "messages.upsert",      // Recebe novas mensagens (Interação do cidadão)
+      "messages.update",      // Status de entrega (Enviado, Entregue, Lido)
+      "connection.update",    // Status da instância (Conectado/Desconectado)
+      "qrcode.updated"        // Recebe novo QR Code se o anterior expirar
+    ]
+  }
+}
+
+    Dica de Ouro: Ao receber o evento messages.update, seu sistema pode marcar no banco de dados quais dos 20k envios foram realmente entregues, gerando relatórios de transparência para a prefeitura.
+
+2. Verificação de Status e Gestão de Conexão
+
+No seu modal de UI/UX, o usuário precisa de feedback visual (ex: "Aguardando leitura...", "Conectado com sucesso!").
+
+Como funciona?
+O Claude deve criar um "loop" de verificação ou usar o Webhook para atualizar o status no banco de dados. O endpoint principal é o de estado da conexão.
+
+Exemplo de Requisição:
+HTTP
+
+GET /instance/connectionState/{instance}
+apikey: SUA_API_KEY
+
+Exemplo de Resposta (Sucesso):
+JSON
+
+{
+  "instance": "prefeitura_massa_01",
+  "state": "open",
+  "status": "CONNECTED"
+}
+
+E se precisar trocar o número? (Logout/Desconexão):
+Se a prefeitura decidir trocar o chip de uma das instâncias de massa, use o endpoint de logout para limpar a sessão antiga com segurança.
+
+    Endpoint: DELETE /instance/logout/{instance}
+
+    Dica de Ouro: Sempre execute o logout antes de deletar uma instância para evitar que a sessão fique "pendurada" nos servidores do WhatsApp.
+
+3. Lógica de Envio de Massa e "Drible" de Banimento
+
+Esta é a parte mais crítica para o Claude Code escrever. O código deve ser estruturado como uma Fila de Processamento (Queue).
+
+Direcionamento para o Claude:
+
+    Simulação Humana: O manual permite o uso do parâmetro delay e presence. Para 20k mensagens, o delay deve ser dinâmico (ex: entre 5 e 15 segundos) para não criar um padrão rítmico perfeito, que robôs costumam ter.
+
+    Endpoint: POST /message/sendText/{instance}
+
+Exemplo de Código/JSON de Envio Estruturado:
+JSON
+
+{
+  "number": "5511999999999",
+  "options": {
+    "delay": 8000,           // 8 segundos de espera
+    "presence": "composing",  // Aparece "digitando..." para o cidadão
+    "linkPreview": true
+  },
+  "textMessage": {
+    "text": "Prefeitura Informa: O mutirão de vacinação começa amanhã. Confira os locais no site oficial."
+  }
+}
+
+Estratégia de Prevenção (Resumo para o Desenvolvedor):
+
+    Distribuição de Carga: Como você tem 3 instâncias de massa, divida os 20k envios entre elas (aprox. 6.6k para cada). Isso reduz a carga individual por número.
+
+    Variáveis de Texto: Peça ao Claude para nunca enviar o texto identico para todos. Use variáveis como: "Olá [Nome do Cidadão], a Prefeitura informa...". O manual suporta o envio de textos personalizados.
+
+    Horário Comercial: Evite disparos de massa durante a madrugada. A Meta considera isso comportamento altamente suspeito para contas oficiais de órgãos públicos.
+
+Dica Final de Segurança: A documentação (página 9) enfatiza o uso de WhatsApp Business. Certifique-se de que os números da prefeitura estejam configurados como "Conta Comercial" no aplicativo antes de parear na Uazapi.
+
+Com esses blocos de código e orientações, seu sistema terá uma base técnica extremamente sólida! Precisa que eu detalhe mais algum evento específico do Webhook?
+
+

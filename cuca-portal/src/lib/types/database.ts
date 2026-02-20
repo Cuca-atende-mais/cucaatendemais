@@ -59,6 +59,21 @@ export type EventoPontual = {
     updated_at: string
 }
 
+export type CampanhaMensal = {
+    id: string
+    mes: number
+    ano: number
+    titulo: string
+    descricao: string | null
+    arquivo_excel_url: string | null
+    total_atividades: number
+    disparo_id: string | null
+    status: string
+    created_by: string | null
+    created_at: string
+    updated_at: string
+}
+
 export type Vaga = {
     id: string
     empresa_id: string

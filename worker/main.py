@@ -164,6 +164,70 @@ async def process_webhook_payload(payload: dict, token: str):
 async def health_check():
     return {"status": "healthy", "service": "worker-cuca"}
 
+@app.post("/send-message/{token}")
+async def send_manual_message(token: str, request: Request):
+    """S5-06: Envio manual de mensagem via Portal -> Worker -> UAZAPI."""
+    if token != os.getenv("WEBHOOK_INTERNAL_TOKEN"):
+        return Response(status_code=403, content="Token inválido")
+    
+    try:
+        payload = await request.json()
+        number = payload.get("number")
+        text = payload.get("text")
+        instance = payload.get("instance")
+
+        # 1. Buscar credenciais da instância no Supabase
+        inst_res = supabase.table("instancias_uazapi").select("nome, token").eq("nome", instance).single().execute()
+        if not inst_res.data:
+            return Response(status_code=404, content="Instância não encontrada")
+        
+        inst_token = inst_res.data["token"]
+        UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+
+        # 2. Disparar para UAZAPI
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{UAZAPI_URL}/message/sendText/{instance}",
+                headers={"apikey": inst_token, "Content-Type": "application/json"},
+                json={
+                    "number": number,
+                    "options": {"delay": 1200, "presence": "composing"},
+                    "textMessage": {"text": text}
+                }
+            )
+            return response.json()
+    except Exception as e:
+        logger.error(f"Erro ao enviar mensagem manual: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
+@app.post("/read-message/{token}")
+async def mark_as_read(token: str, request: Request):
+    """S5-07: Sincronização - Marcar conversa como lida no celular."""
+    if token != os.getenv("WEBHOOK_INTERNAL_TOKEN"):
+        return Response(status_code=403, content="Token inválido")
+    
+    try:
+        payload = await request.json()
+        remote_jid = payload.get("remoteJid") # formato: "558599999999@s.whatsapp.net"
+        instance = payload.get("instance")
+
+        inst_res = supabase.table("instancias_uazapi").select("token").eq("nome", instance).single().execute()
+        if not inst_res.data: return Response(status_code=404)
+
+        UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+        import httpx
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{UAZAPI_URL}/chat/read/{instance}",
+                headers={"apikey": inst_res.data["token"], "Content-Type": "application/json"},
+                json={"remoteJid": remote_jid}
+            )
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Erro ao marcar como lida: {str(e)}")
+        return Response(status_code=500)
+
 @app.post("/webhook/{token}")
 async def uazapi_webhook(token: str, request: Request, background_tasks: BackgroundTasks):
     # 1. Resposta 200 OK imediata (Requisito Crítico UAZAPI / Anti-Ban)

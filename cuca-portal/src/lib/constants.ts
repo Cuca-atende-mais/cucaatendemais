@@ -3,61 +3,64 @@ export const menuItems = [
         title: "Dashboard",
         url: "/dashboard",
         icon: "LayoutDashboard",
+        permission: { recurso: "leads", acao: "read" } // Dashboard base usa leitura de leads
     },
     {
         title: "Leads",
         url: "/leads",
         icon: "Users",
+        permission: { recurso: "leads", acao: "read" }
     },
     {
         title: "Atendimento",
         url: "/atendimento",
         icon: "MessageSquare",
+        permission: { recurso: "ouvidoria", acao: "read" } // Atendimento/Chat vinculado à ouvidoria/conversas
     },
-
     {
         title: "Programação",
         url: "/programacao",
         icon: "Calendar",
-        items: [
-            { title: "Pontual", url: "/programacao/pontual" },
-            { title: "Mensal", url: "/programacao/mensal" },
-        ],
+        permission: { recurso: "programacao", acao: "read" }
     },
     {
         title: "Empregabilidade",
         url: "/empregabilidade",
         icon: "Briefcase",
+        permission: { recurso: "empregabilidade", acao: "read" },
         items: [
-            { title: "Vagas", url: "/empregabilidade/vagas" },
-            { title: "Empresas", url: "/empregabilidade/empresas" },
+            { title: "Vagas", url: "/empregabilidade/vagas", permission: { recurso: "empregabilidade", acao: "read" } },
+            { title: "Empresas", url: "/empregabilidade/empresas", permission: { recurso: "empregabilidade", acao: "read" } },
         ],
     },
     {
         title: "Ouvidoria",
         url: "/ouvidoria",
         icon: "MessageSquare",
+        permission: { recurso: "ouvidoria", acao: "read" }
     },
     {
         title: "Acesso CUCA",
         url: "/acesso",
         icon: "DoorOpen",
+        permission: { recurso: "acesso_cuca", acao: "read" }
     },
     {
         title: "Configurações",
         url: "/configuracoes",
         icon: "Settings",
+        permission: { recurso: "configuracoes", acao: "update" },
         items: [
             { title: "WhatsApp", url: "/configuracoes/whatsapp" },
             { title: "Unidades", url: "/unidades" },
             { title: "Categorias", url: "/categorias" },
         ],
     },
-    // ⚠️ Developer Console — EXCLUSIVO owner/developer. A proteção por role será aplicada no S2-04 (sidebar dinâmica por permissão).
     {
         title: "Developer Console",
         url: "/developer",
         icon: "BarChart2",
+        permission: { recurso: "developer", acao: "read" }
     },
 ]
 
