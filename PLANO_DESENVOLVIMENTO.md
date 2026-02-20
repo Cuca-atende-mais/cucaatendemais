@@ -577,7 +577,7 @@ NÍVEL 5 — Depende de tudo
 | S5-02 | **Routing Automático**: Worker consulta `instancias_uazapi` → envia para Edge Function `motor-agente` | [x] |
 | S5-03 | **UI Chat Espelhado**: Página `/atendimento` com Supabase Realtime (viva) | [x] |
 | S5-04 | **Controle Manual**: Botão IA ON/OFF por conversa (trava no Worker se status != 'ativa') | [x] |
-| S5-05 | **Handover**: Detecção "humano" → Notificação Admin + status `awaiting_human` | [ ] |
+| S5-05 | **Handover**: Detecção "humano" → Notificação Admin + status `awaiting_human` | [x] |
 | S5-06 | **Resposta Manual**: Operador envia no portal → Worker dispara via UAZAPI | [ ] |
 | S5-07 | **Sincronização**: Marcar como lida no celular quando lida no portal | [ ] |
 | S5-08 | **Mídia Contextual**: Júlia envia flyer da vaga / Maria envia flyer do evento | [ ] |
@@ -853,7 +853,7 @@ NÍVEL 5 — Depende de tudo
 
 ## 14. HISTÓRICO DE ENTREGAS E EVIDÊNCIAS 📜
 
-### Sprint 5 — Conexão Real (75%)
+### Sprint 5 — Conexão Real (85%)
 > **Data**: 20/02/2026
 
 #### [S5-03] UI Chat Espelhado
@@ -864,6 +864,12 @@ NÍVEL 5 — Depende de tudo
 - **Lógica de Trava**: Worker FastAPI agora verifica `status` da conversa antes de disparar a IA.
 - **Botão IA ON/OFF**: Alternância direta no cabeçalho do chat com feedback visual (cores de alerta para modo manual).
 
+#### [S5-05] Handover Automático (Detecção de Intenção)
+- **Prompt Engineering**: Regra crítica injetada nos prompts de sistema de todos os agentes.
+- **Tag Interceptora**: Tag `[[HANDOVER]]` é gerada pela IA e interceptada pela Edge Function `motor-agente`.
+- **Transição de Estado**: Mudança automática de `ativa` para `awaiting_human` no banco de dados.
+- **UI de Alerta**: O portal exibe badge "URGENTE" e banner de alerta âmbar para intervenção imediata.
+
 #### Galeria de Evidências
 ````carousel
 ![Interface de Atendimento com Chat Ativo](/home/valmir/.gemini/antigravity/brain/f58aa5eb-3807-42ad-a784-38890f4da86f/valmir_rocha_chat_view_1771596439715.png)
@@ -873,5 +879,5 @@ NÍVEL 5 — Depende de tudo
 
 ---
 
-> **Versão 5.14 — 20/02/2026**
-> Consolidação total de histórico e planejamento. Arquivos paralelos eliminados.
+> **Versão 5.16 — 20/02/2026**
+> Handover automático implementado e validado via Edge Function e UI.

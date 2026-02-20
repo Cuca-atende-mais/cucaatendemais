@@ -81,7 +81,14 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
     async function toggleIA() {
         if (!conversationId || !conversation) return;
 
-        const newStatus = conversation.status === 'ativa' ? 'manual' : 'ativa';
+        let newStatus;
+        if (conversation.status === 'ativa') {
+            newStatus = 'manual';
+        } else if (conversation.status === 'awaiting_human') {
+            newStatus = 'manual';
+        } else {
+            newStatus = 'ativa';
+        }
 
         const { error } = await supabase
             .from('conversas')
@@ -90,7 +97,13 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
 
         if (!error) {
             setConversation({ ...conversation, status: newStatus });
-            toast.success(newStatus === 'ativa' ? "IA Maria ativada para esta conversa" : "Conversa colocada em modo manual");
+            if (newStatus === 'ativa') {
+                toast.success("IA Maria ativada para esta conversa");
+            } else if (newStatus === 'manual' && conversation.status === 'awaiting_human') {
+                toast.success("Você assumiu o controle da conversa");
+            } else {
+                toast.success("Conversa colocada em modo manual");
+            }
         } else {
             toast.error("Erro ao alterar status da IA");
         }
@@ -149,7 +162,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                     <Badge variant="outline" className="h-7 bg-white/5 border-primary/20 text-primary font-medium shadow-sm px-3">
                         {conversation?.instancia_uazapi}
                     </Badge>
-                    {conversation?.status === 'ativa' ? (
+                    {conversation?.status === 'ativa' && (
                         <button
                             onClick={toggleIA}
                             className="h-7 px-3 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md shadow-md animate-in fade-in zoom-in duration-300 gap-1.5 flex items-center text-[10px] font-bold transition-all active:scale-95"
@@ -157,7 +170,17 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                             <Zap className="h-3 w-3 fill-current" />
                             IA MARIA ATIVA
                         </button>
-                    ) : (
+                    )}
+                    {conversation?.status === 'awaiting_human' && (
+                        <button
+                            onClick={toggleIA}
+                            className="h-7 px-3 bg-amber-500 text-white hover:bg-amber-600 rounded-md shadow-md animate-in fade-in zoom-in duration-300 gap-1.5 flex items-center text-[10px] font-bold transition-all active:scale-95 animate-pulse"
+                        >
+                            <User className="h-3 w-3" />
+                            ASSUMIR CONTROLE
+                        </button>
+                    )}
+                    {(conversation?.status === 'manual' || !['ativa', 'awaiting_human'].includes(conversation?.status)) && (
                         <button
                             onClick={toggleIA}
                             className="h-7 px-3 bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-md shadow-md animate-in fade-in zoom-in duration-300 gap-1.5 flex items-center text-[10px] font-bold transition-all active:scale-95"
@@ -232,29 +255,46 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                     "rounded-2xl p-4 text-center transition-all border",
                     conversation?.status === 'ativa'
                         ? "bg-primary/5 border-primary/10"
-                        : "bg-destructive/5 border-destructive/10"
+                        : conversation?.status === 'awaiting_human'
+                            ? "bg-amber-500/5 border-amber-500/20 shadow-[0_0_15px_-5px_rgba(245,158,11,0.3)]"
+                            : "bg-destructive/5 border-destructive/10"
                 )}>
                     <div className="flex items-center justify-center gap-3">
                         <div className={cn(
                             "p-2 rounded-full",
-                            conversation?.status === 'ativa' ? "bg-primary/10" : "bg-destructive/10"
+                            conversation?.status === 'ativa'
+                                ? "bg-primary/10"
+                                : conversation?.status === 'awaiting_human'
+                                    ? "bg-amber-500/10"
+                                    : "bg-destructive/10"
                         )}>
-                            {conversation?.status === 'ativa' ? <Zap className="h-4 w-4 text-primary" /> : <PauseCircle className="h-4 w-4 text-destructive" />}
+                            {conversation?.status === 'ativa' ? <Zap className="h-4 w-4 text-primary" /> : conversation?.status === 'awaiting_human' ? <User className="h-4 w-4 text-amber-500" /> : <PauseCircle className="h-4 w-4 text-destructive" />}
                         </div>
                         <div className="text-left">
                             <p className={cn(
                                 "text-xs font-bold uppercase tracking-wider",
-                                conversation?.status === 'ativa' ? "text-foreground/80" : "text-destructive/80"
+                                conversation?.status === 'ativa'
+                                    ? "text-foreground/80"
+                                    : conversation?.status === 'awaiting_human'
+                                        ? "text-amber-600"
+                                        : "text-destructive/80"
                             )}>
-                                {conversation?.status === 'ativa' ? "Monitoramento Crítico Ativo" : "Intervenção Manual Necessária"}
+                                {conversation?.status === 'ativa' ? "Monitoramento Crítico Ativo" : conversation?.status === 'awaiting_human' ? "Aguardando Intervenção Humana" : "Intervenção Manual Necessária"}
                             </p>
                             <p className="text-[11px] text-muted-foreground opacity-70">
                                 {conversation?.status === 'ativa'
                                     ? "A IA MARIA está gerenciando o fluxo. Você pode assumir a qualquer momento no botão acima."
-                                    : "A IA está pausada. Suas respostas não serão interferidas pelo motor automático."}
+                                    : conversation?.status === 'awaiting_human'
+                                        ? "A IA detectou que o cidadão precisa de um humano. Por favor, assuma agora."
+                                        : "A IA está pausada. Suas respostas não serão interferidas pelo motor automático."}
                             </p>
                         </div>
                         <div className="ml-auto flex items-center gap-2">
+                            {conversation?.status === 'awaiting_human' && (
+                                <Badge variant="outline" className="text-[9px] h-5 bg-amber-500 text-white border-none animate-bounce">
+                                    URGENTE
+                                </Badge>
+                            )}
                             {conversation?.status === 'manual' && (
                                 <Badge variant="destructive" className="text-[9px] h-5 animate-pulse">
                                     PAUSADO
