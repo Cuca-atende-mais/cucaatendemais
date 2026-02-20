@@ -584,7 +584,8 @@ NÍVEL 5 — Depende de tudo
 | S4-12 | Página `/developer/agentes`: Visualização técnica dos prompts em 3 camadas | [x] |
 | S4-13 | Teste E2E (Simulado): Pergunta RAG Barra → Resposta Maria Persona ✅ | [x] |
 
-#### Sprint 5 — Chat Espelhado + Webhooks UAZAPI ⏳ (PRÓXIMO)
+#### Sprint 5 — Chat Espelhado + Webhooks UAZAPI ✅
+> **STATUS**: 95% (Faltando S5-08)
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
 | S5-01 | **Webhook Master**: Worker FastAPI recebe, valida e salva em `mensagens` | [x] |
@@ -592,8 +593,8 @@ NÍVEL 5 — Depende de tudo
 | S5-03 | **UI Chat Espelhado**: Página `/atendimento` com Supabase Realtime (viva) | [x] |
 | S5-04 | **Controle Manual**: Botão IA ON/OFF por conversa (trava no Worker se status != 'ativa') | [x] |
 | S5-05 | **Handover**: Detecção "humano" → Notificação Admin + status `awaiting_human` | [x] |
-| S5-06 | **Resposta Manual**: Operador envia no portal → Worker dispara via UAZAPI | [ ] |
-| S5-07 | **Sincronização**: Marcar como lida no celular quando lida no portal | [ ] |
+| S5-06 | **Resposta Manual**: Operador envia no portal → Worker dispara via UAZAPI | [x] |
+| S5-07 | **Sincronização**: Marcar como lida no celular quando lida no portal | [x] |
 | S5-08 | **Mídia Contextual**: Júlia envia flyer da vaga / Maria envia flyer do evento | [ ] |
 | S5-09 | **Scaffold do Worker**: Estrutura FastAPI + requirements + Dockerfile para Hostinger | [x] |
 | S5-10 | **UI Gestão Instâncias (Global)**: Página `/developer/instancias` para Super Admin | [x] |
