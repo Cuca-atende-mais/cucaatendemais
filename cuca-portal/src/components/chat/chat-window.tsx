@@ -6,7 +6,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-import { User, Bot, Send, ShieldCheck, Zap } from "lucide-react";
+import { User, Bot, Send, ShieldCheck, Zap, PauseCircle, PlayCircle } from "lucide-react";
+import { toast } from "sonner";
 
 interface ChatWindowProps {
     conversationId: string | null;
@@ -77,6 +78,24 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
         setLoading(false);
     }
 
+    async function toggleIA() {
+        if (!conversationId || !conversation) return;
+
+        const newStatus = conversation.status === 'ativa' ? 'manual' : 'ativa';
+
+        const { error } = await supabase
+            .from('conversas')
+            .update({ status: newStatus, updated_at: new Date().toISOString() })
+            .eq('id', conversationId);
+
+        if (!error) {
+            setConversation({ ...conversation, status: newStatus });
+            toast.success(newStatus === 'ativa' ? "IA Maria ativada para esta conversa" : "Conversa colocada em modo manual");
+        } else {
+            toast.error("Erro ao alterar status da IA");
+        }
+    }
+
     if (!conversationId) {
         return (
             <div className="flex-1 flex flex-col items-center justify-center bg-card/10 text-muted-foreground p-8 text-center space-y-6">
@@ -130,11 +149,22 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                     <Badge variant="outline" className="h-7 bg-white/5 border-primary/20 text-primary font-medium shadow-sm px-3">
                         {conversation?.instancia_uazapi}
                     </Badge>
-                    {conversation?.status === 'ativa' && (
-                        <Badge className="h-7 bg-primary text-primary-foreground hover:bg-primary/90 shadow-md animate-in fade-in zoom-in duration-300 gap-1.5">
+                    {conversation?.status === 'ativa' ? (
+                        <button
+                            onClick={toggleIA}
+                            className="h-7 px-3 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md shadow-md animate-in fade-in zoom-in duration-300 gap-1.5 flex items-center text-[10px] font-bold transition-all active:scale-95"
+                        >
                             <Zap className="h-3 w-3 fill-current" />
-                            MARIA IA Ativo
-                        </Badge>
+                            IA MARIA ATIVA
+                        </button>
+                    ) : (
+                        <button
+                            onClick={toggleIA}
+                            className="h-7 px-3 bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-md shadow-md animate-in fade-in zoom-in duration-300 gap-1.5 flex items-center text-[10px] font-bold transition-all active:scale-95"
+                        >
+                            <PauseCircle className="h-3 w-3" />
+                            MODO MANUAL
+                        </button>
                     )}
                 </div>
             </div>
@@ -202,27 +232,35 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                     "rounded-2xl p-4 text-center transition-all border",
                     conversation?.status === 'ativa'
                         ? "bg-primary/5 border-primary/10"
-                        : "bg-muted/10 border-muted/20"
+                        : "bg-destructive/5 border-destructive/10"
                 )}>
                     <div className="flex items-center justify-center gap-3">
                         <div className={cn(
                             "p-2 rounded-full",
-                            conversation?.status === 'ativa' ? "bg-primary/10" : "bg-muted"
+                            conversation?.status === 'ativa' ? "bg-primary/10" : "bg-destructive/10"
                         )}>
-                            {conversation?.status === 'ativa' ? <Zap className="h-4 w-4 text-primary" /> : <ShieldCheck className="h-4 w-4 text-muted-foreground" />}
+                            {conversation?.status === 'ativa' ? <Zap className="h-4 w-4 text-primary" /> : <PauseCircle className="h-4 w-4 text-destructive" />}
                         </div>
                         <div className="text-left">
-                            <p className="text-xs font-bold text-foreground/80 uppercase tracking-wider">
-                                {conversation?.status === 'ativa' ? "Monitoramento Crítico Ativo" : "Conversa em Espera"}
+                            <p className={cn(
+                                "text-xs font-bold uppercase tracking-wider",
+                                conversation?.status === 'ativa' ? "text-foreground/80" : "text-destructive/80"
+                            )}>
+                                {conversation?.status === 'ativa' ? "Monitoramento Crítico Ativo" : "Intervenção Manual Necessária"}
                             </p>
                             <p className="text-[11px] text-muted-foreground opacity-70">
                                 {conversation?.status === 'ativa'
-                                    ? "A IA MARIA está gerenciando o fluxo. Você pode assumir a qualquer momento no botão Intervir."
-                                    : "Esta conversa não está sendo processada pela IA no momento."}
+                                    ? "A IA MARIA está gerenciando o fluxo. Você pode assumir a qualquer momento no botão acima."
+                                    : "A IA está pausada. Suas respostas não serão interferidas pelo motor automático."}
                             </p>
                         </div>
-                        <div className="ml-auto">
-                            <Badge variant="outline" className="text-[10px] border-primary/20 text-primary animate-pulse cursor-pointer hover:bg-primary/10 transition-colors">
+                        <div className="ml-auto flex items-center gap-2">
+                            {conversation?.status === 'manual' && (
+                                <Badge variant="destructive" className="text-[9px] h-5 animate-pulse">
+                                    PAUSADO
+                                </Badge>
+                            )}
+                            <Badge variant="outline" className="text-[10px] border-primary/20 text-primary cursor-pointer hover:bg-primary/10 transition-colors">
                                 Sincronizado
                             </Badge>
                         </div>

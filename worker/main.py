@@ -68,7 +68,6 @@ async def process_webhook_payload(payload: dict, token: str):
                 lead_result = supabase.table("leads").upsert({
                     "telefone": phone,
                     "nome": push_name if not from_me else None,
-                    "remote_jid": remote_jid,
                     "updated_at": "now()"
                 }, on_conflict="telefone").execute()
                 lead_id = lead_result.data[0]["id"]
@@ -78,14 +77,16 @@ async def process_webhook_payload(payload: dict, token: str):
 
             # B. Garantir que a Conversa existe
             try:
-                # Tenta buscar conversa ativa
-                conv_result = supabase.table("conversas").select("id").match({
+                # Tenta buscar conversa (verificando se está em modo manual ou ativa)
+                conv_result = supabase.table("conversas").select("id, status").match({
                     "lead_id": lead_id,
                     "instancia_uazapi": instance_name
                 }).execute()
                 
+                conversation_status = "ativa" # Default
                 if conv_result.data:
                     conversation_id = conv_result.data[0]["id"]
+                    conversation_status = conv_result.data[0].get("status", "ativa")
                     # Atualizar timestamp
                     supabase.table("conversas").update({"updated_at": "now()"}).eq("id", conversation_id).execute()
                 else:
@@ -115,7 +116,8 @@ async def process_webhook_payload(payload: dict, token: str):
                 logger.error(f"Erro ao salvar mensagem: {str(e)}")
             
             # --- S5-02: Routing Automático para Motor de IA ---
-            if not from_me:
+            # A IA só é disparada se não for uma mensagem nossa E se o status for 'ativa'
+            if not from_me and conversation_status == "ativa":
                 try:
                     # Chamar Edge Function motor-agente
                     # Nota: O token interno garante que a requisição partiu do nosso worker

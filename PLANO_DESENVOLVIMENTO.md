@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 5.12 | **Atualizado**: 20/02/2026 (Chat Espelhado Concluído)
-> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Conexão Real (70%)**
+> **Versão**: 5.13 | **Atualizado**: 20/02/2026 (Início Controle Manual)
+> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Conexão Real (75%)**
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -576,7 +576,7 @@ NÍVEL 5 — Depende de tudo
 | S5-01 | **Webhook Master**: Worker FastAPI recebe, valida e salva em `mensagens` | [x] |
 | S5-02 | **Routing Automático**: Worker consulta `instancias_uazapi` → envia para Edge Function `motor-agente` | [x] |
 | S5-03 | **UI Chat Espelhado**: Página `/atendimento` com Supabase Realtime (viva) | [x] |
-| S5-04 | **Controle Manual**: Botão IA ON/OFF por conversa (pausa motor temporariamente) | [ ] |
+| S5-04 | **Controle Manual**: Botão IA ON/OFF por conversa (trava no Worker se status != 'ativa') | [x] |
 | S5-05 | **Handover**: Detecção "humano" → Notificação Admin + status `awaiting_human` | [ ] |
 | S5-06 | **Resposta Manual**: Operador envia no portal → Worker dispara via UAZAPI | [ ] |
 | S5-07 | **Sincronização**: Marcar como lida no celular quando lida no portal | [ ] |
@@ -849,6 +849,29 @@ NÍVEL 5 — Depende de tudo
 
 ---
 
-> **Versão 4.0 — 19/02/2026**
-> Todos os 6 documentos de planejamento foram lidos integralmente e consolidados aqui.
-> **Próxima ação**: Adicionar OPENAI_API_KEY no Supabase Vault para liberar Sprint 4 completo.
+---
+
+## 14. HISTÓRICO DE ENTREGAS E EVIDÊNCIAS 📜
+
+### Sprint 5 — Conexão Real (75%)
+> **Data**: 20/02/2026
+
+#### [S5-03] UI Chat Espelhado
+- **Página `/atendimento`**: Implementada com Supabase Realtime para monitoramento ao vivo.
+- **Visual Premium**: Layout glassmorphism com balões de chat customizados e avatares dinâmicos.
+
+#### [S5-04] Controle Manual da IA
+- **Lógica de Trava**: Worker FastAPI agora verifica `status` da conversa antes de disparar a IA.
+- **Botão IA ON/OFF**: Alternância direta no cabeçalho do chat com feedback visual (cores de alerta para modo manual).
+
+#### Galeria de Evidências
+````carousel
+![Interface de Atendimento com Chat Ativo](/home/valmir/.gemini/antigravity/brain/f58aa5eb-3807-42ad-a784-38890f4da86f/valmir_rocha_chat_view_1771596439715.png)
+<!-- slide -->
+![Modo Manual / Intervenção Ativa](/home/valmir/.gemini/antigravity/brain/f58aa5eb-3807-42ad-a784-38890f4da86f/modo_manual_state_1771596994898.png)
+````
+
+---
+
+> **Versão 5.14 — 20/02/2026**
+> Consolidação total de histórico e planejamento. Arquivos paralelos eliminados.
