@@ -588,32 +588,47 @@ NÍVEL 5 — Depende de tudo
 
 ---
 
-### FASE 2 — PROGRAMAÇÕES E DISPAROS
+### FASE 2 — PROGRAMAÇÃO UNIFICADA E RAG
 
-#### Sprint 6 — Programação Pontual ⏳
+> [!IMPORTANT]
+> **Conclusão de Reunião**: As programações Mensal e Eventual/Pontual serão fundidas. A fonte da verdade para a IA será a base unificada de cada unidade.
+
+#### Sprint 6 — Gestão de Programação & Ingestão ⏳
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S6-01 | CRUD programação pontual: título, descrição, categoria, data, horários, unidade | ⏳ |
-| S6-02 | Upload de flyer (imagem/vídeo) para Supabase Storage | ⏳ |
-| S6-03 | Filtros de envio: categoria (interesse), geolocalização, faixa etária | ⏳ |
-| S6-04 | Opção "filtro global" → evento vai para todos os CUCAs (Admin pode ativar) | ⏳ |
-| S6-05 | Fluxo de aprovação: rascunho → aguardando_aprovacao → aprovado | ⏳ |
-| S6-06 | Notificação Realtime para aprovadores quando evento fica pendente | ⏳ |
-| S6-07 | Preview de leads atingidos (contagem por filtro) antes de confirmar | ⏳ |
-| S6-08 | Indexação RAG automática do evento após criação (source_type='scheduled_program') | ⏳ |
-| S6-09 | Disparo gradual via Worker: delay 5-15s + presence + personalização IA | ⏳ |
-| S6-10 | Rastreamento: enviados / entregues / lidos / respondeu | ⏳ |
+| S6-01 | **CRUD Unificado**: Modal de inserção com toggle [Mensal / Pontual] + Seleção de Unidade | ⏳ |
+| S6-02 | **Importador Inteligente**: Upload de Planilha (.xlsx) com mapeamento automático de colunas | ⏳ |
+| S6-03 | **API de Ingestão**: Endpoint seguro para sistemas externos alimentarem a grade (JSON) | ⏳ |
+| S6-04 | **Alerta de Programação**: Notificação UAZAPI ao Super Admin (Apenas para itens **Pontuais**) | ⏳ |
+| S6-05 | **Fluxo de Aprovação**: Itens Pontuais (Aprovação Superior) vs Mensais (Aprovação Automática) | ⏳ |
 
-#### Sprint 7 — Programação Mensal (RAG-Only) ⏳
+#### Sprint 7 — Sistema Integrado de Alertas & Inteligência ⏳
+> **Foco**: Notificações institucionais e RAG qualificado.
+
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S7-01 | **Interface de Importação**: Modal com seleção de Unidade (cuca_unit_id) + Seleção de Mês/Ano + Dropzone para arquivo .xlsx | [ ] |
-| S7-02 | **Processamento Multi-Abas**: Parser inteligente que identifica e lê via código as abas: `CURSOS`, `ESPORTES`, `DIA A DIA` e `ESPECIAIS` (filtrando pelo mês selecionado) | [ ] |
-| S7-03 | **Mapeamento de Campos (Cursos/Esportes)**: Extração de: Título, Instrutor, Local, Horário, Período/Dias, Meta, Faixa Etária e Descrição/Objetivo | [ ] |
-| S7-04 | **Armazenamento reativo**: Os dados são convertidos em texto narrativo e salvos em `rag_chunks` com as tags de unidade e categoria para indexação imediata | [ ] |
-| S7-05 | **Maria Expert**: Atualização da camada técnica para convidar ativamente o lead a tirar dúvidas: *"Estou com a programação completa aqui, pode me perguntar qualquer coisa!"* | [ ] |
-| S7-06 | **Template de Disparo**: *"Olá! A programação de [Mês] já saiu! 🚀 Confira tudo no link: [Link]. Ficou com dúvida sobre algum horário ou curso? Me pergunta aqui que eu te respondo na hora!"* | [ ] |
-| S7-07 | **Disparo Global**: Aviso em massa para base (~20k) convidando para consulta/matrícula externa | [ ] |
+| S7-01 | **RAG Qualificado**: Indexação automática de tudo que for "aprovado" (Mensal + Pontual) | ⏳ |
+| S7-02 | **Fluxo Handover (Empregabilidade)**: Alerta WP ao responsável quando lead pede humano | ⏳ |
+| S7-03 | **Acesso ao Cuca N1**: Alerta WP ao Resp. Técnico da Unidade sobre nova solicitação | ⏳ |
+| S7-04 | **Acesso ao Cuca N2**: Após aprovação N1, alerta WP ao Aprovador Final/Secretaria | ⏳ |
+| S7-05 | **Filtros de Disparo**: Segmentação por Eixo (Cursos, Esporte, etc) e Unidade | ⏳ |
+
+---
+
+## 13. MATRIZ DE ALERTAS INSTITUCIONAIS (UAZAPI)
+
+O sistema "entenderá" para quem enviar cada alerta baseando-se na função e vínculo do colaborador:
+
+| Evento de Gatilho | Destinatário Principal | Regra de Seleção |
+|-------------------|-------------------------|-------------------|
+| **Nova Programação Pontual** | Super Admin | `role = 'super_admin'` |
+| **Programação Mensal** | *Nenhum (Bypass)* | Automático (Pré-aprovado) |
+| **Handover / Humano** | Atendente / Operador | `role = 'operador'` + `cuca_unit_id` da conversa |
+| **Acesso Cuca (Nível 1)** | Coordenador Unidade | `role = 'coordenador'` + `cuca_unit_id` da unidade solicitada |
+| **Acesso Cuca (Nível 2)** | Secretaria / Aprovador | `role = 'secretaria'` |
+
+> [!TIP]
+> Os números são extraídos do campo `collaborators.phone`. Se houver mais de um colaborador na mesma unidade/regra, todos recebem o alerta para garantir a velocidade de resposta.
 
 #### Sprint 8 — Campanhas + Motor Anti-Ban completo ⏳
 | Ticket | Entregável | Status |
