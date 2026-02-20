@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 5.11 | **Atualizado**: 20/02/2026 (Webhook e Routing Concluídos)
-> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Conexão Real (60%)**
+> **Versão**: 5.12 | **Atualizado**: 20/02/2026 (Chat Espelhado Concluído)
+> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Conexão Real (70%)**
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -575,7 +575,7 @@ NÍVEL 5 — Depende de tudo
 |--------|-----------|--------|
 | S5-01 | **Webhook Master**: Worker FastAPI recebe, valida e salva em `mensagens` | [x] |
 | S5-02 | **Routing Automático**: Worker consulta `instancias_uazapi` → envia para Edge Function `motor-agente` | [x] |
-| S5-03 | **UI Chat Espelhado**: Página `/atendimento` com Supabase Realtime (viva) | [ ] |
+| S5-03 | **UI Chat Espelhado**: Página `/atendimento` com Supabase Realtime (viva) | [x] |
 | S5-04 | **Controle Manual**: Botão IA ON/OFF por conversa (pausa motor temporariamente) | [ ] |
 | S5-05 | **Handover**: Detecção "humano" → Notificação Admin + status `awaiting_human` | [ ] |
 | S5-06 | **Resposta Manual**: Operador envia no portal → Worker dispara via UAZAPI | [ ] |

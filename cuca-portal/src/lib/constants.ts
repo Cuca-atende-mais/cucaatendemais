@@ -9,6 +9,11 @@ export const menuItems = [
         url: "/leads",
         icon: "Users",
     },
+    {
+        title: "Atendimento",
+        url: "/atendimento",
+        icon: "MessageSquare",
+    },
 
     {
         title: "Programação",
