@@ -1,6 +1,7 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 5.7 | **Atualizado**: 19/02/2026 (Gestão Descentralizada Concluída)
-> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Autonomia de Unidade (30%)**
+> **Versão**: 5.8 | **Atualizado**: 20/02/2026 (Consolidação de Planejamento e Gestão)
+> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Autonomia de Unidade (35%)**
+> **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
 ---
