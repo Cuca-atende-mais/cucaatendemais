@@ -88,6 +88,10 @@ export type Vaga = {
     unidade_cuca: string | null
     total_vagas: number
     status: string
+    faixa_etaria: string | null
+    local_entrevista: string | null
+    tipo_selecao: string | null
+    expansiva: boolean
     data_abertura: string
     data_fechamento: string | null
     disparo_id: string | null

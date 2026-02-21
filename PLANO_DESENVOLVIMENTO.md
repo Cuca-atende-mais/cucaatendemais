@@ -661,11 +661,11 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 #### Sprints 9-11 — Empregabilidade Completa ⏳
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S9-01 | Formulário público de cadastro de empresa (CNPJ lookup + access_token) | ⏳ |
-| S9-02 | CRUD vagas: título, descrição, requisitos, benefícios, salário, nº vagas, faixa etária | ⏳ |
-| S9-03 | Campo: local entrevista (na empresa / no CUCA) + tipo seleção | ⏳ |
-| S9-04 | Status lifecycle vaga: pre_cadastro → aberta → preenchida → cancelada | ⏳ |
-| S9-05 | Flag `expansiva`: vaga aparece no canal geral #6 (Júlia Geral no RAG) | ⏳ |
+| S9-01 | Formulário público de cadastro de empresa (CNPJ lookup + access_token) | [x] |
+| S9-02 | CRUD vagas: título, descrição, requisitos, benefícios, salário, nº vagas, faixa etária | [x] |
+| S9-03 | Campo: local entrevista (na empresa / no CUCA) + tipo seleção | [x] |
+| S9-04 | Status lifecycle vaga: pre_cadastro → aberta → preenchida → cancelada | [x] |
+| S9-05 | Flag `expansiva`: vaga aparece no canal geral #6 (Júlia Geral no RAG) | [x] |
 | S9-06 | Indexação RAG automática ao criar vaga (source_type='job_posting', filtro cuca_unit_id) | ⏳ |
 | S9-07 | Link público de candidatura: data de nascimento + upload CV (PDF ou foto) | ⏳ |
 | S9-08 | Worker: OCR via GPT-4o Vision → JSON (nome, idade, endereço, tel, escolaridade, experiência) | ⏳ |
@@ -683,6 +683,7 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S11-01 | Banco de Talentos: matching IA ao criar nova vaga (habilidades × requisitos, últimos 3 meses) | ⏳ |
 | S11-02 | Aba "Banco de Talentos" dentro da vaga: candidatos sugeridos por score | ⏳ |
 | S11-03 | Gestor pode adicionar talento como candidato com 1 clique | ⏳ |
+| S11-04 | 🚨 **DEPLOY VPS HOSTINGER**: Subir o Worker FastAPI na VPS e autenticar instâncias UAZAPI para Go-Live operacional | ⏳ |
 
 ---
 
