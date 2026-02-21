@@ -20,6 +20,13 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI(title="Worker Sistema CUCA")
 
+@app.on_event("startup")
+async def startup_event():
+    from campanhas_engine import campanhas_loop
+    import asyncio
+    logger.info("Agendando motor de Campanhas...")
+    asyncio.create_task(campanhas_loop())
+
 async def process_webhook_payload(payload: dict, token: str):
     """Processa o payload do webhook em background."""
     try:
@@ -131,22 +138,81 @@ async def process_webhook_payload(payload: dict, token: str):
                             "Content-Type": "application/json",
                             "x-internal-token": os.getenv("WEBHOOK_INTERNAL_TOKEN")
                         }
+                        # Buscar dados da instância para passar ao motor-agente
+                        inst_result = supabase.table("instancias_uazapi").select("cuca_unit_id, agente_tipo, token").eq("nome", instance_name).single().execute()
+                        agente_tipo = inst_result.data.get("agente_tipo", "maria") if inst_result.data else "maria"
+                        unidade_cuca = inst_result.data.get("cuca_unit_id") if inst_result.data else None
+                        inst_token = inst_result.data.get("token") if inst_result.data else ""
+                        
                         payload_edge = {
-                            "conversa_id": conversation_id,
-                            "lead_id": lead_id,
-                            "instancia": instance_name,
-                            "mensagem": text_content
+                            "telefone": phone,
+                            "instancia_uazapi": instance_name,
+                            "agente_tipo": agente_tipo,
+                            "unidade_cuca": unidade_cuca,
+                            "mensagem": text_content,
+                            "midia_tipo": "text"
                         }
                         
                         logger.info(f"Roteando para motor-agente: {edge_url}")
-                        # Não esperamos a resposta lenta da IA (fire and forget ou background)
-                        # mas logamos o disparo
-                        await client.post(edge_url, json=payload_edge, headers=headers, timeout=0.1)
-                except httpx.ReadTimeout:
-                    # Timeout curto é esperado se não quisermos esperar o processamento da IA
-                    pass
-                except Exception as e:
-                    logger.error(f"Erro ao rotear para motor-agente: {str(e)}")
+                        
+                        # S5-08: Agora esperamos a resposta da IA para extrair Mídia Contextual (Flyers) e enviar via UAZAPI
+                        # Timeout 45s (GPT-4 pode demorar) mas como estamos em background, não trava o webhook de 200 OK
+                        resp = await client.post(edge_url, json=payload_edge, headers=headers, timeout=45.0)
+                        
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            if data.get("success") and "resposta" in data:
+                                resposta_ia = data["resposta"]
+                                import re
+                                media_url = None
+                                
+                                # Tenta extrair flyer markdown `![alt](url)`
+                                match_md = re.search(r'!\[.*?\]\((.*?)\)', resposta_ia)
+                                # Tenta extrair flyer tag `[FLYER: url]`
+                                match_tag = re.search(r'\[(?:FLYER|MÍDIA):\s*(.*?)\]', resposta_ia)
+                                
+                                if match_md:
+                                    media_url = match_md.group(1).strip()
+                                    resposta_ia = resposta_ia.replace(match_md.group(0), '').strip()
+                                elif match_tag:
+                                    media_url = match_tag.group(1).strip()
+                                    resposta_ia = resposta_ia.replace(match_tag.group(0), '').strip()
+                                
+                                UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+                                
+                                if media_url:
+                                    logger.info(f"Flyer detectado! Enviando media_url: {media_url}")
+                                    # Envia a Midia e o restante da resposta como caption
+                                    await client.post(
+                                        f"{UAZAPI_URL}/message/sendMedia/{instance_name}",
+                                        headers={"apikey": inst_token, "Content-Type": "application/json"},
+                                        json={
+                                            "number": phone,
+                                            "options": {"delay": 1500, "presence": "composing"},
+                                            "mediaMessage": {
+                                                "mediatype": "image",
+                                                "caption": resposta_ia,
+                                                "media": media_url
+                                            }
+                                        }
+                                    )
+                                else:
+                                    logger.info(f"Apenas texto detectado. Tamanho: {len(resposta_ia)}")
+                                    await client.post(
+                                        f"{UAZAPI_URL}/message/sendText/{instance_name}",
+                                        headers={"apikey": inst_token, "Content-Type": "application/json"},
+                                        json={
+                                            "number": phone,
+                                            "options": {"delay": 1200, "presence": "composing"},
+                                            "textMessage": {"text": resposta_ia}
+                                        }
+                                    )
+                        else:
+                            logger.error(f"Erro no motor-agente HTTP {resp.status_code}: {resp.text}")
+                    except httpx.ReadTimeout:
+                        logger.error("Timeout aguardando processamento da IA (motor-agente demorou muito >45s).")
+                    except Exception as e:
+                        logger.error(f"Erro crítico no fluxo com motor-agente: {str(e)}")
             
         elif event_type == "connection.update":
             status = data.get("status")

@@ -585,7 +585,7 @@ NÍVEL 5 — Depende de tudo
 | S4-13 | Teste E2E (Simulado): Pergunta RAG Barra → Resposta Maria Persona ✅ | [x] |
 
 #### Sprint 5 — Chat Espelhado + Webhooks UAZAPI ✅
-> **STATUS**: 95% (Faltando S5-08)
+> **STATUS**: 100% CONCLUÍDO
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
 | S5-01 | **Webhook Master**: Worker FastAPI recebe, valida e salva em `mensagens` | [x] |
@@ -595,7 +595,7 @@ NÍVEL 5 — Depende de tudo
 | S5-05 | **Handover**: Detecção "humano" → Notificação Admin + status `awaiting_human` | [x] |
 | S5-06 | **Resposta Manual**: Operador envia no portal → Worker dispara via UAZAPI | [x] |
 | S5-07 | **Sincronização**: Marcar como lida no celular quando lida no portal | [x] |
-| S5-08 | **Mídia Contextual**: Júlia envia flyer da vaga / Maria envia flyer do evento | [ ] |
+| S5-08 | **Mídia Contextual**: Júlia envia flyer da vaga / Maria envia flyer do evento | [x] |
 | S5-09 | **Scaffold do Worker**: Estrutura FastAPI + requirements + Dockerfile para Hostinger | [x] |
 | S5-10 | **UI Gestão Instâncias (Global)**: Página `/developer/instancias` para Super Admin | [x] |
 | S5-11 | **UI Gestão Instâncias (Local)**: Página `/configuracoes/whatsapp` para Admins de Unidade | [x] |
@@ -648,11 +648,11 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 #### Sprint 8 — Campanhas + Motor Anti-Ban completo ⏳
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S8-01 | Módulo Campanhas: CRUD (título, template com {{nome}}, mídia, público, agendamento) | ⏳ |
-| S8-02 | Fluxo aprovação de campanhas (idêntico ao pontual) | ⏳ |
-| S8-03 | system_config: delays configuráveis via Developer Console | ⏳ |
-| S8-04 | Warm-up: tabela de progressão (50→150→500→1k→4k msgs/dia por 5 semanas) | ⏳ |
-| S8-05 | Monitoramento: se taxa de erro > limite → parar disparo + alertar | ⏳ |
+| S8-01 | Módulo Campanhas: CRUD (título, template com {{nome}}, mídia, público, agendamento) | [x] |
+| S8-02 | Fluxo aprovação de campanhas (idêntico ao pontual) | [x] |
+| S8-03 | system_config: delays configuráveis via Developer Console | [x] |
+| S8-04 | Warm-up: tabela de progressão (50→150→500→1k→4k msgs/dia por 5 semanas) | [x] |
+| S8-05 | Monitoramento: se taxa de erro > limite → parar disparo + alertar | [x] |
 
 ---
 
@@ -942,6 +942,25 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 
 ---
 
+### Sprint 8 — Campanhas + Motor Anti-Ban completo ✅
+> **Data**: 21/02/2026
+
+#### [S8-01 e S8-02] Plataforma de Campanhas e Aprovações
+- **Interface e Tabela (`/campanhas`)**: Componente premium listar campanhas, incluindo título, data agendada, segmento escolhido (Tags/Eixos) e o status do fluxo (Rascunho -> Aprovação -> Andamento -> Concluída).
+- **Segmentação Real**: Motor configurado para ler `publico_alvo` por eixo temático e disparar apenas para Leads da Unidade e com Opt-in ativo.
+- **CampanhaModal**: Baseado na Programação (S3), oferece upload de mídia contextual diretamente para o Supabase Storage.
+
+#### [S8-03] Configurações Anti-Ban e Delays (Console Developer)
+- **Gerenciamento de DB (`configuracoes`)**: Nova página `developer/configuracoes` permite ao Administrador definir os parâmetros lógicos do Worker como Delay Máximo e Mínimo (ms), Limites e Threshold de Erro (%).
+
+#### [S8-04 e S8-05] Motor Background UAZAPI (Worker Python)
+- **Loops Automáticos (`campanhas_engine.py`)**: Script concorrente rodando via `asyncio.create_task` com o core do FastAPI.
+- **Randomização (Warm-up)**: Aguarda tempo `random.uniform()` entre Delay Min e Delay Max a cada lead processado da fila.
+- **Limites Inteligentes**: Envia exatamente até o limite diário (`anti_ban_daily_limit`), pausando progressivamente.
+- **Monitoramento de Taxa de Erro**: Se mais de X% dos envios falharem via UAZAPI (por ex, celular offline ou bloqueio Meta), a campanha é marcada como `pausada` instantaneamente para não comprometer as outras instâncias, emitindo alarme visual no Dashboard.
+
+---
+
 #### Galeria de Evidências
 ````carousel
 ![Interface de Atendimento com Chat Ativo](/home/valmir/.gemini/antigravity/brain/f58aa5eb-3807-42ad-a784-38890f4da86f/valmir_rocha_chat_view_1771596439715.png)
@@ -951,5 +970,5 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 
 ---
 
-> **Versão 5.20 — 21/02/2026**
-> Sprints 2, 5 e 7 consolidadas. Sistema de RBAC e Mensageria Manual operacionais. Guia Mestre atualizado.
+> **Versão 6.0 — 21/02/2026**
+> Sprints 2, 5, 7 e 8 100% concluídas. Motor de campanhas com Anti-ban e envio de mídias ativados junto com o fluxo principal.

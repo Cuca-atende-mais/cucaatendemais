@@ -128,3 +128,17 @@ export type Feedback = {
     respondido_em: string | null
     created_at: string
 }
+
+export type Campanha = {
+    id: string
+    unidade_cuca_id: string
+    titulo: string
+    template_texto: string
+    midia_url: string | null
+    publico_alvo: Record<string, any>
+    agendamento: string | null
+    status: 'rascunho' | 'aguardando_aprovacao' | 'aprovada' | 'em_andamento' | 'concluida' | 'cancelada' | 'pausada'
+    created_by: string
+    created_at: string
+    updated_at: string
+}
