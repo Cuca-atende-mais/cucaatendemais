@@ -13,7 +13,7 @@ import {
     MessageSquare,
     Search,
     Filter,
-    AlertTriangle,
+    TriangleAlert,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -62,7 +62,7 @@ const INITIAL_INSTANCES: InstanceType[] = [
     { id: "11", name: "Pontual Pici", category: "Pontual", unit: "Pici", status: "disconnected" },
     { id: "12", name: "Prog. Mensal", category: "Mensal", unit: "Geral", status: "disconnected" },
     { id: "13", name: "Ouvidoria Jovem", category: "Ouvidoria", unit: "Geral", status: "disconnected" },
-    { id: "14", name: "Agente Geral (Sofia)", category: "Geral", unit: "Geral", status: "disconnected" },
+    { id: "14", name: "Agente Geral (Unidade)", category: "Geral", unit: "Geral", status: "disconnected" },
 ]
 
 export default function InstanciasPage() {
@@ -102,7 +102,7 @@ export default function InstanciasPage() {
         switch (status) {
             case "connected": return <Wifi className="h-4 w-4 text-emerald-500" />
             case "disconnected": return <WifiOff className="h-4 w-4 text-muted-foreground" />
-            case "error": return <AlertTriangle className="h-4 w-4 text-destructive" />
+            case "error": return <TriangleAlert className="h-4 w-4 text-destructive" />
             default: return <RefreshCw className="h-4 w-4 text-amber-500 animate-spin" />
         }
     }

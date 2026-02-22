@@ -250,7 +250,7 @@ export default function ProgramacaoPage() {
                                     <TableRow>
                                         <TableHead>Título</TableHead>
                                         <TableHead>Unidade</TableHead>
-                                        <TableHead>Data</TableHead>
+                                        <TableHead>Período</TableHead>
                                         <TableHead>Status</TableHead>
                                         <TableHead className="text-right">Ações</TableHead>
                                     </TableRow>
@@ -264,7 +264,10 @@ export default function ProgramacaoPage() {
                                         <TableRow key={p.id}>
                                             <TableCell className="font-semibold text-cuca-dark">{p.titulo}</TableCell>
                                             <TableCell><Badge variant="outline">{p.unidade_cuca}</Badge></TableCell>
-                                            <TableCell>{format(new Date(p.data_evento), "dd/MM/yyyy", { locale: ptBR })}</TableCell>
+                                            <TableCell>
+                                                {format(new Date(p.data_inicio), "dd/MM/yyyy", { locale: ptBR })}
+                                                {p.data_fim && ` — ${format(new Date(p.data_fim), "dd/MM/yyyy", { locale: ptBR })}`}
+                                            </TableCell>
                                             <TableCell>{getStatusBadge(p.status)}</TableCell>
                                             <TableCell className="text-right">
                                                 <Button variant="ghost" size="sm"><MoreHorizontal className="h-4 w-4" /></Button>

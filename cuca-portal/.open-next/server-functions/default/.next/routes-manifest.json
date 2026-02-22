@@ -1,0 +1,193 @@
+{
+  "version": 3,
+  "pages404": true,
+  "appType": "app",
+  "caseSensitive": false,
+  "basePath": "",
+  "redirects": [
+    {
+      "source": "/:path+/",
+      "destination": "/:path+",
+      "internal": true,
+      "priority": true,
+      "statusCode": 308,
+      "regex": "^(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))/$"
+    }
+  ],
+  "headers": [],
+  "rewrites": {
+    "beforeFiles": [],
+    "afterFiles": [],
+    "fallback": []
+  },
+  "dynamicRoutes": [
+    {
+      "page": "/empregabilidade/vagas/[id]",
+      "regex": "^/empregabilidade/vagas/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/empregabilidade/vagas/(?<nxtPid>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/vagas/[id]",
+      "regex": "^/vagas/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/vagas/(?<nxtPid>[^/]+?)(?:/)?$"
+    }
+  ],
+  "staticRoutes": [
+    {
+      "page": "/",
+      "regex": "^/(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/(?:/)?$"
+    },
+    {
+      "page": "/_global-error",
+      "regex": "^/_global\\-error(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/_global\\-error(?:/)?$"
+    },
+    {
+      "page": "/_not-found",
+      "regex": "^/_not\\-found(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/_not\\-found(?:/)?$"
+    },
+    {
+      "page": "/api/process-cv",
+      "regex": "^/api/process\\-cv(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/process\\-cv(?:/)?$"
+    },
+    {
+      "page": "/atendimento",
+      "regex": "^/atendimento(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/atendimento(?:/)?$"
+    },
+    {
+      "page": "/cadastro-empresa",
+      "regex": "^/cadastro\\-empresa(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/cadastro\\-empresa(?:/)?$"
+    },
+    {
+      "page": "/campanhas",
+      "regex": "^/campanhas(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/campanhas(?:/)?$"
+    },
+    {
+      "page": "/categorias",
+      "regex": "^/categorias(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/categorias(?:/)?$"
+    },
+    {
+      "page": "/configuracoes/colaboradores",
+      "regex": "^/configuracoes/colaboradores(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/configuracoes/colaboradores(?:/)?$"
+    },
+    {
+      "page": "/configuracoes/whatsapp",
+      "regex": "^/configuracoes/whatsapp(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/configuracoes/whatsapp(?:/)?$"
+    },
+    {
+      "page": "/dashboard",
+      "regex": "^/dashboard(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard(?:/)?$"
+    },
+    {
+      "page": "/developer",
+      "regex": "^/developer(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/developer(?:/)?$"
+    },
+    {
+      "page": "/developer/agentes",
+      "regex": "^/developer/agentes(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/developer/agentes(?:/)?$"
+    },
+    {
+      "page": "/developer/base-conhecimento",
+      "regex": "^/developer/base\\-conhecimento(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/developer/base\\-conhecimento(?:/)?$"
+    },
+    {
+      "page": "/developer/configuracoes",
+      "regex": "^/developer/configuracoes(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/developer/configuracoes(?:/)?$"
+    },
+    {
+      "page": "/developer/instancias",
+      "regex": "^/developer/instancias(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/developer/instancias(?:/)?$"
+    },
+    {
+      "page": "/empregabilidade/vagas",
+      "regex": "^/empregabilidade/vagas(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/empregabilidade/vagas(?:/)?$"
+    },
+    {
+      "page": "/favicon.ico",
+      "regex": "^/favicon\\.ico(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/favicon\\.ico(?:/)?$"
+    },
+    {
+      "page": "/leads",
+      "regex": "^/leads(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/leads(?:/)?$"
+    },
+    {
+      "page": "/login",
+      "regex": "^/login(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/login(?:/)?$"
+    },
+    {
+      "page": "/programacao",
+      "regex": "^/programacao(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/programacao(?:/)?$"
+    },
+    {
+      "page": "/unidades",
+      "regex": "^/unidades(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/unidades(?:/)?$"
+    }
+  ],
+  "dataRoutes": [],
+  "rsc": {
+    "header": "rsc",
+    "varyHeader": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch",
+    "prefetchHeader": "next-router-prefetch",
+    "didPostponeHeader": "x-nextjs-postponed",
+    "contentTypeHeader": "text/x-component",
+    "suffix": ".rsc",
+    "prefetchSegmentHeader": "next-router-segment-prefetch",
+    "prefetchSegmentSuffix": ".segment.rsc",
+    "prefetchSegmentDirSuffix": ".segments",
+    "clientParamParsing": false,
+    "dynamicRSCPrerender": false
+  },
+  "rewriteHeaders": {
+    "pathHeader": "x-nextjs-rewritten-path",
+    "queryHeader": "x-nextjs-rewritten-query"
+  }
+}

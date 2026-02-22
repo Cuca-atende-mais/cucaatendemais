@@ -39,6 +39,11 @@ export default function LeadsPage() {
     const [unidadeFilter, setUnidadeFilter] = useState<string>("all")
     const [statusFilter, setStatusFilter] = useState<string>("all")
 
+    // Modal criar lead
+    const [createDialog, setCreateDialog] = useState(false)
+    const [newLead, setNewLead] = useState({ nome: "", telefone: "", email: "", unidade_cuca: "" })
+    const [creating, setCreating] = useState(false)
+
     // Modal bloquear
     const [bloqDialog, setBloqDialog] = useState(false)
     const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
@@ -105,6 +110,31 @@ export default function LeadsPage() {
         fetchLeads()
     }
 
+    const handleCreateLead = async () => {
+        if (!newLead.telefone.trim()) {
+            toast.error("Telefone é obrigatório")
+            return
+        }
+        setCreating(true)
+        const { error } = await supabase.from("leads").insert({
+            nome: newLead.nome || null,
+            telefone: newLead.telefone.trim(),
+            email: newLead.email || null,
+            unidade_cuca: newLead.unidade_cuca || null,
+            opt_in: true,
+        })
+        if (error) {
+            toast.error("Erro ao criar lead: " + error.message)
+            setCreating(false)
+            return
+        }
+        toast.success("Lead criado com sucesso!")
+        setCreateDialog(false)
+        setNewLead({ nome: "", telefone: "", email: "", unidade_cuca: "" })
+        setCreating(false)
+        fetchLeads()
+    }
+
     const handleDesbloquear = async (lead: Lead) => {
         const { error } = await supabase
             .from("leads")
@@ -148,7 +178,7 @@ export default function LeadsPage() {
                     <h1 className="text-3xl font-bold tracking-tight">Leads</h1>
                     <p className="text-muted-foreground">Gerencie sua base de contatos da Rede CUCA</p>
                 </div>
-                <Button className="bg-cuca-blue hover:bg-sky-800">
+                <Button className="bg-cuca-blue hover:bg-sky-800" onClick={() => setCreateDialog(true)}>
                     <UserPlus className="mr-2 h-4 w-4" /> Novo Lead
                 </Button>
             </div>
@@ -346,6 +376,47 @@ export default function LeadsPage() {
                     )}
                 </CardContent>
             </Card>
+
+            {/* Modal criar lead */}
+            <Dialog open={createDialog} onOpenChange={setCreateDialog}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Novo Lead</DialogTitle>
+                        <DialogDescription>Cadastre um novo contato na base da Rede CUCA.</DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-2">
+                        <div className="grid gap-2">
+                            <Label htmlFor="new-nome">Nome</Label>
+                            <Input id="new-nome" placeholder="Nome do contato" value={newLead.nome} onChange={(e) => setNewLead({ ...newLead, nome: e.target.value })} />
+                        </div>
+                        <div className="grid gap-2">
+                            <Label htmlFor="new-telefone">Telefone *</Label>
+                            <Input id="new-telefone" placeholder="5585999999999" value={newLead.telefone} onChange={(e) => setNewLead({ ...newLead, telefone: e.target.value })} />
+                        </div>
+                        <div className="grid gap-2">
+                            <Label htmlFor="new-email">Email</Label>
+                            <Input id="new-email" type="email" placeholder="email@exemplo.com" value={newLead.email} onChange={(e) => setNewLead({ ...newLead, email: e.target.value })} />
+                        </div>
+                        <div className="grid gap-2">
+                            <Label>Unidade CUCA</Label>
+                            <Select value={newLead.unidade_cuca} onValueChange={(v) => setNewLead({ ...newLead, unidade_cuca: v })}>
+                                <SelectTrigger><SelectValue placeholder="Selecione a unidade" /></SelectTrigger>
+                                <SelectContent>
+                                    {unidadesCuca.map((u) => (
+                                        <SelectItem key={u} value={u}>{u}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setCreateDialog(false)}>Cancelar</Button>
+                        <Button className="bg-cuca-blue hover:bg-sky-800" onClick={handleCreateLead} disabled={creating}>
+                            {creating ? "Salvando..." : "Criar Lead"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Modal de bloqueio */}
             <Dialog open={bloqDialog} onOpenChange={setBloqDialog}>

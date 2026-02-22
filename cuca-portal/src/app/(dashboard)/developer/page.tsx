@@ -6,7 +6,7 @@ import {
     Database,
     Zap,
     Settings2,
-    AlertTriangle,
+    TriangleAlert,
     Server,
     DollarSign,
     Terminal,
@@ -112,7 +112,7 @@ export default function DeveloperConsolePage() {
 
             {/* Warning */}
             <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
-                <AlertTriangle className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
+                <TriangleAlert className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
                 <div className="text-sm">
                     <p className="font-medium text-amber-500">Área técnica — nenhuma configuração aqui deve ser exposta ao usuário final</p>
                     <p className="text-muted-foreground mt-1">

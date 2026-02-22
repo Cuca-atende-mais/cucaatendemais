@@ -36,7 +36,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     const [unidade, setUnidade] = useState<string>("")
 
     // Pontual specific
-    const [dataEvento, setDataEvento] = useState("")
+    const [dataInicio, setDataInicio] = useState("")
+    const [dataFim, setDataFim] = useState("")
     const [local, setLocal] = useState("")
     const [flyerFile, setFlyerFile] = useState<File | null>(null)
     const [flyerPreview, setFlyerPreview] = useState<string | null>(null)
@@ -48,7 +49,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     const supabase = createClient()
 
     const handleSave = async () => {
-        if (!titulo || (isPontual && (!unidade || !dataEvento))) {
+        if (!titulo || (isPontual && (!unidade || !dataInicio || !dataFim))) {
             toast.error("Preencha os campos obrigatórios")
             return
         }
@@ -81,7 +82,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     titulo,
                     descricao,
                     unidade_cuca: unidade,
-                    data_evento: dataEvento,
+                    data_inicio: dataInicio,
+                    data_fim: dataFim,
                     local,
                     flyer_url: flyerUrl,
                     status: "aguardando_aprovacao"
@@ -124,7 +126,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
         setTitulo("")
         setDescricao("")
         setUnidade("")
-        setDataEvento("")
+        setDataInicio("")
+        setDataFim("")
         setLocal("")
         setFlyerFile(null)
         setFlyerPreview(null)
@@ -183,23 +186,35 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     </div>
 
                     {isPontual ? (
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="grid gap-2">
-                                <Label className="flex items-center gap-2"><Calendar className="h-3 w-3" /> Data</Label>
-                                <Input type="date" value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} />
+                        <div className="grid gap-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="grid gap-2">
+                                    <Label className="flex items-center gap-2"><Calendar className="h-3 w-3" /> Data Início</Label>
+                                    <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label className="flex items-center gap-2"><Calendar className="h-3 w-3" /> Data Fim</Label>
+                                    <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+                                </div>
                             </div>
-                            <div className="grid gap-2">
-                                <Label className="flex items-center gap-2"><MapPin className="h-3 w-3" /> Unidade</Label>
-                                <Select value={unidade} onValueChange={setUnidade}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Selecione..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {unidadesCuca.map(u => (
-                                            <SelectItem key={u} value={u}>{u}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="grid gap-2">
+                                    <Label className="flex items-center gap-2"><MapPin className="h-3 w-3" /> Local</Label>
+                                    <Input placeholder="Local do evento" value={local} onChange={(e) => setLocal(e.target.value)} />
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label className="flex items-center gap-2"><MapPin className="h-3 w-3" /> Unidade</Label>
+                                    <Select value={unidade} onValueChange={setUnidade}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Selecione..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {unidadesCuca.map(u => (
+                                                <SelectItem key={u} value={u}>{u}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
                         </div>
                     ) : (

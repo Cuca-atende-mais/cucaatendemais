@@ -10,7 +10,7 @@ import {
     Building2,
     Calendar,
     Smartphone,
-    AlertTriangle,
+    TriangleAlert,
     Info,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -194,7 +194,7 @@ export default function WhatsAppUnidadePage() {
                         {/* Banner de Erro/Banimento simulado */}
                         {inst.status === "error" && (
                             <div className="absolute inset-0 bg-destructive/90 flex flex-col items-center justify-center p-6 text-center text-white">
-                                <AlertTriangle className="h-12 w-12 mb-2" />
+                                <TriangleAlert className="h-12 w-12 mb-2" />
                                 <h3 className="font-bold text-lg">Número Banido</h3>
                                 <p className="text-xs mb-4">A Meta desconectou este chip por comportamento suspeito.</p>
                                 <Button

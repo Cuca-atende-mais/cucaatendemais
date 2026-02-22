@@ -36,20 +36,7 @@ export const menuItems = [
         permission: { recurso: "empregabilidade", acao: "read" },
         items: [
             { title: "Vagas", url: "/empregabilidade/vagas", permission: { recurso: "empregabilidade", acao: "read" } },
-            { title: "Empresas", url: "/empregabilidade/empresas", permission: { recurso: "empregabilidade", acao: "read" } },
         ],
-    },
-    {
-        title: "Ouvidoria",
-        url: "/ouvidoria",
-        icon: "MessageSquare",
-        permission: { recurso: "ouvidoria", acao: "read" }
-    },
-    {
-        title: "Acesso CUCA",
-        url: "/acesso",
-        icon: "DoorOpen",
-        permission: { recurso: "acesso_cuca", acao: "read" }
     },
     {
         title: "Configurações",
@@ -58,6 +45,7 @@ export const menuItems = [
         permission: { recurso: "configuracoes", acao: "update" },
         items: [
             { title: "WhatsApp", url: "/configuracoes/whatsapp" },
+            { title: "Colaboradores", url: "/configuracoes/colaboradores" },
             { title: "Unidades", url: "/unidades" },
             { title: "Categorias", url: "/categorias" },
         ],

@@ -969,7 +969,24 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 ![Modo Manual / Intervenção Ativa](/home/valmir/.gemini/antigravity/brain/f58aa5eb-3807-42ad-a784-38890f4da86f/modo_manual_state_1771596994898.png)
 ````
 
+
 ---
 
-> **Versão 6.0 — 21/02/2026**
-> Sprints 2, 5, 7 e 8 100% concluídas. Motor de campanhas com Anti-ban e envio de mídias ativados junto com o fluxo principal.
+## 14. AJUSTES PÓS-DEPLOY (HOSTINGER VPS) {#14-ajustes}
+
+Status das correções emergenciais pós-deploy na VPS:
+
+- [x] **A-01: Leads** - Corrigir erro ao criar Novo Lead (CRUD)
+- [x] **A-02: Atendimento** - Ajustar visualização de mensagens (Real vs Mock) + `WORKER_URL`
+- [x] **A-03: UI** - Remover menções aos agentes (Júlia Global RAG)
+- [x] **A-04: Programação** - Adicionar campos `data_inicio` e `data_fim`
+- [x] **A-05: Rotas** - Corrigir erros 404 (Empresas, Configurações, Acesso, Ouvidoria)
+- [x] **A-06: CORS/Worker** - Resolver falha de conexão na porta 8000 da VPS
+
+### Esclarecimentos Adicionais
+- **Módulo Campanhas**: Referente ao ticket S8-01, serve para disparos em massa agendados com segmentação de público, essencial para avisos gerais da unidade.
+
+---
+
+> **Versão 6.1 — 22/02/2026**
+> Iniciando fase de ajustes pós-deploy na VPS Hostinger.

@@ -288,7 +288,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                 />
                                 <div className="space-y-1 leading-none">
                                     <Label htmlFor="expansiva">Vaga Expansiva</Label>
-                                    <p className="text-sm text-muted-foreground">O Agente Geral (Júlia Global RAG) divulgará essa vaga para toda a base do CUCA.</p>
+                                    <p className="text-sm text-muted-foreground">Essa vaga será divulgada para todas as unidades do CUCA.</p>
                                 </div>
                             </div>
                         </div>

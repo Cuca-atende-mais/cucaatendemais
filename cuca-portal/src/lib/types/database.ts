@@ -46,6 +46,7 @@ export type EventoPontual = {
     descricao: string | null
     unidade_cuca: string
     data_evento: string
+    data_fim: string | null
     hora_inicio: string | null
     hora_fim: string | null
     local: string | null

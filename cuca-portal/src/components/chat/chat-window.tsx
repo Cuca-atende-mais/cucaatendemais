@@ -57,8 +57,9 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
     async function markAsRead() {
         if (!conversationId || !conversation) return;
         try {
-            const workerUrl = process.env.NEXT_PUBLIC_WORKER_URL || "https://worker-cuca.sua-vps.com";
+            const workerUrl = process.env.NEXT_PUBLIC_WORKER_URL || "";
             const token = process.env.NEXT_PUBLIC_INTERNAL_TOKEN;
+            if (!workerUrl || !token) return;
 
             await fetch(`${workerUrl}/read-message/${token}`, {
                 method: 'POST',
@@ -128,8 +129,9 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
             if (error) throw error;
 
             // 2. Disparar via Worker -> UAZAPI
-            const workerUrl = process.env.NEXT_PUBLIC_WORKER_URL || "https://worker-cuca.sua-vps.com";
+            const workerUrl = process.env.NEXT_PUBLIC_WORKER_URL || "";
             const token = process.env.NEXT_PUBLIC_INTERNAL_TOKEN;
+            if (!workerUrl || !token) throw new Error("Worker URL não configurada");
 
             await fetch(`${workerUrl}/send-message/${token}`, {
                 method: 'POST',
