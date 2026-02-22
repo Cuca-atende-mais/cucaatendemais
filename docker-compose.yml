@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  portal:
+    build: ./cuca-portal
+    container_name: cuca-portal
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - WORKER_URL=http://worker:8000
+    depends_on:
+      - worker
+
+  worker:
+    build: ./worker
+    container_name: cuca-worker
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./worker/.env
+    command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:8000 --timeout 120
+
+  nginx:
+    image: nginx:alpine
+    container_name: cuca-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/certs:/etc/nginx/certs
+    depends_on:
+      - portal
+      - worker
