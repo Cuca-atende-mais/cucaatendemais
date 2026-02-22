@@ -145,12 +145,7 @@ export default function ProgramacaoPage() {
         }
     }
 
-    // Filtered data is now handled directly in fetchData based on state
-    // const filteredPontuais = pontuais.filter(p => {
-    //     const matchesSearch = p.titulo.toLowerCase().includes(searchTerm.toLowerCase())
-    //     const matchesUnidade = unidadeFilter === "all" || p.unidade_cuca === unidadeFilter
-    //     return matchesSearch && matchesUnidade
-    // })
+    const filteredPontuais = pontuais
 
     // const filteredMensais = mensais.filter(m => {
     //     return m.titulo.toLowerCase().includes(searchTerm.toLowerCase())
