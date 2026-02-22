@@ -147,9 +147,7 @@ export default function ProgramacaoPage() {
 
     const filteredPontuais = pontuais
 
-    // const filteredMensais = mensais.filter(m => {
-    //     return m.titulo.toLowerCase().includes(searchTerm.toLowerCase())
-    // })
+    const filteredMensais = mensais
 
     return (
         <div className="space-y-6">
