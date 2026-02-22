@@ -17,6 +17,8 @@ import { Switch } from "@/components/ui/switch"
 import { unidadesCuca } from "@/lib/constants"
 import toast from "react-hot-toast"
 import { Calendar, Clock, MapPin, Sparkles, Upload, Image as ImageIcon, X } from "lucide-react"
+import { format } from "date-fns"
+import { ptBR } from "date-fns/locale"
 
 interface UnifiedProgramModalProps {
     open: boolean
