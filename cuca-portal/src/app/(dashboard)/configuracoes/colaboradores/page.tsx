@@ -233,7 +233,7 @@ export default function ColaboradoresPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant={colab.ativo ? "success" : "destructive"}>
+                                            <Badge className={colab.ativo ? "bg-green-600 text-white hover:bg-green-700" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}>
                                                 {colab.ativo ? "Ativo" : "Inativo"}
                                             </Badge>
                                         </TableCell>
