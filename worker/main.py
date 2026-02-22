@@ -2,8 +2,11 @@ import os
 import json
 import logging
 import asyncio
+import time
 from typing import Optional
-from fastapi import FastAPI, Request, Response, BackgroundTasks
+from collections import defaultdict
+from fastapi import FastAPI, Request, Response, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
@@ -18,7 +21,69 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="Worker Sistema CUCA")
+# ─── Rate Limiter em Memória ─────────────────────────────────────────────────
+# Estrutura: {ip: [timestamps]}
+_rate_limit_store: dict = defaultdict(list)
+RATE_LIMIT_REQUESTS = 30   # máximo de requisições
+RATE_LIMIT_WINDOW = 60     # em uma janela de X segundos
+
+def check_rate_limit(ip: str) -> bool:
+    """Retorna True se a requisição deve ser bloqueada."""
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW
+    # Limpa os timestamps antigos
+    _rate_limit_store[ip] = [ts for ts in _rate_limit_store[ip] if ts > window_start]
+    if len(_rate_limit_store[ip]) >= RATE_LIMIT_REQUESTS:
+        return True  # bloqueado
+    _rate_limit_store[ip].append(now)
+    return False
+
+app = FastAPI(title="Worker Sistema CUCA", docs_url=None, redoc_url=None)
+
+# ─── CORS: Apenas origens conhecidas ─────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://portal.cuca.ce.gov.br",
+        "https://cuca-portal.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
+)
+
+# ─── Middleware de Segurança e Rate Limit ─────────────────────────────────────
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    # 1. Extrair IP real (atrás de proxy NGINX)
+    client_ip = request.headers.get("X-Real-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    
+    # 2. Isentar webhook da UAZAPI do rate limit (alto volume legítimo)
+    path = request.url.path
+    is_webhook = path.startswith("/webhook/")
+    
+    # 3. Rate limit para endpoints não-webhook
+    if not is_webhook and check_rate_limit(client_ip):
+        logger.warning(f"Rate limit atingido para IP: {client_ip} em {path}")
+        return Response(
+            content=json.dumps({"error": "Muitas requisições. Tente novamente em 1 minuto."}),
+            status_code=429,
+            media_type="application/json",
+            headers={"Retry-After": "60"}
+        )
+    
+    # 4. Processar requisição
+    response = await call_next(request)
+    
+    # 5. Adicionar headers de segurança na resposta
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    
+    return response
+
 
 @app.on_event("startup")
 async def startup_event():
