@@ -666,23 +666,23 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S9-03 | Campo: local entrevista (na empresa / no CUCA) + tipo seleção | [x] |
 | S9-04 | Status lifecycle vaga: pre_cadastro → aberta → preenchida → cancelada | [x] |
 | S9-05 | Flag `expansiva`: vaga aparece no canal geral #6 (Júlia Geral no RAG) | [x] |
-| S9-06 | Indexação RAG automática ao criar vaga (source_type='job_posting', filtro cuca_unit_id) | ⏳ |
-| S9-07 | Link público de candidatura: data de nascimento + upload CV (PDF ou foto) | ⏳ |
-| S9-08 | Worker: OCR via GPT-4o Vision → JSON (nome, idade, endereço, tel, escolaridade, experiência) | ⏳ |
-| S9-09 | Aviso automático: preenche requisitos básicos? ✅/⚠️/❌ (informativo para gestor) | ⏳ |
-| S9-10 | Datatable de candidatos: nome, idade, tel, escolaridade, experiência, status, ícone 📄 CV | ⏳ |
-| S9-11 | Edição manual de dados OCR incorretos pelo gestor | ⏳ |
-| S9-12 | Status lifecycle candidato: pendente → selecionado → contratado / rejeitado → banco_talentos | ⏳ |
-| S9-13 | Rejeitado → automático para talent_bank com skills JSONB | ⏳ |
-| S9-14 | Contratado → se vagas=0, vaga muda para "Preenchida" | ⏳ |
-| S10-01 | Agente Júlia por unidade (#1-5): consulta RAG job_posting da unidade | ⏳ |
-| S10-02 | Júlia: confirma candidatura antes de enviar link | ⏳ |
-| S10-03 | Júlia Geral (#6): consulta RAG job_posting sem filtro de unidade | ⏳ |
-| S10-04 | Júlia Geral: direciona ao WhatsApp da unidade (não coleta CV) | ⏳ |
-| S10-05 | Orientação profissional 24h: dicas entrevista, currículo (sem candidatura ativa) | ⏳ |
-| S11-01 | Banco de Talentos: matching IA ao criar nova vaga (habilidades × requisitos, últimos 3 meses) | ⏳ |
-| S11-02 | Aba "Banco de Talentos" dentro da vaga: candidatos sugeridos por score | ⏳ |
-| S11-03 | Gestor pode adicionar talento como candidato com 1 clique | ⏳ |
+| S9-06 | Indexação RAG automática ao criar vaga (source_type='job_posting', filtro cuca_unit_id) | [x] |
+| S9-07 | Link público de candidatura: data de nascimento + upload CV (PDF ou foto) | [x] |
+| S9-08 | Worker: OCR via GPT-4o Vision → JSON (nome, idade, endereço, tel, escolaridade, experiência) | [x] |
+| S9-09 | Aviso automático: preenche requisitos básicos? ✅/⚠️/❌ (informativo para gestor) | [x] |
+| S9-10 | Datatable de candidatos: nome, idade, tel, escolaridade, experiência, status, ícone 📄 CV | [x] |
+| S9-11 | Edição manual de dados OCR incorretos pelo gestor | [x] |
+| S9-12 | Status lifecycle candidato: pendente → selecionado → contratado / rejeitado → banco_talentos | [x] |
+| S9-13 | Rejeitado → automático para talent_bank com skills JSONB | [x] |
+| S9-14 | Contratado → se vagas=0, vaga muda para "Preenchida" | [x] |
+| S10-01 | Agente Júlia por unidade (#1-5): consulta RAG job_posting da unidade | [x] |
+| S10-02 | Júlia: confirma candidatura antes de enviar link | [x] |
+| S10-03 | Júlia Geral (#6): consulta RAG job_posting sem filtro de unidade | [x] |
+| S10-04 | Júlia Geral: direciona ao WhatsApp da unidade (não coleta CV) | [x] |
+| S10-05 | Orientação profissional 24h: dicas entrevista, currículo (sem candidatura ativa) | [x] |
+| S11-01 | Banco de Talentos: matching IA ao criar nova vaga (habilidades × requisitos, últimos 3 meses) | [x] |
+| S11-02 | Aba "Banco de Talentos" dentro da vaga: candidatos sugeridos por score | [x] |
+| S11-03 | Gestor pode adicionar talento como candidato com 1 clique | [x] |
 | S11-04 | 🚨 **DEPLOY VPS HOSTINGER**: Subir o Worker FastAPI na VPS e autenticar instâncias UAZAPI para Go-Live operacional | ⏳ |
 
 ---

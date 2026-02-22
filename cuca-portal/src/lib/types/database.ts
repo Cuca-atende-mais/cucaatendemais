@@ -133,6 +133,20 @@ export type Feedback = {
     created_at: string
 }
 
+export type Candidatura = {
+    id: string
+    vaga_id: string
+    nome: string
+    data_nascimento: string
+    telefone: string
+    arquivo_cv_url: string | null
+    dados_ocr_json: any
+    requisitos_atendidos: string
+    status: string
+    created_at: string
+    updated_at: string
+}
+
 export type Campanha = {
     id: string
     unidade_cuca_id: string

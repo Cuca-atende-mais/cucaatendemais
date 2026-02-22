@@ -294,6 +294,26 @@ async def mark_as_read(token: str, request: Request):
         logger.error(f"Erro ao marcar como lida: {str(e)}")
         return Response(status_code=500)
 
+@app.post("/process-cv")
+async def process_cv_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """S9-08: Rota para o portal disparar o processamento OCR asincrono (GPT-4o)."""
+    try:
+        payload = await request.json()
+        candidatura_id = payload.get("candidatura_id")
+        cv_url = payload.get("cv_url")
+        vaga_id = payload.get("vaga_id")
+        
+        if not candidatura_id or not cv_url or not vaga_id:
+            return Response(status_code=400, content="Faltando parâmetros obligatórios")
+
+        from cv_processor import process_cv_ocr
+        background_tasks.add_task(process_cv_ocr, candidatura_id, cv_url, vaga_id)
+        
+        return {"status": "processing_started"}
+    except Exception as e:
+        logger.error(f"Erro ao startar OCR: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
 @app.post("/webhook/{token}")
 async def uazapi_webhook(token: str, request: Request, background_tasks: BackgroundTasks):
     # 1. Resposta 200 OK imediata (Requisito Crítico UAZAPI / Anti-Ban)
