@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  worker:
+    build: .
+    container_name: cuca-worker
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:8000 --timeout 120
