@@ -71,6 +71,39 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
         }
     }
 
+    async function fetchConversationDetails() {
+        if (!conversationId) return;
+        setLoading(true);
+        try {
+            const { data, error } = await supabase
+                .from('conversas')
+                .select('*, leads(*)')
+                .eq('id', conversationId)
+                .single();
+            if (error) throw error;
+            setConversation(data);
+        } catch (err: any) {
+            toast.error("Erro ao carregar conversa: " + err.message);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function fetchMessages() {
+        if (!conversationId) return;
+        try {
+            const { data, error } = await supabase
+                .from('mensagens')
+                .select('*')
+                .eq('conversa_id', conversationId)
+                .order('created_at', { ascending: true });
+            if (error) throw error;
+            setMessages(data || []);
+        } catch (err: any) {
+            toast.error("Erro ao carregar mensagens: " + err.message);
+        }
+    }
+
     async function handleSendMessage() {
         if (!newMessage.trim() || sending || !conversation) return;
         setSending(true);
