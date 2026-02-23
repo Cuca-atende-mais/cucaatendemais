@@ -24,12 +24,6 @@ export const menuItems = [
         permission: { recurso: "programacao", acao: "read" }
     },
     {
-        title: "Campanhas",
-        url: "/campanhas",
-        icon: "Megaphone",
-        permission: { recurso: "campanhas", acao: "read" }
-    },
-    {
         title: "Empregabilidade",
         url: "/empregabilidade",
         icon: "Briefcase",

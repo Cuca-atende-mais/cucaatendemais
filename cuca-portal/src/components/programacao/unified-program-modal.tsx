@@ -91,16 +91,16 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                 if (error) throw error
                 toast.success("Evento enviado para aprovação!")
             } else {
-                // Salvar em campanhas_mensais -> Status: aprovado (Bypass)
+                // Salvar em campanhas_mensais -> Status: aguardando_aprovacao
                 const { error } = await supabase.from("campanhas_mensais").insert({
                     titulo,
                     descricao,
                     mes,
                     ano,
-                    status: "aprovado"
+                    status: "aguardando_aprovacao"
                 })
                 if (error) throw error
-                toast.success("Programação mensal cadastrada e ativa!")
+                toast.success("Programação mensal enviada para aprovação da comissão!")
             }
 
             onSuccess()

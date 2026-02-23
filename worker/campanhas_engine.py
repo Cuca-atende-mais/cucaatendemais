@@ -35,22 +35,18 @@ async def campanhas_loop():
 
             now_iso = datetime.now(timezone.utc).isoformat()
             
-            # 1. Checar Campanhas Legadas
-            res_camp = supabase.table("campanhas").select("*").in_("status", ["aprovada", "em_andamento"]).execute()
-            for camp in res_camp.data:
-                await processar_item_disparo(camp, "campanhas", delay_min, delay_max, daily_limit, error_threshold)
-
-            # 2. Checar Programação Pontual (Aprovada)
+            # 1. Checar Programação Pontual (Aprovada pelo Gerente da Unidade)
             res_pontuais = supabase.table("eventos_pontuais").select("*").eq("status", "aprovado").is_("disparo_id", "null").execute()
             for evento in res_pontuais.data:
                 await processar_item_disparo(evento, "eventos_pontuais", delay_min, delay_max, daily_limit, error_threshold)
 
-            # 3. Checar Programação Mensal (Aprovada)
+            # 2. Checar Programação Mensal (Aprovada pós-Comissão/Excel)
             res_mensais = supabase.table("campanhas_mensais").select("*").eq("status", "aprovado").is_("disparo_id", "null").execute()
             for mensal in res_mensais.data:
                 await processar_item_disparo(mensal, "campanhas_mensais", delay_min, delay_max, daily_limit, error_threshold)
 
-            # 4. Checar Ouvidoria (Super Admin)
+            # 3. Checar Ouvidoria (Aprovada pelo Super Admin CUCA)
+            # Super Admin analisa IA e autoriza o disparo de feedback/balanço
             res_ouvidoria = supabase.table("ouvidoria_eventos").select("*").eq("status", "aprovado").is_("disparo_id", "null").execute()
             for ouv in res_ouvidoria.data:
                 await processar_item_disparo(ouv, "ouvidoria_eventos", delay_min, delay_max, daily_limit, error_threshold)
