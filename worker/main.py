@@ -274,10 +274,10 @@ async def process_webhook_payload(payload: dict, token: str):
                                     )
                         else:
                             logger.error(f"Erro no motor-agente HTTP {resp.status_code}: {resp.text}")
-                    except httpx.ReadTimeout:
-                        logger.error("Timeout aguardando processamento da IA (motor-agente demorou muito >45s).")
-                    except Exception as e:
-                        logger.error(f"Erro crítico no fluxo com motor-agente: {str(e)}")
+                except httpx.ReadTimeout:
+                    logger.error("Timeout aguardando processamento da IA (motor-agente demorou mais de 45s).")
+                except Exception as e:
+                    logger.error(f"Erro crítico no fluxo com motor-agente: {str(e)}")
             
         elif event_type == "connection.update":
             status = data.get("status")
