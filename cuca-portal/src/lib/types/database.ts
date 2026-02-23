@@ -46,6 +46,7 @@ export type EventoPontual = {
     descricao: string | null
     unidade_cuca: string
     data_evento: string
+    data_inicio: string
     data_fim: string | null
     hora_inicio: string | null
     hora_fim: string | null
@@ -66,6 +67,8 @@ export type CampanhaMensal = {
     ano: number
     titulo: string
     descricao: string | null
+    unidade_cuca_id: string | null
+    unidade_cuca: string | null
     arquivo_excel_url: string | null
     total_atividades: number
     disparo_id: string | null
