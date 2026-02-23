@@ -14,7 +14,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANO
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
 
-async def get_config(key: str, default_val: int) -> int:
+
+def _get_config_sync(key: str, default_val: int) -> int:
+    """Lê configuração do banco (síncrono - deve ser chamado via asyncio.to_thread)."""
     try:
         res = supabase.table("configuracoes").select("valor").eq("chave", key).execute()
         if res.data and len(res.data) > 0 and res.data[0].get("valor") is not None:
@@ -23,86 +25,86 @@ async def get_config(key: str, default_val: int) -> int:
         logger.warning(f"Erro ao ler config {key}: {e}")
     return default_val
 
-async def campanhas_loop():
-    logger.info("Iniciando Motor de Campanhas e Anti-Ban...")
-    while True:
-        try:
-            # Ler configs de delay e error_threshold
-            delay_min = await get_config("anti_ban_delay_min", 2000)
-            delay_max = await get_config("anti_ban_delay_max", 5000)
-            daily_limit = await get_config("anti_ban_daily_limit", 500)
-            error_threshold = await get_config("anti_ban_error_threshold", 10)
 
-            now_iso = datetime.now(timezone.utc).isoformat()
-            
-            # 1. Checar Programação Pontual (Aprovada pelo Gerente da Unidade)
-            res_pontuais = supabase.table("eventos_pontuais").select("*").eq("status", "aprovado").is_("disparo_id", "null").execute()
-            for evento in res_pontuais.data:
-                await processar_item_disparo(evento, "eventos_pontuais", delay_min, delay_max, daily_limit, error_threshold)
+async def get_config(key: str, default_val: int) -> int:
+    """Lê configuração sem bloquear o event loop."""
+    return await asyncio.to_thread(_get_config_sync, key, default_val)
 
-            # 2. Checar Programação Mensal (Aprovada pós-Comissão/Excel)
-            res_mensais = supabase.table("campanhas_mensais").select("*").eq("status", "aprovado").is_("disparo_id", "null").execute()
-            for mensal in res_mensais.data:
-                await processar_item_disparo(mensal, "campanhas_mensais", delay_min, delay_max, daily_limit, error_threshold)
 
-            # 3. Checar Ouvidoria (Aprovada pelo Super Admin CUCA)
-            # Super Admin analisa IA e autoriza o disparo de feedback/balanço
-            res_ouvidoria = supabase.table("ouvidoria_eventos").select("*").eq("status", "aprovado").is_("disparo_id", "null").execute()
-            for ouv in res_ouvidoria.data:
-                await processar_item_disparo(ouv, "ouvidoria_eventos", delay_min, delay_max, daily_limit, error_threshold)
+def _query_db_sync(tabela: str, status: str):
+    """Query síncrona - deve ser chamada via asyncio.to_thread."""
+    return supabase.table(tabela).select("*").eq("status", status).is_("disparo_id", "null").execute()
 
-        except Exception as e:
-            logger.error(f"Erro no loop de disparos: {str(e)}")
-        
-        await asyncio.sleep(30) # Checa a cada 30 segundos
+
+def _update_db_sync(tabela: str, item_id: str, dados: dict):
+    """Update síncrono - deve ser chamado via asyncio.to_thread."""
+    return supabase.table(tabela).update(dados).eq("id", item_id).execute()
+
+
+def _query_instancia_sync(unidade_id: str):
+    """Busca instância UAZAPI vinculada à unidade."""
+    return supabase.table("instancias_uazapi").select("nome, token").eq("cuca_unit_id", unidade_id).execute()
+
+
+def _query_leads_sync():
+    """Busca leads com opt_in ativo."""
+    return supabase.table("leads").select("telefone, nome").eq("opt_in", True).eq("bloqueado", False).execute()
+
 
 async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_max: int, daily_limit: int, error_threshold: int):
-    item_id = item["id"]
-    unidade_id = item.get("unidade_cuca_id") or item.get("unidade_id") # compatibilidade com nomes de colunas
-    
-    if item["status"] == "aprovado" or item["status"] == "aprovada":
-        supabase.table(origem).update({"status": "em_andamento"}).eq("id", item_id).execute()
+    """Processa e dispara mensagem para um evento aprovado."""
+    item_id = item.get("id")
+    unidade_id = item.get("unidade_cuca_id") or item.get("unidade_id")
+    template_texto = item.get("template_texto") or item.get("titulo") or item.get("descricao") or "Olá, {{nome}}!"
+    midia_url = item.get("midia_url") or item.get("flyer_url")
 
-    # Buscar instância
-    inst_res = supabase.table("instancias_uazapi").select("nome, token").eq("cuca_unit_id", unidade_id).execute()
+    # Marcar como em andamento (em thread separada para não bloquear)
+    await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
+
+    # Buscar instância UAZAPI
+    inst_res = await asyncio.to_thread(_query_instancia_sync, unidade_id)
     if not inst_res.data:
-        logger.error(f"Nenhuma instância UAZAPI vinculada à unidade {unidade_id}")
-        supabase.table("campanhas").update({"status": "pausada"}).eq("id", camp_id).execute()
+        logger.error(f"Nenhuma instância UAZAPI para unidade {unidade_id}. Pausando item {item_id}.")
+        await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
         return
-    
+
     instance_name = inst_res.data[0]["nome"]
     inst_token = inst_res.data[0]["token"]
 
-    # Buscar apenas leads com opt_in e não bloqueados
-    # Obs: Se tiver milhões de leads, ideal era paginação. Para o MVP, pega tudo.
-    leads_res = supabase.table("leads").select("telefone, nome").eq("opt_in", True).eq("bloqueado", False).execute()
+    # Buscar leads com opt_in
+    leads_res = await asyncio.to_thread(_query_leads_sync)
     leads = leads_res.data or []
-    
-    sucessos = 0
-    erros = 0
     total = len(leads)
 
     if total == 0:
-        supabase.table("campanhas").update({"status": "concluida"}).eq("id", camp_id).execute()
+        logger.info(f"Item {item_id}: Sem leads para disparar. Marcando como concluída.")
+        await asyncio.to_thread(_update_db_sync, origem, item_id, {
+            "status": "concluida",
+            "disparo_id": f"DISP-{int(time.time())}"
+        })
         return
 
-    logger.info(f"Campanha {camp_id}: Disparando para {total} leads com delay de {delay_min} a {delay_max}ms")
+    logger.info(f"Item {item_id} ({origem}): Disparando para {total} leads | Delay: {delay_min}-{delay_max}ms")
+
+    sucessos = 0
+    erros = 0
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             for i, lead in enumerate(leads):
                 if i >= daily_limit:
-                    logger.warning("Limite diário anti-ban atingido nesta run.")
+                    logger.warning(f"Limite diário anti-ban atingido ({daily_limit}). Pausando.")
                     break
 
-                # Aplicar Delay Aleatório (Anti-Ban Warmup)
+                # Delay aleatório anti-ban
                 sleep_time = random.uniform(delay_min / 1000.0, delay_max / 1000.0)
                 await asyncio.sleep(sleep_time)
 
-                texto = camp["template_texto"].replace("{{nome}}", lead["nome"] or "cidadão")
+                nome_lead = lead.get("nome") or "cidadão"
+                texto = template_texto.replace("{{nome}}", nome_lead)
 
                 try:
-                    if camp.get("midia_url"):
+                    if midia_url:
                         resp = await client.post(
                             f"{UAZAPI_URL}/message/sendMedia/{instance_name}",
                             headers={"apikey": inst_token, "Content-Type": "application/json"},
@@ -112,7 +114,7 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                                 "mediaMessage": {
                                     "mediatype": "image",
                                     "caption": texto,
-                                    "media": camp["midia_url"]
+                                    "media": midia_url
                                 }
                             }
                         )
@@ -126,27 +128,69 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                                 "textMessage": {"text": texto}
                             }
                         )
-                    
+
                     if resp.status_code == 200:
                         sucessos += 1
                     else:
                         erros += 1
+                        logger.warning(f"UAZAPI HTTP {resp.status_code} para {lead['telefone']}")
 
                 except Exception as req_err:
                     erros += 1
                     logger.error(f"Erro request UAZAPI: {str(req_err)}")
 
-                # Monitoramento de Erros e Bloqueio Automático
-                current_rate = (erros / (i + 1)) * 100
-                if current_rate > error_threshold and (i + 1) > 5:
-                    logger.error(f"ALERTA: Taxa de erro alta ({current_rate}%). Pausando disparo!")
-                    supabase.table(origem).update({"status": "pausada"}).eq("id", item_id).execute()
-                    return
+                # Monitorar taxa de erro anti-ban
+                if (i + 1) > 5:
+                    taxa_erro = (erros / (i + 1)) * 100
+                    if taxa_erro > error_threshold:
+                        logger.error(f"ALERTA: Taxa de erro {taxa_erro:.1f}% > {error_threshold}%. Pausando!")
+                        await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
+                        return
 
-            # Finalização do disparo
-            supabase.table(origem).update({"status": "concluida", "disparo_id": "DISP-" + str(int(time.time()))}).eq("id", item_id).execute()
-            logger.info(f"Disparo {item_id} concluído. Sucessos: {sucessos}, Erros: {erros}")
+        # Finalizar disparo com sucesso
+        await asyncio.to_thread(_update_db_sync, origem, item_id, {
+            "status": "concluida",
+            "disparo_id": f"DISP-{int(time.time())}"
+        })
+        logger.info(f"Disparo {item_id} concluído. Sucessos: {sucessos} | Erros: {erros}")
 
     except Exception as exc:
-        logger.error(f"Falha fatal no processar_item_disparo: {str(exc)}")
-        supabase.table(origem).update({"status": "pausada"}).eq("id", item_id).execute()
+        logger.error(f"Falha fatal em processar_item_disparo: {str(exc)}")
+        await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
+
+
+async def campanhas_loop():
+    """Loop principal: checa aprovações a cada 30s sem bloquear o event loop."""
+    logger.info("Iniciando Motor de Campanhas e Anti-Ban...")
+
+    # Aguarda 5s após startup para deixar o servidor estabilizar
+    await asyncio.sleep(5)
+
+    while True:
+        try:
+            # Ler configurações anti-ban
+            delay_min = await get_config("anti_ban_delay_min", 2000)
+            delay_max = await get_config("anti_ban_delay_max", 5000)
+            daily_limit = await get_config("anti_ban_daily_limit", 500)
+            error_threshold = await get_config("anti_ban_error_threshold", 10)
+
+            # 1. Programação Pontual (aprovada pelo Gerente da Unidade)
+            res_pontuais = await asyncio.to_thread(_query_db_sync, "eventos_pontuais", "aprovado")
+            for evento in (res_pontuais.data or []):
+                await processar_item_disparo(evento, "eventos_pontuais", delay_min, delay_max, daily_limit, error_threshold)
+
+            # 2. Programação Mensal (aprovada pela Comissão/Excel)
+            res_mensais = await asyncio.to_thread(_query_db_sync, "campanhas_mensais", "aprovado")
+            for mensal in (res_mensais.data or []):
+                await processar_item_disparo(mensal, "campanhas_mensais", delay_min, delay_max, daily_limit, error_threshold)
+
+            # 3. Ouvidoria (aprovada pelo Super Admin CUCA)
+            res_ouvidoria = await asyncio.to_thread(_query_db_sync, "ouvidoria_eventos", "aprovado")
+            for ouv in (res_ouvidoria.data or []):
+                await processar_item_disparo(ouv, "ouvidoria_eventos", delay_min, delay_max, daily_limit, error_threshold)
+
+        except Exception as e:
+            logger.error(f"Erro no loop de disparos: {str(e)}")
+
+        # Aguarda 30 segundos antes da próxima verificação
+        await asyncio.sleep(30)

@@ -60,9 +60,9 @@ async def security_middleware(request: Request, call_next):
     # 1. Extrair IP real (atrás de proxy NGINX)
     client_ip = request.headers.get("X-Real-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (request.client.host if request.client else "unknown")
     
-    # 2. Isentar webhook da UAZAPI do rate limit (alto volume legítimo)
+    # 2. Isentar webhook e health do rate limit
     path = request.url.path
-    is_webhook = path.startswith("/webhook/")
+    is_webhook = path.startswith("/webhook/") or path in ("/", "/health")
     
     # 3. Rate limit para endpoints não-webhook
     if not is_webhook and check_rate_limit(client_ip):
@@ -290,6 +290,10 @@ async def process_webhook_payload(payload: dict, token: str):
 
     except Exception as e:
         logger.error(f"Erro no processamento em background: {str(e)}")
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "worker-cuca"}
 
 @app.get("/health")
 async def health_check():
