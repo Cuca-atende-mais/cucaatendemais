@@ -35,29 +35,39 @@ async def campanhas_loop():
 
             now_iso = datetime.now(timezone.utc).isoformat()
             
-            # Or demorou no fastapi, então pegamos as campanhas com OR
-            res = supabase.table("campanhas") \
+            # 1. Checar Campanhas Legadas (se ainda existirem)
+            res_camp = supabase.table("campanhas") \
                 .select("*") \
                 .in_("status", ["aprovada", "em_andamento"]) \
                 .execute()
 
-            for camp in res.data:
+            for camp in res_camp.data:
                 agendamento = camp.get("agendamento")
-                # Se não tem agendamento ou se a data de agendamento já passou
                 if not agendamento or agendamento <= now_iso:
-                    await processar_campanha(camp, delay_min, delay_max, daily_limit, error_threshold)
+                    await processar_item_disparo(camp, "campanhas", delay_min, delay_max, daily_limit, error_threshold)
+
+            # 2. Checar Programação Pontual (Aprovada pelo Gerente)
+            res_pontuais = supabase.table("eventos_pontuais") \
+                .select("*") \
+                .eq("status", "aprovado") \
+                .is_("disparo_id", "null") \
+                .execute()
+
+            for evento in res_pontuais.data:
+                # O motor processa o evento pontual como se fosse uma campanha
+                await processar_item_disparo(evento, "eventos_pontuais", delay_min, delay_max, daily_limit, error_threshold)
 
         except Exception as e:
-            logger.error(f"Erro no loop de campanhas: {str(e)}")
+            logger.error(f"Erro no loop de disparos: {str(e)}")
         
         await asyncio.sleep(30) # Checa a cada 30 segundos
 
-async def processar_campanha(camp: dict, delay_min: int, delay_max: int, daily_limit: int, error_threshold: int):
-    camp_id = camp["id"]
-    unidade_id = camp["unidade_cuca_id"]
+async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_max: int, daily_limit: int, error_threshold: int):
+    item_id = item["id"]
+    unidade_id = item.get("unidade_cuca_id") or item.get("unidade_id") # compatibilidade com nomes de colunas
     
-    if camp["status"] == "aprovada":
-        supabase.table("campanhas").update({"status": "em_andamento"}).eq("id", camp_id).execute()
+    if item["status"] == "aprovado" or item["status"] == "aprovada":
+        supabase.table(origem).update({"status": "em_andamento"}).eq("id", item_id).execute()
 
     # Buscar instância
     inst_res = supabase.table("instancias_uazapi").select("nome, token").eq("cuca_unit_id", unidade_id).execute()
@@ -132,17 +142,17 @@ async def processar_campanha(camp: dict, delay_min: int, delay_max: int, daily_l
                     erros += 1
                     logger.error(f"Erro request UAZAPI: {str(req_err)}")
 
-                # Monitoramento de Erros e Bloqueio Automático (S8-05)
+                # Monitoramento de Erros e Bloqueio Automático
                 current_rate = (erros / (i + 1)) * 100
                 if current_rate > error_threshold and (i + 1) > 5:
-                    logger.error(f"ALERTA: Taxa de erro alta ({current_rate}%). Possível ban ou offline. Pausando campanha!")
-                    supabase.table("campanhas").update({"status": "pausada"}).eq("id", camp_id).execute()
+                    logger.error(f"ALERTA: Taxa de erro alta ({current_rate}%). Pausando disparo!")
+                    supabase.table(origem).update({"status": "pausada"}).eq("id", item_id).execute()
                     return
 
-            # Finalização da campanha
-            supabase.table("campanhas").update({"status": "concluida"}).eq("id", camp_id).execute()
-            logger.info(f"Campanha {camp_id} concluída. Sucessos: {sucessos}, Erros: {erros}")
+            # Finalização do disparo
+            supabase.table(origem).update({"status": "concluida", "disparo_id": "DISP-" + str(int(time.time()))}).eq("id", item_id).execute()
+            logger.info(f"Disparo {item_id} concluído. Sucessos: {sucessos}, Erros: {erros}")
 
     except Exception as exc:
-        logger.error(f"Falha fatal no processar_campanha: {str(exc)}")
-        supabase.table("campanhas").update({"status": "pausada"}).eq("id", camp_id).execute()
+        logger.error(f"Falha fatal no processar_item_disparo: {str(exc)}")
+        supabase.table(origem).update({"status": "pausada"}).eq("id", item_id).execute()
