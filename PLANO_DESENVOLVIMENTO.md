@@ -989,49 +989,45 @@ Status das correções emergenciais pós-deploy na VPS:
 
 ---
 
+## 15. GUIA TÉCNICO: WORKER & EASYPANEL {#15-worker-setup}
+
+Abaixo, o passo a passo solicitado para configurar o Worker Python na Hostinger via Easypanel:
+
+### Passo 1: O que é o Worker?
+O Worker é um processo separado (Back-end) que lida com tarefas pesadas ou constantes que o Portal (Next.js) não deve fazer para não ficar lento. No nosso caso:
+1. **Loop de Disparos**: Varre o banco a cada 30 segundos verificando o que foi aprovado.
+2. **Processamento de Currículos**: Extrai dados de PDFs no Banco de Talentos.
+3. **Webhooks UAZAPI**: Recebe mensagens do WhatsApp e salva no banco.
+
+### Passo 2: Configuração Passo a Passo no Easypanel
+1. **No Terminal Local**: 
+   - Garanta que as dependências estão no `worker/requirements.txt`.
+   - Realize o `git push` (já fiz o commit com o código unificado).
+2. **No Painel Easypanel**:
+   - Vá em **Services** -> **Add Service** -> **App**.
+   - **Service Name**: `cuca-worker`.
+   - **Source**: 
+     - Selecione seu repositório Git.
+     - **Branch**: `main`.
+     - **Root Directory**: `./worker` (Crucial para ele ignorar o resto do projeto).
+3. **Environment Variables**:
+   Adicione exatamente estas chaves (pegue do seu Supabase):
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY` (Chave secreta para o Worker editar o banco).
+   - `UAZAPI_BASE_URL` (URL da API do WhatsApp).
+   - `INTERNAL_TOKEN` (Crie um token forte e use o mesmo no `.env.local` do Portal).
+4. **Network**:
+   - Adicione uma porta: `Internal: 8000` -> `Public: 8000` (ou a porta que preferir).
+5. **Deploy**:
+   - O Easypanel lerá o `Dockerfile` dentro da pasta `worker` e fará o build automaticamente.
+
+### Passo 3: Como atualizar?
+Como o deploy não é automático na Hostinger:
+1. Sempre que terminarmos um ajuste aqui e eu fizer o `push`, você abre o Easypanel.
+2. Entra no serviço `cuca-worker`.
+3. Clica no botão azul **Deploy**. Ele faz o pull e atualiza em segundos.
 
 ---
 
-## 15. GUIA DE DEPLOY (HOSTINGER + EASYPANEL) {#15-deploy}
-
-Como o Easypanel não possui redeploy automático via Git (webhook) por padrão na Hostinger, siga estes passos para atualizar o Worker após os commits:
-
-### Passo 1: Preparação do Worker (Python)
-- **Estrutura**: O Worker é um app FastAPI que roda um loop de fundo (`asyncio`).
-- **Dependências**: Garanta que o `requirements.txt` inclua:
-  - `fastapi`, `uvicorn`, `supabase`, `httpx`, `python-dotenv`.
-- **Dockerfile**:
-  ```dockerfile
-  FROM python:3.11-slim
-  WORKDIR /app
-  COPY requirements.txt .
-  RUN pip install -r requirements.txt
-  COPY . .
-  CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-  ```
-- **Porta**: O app **deve** expor a porta `8000`.
-
-### Passo 2: Configuração no Easypanel
-1. **Novo Projeto**: Crie um projeto chamado `CUCA`.
-2. **Service (App)**: Adicione um serviço do tipo `App`.
-3. **Source**: 
-   - **Git Repository**: Vincule seu repositório GitHub.
-   - **Branch**: `main`.
-   - **Root Directory**: `./worker` (Confirmado: o diretório é `worker`, não `cuca-worker`).
-4. **Environment Variables**:
-   - `SUPABASE_URL`: URL do seu projeto.
-   - `SUPABASE_SERVICE_ROLE_KEY`: Chave de serviço (precisa de permissão total).
-   - `UAZAPI_BASE_URL`: URL do servidor da UAZAPI.
-   - `INTERNAL_TOKEN`: Token compartilhado com o Portal para webhooks.
-5. **Porta**: Em `Network`, mapeie a porta interna `8000` para a porta pública desejada.
-
-### Passo 3: Atualização (Redeploy Manual)
-Sempre que fizermos um `git push` aqui, você deve:
-1. Abrir o Easypanel (Hostinger).
-2. Selecionar o serviço do Worker.
-3. No painel **Deploy**, clicar em **Deploy**. O Easypanel irá baixar o código novo, buildar o Docker e reiniciar o serviço.
-
----
-
-> **Versão 6.2 — 22/02/2026**
-> Commit de ajustes técnicos realizado. Guia de deploy Easypanel adicionado ao plano.
+> **Versão 6.3 — 22/02/2026**
+> Unificação de disparos (Pontual/Mensal/Ouvidoria) implementada. Guia técnico detalhado para Super Admin e Easypanel.
