@@ -988,5 +988,41 @@ Status das correções emergenciais pós-deploy na VPS:
 
 ---
 
-> **Versão 6.1 — 22/02/2026**
-> Iniciando fase de ajustes pós-deploy na VPS Hostinger.
+
+---
+
+## 15. GUIA DE DEPLOY (HOSTINGER + EASYPANEL) {#15-deploy}
+
+Como o Easypanel não possui redeploy automático via Git (webhook) por padrão na Hostinger, siga estes passos para atualizar o Worker após os commits:
+
+### Passo 1: Preparação do Worker (Python)
+- O Worker deve estar no diretório `/cuca-worker`.
+- Garanta que o `Dockerfile` exponha a porta `8000`.
+- O entrypoint deve ser: `uvicorn main:app --host 0.0.0.0 --port 8000`.
+
+### Passo 2: Configuração no Easypanel
+1. **Novo Projeto**: Crie um projeto chamado `CUCA`.
+2. **Service (App)**: Adicione um serviço do tipo `App`.
+3. **Source**: 
+   - **Git Repository**: Vincule seu repositório GitHub.
+   - **Branch**: `main`.
+   - **Root Directory**: `./cuca-worker` (importante!).
+4. **Environment Variables**: Copie as chaves do `.env` local:
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `OPENAI_API_KEY`
+   - `UAZAPI_SERVER_URL`
+   - `UAZAPI_ADMIN_TOKEN`
+   - `INTERNAL_TOKEN` (Deve ser igual ao `NEXT_PUBLIC_INTERNAL_TOKEN` do Portal).
+5. **Porta**: Em `Network`, garanta que a porta `8000` esteja mapeada.
+
+### Passo 3: Atualização (Redeploy Manual)
+Sempre que fizermos um `git push` aqui, você deve:
+1. Abrir o Easypanel.
+2. Ir no serviço do Worker.
+3. No painel **Deploy**, clicar em **Deploy** ou **Force Rebuild**.
+
+---
+
+> **Versão 6.2 — 22/02/2026**
+> Commit de ajustes técnicos realizado. Guia de deploy Easypanel adicionado ao plano.
