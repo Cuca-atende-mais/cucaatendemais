@@ -1080,7 +1080,8 @@ O sistema detecta automaticamente o ambiente. Para manutenção local, utilize o
 - [x] **Privacidade (LGPD)**: Botão de anonimização e fluxo de Opt-in testados e operacionais.
 - [x] **Developer Console**: Monitoramento de custo OpenAI e Logs do Worker em tempo real ativos.
 - [x] **Consolidado Gerencial**: Dashboard principal exibindo métricas reais de todas as unidades CUCA.
-- [ ] **Validação Local**: Abrir o sistema em `localhost:3000` e confirmar login bem-sucedido.
+- [x] **Validação Local**: Abrir o sistema em `localhost:3000` e confirmar login bem-sucedido.
+- [x] **Estabilidade de Build**: Correções de imports e rotas aplicadas para garantir deploy na Hostinger.
 
 ---
 

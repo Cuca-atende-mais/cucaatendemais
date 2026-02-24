@@ -69,7 +69,7 @@ export default function DashboardPage() {
                         <SelectContent>
                             <SelectItem value="all">Todas as Unidades</SelectItem>
                             {unidadesCuca.map(u => (
-                                <SelectItem key={u.id} value={u.nome}>{u.nome}</SelectItem>
+                                <SelectItem key={u} value={u}>{u}</SelectItem>
                             ))}
                         </SelectContent>
                     </Select>
