@@ -80,15 +80,15 @@ const consoleModules = [
         badgeVariant: "default" as const,
         status: "active",
     },
-]    {
-    title: "Diagnóstico RAG",
-    description: "Verificar chunks indexados por canal — testar busca semântica sem expor ao usuário",
-    icon: Database,
-    href: "/developer/rag",
-    badge: "Em breve",
-    badgeVariant: "secondary" as const,
-    status: "coming",
-},
+    {
+        title: "Diagnóstico RAG",
+        description: "Verificar chunks indexados por canal — testar busca semântica sem expor ao usuário",
+        icon: Database,
+        href: "/developer/rag",
+        badge: "Em breve",
+        badgeVariant: "secondary" as const,
+        status: "coming",
+    },
 ]
 
 export default function DeveloperConsolePage() {

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/lib/supabase/client"
 import {
     CalendarDays, Plus, Pencil, Trash2, CheckCircle2,
     AlertTriangle, Loader2, Megaphone
@@ -40,7 +40,7 @@ const STATUS_CONFIG = {
 const UNIDADES = ["Geral", "Barra", "Mondubim", "Jangurussu", "José Walter", "Pici"]
 
 export default function EventosOuvidoriaPage() {
-    const supabase = createClientComponentClient()
+    const supabase = createClient()
     const [eventos, setEventos] = useState<EventoOuvidoria[]>([])
     const [loading, setLoading] = useState(true)
 

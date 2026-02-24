@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/lib/supabase/client"
 import {
     Wifi,
     WifiOff,
@@ -45,7 +45,7 @@ type InstanceType = {
 }
 
 export default function WhatsAppUnidadePage() {
-    const supabase = createClientComponentClient()
+    const supabase = createClient()
     const [instances, setInstances] = useState<InstanceType[]>([])
     const [loading, setLoading] = useState<string | null>(null)
     const [fetching, setFetching] = useState(true)

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/lib/supabase/client"
 import { DollarSign, TrendingUp, BarChart2, Loader2, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -23,7 +23,7 @@ const FEATURE_LABEL: Record<string, string> = {
 }
 
 export default function DevConsumoPage() {
-    const supabase = createClientComponentClient()
+    const supabase = createClient()
     const [rows, setRows] = useState<UsageRow[]>([])
     const [budget, setBudget] = useState<number>(50)
     const [loading, setLoading] = useState(true)

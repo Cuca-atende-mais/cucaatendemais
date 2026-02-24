@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/lib/supabase/client"
 import {
     Building2, Plus, Pencil, Trash2, ChevronDown, ChevronRight,
     CheckCircle2, AlertTriangle, WrenchIcon, Loader2, Monitor
@@ -46,7 +46,7 @@ const STATUS_CONFIG = {
 const UNIDADES = ["Barra", "Mondubim", "Jangurussu", "José Walter", "Pici"]
 
 export default function EspacosPage() {
-    const supabase = createClientComponentClient()
+    const supabase = createClient()
     const [espacos, setEspacos] = useState<Espaco[]>([])
     const [equipamentosPorEspaco, setEquipamentosPorEspaco] = useState<Record<string, Equipamento[]>>({})
     const [expanded, setExpanded] = useState<string | null>(null)

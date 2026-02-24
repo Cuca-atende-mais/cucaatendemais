@@ -36,7 +36,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/lib/supabase/client"
 
 // Tipagem baseada no banco de dados
 type InstanceType = {
@@ -50,7 +50,7 @@ type InstanceType = {
 }
 
 export default function InstanciasPage() {
-    const supabase = createClientComponentClient()
+    const supabase = createClient()
     const [instances, setInstances] = useState<InstanceType[]>([])
     const [search, setSearch] = useState("")
     const [filterCategory, setFilterCategory] = useState("all")

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Server, Activity, Cpu, Database, Loader2, RefreshCcw, Wifi, AlertCircle } from "lucide-react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,7 +21,7 @@ type WorkerStats = {
 }
 
 export default function DevWorkerPage() {
-    const supabase = createClientComponentClient()
+    const supabase = createClient()
     const [stats, setStats] = useState<WorkerStats | null>(null)
     const [loading, setLoading] = useState(true)
 

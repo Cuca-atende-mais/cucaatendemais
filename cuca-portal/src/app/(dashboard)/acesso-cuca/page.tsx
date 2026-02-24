@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/lib/supabase/client"
 import {
     ClipboardList, CheckCircle2, XCircle, Clock, Building2,
     Calendar, User, Phone, FileText, ChevronRight, Loader2,
@@ -52,7 +52,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
 }
 
 export default function AcessoCucaPortalPage() {
-    const supabase = createClientComponentClient()
+    const supabase = createClient()
     const [solicitacoes, setSolicitacoes] = useState<Solicitacao[]>([])
     const [loading, setLoading] = useState(true)
     const [detalhando, setDetalhando] = useState<Solicitacao | null>(null)

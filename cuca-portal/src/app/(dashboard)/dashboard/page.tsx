@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users, Calendar, Briefcase, MessageSquare, Building2, TrendingUp, Loader2 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -9,7 +9,7 @@ import { unidadesCuca } from "@/lib/constants"
 import { cn } from "@/lib/utils"
 
 export default function DashboardPage() {
-    const supabase = createClientComponentClient()
+    const supabase = createClient()
     const [loading, setLoading] = useState(true)
     const [selectedUnit, setSelectedUnit] = useState("all")
     const [stats, setStats] = useState({

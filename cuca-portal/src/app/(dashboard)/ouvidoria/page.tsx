@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import { createClient } from "@/lib/supabase/client"
 import {
     MessageSquareWarning, Lightbulb, PieChart, Activity, UserX, User, Building2,
     Calendar, CheckCircle2, AlertCircle, HelpCircle, Loader2, Sparkles
@@ -40,7 +40,7 @@ const SENTIMENTO_CONFIG = {
 }
 
 export default function OuvidoriaPage() {
-    const supabase = createClientComponentClient()
+    const supabase = createClient()
     const [registros, setRegistros] = useState<OuvidoriaRegistro[]>([])
     const [loading, setLoading] = useState(true)
     const [detalhamento, setDetalhamento] = useState<OuvidoriaRegistro | null>(null)
