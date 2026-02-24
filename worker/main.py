@@ -143,6 +143,7 @@ async def process_webhook_payload(payload: dict, token: str):
                     "updated_at": "now()"
                 }, on_conflict="telefone").execute()
                 lead_id = lead_result.data[0]["id"]
+                opt_in = lead_result.data[0].get("opt_in", False)
             except Exception as e:
                 logger.error(f"Erro ao gerenciar Lead: {str(e)}")
                 return # Se não tiver lead, não salvamos mensagem
@@ -187,9 +188,79 @@ async def process_webhook_payload(payload: dict, token: str):
             except Exception as e:
                 logger.error(f"Erro ao salvar mensagem: {str(e)}")
             
-            # --- S5-02: Routing Automático para Motor de IA ---
-            # A IA só é disparada se não for uma mensagem nossa E se o status for 'ativa'
+            # --- S14-01 e S14-02: Opt-in LGPD ---
             if not from_me and conversation_status == "ativa":
+                if not opt_in:
+                    texto_limpo = text_content.lower().strip()
+                    import httpx
+                    
+                    # Verificando resposta ao opt-in
+                    if texto_limpo in ["sim", "aceito", "quero"]:
+                        try:
+                            supabase.table("leads").update({"opt_in": True}).eq("id", lead_id).execute()
+                            logger.info(f"Lead {lead_id} aceitou o LGPD Opt-in.")
+                        except Exception as e:
+                            logger.error(f"Erro ao setar opt-in: {e}")
+                        
+                        # Marca virtualmente como verdadeiro para continuar o fluxo para a IA nesta mesma mensagem
+                        opt_in = True
+                        
+                        # Responder agradecendo
+                        try:
+                            UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+                            inst_result = supabase.table("instancias_uazapi").select("token").eq("nome", instance_name).single().execute()
+                            inst_token = inst_result.data.get("token") if inst_result.data else ""
+                            
+                            async def notify_optin():
+                                async with httpx.AsyncClient() as client:
+                                    payload_send = {
+                                        "number": phone,
+                                        "options": {"delay": 1200, "presence": "composing"},
+                                        "textMessage": {"text": "Obrigado por confirmar! Aguarde um momento enquanto processo seu atendimento..." }
+                                    }
+                                    await client.post(f"{UAZAPI_URL}/messages/sendText", json=payload_send, headers={"apiKey": inst_token})
+                            asyncio.create_task(notify_optin())
+                        except Exception as e:
+                            pass
+                            
+                    elif texto_limpo in ["não", "nao", "sair", "parar"]:
+                        # Usuário negou o opt-in
+                        try:
+                            UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+                            inst_result = supabase.table("instancias_uazapi").select("token").eq("nome", instance_name).single().execute()
+                            inst_token = inst_result.data.get("token") if inst_result.data else ""
+                            
+                            async with httpx.AsyncClient() as client:
+                                payload_send = {
+                                    "number": phone,
+                                    "options": {"delay": 1200, "presence": "composing"},
+                                    "textMessage": {"text": "Tudo bem! Suas preferências foram salvas e você não receberá mensagens do Atende+. Caso mude de ideia no futuro, basta mandar um 'Oi'." }
+                                }
+                                await client.post(f"{UAZAPI_URL}/messages/sendText", json=payload_send, headers={"apiKey": inst_token})
+                        except Exception as e:
+                            logger.error(f"Erro ao tratar recusa de opt-in: {e}")
+                        return # Encerra processamento
+                    else:
+                        # Manda a mensagem padrão pedindo aceite
+                        try:
+                            UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+                            inst_result = supabase.table("instancias_uazapi").select("token").eq("nome", instance_name).single().execute()
+                            inst_token = inst_result.data.get("token") if inst_result.data else ""
+                            
+                            async with httpx.AsyncClient() as client:
+                                payload_send = {
+                                    "number": phone,
+                                    "options": {"delay": 1200, "presence": "composing"},
+                                    "textMessage": {"text": "👋 Olá! Bem-vindo ao *Atende+* da Rede CUCA.\n\nPara continuar o atendimento e de acordo com a LGPD, preciso que você aceite receber nossas mensagens e concorde com a nossa política.\n\nResponda *Sim* para continuar ou *Não* para encerrar." }
+                                }
+                                await client.post(f"{UAZAPI_URL}/messages/sendText", json=payload_send, headers={"apiKey": inst_token})
+                        except Exception as e:
+                            logger.error(f"Erro ao pedir opt-in: {e}")
+                        return # Encerra processamento até ele responder Sim
+
+            # --- S5-02: Routing Automático para Motor de IA ---
+            # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa' e se tiver opt-in LGPD aceito
+            if not from_me and conversation_status == "ativa" and opt_in:
                 try:
                     # Chamar Edge Function motor-agente
                     # Nota: O token interno garante que a requisição partiu do nosso worker

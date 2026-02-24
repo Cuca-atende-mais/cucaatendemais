@@ -36,7 +36,9 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 
-// Tipagem básica para instâncias
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+
+// Tipagem baseada no banco de dados
 type InstanceType = {
     id: string
     name: string
@@ -47,48 +49,72 @@ type InstanceType = {
     lastSeen?: string
 }
 
-// Lista estática das 14 instâncias baseada na documentação ministerial
-const INITIAL_INSTANCES: InstanceType[] = [
-    { id: "1", name: "Emp. Barra", category: "Empregabilidade", unit: "Barra", status: "disconnected" },
-    { id: "2", name: "Emp. Mondubim", category: "Empregabilidade", unit: "Mondubim", status: "disconnected" },
-    { id: "3", name: "Emp. Jangurussu", category: "Empregabilidade", unit: "Jangurussu", status: "disconnected" },
-    { id: "4", name: "Emp. José Walter", category: "Empregabilidade", unit: "José Walter", status: "disconnected" },
-    { id: "5", name: "Emp. Pici", category: "Empregabilidade", unit: "Pici", status: "disconnected" },
-    { id: "6", name: "Emp. Geral", category: "Empregabilidade", unit: "Geral", status: "disconnected" },
-    { id: "7", name: "Pontual Barra", category: "Pontual", unit: "Barra", status: "disconnected" },
-    { id: "8", name: "Pontual Mondubim", category: "Pontual", unit: "Mondubim", status: "disconnected" },
-    { id: "9", name: "Pontual Jangurussu", category: "Pontual", unit: "Jangurussu", status: "disconnected" },
-    { id: "10", name: "Pontual José Walter", category: "Pontual", unit: "José Walter", status: "disconnected" },
-    { id: "11", name: "Pontual Pici", category: "Pontual", unit: "Pici", status: "disconnected" },
-    { id: "12", name: "Prog. Mensal", category: "Mensal", unit: "Geral", status: "disconnected" },
-    { id: "13", name: "Ouvidoria Jovem", category: "Ouvidoria", unit: "Geral", status: "disconnected" },
-    { id: "14", name: "Agente Geral (Unidade)", category: "Geral", unit: "Geral", status: "disconnected" },
-]
-
 export default function InstanciasPage() {
-    const [instances, setInstances] = useState<InstanceType[]>(INITIAL_INSTANCES)
+    const supabase = createClientComponentClient()
+    const [instances, setInstances] = useState<InstanceType[]>([])
     const [search, setSearch] = useState("")
     const [filterCategory, setFilterCategory] = useState("all")
     const [loading, setLoading] = useState<string | null>(null)
+    const [fetching, setFetching] = useState(true)
 
-    // Simulação de ação de conexão (Gera QR Code)
-    const handleConnect = (id: string) => {
-        setLoading(id)
-        setTimeout(() => {
-            toast.success("QR Code gerado com sucesso!")
-            setLoading(null)
-        }, 1500)
+    useEffect(() => {
+        fetchInstances()
+    }, [])
+
+    const fetchInstances = async () => {
+        try {
+            setFetching(true)
+            const { data, error } = await supabase.from('instancias_uazapi').select('*').order('nome')
+
+            if (error) throw error
+
+            const mapped: InstanceType[] = (data || []).map(row => ({
+                id: row.id,
+                name: row.nome,
+                category: (row.agente_tipo === "Empregabilidade" || row.agente_tipo === "Pontual" || row.agente_tipo === "Mensal" || row.agente_tipo === "Ouvidoria") ? row.agente_tipo : "Geral",
+                unit: row.unidade_cuca || "Geral",
+                status: row.ativa ? "connected" : "disconnected",
+                phone: row.telefone
+            }))
+
+            setInstances(mapped)
+        } catch (error) {
+            console.error("Erro ao carregar instâncias:", error)
+        } finally {
+            setFetching(false)
+        }
     }
 
-    // Simulação de Logout
-    const handleLogout = (id: string) => {
+    // Ação de conexão (Gera QR Code)
+    const handleConnect = async (id: string) => {
+        setLoading(id)
+        try {
+            // Simula geração de QR e ativa no banco
+            const { error } = await supabase.from('instancias_uazapi').update({ ativa: true }).eq('id', id)
+            if (error) throw error
+            toast.success("QR Code gerado com sucesso!")
+            await fetchInstances() // Recarrega
+        } catch (error) {
+            toast.error("Erro ao conectar.")
+        } finally {
+            setLoading(null)
+        }
+    }
+
+    // Ação de Logout
+    const handleLogout = async (id: string) => {
         if (!confirm("Tem certeza que deseja desconectar este número?")) return
         setLoading(id)
-        setTimeout(() => {
-            setInstances(prev => prev.map(inst => inst.id === id ? { ...inst, status: "disconnected" } : inst))
+        try {
+            const { error } = await supabase.from('instancias_uazapi').update({ ativa: false, telefone: null }).eq('id', id)
+            if (error) throw error
             toast.error("Instância desconectada com segurança.")
+            await fetchInstances()
+        } catch (error) {
+            toast.error("Erro ao desconectar.")
+        } finally {
             setLoading(null)
-        }, 1200)
+        }
     }
 
     const filteredInstances = instances.filter(inst => {

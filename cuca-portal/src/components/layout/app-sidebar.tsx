@@ -13,6 +13,7 @@ import {
     DoorOpen,
     LogOut,
     BarChart2,
+    Megaphone,
 } from "lucide-react"
 import {
     Sidebar,
@@ -41,6 +42,7 @@ const iconMap = {
     Settings,
     DoorOpen,
     BarChart2,
+    Megaphone,
 }
 
 export function AppSidebar() {

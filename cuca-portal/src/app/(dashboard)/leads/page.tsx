@@ -25,7 +25,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
     Search, UserPlus, Phone, Mail, Tag, Filter,
-    MoreHorizontal, BellOff, Bell, ShieldBan, ShieldCheck,
+    MoreHorizontal, BellOff, Bell, ShieldBan, ShieldCheck, Eraser,
 } from "lucide-react"
 import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
@@ -151,6 +151,33 @@ export default function LeadsPage() {
         })
 
         toast.success("Lead desbloqueado ✅")
+        fetchLeads()
+    }
+
+    // S14-03: Anonimizar Lead (Direito ao Esquecimento)
+    const handleAnonimizar = async (lead: Lead) => {
+        const confirmado = window.confirm(
+            `⚠️ ATENÇÃO: Esta operação é IRREVERSÍVEL!\n\nO nome, e-mail etelefone de "${lead.nome || lead.telefone}" serão substituídos por dados anonimizados.\n\nDeseja confirmar a Anonimização de Dados conforme a LGPD?`
+        )
+        if (!confirmado) return
+
+        const hash = `anonimo_${lead.id.substring(0, 8)}`
+        const { error } = await supabase
+            .from("leads")
+            .update({
+                nome: null,
+                email: null,
+                telefone: hash,
+                tags: [],
+                opt_in: false,
+                bloqueado: true,
+                motivo_bloqueio: "Dados anonimizados por solicitação LGPD",
+                updated_at: new Date().toISOString()
+            })
+            .eq("id", lead.id)
+
+        if (error) { toast.error("Erro ao anonimizar dados"); return }
+        toast.success("Dados anonimizados com sucesso (LGPD)")
         fetchLeads()
     }
 
@@ -366,6 +393,13 @@ export default function LeadsPage() {
                                                             <ShieldBan className="mr-2 h-4 w-4" /> Bloquear
                                                         </DropdownMenuItem>
                                                     )}
+                                                    <DropdownMenuSeparator />
+                                                    <DropdownMenuItem
+                                                        className="text-orange-600"
+                                                        onClick={() => handleAnonimizar(lead)}
+                                                    >
+                                                        <Eraser className="mr-2 h-4 w-4" /> Anonimizar Dados (LGPD)
+                                                    </DropdownMenuItem>
                                                 </DropdownMenuContent>
                                             </DropdownMenu>
                                         </TableCell>

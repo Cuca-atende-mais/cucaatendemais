@@ -158,8 +158,62 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
         <div className="flex-1 flex flex-col h-full bg-card/20 backdrop-blur-md relative overflow-hidden">
             {/* ... Header anterior ... */}
 
-            {/* Messages Area */}
-            {/* ... Bloco ref={scrollRef} anterior ... */}
+            {/* Messages */}
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6 relative z-10 scrollbar-thin scrollbar-thumb-primary/10">
+                {loading ? (
+                    <div className="flex flex-col items-center justify-center h-full space-y-4 opacity-50">
+                        <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-primary" />
+                        <p className="text-xs font-medium text-muted-foreground">Sincronizando histórico...</p>
+                    </div>
+                ) : (
+                    messages.map((msg, idx) => {
+                        const isLastOfUser = idx === messages.length - 1 || messages[idx + 1].remetente !== msg.remetente;
+
+                        return (
+                            <div
+                                key={msg.id}
+                                className={cn(
+                                    "flex w-full animate-in fade-in slide-in-from-bottom-2 duration-500",
+                                    msg.remetente === 'lead' ? "justify-start" : "justify-end"
+                                )}
+                            >
+                                <div className={cn(
+                                    "max-w-[75%] flex items-end gap-3 group",
+                                    msg.remetente === 'lead' ? "flex-row" : "flex-row-reverse"
+                                )}>
+                                    <Avatar className={cn(
+                                        "h-8 w-8 border border-muted/50 shadow-sm transition-all",
+                                        !isLastOfUser && "opacity-0"
+                                    )}>
+                                        <AvatarFallback className={cn(
+                                            "text-[10px] font-bold",
+                                            msg.remetente === 'lead' ? "bg-muted" : "bg-primary/10 text-primary"
+                                        )}>
+                                            {msg.remetente === 'lead' ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+                                        </AvatarFallback>
+                                    </Avatar>
+
+                                    <div className={cn(
+                                        "p-4 rounded-2xl text-[13px] lg:text-sm shadow-sm relative transition-all group-hover:shadow-md",
+                                        msg.remetente === 'lead'
+                                            ? "bg-white border border-border rounded-bl-none text-foreground"
+                                            : "bg-primary text-primary-foreground rounded-br-none"
+                                    )}>
+                                        <p className="leading-relaxed whitespace-pre-wrap">{msg.conteudo}</p>
+                                        <div className={cn(
+                                            "text-[9px] mt-2 flex items-center gap-1 font-medium scale-90 origin-left opacity-60",
+                                            msg.remetente === 'lead' ? "text-muted-foreground" : "text-primary-foreground"
+                                        )}>
+                                            {format(new Date(msg.created_at), "HH:mm")}
+                                            {msg.remetente !== 'lead' && <ShieldCheck className="h-2 w-2" />}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )
+                    })
+                )}
+            </div>
 
             {/* Integration Footer with Input */}
             <div className="p-4 border-t bg-card/60 backdrop-blur-xl relative z-20 space-y-4 shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.1)]">

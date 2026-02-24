@@ -692,74 +692,75 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 #### Sprint 12 — Acesso CUCA (Ana) ⏳
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S12-01 | CRUD de Espaços e Equipamentos (status: ativo/desativado/manutencao) | ⏳ |
-| S12-02 | Formulário público: CUCA → espaço → equipamentos (checkboxes dinâmicos — só ativos) | ⏳ |
-| S12-03 | Campos: nome, CPF, telefone, data, horário, natureza do evento | ⏳ |
-| S12-04 | Geração automática de protocolo (#XXXXX) + status initial | ⏳ |
-| S12-05 | Agente Ana: identifica intenção de agendamento → envia link formulário | ⏳ |
-| S12-06 | Após submissão: Ana envia protocolo via WhatsApp ao solicitante | ⏳ |
-| S12-07 | Aprovação Nível 1 (técnico): notificação WhatsApp + interface portal | ⏳ |
-| S12-08 | Aprovação Nível 2 (secretaria): notificação + aprovação final | ⏳ |
-| S12-09 | Aprovado: Ana informa + ativa cron de 48h auto-cancelamento | ⏳ |
-| S12-10 | Reprovado: Ana responde sem compartilhar motivos/contatos | ⏳ |
-| S12-11 | Insistência pós-reprovação: Ana repete redirecionamento à unidade (variações de texto) | ⏳ |
-| S12-12 | Ana identifica solicitação por protocolo ou CPF em contato posterior | ⏳ |
+| S12-01 | CRUD de Espaços e Equipamentos (status: ativo/desativado/manutencao) | [x] |
+| S12-02 | Formulário público: CUCA → espaço → equipamentos (checkboxes dinâmicos — só ativos) | [x] |
+| S12-03 | Campos: nome, CPF, telefone, data, horário, natureza do evento | [x] |
+| S12-04 | Geração automática de protocolo (#XXXXX) + status initial | [x] |
+| S12-05 | Agente Ana: identifica intenção de agendamento → envia link formulário | [x] |
+| S12-06 | Após submissão: Ana envia protocolo via WhatsApp ao solicitante | [x] |
+| S12-07 | Aprovação Nível 1 (técnico): notificação WhatsApp + interface portal | [x] |
+| S12-08 | Aprovação Nível 2 (secretaria): notificação + aprovação final | [x] |
+| S12-09 | Aprovado: Ana informa + ativa cron de 48h auto-cancelamento | [x] |
+| S12-10 | Reprovado: Ana responde sem compartilhar motivos/contatos | [x] |
+| S12-11 | Insistência pós-reprovação: Ana repete redirecionamento à unidade (variações de texto) | [x] |
+| S12-12 | Ana identifica solicitação por protocolo ou CPF em contato posterior | [x] |
 
-#### Sprint 13 — Ouvidoria (Sofia) ⏳
+#### Sprint 13 — Ouvidoria (Sofia) [x]
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S13-01 | Criação de Eventos de Escuta (Super Admin): título, descrição, datas, filtro CUCA | ⏳ |
-| S13-02 | Sofia: sempre pergunta "crítica ou sugestão?" na primeira mensagem | ⏳ |
-| S13-03 | Buffer 15s entre mensagens (lead pode fragmentar o texto) | ⏳ |
-| S13-04 | Fluxo crítica: anônima (sem remote_jid, sem nome), pergunta CUCA (opcional) | ⏳ |
-| S13-05 | Aviso de anonimato: *"Não estamos coletando seus dados pessoais."* | ⏳ |
-| S13-06 | Fluxo sugestão: coleta nome + CUCA + gera protocolo | ⏳ |
-| S13-07 | Loop de continuidade após cada mensagem ("Deseja enviar mais alguma?") | ⏳ |
-| S13-08 | Enceramento gracioso: "não"/"obrigado"/"valeu"/"era isso" → agradece e finaliza | ⏳ |
-| S13-09 | Em evento ativo: Sofia responde EXCLUSIVAMENTE dentro do escopo da descrição do evento | ⏳ |
-| S13-10 | Portal: páginas "Críticas" (anônimas) e "Sugestões" (identificadas) separadas | ⏳ |
-| S13-11 | Análise de sentimento: botão por evento → GPT-4o classifica positivo/negativo/neutro | ⏳ |
-| S13-12 | Temas recorrentes + resumo executivo + gráficos (pizza, linha, barras) | ⏳ |
-| S13-13 | Pesquisas de satisfação: quantitativa (botões WhatsApp) + qualitativa (texto/áudio) | ⏳ |
+| S13-01 | Criação de Eventos de Escuta (Super Admin): título, descrição, datas, filtro CUCA | [x] |
+| S13-02 | Sofia: sempre pergunta "crítica ou sugestão?" na primeira mensagem | [x] |
+| S13-03 | Buffer 15s entre mensagens (lead pode fragmentar o texto) | [x] |
+| S13-04 | Fluxo crítica: anônima (sem remote_jid, sem nome), pergunta CUCA (opcional) | [x] |
+| S13-05 | Aviso de anonimato: *"Não estamos coletando seus dados pessoais."* | [x] |
+| S13-06 | Fluxo sugestão: coleta nome + CUCA + gera protocolo | [x] |
+| S13-07 | Loop de continuidade após cada mensagem ("Deseja enviar mais alguma?") | [x] |
+| S13-08 | Enceramento gracioso: "não"/"obrigado"/"valeu"/"era isso" → agradece e finaliza | [x] |
+| S13-09 | Em evento ativo: Sofia responde EXCLUSIVAMENTE dentro do escopo da descrição do evento | [x] |
+| S13-10 | Portal: páginas "Críticas" (anônimas) e "Sugestões" (identificadas) separadas | [x] |
+| S13-11 | Análise de sentimento: botão por evento → GPT-4o classifica positivo/negativo/neutro | [x] |
+| S13-12 | Temas recorrentes + resumo executivo + gráficos (pizza, linha, barras) | [x] |
+| S13-13 | Pesquisas de satisfação: quantitativa (botões WhatsApp) + qualitativa (texto/áudio) | [x] |
 
-#### Sprint 14 — Pesquisas, LGPD e Governança ⏳
+#### Sprint 14 — Pesquisas, LGPD e Governança [x]
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S14-01 | Opt-in na primeira interação: *"Para continuar, preciso que aceite receber mensagens. [Sim] [Não]"* | ⏳ |
-| S14-02 | Se "Não": lead cadastrado mas nunca recebe disparos ativos | ⏳ |
-| S14-03 | Anonimização de dados: funcionalidade de "direito ao esquecimento" | ⏳ |
-| S14-04 | Audit logs automáticos em toda ação do portal (action, resource, user_id, old_data, new_data) | ⏳ |
-| S14-05 | pg_cron limpeza 60 dias em message_logs (02:00 AM) | ⏳ |
+| S14-01 | Opt-in na primeira interação: *"Para continuar, preciso que aceite receber mensagens. [Sim] [Não]"* | [x] |
+| S14-02 | Se "Não": lead cadastrado mas nunca recebe disparos ativos | [x] |
+| S14-03 | Anonimização de dados: funcionalidade de "direito ao esquecimento" | [x] |
+| S14-04 | Audit logs automáticos em toda ação do portal (action, resource, user_id, old_data, new_data) | [x] |
+| S14-05 | pg_cron limpeza 60 dias em message_logs (02:00 AM) | [x] |
 
 ---
 
 ### FASE 5 — DEVELOPER CONSOLE + DASHBOARDS + GO-LIVE
 
-#### Sprints 15-17 ⏳
+#### Sprints 15-17 [x]
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S15-01 | Rota `/developer` (exclusivo role super_admin no banco) | ⏳ |
-| S15-02 | Dashboard consumo OpenAI: tokens/dia, custo/modelo, breakdown por feature, projeção mensal | ⏳ |
-| S15-03 | Alertas de budget: 🟡 80% e 🔴 100% em ai_usage_logs | ⏳ |
-| S15-04 | Logs Worker em tempo real: WebSocket, últimas 1000 linhas, filtros (tipo, instância, lead, período) | ⏳ |
-| S15-05 | Download logs: últimos 7 dias em .txt/.json | ⏳ |
-| S15-06 | Métricas Worker: status, uptime, fila Celery (pendentes/executando/falhas), latência, CPU/memória | ⏳ |
-| S15-07 | Controle instâncias: tabela 14 instâncias, status 🟢/🔴/⚠️, criar, editar, deletar, QR Code | ⏳ |
-| S15-08 | Gatilhos de alerta: worker offline, erro alto, instância desconectada, budget alto, fila travada | ⏳ |
-| S15-09 | system_config UI: editar delays, limites, warm-up, modelo Whisper, budget — sem restart | ⏳ |
-| S15-10 | **Sentry Integration**: Configuração no Portal (Vercel) e no Worker (FastAPI) para captura de erros | [ ] |
-| S15-11 | **Agente de Observabilidade**: Seed SQL do prompt especialista e integração com APIs de logs | [ ] |
-| S15-12 | **Dashboard Observabilidade**: Visão consolidada IA (Saúde System) + Erros Sentry | [ ] |
-| S15-13 | Audit log do Developer Console (toda ação registrada) | [ ] |
-| S16-01 | Dashboards por CUCA: atendimentos, horários de pico, % IA vs humano, tempo médio resposta | ⏳ |
-| S16-02 | Dashboards globais (Super Admin): consolidado + comparativo entre unidades | ⏳ |
-| S16-03 | Dashboard Empregabilidade: vagas, candidaturas, taxa de contratação, tempo médio | ⏳ |
-| S16-04 | Dashboard Acesso CUCA: espaços demandados, taxa aprovação, no-shows | ⏳ |
-| S16-05 | Dashboard Ouvidoria: sentimento geral, temas, taxa resposta da gestão | ⏳ |
-| S17-01 | Testes E2E (Playwright): todas as rotas e fluxos principais | ⏳ |
-| S17-02 | Load testing: disparo 20k mensagens simultâneas | ⏳ |
-| S17-03 | Documentação: guia do gestor + guia do admin + guia de API interna | ⏳ |
-| S17-04 | Go-live: deploy produção, Cloudflare, 14 instâncias conectadas, warm-up iniciado | ⏳ |
+| S15-01 | Rota `/developer` (exclusivo role super_admin no banco) | [x] |
+| S15-02 | Dashboard consumo OpenAI: tokens/dia, custo/modelo, breakdown por feature, projeção mensal | [x] |
+| S15-03 | Alertas de budget: 🟡 80% e 🔴 100% em ai_usage_logs | [x] |
+| S15-04 | Logs Worker em tempo real: WebSocket, últimas 1000 linhas, filtros (tipo, instância, lead, período) | [x] |
+| S15-05 | Download logs: últimos 7 dias em .txt/.json | [x] |
+| S15-06 | Métricas Worker: status, uptime, fila Celery (pendentes/executando/falhas), latência, CPU/memória | [x] |
+| S15-07 | Controle instâncias: tabela 14 instâncias, status 🟢/🔴/⚠️, criar, editar, deletar, QR Code | [x] |
+| S15-08 | Gatilhos de alerta: worker offline, erro alto, instância desconectada, budget alto, fila travada | [x] |
+| S15-09 | system_config UI: editar delays, limites, warm-up, modelo Whisper, budget — sem restart | [x] |
+| S15-10 | **Sentry Integration**: Configuração no Portal (Vercel) e no Worker (FastAPI) para captura de erros | [x] |
+| S15-11 | **Agente de Observabilidade**: Seed SQL do prompt especialista e integração com APIs de logs | [x] |
+| S15-12 | **Dashboard Observabilidade**: Visão consolidada IA (Saúde System) + Erros Sentry | [x] |
+| S15-13 | Audit log do Developer Console (toda ação registrada) | [x] |
+| S16-01 | Dashboards por CUCA: atendimentos, horários de pico, % IA vs humano, tempo médio resposta | [x] |
+| S16-02 | Dashboards globais (Super Admin): consolidado + comparativo entre unidades | [x] |
+| S16-03 | Dashboard Empregabilidade: vagas, candidaturas, taxa de contratação, tempo médio | [x] |
+| S16-04 | Dashboard Acesso CUCA: espaços demandados, taxa aprovação, no-shows | [x] |
+| S16-05 | Dashboard Ouvidoria: sentimento geral, temas, taxa resposta da gestão | [x] |
+| S17-01 | Testes E2E (Playwright): todas as rotas e fluxos principais | [x] |
+| S17-02 | Load testing: disparo 20k mensagens simultâneas | [x] |
+| S17-03 | Documentação: guia do gestor + guia do admin + guia de API interna | [x] |
+| S17-04 | Setup Multi-Ambiente: Configurar Redirect URLs no Supabase (Localhost + Produção) | ⏳ |
+| S17-05 | Handover técnico: treinamento e entrega de acessos VPS/Hostinger | ⏳ |
 
 ---
 
@@ -1053,3 +1054,54 @@ O Easypanel **não** faz redeploy automático via Git push na Hostinger. Sempre 
 
 > **Versão 6.4 — 23/02/2026**
 > Remoção definitiva de Campanhas do frontend e backend. Guia de criação do `cuca-worker` no Easypanel reestruturado com instruções precisas baseadas no código real do projeto.
+
+---
+
+### 🚀 DIRETRIZES DE GO-LIVE E MULTI-AMBIENTE (S17)
+
+Para que o desenvolvimento local (`localhost`) funcione em paralelo com a produção real na Hostinger, as seguintes configurações MANUAIS são obrigatórias no Dashboard do Supabase:
+
+#### 1. URLs de Redirecionamento (Auth)
+Acesse: **Authentication > Settings > URIs**.
+Adicione os seguintes itens:
+- `http://localhost:3000/**` (Manutenção local porta padrão)
+- `http://localhost:3001/**` (Manutenção local porta alternativa)
+- `https://cucaatendemais.com.br/**` (Produção real)
+
+> [!IMPORTANT]
+> Sem estas URLs, o login via Supabase Auth falhará ao rodar o projeto localmente.
+
+#### 2. Variáveis de Ambiente (.env)
+O sistema detecta automaticamente o ambiente. Para manutenção local, utilize o arquivo `.env.local` apontando para o mesmo banco de dados, mas mantenha o `NEXT_PUBLIC_WORKER_URL` apontando para o Worker de produção (`api.cucaatendemais.com.br`) se não quiser rodar o Worker Python localmente.
+
+---
+
+### 📋 CHECKLIST FINAL DE ENTREGA
+- [x] **Privacidade (LGPD)**: Botão de anonimização e fluxo de Opt-in testados e operacionais.
+- [x] **Developer Console**: Monitoramento de custo OpenAI e Logs do Worker em tempo real ativos.
+- [x] **Consolidado Gerencial**: Dashboard principal exibindo métricas reais de todas as unidades CUCA.
+- [ ] **Validação Local**: Abrir o sistema em `localhost:3000` e confirmar login bem-sucedido.
+
+---
+
+## 11. GUIA DE OPERAÇÃO E MANUTENÇÃO (S17) {#11-guia-operacao}
+
+### 11.1 Gestão de Leads e LGPD
+- **Anonimização**: Use o botão "Anonimizar Dados" na tela de Leads para pedidos de exclusão (Direito ao Esquecimento). A operação é irreversível.
+- **Opt-in**: Respeite o fluxo automático. Se o lead não responder "SIM", o motor de IA não será ativado para este contato.
+
+### 11.2 Monitoramento de Custos (OpenAI)
+- Acesse `/developer/consumo` para ver o budget mensal.
+- O aviso amarelo 🟡 aparece com 80% do budget gasto. O vermelho 🔴 com 100%.
+- Se o budget estourar, ajuste o valor na tela de `Configurações do Sistema`.
+
+### 11.3 Troubleshooting (Worker)
+- Se as mensagens pararem de chegar no portal:
+  1. Verifique `/developer/worker` se o status está **Online**.
+  2. Verifique `/developer/logs` para erros de "Unauthorized" (Token UAZAPI expirado).
+  3. No Easypanel (Hostinger), faça o Redeploy do serviço `cuca-worker`.
+
+### 11.4 Manutenção Local (localhost)
+- Para rodar o sistema localmente sem afetar o login de produção:
+  - Adicione `http://localhost:3000/**` nas **Redirect URLs** do Supabase.
+  - No `.env.local`, mantenha as chaves do Supabase idênticas às de produção.

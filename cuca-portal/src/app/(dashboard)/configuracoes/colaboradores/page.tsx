@@ -130,6 +130,9 @@ export default function ColaboradoresPage() {
                     <DialogContent className="sm:max-w-[500px]">
                         <DialogHeader>
                             <DialogTitle>{editingColaborador ? "Editar Colaborador" : "Cadastrar Colaborador"}</DialogTitle>
+                            <DialogDescription className="sr-only">
+                                Formulário para gerenciar dados e acessos de um colaborador.
+                            </DialogDescription>
                         </DialogHeader>
                         <div className="grid gap-4 py-4">
                             <div className="grid gap-2">

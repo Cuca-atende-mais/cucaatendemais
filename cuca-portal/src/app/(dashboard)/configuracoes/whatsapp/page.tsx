@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import {
     Wifi,
     WifiOff,
@@ -43,32 +44,71 @@ type InstanceType = {
     phone?: string
 }
 
-// Lista filtrada apenas para o Cuca Pici
-const INITIAL_INSTANCES: InstanceType[] = [
-    { id: "5", name: "Empregabilidade Pici", category: "Empregabilidade", unit: "Pici", status: "connected", phone: "5585999999999" },
-    { id: "11", name: "Pontual Pici", category: "Pontual", unit: "Pici", status: "error", phone: "5585888888888" },
-]
-
 export default function WhatsAppUnidadePage() {
-    const [instances, setInstances] = useState<InstanceType[]>(INITIAL_INSTANCES)
+    const supabase = createClientComponentClient()
+    const [instances, setInstances] = useState<InstanceType[]>([])
     const [loading, setLoading] = useState<string | null>(null)
+    const [fetching, setFetching] = useState(true)
 
-    const handleConnect = (id: string) => {
-        setLoading(id)
-        setTimeout(() => {
-            toast.success("QR Code gerado. Escaneie para conectar.")
-            setLoading(null)
-        }, 1000)
+    useEffect(() => {
+        fetchInstances()
+    }, [])
+
+    const fetchInstances = async () => {
+        try {
+            setFetching(true)
+            const { data, error } = await supabase
+                .from('instancias_uazapi')
+                .select('*')
+                .eq('unidade_cuca', MOCK_USER.unidade)
+                .order('nome')
+
+            if (error) throw error
+
+            const mapped: InstanceType[] = (data || []).filter(r => r.agente_tipo === "Empregabilidade" || r.agente_tipo === "Pontual").map(row => ({
+                id: row.id,
+                name: row.nome,
+                category: row.agente_tipo as "Empregabilidade" | "Pontual",
+                unit: row.unidade_cuca || "Pici",
+                status: row.ativa ? "connected" : "disconnected",
+                phone: row.telefone
+            }))
+
+            setInstances(mapped)
+        } catch (error) {
+            console.error("Erro ao carregar instâncias:", error)
+        } finally {
+            setFetching(false)
+        }
     }
 
-    const handleLogout = (id: string) => {
+    const handleConnect = async (id: string) => {
+        setLoading(id)
+        try {
+            const { error } = await supabase.from('instancias_uazapi').update({ ativa: true }).eq('id', id)
+            if (error) throw error
+            toast.success("QR Code gerado. Escaneie para conectar.")
+            await fetchInstances()
+        } catch (error) {
+            toast.error("Erro ao gerar QR Code.")
+        } finally {
+            setLoading(null)
+        }
+    }
+
+    const handleLogout = async (id: string) => {
         if (!confirm("Isso desconectará o número atual. Você tem um chip novo para conectar em seguida?")) return
         setLoading(id)
-        setTimeout(() => {
-            setInstances(prev => prev.map(inst => inst.id === id ? { ...inst, status: "disconnected", phone: undefined } : inst))
-            toast.error("Número desconectado. Coloque o chip novo e gere um QR Code.")
+        try {
+            const { error } = await supabase.from('instancias_uazapi').update({ ativa: false, telefone: null }).eq('id', id)
+            if (error) throw error
+            toast.error("Número desconectado.")
+            await fetchInstances()
+        } catch (error) {
+            toast.error("Erro ao desconectar.")
+        } finally {
             setLoading(null)
-        }, 1000)
+        }
     }
 
     return (

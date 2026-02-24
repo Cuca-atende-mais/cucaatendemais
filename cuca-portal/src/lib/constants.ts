@@ -33,6 +33,26 @@ export const menuItems = [
         ],
     },
     {
+        title: "Acesso CUCA",
+        url: "/acesso-cuca",
+        icon: "DoorOpen",
+        permission: { recurso: "ouvidoria", acao: "read" },
+        items: [
+            { title: "Solicitações", url: "/acesso-cuca" },
+            { title: "Espaços & Equipamentos", url: "/acesso-cuca/espacos" },
+        ],
+    },
+    {
+        title: "Ouvidoria",
+        url: "/ouvidoria",
+        icon: "Megaphone",
+        permission: { recurso: "ouvidoria", acao: "read" },
+        items: [
+            { title: "Painel de Manifestações", url: "/ouvidoria" },
+            { title: "Eventos de Escuta", url: "/ouvidoria/eventos" },
+        ],
+    },
+    {
         title: "Configurações",
         url: "/configuracoes",
         icon: "Settings",
