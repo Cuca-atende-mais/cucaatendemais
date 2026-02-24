@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation"
 import Link from "next/link"
+import Image from "next/image"
 import {
     LayoutDashboard,
     Users,
@@ -9,7 +10,6 @@ import {
     Briefcase,
     MessageSquare,
     Settings,
-    Hexagon,
     DoorOpen,
     LogOut,
     BarChart2,
@@ -41,6 +41,7 @@ const iconMap = {
     MessageSquare,
     Settings,
     DoorOpen,
+    LogOut,
     BarChart2,
     Megaphone,
 }
@@ -60,7 +61,7 @@ export function AppSidebar() {
 
     // Filtrar itens de menu baseados nas permissões do colaborador
     const filteredMenuItems = menuItems.filter(item => {
-        if (!item.permission) return true // Itens sem permissão explícita são públicos (dashboard?)
+        if (!item.permission) return true
         return hasPermission(item.permission.recurso, item.permission.acao)
     })
 
@@ -68,7 +69,13 @@ export function AppSidebar() {
         <Sidebar collapsible="icon" className="border-r">
             <SidebarHeader className="border-b p-4">
                 <div className="flex items-center gap-3">
-                    <Hexagon className="w-8 h-8 text-cuca-yellow animate-pulse" />
+                    <Image
+                        src="/logo-rede-cuca.png"
+                        alt="Rede CUCA"
+                        width={36}
+                        height={36}
+                        className="object-contain shrink-0"
+                    />
                     {state === "expanded" && (
                         <div className="flex flex-col">
                             <span className="font-bold text-xl tracking-tight uppercase">
@@ -87,38 +94,38 @@ export function AppSidebar() {
                     <SidebarGroupContent>
                         <SidebarMenu>
                             {filteredMenuItems.map((item) => {
-                                const Icon = iconMap[item.icon as keyof typeof iconMap] ?? Hexagon
+                                const IconComponent = iconMap[item.icon as keyof typeof iconMap]
+                                const isActive = pathname === item.url || pathname.startsWith(item.url + "/")
+
                                 return (
                                     <SidebarMenuItem key={item.title}>
                                         <SidebarMenuButton
                                             asChild
-                                            isActive={pathname === item.url || (item.items?.some(s => pathname === s.url) ?? false)}
+                                            isActive={isActive}
                                             tooltip={item.title}
                                         >
                                             <Link href={item.url}>
-                                                <Icon />
+                                                {IconComponent && <IconComponent />}
                                                 <span>{item.title}</span>
                                             </Link>
                                         </SidebarMenuButton>
-                                        {item.items && state === "expanded" && (
-                                            <SidebarMenu className="ml-4 mt-1">
-                                                {item.items.map((subItem) => {
-                                                    // Opcional: Filtrar subitens também se necessário
-                                                    return (
-                                                        <SidebarMenuItem key={subItem.title}>
-                                                            <SidebarMenuButton
-                                                                asChild
-                                                                isActive={pathname === subItem.url}
-                                                                size="sm"
-                                                            >
-                                                                <Link href={subItem.url}>
-                                                                    <span>{subItem.title}</span>
-                                                                </Link>
-                                                            </SidebarMenuButton>
-                                                        </SidebarMenuItem>
-                                                    )
-                                                })}
-                                            </SidebarMenu>
+
+                                        {/* Sub-items */}
+                                        {item.items && isActive && state === "expanded" && (
+                                            <div className="ml-6 mt-1 space-y-1">
+                                                {item.items.map((subItem) => (
+                                                    <Link
+                                                        key={subItem.title}
+                                                        href={subItem.url}
+                                                        className={`block text-xs px-3 py-1.5 rounded-md transition-colors ${pathname === subItem.url
+                                                                ? "bg-primary/10 text-primary font-medium"
+                                                                : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                                                            }`}
+                                                    >
+                                                        {subItem.title}
+                                                    </Link>
+                                                ))}
+                                            </div>
                                         )}
                                     </SidebarMenuItem>
                                 )
@@ -129,33 +136,35 @@ export function AppSidebar() {
             </SidebarContent>
 
             <SidebarFooter className="border-t p-4">
-                <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                        <Avatar className="h-9 w-9 border-2 border-cuca-yellow">
-                            <AvatarFallback className="bg-cuca-dark text-cuca-yellow font-bold text-xs">
-                                {profile?.nome_completo?.substring(0, 2).toUpperCase() || '??'}
+                <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <Avatar className="h-8 w-8 shrink-0">
+                            <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                                {profile?.nome_completo
+                                    ? profile.nome_completo.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()
+                                    : "?"}
                             </AvatarFallback>
                         </Avatar>
                         {state === "expanded" && (
-                            <div className="flex-1 overflow-hidden">
-                                <p className="text-sm font-bold truncate">{profile?.nome_completo || 'Carregando...'}</p>
-                                <p className="text-[10px] text-muted-foreground uppercase tracking-tighter">
-                                    {profile?.funcao.nome.replace('_', ' ') || 'Acesso Restrito'}
-                                </p>
+                            <div className="flex flex-col min-w-0">
+                                <span className="text-xs font-medium truncate">
+                                    {profile?.nome_completo || "Usuário"}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground truncate">
+                                    {profile?.unidade_cuca || "Super Admin"}
+                                </span>
                             </div>
                         )}
                     </div>
-                    {state === "expanded" && (
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-start text-muted-foreground hover:text-destructive border-dashed border-muted-foreground/30"
-                            onClick={handleLogout}
-                        >
-                            <LogOut className="mr-2 h-4 w-4" />
-                            Sair do sistema
-                        </Button>
-                    )}
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        onClick={handleLogout}
+                        title="Sair do sistema"
+                    >
+                        <LogOut className="h-4 w-4" />
+                    </Button>
                 </div>
             </SidebarFooter>
         </Sidebar>

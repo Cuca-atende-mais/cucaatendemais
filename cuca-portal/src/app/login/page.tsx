@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Hexagon, Loader2 } from "lucide-react"
+import Image from "next/image"
+import { Loader2 } from "lucide-react"
 
 export default function LoginPage() {
     const [email, setEmail] = useState("")
@@ -41,7 +42,14 @@ export default function LoginPage() {
             <Card className="w-full max-w-md">
                 <CardHeader className="space-y-4 text-center">
                     <div className="flex justify-center">
-                        <Hexagon className="w-16 h-16 text-cuca-yellow animate-pulse" />
+                        <Image
+                            src="/logo-rede-cuca.png"
+                            alt="Logo Rede CUCA"
+                            width={120}
+                            height={120}
+                            className="object-contain"
+                            priority
+                        />
                     </div>
                     <div>
                         <CardTitle className="text-2xl font-bold">REDE CUCA</CardTitle>

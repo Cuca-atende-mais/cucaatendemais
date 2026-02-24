@@ -15,7 +15,10 @@ export const metadata: Metadata = {
   title: "CUCA Atende+ | Sistema de Gestão da Rede CUCA",
   description: "Sistema integrado de gestão para a Rede CUCA de Fortaleza - Leads, Programação, Empregabilidade e Ouvidoria",
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/favicon.png', type: 'image/png' },
+    ],
+    apple: '/favicon.png',
   },
 };
 
