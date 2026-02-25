@@ -9,8 +9,35 @@ from fastapi import FastAPI, Request, Response, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from supabase import create_client, Client
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.httpx import HttpxIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 
 load_dotenv()
+
+# ─── Sentry: Monitoramento de Erros ───────────────────────────────────────────
+_SENTRY_DSN = os.getenv("SENTRY_DSN_WORKER")
+if _SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=_SENTRY_DSN,
+        integrations=[
+            FastApiIntegration(transaction_style="endpoint"),
+            HttpxIntegration(),
+            LoggingIntegration(
+                level=logging.WARNING,        # Captura logs WARNING+
+                event_level=logging.ERROR,    # Envia como evento ERROR+
+            ),
+        ],
+        # 10% das transações para performance monitoring
+        traces_sample_rate=0.1,
+        # Ambiente e versão
+        environment=os.getenv("ENVIRONMENT", "production"),
+        release=os.getenv("APP_VERSION", "1.0.0"),
+        # Não capturar dados sensíveis (tokens, senhas)
+        send_default_pii=False,
+    )
+
 
 # Configuração de Logging
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +47,7 @@ logger = logging.getLogger("worker-cuca")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 
 # ─── Rate Limiter em Memória ─────────────────────────────────────────────────
 # Estrutura: {ip: [timestamps]}
