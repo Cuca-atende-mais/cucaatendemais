@@ -5,31 +5,22 @@ const nextConfig: NextConfig = {
   output: "standalone",
 };
 
-// Configuração do Sentry para o bundler Next.js
-// Docs: https://docs.sentry.io/platforms/javascript/guides/nextjs/
 export default withSentryConfig(nextConfig, {
-  // Organização e projeto no Sentry (preencher após criar o projeto)
-  org: process.env.SENTRY_ORG,
-  project: process.env.SENTRY_PROJECT,
+  // Organização e projeto no Sentry
+  org: "cuca-atende",
+  project: "cuca-portal",
 
-  // Auth token para upload de source maps (necessário para stack traces legíveis)
-  // Gere em: https://sentry.io/orgredirect/organizations/:orgslug/settings/auth-tokens/
+  // Auth token para upload de source maps
   authToken: process.env.SENTRY_AUTH_TOKEN,
 
-  // Silencia logs do Sentry durante o build
-  silent: !process.env.CI,
+  // Silencia o output verbose do Sentry durante o build
+  silent: true,
 
-  // Upload de source maps habilitado apenas em produção
+  // Desativa source maps em desenvolvimento (ativa apenas no build de produção)
   sourcemaps: {
-    disable: process.env.NODE_ENV !== "production",
+    disable: false,
   },
 
-  // Não abre o browser automaticamente durante o build
-  autoInstrumentServerFunctions: true,
-
-  // Desabilita o wizard interativo do Sentry no build
+  // Oculta logs do Sentry no terminal
   disableLogger: true,
-
-  // Tunnel para evitar bloqueio de ad-blockers
-  tunnelRoute: "/monitoring",
 });
