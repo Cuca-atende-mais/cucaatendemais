@@ -5,6 +5,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { UserProvider } from "@/lib/auth/user-provider";
 import { Toaster } from "react-hot-toast";
+import { SentryInitializer } from "@/components/sentry-initializer";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -33,6 +34,7 @@ export default function RootLayout({
         className={`${inter.variable} font-sans antialiased`}
       >
         <UserProvider>
+          <SentryInitializer />
           {children}
           <Toaster position="top-right" />
         </UserProvider>
