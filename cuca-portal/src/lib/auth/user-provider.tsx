@@ -24,6 +24,7 @@ type UserContextType = {
     profile: UserProfile | null
     loading: boolean
     hasPermission: (recurso: string, acao: string) => boolean
+    isDeveloper: boolean
 }
 
 const UserContext = createContext<UserContextType>({
@@ -31,6 +32,7 @@ const UserContext = createContext<UserContextType>({
     profile: null,
     loading: true,
     hasPermission: () => false,
+    isDeveloper: false,
 })
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
@@ -83,9 +85,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     const hasPermission = (recurso: string, acao: string) => {
         if (!profile) return false
-        if (profile.funcao.nome === 'super_admin') return true
+        // developer e super_admin tem acesso irrestrito
+        if (profile.funcao.nome === 'developer' || profile.funcao.nome === 'super_admin') return true
         return profile.funcao.permissoes.some(p => p.recurso === recurso && (p.acao === acao || p.acao === '*'))
     }
+
+    const isDeveloper = profile?.funcao?.nome === 'developer'
 
     useEffect(() => {
         const initializeUser = async () => {
@@ -121,7 +126,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }, [supabase.auth])
 
     return (
-        <UserContext.Provider value={{ user, profile, loading, hasPermission }}>
+        <UserContext.Provider value={{ user, profile, loading, hasPermission, isDeveloper }}>
             {children}
         </UserContext.Provider>
     )

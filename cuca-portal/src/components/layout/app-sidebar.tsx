@@ -50,7 +50,7 @@ export function AppSidebar() {
     const pathname = usePathname()
     const router = useRouter()
     const { state } = useSidebar()
-    const { profile, hasPermission } = useUser()
+    const { profile, hasPermission, isDeveloper } = useUser()
     const supabase = createClient()
 
     const handleLogout = async () => {
@@ -61,6 +61,8 @@ export function AppSidebar() {
 
     // Filtrar itens de menu baseados nas permissões do colaborador
     const filteredMenuItems = menuItems.filter(item => {
+        // Developer Console: APENAS para developers
+        if (item.url === '/developer') return isDeveloper
         if (!item.permission) return true
         return hasPermission(item.permission.recurso, item.permission.acao)
     })
@@ -118,8 +120,8 @@ export function AppSidebar() {
                                                         key={subItem.title}
                                                         href={subItem.url}
                                                         className={`block text-xs px-3 py-1.5 rounded-md transition-colors ${pathname === subItem.url
-                                                                ? "bg-primary/10 text-primary font-medium"
-                                                                : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                                                            ? "bg-primary/10 text-primary font-medium"
+                                                            : "text-muted-foreground hover:text-foreground hover:bg-accent"
                                                             }`}
                                                     >
                                                         {subItem.title}
