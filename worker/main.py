@@ -482,6 +482,26 @@ async def process_cv_endpoint(request: Request, background_tasks: BackgroundTask
         logger.error(f"Erro ao startar OCR: {str(e)}")
         return Response(status_code=500, content=str(e))
 
+@app.post("/analyse-sentiment")
+async def analyse_sentiment_endpoint(request: Request):
+    """S13-11: Rota para o portal disparar a análise de sentimento via Sofia (LLM)."""
+    try:
+        payload = await request.json()
+        registro_id = payload.get("registro_id")
+        texto = payload.get("texto")
+        
+        if not registro_id or not texto:
+            return Response(status_code=400, content="Faltando registro_id ou texto")
+
+        from sentiment_processor import analyse_manifestation_sentiment
+        # Aqui fazemos await pois o usuário quer o feedback imediato no portal
+        result = await analyse_manifestation_sentiment(registro_id, texto)
+        
+        return result
+    except Exception as e:
+        logger.error(f"Erro ao processar sentimento: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
 @app.post("/webhook/{token}")
 async def uazapi_webhook(token: str, request: Request, background_tasks: BackgroundTasks):
     # 1. Resposta 200 OK imediata (Requisito Crítico UAZAPI / Anti-Ban)

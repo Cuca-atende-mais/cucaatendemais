@@ -10,9 +10,10 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { ArrowLeft, FileText, CheckCircle2, UserCheck, UserX, AlertCircle, Loader2, FileTerminal, Edit3, Eye, MoreHorizontal } from "lucide-react"
+import { ArrowLeft, FileText, CheckCircle2, UserCheck, UserX, AlertCircle, Loader2, FileTerminal, Edit3, Eye, MoreHorizontal, Sparkles } from "lucide-react"
 import toast from "react-hot-toast"
 import { differenceInYears } from "date-fns"
+import { MatchModal } from "@/components/empregabilidade/match-modal"
 
 export default function VagaDetalhesPage() {
     const params = useParams()
@@ -22,6 +23,8 @@ export default function VagaDetalhesPage() {
     const [vaga, setVaga] = useState<Vaga | null>(null)
     const [candidatos, setCandidatos] = useState<Candidatura[]>([])
     const [loading, setLoading] = useState(true)
+    const [selectedCandidato, setSelectedCandidato] = useState<any>(null)
+    const [isMatchModalOpen, setIsMatchModalOpen] = useState(false)
 
     const supabase = createClient()
 
@@ -141,7 +144,7 @@ export default function VagaDetalhesPage() {
                                 <TableHead>Candidato (Idade)</TableHead>
                                 <TableHead>Contato</TableHead>
                                 <TableHead>OCR: Escolaridade / Experiência</TableHead>
-                                <TableHead>Aderência (IA)</TableHead>
+                                <TableHead>Match (IA)</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead className="text-right">Ações</TableHead>
                             </TableRow>
@@ -167,8 +170,21 @@ export default function VagaDetalhesPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <div className="text-2xl" title="Match com Requisitos">
-                                                {c.requisitos_atendidos || "⏳"}
+                                            <div
+                                                className="flex flex-col items-center cursor-pointer hover:bg-slate-50 p-1 rounded transition-colors"
+                                                onClick={() => {
+                                                    setSelectedCandidato(c)
+                                                    setIsMatchModalOpen(true)
+                                                }}
+                                            >
+                                                <div className={`text-xl font-bold ${(c as any).match_score >= 80 ? "text-green-600" :
+                                                        (c as any).match_score >= 50 ? "text-amber-600" : "text-red-600"
+                                                    }`}>
+                                                    {(c as any).match_score || 0}%
+                                                </div>
+                                                <div className="text-[10px] uppercase font-bold text-muted-foreground flex items-center gap-1">
+                                                    <Sparkles className="w-2 h-2" /> Analisar
+                                                </div>
                                             </div>
                                         </TableCell>
                                         <TableCell>
@@ -178,6 +194,28 @@ export default function VagaDetalhesPage() {
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex items-center justify-end gap-2">
+                                                {c.status === 'pendente' && (
+                                                    <div className="flex gap-1 mr-2 bg-slate-100 p-1 rounded-lg">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                                            onClick={() => handleUpdateStatus(c.id, 'selecionado', ocr)}
+                                                            title="Pré-selecionar"
+                                                        >
+                                                            <UserCheck className="h-4 w-4" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                                            onClick={() => handleUpdateStatus(c.id, 'rejeitado', ocr)}
+                                                            title="Rejeitar"
+                                                        >
+                                                            <UserX className="h-4 w-4" />
+                                                        </Button>
+                                                    </div>
+                                                )}
                                                 {c.arquivo_cv_url && (
                                                     <Button variant="ghost" size="icon" title="Ver Currículo PDF/Imagem" onClick={() => window.open(c.arquivo_cv_url!, '_blank')}>
                                                         <Eye className="h-4 w-4 text-cuca-blue" />
@@ -211,6 +249,13 @@ export default function VagaDetalhesPage() {
                     </Table>
                 </CardContent>
             </Card>
+
+            <MatchModal
+                isOpen={isMatchModalOpen}
+                onClose={() => setIsMatchModalOpen(false)}
+                candidato={selectedCandidato}
+                vaga={vaga}
+            />
         </div>
     )
 }

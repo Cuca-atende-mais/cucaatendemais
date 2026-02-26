@@ -16,6 +16,7 @@ import {
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
+import toast from "react-hot-toast"
 
 type OuvidoriaRegistro = {
     id: string
@@ -45,6 +46,7 @@ export default function OuvidoriaPage() {
     const [registros, setRegistros] = useState<OuvidoriaRegistro[]>([])
     const [loading, setLoading] = useState(true)
     const [detalhamento, setDetalhamento] = useState<OuvidoriaRegistro | null>(null)
+    const [analysing, setAnalysing] = useState(false)
 
     useEffect(() => { fetchRegistros() }, [])
 
@@ -57,6 +59,36 @@ export default function OuvidoriaPage() {
 
         setRegistros(data || [])
         setLoading(false)
+    }
+
+    const handleAnalyseSentiment = async (registro: OuvidoriaRegistro) => {
+        setAnalysing(true)
+        try {
+            const res = await fetch("/api/sentiment", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    registro_id: registro.id,
+                    texto: registro.texto_manifestacao
+                })
+            })
+            if (!res.ok) throw new Error("Erro na análise")
+            const result = await res.json()
+            toast.success("Análise concluída!")
+
+            // Atualizar estado local
+            setDetalhamento({
+                ...registro,
+                sentimento: result.sentimento,
+                resumo_ia: result.resumo_ia,
+                temas_identificados: result.temas
+            })
+            fetchRegistros()
+        } catch (error) {
+            toast.error("Falha ao analisar sentimento")
+        } finally {
+            setAnalysing(false)
+        }
     }
 
     const criticas = registros.filter(r => r.tipo === "critica")
@@ -288,6 +320,23 @@ export default function OuvidoriaPage() {
                                             </div>
                                         )}
                                     </div>
+                                </div>
+                            )}
+
+                            {/* Ações */}
+                            {!detalhamento.resumo_ia && (
+                                <div className="mt-4 flex justify-center">
+                                    <Button
+                                        onClick={() => handleAnalyseSentiment(detalhamento)}
+                                        disabled={analysing}
+                                        className="w-full bg-indigo-600 hover:bg-indigo-700"
+                                    >
+                                        {analysing ? (
+                                            <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Analisando...</>
+                                        ) : (
+                                            <><Sparkles className="h-4 w-4 mr-2" /> Analisar com IA Sofia</>
+                                        )}
+                                    </Button>
                                 </div>
                             )}
                         </div>

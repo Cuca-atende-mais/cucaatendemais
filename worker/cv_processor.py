@@ -35,26 +35,30 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
         vaga = vaga_res.data
         
         prompt_sys = f"""
-        Você é um assistente especialista em Recrutamento e Seleção de jovens.
-        Vou te passar a imagem/documento de um currículo. Extraia os dados em formato JSON ESTRITO, sem markdown.
+        Você é um assistente especialista em Recrutamento e Seleção da Rede CUCA (equipamento público de Fortaleza). 
+        Sua missão é extrair dados de um currículo e compará-los com os requisitos de uma vaga de estágio ou primeiro emprego.
         
-        A vaga que o candidato se aplicou tem as seguintes características:
+        DADOS DA VAGA:
         Título: {vaga.get('titulo', '')}
-        Requisitos: {vaga.get('requisitos', '')}
+        Requisitos principais: {vaga.get('requisitos', '')}
+        Escolaridade Mínima: {vaga.get('escolaridade_minima', 'Não especificado')}
         
-        Você deve gerar um JSON com o seguinte schema exato:
+        INSTRUÇÕES:
+        Extraia as informações em formato JSON rigoroso. Compare o perfil do candidato com a vaga e forneça uma análise qualitativa.
+        
+        SCHEMA JSON ESPERADO:
         {{
-            "escolaridade": "Ex: Ensino Médio Completo",
-            "experiencia_meses": 12,
-            "resumo_experiencias": ["string", "string"],
-            "habilidades": ["string", "string"],
-            "avaliacao_requisitos": "✅ ou ⚠️ ou ❌"
+            "escolaridade": "String",
+            "experiencia_meses": Integer,
+            "resumo_experiencias": ["String"],
+            "habilidades": ["String"],
+            "match_score": Integer (0 a 100),
+            "analise_aderencia": {{
+                "pontos_fortes": ["Por que ele combina"],
+                "pontos_atencao": ["O que falta ou diverge"],
+                "veredito": "✅ ou ⚠️ ou ❌"
+            }}
         }}
-        
-        Regras para 'avaliacao_requisitos':
-        - ✅ Se o currículo MAIS a idade/perfil indicam forte aderência aos requisitos.
-        - ⚠️ Se atende parcialmente ou falta alguma informação chave.
-        - ❌ Se não atende de forma gritante.
         """
 
         # Preparar mensagem dependendo do tipo (GPT-4o lida com PDF no endpoint vision/chat se convertido em imagem, 
@@ -93,13 +97,17 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
             
         json_data = json.loads(raw_output)
         
-        avaliacao = json_data.get("avaliacao_requisitos", "⚠️")
+        # Extraindo dados da nova estrutura
+        analise = json_data.get("analise_aderencia", {})
+        veredito = analise.get("veredito", "⚠️")
+        match_score = json_data.get("match_score", 0)
         
         # 3. Atualizar no banco
         supabase.table("candidaturas").update({
             "dados_ocr_json": json_data,
-            "requisitos_atendidos": avaliacao,
-            "status": "selecionado" if avaliacao == "✅" else "pendente"
+            "requisitos_atendidos": veredito,
+            "match_score": match_score, # Novo campo sugerido na Fase 2
+            "status": "selecionado" if veredito == "✅" else "pendente"
         }).eq("id", candidatura_id).execute()
         
         logger.info(f"OCR finalizado para {candidatura_id}. Avaliação: {avaliacao}")
