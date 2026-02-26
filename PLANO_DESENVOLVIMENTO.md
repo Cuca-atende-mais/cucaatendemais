@@ -1106,3 +1106,86 @@ O sistema detecta automaticamente o ambiente. Para manutenção local, utilize o
 - Para rodar o sistema localmente sem afetar o login de produção:
   - Adicione `http://localhost:3000/**` nas **Redirect URLs** do Supabase.
   - No `.env.local`, mantenha as chaves do Supabase idênticas às de produção.
+---
+
+## 12. 🧠 BRAINSTORM: HIERARQUIA E AUTONOMIA (S18) {#12-hierarquia}
+
+### Contexto
+O sistema cresceu e precisa de uma cadeia de comando clara para descentralizar a gestão de usuários sem perder a segurança.
+
+### Níveis de Autonomia Propostos:
+1. **Developer (Valmir/Dev)**: Criam **Super Admin Cuca**. Acesso global.
+2. **Super Admin Cuca**: Criam **Gestores/Gerentes** de cada Unidade/Território. Acesso global.
+3. **Gestores de Unidade**: Criam sua **Equipe (N1/N2/Atendente)**. Acesso restrito à unidade.
+
+---
+
+### Opção A: Modais Especializados com Trava de Unidade (RECOMENDADO)
+Criar fluxos de cadastro distintos no Dashboard para cada nível.
+- **Prós**: UX fluida, redução de erro humano (unidade automática), segurança reforçada.
+- **Contras**: Requer criação de 3 modais diferentes.
+- **Esforço**: Médio.
+
+### Opção B: Formulário Único com Lógica de Nível (RBAC)
+Um único modal que habilita/desabilita campos conforme o `nivel_acesso` do usuário logado.
+- **Prós**: Menos manutenção de UI.
+- **Contras**: interface poluída com condicionais, risco de bypass se a lógica falhar.
+- **Esforço**: Baixo.
+
+---
+
+### Solução Escolhida: Option A + RLS
+Implementaremos modais específicos para cada nível hierárquico, garantindo que:
+- O Gestor não precise (nem consiga) escolher a unidade — ela será herdada do seu próprio perfil.
+- O Super Admin escolha a unidade ao criar o Gestor.
+
+---
+
+## 13. ESPECIFICAÇÕES TÉCNICAS: GESTÃO DE USUÁRIOS (S18) {#13-especificacoes-usuarios}
+
+### 13.1 Modais de Criação
+- **[NEW] Modal Super Admin**: Exclusivo para Developers. Campos: Nome, Email. `funcao_id` = Super Admin, `unidade_cuca` = NULL.
+- **[NEW] Modal Gestor**: Exclusivo para Super Admins e Developers. Campos: Nome, Email, Unidade. `funcao_id` = Gestor.
+- **[NEW] Modal Equipe**: Exclusivo para Gestores. Campos: Nome, Email, Nível (Atendente, N1, N2). `unidade_cuca` herdada automaticamente.
+
+### 13.2 Bloqueios de Segurança (RLS)
+- Função `pode_gerenciar_colaborador(target_user_id)` no Postgres para validar se o criador tem nível superior ao criado.
+
+---
+
+## 14. 🧠 BRAINSTORM: VISIBILIDADE GLOBAL DO DEVELOPER/OWNER (S18) {#14-visibilidade-developer}
+
+### Contexto
+Atualmente, os usuários com a função `developer` (`valmir@cucateste.com` e `dev.cucaatendemais@gmail.com`) estão visualizando **apenas** o módulo "Developer Console" no menu lateral, perdendo o acesso aos módulos de negócio (Dashboard, Leads, Atendimento, etc.).
+O objetivo é garantir que esses usuários tenham um bypass global no frontend (Sidebar) e no backend (RLS), garantindo a visão administrativa de ambos os mundos (Técnico e Negócio).
+
+---
+
+### Opção A: Modificar a validação no `AppSidebar` (Frontend Bypass Global)
+Alterar a lógica de filtragem de itens do menu para que, se a flag `isDeveloper` for verdadeira, retorne o array inteiro do menu sem passar pelas checagens individuais de permissão.
+- **Prós**: Resolve o bug instantaneamente, garante que qualquer nova tela criada automaticamente apareça para os devs, sem precisar registrar permissões no banco.
+- **Contras**: É apenas uma checagem visual. Se o backend (RLS) não estiver alinhado, as telas poderão carregar sem dados.
+- **Esforço**: Baixo.
+
+### Opção B: Vincular Mock de Permissões no Banco (`funcoes_permissoes`)
+Rodar um script SQL preenchendo todas as permissões do sistema (`leads`, `atendimento`, etc.) para o `funcao_id` associado ao `developer`.
+- **Prós**: Utiliza a estrutura base do Supabase já existente no `user-provider.tsx` sem mudar a lógica de React.
+- **Contras**: Pouco manutenível. Sempre que for criado um novo módulo, será preciso lembrar de dar permissão ao Developer explicitamente via banco.
+- **Esforço**: Médio.
+
+### Opção C: Bypass Duplo (Sidebar + Backend) [RECOMENDADO]
+Combinar a Opção A no Frontend com as lógicas RLS no Backend. Adicionar um bypass irrestrito (`if (isDeveloper) return true`) no arquivo `app-sidebar.tsx`, e nas lógicas SQL garantir que as funções como `get_my_unit()` tratem desenvolvedores de forma global (o que já foi parcialmente implementado).
+- **Prós**: Solução definitiva à prova de falhas. Desenvolvedores viram "Deuses" no sistema. O acesso fica irrestrito independenente do que `hasPermission` diga no JS.
+- **Contras**: Nenhum.
+- **Esforço**: Baixo/Médio (Ajuste rápido no `app-sidebar.tsx`).
+
+---
+
+## 💡 Recomendação de Execução
+
+**Opção C** porque garante a segurança a longo prazo. Um software como o Atende+ crescerá de módulos rapidamente, e atrelar a visualização do Developer à tabela de permissões causará problemas frequentes ("tela nova desaparecendo para o dev"). A implementação consiste em 1 linha de retorno garantido no `app-sidebar.tsx`.
+
+### Passos da Execução Sugerida
+1. Modificar `/src/components/layout/app-sidebar.tsx` adicionando `if (isDeveloper) return true` como primeira regra no filtro.
+2. Garantir que no `UserProvider` a função `hasPermission` também faça short-circuit de segurança imediato.
+3. Testar a interface global como Valmir.

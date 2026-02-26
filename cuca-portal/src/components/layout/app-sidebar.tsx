@@ -61,8 +61,12 @@ export function AppSidebar() {
 
     // Filtrar itens de menu baseados nas permissões do colaborador
     const filteredMenuItems = menuItems.filter(item => {
-        // Developer Console: APENAS para os emails autorizados (Valmir e Dev Cuca)
-        if (item.url === '/developer') return isDeveloper
+        // Bypass Global para Desenvolvedores
+        if (isDeveloper) return true
+
+        // Developer Console: APENAS para os emails autorizados (garantia dupla)
+        if (item.url === '/developer') return false
+
         if (!item.permission) return true
         return hasPermission(item.permission.recurso, item.permission.acao)
     })

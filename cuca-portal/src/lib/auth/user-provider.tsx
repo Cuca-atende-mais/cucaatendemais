@@ -17,6 +17,7 @@ type UserProfile = {
         permissoes: Permission[]
     }
     unidade_cuca: string
+    email: string
 }
 
 type UserContextType = {
@@ -47,6 +48,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             .select(`
                 id,
                 nome_completo,
+                email,
                 unidade_cuca,
                 funcoes (
                     nome,
@@ -70,6 +72,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         const mappedProfile: UserProfile = {
             id: data.id,
             nome_completo: data.nome_completo,
+            email: data.email,
             unidade_cuca: data.unidade_cuca,
             funcao: {
                 nome: (data.funcoes as any).nome,

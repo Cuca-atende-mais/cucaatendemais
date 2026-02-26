@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { useUser } from "@/lib/auth/user-provider"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -41,6 +42,7 @@ export default function ColaboradoresPage() {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingColaborador, setEditingColaborador] = useState<any>(null)
     const [searchTerm, setSearchTerm] = useState("")
+    const { profile, isDeveloper } = useUser()
 
     const supabase = createClient()
 
@@ -65,8 +67,24 @@ export default function ColaboradoresPage() {
             supabase.from("funcoes").select("*").order("nome")
         ])
 
-        if (cRes.data) setColaboradores(cRes.data)
-        if (fRes.data) setFuncoes(fRes.data)
+        if (cRes.data) {
+            // Se for gestor de unidade, filtrar apenas colaboradores da sua unidade
+            if (profile?.funcao?.nome === 'gestor_unidade') {
+                setColaboradores(cRes.data.filter(c => c.unidade_cuca === profile.unidade_cuca))
+            } else {
+                setColaboradores(cRes.data)
+            }
+        }
+        if (fRes.data) {
+            // Filtrar funções baseadas na hierarquia
+            // Níveis: Dev(10), SuperAdmin(5), Gestor Central(4), Gestor Unidade(3), Colab(2)
+            const myLevel = profile?.funcao?.nivel_acesso || 0
+            const disponiveis = fRes.data.filter(f => {
+                if (isDeveloper) return f.nome !== 'developer' // Dev cria tudo menos outro dev (via UI)
+                return f.nivel_acesso < myLevel // Só cria quem tem nível menor
+            })
+            setFuncoes(disponiveis)
+        }
         setLoading(false)
     }
 
@@ -129,9 +147,21 @@ export default function ColaboradoresPage() {
                     </DialogTrigger>
                     <DialogContent className="sm:max-w-[500px]">
                         <DialogHeader>
-                            <DialogTitle>{editingColaborador ? "Editar Colaborador" : "Cadastrar Colaborador"}</DialogTitle>
-                            <DialogDescription className="sr-only">
-                                Formulário para gerenciar dados e acessos de um colaborador.
+                            <DialogTitle>
+                                {editingColaborador
+                                    ? "Editar Colaborador"
+                                    : isDeveloper
+                                        ? "Cadastrar Super Admin Cuca"
+                                        : profile?.funcao?.nome === 'super_admin'
+                                            ? "Cadastrar Gestor de Unidade"
+                                            : "Cadastrar Membro da Equipe"}
+                            </DialogTitle>
+                            <DialogDescription>
+                                {isDeveloper
+                                    ? "Como Developer, você está criando um administrador global do sistema."
+                                    : profile?.funcao?.nome === 'super_admin'
+                                        ? "Como Super Admin, você está delegando a gestão de uma unidade específica."
+                                        : `Adicionando novo membro para a unidade ${profile?.unidade_cuca}.`}
                             </DialogDescription>
                         </DialogHeader>
                         <div className="grid gap-4 py-4">
@@ -152,20 +182,37 @@ export default function ColaboradoresPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="grid gap-2">
                                     <Label>Função (Role)</Label>
-                                    <Select value={formData.funcao_id} onValueChange={val => setFormData({ ...formData, funcao_id: val })}>
+                                    <Select
+                                        value={formData.funcao_id}
+                                        onValueChange={val => {
+                                            const selectedFuncao = funcoes.find(f => f.id === val)
+                                            // Se for gestor de unidade criando equipe, travar a unidade
+                                            const newUnidade = profile?.funcao?.nome === 'gestor_unidade' ? profile.unidade_cuca : formData.unidade_cuca
+                                            setFormData({ ...formData, funcao_id: val, unidade_cuca: newUnidade })
+                                        }}
+                                    >
                                         <SelectTrigger>
                                             <SelectValue placeholder="Selecione..." />
                                         </SelectTrigger>
                                         <SelectContent>
                                             {funcoes.map(f => (
-                                                <SelectItem key={f.id} value={f.id}>{f.nome.replace('_', ' ').toUpperCase()}</SelectItem>
+                                                <SelectItem key={f.id} value={f.id}>
+                                                    <div className="flex justify-between w-full gap-2">
+                                                        <span>{f.nome.replace('_', ' ').toUpperCase()}</span>
+                                                        <span className="text-[10px] bg-muted px-1 rounded text-muted-foreground">LVL {f.nivel_acesso}</span>
+                                                    </div>
+                                                </SelectItem>
                                             ))}
                                         </SelectContent>
                                     </Select>
                                 </div>
                                 <div className="grid gap-2">
                                     <Label>Unidade Ativa</Label>
-                                    <Select value={formData.unidade_cuca} onValueChange={val => setFormData({ ...formData, unidade_cuca: val })}>
+                                    <Select
+                                        value={formData.unidade_cuca}
+                                        onValueChange={val => setFormData({ ...formData, unidade_cuca: val })}
+                                        disabled={profile?.funcao?.nome === 'gestor_unidade'}
+                                    >
                                         <SelectTrigger>
                                             <SelectValue placeholder="Selecione..." />
                                         </SelectTrigger>
