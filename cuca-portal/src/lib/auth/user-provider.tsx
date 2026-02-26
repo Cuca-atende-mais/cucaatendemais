@@ -14,6 +14,7 @@ type UserProfile = {
     nome_completo: string
     funcao: {
         nome: string
+        nivel_acesso: number
         permissoes: Permission[]
     }
     unidade_cuca: string
@@ -52,6 +53,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                 unidade_cuca,
                 funcoes (
                     nome,
+                    nivel_acesso,
                     funcoes_permissoes (
                         permissoes (
                             recurso,
@@ -76,6 +78,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             unidade_cuca: data.unidade_cuca,
             funcao: {
                 nome: (data.funcoes as any).nome,
+                nivel_acesso: (data.funcoes as any).nivel_acesso || 0,
                 permissoes: (data.funcoes as any).funcoes_permissoes.map((fp: any) => ({
                     recurso: fp.permissoes.recurso,
                     acao: fp.permissoes.acao
