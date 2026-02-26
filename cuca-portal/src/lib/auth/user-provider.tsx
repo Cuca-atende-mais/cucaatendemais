@@ -90,7 +90,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         return profile.funcao.permissoes.some(p => p.recurso === recurso && (p.acao === acao || p.acao === '*'))
     }
 
-    const isDeveloper = profile?.funcao?.nome === 'developer'
+    const isDeveloper = profile?.funcao?.nome === 'developer' &&
+        ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com'].includes(profile?.email || '')
 
     useEffect(() => {
         const initializeUser = async () => {
