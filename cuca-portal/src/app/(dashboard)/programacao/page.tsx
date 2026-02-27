@@ -107,7 +107,6 @@ export default function ProgramacaoPage() {
                         unidade_cuca: unidadeFilter,
                         mes: new Date().getMonth() + 1, // Default para o mês atual
                         ano: 2026, // Baseado no nome dos arquivos vistos
-                        aprovado: true,
                         status: "aprovado"
                     }))
 
