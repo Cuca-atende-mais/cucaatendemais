@@ -38,13 +38,8 @@ export default function ProgramacaoPage() {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [isImportModalOpen, setIsImportModalOpen] = useState(false)
 
-    // Estados do Modal Lateral (Sheet)
-    const [selectedCampanha, setSelectedCampanha] = useState<CampanhaMensal | null>(null)
-    const [atividadesCampanha, setAtividadesCampanha] = useState<any[]>([])
-    const [loadingSheet, setLoadingSheet] = useState(false)
-    const [isDisparando, setIsDisparando] = useState(false)
-
     const supabase = createClient()
+    const router = useRouter()
 
     useEffect(() => {
         fetchData()
@@ -80,24 +75,8 @@ export default function ProgramacaoPage() {
         }
     }
 
-    const openCampanhaDetails = async (campanha: CampanhaMensal) => {
-        setSelectedCampanha(campanha)
-        setLoadingSheet(true)
-        try {
-            const { data, error } = await supabase
-                .from("atividades_mensais")
-                .select("*")
-                .eq("campanha_id", campanha.id)
-                .order("data_atividade", { ascending: true })
-
-            if (error) throw error
-            setAtividadesCampanha(data || [])
-        } catch (error: any) {
-            console.error(error)
-            toast.error("Erro ao carregar atividades")
-        } finally {
-            setLoadingSheet(false)
-        }
+    const openCampanhaDetails = (campanha: CampanhaMensal) => {
+        router.push(`/programacao/mensal/${campanha.id}`)
     }
 
 
