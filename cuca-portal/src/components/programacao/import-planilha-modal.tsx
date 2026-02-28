@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Upload, AlertTriangle } from "lucide-react"
+import { useRouter } from "next/navigation"
 import toast from "react-hot-toast"
 import * as XLSX from "xlsx"
 
@@ -38,6 +39,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [mesSelecionado, setMesSelecionado] = useState<string>("")
     const [file, setFile] = useState<File | null>(null)
+    const router = useRouter()
 
     // Estado do checklist visual
     const [isLoading, setIsLoading] = useState(false)
@@ -255,11 +257,12 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 appendLog("success", "Finalizado", "Programação de " + mesObj.label + " criada e enviada ativamente ao RAG.")
                 toast.success("Importação concluída com sucesso!")
 
-                // Dispara refresh pra grid na background pós delay
+                // Dispara refresh pra grid na background pós delay e redireciona pra Tabela Rica
                 setTimeout(() => {
                     handleOpenChange(false)
                     onSuccess()
-                }, 4000)
+                    router.push(`/programacao/mensal/${newCamp.id}`)
+                }, 3000)
 
             } catch (err: any) {
                 appendLog("error", "Erro JS", err.message)
