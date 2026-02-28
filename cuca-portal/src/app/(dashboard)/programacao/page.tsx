@@ -24,15 +24,10 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 import { UnifiedProgramModal } from "@/components/programacao/unified-program-modal"
+import { ImportPlanilhaModal } from "@/components/programacao/import-planilha-modal"
 import * as XLSX from 'xlsx'
-import {
-    Sheet,
-    SheetContent,
-    SheetDescription,
-    SheetHeader,
-    SheetTitle,
-} from "@/components/ui/sheet"
-import { Send } from "lucide-react"
+import { useRouter } from "next/navigation"
+
 export default function ProgramacaoPage() {
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [pontuais, setPontuais] = useState<EventoPontual[]>([])
@@ -41,7 +36,7 @@ export default function ProgramacaoPage() {
     const [searchTerm, setSearchTerm] = useState("")
     const [unidadeFilter, setUnidadeFilter] = useState<string>("all")
     const [isModalOpen, setIsModalOpen] = useState(false)
-    const [importLoading, setImportLoading] = useState(false)
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false)
 
     // Estados do Modal Lateral (Sheet)
     const [selectedCampanha, setSelectedCampanha] = useState<CampanhaMensal | null>(null)
@@ -85,117 +80,6 @@ export default function ProgramacaoPage() {
         }
     }
 
-    const handleImportXLSX = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-
-        if (unidadeFilter === "all") {
-            toast.error("Por favor, selecione uma unidade específica antes de importar.")
-            return
-        }
-
-        setImportLoading(true)
-        const reader = new FileReader()
-        reader.onload = async (evt) => {
-            try {
-                const bstr = evt.target?.result
-                const wb = XLSX.read(bstr, { type: 'binary' })
-
-                // Procurar aba "DIA A DIA" ou a primeira aba
-                const diaADiaSheetName = wb.SheetNames.find(n => n.includes("DIA A DIA")) || wb.SheetNames[0]
-                if (!diaADiaSheetName) {
-                    throw new Error("Nenhuma aba 'DIA A DIA' ou outra aba encontrada na planilha.")
-                }
-                const ws = wb.Sheets[diaADiaSheetName]
-                const data: any[] = XLSX.utils.sheet_to_json(ws, { header: 1 })
-
-                // Pular as primeiras linhas (meta-dados/cabeçalho humano)
-                // Começar da linha 6 (baseado na análise prévia)
-                const rows = data.slice(6)
-
-                const mesAtual = new Date().getMonth() + 1
-                const anoAtual = new Date().getFullYear()
-
-                // 1. Procurar ou criar a campanha mensal para o mês/ano/unidade atual
-                let campanhaId = ""
-                const { data: existingCamp, error: checkErr } = await supabase
-                    .from("campanhas_mensais")
-                    .select("id")
-                    .eq("mes", mesAtual)
-                    .eq("ano", anoAtual)
-                    .eq("unidade_cuca", unidadeFilter)
-                    .maybeSingle()
-
-                if (checkErr) throw checkErr
-
-                if (existingCamp) {
-                    campanhaId = existingCamp.id
-                } else {
-                    const { data: newCamp, error: insErr } = await supabase
-                        .from("campanhas_mensais")
-                        .insert({
-                            titulo: `Programação Mensal - ${mesAtual}/${anoAtual}`,
-                            unidade_cuca: unidadeFilter,
-                            mes: mesAtual,
-                            ano: anoAtual,
-                            total_atividades: 0,
-                            status: "aprovado"
-                        })
-                        .select("id")
-                        .single()
-
-                    if (insErr) throw insErr
-                    campanhaId = newCamp.id
-                }
-
-                const fallbackDate = new Date(anoAtual, mesAtual - 1, 1).toISOString().split('T')[0]
-
-                // 2. Extrair dados da planilha para criar as atividades individuais vinculadas
-                const atividadesToInsert = rows
-                    .filter(row => row[9] && typeof row[9] === 'string' && row[9].trim() !== "")
-                    .map(row => ({
-                        campanha_id: campanhaId,
-                        unidade_cuca: unidadeFilter,
-                        titulo: row[9].substring(0, 100),
-                        descricao: row[9],
-                        local: row[8] ? String(row[8]).substring(0, 255) : "Não informado",
-                        data_atividade: fallbackDate
-                    }))
-
-                if (atividadesToInsert.length === 0) {
-                    toast.error("Nenhuma atividade válida encontrada na planilha.")
-                    return
-                }
-
-                // 3. Inserir atividades na tabela detalhe
-                const { error: actErr } = await supabase.from("atividades_mensais").insert(atividadesToInsert)
-                if (actErr) throw actErr
-
-                // 4. Atualizar o contador total de atividades da campanha
-                const { count, error: countErr } = await supabase
-                    .from("atividades_mensais")
-                    .select("*", { count: 'exact', head: true })
-                    .eq("campanha_id", campanhaId)
-
-                if (!countErr && count !== null) {
-                    await supabase.from("campanhas_mensais")
-                        .update({ total_atividades: count })
-                        .eq("id", campanhaId)
-                }
-
-                toast.success(`${atividadesToInsert.length} atividades importadas com sucesso!`)
-                fetchData()
-            } catch (error: any) {
-                console.error("Erro na importação:", error)
-                toast.error("Erro ao processar planilha: " + error.message)
-            } finally {
-                setImportLoading(false)
-                if (fileInputRef.current) fileInputRef.current.value = ""
-            }
-        }
-        reader.readAsBinaryString(file)
-    }
-
     const openCampanhaDetails = async (campanha: CampanhaMensal) => {
         setSelectedCampanha(campanha)
         setLoadingSheet(true)
@@ -216,40 +100,7 @@ export default function ProgramacaoPage() {
         }
     }
 
-    const handleAprovarEDisparar = async () => {
-        if (!selectedCampanha) return
 
-        setIsDisparando(true)
-        try {
-            // Atualizar status para aprovado caso não esteja (apenas garantia)
-            if (selectedCampanha.status !== "aprovado") {
-                await supabase.from("campanhas_mensais")
-                    .update({ status: "aprovado" })
-                    .eq("id", selectedCampanha.id)
-            }
-
-            // Chamar endpoint de disparo
-            const res = await fetch("/api/disparos/mensal", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanhaId: selectedCampanha.id })
-            })
-
-            if (!res.ok) {
-                const err = await res.json()
-                throw new Error(err.error || "Falha na API de envio")
-            }
-
-            toast.success("Mês Aprovado! Disparo enviado para a fila do WhatsApp.")
-            setSelectedCampanha(null)
-            fetchData()
-        } catch (error: any) {
-            console.error("Erro no disparo:", error)
-            toast.error("Erro: " + error.message)
-        } finally {
-            setIsDisparando(false)
-        }
-    }
 
     const getStatusBadge = (status: string) => {
         switch (status) {
@@ -333,22 +184,19 @@ export default function ProgramacaoPage() {
                                 ))}
                             </div>
 
-                            <input
-                                type="file"
-                                ref={fileInputRef}
-                                className="hidden"
-                                accept=".xlsx, .xls"
-                                onChange={handleImportXLSX}
-                            />
-
                             <Button
                                 variant="outline"
-                                className="border-cuca-blue text-cuca-blue hover:bg-cuca-blue/10"
-                                onClick={() => fileInputRef.current?.click()}
-                                disabled={importLoading}
+                                className="border-cuca-blue text-cuca-blue hover:bg-cuca-blue/10 gap-2"
+                                onClick={() => {
+                                    if (unidadeFilter === "all") {
+                                        toast.error("Por favor, selecione uma unidade específica primeiro para a importação.")
+                                        return
+                                    }
+                                    setIsImportModalOpen(true)
+                                }}
                             >
-                                <FileSpreadsheet className="mr-2 h-4 w-4" />
-                                {importLoading ? "Importando..." : "Importar XLSX"}
+                                <Upload className="mr-1 h-4 w-4" />
+                                Atualizar Programação
                             </Button>
 
                             <Button
@@ -453,72 +301,14 @@ export default function ProgramacaoPage() {
                 </div>
             </div>
 
-            <Sheet open={!!selectedCampanha} onOpenChange={(open) => !open && setSelectedCampanha(null)}>
-                <SheetContent side="right" className="w-[400px] sm:w-[600px] sm:max-w-xl flex flex-col pt-10">
-                    <SheetHeader>
-                        <SheetTitle className="text-xl">{selectedCampanha?.titulo}</SheetTitle>
-                        <SheetDescription>
-                            Visualização das atividades importadas via Excel para a unidade <strong>{selectedCampanha?.unidade_cuca}</strong>.
-                        </SheetDescription>
-                    </SheetHeader>
-
-                    <div className="flex-1 overflow-auto mt-4 px-1">
-                        {loadingSheet ? (
-                            <div className="text-center p-8 text-muted-foreground">Carregando dados da planilha...</div>
-                        ) : atividadesCampanha.length === 0 ? (
-                            <div className="text-center p-8 text-muted-foreground">Nenhuma atividade registrada na campanha.</div>
-                        ) : (
-                            <div className="space-y-4">
-                                {atividadesCampanha.map((act) => (
-                                    <div key={act.id} className="border rounded-lg p-3 text-sm bg-muted/20">
-                                        <div className="font-semibold text-cuca-dark mb-1">{act.titulo}</div>
-                                        <div className="text-muted-foreground text-xs mb-2">{act.descricao}</div>
-
-                                        <div className="flex items-center gap-4 text-xs text-muted-foreground mt-2 border-t pt-2">
-                                            <div className="flex items-center gap-1">
-                                                <Calendar className="h-3 w-3" />
-                                                {format(new Date(act.data_atividade), "dd/MM/yyyy")}
-                                            </div>
-                                            {(act.hora_inicio || act.hora_fim) && (
-                                                <div className="flex items-center gap-1">
-                                                    <Clock className="h-3 w-3" />
-                                                    {act.hora_inicio && act.hora_inicio.substring(0, 5)} {act.hora_fim && `às ${act.hora_fim.substring(0, 5)}`}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="border-t pt-4 mt-auto flex flex-col gap-3">
-                        <div className="p-3 bg-blue-50/50 rounded-lg text-xs text-blue-800 border border-blue-100 flex gap-2">
-                            <AlertCircle className="h-4 w-4 shrink-0" />
-                            <span>
-                                Ao disparar, uma mensagem automática (com RAG e o link do Portal da Juventude) será enviada fila de <b>WhatsApp (UAZAPI)</b> de todos os jovens cadastrados do <b>{selectedCampanha?.unidade_cuca}</b>.
-                            </span>
-                        </div>
-                        <div className="flex items-center justify-end gap-2">
-                            <Button variant="outline" onClick={() => setSelectedCampanha(null)}>
-                                Fechar
-                            </Button>
-                            <Button
-                                className="bg-green-600 hover:bg-green-700 text-white font-bold"
-                                disabled={isDisparando || atividadesCampanha.length === 0}
-                                onClick={handleAprovarEDisparar}
-                            >
-                                {isDisparando ? "Processando..." : (
-                                    <>
-                                        <Send className="w-4 h-4 mr-2" />
-                                        Aprovar e Disparar Aviso
-                                    </>
-                                )}
-                            </Button>
-                        </div>
-                    </div>
-                </SheetContent>
-            </Sheet>
+            {isImportModalOpen && (
+                <ImportPlanilhaModal
+                    open={isImportModalOpen}
+                    onOpenChange={setIsImportModalOpen}
+                    unidadeCuca={unidadeFilter !== "all" ? unidadeFilter : ""}
+                    onSuccess={fetchData}
+                />
+            )}
         </div>
     )
 }

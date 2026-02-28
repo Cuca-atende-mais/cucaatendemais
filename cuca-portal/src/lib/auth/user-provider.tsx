@@ -70,23 +70,27 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             return null
         }
 
-        // Transformar estrutura aninhada em algo mais limpo
-        const mappedProfile: UserProfile = {
-            id: data.id,
-            nome_completo: data.nome_completo,
-            email: data.email,
-            unidade_cuca: data.unidade_cuca,
-            funcao: {
-                nome: (data.funcoes as any).nome,
-                nivel_acesso: (data.funcoes as any).nivel_acesso || 0,
-                permissoes: (data.funcoes as any).funcoes_permissoes.map((fp: any) => ({
-                    recurso: fp.permissoes.recurso,
-                    acao: fp.permissoes.acao
-                }))
+        try {
+            // Transformar estrutura aninhada em algo mais limpo
+            const mappedProfile: UserProfile = {
+                id: data.id,
+                nome_completo: data.nome_completo,
+                email: data.email,
+                unidade_cuca: data.unidade_cuca,
+                funcao: {
+                    nome: (data.funcoes as any)?.nome || 'Sem Função',
+                    nivel_acesso: (data.funcoes as any)?.nivel_acesso || 0,
+                    permissoes: ((data.funcoes as any)?.funcoes_permissoes || []).map((fp: any) => ({
+                        recurso: fp?.permissoes?.recurso || '',
+                        acao: fp?.permissoes?.acao || ''
+                    }))
+                }
             }
+            return mappedProfile
+        } catch (mappingError) {
+            console.error("Erro ao mapear o perfil do colaborador:", mappingError, "Dados crus:", data)
+            return null
         }
-
-        return mappedProfile
     }
 
     const hasPermission = (recurso: string, acao: string) => {
@@ -101,32 +105,42 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         const initializeUser = async () => {
-            setLoading(true)
-            const { data: { user } } = await supabase.auth.getUser()
-            setUser(user)
+            try {
+                setLoading(true)
+                const { data: { user } } = await supabase.auth.getUser()
+                setUser(user)
 
-            if (user) {
-                const userProfile = await fetchProfile(user.id)
-                setProfile(userProfile)
-            } else {
-                setProfile(null)
+                if (user) {
+                    const userProfile = await fetchProfile(user.id)
+                    setProfile(userProfile)
+                } else {
+                    setProfile(null)
+                }
+            } catch (err) {
+                console.error("Erro fatal na inicialização do usuário:", err)
+            } finally {
+                setLoading(false)
             }
-            setLoading(false)
         }
 
         initializeUser()
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-            const currentUser = session?.user ?? null
-            setUser(currentUser)
+            try {
+                const currentUser = session?.user ?? null
+                setUser(currentUser)
 
-            if (currentUser) {
-                const userProfile = await fetchProfile(currentUser.id)
-                setProfile(userProfile)
-            } else {
-                setProfile(null)
+                if (currentUser) {
+                    const userProfile = await fetchProfile(currentUser.id)
+                    setProfile(userProfile)
+                } else {
+                    setProfile(null)
+                }
+            } catch (err) {
+                console.error("Erro ao lidar com mudança de auth:", err)
+            } finally {
+                setLoading(false)
             }
-            setLoading(false)
         })
 
         return () => subscription.unsubscribe()

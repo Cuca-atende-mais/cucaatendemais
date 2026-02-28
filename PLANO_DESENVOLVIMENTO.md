@@ -1093,6 +1093,78 @@ O sistema detecta automaticamente o ambiente. Para manutenção local, utilize o
 
 ### 11.2 Monitoramento de Custos (OpenAI)
 - Acesse `/developer/consumo` para ver o budget mensal.
+
+---
+
+## 🧠 Brainstorm: Visualização e Disparo da Programação Mensal
+
+### Context
+A importação de planilhas de Programação Mensal agora cria uma campanha "pai" e salva dezenas de linhas filhas na tabela `atividades_mensais`. Precisamos de uma interface read-only no painel `/programacao` para o usuário conferir se os dados do mês subiram corretos e, em seguida, botões de ação para aprovar o lote e realizar o envio em massa para os leads, contendo o link do Portal da Juventude (que consta em `system_config` como `portal_url_producao`).
+
+---
+
+### Option A: Modal Lateral (Sheet) expansível com Datatable 
+Ao clicar em "Ver Atividades" na linha da Campanha Mensal, abre-se uma gaveta lateral (Sheet do shadcn/ui) contendo uma Datatable simples (com Paginação) listando: Título, Data, Horário e Local de cada atividade importada. No rodapé do Sheet, ficam os botões: "Aprovar Mês" e "Disparar Aviso".
+
+✅ **Pros:**
+- Mantém o usuário na mesma tela sem perder o contexto.
+- Visual moderno e muito utilizado no restante do portal (ex: edição rápida).
+- Componentes já existem no projeto (Fácil montagem).
+
+❌ **Cons:**
+- Sheets laterais têm espaço horizontal reduzido, apertando as colunas da datatable se houver textos de descrição longos.
+
+📊 **Effort:** Low
+
+---
+
+### Option B: Expansão de Linha (Accordion/Sub-table)
+A própria tabela principal de Campanhas Mensais ganha a habilidade de "expandir" a linha (Chevron Down). Ao expandir, revela-se uma mini-tabela embutida mostrando as atividades exclusivas daquele mês. Os botões de Aprovação e Disparo ficam ao lado do Chevron na linha principal.
+
+✅ **Pros:**
+- Visualização extremamente fluida e contígua.
+- Permite comparar rapidamente atividades de dois meses diferentes se ambos expandidos.
+
+❌ **Cons:**
+- Datatables aninhadas no React podem ser chatas de lidar com responsividade.
+- Fica visualmente poluído se o mês tiver 50+ atividades sendo listadas na mesma página principal.
+
+📊 **Effort:** Medium
+
+---
+
+### Option C: Nova Página Dedicada (`/programacao/mensal/[id]`)
+Clicar na campanha leva a uma rota totalmente nova. Nessa tela inteira, exibe-se a Datatable rica com filtros por dia útil, busca e todos os detalhes. No topo da tela (Header), o card de Status, o contador e a "Call to Action" de: 1. Aprovar Mês (Alimenta RAG) -> 2. Disparar Mensagem de Convite.
+
+✅ **Pros:**
+- Espaço infinito para visualizar as colunas do Excel original com conforto.
+- URL própria (pode compartilhar o link da auditoria do mês com outro gestor).
+- Única forma de ver relatórios de "quantos disparos daquele mês falharam" no futuro.
+
+❌ **Cons:**
+- Adiciona mais caminhos de roteamento ao sistema.
+- Tira a agilidade de um "clique rápido e aprovo", exigindo navegar entre telas.
+
+📊 **Effort:** Medium
+
+---
+
+### 💡 Recommendation sobre Visualização
+
+**Option A (Modal Lateral / Sheet)** because é a solução mais alinhada com aplicações modernas em painéis Next.js. O usuário sobe o Excel, clica no olho (view) na mesma tela, corre o olho pela tabela paginada rápida no painel lateral só pra bater se as datas não estão malucas, e clica em "Disparar Aviso". É eficiente e não quebra a imersão.
+
+---
+
+### 💬 Fluxo de Disparo do Link do Portal
+Para o disparo aos leads (WhatsApp), o fluxo técnico recomendado seria:
+
+1. **Ação no Front-end**: Ao clicar em "Disparar", o React chama um endpoint (`/api/disparos/mensal`).
+2. **Mensagem Template Sugerida (pode vir de `mensagens_padrao` ou escrita hardcoded):**
+   *"Olá {lead_nome}! A programação do mês de {mes} do CUCA {unidade} já está no ar. Temos {total_atividades} atividades preparadas. Acesse nosso portal e confira tudo: {portal_url_producao}/programacao "*
+3. **Engenharia**:
+   - O backend recupera de `system_config` o valor real de `portal_url_producao` (ex: `https://cucaatendemais.com.br`).
+   - Gera as mensagens de disparos na tabela `disparos` apontando para todos os jovens daquela `unidade_cuca` com `opt_in = true`.
+   - O cron job de `pg_cron` (ou seu uazapi_worker) consome a fila gradativamente.
 - O aviso amarelo 🟡 aparece com 80% do budget gasto. O vermelho 🔴 com 100%.
 - Se o budget estourar, ajuste o valor na tela de `Configurações do Sistema`.
 
@@ -1189,3 +1261,41 @@ Combinar a Opção A no Frontend com as lógicas RLS no Backend. Adicionar um by
 1. Modificar `/src/components/layout/app-sidebar.tsx` adicionando `if (isDeveloper) return true` como primeira regra no filtro.
 2. Garantir que no `UserProvider` a função `hasPermission` também faça short-circuit de segurança imediato.
 3. Testar a interface global como Valmir.
+
+---
+
+## 15. 🧠 ARQUITETURA DEFINIDA: RAG DE MÊS ÚNICO E DATA TABLE RICA {#15-evolucao-programacao}
+
+### Acordo Estratégico com Cliente (Wipe and Replace)
+Para simplificar a gestão e garantir zero "alucinação temporal" na Inteligência Artificial, o sistema adotará a filosofia de **Mês Único Vigente** por Unidade. Em vez de manter um espelho histórico de meses anteriores no banco vetorial, a cada novo Import aprovado, a memória do sistema é deletada e reescrita, garantindo que o RAG só tenha ciência do cenário atual ou imediatamente futuro.
+
+Aqui está o plano de implementação atualizado:
+
+---
+
+### 1. Interface: Importação Dinâmica e Data Table Robusta
+- **Modal de Upload com Seletor de Mês**: Ao clicar em "Importar XLSX", um modal pedirá ao gestor para informar **Qual é o mês referência** da planilha que ele está subindo (Ex: Março).
+- **Substituição (CRUD Base)**: O usuário possuirá um botão na interface "Atualizar Programação". Sempre que subir um Excel novo para a mesma Unidade, o Backend executará um `DELETE CASCADE` na campanha mensal anterior daquela unidade e em todas as `atividades_mensais` relativas a ela. 
+- **O Fim da Gaveta (Sheet)**: As atividades não serão mais lidas numa aba lateral pequena. Serão migradas para uma **Data Table Premium** (react-table) em tela cheia (Modal gigante ou página própria) contendo filtros por dia, exibindo todas as colunas originadas do Excel.
+
+### 2. O Parser Inteligente e Validação Visual de Abas
+As planilhas do Excel possuem diversas abas (ex: `ESPORTES - JANEIRO`, `ESPORTES - FEVEREIRO`, `ESPORTES - MARÇO`). O sistema terá um visual de checklist para validar a escrita das abas no momento do upload.
+- **Checklist Visual de Etapas**: Após selecionar o mês (ex: MARÇO) e iniciar o upload, a interface exibirá o status de leitura de cada aba processada. Exemplo para o Lead:
+  - ✅ `CURSOS - MARÇO` - concluído (importado)
+  - ✅ `ESPORTES - MARÇO` - concluído (importado)
+  - ✅ `DIA A DIA - MARÇO` - concluído (importado)
+  - ⚠️ `ESPECIAL - MARÇO` - não carregado - *"Atenção: aba não encontrada ou com erro de digitação (ex: sem cedilha). Reveja a escrita da aba e informe corretamente, e então tente novamente em 'Atualizar Programação'."*
+- O parser irá iterar ativamente por `wb.SheetNames`. Se achar uma aba correspondente com o mês que o gestor escolheu (ou forçar um fuzzy match tolerante ou categorias fixadas base), ele importa. As abas mal digitadas (ex: "MARCO") farão disparar o alerta visual para correção humana.
+- **Extração de Categoria**: O prefixo do nome da aba (A palavra antes de " - ") será recortado via Regex e gravado numa nova coluna obrigatória `categoria` (ex: "ESPORTE", "CURSO", "DIA A DIA").
+
+### 3. Sincronização e Resposta Intocável no RAG
+- **Solução Definitiva Pela Raiz**: Com a deleção sumária da campanha de "Fevereiro" para o carregamento da de "Março", o trigger do banco apagará os chunks vetoriais antigos do Pinecone/Supabase Vector automaticamente.
+- Quando o Lead enviar a mensagem no WhatsApp perguntando "O que tem de teatro?", a IA lerá *apenas* a programação do mês engatilhado e ativo no sistema. Não é necessário mais programar filtros cruzados de timestamp na consulta vetorial.
+- **Aviso Disparado**: A mensagem de aprovação carregará o mês atual validado para disparar na UAZAPI.
+
+### 🚀 Resumo do Esforço e Próximos Passos
+1. Modificar Banco: Adicionar coluna `categoria` em `atividades_mensais`.
+2. Frontend: Criar o `<Dialog>` robusto de Importação com Seletor de Mês.
+3. Frontend: Refatorar o código `handleImportXLSX` para rodar o loop em todas as `wb.SheetNames`, aplicando a regex de `Categoria - Mês` validando apenas o mês inputado.
+4. Backend: Atualizar lógica para que a inserção apague (`DELETE`) a Campanha anterior da mesma `unidade_cuca` limpando a tabela filha e consequentemente os Embeddings RAG.
+5. Frontend: Trocar a visualização na Sidebar por uma Tabela Complexa que usa o campo novo `categoria` p/ filtrar as atividades do mês.
