@@ -201,13 +201,58 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                     const fallbackDate = new Date(anoAtual, mesInt - 1, 1).toISOString().split('T')[0]
 
                     rows.forEach(row => {
-                        if (row[9] && typeof row[9] === 'string' && row[9].trim() !== "") {
+                        let titulo = ""
+                        let descricao = ""
+                        let local = "Não informado"
+                        let horaInicioStr = ""
+                        let horaFimStr = ""
+
+                        if (categoriaVal === "CURSOS") {
+                            titulo = row[2]
+                            descricao = row[5] || ""
+                            local = "Não informado"
+
+                            // Tenta pegar o horário da coluna 8 (ex: "14:00 às 17:00")
+                            if (row[8] && typeof row[8] === 'string') {
+                                const parts = row[8].split("às")
+                                if (parts.length === 2) {
+                                    horaInicioStr = parts[0].trim()
+                                    horaFimStr = parts[1].trim()
+                                }
+                            }
+                        } else if (categoriaVal === "ESPORTES") {
+                            titulo = row[1]
+                            descricao = row[3] ? `Turma: ${row[3]}` : ""
+                            local = "Não informado"
+
+                            if (row[8] && typeof row[8] === 'string') {
+                                const parts = row[8].split("ás")
+                                if (parts.length === 2) {
+                                    horaInicioStr = parts[0].trim()
+                                    horaFimStr = parts[1].trim()
+                                }
+                            }
+                        } else if (categoriaVal === "DIA A DIA") {
+                            titulo = row[4]
+                            descricao = row[9] || row[5] || ""
+                            local = row[8] || row[1] || "Não informado"
+                        } else {
+                            // Fallback Genérico
+                            titulo = row[2] || row[1] || row[4]
+                            descricao = row[5] || row[9] || ""
+                            local = row[8] || "Não informado"
+                        }
+
+                        // Validação: Atividade só é válida se tiver um título válido escrito
+                        if (titulo && typeof titulo === 'string' && titulo.trim() !== "") {
                             atividadesToInsert.push({
                                 unidade_cuca: unidadeCuca,
-                                titulo: String(row[9]).substring(0, 100),
-                                descricao: row[9],
-                                local: row[8] ? String(row[8]).substring(0, 255) : "Não informado",
-                                data_atividade: fallbackDate, // Por enqt sem parse da data da grid
+                                titulo: titulo.substring(0, 100),
+                                descricao: String(descricao),
+                                local: String(local).substring(0, 255),
+                                data_atividade: fallbackDate,
+                                hora_inicio: horaInicioStr || null,
+                                hora_fim: horaFimStr || null,
                                 categoria: categoriaVal
                             })
                             countNaAba++
