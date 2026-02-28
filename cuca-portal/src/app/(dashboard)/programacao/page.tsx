@@ -99,26 +99,78 @@ export default function ProgramacaoPage() {
                 // Pular as primeiras linhas (meta-dados/cabeçalho humano)
                 // Começar da linha 6 (baseado na análise prévia)
                 const rows = data.slice(6)
-                const itemsToInsert = rows
+
+                const mesAtual = new Date().getMonth() + 1
+                const anoAtual = new Date().getFullYear()
+
+                // 1. Procurar ou criar a campanha mensal para o mês/ano/unidade atual
+                let campanhaId = ""
+                const { data: existingCamp, error: checkErr } = await supabase
+                    .from("campanhas_mensais")
+                    .select("id")
+                    .eq("mes", mesAtual)
+                    .eq("ano", anoAtual)
+                    .eq("unidade_cuca", unidadeFilter)
+                    .maybeSingle()
+
+                if (checkErr) throw checkErr
+
+                if (existingCamp) {
+                    campanhaId = existingCamp.id
+                } else {
+                    const { data: newCamp, error: insErr } = await supabase
+                        .from("campanhas_mensais")
+                        .insert({
+                            titulo: `Programação Mensal - ${mesAtual}/${anoAtual}`,
+                            unidade_cuca: unidadeFilter,
+                            mes: mesAtual,
+                            ano: anoAtual,
+                            total_atividades: 0,
+                            status: "aprovado"
+                        })
+                        .select("id")
+                        .single()
+
+                    if (insErr) throw insErr
+                    campanhaId = newCamp.id
+                }
+
+                const fallbackDate = new Date(anoAtual, mesAtual - 1, 1).toISOString().split('T')[0]
+
+                // 2. Extrair dados da planilha para criar as atividades individuais vinculadas
+                const atividadesToInsert = rows
                     .filter(row => row[9] && typeof row[9] === 'string' && row[9].trim() !== "")
                     .map(row => ({
-                        titulo: row[9].substring(0, 100), // Usamos a descrição como título temporário
-                        descricao: row[9],
+                        campanha_id: campanhaId,
                         unidade_cuca: unidadeFilter,
-                        mes: new Date().getMonth() + 1, // Default para o mês atual
-                        ano: 2026, // Baseado no nome dos arquivos vistos
-                        status: "aprovado"
+                        titulo: row[9].substring(0, 100),
+                        descricao: row[9],
+                        local: row[8] ? String(row[8]).substring(0, 255) : "Não informado",
+                        data_atividade: fallbackDate
                     }))
 
-                if (itemsToInsert.length === 0) {
+                if (atividadesToInsert.length === 0) {
                     toast.error("Nenhuma atividade válida encontrada na planilha.")
                     return
                 }
 
-                const { error } = await supabase.from("campanhas_mensais").insert(itemsToInsert)
-                if (error) throw error
+                // 3. Inserir atividades na tabela detalhe
+                const { error: actErr } = await supabase.from("atividades_mensais").insert(atividadesToInsert)
+                if (actErr) throw actErr
 
-                toast.success(`${itemsToInsert.length} atividades importadas com sucesso!`)
+                // 4. Atualizar o contador total de atividades da campanha
+                const { count, error: countErr } = await supabase
+                    .from("atividades_mensais")
+                    .select("*", { count: 'exact', head: true })
+                    .eq("campanha_id", campanhaId)
+
+                if (!countErr && count !== null) {
+                    await supabase.from("campanhas_mensais")
+                        .update({ total_atividades: count })
+                        .eq("id", campanhaId)
+                }
+
+                toast.success(`${atividadesToInsert.length} atividades importadas com sucesso!`)
                 fetchData()
             } catch (error: any) {
                 console.error("Erro na importação:", error)
