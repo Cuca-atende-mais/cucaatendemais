@@ -72,8 +72,11 @@ export async function POST(request: Request) {
         }
 
         // 4. Disparar E-mail usando Resend
-        // OBS: Substitua o NEXT_PUBLIC_SITE_URL pelo domínio em produção.
-        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+        const fallbackHost = request.headers.get('host') || 'localhost:3000'
+        const fallbackProto = request.headers.get('x-forwarded-proto') || (fallbackHost.includes('localhost') ? 'http' : 'https')
+        const dynamicBaseUrl = `${fallbackProto}://${fallbackHost}`
+
+        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || dynamicBaseUrl
         const setupLink = `${baseUrl}/setup-senha?token=${setupToken}`
 
         try {
