@@ -56,13 +56,13 @@ export const menuItems = [
         title: "Configurações",
         url: "/configuracoes",
         icon: "Settings",
-        permission: { recurso: "configuracoes", acao: "read" },
+        // Parent menu doesn't need strict perm now, sidebar relies on children
         items: [
-            { title: "WhatsApp", url: "/configuracoes/whatsapp", permission: { recurso: "configuracoes", acao: "update" } },
-            { title: "Colaboradores", url: "/configuracoes/colaboradores", permission: { recurso: "equipe", acao: "read" } },
-            { title: "Perfis (RBAC)", url: "/configuracoes/perfis", permission: { recurso: "perfis", acao: "read" } },
-            { title: "Unidades", url: "/unidades", permission: { recurso: "configuracoes", acao: "update" } },
-            { title: "Categorias", url: "/categorias", permission: { recurso: "configuracoes", acao: "update" } },
+            { title: "WhatsApp", url: "/configuracoes/whatsapp", permission: { recurso: "config_whatsapp", acao: "read" } },
+            { title: "Colaboradores", url: "/configuracoes/colaboradores", permission: { recurso: "config_colaboradores", acao: "read" } },
+            { title: "Perfis (RBAC)", url: "/configuracoes/perfis", permission: { recurso: "config_perfis", acao: "read" } },
+            { title: "Unidades", url: "/unidades", permission: { recurso: "config_unidades", acao: "read" } },
+            { title: "Categorias", url: "/categorias", permission: { recurso: "config_categorias", acao: "read" } },
         ],
     },
     {

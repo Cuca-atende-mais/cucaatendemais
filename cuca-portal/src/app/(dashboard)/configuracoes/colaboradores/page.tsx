@@ -45,6 +45,8 @@ export default function ColaboradoresPage() {
     const [searchTerm, setSearchTerm] = useState("")
     const { profile, isDeveloper } = useUser()
 
+    const canManageStatus = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca' || profile?.funcao?.nome === 'Gerente'
+
     const supabase = createClient()
 
     const formDataInit = {
@@ -249,7 +251,7 @@ export default function ColaboradoresPage() {
                                 </div>
                             </div>
                             {/* Controle de Auditoria (Acesso) */}
-                            {editingColaborador && (
+                            {editingColaborador && canManageStatus && (
                                 <div className="flex items-center space-x-2 pt-2 border-t mt-2">
                                     <div className="flex-1 space-y-1">
                                         <p className="text-sm font-medium leading-none">

@@ -1429,3 +1429,19 @@ A regra engessada de "Perfis fixados no código" foi substituída por um gerenci
   - Nas telas de Programação e Acesso CUCA, o campo/filtro de Unidade deve vir cravado na unidade do funcionário logado, escondendo a opção "Todas" para quem não for Super Admin ou Master.
 - [x] **Indicadores Visuais de Multitenant**:
   - Inserir um *Badge* ou letreiro claro nas telas indicando "Você está vendo/editando dados da Unidade X" para não haver confusão visual durante a Programação.
+
+---
+
+## 📋 Checklist de Execução: Fase 10.1 - Nivelamento Rigoroso de Configurações e Equipamentos
+
+- [x] **Acesso CUCA (Espaços e Equipamentos)**:
+  - Filtrar a aba de `Espaços & Equipamentos` para exibir somente os cadastrados na unidade do usuário (exceto Super Admin/Master).
+- [x] **Restrição de Lista de Perfis**:
+  - Na tela de criação/edição de perfis, não exibir perfis de outras unidades ou que o usuário não tenha poder para ver (esconder perfis Master/Super dependendo de quem logou).
+- [x] **Granularidade do Menu `Configurações`**:
+  - Separar e expandir os módulos na matriz de acesso (RBAC) para contemplar submenus: `WhatsApp`, `Colaboradores`, `Perfis`, `Unidades` e `Categorias`.
+- [x] **Proteção de Modulos Críticos de Configuração**:
+  - Os módulos de `Unidades` e `Categorias` não poderão ser cedidos, visualizados ou configurados por ninguém além dos Masters (`isDeveloper`). Somente o Master os visualizará como opção na criação de perfil.
+- [x] **Botão de Ativar/Desativar Colaborador**:
+  - Deixar o controle de ativação/desativação habilitado somente para Owner, Super Admin e Gerente (outros perfis que porventura puderem editar colabs não poderão mudar o status).
+

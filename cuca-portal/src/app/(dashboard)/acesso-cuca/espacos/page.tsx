@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { useUser } from "@/lib/auth/user-provider"
 import {
     Building2, Plus, Pencil, Trash2, ChevronDown, ChevronRight,
     CheckCircle2, AlertTriangle, WrenchIcon, Loader2, Monitor
@@ -71,11 +72,22 @@ export default function EspacosPage() {
     const [qStatus, setQStatus] = useState<"ativo" | "desativado" | "manutencao">("ativo")
     const [savingEquip, setSavingEquip] = useState(false)
 
-    useEffect(() => { fetchEspacos() }, [])
+    const { profile, isDeveloper } = useUser()
+    const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+
+    useEffect(() => {
+        if (profile) fetchEspacos()
+    }, [profile])
 
     const fetchEspacos = async () => {
         setLoading(true)
-        const { data } = await supabase.from("espacos_cuca").select("*").order("unidade_cuca").order("nome")
+        let query = supabase.from("espacos_cuca").select("*").order("unidade_cuca").order("nome")
+
+        if (!canSeeAllUnits && profile?.unidade_cuca) {
+            query = query.eq('unidade_cuca', profile.unidade_cuca)
+        }
+
+        const { data } = await query
         setEspacos(data || [])
         setLoading(false)
     }
@@ -100,7 +112,7 @@ export default function EspacosPage() {
         setENome(e?.nome || "")
         setEDescricao(e?.descricao || "")
         setECapacidade(e?.capacidade?.toString() || "")
-        setEUnidade(e?.unidade_cuca || "")
+        setEUnidade(e?.unidade_cuca || (!canSeeAllUnits && profile?.unidade_cuca ? profile.unidade_cuca : ""))
         setEStatus(e?.status || "ativo")
         setModalEspaco(true)
     }
@@ -325,10 +337,13 @@ export default function EspacosPage() {
                         </div>
                         <div className="grid gap-1.5">
                             <Label>Unidade CUCA *</Label>
-                            <Select value={eUnidade} onValueChange={setEUnidade}>
+                            <Select value={eUnidade} onValueChange={setEUnidade} disabled={!canSeeAllUnits}>
                                 <SelectTrigger><SelectValue placeholder="Selecione a unidade" /></SelectTrigger>
                                 <SelectContent>
-                                    {UNIDADES.map(u => <SelectItem key={u} value={u}>CUCA {u}</SelectItem>)}
+                                    {UNIDADES.map(u => {
+                                        if (!canSeeAllUnits && u !== profile?.unidade_cuca) return null;
+                                        return <SelectItem key={u} value={u}>CUCA {u}</SelectItem>
+                                    })}
                                 </SelectContent>
                             </Select>
                         </div>

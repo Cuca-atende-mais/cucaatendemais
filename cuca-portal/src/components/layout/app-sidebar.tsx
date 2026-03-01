@@ -59,17 +59,41 @@ export function AppSidebar() {
         router.refresh()
     }
 
-    // Filtrar itens de menu baseados nas permissões do colaborador
-    const filteredMenuItems = menuItems.filter(item => {
+    const filteredMenuItems = menuItems.map(item => {
         // Bypass Global para Desenvolvedores
-        if (isDeveloper) return true
+        if (isDeveloper) return item
 
         // Developer Console: APENAS para os emails autorizados (garantia dupla)
-        if (item.url === '/developer') return false
+        if (item.url === '/developer') return null
 
-        if (!item.permission) return true
-        return hasPermission(item.permission.recurso, item.permission.acao)
-    })
+        let visibleChildren = item.items
+
+        if (item.items) {
+            visibleChildren = item.items.filter(child => {
+                if (!child.permission) return true
+                return hasPermission(child.permission.recurso, child.permission.acao)
+            })
+        }
+
+        let hasParentPerm = true
+        if (item.permission) {
+            hasParentPerm = hasPermission(item.permission.recurso, item.permission.acao)
+        }
+
+        // Se tem filhos originais mas após o filtro não sobrou nenhum: ocultar o pai.
+        // Se sobrou algum filho: o pai deve ficar visível independente da permissão direta do pai.
+        if (item.items && item.items.length > 0) {
+            if (visibleChildren && visibleChildren.length > 0) {
+                hasParentPerm = true
+            } else {
+                hasParentPerm = false
+            }
+        }
+
+        if (!hasParentPerm) return null
+
+        return { ...item, items: visibleChildren }
+    }).filter(Boolean) as typeof menuItems
 
     return (
         <Sidebar collapsible="icon" className="border-r">
@@ -123,7 +147,7 @@ export function AppSidebar() {
                                                     <Link
                                                         key={subItem.title}
                                                         href={subItem.url}
-                                                        className={`block text-xs px-3 py-1.5 rounded-md transition-colors ${pathname === subItem.url
+                                                        className={`block text-xs px-3 py-1.5 rounded-md transition-colors ${pathname === subItem.url || pathname.startsWith(subItem.url + "/")
                                                             ? "bg-primary/10 text-primary font-medium"
                                                             : "text-muted-foreground hover:text-foreground hover:bg-accent"
                                                             }`}

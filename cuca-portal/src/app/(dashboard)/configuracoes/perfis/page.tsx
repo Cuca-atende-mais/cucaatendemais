@@ -72,7 +72,7 @@ const MODULE_GROUPS = [
 const FLAT_MODULES = MODULE_GROUPS.flatMap(g => g.modules)
 
 export default function GestaoPerfisPage() {
-    const { isDeveloper } = useUser()
+    const { isDeveloper, profile } = useUser()
     const groupsToRender = isDeveloper ? MODULE_GROUPS : MODULE_GROUPS.filter(g => g.category !== 'Módulo Técnico')
     const validFlatModules = groupsToRender.flatMap(g => g.modules)
 
@@ -96,10 +96,21 @@ export default function GestaoPerfisPage() {
 
     const fetchRoles = async () => {
         setLoading(true)
-        const { data, error } = await supabase
-            .from('sys_roles')
-            .select('*')
-            .order('name')
+
+        const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+
+        let query = supabase.from('sys_roles').select('*').order('name')
+
+        if (!canSeeAllUnits && profile?.unidade_cuca) {
+            query = query.or(`unidade_cuca.is.null,unidade_cuca.eq.${profile.unidade_cuca}`)
+            query = query.neq('name', 'Super Admin Cuca')
+        }
+
+        if (!isDeveloper) {
+            query = query.neq('name', 'Developer')
+        }
+
+        const { data, error } = await query
 
         if (data) {
             setRoles(data)
@@ -151,9 +162,14 @@ export default function GestaoPerfisPage() {
         if (!roleForm.name.trim()) return toast.error("Digite o nome da Função")
         try {
             if (isCreating) {
+                const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
                 const { data, error } = await supabase
                     .from('sys_roles')
-                    .insert({ name: roleForm.name, description: roleForm.description })
+                    .insert({
+                        name: roleForm.name,
+                        description: roleForm.description,
+                        unidade_cuca: canSeeAllUnits ? null : profile?.unidade_cuca
+                    })
                     .select()
                     .single()
 
