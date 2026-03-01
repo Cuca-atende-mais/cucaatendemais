@@ -200,6 +200,26 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                     let countNaAba = 0
                     const fallbackDate = new Date(anoAtual, mesInt - 1, 1).toISOString().split('T')[0]
 
+                    const parseTimeString = (timeStr: string | null | undefined): string | null => {
+                        if (!timeStr) return null;
+                        let s = String(timeStr).trim().toLowerCase();
+
+                        s = s.replace('h', ':');
+                        if (s.endsWith(':')) s = s + '00';
+
+                        const parts = s.split(':');
+                        if (parts.length >= 1) {
+                            const hInt = parseInt(parts[0]);
+                            if (isNaN(hInt)) return null;
+                            let h = hInt.toString().padStart(2, '0');
+                            let m = parts.length >= 2 ? parseInt(parts[1]) : 0;
+                            if (isNaN(m)) m = 0;
+                            let mStr = m.toString().padStart(2, '0');
+                            return `${h}:${mStr}:00`;
+                        }
+                        return null;
+                    }
+
                     rows.forEach(row => {
                         let titulo = ""
                         let descricao = ""
@@ -286,8 +306,8 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                                 descricao: String(descricao).substring(0, 1500),
                                 local: String(local).substring(0, 255),
                                 data_atividade: fallbackDate,
-                                hora_inicio: horaInicioStr || null,
-                                hora_fim: horaFimStr || null,
+                                hora_inicio: parseTimeString(horaInicioStr),
+                                hora_fim: parseTimeString(horaFimStr),
                                 categoria: categoriaVal,
                                 metadata: meta
                             })
