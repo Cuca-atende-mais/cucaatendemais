@@ -69,20 +69,35 @@ export default function ColaboradoresPage() {
         ])
 
         if (cRes.data) {
-            if (profile?.funcao?.nome === 'Gerente') {
-                setColaboradores(cRes.data.filter(c => c.unidade_cuca === profile.unidade_cuca))
-            } else {
-                setColaboradores(cRes.data)
+            const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+
+            let filteredColabs = cRes.data
+
+            // Remover os Masters (Developer) para todo mundo que não é Master
+            if (!isDeveloper) {
+                filteredColabs = filteredColabs.filter(c => c.sys_roles?.name !== 'Developer')
             }
+
+            // Aplicar as regras rigorosas caso não seja Developer e nem Super Admin
+            if (!canSeeAllUnits) {
+                // Filtra apenas a unidade dele
+                filteredColabs = filteredColabs.filter(c => c.unidade_cuca === profile?.unidade_cuca)
+                // Remove Super Admins da visão dos inferiores
+                filteredColabs = filteredColabs.filter(c => c.sys_roles?.name !== 'Super Admin Cuca')
+            }
+
+            setColaboradores(filteredColabs)
         }
         if (rRes.data) {
-            // Filtro simples de Hierarquia baseado em nomes conhecidos para não depender de nivel_acesso numérico
+            // Filtro simples de Hierarquia para criação de Cargos
             let disponiveis = rRes.data
+            const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+
             if (!isDeveloper) {
                 disponiveis = rRes.data.filter(r => r.name !== 'Developer')
             }
-            if (profile?.funcao?.nome === 'Gerente') {
-                disponiveis = rRes.data.filter(r => !['Developer', 'Super Admin Cuca'].includes(r.name))
+            if (!canSeeAllUnits) {
+                disponiveis = disponiveis.filter(r => r.name !== 'Super Admin Cuca')
             }
             setRoles(disponiveis)
         }
@@ -93,17 +108,21 @@ export default function ColaboradoresPage() {
         setIsSaving(true)
         try {
             if (editingColaborador) {
-                const { error } = await supabase
-                    .from("colaboradores")
-                    .update({
+                const res = await fetch('/api/colaboradores/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: editingColaborador.id,
+                        user_id: editingColaborador.user_id,
                         nome_completo: formData.nome_completo,
                         telefone: formData.telefone,
                         role_id: formData.role_id,
                         unidade_cuca: formData.unidade_cuca,
                         ativo: formData.ativo
                     })
-                    .eq("id", editingColaborador.id)
-                if (error) throw error
+                })
+                const data = await res.json()
+                if (!res.ok) throw new Error(data.error || 'Erro ao atualizar colaborador')
                 toast.success("Colaborador atualizado!")
             } else {
                 // Nova API de Criação Silenciosa com Resend Email
@@ -229,6 +248,27 @@ export default function ColaboradoresPage() {
                                     </Select>
                                 </div>
                             </div>
+                            {/* Controle de Auditoria (Acesso) */}
+                            {editingColaborador && (
+                                <div className="flex items-center space-x-2 pt-2 border-t mt-2">
+                                    <div className="flex-1 space-y-1">
+                                        <p className="text-sm font-medium leading-none">
+                                            Acesso ao Sistema
+                                        </p>
+                                        <p className="text-sm text-muted-foreground">
+                                            Desativar anulará o acesso e revogará a senha deste colaborador.
+                                        </p>
+                                    </div>
+                                    <Button
+                                        variant={formData.ativo ? "default" : "destructive"}
+                                        className={formData.ativo ? "bg-green-600 hover:bg-green-700" : ""}
+                                        onClick={() => setFormData({ ...formData, ativo: !formData.ativo })}
+                                        disabled={isSaving}
+                                    >
+                                        {formData.ativo ? "Ativo" : "Desativado (Revogado)"}
+                                    </Button>
+                                </div>
+                            )}
                         </div>
                         <DialogFooter>
                             <Button variant="outline" onClick={() => setIsModalOpen(false)} disabled={isSaving}>Cancelar</Button>

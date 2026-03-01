@@ -7,6 +7,7 @@ import {
     Calendar, User, Phone, FileText, ChevronRight, Loader2,
     AlertTriangle, Filter, Eye
 } from "lucide-react"
+import { useUser } from "@/lib/auth/user-provider"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -61,14 +62,27 @@ export default function AcessoCucaPortalPage() {
     const [reviewMode, setReviewMode] = useState<"aprovar" | "reprovar" | null>(null)
     const [saving, setSaving] = useState(false)
 
-    useEffect(() => { fetchSolicitacoes() }, [])
+    const { profile, isDeveloper } = useUser()
+
+    useEffect(() => {
+        if (profile) fetchSolicitacoes()
+    }, [profile])
 
     const fetchSolicitacoes = async () => {
         setLoading(true)
-        const { data } = await supabase
+
+        let query = supabase
             .from("solicitacoes_acesso")
             .select("*, espacos_cuca(nome)")
             .order("created_at", { ascending: false })
+
+        const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+
+        if (!canSeeAllUnits && profile?.unidade_cuca) {
+            query = query.eq('unidade_cuca', profile.unidade_cuca)
+        }
+
+        const { data } = await query
         setSolicitacoes(data || [])
         setLoading(false)
     }

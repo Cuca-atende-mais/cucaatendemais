@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { useUser } from "@/lib/auth/user-provider"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -71,6 +72,10 @@ const MODULE_GROUPS = [
 const FLAT_MODULES = MODULE_GROUPS.flatMap(g => g.modules)
 
 export default function GestaoPerfisPage() {
+    const { isDeveloper } = useUser()
+    const groupsToRender = isDeveloper ? MODULE_GROUPS : MODULE_GROUPS.filter(g => g.category !== 'Módulo Técnico')
+    const validFlatModules = groupsToRender.flatMap(g => g.modules)
+
     const [roles, setRoles] = useState<any[]>([])
     const [selectedRole, setSelectedRole] = useState<any>(null)
     const [permissions, setPermissions] = useState<any[]>([])
@@ -123,7 +128,7 @@ export default function GestaoPerfisPage() {
             return
         }
 
-        const perms = FLAT_MODULES.map(mod => {
+        const perms = validFlatModules.map(mod => {
             const existing = data?.find(d => d.module === mod.id)
             if (existing) {
                 return { ...existing, label: mod.label }
@@ -291,8 +296,8 @@ export default function GestaoPerfisPage() {
                                         key={r.id}
                                         onClick={() => loadRolePermissions(r)}
                                         className={`p-3 rounded-md cursor-pointer transition-all border group relative ${selectedRole?.id === r.id
-                                                ? 'bg-blue-50 border-blue-200 shadow-sm'
-                                                : 'bg-white hover:bg-slate-50 border-transparent hover:border-slate-200'
+                                            ? 'bg-blue-50 border-blue-200 shadow-sm'
+                                            : 'bg-white hover:bg-slate-50 border-transparent hover:border-slate-200'
                                             }`}
                                     >
                                         <div className="font-bold text-sm text-slate-700 leading-tight pr-6">{r.name}</div>
@@ -452,7 +457,7 @@ export default function GestaoPerfisPage() {
                                         </TableHeader>
 
                                         <TableBody>
-                                            {MODULE_GROUPS.map((group, groupIndex) => (
+                                            {groupsToRender.map((group, groupIndex) => (
                                                 <div key={group.category} className="contents">
                                                     {/* Row Categoria */}
                                                     <TableRow className="bg-slate-50/80 hover:bg-slate-50/80 border-y border-slate-200">

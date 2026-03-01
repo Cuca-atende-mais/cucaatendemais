@@ -1414,3 +1414,18 @@ A regra engessada de "Perfis fixados no código" foi substituída por um gerenci
 - [x] **Ferramentas de Massa**: Incluir botões para "Marcar Linha (Todos os poderes daquele módulo)" e "Marcar Coluna (Todo visualização, todo delete, etc)".
 - [x] **CRUD Completo de Cargos**: Permitir não só Criar e Deletar, mas também Editar o Nome e Descrição da Função Administrativa.
 
+---
+
+## 📋 Checklist de Execução: Fase 10 - Ajustes Finos de Hierarquia, Auditoria e Multi-Tenant por Unidade
+
+- [x] **Soft-Delete e Auditoria (Colaboradores)**:
+  - Adicionar Switch de `Ativo`/`Inativo` na tela de edição de equipe.
+  - Ocultar/bloquear login na rota via Supabase Admin (ban_duration) para evitar exclusão de dados vinculados e manter histórico de auditoria.
+- [x] **UX Inicial de Programação**:
+  - Ajustar o menu `Programação` para exibir e carregar por padrão a tela "Mensal" em vez da agenda "Pontual".
+- [x] **Visibilidade Multitenant Rigorosa (Master/Super vs Gerentes/Unidades)**:
+  - Ocultar o módulo `Developer Console` de **todos**, exceto `valmir@cucateste.com` e `dev.cucaatendemais@gmail.com`.
+  - Super Admin Cuca tem visão geral, porém Gerentes de Unidade só enxergam a si mesmos e os funcionários de **sua** unidade, e não veem os dados do Super Admin e dos Masters nos relatórios de equipe.
+  - Nas telas de Programação e Acesso CUCA, o campo/filtro de Unidade deve vir cravado na unidade do funcionário logado, escondendo a opção "Todas" para quem não for Super Admin ou Master.
+- [x] **Indicadores Visuais de Multitenant**:
+  - Inserir um *Badge* ou letreiro claro nas telas indicando "Você está vendo/editando dados da Unidade X" para não haver confusão visual durante a Programação.

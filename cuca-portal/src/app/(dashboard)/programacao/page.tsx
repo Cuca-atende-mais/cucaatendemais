@@ -27,6 +27,7 @@ import { UnifiedProgramModal } from "@/components/programacao/unified-program-mo
 import { ImportPlanilhaModal } from "@/components/programacao/import-planilha-modal"
 import * as XLSX from 'xlsx'
 import { useRouter } from "next/navigation"
+import { useUser } from "@/lib/auth/user-provider"
 
 export default function ProgramacaoPage() {
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -41,9 +42,20 @@ export default function ProgramacaoPage() {
     const supabase = createClient()
     const router = useRouter()
 
+    const { profile, isDeveloper } = useUser()
+
+    const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+
+    // Iniciar filtro com a unidade do perfil caso não seja super/master
     useEffect(() => {
-        fetchData()
-    }, [unidadeFilter, searchTerm]) // Added searchTerm to dependencies for live filtering
+        if (profile && !canSeeAllUnits) {
+            setUnidadeFilter(profile.unidade_cuca || "all")
+        }
+    }, [profile, canSeeAllUnits])
+
+    useEffect(() => {
+        if (profile) fetchData()
+    }, [unidadeFilter, searchTerm, profile]) // Added searchTerm to dependencies for live filtering
 
     const fetchData = async () => {
         setLoading(true)
@@ -102,8 +114,20 @@ export default function ProgramacaoPage() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-cuca-dark">Programas & Eventos</h1>
-                    <p className="text-muted-foreground">Gestão unificada da programação da Rede CUCA</p>
+                    <h1 className="text-3xl font-bold tracking-tight text-cuca-dark flex items-center gap-3">
+                        Programas & Eventos
+                        {unidadeFilter !== "all" && (
+                            <Badge className="bg-cuca-blue text-white text-sm font-medium px-3 py-1">
+                                Unidade: {unidadeFilter}
+                            </Badge>
+                        )}
+                        {unidadeFilter === "all" && (
+                            <Badge variant="outline" className="text-muted-foreground text-sm font-medium px-3 py-1 border-muted-foreground/30">
+                                Vista Global (Todas Unidades)
+                            </Badge>
+                        )}
+                    </h1>
+                    <p className="text-muted-foreground mt-1">Gestão unificada da programação da Rede CUCA</p>
                 </div>
                 <Button
                     className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold"
@@ -119,14 +143,14 @@ export default function ProgramacaoPage() {
                 onSuccess={fetchData}
             />
 
-            <Tabs defaultValue="pontual" className="w-full">
+            <Tabs defaultValue="mensal" className="w-full">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                     <TabsList className="bg-muted/50 p-1">
-                        <TabsTrigger value="pontual" className="gap-2">
-                            <Clock className="h-4 w-4" /> Pontual
-                        </TabsTrigger>
                         <TabsTrigger value="mensal" className="gap-2">
                             <Calendar className="h-4 w-4" /> Mensal
+                        </TabsTrigger>
+                        <TabsTrigger value="pontual" className="gap-2">
+                            <Clock className="h-4 w-4" /> Pontual
                         </TabsTrigger>
                     </TabsList>
 
@@ -142,25 +166,32 @@ export default function ProgramacaoPage() {
                         </div>
                         <div className="flex items-center gap-3">
                             <div className="flex bg-muted p-1 rounded-lg">
-                                <Button
-                                    variant={unidadeFilter === "all" ? "secondary" : "ghost"}
-                                    size="sm"
-                                    onClick={() => setUnidadeFilter("all")}
-                                    className="h-8 text-xs px-3"
-                                >
-                                    Todas
-                                </Button>
-                                {unidadesCuca.map((u) => (
+                                {canSeeAllUnits && (
                                     <Button
-                                        key={u}
-                                        variant={unidadeFilter === u ? "secondary" : "ghost"}
+                                        variant={unidadeFilter === "all" ? "default" : "ghost"}
                                         size="sm"
-                                        onClick={() => setUnidadeFilter(u)}
-                                        className="h-8 text-xs px-3"
+                                        onClick={() => setUnidadeFilter("all")}
+                                        className={`h-8 text-xs px-3 ${unidadeFilter === "all" ? "bg-cuca-blue text-white hover:bg-cuca-blue/90 font-bold" : ""}`}
                                     >
-                                        {u}
+                                        Todas as Unidades
                                     </Button>
-                                ))}
+                                )}
+                                {unidadesCuca.map((u) => {
+                                    // Se não pode ver tudo, e U não é a unidade dele, esconde o botão
+                                    if (!canSeeAllUnits && u !== profile?.unidade_cuca) return null
+
+                                    return (
+                                        <Button
+                                            key={u}
+                                            variant={unidadeFilter === u ? "default" : "ghost"}
+                                            size="sm"
+                                            onClick={() => canSeeAllUnits && setUnidadeFilter(u)}
+                                            className={`h-8 text-xs px-3 ${unidadeFilter === u ? "bg-cuca-blue text-white hover:bg-cuca-blue/90 font-bold" : ""}`}
+                                        >
+                                            {u}
+                                        </Button>
+                                    )
+                                })}
                             </div>
 
                             <Button
