@@ -55,9 +55,11 @@ const MODULE_GROUPS = [
     {
         category: 'Administração & Sistema',
         modules: [
-            { id: 'equipe', label: 'Gestão da Equipe (Colaboradores)' },
-            { id: 'perfis', label: 'Perfis de Acesso (Controle RBAC)' },
-            { id: 'configuracoes', label: 'Ajustes Finos (WhatsApp, Locais)' },
+            { id: 'config_whatsapp', label: 'Config. WhatsApp (Gerenciar Instâncias e QR Code)' },
+            { id: 'config_colaboradores', label: 'Gestão da Equipe (Convidar e Editar Colaboradores)' },
+            { id: 'config_perfis', label: 'Perfis de Acesso (Controle de Matriz RBAC)' },
+            { id: 'config_unidades', label: 'Cadastro e Edição de Unidades Físicas' },
+            { id: 'config_categorias', label: 'Cadastro e Edição de Categorias de Equipamentos' },
         ]
     },
     {
