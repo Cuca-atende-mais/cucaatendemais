@@ -31,14 +31,15 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { Users, Plus, Shield, Building2, Mail, Phone, Search } from "lucide-react"
+import { Users, Plus, Shield, Building2, Mail, Phone, Search, Loader2 } from "lucide-react"
 import { toast } from "react-hot-toast"
 import { unidadesCuca } from "@/lib/constants"
 
 export default function ColaboradoresPage() {
     const [colaboradores, setColaboradores] = useState<any[]>([])
-    const [funcoes, setFuncoes] = useState<any[]>([])
+    const [roles, setRoles] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
+    const [isSaving, setIsSaving] = useState(false)
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingColaborador, setEditingColaborador] = useState<any>(null)
     const [searchTerm, setSearchTerm] = useState("")
@@ -50,7 +51,7 @@ export default function ColaboradoresPage() {
         nome_completo: "",
         email: "",
         telefone: "",
-        funcao_id: "",
+        role_id: "",
         unidade_cuca: "Geral",
         ativo: true
     }
@@ -62,47 +63,63 @@ export default function ColaboradoresPage() {
 
     const fetchData = async () => {
         setLoading(true)
-        const [cRes, fRes] = await Promise.all([
-            supabase.from("colaboradores").select("*, funcoes(nome)").order("nome_completo"),
-            supabase.from("funcoes").select("*").order("nome")
+        const [cRes, rRes] = await Promise.all([
+            supabase.from("colaboradores").select("*, sys_roles(name)").order("nome_completo"),
+            supabase.from("sys_roles").select("*").order("name")
         ])
 
         if (cRes.data) {
-            // Se for gestor de unidade, filtrar apenas colaboradores da sua unidade
-            if (profile?.funcao?.nome === 'gestor_unidade') {
+            if (profile?.funcao?.nome === 'Gerente') {
                 setColaboradores(cRes.data.filter(c => c.unidade_cuca === profile.unidade_cuca))
             } else {
                 setColaboradores(cRes.data)
             }
         }
-        if (fRes.data) {
-            // Filtrar funções baseadas na hierarquia
-            // Níveis: Dev(10), SuperAdmin(5), Gestor Central(4), Gestor Unidade(3), Colab(2)
-            const myLevel = profile?.funcao?.nivel_acesso || 0
-            const disponiveis = fRes.data.filter(f => {
-                if (isDeveloper) return f.nome !== 'developer' // Dev cria tudo menos outro dev (via UI)
-                return f.nivel_acesso < myLevel // Só cria quem tem nível menor
-            })
-            setFuncoes(disponiveis)
+        if (rRes.data) {
+            // Filtro simples de Hierarquia baseado em nomes conhecidos para não depender de nivel_acesso numérico
+            let disponiveis = rRes.data
+            if (!isDeveloper) {
+                disponiveis = rRes.data.filter(r => r.name !== 'Developer')
+            }
+            if (profile?.funcao?.nome === 'Gerente') {
+                disponiveis = rRes.data.filter(r => !['Developer', 'Super Admin Cuca'].includes(r.name))
+            }
+            setRoles(disponiveis)
         }
         setLoading(false)
     }
 
     const handleSave = async () => {
+        setIsSaving(true)
         try {
             if (editingColaborador) {
                 const { error } = await supabase
                     .from("colaboradores")
-                    .update(formData)
+                    .update({
+                        nome_completo: formData.nome_completo,
+                        telefone: formData.telefone,
+                        role_id: formData.role_id,
+                        unidade_cuca: formData.unidade_cuca,
+                        ativo: formData.ativo
+                    })
                     .eq("id", editingColaborador.id)
                 if (error) throw error
                 toast.success("Colaborador atualizado!")
             } else {
-                const { error } = await supabase
-                    .from("colaboradores")
-                    .insert([formData])
-                if (error) throw error
-                toast.success("Colaborador cadastrado!")
+                // Nova API de Criação Silenciosa com Resend Email
+                const res = await fetch('/api/colaboradores/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: formData.email,
+                        nome: formData.nome_completo,
+                        roleId: formData.role_id,
+                        unidadeCuca: formData.unidade_cuca
+                    })
+                })
+                const data = await res.json()
+                if (!res.ok) throw new Error(data.error || 'Erro ao criar colaborador')
+                toast.success("Colaborador cadastrado e convite enviado!")
             }
             setIsModalOpen(false)
             setEditingColaborador(null)
@@ -110,6 +127,8 @@ export default function ColaboradoresPage() {
             fetchData()
         } catch (error: any) {
             toast.error(error.message)
+        } finally {
+            setIsSaving(false)
         }
     }
 
@@ -118,9 +137,9 @@ export default function ColaboradoresPage() {
         setFormData({
             nome_completo: colab.nome_completo,
             email: colab.email,
-            telefone: colab.telefone,
-            funcao_id: colab.funcao_id,
-            unidade_cuca: colab.unidade_cuca,
+            telefone: colab.telefone || "",
+            role_id: colab.role_id || "",
+            unidade_cuca: colab.unidade_cuca || "Geral",
             ativo: colab.ativo
         })
         setIsModalOpen(true)
@@ -148,76 +167,61 @@ export default function ColaboradoresPage() {
                     <DialogContent className="sm:max-w-[500px]">
                         <DialogHeader>
                             <DialogTitle>
-                                {editingColaborador
-                                    ? "Editar Colaborador"
-                                    : isDeveloper
-                                        ? "Cadastrar Super Admin Cuca"
-                                        : profile?.funcao?.nome === 'super_admin'
-                                            ? "Cadastrar Gestor de Unidade"
-                                            : "Cadastrar Membro da Equipe"}
+                                {editingColaborador ? "Editar Colaborador" : "Cadastrar Colaborador"}
                             </DialogTitle>
                             <DialogDescription>
-                                {isDeveloper
-                                    ? "Como Developer, você está criando um administrador global do sistema."
-                                    : profile?.funcao?.nome === 'super_admin'
-                                        ? "Como Super Admin, você está delegando a gestão de uma unidade específica."
-                                        : `Adicionando novo membro para a unidade ${profile?.unidade_cuca}.`}
+                                {editingColaborador
+                                    ? "Altere os dados de acesso e perfil."
+                                    : "O colaborador receberá um e-mail com instruções para configurar sua própria senha."}
                             </DialogDescription>
                         </DialogHeader>
                         <div className="grid gap-4 py-4">
                             <div className="grid gap-2">
                                 <Label htmlFor="nome">Nome Completo</Label>
-                                <Input id="nome" value={formData.nome_completo} onChange={e => setFormData({ ...formData, nome_completo: e.target.value })} />
+                                <Input id="nome" value={formData.nome_completo} onChange={e => setFormData({ ...formData, nome_completo: e.target.value })} disabled={isSaving} />
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="grid gap-2">
-                                    <Label htmlFor="email">E-mail</Label>
-                                    <Input id="email" type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                                    <Label htmlFor="email">E-mail {editingColaborador && "(Fixo)"}</Label>
+                                    <Input id="email" type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} disabled={!!editingColaborador || isSaving} />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="tel">Telefone (WP)</Label>
-                                    <Input id="tel" value={formData.telefone} onChange={e => setFormData({ ...formData, telefone: e.target.value })} />
+                                    <Label htmlFor="tel">Telefone (Opcional)</Label>
+                                    <Input id="tel" value={formData.telefone} onChange={e => setFormData({ ...formData, telefone: e.target.value })} disabled={isSaving} />
                                 </div>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="grid gap-2">
-                                    <Label>Função (Role)</Label>
+                                    <Label>Perfil de Acesso (Cargo)</Label>
                                     <Select
-                                        value={formData.funcao_id}
-                                        onValueChange={val => {
-                                            const selectedFuncao = funcoes.find(f => f.id === val)
-                                            // Se for gestor de unidade criando equipe, travar a unidade
-                                            const newUnidade = profile?.funcao?.nome === 'gestor_unidade' ? profile.unidade_cuca : formData.unidade_cuca
-                                            setFormData({ ...formData, funcao_id: val, unidade_cuca: newUnidade })
-                                        }}
+                                        value={formData.role_id}
+                                        onValueChange={val => setFormData({ ...formData, role_id: val })}
+                                        disabled={isSaving}
                                     >
                                         <SelectTrigger>
                                             <SelectValue placeholder="Selecione..." />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {funcoes.map(f => (
-                                                <SelectItem key={f.id} value={f.id}>
-                                                    <div className="flex justify-between w-full gap-2">
-                                                        <span>{f.nome.replace('_', ' ').toUpperCase()}</span>
-                                                        <span className="text-[10px] bg-muted px-1 rounded text-muted-foreground">LVL {f.nivel_acesso}</span>
-                                                    </div>
+                                            {roles.map(r => (
+                                                <SelectItem key={r.id} value={r.id}>
+                                                    {r.name}
                                                 </SelectItem>
                                             ))}
                                         </SelectContent>
                                     </Select>
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label>Unidade Ativa</Label>
+                                    <Label>Unidade de Lotação</Label>
                                     <Select
                                         value={formData.unidade_cuca}
                                         onValueChange={val => setFormData({ ...formData, unidade_cuca: val })}
-                                        disabled={profile?.funcao?.nome === 'gestor_unidade'}
+                                        disabled={profile?.funcao?.nome === 'Gerente' || isSaving}
                                     >
                                         <SelectTrigger>
                                             <SelectValue placeholder="Selecione..." />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="Geral">Todas as Unidades</SelectItem>
+                                            <SelectItem value="Geral">Administração Geral</SelectItem>
                                             {unidadesCuca.map(u => (
                                                 <SelectItem key={u} value={u}>{u}</SelectItem>
                                             ))}
@@ -227,8 +231,11 @@ export default function ColaboradoresPage() {
                             </div>
                         </div>
                         <DialogFooter>
-                            <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancelar</Button>
-                            <Button onClick={handleSave} className="bg-cuca-yellow text-cuca-dark hover:bg-cuca-yellow/90">Salvar</Button>
+                            <Button variant="outline" onClick={() => setIsModalOpen(false)} disabled={isSaving}>Cancelar</Button>
+                            <Button onClick={handleSave} className="bg-cuca-yellow text-cuca-dark hover:bg-cuca-yellow/90" disabled={isSaving}>
+                                {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                                {isSaving ? "Salvando..." : "Salvar e Enviar Convite"}
+                            </Button>
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
@@ -248,9 +255,10 @@ export default function ColaboradoresPage() {
                 <CardContent className="p-0">
                     <Table>
                         <TableHeader>
-                            <TableRow>
+                            <TableRow className="bg-muted/50">
                                 <TableHead>Colaborador</TableHead>
-                                <TableHead>Função</TableHead>
+                                <TableHead>Contato</TableHead>
+                                <TableHead>Cargo</TableHead>
                                 <TableHead>Unidade</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead className="text-right">Ações</TableHead>
@@ -258,37 +266,64 @@ export default function ColaboradoresPage() {
                         </TableHeader>
                         <TableBody>
                             {loading ? (
-                                <TableRow><TableCell colSpan={5} className="text-center py-10">Carregando...</TableCell></TableRow>
+                                <TableRow>
+                                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                                        Carregando equipe...
+                                    </TableCell>
+                                </TableRow>
                             ) : filteredColabs.length === 0 ? (
-                                <TableRow><TableCell colSpan={5} className="text-center py-10">Nenhum colaborador encontrado.</TableCell></TableRow>
+                                <TableRow>
+                                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                                        Nenhum colaborador encontrado.
+                                    </TableCell>
+                                </TableRow>
                             ) : (
                                 filteredColabs.map((colab) => (
                                     <TableRow key={colab.id}>
                                         <TableCell>
-                                            <div className="flex flex-col">
-                                                <span className="font-medium text-foreground">{colab.nome_completo}</span>
-                                                <span className="text-xs text-muted-foreground">{colab.email}</span>
+                                            <div className="flex items-center gap-3">
+                                                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium">
+                                                    {colab.nome_completo.charAt(0).toUpperCase()}
+                                                </div>
+                                                <div>
+                                                    <p className="font-medium">{colab.nome_completo}</p>
+                                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                                        <Mail className="w-3 h-3" />
+                                                        {colab.email}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant="secondary" className="font-mono text-[10px] uppercase">
+                                            {colab.telefone && (
+                                                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                                                    <Phone className="w-3 h-3" />
+                                                    {colab.telefone}
+                                                </div>
+                                            )}
+                                        </TableCell>
+                                        <TableCell>
+                                            <Badge variant="outline" className="font-medium bg-blue-50/50 text-blue-700 border-blue-200">
                                                 <Shield className="w-3 h-3 mr-1" />
-                                                {colab.funcoes?.nome.replace('_', ' ')}
+                                                {colab.sys_roles?.name || "Sem Perfil"}
                                             </Badge>
                                         </TableCell>
                                         <TableCell>
-                                            <div className="flex items-center text-sm text-muted-foreground">
-                                                <Building2 className="w-3 h-3 mr-1" />
+                                            <div className="flex items-center gap-1 text-sm">
+                                                <Building2 className="w-4 h-4 text-muted-foreground" />
                                                 {colab.unidade_cuca}
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge className={colab.ativo ? "bg-green-600 text-white hover:bg-green-700" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}>
+                                            <Badge variant={colab.ativo ? "default" : "secondary"}
+                                                className={colab.ativo ? "bg-green-100 text-green-700 hover:bg-green-100 border-green-200" : ""}>
                                                 {colab.ativo ? "Ativo" : "Inativo"}
                                             </Badge>
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <Button variant="ghost" size="sm" onClick={() => handleEdit(colab)}>Configurar</Button>
+                                            <Button variant="ghost" size="sm" onClick={() => handleEdit(colab)}>
+                                                Editar
+                                            </Button>
                                         </TableCell>
                                     </TableRow>
                                 ))

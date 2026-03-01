@@ -14,8 +14,7 @@ type UserProfile = {
     nome_completo: string
     funcao: {
         nome: string
-        nivel_acesso: number
-        permissoes: Permission[]
+        permissoes: any[]
     }
     unidade_cuca: string
     email: string
@@ -51,14 +50,14 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                 nome_completo,
                 email,
                 unidade_cuca,
-                funcoes (
-                    nome,
-                    nivel_acesso,
-                    funcoes_permissoes (
-                        permissoes (
-                            recurso,
-                            acao
-                        )
+                sys_roles (
+                    name,
+                    sys_permissions (
+                        module,
+                        can_read,
+                        can_create,
+                        can_update,
+                        can_delete
                     )
                 )
             `)
@@ -78,12 +77,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                 email: data.email,
                 unidade_cuca: data.unidade_cuca,
                 funcao: {
-                    nome: (data.funcoes as any)?.nome || 'Sem Função',
-                    nivel_acesso: (data.funcoes as any)?.nivel_acesso || 0,
-                    permissoes: ((data.funcoes as any)?.funcoes_permissoes || []).map((fp: any) => ({
-                        recurso: fp?.permissoes?.recurso || '',
-                        acao: fp?.permissoes?.acao || ''
-                    }))
+                    nome: (data.sys_roles as any)?.name || 'Sem Função',
+                    permissoes: (data.sys_roles as any)?.sys_permissions || []
                 }
             }
             return mappedProfile
@@ -95,12 +90,21 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     const hasPermission = (recurso: string, acao: string) => {
         if (!profile) return false
-        // developer e super_admin tem acesso irrestrito
-        if (profile.funcao.nome === 'developer' || profile.funcao.nome === 'super_admin') return true
-        return profile.funcao.permissoes.some(p => p.recurso === recurso && (p.acao === acao || p.acao === '*'))
+        if (profile.funcao.nome === 'Developer' || profile.funcao.nome === 'Super Admin Cuca') return true
+
+        const resourcePerm = profile.funcao.permissoes.find((p: any) => p.module === recurso)
+        if (!resourcePerm) return false
+
+        switch (acao) {
+            case 'read': return resourcePerm.can_read
+            case 'create': return resourcePerm.can_create
+            case 'update': return resourcePerm.can_update
+            case 'delete': return resourcePerm.can_delete
+            default: return false
+        }
     }
 
-    const isDeveloper = profile?.funcao?.nome === 'developer' &&
+    const isDeveloper = profile?.funcao?.nome === 'Developer' &&
         ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com'].includes(profile?.email || '')
 
     useEffect(() => {

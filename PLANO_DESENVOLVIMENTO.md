@@ -1371,3 +1371,42 @@ O fluxo atual depende de arquivamento físico e planilhas instáveis geradas por
 - Se a negociação fluir pelo lado reverso, a Prefeitura desenvolverá os Endpoints do Portal da Juventude que publicam a Revista Digitalizada.
 - **Nosso Papel:** Criaríamos um Worker (Cron Job) que escutaria a API da SEJU (`GET /api/seju/revistas/cuca/atual`) a cada 12 horas.
 - Todo o processamento vetorial (Embeddings), que hoje construímos usando arquivos do Excel, se alimentaria diretamente das chaves JSON dessa API, transformando seus arrays nativos no mesmo "Super-Prompt Literário" pro RAG engolir automaticamente e servir no Whatsapp aos Jovens.
+
+---
+
+## 18. 🔐 ARQUITETURA DE AUTENTICAÇÃO E CONTROLE DE ACESSO (RBAC) {#18-auth-rbac}
+
+Para mitigar os históricos de conflitos com e-mails mágicos da plataforma Supabase e ao mesmo tempo fornecer extremo controle granular sobre quem vê o que no sistema (Hierarquia Cuca), a arquitetura adotada abandona o fluxo nativo automatizado (Invite) em prol da solução "SaaS Auth Flow Customizado".
+
+### 18.1 Criação de Colaboradores e Tenant (Isolamento)
+- **Inserção Acoplada:** A tabela de colaboradores será vinculada obrigatoriamente à tabela `auth.users` do Supabase via Foreign Key (`user_id`). 
+- **Estratégia Anti-Conflito (Silenciosa):** O Back-End (via SDK Admin do Supabase) criará o usuário com a propriedade `email_confirm: true` para **silenciar todos os e-mails vitrines nativos do Supabase.** Nossa base registrará um Token temporário na nossa própria tabela de Colaboradores.
+- **Isolamento de Tenant:** Os colaboradores e seus respectivos dados continuarão isolados pela coluna `unidade_cuca` na tabela pública, garantindo a visualização separada por Polos através do nosso Row Level Security (RLS), mesmo que pertençam globalmente à tabela de Auth.
+
+### 18.2 Fluxo do E-mail Personalizado e Setup de Senha
+- **E-Mail via Resend API:** Com a verificação de Domínio Próprio ou com e-mails fixados se usando Free Tier, o sistema dispara um E-mail React lindamente diagramado com a logo da Instituição, informando sobre a criação de conta.
+- O e-mail contém um link `/setup-senha?token=XYZ` da nossa própria aplicação.
+- Na tela enxuta e com identidade visual do CUCA, o colaborador digita a senha escolhida intransferível (apenas ele saberá). Ao enviar, o Back-End destrói o token de segurança, atualiza a senha de fato no Supabase (`admin.updateUserById`), realiza automaticamente o primeiro login e injeta o colaborador na home do Painel. Zero confusões de telas de validação mortas.
+
+### 18.3 Gestão Dinâmica de Perfis (O "RBAC Enterprise")
+A regra engessada de "Perfis fixados no código" foi substituída por um gerenciador dinâmico de Perfis de Acesso.
+
+- **UI do "Nível Deus":**
+  1. O **Developer** detém o Master Key: enxerga Módulos de Log, Developer Console puro, System Settings e tem perpassos imunes (`Bypass`) à validação do Middleware.
+  2. O **Super Admin Cuca:** Pode tudo o que o negócio precisa, **cria** todos os demais colaboradores e cria os Gerentes, mas não vê as ferramentas técnicas (Developer Console), resguardando o código de incidentes.
+- **Painel de Cargos (Rules):** O Super Admin contará com uma tela em `Configurações > Perfis` para "Fabricar" novos perfis desenhando a permissão granular baseada em Matriz CRUD (Visualizar Menu, Criar, Editar, Deletar).
+  - Ex: Ele mesmo criará o perfil de "Atendente", desmarcando as caixas de criação de planilhas.
+- **A Barreira (Middleware Edge):** Ao logar, nosso sistema lerá os direitos desse JSON atrelado à Conta do Cuca. Qualquer rota acessada irá ser cortada na raiz no Next.js caso seu perfil não a conte. Na ponta UI, os botões sumirão ou aparecerão bloqueados. O RLS do banco será o seguro de vida caso hackers forcem a UI localmente.
+
+---
+
+## 📋 Checklist de Execução: Fase 9 - Auth Customizada e RBAC Dinâmico
+
+- [x] Criar tabelas `sys_roles` e `sys_permissions` no Supabase e atrelá-las a `colaboradores`.
+- [x] Adicionar colunas `setup_token` (UUID) e `setup_token_expires_at` em `colaboradores`.
+- [x] Criar API `/api/colaboradores/create` no Backend para Auth Admin silencioso (`email_confirm: true`).
+- [x] Integrar envio de e-mail via Resend API (usando seu Token `re_E2VC...`) na criação do colaborador.
+- [x] Criar tela pública `/setup-senha` para definição de senha com identidade visual do CUCA (React Email Template e Modal enxuto redirecionando para `/login`).
+- [x] Desenvolver API `/api/colaboradores/setup-password` para que o frontend atualize a senha via Supabase Admin usando o token gerado.
+- [x] Desenvolver UI em `/configuracoes/perfis` (Gestão Dinâmica) para criar Cargos Múltiplos com checkboxes CRUD (Read, Create, Update, Delete) vinculados as tabelas.
+- [x] Modificar Middleware/SideBar no FrontEnd para ocultar itens de menu e botões que o usuário logado não possui permissão RBAC.

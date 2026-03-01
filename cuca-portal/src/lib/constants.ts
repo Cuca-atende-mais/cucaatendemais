@@ -56,10 +56,11 @@ export const menuItems = [
         title: "Configurações",
         url: "/configuracoes",
         icon: "Settings",
-        permission: { recurso: "configuracoes", acao: "update" },
+        permission: { recurso: "configuracoes", acao: "read" },
         items: [
             { title: "WhatsApp", url: "/configuracoes/whatsapp" },
             { title: "Colaboradores", url: "/configuracoes/colaboradores" },
+            { title: "Perfis (RBAC)", url: "/configuracoes/perfis" },
             { title: "Unidades", url: "/unidades" },
             { title: "Categorias", url: "/categorias" },
         ],
