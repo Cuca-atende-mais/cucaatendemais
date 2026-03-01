@@ -70,14 +70,15 @@ export function AppSidebar() {
 
         if (item.items) {
             visibleChildren = item.items.filter(child => {
-                if (!child.permission) return true
-                return hasPermission(child.permission.recurso, child.permission.acao)
+                const perm = (child as any).permission
+                if (!perm) return true
+                return hasPermission(perm.recurso, perm.acao)
             })
         }
 
         let hasParentPerm = true
-        if (item.permission) {
-            hasParentPerm = hasPermission(item.permission.recurso, item.permission.acao)
+        if ((item as any).permission) {
+            hasParentPerm = hasPermission((item as any).permission.recurso, (item as any).permission.acao)
         }
 
         // Se tem filhos originais mas após o filtro não sobrou nenhum: ocultar o pai.
