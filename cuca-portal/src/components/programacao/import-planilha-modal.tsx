@@ -206,13 +206,23 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                         let local = "Não informado"
                         let horaInicioStr = ""
                         let horaFimStr = ""
+                        let meta: any = {}
 
                         if (categoriaVal === "CURSOS") {
                             titulo = row[2]
-                            descricao = row[5] || ""
+                            meta = {
+                                ementa: row[5] || "",
+                                requisitos: row[6] || "",
+                                periodo: row[7] || "",
+                                horario: row[8] || "",
+                                carga_horaria: row[3] || "",
+                                vagas: row[4] || "",
+                                educador: row[9] || ""
+                            }
+
+                            descricao = `Curso: ${titulo}. Educador: ${meta.educador}. Vagas: ${meta.vagas}. Carga Horária: ${meta.carga_horaria}h. Período: ${meta.periodo}. Horário: ${meta.horario}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}`
                             local = "Não informado"
 
-                            // Tenta pegar o horário da coluna 8 (ex: "14:00 às 17:00")
                             if (row[8] && typeof row[8] === 'string') {
                                 const parts = row[8].split("às")
                                 if (parts.length === 2) {
@@ -222,25 +232,50 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                             }
                         } else if (categoriaVal === "ESPORTES") {
                             titulo = row[1]
-                            descricao = row[3] ? `Turma: ${row[3]}` : ""
+                            meta = {
+                                professor: row[2] || "",
+                                turma: row[3] || "",
+                                faixa_etaria: row[4] || "",
+                                sexo: row[5] || "",
+                                vagas: row[6] || "",
+                                dias_semana: row[7] || "",
+                                horario: row[8] || ""
+                            }
+
+                            descricao = `Esporte Modalidade: ${titulo} - Turma ${meta.turma}. Professor: ${meta.professor}. Vagas: ${meta.vagas}. Público: ${meta.sexo} (Idade: ${meta.faixa_etaria}). Dias: ${meta.dias_semana}. Horário: ${meta.horario}.`
                             local = "Não informado"
 
                             if (row[8] && typeof row[8] === 'string') {
-                                const parts = row[8].split("ás")
+                                const parts = row[8].replace("ás", "às").split("às")
                                 if (parts.length === 2) {
                                     horaInicioStr = parts[0].trim()
                                     horaFimStr = parts[1].trim()
                                 }
                             }
-                        } else if (categoriaVal === "DIA A DIA") {
-                            titulo = row[4]
-                            descricao = row[9] || row[5] || ""
-                            local = row[8] || row[1] || "Não informado"
+                        } else if (categoriaVal === "DIA A DIA" || categoriaVal === "ESPECIAIS") {
+                            // Assumindo Especiais com mesma estrutura do Dia a Dia pelo visual
+                            titulo = row[4] || row[3] // Dia a dia é 4, Especiais é 3
+                            meta = {
+                                sessao: row[1] || "",
+                                data_real: row[2] || "",
+                                dia_semana: row[3] || "", // em dia-a-dia
+                                atividade: row[5] || row[4] || "",
+                                local: row[8] || row[6] || "",
+                                informacoes: row[9] || row[7] || "",
+                                hora_inicio: row[6] || row[5] || "",
+                                hora_fim: row[7] || ""
+                            }
+
+                            descricao = `Programa (${categoriaVal}): ${titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${meta.hora_inicio} às ${meta.hora_fim}. Local: ${meta.local}. Informações: ${meta.informacoes}. Sessão: ${meta.sessao}.`
+                            local = meta.local || "Não informado"
+                            horaInicioStr = String(meta.hora_inicio).trim()
+                            horaFimStr = String(meta.hora_fim).trim()
                         } else {
                             // Fallback Genérico
                             titulo = row[2] || row[1] || row[4]
-                            descricao = row[5] || row[9] || ""
+                            descricao = String(row[5] || row[9] || "")
                             local = row[8] || "Não informado"
+                            meta = { info_bruta: descricao }
                         }
 
                         // Validação: Atividade só é válida se tiver um título válido escrito
@@ -248,12 +283,13 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                             atividadesToInsert.push({
                                 unidade_cuca: unidadeCuca,
                                 titulo: titulo.substring(0, 100),
-                                descricao: String(descricao),
+                                descricao: String(descricao).substring(0, 1500),
                                 local: String(local).substring(0, 255),
                                 data_atividade: fallbackDate,
                                 hora_inicio: horaInicioStr || null,
                                 hora_fim: horaFimStr || null,
-                                categoria: categoriaVal
+                                categoria: categoriaVal,
+                                metadata: meta
                             })
                             countNaAba++
                         }

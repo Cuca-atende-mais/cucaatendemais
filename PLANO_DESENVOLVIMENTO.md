@@ -1299,3 +1299,75 @@ As planilhas do Excel possuem diversas abas (ex: `ESPORTES - JANEIRO`, `ESPORTES
 3. Frontend: Refatorar o código `handleImportXLSX` para rodar o loop em todas as `wb.SheetNames`, aplicando a regex de `Categoria - Mês` validando apenas o mês inputado.
 4. Backend: Atualizar lógica para que a inserção apague (`DELETE`) a Campanha anterior da mesma `unidade_cuca` limpando a tabela filha e consequentemente os Embeddings RAG.
 5. Frontend: Trocar a visualização na Sidebar por uma Tabela Complexa que usa o campo novo `categoria` p/ filtrar as atividades do mês.
+
+---
+
+## 16. 🧠 ARQUITETURA DE DADOS: O "SUPER-PROMPT" NA DESCRIÇÃO (RAG ENRIQUECIDO) {#16-super-prompt-descricao}
+
+### O Problema da Informação Desestruturada
+O cliente (Rede CUCA) possui planilhas que espelham exatamente a visão física ("Revistinha impressa" pela gráfica), ou seja, dividem os dados em diversas colunas vitais para a tomada de decisão do jovem: Período, Horário, Educador, Carga Horária, Faixa Etária, Vagas, Dias da semana, etc.
+Anteriormente, a tabela do banco (`atividades_mensais`) possuía apenas um campo `descricao` simples que ignorava todo o resto das colunas, deixando o RAG "cego" sobre restrições de idade, cronograma e vagas.
+
+### A Solução Parte 1: Inclusão Concatenada (O "Super-Prompt" do RAG)
+Para evitar a necessidade de criar dezenas de colunas fragmentadas (e muitas vezes nulas, já que Esportes tem colunas diferentes de Cursos) na tabela de banco de dados, iremos adotar o padrão de **String Formatada Rico para RAG** (Super-Prompt).
+
+No momento de leitura da planilha (`import-planilha-modal.tsx`), o parser irá capturar cada coluna disponível, rotulá-la em texto amigável e concatenar isso dentro do próprio campo `descricao`.
+Desta forma, quando o processo Backend (Trigger/Edge Function) transformar o registro num Vetor (Embedding), toda a riqueza contextual subirá acoplada, e o LLM baterá o olho num texto humano de fácil compreensão.
+
+### O Desafio das Datas Erradas (Solução)
+Os primeiros testes traziam datas genéricas ("01/03/2026") inseridas via fallback no código, o que estava distante da realidade das planilhas.
+A solução é abortar o `fallbackDate` cru e **extrair ativamente as colunas de Período** ("06/03/2026 a 27/03/2026"), embutindo-as na modelagem da data da atividade de forma fidedigna. Para Esportes que não possuem "Período", usaremos os Dias da Semana (ex: "Terças e Quintas"), garantindo fidelidade de agenda ao Jovem.
+
+### A Solução Parte 2: A Prova Visual (UI de Transparência do RAG)
+O problema levantado: *"Como o cliente terá a certeza e até eu mesmo como developer de que essas informações estão inseridas e dentro do RAG?"*
+
+Para garantir que a visualização não seja um amontoado técnico de dados confusos, a solução visual será desenhada pensando na experiência do usuário (UX) com foco em **Clareza e Auditoria**.
+
+**Como será na interface:**
+1. Na Data Table de atividades (rota `[id]`), ao lado de cada linha, haverá um botão discreto e elegante com o ícone de um robô ou um cérebro (ex: `LucideBrain` ou `LucideBot`). O *tooltip* (balãozinho ao passar o mouse) dirá: *"Ver o que a IA sabe sobre isso"*.
+2. **O Modal de "Visão da IA":** Ao clicar, um popup (Dialog) limpo e moderno se abrirá. 
+3. **Layout do Modal:**
+   - **Cabeçalho:** Título da atividade em destaque com um selo dizendo "Sincronizado com a IA ✅".
+   - **Corpo (Para o Gestor/Usuário Comum):** Um card visual amigável exibindo as informações mastigadas em tópicos (Ex: 👨‍🏫 Educador: Renato; 👥 Vagas: 10; ⏰ Horário: 14h às 17h). Isso prova para o humano que o sistema capturou tudo.
+   - **Corpo (Para o Desenvolvedor/Auditoria):** Logo abaixo, uma seção recolhível (Accordion) chamada *"Ver formato bruto enviado ao RAG (Modo Técnico)"*. Ao abrir, o usuário verá exatamente a grande *string concatenada* (o Super-Prompt) que está salva no banco de dados e que servirá para a busca vetorial.
+   - **Conclusão:** Dessa forma, o usuário leigo recebe a paz de espírito visual de que os dados foram todos lidos, e nós (desenvolvedores) ganhamos uma ferramenta de auditoria instantânea (troubleshooting) sem precisar abrir o Supabase.
+
+### Matriz de Mapeamento por Categoria (Parseamento Flexível):
+
+#### 📚 CURSOS
+- O script montará a `descricao` em blocos Textuais:
+  - **Ementa:** [Coluna F]
+  - **Requisitos:** [Coluna G]
+  - **Datas, Períodos e Dias:** [Coluna H]
+  - **Horário:** [Coluna I]
+  - **Carga Horária:** [Coluna D]h / **Vagas:** [Coluna E] / **Educador:** [Coluna J]
+
+#### ⚽ ESPORTES
+- Como é um mapa menor, a montagem será objetiva:
+  - **Turma:** [Coluna D] / **Professor:** [Coluna C]
+  - **Público:** [Coluna E] / **Gênero:** [Coluna F]
+  - **Vagas:** [Coluna G]
+  - **Dias da Semana:** [Coluna H]
+  - **Horário:** [Coluna I]
+
+#### 🎮 DIA A DIA (E Esportes Especiais)
+- Seguirá a mesma regra base de montagem amigável de sentenças usando os nomes das colunas como chaves semânticas baseadas na Planilha Real.
+
+---
+
+## 17. 🌐 VISÃO DE FUTURO: API-FIRST E INTEGRAÇÃO PORTAL DA JUVENTUDE (SEJU) {#17-api-seju}
+
+O fluxo atual depende de arquivamento físico e planilhas instáveis geradas por humanos, visando suprir a Gráfica da Revista impressa. O modelo ideal (Target Architecture) abrange eliminar o Excel do centro tecnológico.
+
+### Fases do Roadmap Estratégico de Interoperabilidade:
+
+#### Plano A (Nossa API como Source of Truth)
+- Como premissa, as Diretorias de Rede Cuca abandonarão a planilha e passarão a preencher a programação através de um cadastro direto no **Cuca Portal (Nosso Sistema)**, em uma tela robusta dotada de filtros e validações.
+- **Construção do Endpoint:** Iremos instanciar uma API REST Pública (`GET /api/v1/programacoes/ativas`).
+- **Consumo:** A equipe de TI da Prefeitura (Portal da Juventude - SEJU) passará a consumir o nosso JSON servido diretamente, injetando as rotinas no Portal deles para que o site continue sendo o centro oficial de **Matrículas**.
+- **Benefício:** Reduz a zero a quebra de contrato de planilhas. O RAG ficará atualizado em Tempo Real e não em "bateladas" mensais.
+
+#### Plano B (Consumindo a API da Prefeitura)
+- Se a negociação fluir pelo lado reverso, a Prefeitura desenvolverá os Endpoints do Portal da Juventude que publicam a Revista Digitalizada.
+- **Nosso Papel:** Criaríamos um Worker (Cron Job) que escutaria a API da SEJU (`GET /api/seju/revistas/cuca/atual`) a cada 12 horas.
+- Todo o processamento vetorial (Embeddings), que hoje construímos usando arquivos do Excel, se alimentaria diretamente das chaves JSON dessa API, transformando seus arrays nativos no mesmo "Super-Prompt Literário" pro RAG engolir automaticamente e servir no Whatsapp aos Jovens.
