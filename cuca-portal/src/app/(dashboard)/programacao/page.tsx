@@ -271,15 +271,6 @@ export default function ProgramacaoPage() {
                 </TabsContent>
             </Tabs>
 
-            {/* Hint para super admin */}
-            <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl flex gap-3">
-                <AlertCircle className="text-blue-600 h-5 w-5 shrink-0 mt-0.5" />
-                <div className="text-sm text-blue-800">
-                    <p className="font-bold mb-1">Dica de Atendimento:</p>
-                    <p>Ao aprovar um evento **Pontual**, os leads filtrados receberão uma notificação automática. Programações **Mensais** alimentam o RAG imediatamente para que a IA possa responder dúvidas.</p>
-                </div>
-            </div>
-
             {isImportModalOpen && (
                 <ImportPlanilhaModal
                     open={isImportModalOpen}
