@@ -56,7 +56,7 @@ export async function POST(request: Request) {
             .from('colaboradores')
             .insert({
                 user_id: userId,
-                nome,
+                nome_completo: nome,
                 email,
                 unidade_cuca: unidadeCuca || null,
                 role_id: roleId,
