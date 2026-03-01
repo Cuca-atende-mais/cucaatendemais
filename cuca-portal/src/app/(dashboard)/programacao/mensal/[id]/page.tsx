@@ -61,6 +61,7 @@ export default function CampanhaMensalPage() {
                 .eq("campanha_id", campanhaId)
                 .order("categoria", { ascending: true })
                 .order("data_atividade", { ascending: true })
+                .order("titulo", { ascending: true })
 
             if (actErr) throw actErr
 
@@ -204,162 +205,108 @@ export default function CampanhaMensalPage() {
                     </div>
                 </div>
 
-                <div className="overflow-auto max-h-[600px] flex-1">
-                    <Table>
-                        <TableHeader className="bg-slate-50 sticky top-0 z-10 shadow-sm">
-                            {categoriaFilter === "CURSOS" ? (
-                                <TableRow>
-                                    <TableHead className="max-w-[200px]">Curso</TableHead>
-                                    <TableHead className="min-w-[200px]">Ementa e Requisitos</TableHead>
-                                    <TableHead>Educador</TableHead>
-                                    <TableHead>CH / Vagas</TableHead>
-                                    <TableHead>Período e Horário</TableHead>
-                                </TableRow>
-                            ) : categoriaFilter === "ESPORTES" ? (
-                                <TableRow>
-                                    <TableHead className="max-w-[200px]">Esporte / Modalidade</TableHead>
-                                    <TableHead>Professor(a)</TableHead>
-                                    <TableHead>Turma / Vagas</TableHead>
-                                    <TableHead className="min-w-[150px]">Público Alvo</TableHead>
-                                    <TableHead>Dias e Horários</TableHead>
-                                </TableRow>
-                            ) : (categoriaFilter === "DIA A DIA" || categoriaFilter === "ESPECIAIS") ? (
-                                <TableRow>
-                                    <TableHead className="max-w-[200px]">Programa / Atividade</TableHead>
-                                    <TableHead>Data e Dia</TableHead>
-                                    <TableHead>Horário</TableHead>
-                                    <TableHead>Local</TableHead>
-                                    <TableHead className="min-w-[200px]">Sessão e Infos</TableHead>
-                                </TableRow>
-                            ) : (
-                                <TableRow>
-                                    <TableHead className="w-[150px]">Categoria (Aba)</TableHead>
-                                    <TableHead className="w-[120px]">Data Geral</TableHead>
-                                    <TableHead className="max-w-[200px]">Atividade / Título</TableHead>
-                                    <TableHead className="min-w-[300px]">Descrição Completa</TableHead>
-                                    <TableHead className="w-[100px]">Horário</TableHead>
-                                    <TableHead>Local</TableHead>
-                                </TableRow>
-                            )}
-                        </TableHeader>
-                        <TableBody>
-                            {filteredAtividades.map((act) => {
-                                const meta = act.metadata || {}
-                                return (
-                                    <TableRow key={act.id} className="hover:bg-blue-50/30">
+                <div className="overflow-auto max-h-[600px] flex-1 p-4 bg-slate-50/50">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {filteredAtividades.map((act) => {
+                            const meta = act.metadata || {}
+                            return (
+                                <div key={act.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 hover:border-cuca-blue/50 hover:shadow-md transition-all flex flex-col justify-between">
+                                    {/* Card Header */}
+                                    <div className="flex justify-between items-start mb-3 gap-2">
+                                        <div className="font-semibold text-cuca-blue text-sm line-clamp-2 leading-tight">
+                                            {act.titulo}
+                                        </div>
+                                        {categoriaFilter === "all" && (
+                                            <Badge variant="outline" className="text-[10px] uppercase bg-slate-50 whitespace-nowrap">
+                                                {act.categoria}
+                                            </Badge>
+                                        )}
+                                    </div>
+
+                                    {/* Card Body by Category */}
+                                    <div className="flex-1 text-sm text-slate-600 space-y-2 mb-4">
                                         {categoriaFilter === "CURSOS" ? (
                                             <>
-                                                <TableCell><div className="font-semibold text-cuca-blue text-sm line-clamp-2">{act.titulo}</div></TableCell>
-                                                <TableCell>
-                                                    <div className="text-xs text-slate-600 line-clamp-2" title={meta.ementa}>{meta.ementa || "-"}</div>
-                                                    <div className="text-[10px] text-orange-600 mt-1">Req: {meta.requisitos || "-"}</div>
-                                                </TableCell>
-                                                <TableCell className="text-sm font-medium">{meta.educador || "-"}</TableCell>
-                                                <TableCell className="text-xs text-slate-600">
-                                                    <div>CH: <span className="font-semibold">{meta.carga_horaria || "-"}h</span></div>
-                                                    <div>Vagas: <span className="font-semibold">{meta.vagas || "-"}</span></div>
-                                                </TableCell>
-                                                <TableCell className="text-xs text-slate-600">
-                                                    <div className="flex items-center gap-1 mb-1"><Calendar className="h-3 w-3" /> {meta.periodo || "-"}</div>
-                                                    <div className="flex items-center gap-1"><Clock className="h-3 w-3" /> {meta.horario || "-"}</div>
-                                                </TableCell>
+                                                <div className="text-xs line-clamp-2" title={meta.ementa}>
+                                                    <span className="font-semibold text-slate-700">Ementa:</span> {meta.ementa || "-"}
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2 mt-2">
+                                                    <div><span className="font-semibold text-slate-700">Educador:</span> {meta.educador || "-"}</div>
+                                                    <div><span className="font-semibold text-slate-700">Vagas:</span> {meta.vagas || "-"}</div>
+                                                    <div><span className="font-semibold text-slate-700">Carga:</span> {meta.carga_horaria || "-"}h</div>
+                                                </div>
+                                                <div className="text-[10px] text-orange-600 bg-orange-50 p-1.5 rounded mt-2 line-clamp-1">
+                                                    Req: {meta.requisitos || "Nenhum"}
+                                                </div>
                                             </>
                                         ) : categoriaFilter === "ESPORTES" ? (
                                             <>
-                                                <TableCell><div className="font-semibold text-cuca-blue text-sm line-clamp-2">{act.titulo}</div></TableCell>
-                                                <TableCell className="text-sm font-medium">{meta.professor || "-"}</TableCell>
-                                                <TableCell className="text-xs text-slate-600">
-                                                    <div>Turma: <span className="font-semibold">{meta.turma || "-"}</span></div>
-                                                    <div>Vagas: <span className="font-semibold">{meta.vagas || "-"}</span></div>
-                                                </TableCell>
-                                                <TableCell className="text-xs">
-                                                    <Badge variant="secondary" className="mb-1">{meta.sexo || "Misto"}</Badge>
-                                                    <div className="text-slate-500 mt-1">Idade: {meta.faixa_etaria || "-"}</div>
-                                                </TableCell>
-                                                <TableCell className="text-xs text-slate-600">
-                                                    <div className="flex items-center gap-1 mb-1"><Calendar className="h-3 w-3" /> {meta.dias_semana || "-"}</div>
-                                                    <div className="flex items-center gap-1"><Clock className="h-3 w-3" /> {meta.horario || "-"}</div>
-                                                </TableCell>
+                                                <div className="grid grid-cols-2 gap-y-2 gap-x-1 text-xs">
+                                                    <div><span className="font-semibold text-slate-700">Prof:</span> <span className="line-clamp-1">{meta.professor || "-"}</span></div>
+                                                    <div><span className="font-semibold text-slate-700">Turma:</span> {meta.turma || "-"}</div>
+                                                    <div><span className="font-semibold text-slate-700">Vagas:</span> {meta.vagas || "-"}</div>
+                                                    <div><Badge variant="secondary" className="text-[10px] truncate max-w-full">{meta.sexo || "Misto"}</Badge></div>
+                                                </div>
+                                                <div className="text-xs mt-2"><span className="font-semibold text-slate-700">Idade:</span> {meta.faixa_etaria || "-"}</div>
                                             </>
                                         ) : (categoriaFilter === "DIA A DIA" || categoriaFilter === "ESPECIAIS") ? (
                                             <>
-                                                <TableCell>
-                                                    <div className="font-semibold text-cuca-blue text-sm">{act.titulo}</div>
-                                                    <div className="text-xs text-slate-500 font-medium line-clamp-2 mt-1">{meta.atividade || ""}</div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div className="flex items-center gap-1.5 text-slate-600 text-sm font-medium">
-                                                        <Calendar className="h-3.5 w-3.5" />
-                                                        {meta.data_real || "--/--"}
-                                                    </div>
-                                                    <div className="text-xs text-slate-400 mt-0.5">{meta.dia_semana || ""}</div>
-                                                </TableCell>
-                                                <TableCell className="text-slate-600 whitespace-nowrap">
-                                                    <div className="flex items-center gap-1 text-xs font-semibold">
-                                                        <Clock className="h-3 w-3 text-orange-500" />
-                                                        <span>{meta.hora_inicio || "??"} às {meta.hora_fim || "??"}</span>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell className="text-xs text-slate-600 font-medium bg-slate-50/50">
-                                                    {act.local}
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200 mb-1">{meta.sessao || "-"}</Badge>
-                                                    <div className="text-xs text-slate-500 line-clamp-2" title={meta.informacoes}>{meta.informacoes || "-"}</div>
-                                                </TableCell>
+                                                <div className="font-medium text-slate-700 mb-1 leading-tight line-clamp-2">{meta.atividade || ""}</div>
+                                                <div className="text-xs text-slate-500 line-clamp-2" title={meta.informacoes}>
+                                                    {meta.informacoes || "-"}
+                                                </div>
+                                                <div className="mt-2 text-xs">
+                                                    <Badge className="bg-blue-100/50 text-blue-800 hover:bg-blue-200 border-none font-medium">
+                                                        Sessão: {meta.sessao || "-"}
+                                                    </Badge>
+                                                </div>
                                             </>
                                         ) : (
-                                            <>
-                                                <TableCell>
-                                                    <Badge variant="outline" className="font-semibold text-slate-700 bg-white">
-                                                        {act.categoria || "N/A"}
-                                                    </Badge>
-                                                </TableCell>
-                                                <TableCell className="font-medium whitespace-nowrap">
-                                                    <div className="flex items-center gap-1.5 text-slate-600">
-                                                        <Calendar className="h-3.5 w-3.5" />
-                                                        {act.data_atividade ? format(new Date(act.data_atividade), "dd/MMM", { locale: ptBR }) : "--/--"}
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div className="font-semibold text-cuca-blue text-sm line-clamp-2">
-                                                        {act.titulo}
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div className="text-xs text-slate-600 line-clamp-3" title={act.descricao}>
-                                                        {act.descricao}
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell className="text-slate-600 whitespace-nowrap">
-                                                    {(act.hora_inicio || act.hora_fim) ? (
-                                                        <div className="flex items-center gap-1 text-xs">
-                                                            <Clock className="h-3 w-3" />
-                                                            <span>
-                                                                {act.hora_inicio?.substring(0, 5) || "??:??"} às {act.hora_fim?.substring(0, 5) || "??:??"}
-                                                            </span>
-                                                        </div>
-                                                    ) : (
-                                                        <span className="text-xs text-slate-400">Integral</span>
-                                                    )}
-                                                </TableCell>
-                                                <TableCell className="text-xs text-slate-600">
-                                                    {act.local}
-                                                </TableCell>
-                                            </>
+                                            <div className="text-xs line-clamp-4">
+                                                {act.descricao}
+                                            </div>
                                         )}
-                                    </TableRow>
-                                )
-                            })}
-                            {filteredAtividades.length === 0 && (
-                                <TableRow>
-                                    <TableCell colSpan={6} className="h-32 text-center text-slate-500">
-                                        Nenhuma atividade condizente com os filtros atuais ou nesta aba ({categoriaFilter === "all" ? "Geral" : categoriaFilter}).
-                                    </TableCell>
-                                </TableRow>
-                            )}
-                        </TableBody>
-                    </Table>
+                                    </div>
+
+                                    {/* Card Footer */}
+                                    <div className="pt-3 border-t border-slate-100 flex flex-col gap-1.5 text-xs text-slate-500">
+                                        <div className="flex justify-between items-center w-full">
+                                            <div className="flex items-center gap-1.5 font-medium text-slate-700 truncate">
+                                                <Calendar className="h-3.5 w-3.5 shrink-0" />
+                                                <span className="truncate">
+                                                    {categoriaFilter === "CURSOS" ? meta.periodo || "--/--" :
+                                                        categoriaFilter === "ESPORTES" ? meta.dias_semana || "--/--" :
+                                                            (categoriaFilter === "DIA A DIA" || categoriaFilter === "ESPECIAIS") ? `${meta.data_real || "--/--"} (${meta.dia_semana?.substring(0, 3) || ""})` :
+                                                                act.data_atividade ? format(new Date(act.data_atividade), "dd/MMM", { locale: ptBR }) : "--/--"}
+                                                </span>
+                                            </div>
+
+                                            <div className="flex items-center justify-end gap-1.5 font-medium text-slate-600 shrink-0 w-1/3">
+                                                <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                                                <span className="truncate" title={act.local || meta.local}>{act.local || meta.local || "Não inf."}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-1.5 font-semibold text-orange-600">
+                                            <Clock className="h-3.5 w-3.5 shrink-0" />
+                                            {categoriaFilter === "CURSOS" || categoriaFilter === "ESPORTES"
+                                                ? meta.horario || "??"
+                                                : (act.hora_inicio || act.hora_fim)
+                                                    ? `${act.hora_inicio?.substring(0, 5) || "??"} às ${act.hora_fim?.substring(0, 5) || "??"}`
+                                                    : "Horário Integral"}
+                                        </div>
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                    {filteredAtividades.length === 0 && (
+                        <div className="py-24 text-center text-slate-500 flex flex-col items-center">
+                            <FileText className="h-12 w-12 text-slate-300 mb-4" />
+                            <p className="font-semibold text-lg text-slate-600">Nenhuma atividade localizada</p>
+                            <p className="text-sm mt-1">com os filtros atuais ou nesta aba ({categoriaFilter === "all" ? "Geral" : categoriaFilter}).</p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

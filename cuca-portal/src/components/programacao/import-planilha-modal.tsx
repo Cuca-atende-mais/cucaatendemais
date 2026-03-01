@@ -193,7 +193,8 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
 
                     // Processa o conteúdo
                     const ws = wb.Sheets[sheetName]
-                    const data: any[] = XLSX.utils.sheet_to_json(ws, { header: 1 })
+                    // raw: false força o conversor a mastigar as células numéricas devolvendo textos formatados como aparecem no Excel
+                    const data: any[] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: "dd/mm/yyyy" })
 
                     const rows = data.slice(6) // Header pull
 
