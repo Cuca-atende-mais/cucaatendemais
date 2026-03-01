@@ -1410,3 +1410,7 @@ A regra engessada de "Perfis fixados no código" foi substituída por um gerenci
 - [x] Desenvolver API `/api/colaboradores/setup-password` para que o frontend atualize a senha via Supabase Admin usando o token gerado.
 - [x] Desenvolver UI em `/configuracoes/perfis` (Gestão Dinâmica) para criar Cargos Múltiplos com checkboxes CRUD (Read, Create, Update, Delete) vinculados as tabelas.
 - [x] Modificar Middleware/SideBar no FrontEnd para ocultar itens de menu e botões que o usuário logado não possui permissão RBAC.
+- [x] **Refinamento de UX/UI**: Segmentar as permissões em Grupos Categóricos (CRM, Ouvidoria, Admin).
+- [x] **Ferramentas de Massa**: Incluir botões para "Marcar Linha (Todos os poderes daquele módulo)" e "Marcar Coluna (Todo visualização, todo delete, etc)".
+- [x] **CRUD Completo de Cargos**: Permitir não só Criar e Deletar, mas também Editar o Nome e Descrição da Função Administrativa.
+

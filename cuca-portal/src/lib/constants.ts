@@ -15,7 +15,7 @@ export const menuItems = [
         title: "Atendimento",
         url: "/atendimento",
         icon: "MessageSquare",
-        permission: { recurso: "ouvidoria", acao: "read" } // Atendimento/Chat vinculado à ouvidoria/conversas
+        permission: { recurso: "atendimentos", acao: "read" }
     },
     {
         title: "Programação",
@@ -36,10 +36,10 @@ export const menuItems = [
         title: "Acesso CUCA",
         url: "/acesso-cuca",
         icon: "DoorOpen",
-        permission: { recurso: "ouvidoria", acao: "read" },
+        permission: { recurso: "acesso_cuca", acao: "read" },
         items: [
-            { title: "Solicitações", url: "/acesso-cuca" },
-            { title: "Espaços & Equipamentos", url: "/acesso-cuca/espacos" },
+            { title: "Solicitações", url: "/acesso-cuca", permission: { recurso: "acesso_cuca", acao: "read" } },
+            { title: "Espaços & Equipamentos", url: "/acesso-cuca/espacos", permission: { recurso: "acesso_cuca", acao: "create" } },
         ],
     },
     {
@@ -58,11 +58,11 @@ export const menuItems = [
         icon: "Settings",
         permission: { recurso: "configuracoes", acao: "read" },
         items: [
-            { title: "WhatsApp", url: "/configuracoes/whatsapp" },
-            { title: "Colaboradores", url: "/configuracoes/colaboradores" },
-            { title: "Perfis (RBAC)", url: "/configuracoes/perfis" },
-            { title: "Unidades", url: "/unidades" },
-            { title: "Categorias", url: "/categorias" },
+            { title: "WhatsApp", url: "/configuracoes/whatsapp", permission: { recurso: "configuracoes", acao: "update" } },
+            { title: "Colaboradores", url: "/configuracoes/colaboradores", permission: { recurso: "equipe", acao: "read" } },
+            { title: "Perfis (RBAC)", url: "/configuracoes/perfis", permission: { recurso: "perfis", acao: "read" } },
+            { title: "Unidades", url: "/unidades", permission: { recurso: "configuracoes", acao: "update" } },
+            { title: "Categorias", url: "/categorias", permission: { recurso: "configuracoes", acao: "update" } },
         ],
     },
     {

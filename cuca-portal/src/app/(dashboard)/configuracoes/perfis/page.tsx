@@ -22,20 +22,53 @@ import {
     Save,
     AlertCircle,
     Trash2,
-    Users
+    Users,
+    CheckSquare,
+    Square
 } from "lucide-react"
 import toast from "react-hot-toast"
 
-const AVAILABLE_MODULES = [
-    { id: 'dashboard', label: 'Dashboard' },
-    { id: 'leads', label: 'Módulo de Leads' },
-    { id: 'atendimentos', label: 'Módulo de Atendimentos' },
-    { id: 'programacao', label: 'Módulo de Programação' },
-    { id: 'empregabilidade', label: 'Módulo de Empregabilidade' },
-    { id: 'ouvidoria', label: 'Ouvidoria & Acesso' },
-    { id: 'configuracoes', label: 'Configurações (Cuidado)' },
-    { id: 'developer', label: 'Developer Console' },
+const MODULE_GROUPS = [
+    {
+        category: 'Visão Geral & Inteligência',
+        modules: [
+            { id: 'dashboard', label: 'Estatísticas Básicas' },
+            { id: 'leads', label: 'Funil de Leads & Conversões' },
+        ]
+    },
+    {
+        category: 'Atendimentos & Ouvidoria',
+        modules: [
+            { id: 'atendimentos', label: 'Painel de Atendimentos (Omnichannel)' },
+            { id: 'ouvidoria', label: 'Manifestações e Eventos de Escuta' },
+            { id: 'acesso_cuca', label: 'Solicitações de Acesso CUCA' },
+        ]
+    },
+    {
+        category: 'Projetos Específicos',
+        modules: [
+            { id: 'programacao', label: 'Programação de Eventos Mensais' },
+            { id: 'empregabilidade', label: 'Banco de Vagas (Empregabilidade)' },
+        ]
+    },
+    {
+        category: 'Administração & Sistema',
+        modules: [
+            { id: 'equipe', label: 'Gestão da Equipe (Colaboradores)' },
+            { id: 'perfis', label: 'Perfis de Acesso (Controle RBAC)' },
+            { id: 'configuracoes', label: 'Ajustes Finos (WhatsApp, Locais)' },
+        ]
+    },
+    {
+        category: 'Módulo Técnico',
+        modules: [
+            { id: 'developer', label: 'Developer Console' },
+        ]
+    }
 ]
+
+// Lista flat de módulos para facilitar a inicialização
+const FLAT_MODULES = MODULE_GROUPS.flatMap(g => g.modules)
 
 export default function GestaoPerfisPage() {
     const [roles, setRoles] = useState<any[]>([])
@@ -43,8 +76,9 @@ export default function GestaoPerfisPage() {
     const [permissions, setPermissions] = useState<any[]>([])
 
     const [isCreating, setIsCreating] = useState(false)
-    const [newRoleName, setNewRoleName] = useState("")
-    const [newRoleDesc, setNewRoleDesc] = useState("")
+    const [isEditingRoleInfo, setIsEditingRoleInfo] = useState(false)
+
+    const [roleForm, setRoleForm] = useState({ name: "", description: "" })
 
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
@@ -62,7 +96,14 @@ export default function GestaoPerfisPage() {
             .select('*')
             .order('name')
 
-        if (data) setRoles(data)
+        if (data) {
+            setRoles(data)
+            // Se tinha um role selecionado antes de atualizar a lista, mantém ele vivo com os novos dados
+            if (selectedRole) {
+                const refreshed = data.find(r => r.id === selectedRole.id)
+                if (refreshed) setSelectedRole(refreshed)
+            }
+        }
         if (error) toast.error("Falha ao carregar funções")
         setLoading(false)
     }
@@ -70,6 +111,8 @@ export default function GestaoPerfisPage() {
     const loadRolePermissions = async (role: any) => {
         setSelectedRole(role)
         setIsCreating(false)
+        setIsEditingRoleInfo(false)
+
         const { data, error } = await supabase
             .from('sys_permissions')
             .select('*')
@@ -80,8 +123,7 @@ export default function GestaoPerfisPage() {
             return
         }
 
-        // Initialize state with DB data or default falses
-        const perms = AVAILABLE_MODULES.map(mod => {
+        const perms = FLAT_MODULES.map(mod => {
             const existing = data?.find(d => d.module === mod.id)
             if (existing) {
                 return { ...existing, label: mod.label }
@@ -100,48 +142,89 @@ export default function GestaoPerfisPage() {
         setPermissions(perms)
     }
 
-    const handleCreateRole = async () => {
-        if (!newRoleName) return toast.error("Digite o nome da Função")
+    const handleSaveRoleInfo = async () => {
+        if (!roleForm.name.trim()) return toast.error("Digite o nome da Função")
         try {
-            const { data, error } = await supabase
-                .from('sys_roles')
-                .insert({ name: newRoleName, description: newRoleDesc })
-                .select()
-                .single()
+            if (isCreating) {
+                const { data, error } = await supabase
+                    .from('sys_roles')
+                    .insert({ name: roleForm.name, description: roleForm.description })
+                    .select()
+                    .single()
 
-            if (error) throw error
+                if (error) throw error
+                toast.success("Função criada com sucesso!")
+                setIsCreating(false)
+                fetchRoles()
+                loadRolePermissions(data)
+            } else {
+                // Modo Edição de Informações Básicas
+                const { error } = await supabase
+                    .from('sys_roles')
+                    .update({ name: roleForm.name, description: roleForm.description })
+                    .eq('id', selectedRole.id)
 
-            toast.success("Função criada com sucesso!")
-            setIsCreating(false)
-            setNewRoleName("")
-            setNewRoleDesc("")
-            fetchRoles()
-            loadRolePermissions(data)
+                if (error) throw error
+                toast.success("Informações do Cargo atualizadas!")
+                setIsEditingRoleInfo(false)
+                fetchRoles()
+            }
         } catch (err: any) {
             toast.error(err.message)
         }
     }
 
-    const deleteRole = async (id: string) => {
-        if (!confirm("Atenção: Destruir essa Função pode bloquear usuários associados. Confirmar?")) return
+    const deleteRole = async (id: string, name: string) => {
+        if (!confirm(`Atenção: Você está prestes a DELETAR a função "${name}". Isso privará o acesso de todos os colaboradores associados a ela. Confirmar destruição definitiva?`)) return
         const { error } = await supabase.from('sys_roles').delete().eq('id', id)
-        if (error) return toast.error(error.message)
-        toast.success("Função apagada")
+        if (error) return toast.error("Erro ao deletar: " + error.message)
+
+        toast.success("Função deletada com sucesso")
         if (selectedRole?.id === id) setSelectedRole(null)
         fetchRoles()
     }
 
-    const handleCheckboxChange = (moduleIdx: number, field: string, checked: boolean) => {
-        const newPerms = [...permissions]
-        newPerms[moduleIdx][field] = checked
-        setPermissions(newPerms)
+    const handleCheckboxChange = (moduleId: string, field: string, checked: boolean) => {
+        setPermissions(prev => prev.map(p => {
+            if (p.module === moduleId) {
+                const updated = { ...p, [field]: checked }
+                // Regra de Ouro: Se der permissão de criar, editar ou deletar, deve OBRIGATORIAMENTE dar Read
+                if (checked && field !== 'can_read') {
+                    updated.can_read = true
+                }
+                return updated
+            }
+            return p
+        }))
     }
 
-    const savePermissions = async () => {
+    const handleRowSelectAll = (moduleId: string, check: boolean) => {
+        setPermissions(prev => prev.map(p => {
+            if (p.module === moduleId) {
+                return {
+                    ...p,
+                    can_read: check,
+                    can_create: check,
+                    can_update: check,
+                    can_delete: check
+                }
+            }
+            return p
+        }))
+    }
+
+    const handleColumnSelectAll = (field: string, check: boolean) => {
+        setPermissions(prev => prev.map(p => {
+            const updated = { ...p, [field]: check }
+            // Se mandou marcar toda a coluna de CRUD, marca auto a coluna Read também
+            if (check && field !== 'can_read') updated.can_read = true
+            return updated
+        }))
+    }
+
+    const savePermissionsMatrix = async () => {
         setSaving(true)
         try {
-            // Upsert mechanism: se id is nulo, é insert. Senão é update.
-            // Para simplificar: deleta tudo e re-insere
             await supabase.from('sys_permissions').delete().eq('role_id', selectedRole.id)
 
             const toInsert = permissions.map(p => ({
@@ -156,7 +239,7 @@ export default function GestaoPerfisPage() {
             const { error } = await supabase.from('sys_permissions').insert(toInsert)
             if (error) throw error
 
-            toast.success("Permissões salvas no banco!")
+            toast.success("Matriz de Permissões salva com sucesso!")
         } catch (error: any) {
             toast.error(error.message)
         } finally {
@@ -164,156 +247,301 @@ export default function GestaoPerfisPage() {
         }
     }
 
+    const openCreateMode = () => {
+        setIsCreating(true)
+        setSelectedRole(null)
+        setRoleForm({ name: "", description: "" })
+    }
+
+    const openEditMode = () => {
+        setIsEditingRoleInfo(true)
+        setRoleForm({ name: selectedRole.name, description: selectedRole.description || "" })
+    }
+
     return (
         <div className="flex flex-col gap-6 p-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-slate-800 flex items-center gap-2">
-                        <Shield className="h-8 w-8 text-cuca-blue" />
-                        Gestão de Perfis de Acesso (RBAC)
-                    </h1>
-                    <p className="text-muted-foreground mt-1">
-                        Gerencie Cargos/Funções e defina matrizes rigorosas do que cada perfil pode acessar.
-                    </p>
-                </div>
+            <div>
+                <h1 className="text-3xl font-bold tracking-tight text-slate-800 flex items-center gap-2">
+                    <Shield className="h-8 w-8 text-cuca-blue" />
+                    Gestão de Perfis de Acesso (RBAC)
+                </h1>
+                <p className="text-muted-foreground mt-1 text-sm md:text-base">
+                    Controle rígido de segurança: Crie cargos, edite seus detalhes e especifique em nível granular quais módulos e ferramentas a equipe pode visualizar ou modificar.
+                </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                {/* Lateral Esquerda - Lista de Cargos */}
-                <div className="md:col-span-1 flex flex-col gap-4">
-                    <Button onClick={() => { setIsCreating(true); setSelectedRole(null) }} className="w-full bg-cuca-blue h-12">
-                        <Plus className="h-5 w-5 mr-2" /> Novo Cargo
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                {/* Painel Esquerdo - Lista de Roles */}
+                <div className="lg:col-span-1 flex flex-col gap-4">
+                    <Button onClick={openCreateMode} className="w-full bg-cuca-blue h-12 text-sm font-semibold shadow-sm hover:shadow-md transition-shadow">
+                        <Plus className="h-5 w-5 mr-2" /> Novo Cargo Administrativo
                     </Button>
 
-                    <Card className="border-0 shadow-sm h-[600px] overflow-auto">
-                        <CardHeader className="bg-slate-50/50 sticky top-0 border-b p-4 z-10">
-                            <CardTitle className="text-sm font-semibold text-slate-600 uppercase flex justify-between items-center">
-                                Cargos Cadastrados
-                                <Badge variant="secondary">{roles.length}</Badge>
+                    <Card className="border-0 shadow-sm overflow-hidden flex flex-col" style={{ maxHeight: "calc(100vh - 250px)" }}>
+                        <CardHeader className="bg-slate-50 border-b p-4 shrink-0">
+                            <CardTitle className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between items-center">
+                                Tabela de Perfis
+                                <Badge variant="secondary" className="bg-slate-200 text-slate-700">{roles.length}</Badge>
                             </CardTitle>
                         </CardHeader>
-                        <div className="p-2 space-y-1">
+                        <div className="p-2 space-y-1 overflow-y-auto grow">
                             {loading ? <p className="text-xs text-center text-slate-400 p-4">Carregando...</p> :
                                 roles.map(r => (
                                     <div
                                         key={r.id}
                                         onClick={() => loadRolePermissions(r)}
-                                        className={`p-3 rounded-lg cursor-pointer transition-all border ${selectedRole?.id === r.id ? 'bg-blue-50 border-blue-200' : 'bg-white hover:bg-slate-50 border-transparent hover:border-slate-200'}`}
+                                        className={`p-3 rounded-md cursor-pointer transition-all border group relative ${selectedRole?.id === r.id
+                                                ? 'bg-blue-50 border-blue-200 shadow-sm'
+                                                : 'bg-white hover:bg-slate-50 border-transparent hover:border-slate-200'
+                                            }`}
                                     >
-                                        <div className="font-semibold text-sm text-slate-700">{r.name}</div>
-                                        <div className="text-[10px] text-slate-400 truncate mt-0.5">{r.description || "Sem descrição"}</div>
+                                        <div className="font-bold text-sm text-slate-700 leading-tight pr-6">{r.name}</div>
+                                        <div className="text-[11px] text-slate-400 mt-1 line-clamp-2 leading-relaxed">{r.description || "Nenhuma descrição informada."}</div>
+                                        {selectedRole?.id === r.id && (
+                                            <div className="absolute right-2 top-0 bottom-0 flex items-center">
+                                                <div className="w-1.5 h-1.5 rounded-full bg-cuca-blue"></div>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                         </div>
                     </Card>
                 </div>
 
-                {/* Lateral Direita - Configuração */}
-                <div className="md:col-span-3">
-                    {isCreating ? (
-                        <Card className="border-0 shadow-sm">
-                            <CardHeader>
-                                <CardTitle className="flex items-center gap-2">
-                                    <Shield className="h-5 w-5 text-cuca-blue" /> Criar Novo Cargo
+                {/* Painel Direito - Editor do Cargo e Matriz */}
+                <div className="lg:col-span-3">
+                    {isCreating || isEditingRoleInfo ? (
+                        <Card className="border border-blue-100 shadow-md animate-in fade-in zoom-in-95 duration-200">
+                            <CardHeader className="bg-blue-50/50 border-b">
+                                <CardTitle className="flex items-center gap-2 text-cuca-blue font-bold">
+                                    <Shield className="h-5 w-5" />
+                                    {isCreating ? "Criação de Novo Perfil" : "Edição dos Detalhes Básicos do Perfil"}
                                 </CardTitle>
-                                <CardDescription>Defina a nomenclatura e propósito dessa função.</CardDescription>
+                                <CardDescription>
+                                    {isCreating
+                                        ? "Defina a nomenclatura oficial (ex: 'Gerente da Ouvidoria'). Em seguida, você poderá configurar a matriz de permissões deste perfil."
+                                        : "Atualizar os nomes refletirá instantaneamente para todos os usuários com esse cargo."}
+                                </CardDescription>
                             </CardHeader>
-                            <CardContent className="space-y-4">
-                                <div className="space-y-2">
-                                    <Label>Nome da Função (Ex: Coordenador Esportivo)</Label>
-                                    <Input value={newRoleName} onChange={e => setNewRoleName(e.target.value)} placeholder="Ex: Atendente de Recepção" />
+                            <CardContent className="space-y-5 p-6 bg-white">
+                                <div className="space-y-1.5">
+                                    <Label className="text-slate-700 font-semibold text-sm">Nomenclatura da Função <span className="text-red-500">*</span></Label>
+                                    <Input
+                                        className="h-11 bg-slate-50"
+                                        value={roleForm.name}
+                                        onChange={e => setRoleForm({ ...roleForm, name: e.target.value })}
+                                        placeholder="Ex: Auxiliar Administrativo"
+                                    />
                                 </div>
-                                <div className="space-y-2">
-                                    <Label>Descrição (Opcional)</Label>
-                                    <Input value={newRoleDesc} onChange={e => setNewRoleDesc(e.target.value)} placeholder="Acesso focado no balcão" />
+                                <div className="space-y-1.5">
+                                    <Label className="text-slate-700 font-semibold text-sm">Breve Descrição Propósito</Label>
+                                    <Input
+                                        className="h-11 bg-slate-50"
+                                        value={roleForm.description}
+                                        onChange={e => setRoleForm({ ...roleForm, description: e.target.value })}
+                                        placeholder="Destinado a operadores do balcão, com foco restrito à triagem."
+                                    />
                                 </div>
-                                <Button onClick={handleCreateRole} className="bg-green-600 hover:bg-green-700">Gravar Cargo</Button>
-                                <Button variant="ghost" onClick={() => setIsCreating(false)} className="ml-2">Cancelar</Button>
+                                <div className="pt-2 flex gap-3">
+                                    <Button onClick={handleSaveRoleInfo} className="bg-green-600 hover:bg-green-700 h-10 px-8">
+                                        <Save className="h-4 w-4 mr-2" /> Salvar Detalhes
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => {
+                                            if (isCreating) setIsCreating(false);
+                                            if (isEditingRoleInfo) setIsEditingRoleInfo(false);
+                                        }}
+                                        className="h-10 text-slate-600 hover:text-slate-800"
+                                    >
+                                        Cancelar
+                                    </Button>
+                                </div>
                             </CardContent>
                         </Card>
                     ) : selectedRole ? (
-                        <div className="space-y-6">
-                            <Card className="border-0 shadow-sm">
-                                <CardHeader className="flex flex-row items-start justify-between bg-slate-50 border-b rounded-t-xl">
-                                    <div>
-                                        <CardTitle className="text-xl text-cuca-blue flex items-center gap-2">
-                                            {selectedRole.name}
-                                        </CardTitle>
-                                        <CardDescription className="mt-1">{selectedRole.description}</CardDescription>
+                        <div className="space-y-5 animate-in fade-in duration-300">
+                            {/* Bloco Título Perfil */}
+                            <Card className="border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="p-5 md:p-6 bg-white flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                                    <div className="flex items-start gap-4">
+                                        <div className="h-12 w-12 rounded-lg bg-blue-50 text-cuca-blue border border-blue-100 flex items-center justify-center shrink-0">
+                                            <Shield className="h-6 w-6" />
+                                        </div>
+                                        <div>
+                                            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
+                                                {selectedRole.name}
+                                                <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-500 py-0.5 border-slate-200">
+                                                    ID: {selectedRole.id.split('-')[0]}
+                                                </Badge>
+                                            </h2>
+                                            <p className="text-sm text-slate-500 mt-1 max-w-xl">
+                                                {selectedRole.description || "Nenhuma descrição fornecida para delimitar o escopo deste papel."}
+                                            </p>
+                                        </div>
                                     </div>
-                                    <Button variant="destructive" size="sm" onClick={() => deleteRole(selectedRole.id)}>
-                                        <Trash2 className="h-4 w-4 mr-2" /> Deletar Inteiro
+                                    <div className="flex gap-2 shrink-0">
+                                        <Button variant="outline" size="sm" onClick={openEditMode} className="text-slate-600 border-slate-200">
+                                            Editar Nome
+                                        </Button>
+                                        <Button variant="destructive" size="sm" className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 hover:border-red-300" onClick={() => deleteRole(selectedRole.id, selectedRole.name)}>
+                                            <Trash2 className="h-4 w-4 md:mr-2" /> <span className="hidden md:inline">Destruir Cargo</span>
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div className="bg-amber-50 border-t border-amber-100 p-3 px-5 flex items-start sm:items-center gap-3">
+                                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
+                                    <p className="text-xs sm:text-sm text-amber-800">
+                                        <strong>Segurança Frontend:</strong> O pilar fundamental é <strong className="font-black underline decoration-amber-300">Visualizar Menu</strong>. Se não marcado, a rota associada deixa de existir para o colaborador, inutilizando regras adjacentes. Ao ativar Criação ou Edição, o Visualizar Menu será ativado por consequência lógica.
+                                    </p>
+                                </div>
+                            </Card>
+
+                            {/* Bloco Matriz Complexa */}
+                            <Card className="border border-slate-200 shadow-sm relative overflow-hidden">
+                                <CardHeader className="bg-slate-50 border-b flex flex-row items-center justify-between py-3 px-5">
+                                    <CardTitle className="text-sm font-bold text-slate-700 uppercase tracking-widest flex items-center gap-2">
+                                        Matriz de Controle (CRUD)
+                                    </CardTitle>
+                                    <Button onClick={savePermissionsMatrix} disabled={saving} className="bg-cuca-blue h-9 px-6 text-xs sm:text-sm font-semibold rounded-full shadow-md hover:shadow-lg transition-all">
+                                        <Save className="h-4 w-4 mr-2" /> {saving ? "Salvando Definitivo..." : "Gravar Permissões no Banco"}
                                     </Button>
                                 </CardHeader>
-                                <CardContent className="p-0">
-                                    <div className="p-4 bg-orange-50 border-b border-orange-100 flex items-start gap-3">
-                                        <AlertCircle className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
-                                        <p className="text-sm text-orange-800">
-                                            <strong>Matriz de Acessos:</strong> Marque a coluna <i>Visualizar Menu</i> para a tela aparecer. Sem isso, as outras opções (Criar/Editar/Apagar) ficam irrelevantes pois ele sequer alcança o módulo.
-                                        </p>
-                                    </div>
-                                    <Table>
-                                        <TableHeader className="bg-white">
-                                            <TableRow>
-                                                <TableHead className="w-[300px]">Módulo do Sistema</TableHead>
-                                                <TableHead className="text-center font-bold text-slate-700">👀 Visualizar Menu</TableHead>
-                                                <TableHead className="text-center font-bold text-green-700">➕ Criar</TableHead>
-                                                <TableHead className="text-center font-bold text-orange-600">✏️ Editar</TableHead>
-                                                <TableHead className="text-center font-bold text-red-600">🗑️ Deletar</TableHead>
+                                <CardContent className="p-0 overflow-x-auto">
+                                    <Table className="min-w-[800px] border-b-0">
+                                        <TableHeader className="bg-white sticky top-0 z-10 shadow-sm">
+                                            <TableRow className="border-b border-slate-200 hover:bg-transparent">
+                                                <TableHead className="w-[280px] bg-white pt-4 align-top">
+                                                    Módulo e Granularidade
+                                                </TableHead>
+                                                {/* Header Actions for Columns */}
+                                                {[
+                                                    { field: 'can_read', label: 'Ver Menu', icon: '👀', color: 'text-slate-700', activeBg: 'data-[state=checked]:bg-cuca-blue' },
+                                                    { field: 'can_create', label: 'Criar / Add', icon: '➕', color: 'text-green-700', activeBg: 'data-[state=checked]:bg-green-600' },
+                                                    { field: 'can_update', label: 'Editar', icon: '✏️', color: 'text-orange-600', activeBg: 'data-[state=checked]:bg-orange-500' },
+                                                    { field: 'can_delete', label: 'Apagar', icon: '🗑️', color: 'text-red-600', activeBg: 'data-[state=checked]:bg-red-600' }
+                                                ].map(col => {
+                                                    // Checa se todas da coluna estão marcadas (somente as linhas flat)
+                                                    const allChecked = permissions.length > 0 && permissions.every(p => p[col.field])
+                                                    const someChecked = permissions.some(p => p[col.field])
+
+                                                    return (
+                                                        <TableHead key={col.field} className="text-center bg-white p-3 align-top min-w-[110px] border-l border-slate-100">
+                                                            <div className="flex flex-col items-center gap-2">
+                                                                <span className={`font-bold text-[13px] ${col.color} whitespace-nowrap`}>
+                                                                    {col.icon} {col.label}
+                                                                </span>
+                                                                <Button
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    className={`h-6 text-[10px] px-2 rounded-full w-full max-w-[90px] ${allChecked ? 'bg-slate-100 border-slate-300 text-slate-500 hover:bg-slate-200' : 'bg-white hover:bg-slate-50'}`}
+                                                                    onClick={() => handleColumnSelectAll(col.field, !allChecked)}
+                                                                >
+                                                                    <CheckSquare className="w-3 h-3 mr-1" />
+                                                                    {allChecked ? 'Desfazer' : 'Tudo'}
+                                                                </Button>
+                                                            </div>
+                                                        </TableHead>
+                                                    )
+                                                })}
+                                                <TableHead className="w-[80px] text-center bg-white p-3 align-top border-l border-slate-100 font-bold text-slate-400 text-xs flex flex-col items-center gap-2">
+                                                    <span className="opacity-0">Linha</span>
+                                                    <div className="h-6"></div> {/* Spacer to align with All Buttons */}
+                                                </TableHead>
                                             </TableRow>
                                         </TableHeader>
+
                                         <TableBody>
-                                            {permissions.map((perm, idx) => (
-                                                <TableRow key={perm.module} className="hover:bg-slate-50/50">
-                                                    <TableCell className="font-medium text-slate-700">
-                                                        {perm.label}
-                                                        <div className="text-[10px] text-slate-400 leading-none">ID: {perm.module}</div>
-                                                    </TableCell>
-                                                    <TableCell className="text-center">
-                                                        <Checkbox
-                                                            checked={perm.can_read}
-                                                            onCheckedChange={c => handleCheckboxChange(idx, 'can_read', !!c)}
-                                                            className="data-[state=checked]:bg-cuca-blue"
-                                                        />
-                                                    </TableCell>
-                                                    <TableCell className="text-center">
-                                                        <Checkbox
-                                                            checked={perm.can_create}
-                                                            onCheckedChange={c => handleCheckboxChange(idx, 'can_create', !!c)}
-                                                            className="data-[state=checked]:bg-green-600 border-green-200"
-                                                        />
-                                                    </TableCell>
-                                                    <TableCell className="text-center">
-                                                        <Checkbox
-                                                            checked={perm.can_update}
-                                                            onCheckedChange={c => handleCheckboxChange(idx, 'can_update', !!c)}
-                                                            className="data-[state=checked]:bg-orange-500 border-orange-200"
-                                                        />
-                                                    </TableCell>
-                                                    <TableCell className="text-center">
-                                                        <Checkbox
-                                                            checked={perm.can_delete}
-                                                            onCheckedChange={c => handleCheckboxChange(idx, 'can_delete', !!c)}
-                                                            className="data-[state=checked]:bg-red-600 border-red-200"
-                                                        />
-                                                    </TableCell>
-                                                </TableRow>
+                                            {MODULE_GROUPS.map((group, groupIndex) => (
+                                                <div key={group.category} className="contents">
+                                                    {/* Row Categoria */}
+                                                    <TableRow className="bg-slate-50/80 hover:bg-slate-50/80 border-y border-slate-200">
+                                                        <TableCell colSpan={6} className="py-2.5 px-4">
+                                                            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{group.category}</span>
+                                                        </TableCell>
+                                                    </TableRow>
+
+                                                    {group.modules.map(mod => {
+                                                        const perm = permissions.find(p => p.module === mod.id) || {}
+                                                        // Check se toda a linha dessa exata feature ta true
+                                                        const isRowFull = perm.can_read && perm.can_create && perm.can_update && perm.can_delete
+
+                                                        return (
+                                                            <TableRow key={mod.id} className="hover:bg-slate-50/50 transition-colors group/row">
+                                                                <TableCell className="font-medium text-slate-700 py-3 pl-6 border-r border-slate-50 bg-white group-hover/row:bg-slate-50/30">
+                                                                    <div className="text-sm font-semibold">{mod.label}</div>
+                                                                    <div className="font-mono text-[9px] text-slate-300 mt-0.5">{mod.id}</div>
+                                                                </TableCell>
+
+                                                                <TableCell className="text-center border-l border-slate-100 bg-white group-hover/row:bg-slate-50/30">
+                                                                    <Checkbox
+                                                                        checked={perm.can_read || false}
+                                                                        onCheckedChange={c => handleCheckboxChange(mod.id, 'can_read', !!c)}
+                                                                        className={`w-5 h-5 rounded border-slate-300 data-[state=checked]:bg-cuca-blue data-[state=checked]:border-cuca-blue ${perm.can_read ? 'shadow-sm' : ''}`}
+                                                                    />
+                                                                </TableCell>
+
+                                                                <TableCell className="text-center border-l text-center border-slate-100 bg-white group-hover/row:bg-slate-50/30">
+                                                                    <Checkbox
+                                                                        checked={perm.can_create || false}
+                                                                        onCheckedChange={c => handleCheckboxChange(mod.id, 'can_create', !!c)}
+                                                                        className={`w-5 h-5 rounded border-slate-300 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600 ${perm.can_create ? 'shadow-sm' : ''}`}
+                                                                    />
+                                                                </TableCell>
+
+                                                                <TableCell className="text-center border-l text-center border-slate-100 bg-white group-hover/row:bg-slate-50/30">
+                                                                    <Checkbox
+                                                                        checked={perm.can_update || false}
+                                                                        onCheckedChange={c => handleCheckboxChange(mod.id, 'can_update', !!c)}
+                                                                        className={`w-5 h-5 rounded border-slate-300 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500 ${perm.can_update ? 'shadow-sm' : ''}`}
+                                                                    />
+                                                                </TableCell>
+
+                                                                <TableCell className="text-center border-l border-r text-center border-slate-100 bg-white group-hover/row:bg-slate-50/30">
+                                                                    <Checkbox
+                                                                        checked={perm.can_delete || false}
+                                                                        onCheckedChange={c => handleCheckboxChange(mod.id, 'can_delete', !!c)}
+                                                                        className={`w-5 h-5 rounded border-slate-300 data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600 ${perm.can_delete ? 'shadow-sm' : ''}`}
+                                                                    />
+                                                                </TableCell>
+
+                                                                {/* "Marcar Linha (Todos da feature)" */}
+                                                                <TableCell className="text-center w-[80px] bg-slate-50/30 group-hover/row:bg-slate-100/50">
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        onClick={() => handleRowSelectAll(mod.id, !isRowFull)}
+                                                                        className={`h-7 w-7 p-0 rounded-md opacity-40 hover:opacity-100 hover:bg-blue-100 hover:text-blue-700 transition-all ${isRowFull ? 'text-blue-600 opacity-100 bg-blue-50 border border-blue-200' : ''}`}
+                                                                        title={isRowFull ? "Desmarcar toda linha" : "Marcar Poder Total (CRUD) nesta feature"}
+                                                                    >
+                                                                        {isRowFull ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                                                                    </Button>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        )
+                                                    })}
+                                                </div>
                                             ))}
                                         </TableBody>
                                     </Table>
                                 </CardContent>
-                                <div className="p-4 border-t bg-slate-50/50 flex justify-end">
-                                    <Button onClick={savePermissions} disabled={saving} className="bg-cuca-blue px-6">
-                                        <Save className="h-4 w-4 mr-2" /> {saving ? "Salvando..." : "Salvar Matriz"}
+                                <div className="p-4 border-t bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4">
+                                    <div className="text-sm text-slate-500">
+                                        Modificações não salvas serão perdidas ao trocar de aba.
+                                    </div>
+                                    <Button onClick={savePermissionsMatrix} disabled={saving} className="bg-cuca-blue h-11 px-8 w-full md:w-auto text-sm font-semibold shadow-md hover:shadow-lg transition-all rounded-full">
+                                        <Save className="h-4 w-4 mr-2" />
+                                        {saving ? "Registrando Níveis..." : "Salvar Níveis de Acesso (Matriz CRUD)"}
                                     </Button>
                                 </div>
                             </Card>
                         </div>
                     ) : (
-                        <div className="h-full min-h-[400px] flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-xl text-slate-400 bg-slate-50/30">
-                            <Users className="h-16 w-16 mb-4 text-slate-300" />
-                            <h2 className="text-xl font-semibold text-slate-600">Nenhum perfil selecionado</h2>
-                            <p className="mt-2 text-sm max-w-sm text-center">Selecione um cargo no menu lateral para mapear as permissões exatas da UI e APIs.</p>
+                        <div className="h-[600px] flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 bg-slate-50/50 p-8 text-center animate-in zoom-in-95 duration-500">
+                            <div className="h-20 w-20 bg-white rounded-full flex items-center justify-center shadow-sm border border-slate-100 mb-6">
+                                <Users className="h-10 w-10 text-slate-300" />
+                            </div>
+                            <h2 className="text-2xl font-bold text-slate-700">Nenhum Cargo Ativo</h2>
+                            <p className="mt-3 text-base text-slate-500 max-w-md">Para começar a desenhar as regras de acesso, clique em algum Perfil na lista à esquerda ou utilize o botão Novo Cargo Administrativo.</p>
                         </div>
                     )}
                 </div>
