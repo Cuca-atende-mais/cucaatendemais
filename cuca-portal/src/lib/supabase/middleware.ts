@@ -36,7 +36,7 @@ export async function updateSession(request: NextRequest) {
     } = await supabase.auth.getUser()
 
     const { pathname } = request.nextUrl
-    const isPublicPath = pathname === '/login' || pathname.startsWith('/auth') || pathname.startsWith('/setup-senha')
+    const isPublicPath = pathname === '/login' || pathname.startsWith('/auth') || pathname.startsWith('/setup-senha') || pathname === '/api/colaboradores/setup-password'
 
     // Usuário não autenticado tentando acessar rota protegida
     if (!user && !isPublicPath) {
