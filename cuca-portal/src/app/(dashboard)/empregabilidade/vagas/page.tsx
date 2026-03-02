@@ -7,7 +7,6 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin } from "lucide-react"
 import { VagaModal } from "@/components/empregabilidade/vaga-modal"
