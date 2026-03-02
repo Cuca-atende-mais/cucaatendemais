@@ -20,9 +20,6 @@ import {
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select"
-import {
-    Collapsible, CollapsibleContent, CollapsibleTrigger,
-} from "@/components/ui/collapsible"
 import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Switch } from "@/components/ui/switch"
