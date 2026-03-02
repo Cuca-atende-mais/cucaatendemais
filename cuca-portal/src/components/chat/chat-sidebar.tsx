@@ -13,9 +13,11 @@ import { Search } from "lucide-react";
 interface ChatSidebarProps {
     activeConversationId: string | null;
     onSelectConversation: (id: string) => void;
+    filterAgenteTipo?: string[];
+    title?: string;
 }
 
-export default function ChatSidebar({ activeConversationId, onSelectConversation }: ChatSidebarProps) {
+export default function ChatSidebar({ activeConversationId, onSelectConversation, filterAgenteTipo, title = "Atendimento" }: ChatSidebarProps) {
     const [conversations, setConversations] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
@@ -49,7 +51,7 @@ export default function ChatSidebar({ activeConversationId, onSelectConversation
     }, []);
 
     async function fetchConversations() {
-        const { data, error } = await supabase
+        let query = supabase
             .from('conversas')
             .select(`
         *,
@@ -59,6 +61,15 @@ export default function ChatSidebar({ activeConversationId, onSelectConversation
         )
       `)
             .order('updated_at', { ascending: false });
+
+        if (filterAgenteTipo && filterAgenteTipo.length > 0) {
+            query = query.in('agente_tipo', filterAgenteTipo);
+        } else {
+            // General Atendimento (exclude Empregabilidade to keep them isolated if desired)
+            query = query.not('agente_tipo', 'in', '("julia_geral","julia_unidade")');
+        }
+
+        const { data, error } = await query;
 
         if (!error && data) {
             setConversations(data);
@@ -74,7 +85,7 @@ export default function ChatSidebar({ activeConversationId, onSelectConversation
     return (
         <div className="flex flex-col h-full border-r bg-card/50 backdrop-blur-sm">
             <div className="p-4 space-y-4">
-                <h2 className="text-xl font-bold tracking-tight">Atendimento</h2>
+                <h2 className="text-xl font-bold tracking-tight">{title}</h2>
                 <div className="relative">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
