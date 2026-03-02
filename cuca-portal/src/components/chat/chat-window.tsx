@@ -17,6 +17,7 @@ interface ChatWindowProps {
 }
 
 export default function ChatWindow({ conversationId }: ChatWindowProps) {
+    const { hasPermission } = useUser();
     const [messages, setMessages] = useState<any[]>([]);
     const [conversation, setConversation] = useState<any>(null);
     const [loading, setLoading] = useState(false);

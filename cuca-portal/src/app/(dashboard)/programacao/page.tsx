@@ -42,7 +42,7 @@ export default function ProgramacaoPage() {
     const supabase = createClient()
     const router = useRouter()
 
-    const { profile, isDeveloper } = useUser()
+    const { profile, isDeveloper, hasPermission } = useUser()
 
     const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
 
