@@ -72,7 +72,7 @@ export default function EspacosPage() {
     const [qStatus, setQStatus] = useState<"ativo" | "desativado" | "manutencao">("ativo")
     const [savingEquip, setSavingEquip] = useState(false)
 
-    const { profile, isDeveloper } = useUser()
+    const { profile, isDeveloper, hasPermission } = useUser()
     const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
 
     useEffect(() => {
