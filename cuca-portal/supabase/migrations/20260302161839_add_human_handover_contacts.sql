@@ -17,10 +17,10 @@ on public.human_handover_contacts for all
 to authenticated
 using (
   exists (
-    select 1 from public.collaborators
-    where collaborators.id = auth.uid()
-      and collaborators.role_id in (
-        select id from public.roles where name in ('super_admin', 'coordenador', 'operador', 'admin_local')
+    select 1 from public.colaboradores
+    where colaboradores.user_id = auth.uid()
+      and colaboradores.role_id in (
+        select id from public.sys_roles where name in ('super_admin', 'coordenador', 'operador', 'admin_local')
       )
   )
 );

@@ -9,7 +9,7 @@ create table if not exists public.empresas (
     porte text,
     contato_responsavel text,
     ativa boolean default true not null,
-    created_by uuid references public.collaborators(id) on delete set null,
+    created_by uuid references public.colaboradores(id) on delete set null,
     created_at timestamp with time zone default now() not null,
     updated_at timestamp with time zone default now() not null
 );
@@ -27,10 +27,10 @@ on public.empresas for all
 to authenticated
 using (
   exists (
-    select 1 from public.collaborators
-    where collaborators.id = auth.uid()
-      and collaborators.role_id in (
-        select id from public.roles where name in ('super_admin', 'coordenador', 'operador', 'admin_local')
+    select 1 from public.colaboradores
+    where colaboradores.user_id = auth.uid()
+      and colaboradores.role_id in (
+        select id from public.sys_roles where name in ('super_admin', 'coordenador', 'operador', 'admin_local')
       )
   )
 );
