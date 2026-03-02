@@ -67,7 +67,7 @@ export const menuItems = [
         icon: "Settings",
         // Parent menu doesn't need strict perm now, sidebar relies on children
         items: [
-            { title: "Transbordo (Rotas)", url: "/configuracoes/transbordo", permission: { recurso: "config_whatsapp", acao: "read" } },
+            { title: "Atendimento Humano", url: "/configuracoes/transbordo", permission: { recurso: "config_whatsapp", acao: "read" } },
             { title: "WhatsApp", url: "/configuracoes/whatsapp", permission: { recurso: "config_whatsapp", acao: "read" } },
             { title: "Colaboradores", url: "/configuracoes/colaboradores", permission: { recurso: "config_colaboradores", acao: "read" } },
             { title: "Perfis (RBAC)", url: "/configuracoes/perfis", permission: { recurso: "config_perfis", acao: "read" } },

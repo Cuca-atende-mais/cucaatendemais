@@ -159,7 +159,7 @@ export default function TransbordoPage() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Transbordo Humano</h1>
+                    <h1 className="text-3xl font-bold tracking-tight">Atendimento Humano</h1>
                     <p className="text-muted-foreground">
                         Configure para quais números de WhatsApp os resumos de atendimento serão enviados.
                     </p>
