@@ -83,7 +83,14 @@ export default function EspacosPage() {
         setLoading(true)
         let query = supabase.from("espacos_cuca").select("*").order("unidade_cuca").order("nome")
 
-        const { data } = await query
+        if (!canSeeAllUnits && profile?.unidade_cuca) {
+            query = query.eq('unidade_cuca', profile.unidade_cuca)
+        }
+
+        const { data, error } = await query
+        if (error) {
+            console.error("Erro ao buscar espaços:", error)
+        }
         setEspacos(data || [])
         setLoading(false)
     }
