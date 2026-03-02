@@ -71,7 +71,11 @@ export function AppSidebar() {
         if (item.items) {
             visibleChildren = item.items.filter(child => {
                 const perm = (child as any).permission
-                if (!perm) return true
+                const perms = (child as any).permissions
+                if (!perm && !perms) return true
+                if (perms && Array.isArray(perms)) {
+                    return perms.some((p: any) => hasPermission(p.recurso, p.acao))
+                }
                 return hasPermission(perm.recurso, perm.acao)
             })
         }

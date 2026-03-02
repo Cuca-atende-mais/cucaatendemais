@@ -51,7 +51,8 @@ const MODULE_GROUPS = [
     {
         category: 'Acesso CUCA',
         modules: [
-            { id: 'acesso_solicitacoes', label: 'Solicitações de Acesso (Aprovar/Recusar)' },
+            { id: 'acesso_solicitacoes_n1', label: 'Solicitações (Aprovação N1 - Materiais/Espaço)' },
+            { id: 'acesso_solicitacoes_n2', label: 'Solicitações (Aprovação Final N2 - Gerencial)' },
             { id: 'acesso_espacos', label: 'Gestão de Espaços e Equipamentos' },
         ]
     },
@@ -227,6 +228,12 @@ export default function GestaoPerfisPage() {
                 if (checked && field !== 'can_read') {
                     updated.can_read = true
                 }
+                // Regra de Ouro Reversa: Se tirar permissão de Read, TIRA OBRIGATORIAMENTE criar, editar, deletar
+                if (!checked && field === 'can_read') {
+                    updated.can_create = false
+                    updated.can_update = false
+                    updated.can_delete = false
+                }
                 return updated
             }
             return p
@@ -253,6 +260,12 @@ export default function GestaoPerfisPage() {
             const updated = { ...p, [field]: check }
             // Se mandou marcar toda a coluna de CRUD, marca auto a coluna Read também
             if (check && field !== 'can_read') updated.can_read = true
+            // Se mandou desmarcar toda a coluna Read, desmarca auto todo o CRUD também
+            if (!check && field === 'can_read') {
+                updated.can_create = false
+                updated.can_update = false
+                updated.can_delete = false
+            }
             return updated
         }))
     }

@@ -256,24 +256,25 @@ export default function AcessoCucaPortalPage() {
                             </div>
 
                             {/* Ações de aprovação */}
-                            {hasPermission("acesso_solicitacoes", "update") && (detalhando.status === "aguardando_n1" || detalhando.status === "aguardando_n2") && !reviewMode && (
-                                <div className="flex gap-2 pt-2 border-t">
-                                    <Button
-                                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 gap-2"
-                                        onClick={() => setReviewMode("aprovar")}
-                                    >
-                                        <CheckCircle2 className="h-4 w-4" />
-                                        {detalhando.status === "aguardando_n1" ? "Aprovar (N1)" : "Aprovação Final (N2)"}
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        className="flex-1 text-destructive border-destructive/20 hover:bg-destructive/5 gap-2"
-                                        onClick={() => setReviewMode("reprovar")}
-                                    >
-                                        <XCircle className="h-4 w-4" /> Reprovar
-                                    </Button>
-                                </div>
-                            )}
+                            {((hasPermission("acesso_solicitacoes_n1", "update") && detalhando.status === "aguardando_n1") ||
+                                (hasPermission("acesso_solicitacoes_n2", "update") && detalhando.status === "aguardando_n2")) && !reviewMode && (
+                                    <div className="flex gap-2 pt-2 border-t">
+                                        <Button
+                                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 gap-2"
+                                            onClick={() => setReviewMode("aprovar")}
+                                        >
+                                            <CheckCircle2 className="h-4 w-4" />
+                                            {detalhando.status === "aguardando_n1" ? "Aprovar (N1)" : "Aprovação Final (N2)"}
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            className="flex-1 text-destructive border-destructive/20 hover:bg-destructive/5 gap-2"
+                                            onClick={() => setReviewMode("reprovar")}
+                                        >
+                                            <XCircle className="h-4 w-4" /> Reprovar
+                                        </Button>
+                                    </div>
+                                )}
 
                             {reviewMode === "aprovar" && (
                                 <div className="space-y-3 pt-2 border-t">

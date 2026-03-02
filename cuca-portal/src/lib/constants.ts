@@ -42,9 +42,8 @@ export const menuItems = [
         title: "Acesso CUCA",
         url: "/acesso-cuca",
         icon: "DoorOpen",
-        permission: { recurso: "acesso_solicitacoes", acao: "read" },
         items: [
-            { title: "Solicitações", url: "/acesso-cuca", permission: { recurso: "acesso_solicitacoes", acao: "read" } },
+            { title: "Solicitações", url: "/acesso-cuca", permissions: [{ recurso: "acesso_solicitacoes_n1", acao: "read" }, { recurso: "acesso_solicitacoes_n2", acao: "read" }] },
             { title: "Espaços & Equipamentos", url: "/acesso-cuca/espacos", permission: { recurso: "acesso_espacos", acao: "read" } },
         ],
     },

@@ -83,10 +83,6 @@ export default function EspacosPage() {
         setLoading(true)
         let query = supabase.from("espacos_cuca").select("*").order("unidade_cuca").order("nome")
 
-        if (!canSeeAllUnits && profile?.unidade_cuca) {
-            query = query.eq('unidade_cuca', profile.unidade_cuca)
-        }
-
         const { data } = await query
         setEspacos(data || [])
         setLoading(false)
