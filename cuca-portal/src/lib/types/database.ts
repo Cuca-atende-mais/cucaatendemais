@@ -164,3 +164,17 @@ export type Campanha = {
     created_at: string
     updated_at: string
 }
+
+export type TalentBank = {
+    id: string
+    nome: string
+    data_nascimento: string | null
+    telefone: string | null
+    candidatura_origem_id: string | null
+    vaga_origem_id: string | null
+    skills_jsonb: any
+    status: string
+    arquivo_cv_url: string | null
+    created_at: string
+    updated_at: string
+}
