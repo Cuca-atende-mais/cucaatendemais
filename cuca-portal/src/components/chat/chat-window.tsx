@@ -25,7 +25,6 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
     const [sending, setSending] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const supabase = createClient();
-    const { hasPermission } = useUser();
 
     useEffect(() => {
         if (!conversationId) return;
