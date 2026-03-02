@@ -686,7 +686,7 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S11-03 | Gestor pode adicionar talento como candidato com 1 clique | [x] |
 | S11-04 | UI: Interface de mensagens `/empregabilidade/mensagens` isolada do atendimento geral (RH independente) | [x] |
 | S11-05 | CRUD de Transbordo Humano: Tabela e Tela para configurar núm. de WhatsApp de responsáveis por módulo | [x] |
-| S11-06 | Worker Handover: IA detecta pedido de humano, busca número no banco, envia resumo e link pro gestor | ⏳ |
+| S11-06 | Worker Handover: IA detecta pedido de humano, busca número no banco, envia resumo e link pro gestor | [x] |
 | S11-07 | 🚨 **DEPLOY VPS HOSTINGER**: Subir o Worker FastAPI na VPS e autenticar instâncias UAZAPI para Go-Live operacional | ⏳ |
 
 ---

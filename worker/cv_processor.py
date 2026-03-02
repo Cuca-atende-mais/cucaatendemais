@@ -30,7 +30,11 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
         file_b64 = await download_file_as_base64(cv_url)
         is_pdf = cv_url.lower().endswith(".pdf")
         
-        # 2. Buscar requisitos da vaga para o "Matching" (score_aderencia/requisitos_atendidos)
+        # 1.5 Buscar relacionamento
+        cand_res = supabase.table("candidaturas").select("candidato_id").eq("id", candidatura_id).single().execute()
+        candidato_id = cand_res.data["candidato_id"]
+        
+        # 2. Buscar requisitos da vaga para o "Matching"
         vaga_res = supabase.table("vagas").select("titulo, requisitos, escolaridade_minima").eq("id", vaga_id).single().execute()
         vaga = vaga_res.data
         
@@ -101,20 +105,27 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
         analise = json_data.get("analise_aderencia", {})
         veredito = analise.get("veredito", "⚠️")
         match_score = json_data.get("match_score", 0)
+        pontos_fortes = " ".join(analise.get("pontos_fortes", []))
         
-        # 3. Atualizar no banco
+        # 3. Atualizar no banco (Tabela: candidatos - Habilidades Gerais)
+        supabase.table("candidatos").update({
+            "escolaridade": json_data.get("escolaridade", ""),
+            "experiencias": json_data.get("resumo_experiencias", []),
+            "habilidades": json_data.get("habilidades", []),
+        }).eq("id", candidato_id).execute()
+        
+        # 4. Atualizar no banco (Tabela: candidaturas - Match com a Vaga específica)
         supabase.table("candidaturas").update({
-            "dados_ocr_json": json_data,
-            "requisitos_atendidos": veredito,
-            "match_score": match_score, # Novo campo sugerido na Fase 2
-            "status": "selecionado" if veredito == "✅" else "pendente"
+            "matching_score": match_score,
+            "matching_justificativa": f"{veredito} - {pontos_fortes}",
+            "status": "selecionado" if veredito == "✅" else ("rejeitado" if veredito == "❌" else "pendente")
         }).eq("id", candidatura_id).execute()
         
-        logger.info(f"OCR finalizado para {candidatura_id}. Avaliação: {avaliacao}")
+        logger.info(f"OCR finalizado para {candidatura_id}. Score: {match_score}. Veredito: {veredito}")
 
     except Exception as e:
         logger.error(f"Erro ao processar OCR da candidatura {candidatura_id}: {str(e)}")
         # Atualizar status para erro de processamento
         supabase.table("candidaturas").update({
-            "requisitos_atendidos": "Erro OCR"
+            "matching_justificativa": f"Erro OCR: {str(e)[:50]}"
         }).eq("id", candidatura_id).execute()
