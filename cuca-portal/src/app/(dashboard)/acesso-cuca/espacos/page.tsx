@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import { unidadesCuca } from "@/lib/constants"
 
 type Espaco = {
     id: string
@@ -43,8 +44,6 @@ const STATUS_CONFIG = {
     desativado: { label: "Desativado", color: "bg-slate-100 text-slate-500 border-slate-200", icon: AlertTriangle },
     manutencao: { label: "Em Manutenção", color: "bg-amber-500/10 text-amber-600 border-amber-200", icon: WrenchIcon },
 }
-
-const UNIDADES = ["Barra", "Mondubim", "Jangurussu", "José Walter", "Pici"]
 
 export default function EspacosPage() {
     const supabase = createClient()
@@ -184,7 +183,7 @@ export default function EspacosPage() {
     }
 
     // Agrupar por unidade
-    const porUnidade = UNIDADES.map(u => ({ unidade: u, items: espacos.filter(e => e.unidade_cuca === u) })).filter(g => g.items.length > 0)
+    const porUnidade = unidadesCuca.map(u => ({ unidade: u, items: espacos.filter(e => e.unidade_cuca === u) })).filter(g => g.items.length > 0)
 
     return (
         <div className="flex flex-col gap-6 p-2 md:p-6">
@@ -355,9 +354,9 @@ export default function EspacosPage() {
                             <Select value={eUnidade} onValueChange={setEUnidade} disabled={!canSeeAllUnits}>
                                 <SelectTrigger><SelectValue placeholder="Selecione a unidade" /></SelectTrigger>
                                 <SelectContent>
-                                    {UNIDADES.map(u => {
+                                    {unidadesCuca.map(u => {
                                         if (!canSeeAllUnits && u !== profile?.unidade_cuca) return null;
-                                        return <SelectItem key={u} value={u}>CUCA {u}</SelectItem>
+                                        return <SelectItem key={u} value={u}>{u}</SelectItem>
                                     })}
                                 </SelectContent>
                             </Select>
