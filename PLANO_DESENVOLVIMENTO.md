@@ -1445,3 +1445,21 @@ A regra engessada de "Perfis fixados no código" foi substituída por um gerenci
 - [x] **Botão de Ativar/Desativar Colaborador**:
   - Deixar o controle de ativação/desativação habilitado somente para Owner, Super Admin e Gerente (outros perfis que porventura puderem editar colabs não poderão mudar o status).
 
+---
+
+## 📋 Checklist de Execução: Fase 10.2 - Granularidade Extrema do RBAC e Bloqueio de UI por Permissão
+
+- [x] **Módulo Leads**:
+  - Desmembrar e criar chaves explícitas para: `Visualizar Leads`, `Novo Lead` (CRUD), `Registrar Output` (CRUD), `Bloquear Lead` (CRUD) e `Anonimizar Dados` (CRUD).
+- [x] **Módulo Atendimento**:
+  - Garantir chave única para Atendimento, e revisar os botões na UI para respeitarem `cria`, `edita`, `deleta`.
+- [x] **Módulo Programação**:
+  - Separar explicitamente na matriz: `Programação Mensal` e `Programação Pontual`.
+- [x] **Módulo Empregabilidade**:
+  - Separar explicitamente na matriz: `Módulo Banco de Vagas`, `Vagas` (CRUD).
+- [x] **Módulo Acesso CUCA**:
+  - Separar explicitamente na matriz: `Solicitações` (com editar/aprovar e deletar/recusar) e `Espaços e Equipamentos`.
+- [x] **Módulo Ouvidoria**:
+  - Analisar e garantir o bloqueio real dos botões de ação na View.
+- [x] **Revisão e Implementação da Engine de Controle de Interface**:
+  - Varrer todas as tabelas, modais e actions (`Novo`, `Editar`, `Deletar`) nas telas citadas acima. Se o cargo só tem flag de `read` (Visualizar), os botões de ação devem ser **desativados ou ocultados**. Somente quem possui flags `create`, `update`, `delete` verá e poderá interagir com essas funcionalidades na interface.

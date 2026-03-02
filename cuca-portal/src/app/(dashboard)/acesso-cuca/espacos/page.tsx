@@ -194,9 +194,11 @@ export default function EspacosPage() {
                     </h1>
                     <p className="text-sm text-muted-foreground mt-1">Gerencie os espaços e equipamentos disponíveis para reserva nos CUCAs.</p>
                 </div>
-                <Button onClick={() => openEspacoModal()} className="gap-2">
-                    <Plus className="h-4 w-4" /> Novo Espaço
-                </Button>
+                {hasPermission("acesso_espacos", "create") && (
+                    <Button onClick={() => openEspacoModal()} className="gap-2">
+                        <Plus className="h-4 w-4" /> Novo Espaço
+                    </Button>
+                )}
             </div>
 
             {/* Link para formulário público */}
@@ -237,12 +239,16 @@ export default function EspacosPage() {
                                                     <Icon className="h-3 w-3 mr-1" /> {cfg.label}
                                                 </Badge>
                                                 <div className="flex gap-1 shrink-0">
-                                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEspacoModal(espaco)}>
-                                                        <Pencil className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteEspaco(espaco.id)}>
-                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                    </Button>
+                                                    {hasPermission("acesso_espacos", "update") && (
+                                                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEspacoModal(espaco)}>
+                                                            <Pencil className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    )}
+                                                    {hasPermission("acesso_espacos", "delete") && (
+                                                        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteEspaco(espaco.id)}>
+                                                            <Trash2 className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             </div>
 
@@ -251,9 +257,11 @@ export default function EspacosPage() {
                                                 <div className="border-t bg-muted/30 p-4 space-y-3">
                                                     <div className="flex items-center justify-between">
                                                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Equipamentos</p>
-                                                        <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => openEquipModal(espaco.id)}>
-                                                            <Plus className="h-3 w-3" /> Adicionar
-                                                        </Button>
+                                                        {hasPermission("acesso_espacos", "create") && (
+                                                            <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => openEquipModal(espaco.id)}>
+                                                                <Plus className="h-3 w-3" /> Adicionar
+                                                            </Button>
+                                                        )}
                                                     </div>
                                                     {equips.length === 0 ? (
                                                         <p className="text-sm text-muted-foreground">Nenhum equipamento cadastrado.</p>
@@ -272,12 +280,16 @@ export default function EspacosPage() {
                                                                             <EqIcon className="h-3 w-3 mr-1" /> {eqCfg.label}
                                                                         </Badge>
                                                                         <div className="flex gap-1">
-                                                                            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => openEquipModal(espaco.id, eq)}>
-                                                                                <Pencil className="h-3 w-3" />
-                                                                            </Button>
-                                                                            <Button size="icon" variant="ghost" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => deleteEquip(eq)}>
-                                                                                <Trash2 className="h-3 w-3" />
-                                                                            </Button>
+                                                                            {hasPermission("acesso_espacos", "update") && (
+                                                                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => openEquipModal(espaco.id, eq)}>
+                                                                                    <Pencil className="h-3 w-3" />
+                                                                                </Button>
+                                                                            )}
+                                                                            {hasPermission("acesso_espacos", "delete") && (
+                                                                                <Button size="icon" variant="ghost" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => deleteEquip(eq)}>
+                                                                                    <Trash2 className="h-3 w-3" />
+                                                                                </Button>
+                                                                            )}
                                                                         </div>
                                                                     </div>
                                                                 )

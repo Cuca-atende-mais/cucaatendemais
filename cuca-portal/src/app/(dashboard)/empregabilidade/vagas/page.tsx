@@ -8,12 +8,13 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
-    Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin } from "lucide-react"
 import { VagaModal } from "@/components/empregabilidade/vaga-modal"
+import { useUser } from "@/lib/auth/user-provider"
 
 export default function VagasPage() {
+    const { hasPermission } = useUser()
     const [vagas, setVagas] = useState<Vaga[]>([])
     const [empresasMap, setEmpresasMap] = useState<Record<string, Empresa>>({})
     const [unidadesMap, setUnidadesMap] = useState<Record<string, string>>({})
@@ -114,9 +115,11 @@ export default function VagasPage() {
                     </h1>
                     <p className="text-muted-foreground">Gerencie o portfólio de oportunidades para juventude.</p>
                 </div>
-                <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold" onClick={openNewModal}>
-                    <Plus className="mr-2 h-4 w-4" /> Cadastrar Vaga
-                </Button>
+                {hasPermission("empreg_vagas", "create") && (
+                    <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold" onClick={openNewModal}>
+                        <Plus className="mr-2 h-4 w-4" /> Cadastrar Vaga
+                    </Button>
+                )}
             </div>
 
             <VagaModal

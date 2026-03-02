@@ -31,8 +31,10 @@ import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
+import { useUser } from "@/lib/auth/user-provider"
 
 export default function LeadsPage() {
+    const { hasPermission } = useUser()
     const [leads, setLeads] = useState<Lead[]>([])
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState("")
@@ -205,9 +207,11 @@ export default function LeadsPage() {
                     <h1 className="text-3xl font-bold tracking-tight">Leads</h1>
                     <p className="text-muted-foreground">Gerencie sua base de contatos da Rede CUCA</p>
                 </div>
-                <Button className="bg-cuca-blue hover:bg-sky-800" onClick={() => setCreateDialog(true)}>
-                    <UserPlus className="mr-2 h-4 w-4" /> Novo Lead
-                </Button>
+                {hasPermission("leads_novo", "create") && (
+                    <Button className="bg-cuca-blue hover:bg-sky-800" onClick={() => setCreateDialog(true)}>
+                        <UserPlus className="mr-2 h-4 w-4" /> Novo Lead
+                    </Button>
+                )}
             </div>
 
             {/* Cards de métricas */}
@@ -372,34 +376,44 @@ export default function LeadsPage() {
                                                     </Button>
                                                 </DropdownMenuTrigger>
                                                 <DropdownMenuContent align="end">
-                                                    {!lead.bloqueado && (
+                                                    {(!lead.bloqueado && hasPermission("leads_bloquear", "update")) && (
                                                         <DropdownMenuItem onClick={() => toggleOptIn(lead)}>
                                                             {lead.opt_in
                                                                 ? <><BellOff className="mr-2 h-4 w-4" /> Registrar opt-out</>
                                                                 : <><Bell className="mr-2 h-4 w-4" /> Reativar opt-in</>}
                                                         </DropdownMenuItem>
                                                     )}
-                                                    <DropdownMenuSeparator />
-                                                    {lead.bloqueado ? (
-                                                        <DropdownMenuItem onClick={() => handleDesbloquear(lead)}>
-                                                            <ShieldCheck className="mr-2 h-4 w-4 text-green-600" />
-                                                            Desbloquear
-                                                        </DropdownMenuItem>
-                                                    ) : (
-                                                        <DropdownMenuItem
-                                                            className="text-red-600"
-                                                            onClick={() => { setSelectedLead(lead); setBloqDialog(true) }}
-                                                        >
-                                                            <ShieldBan className="mr-2 h-4 w-4" /> Bloquear
-                                                        </DropdownMenuItem>
+
+                                                    {hasPermission("leads_bloquear", "update") && (
+                                                        <>
+                                                            <DropdownMenuSeparator />
+                                                            {lead.bloqueado ? (
+                                                                <DropdownMenuItem onClick={() => handleDesbloquear(lead)}>
+                                                                    <ShieldCheck className="mr-2 h-4 w-4 text-green-600" />
+                                                                    Desbloquear
+                                                                </DropdownMenuItem>
+                                                            ) : (
+                                                                <DropdownMenuItem
+                                                                    className="text-red-600"
+                                                                    onClick={() => { setSelectedLead(lead); setBloqDialog(true) }}
+                                                                >
+                                                                    <ShieldBan className="mr-2 h-4 w-4" /> Bloquear
+                                                                </DropdownMenuItem>
+                                                            )}
+                                                        </>
                                                     )}
-                                                    <DropdownMenuSeparator />
-                                                    <DropdownMenuItem
-                                                        className="text-orange-600"
-                                                        onClick={() => handleAnonimizar(lead)}
-                                                    >
-                                                        <Eraser className="mr-2 h-4 w-4" /> Anonimizar Dados (LGPD)
-                                                    </DropdownMenuItem>
+
+                                                    {hasPermission("leads_anonimizar", "delete") && (
+                                                        <>
+                                                            <DropdownMenuSeparator />
+                                                            <DropdownMenuItem
+                                                                className="text-orange-600"
+                                                                onClick={() => handleAnonimizar(lead)}
+                                                            >
+                                                                <Eraser className="mr-2 h-4 w-4" /> Anonimizar Dados (LGPD)
+                                                            </DropdownMenuItem>
+                                                        </>
+                                                    )}
                                                 </DropdownMenuContent>
                                             </DropdownMenu>
                                         </TableCell>

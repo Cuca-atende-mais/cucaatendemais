@@ -3,13 +3,13 @@ export const menuItems = [
         title: "Dashboard",
         url: "/dashboard",
         icon: "LayoutDashboard",
-        permission: { recurso: "leads", acao: "read" } // Dashboard base usa leitura de leads
+        permission: { recurso: "dashboard", acao: "read" } // Dashboard base
     },
     {
         title: "Leads",
         url: "/leads",
         icon: "Users",
-        permission: { recurso: "leads", acao: "read" }
+        permission: { recurso: "leads_overview", acao: "read" }
     },
     {
         title: "Atendimento",
@@ -21,25 +21,31 @@ export const menuItems = [
         title: "Programação",
         url: "/programacao",
         icon: "Calendar",
-        permission: { recurso: "programacao", acao: "read" }
+        permission: { recurso: "programacao_mensal", acao: "read" },
+        // Fallback for parent menu logic if needed, usually handles visibleChildren
+        items: [
+            { title: "Mensal", url: "/programacao", permission: { recurso: "programacao_mensal", acao: "read" } },
+            // If there's a specific route for pontual, it would be here.
+        ],
     },
     {
         title: "Empregabilidade",
         url: "/empregabilidade",
         icon: "Briefcase",
-        permission: { recurso: "empregabilidade", acao: "read" },
+        permission: { recurso: "empreg_banco_cv", acao: "read" },
         items: [
-            { title: "Vagas", url: "/empregabilidade/vagas", permission: { recurso: "empregabilidade", acao: "read" } },
+            { title: "Painel Geral", url: "/empregabilidade", permission: { recurso: "empreg_banco_cv", acao: "read" } },
+            { title: "Vagas", url: "/empregabilidade/vagas", permission: { recurso: "empreg_vagas", acao: "read" } },
         ],
     },
     {
         title: "Acesso CUCA",
         url: "/acesso-cuca",
         icon: "DoorOpen",
-        permission: { recurso: "acesso_cuca", acao: "read" },
+        permission: { recurso: "acesso_solicitacoes", acao: "read" },
         items: [
-            { title: "Solicitações", url: "/acesso-cuca", permission: { recurso: "acesso_cuca", acao: "read" } },
-            { title: "Espaços & Equipamentos", url: "/acesso-cuca/espacos", permission: { recurso: "acesso_cuca", acao: "create" } },
+            { title: "Solicitações", url: "/acesso-cuca", permission: { recurso: "acesso_solicitacoes", acao: "read" } },
+            { title: "Espaços & Equipamentos", url: "/acesso-cuca/espacos", permission: { recurso: "acesso_espacos", acao: "read" } },
         ],
     },
     {
@@ -48,8 +54,8 @@ export const menuItems = [
         icon: "Megaphone",
         permission: { recurso: "ouvidoria", acao: "read" },
         items: [
-            { title: "Painel de Manifestações", url: "/ouvidoria" },
-            { title: "Eventos de Escuta", url: "/ouvidoria/eventos" },
+            { title: "Painel de Manifestações", url: "/ouvidoria", permission: { recurso: "ouvidoria", acao: "read" } },
+            { title: "Eventos de Escuta", url: "/ouvidoria/eventos", permission: { recurso: "ouvidoria", acao: "read" } },
         ],
     },
     {

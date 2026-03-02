@@ -31,25 +31,37 @@ import toast from "react-hot-toast"
 
 const MODULE_GROUPS = [
     {
-        category: 'Visão Geral & Inteligência',
+        category: 'Módulo de Leads',
         modules: [
-            { id: 'dashboard', label: 'Estatísticas Básicas' },
-            { id: 'leads', label: 'Funil de Leads & Conversões' },
+            { id: 'dashboard', label: 'Estatísticas Básicas (Visualização)' },
+            { id: 'leads_overview', label: 'Visualizar Lista de Leads' },
+            { id: 'leads_novo', label: 'Novo Lead (Cadastro)' },
+            { id: 'leads_output', label: 'Registrar Output em Lead' },
+            { id: 'leads_bloquear', label: 'Bloquear/Desbloquear Lead' },
+            { id: 'leads_anonimizar', label: 'Anonimizar Dados de Lead (LGPD)' },
         ]
     },
     {
         category: 'Atendimentos & Ouvidoria',
         modules: [
             { id: 'atendimentos', label: 'Painel de Atendimentos (Omnichannel)' },
-            { id: 'ouvidoria', label: 'Manifestações e Eventos de Escuta' },
-            { id: 'acesso_cuca', label: 'Solicitações de Acesso CUCA' },
+            { id: 'ouvidoria', label: 'Manifestações e Ouvidoria' },
         ]
     },
     {
-        category: 'Projetos Específicos',
+        category: 'Acesso CUCA',
         modules: [
-            { id: 'programacao', label: 'Programação de Eventos Mensais' },
-            { id: 'empregabilidade', label: 'Banco de Vagas (Empregabilidade)' },
+            { id: 'acesso_solicitacoes', label: 'Solicitações de Acesso (Aprovar/Recusar)' },
+            { id: 'acesso_espacos', label: 'Gestão de Espaços e Equipamentos' },
+        ]
+    },
+    {
+        category: 'Programação & Empregabilidade',
+        modules: [
+            { id: 'programacao_mensal', label: 'Programação de Eventos: Mensal' },
+            { id: 'programacao_pontual', label: 'Programação de Eventos: Pontual' },
+            { id: 'empreg_banco_cv', label: 'Empregabilidade: Banco de Currículos (Candidatos)' },
+            { id: 'empreg_vagas', label: 'Empregabilidade: Gestão de Vagas' },
         ]
     },
     {

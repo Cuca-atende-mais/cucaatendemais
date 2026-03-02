@@ -194,27 +194,31 @@ export default function ProgramacaoPage() {
                                 })}
                             </div>
 
-                            <Button
-                                variant="outline"
-                                className="border-cuca-blue text-cuca-blue hover:bg-cuca-blue/10 gap-2"
-                                onClick={() => {
-                                    if (unidadeFilter === "all") {
-                                        toast.error("Por favor, selecione uma unidade específica primeiro para a importação.")
-                                        return
-                                    }
-                                    setIsImportModalOpen(true)
-                                }}
-                            >
-                                <Upload className="mr-1 h-4 w-4" />
-                                Atualizar Programação
-                            </Button>
+                            {hasPermission("programacao_mensal", "create") && (
+                                <Button
+                                    variant="outline"
+                                    className="border-cuca-blue text-cuca-blue hover:bg-cuca-blue/10 gap-2"
+                                    onClick={() => {
+                                        if (unidadeFilter === "all") {
+                                            toast.error("Por favor, selecione uma unidade específica primeiro para a importação.")
+                                            return
+                                        }
+                                        setIsImportModalOpen(true)
+                                    }}
+                                >
+                                    <Upload className="mr-1 h-4 w-4" />
+                                    Atualizar Programação
+                                </Button>
+                            )}
 
-                            <Button
-                                className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold"
-                                onClick={() => setIsModalOpen(true)}
-                            >
-                                <Plus className="mr-2 h-4 w-4" /> Novo Item
-                            </Button>
+                            {(hasPermission("programacao_mensal", "create") || hasPermission("programacao_pontual", "create")) && (
+                                <Button
+                                    className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold"
+                                    onClick={() => setIsModalOpen(true)}
+                                >
+                                    <Plus className="mr-2 h-4 w-4" /> Novo Item
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </div>

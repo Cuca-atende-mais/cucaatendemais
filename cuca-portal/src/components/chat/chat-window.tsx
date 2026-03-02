@@ -10,6 +10,7 @@ import { User, Bot, Send, ShieldCheck, Zap, PauseCircle, PlayCircle } from "luci
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useUser } from "@/lib/auth/user-provider";
 
 interface ChatWindowProps {
     conversationId: string | null;
@@ -23,6 +24,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
     const [sending, setSending] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const supabase = createClient();
+    const { hasPermission } = useUser();
 
     useEffect(() => {
         if (!conversationId) return;
@@ -222,20 +224,26 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                     conversation?.status === 'ativa' && "opacity-50 pointer-events-none grayscale"
                 )}>
                     <Input
-                        placeholder={conversation?.status === 'ativa' ? "IA Maria está respondendo..." : "Digite sua mensagem..."}
+                        placeholder={
+                            !hasPermission("atendimentos", "create")
+                                ? "Você não tem permissão para responder..."
+                                : conversation?.status === 'ativa'
+                                    ? "IA Maria está respondendo..."
+                                    : "Digite sua mensagem..."
+                        }
                         className="bg-transparent border-none focus-visible:ring-0 shadow-none px-4"
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                        disabled={conversation?.status === 'ativa' || sending}
+                        disabled={conversation?.status === 'ativa' || sending || !hasPermission("atendimentos", "create")}
                     />
                     <Button
                         size="icon"
                         onClick={handleSendMessage}
-                        disabled={!newMessage.trim() || conversation?.status === 'ativa' || sending}
+                        disabled={!newMessage.trim() || conversation?.status === 'ativa' || sending || !hasPermission("atendimentos", "create")}
                         className={cn(
                             "rounded-xl shadow-lg transition-all active:scale-90",
-                            conversation?.status === 'ativa' ? "bg-muted" : "bg-primary hover:bg-primary/90"
+                            conversation?.status === 'ativa' || !hasPermission("atendimentos", "create") ? "bg-muted" : "bg-primary hover:bg-primary/90"
                         )}
                     >
                         {sending ? <div className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full" /> : <Send className="h-4 w-4" />}

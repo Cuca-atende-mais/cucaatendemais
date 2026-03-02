@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { unidadesCuca } from "@/lib/constants"
 import { Loader2, Save } from "lucide-react"
+import { useUser } from "@/lib/auth/user-provider"
 
 interface VagaModalProps {
     open: boolean
@@ -21,6 +22,7 @@ interface VagaModalProps {
 }
 
 export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProps) {
+    const { hasPermission } = useUser()
     const [loading, setLoading] = useState(false)
     const [fetching, setFetching] = useState(false)
     const [empresas, setEmpresas] = useState<Empresa[]>([])
@@ -294,15 +296,19 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                         </div>
 
                         <div className="flex justify-end gap-2 mt-4">
-                            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>Cancelar</Button>
-                            <Button
-                                className="bg-cuca-blue hover:bg-sky-800 text-white"
-                                onClick={handleSave}
-                                disabled={loading || !empresaId || !titulo || !descricao || !unidadeCucaId}
-                            >
-                                {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                                Salvar Vaga
+                            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+                                {hasPermission("empreg_vagas", "update") || hasPermission("empreg_vagas", "create") ? "Cancelar" : "Fechar"}
                             </Button>
+                            {(hasPermission("empreg_vagas", "update") || hasPermission("empreg_vagas", "create")) && (
+                                <Button
+                                    className="bg-cuca-blue hover:bg-sky-800 text-white"
+                                    onClick={handleSave}
+                                    disabled={loading || !empresaId || !titulo || !descricao || !unidadeCucaId}
+                                >
+                                    {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                                    Salvar Vaga
+                                </Button>
+                            )}
                         </div>
                     </div>
                 )}

@@ -62,7 +62,7 @@ export default function AcessoCucaPortalPage() {
     const [reviewMode, setReviewMode] = useState<"aprovar" | "reprovar" | null>(null)
     const [saving, setSaving] = useState(false)
 
-    const { profile, isDeveloper } = useUser()
+    const { profile, isDeveloper, hasPermission } = useUser()
 
     useEffect(() => {
         if (profile) fetchSolicitacoes()
@@ -256,7 +256,7 @@ export default function AcessoCucaPortalPage() {
                             </div>
 
                             {/* Ações de aprovação */}
-                            {(detalhando.status === "aguardando_n1" || detalhando.status === "aguardando_n2") && !reviewMode && (
+                            {hasPermission("acesso_solicitacoes", "update") && (detalhando.status === "aguardando_n1" || detalhando.status === "aguardando_n2") && !reviewMode && (
                                 <div className="flex gap-2 pt-2 border-t">
                                     <Button
                                         className="flex-1 bg-emerald-600 hover:bg-emerald-700 gap-2"

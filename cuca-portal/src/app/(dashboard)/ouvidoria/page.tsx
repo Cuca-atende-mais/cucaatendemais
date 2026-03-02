@@ -17,6 +17,7 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import toast from "react-hot-toast"
+import { useUser } from "@/lib/auth/user-provider"
 
 type OuvidoriaRegistro = {
     id: string
@@ -47,6 +48,7 @@ export default function OuvidoriaPage() {
     const [loading, setLoading] = useState(true)
     const [detalhamento, setDetalhamento] = useState<OuvidoriaRegistro | null>(null)
     const [analysing, setAnalysing] = useState(false)
+    const { hasPermission } = useUser()
 
     useEffect(() => { fetchRegistros() }, [])
 
@@ -324,7 +326,7 @@ export default function OuvidoriaPage() {
                             )}
 
                             {/* Ações */}
-                            {!detalhamento.resumo_ia && (
+                            {!detalhamento.resumo_ia && hasPermission("ouvidoria", "update") && (
                                 <div className="mt-4 flex justify-center">
                                     <Button
                                         onClick={() => handleAnalyseSentiment(detalhamento)}

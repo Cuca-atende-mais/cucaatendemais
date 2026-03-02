@@ -19,6 +19,7 @@ import toast from "react-hot-toast"
 import { Calendar, Clock, MapPin, Sparkles, Upload, Image as ImageIcon, X } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
+import { useUser } from "@/lib/auth/user-provider"
 
 interface UnifiedProgramModalProps {
     open: boolean
@@ -27,8 +28,9 @@ interface UnifiedProgramModalProps {
 }
 
 export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedProgramModalProps) {
+    const { hasPermission } = useUser()
     const [loading, setLoading] = useState(false)
-    const [isPontual, setIsPontual] = useState(true)
+    const [isPontual, setIsPontual] = useState(hasPermission("programacao_pontual", "create"))
 
     // Form states
     const [titulo, setTitulo] = useState("")
@@ -287,7 +289,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     <Button
                         className={isPontual ? "bg-cuca-yellow text-cuca-dark hover:bg-yellow-500" : "bg-cuca-blue hover:bg-sky-800 text-white"}
                         onClick={handleSave}
-                        disabled={loading}
+                        disabled={loading || (isPontual ? !hasPermission("programacao_pontual", "create") : !hasPermission("programacao_mensal", "create"))}
                     >
                         {loading ? "Salvando..." : isPontual ? "Enviar para Aprovação" : "Publicar Grade Mensal"}
                     </Button>
