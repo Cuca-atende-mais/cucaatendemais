@@ -667,7 +667,7 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S9-04 | Status lifecycle vaga: pre_cadastro → aberta → preenchida → cancelada | [x] |
 | S9-05 | Flag `expansiva`: vaga aparece no canal geral #6 (Júlia Geral no RAG) | [x] |
 | S9-06 | Indexação RAG automática ao criar vaga (source_type='job_posting', filtro cuca_unit_id) | [x] |
-| S9-07 | Link público de candidatura: data de nascimento + upload CV (PDF ou foto) | [x] |
+| S9-07 | Link público unificado da unidade: data nasc. + upload CV + modal de escolha de vaga local | ⏳ |
 | S9-08 | Worker: OCR via GPT-4o Vision → JSON (nome, idade, endereço, tel, escolaridade, experiência) | [x] |
 | S9-09 | Aviso automático: preenche requisitos básicos? ✅/⚠️/❌ (informativo para gestor) | [x] |
 | S9-10 | Datatable de candidatos: nome, idade, tel, escolaridade, experiência, status, ícone 📄 CV | [x] |
@@ -680,10 +680,14 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S10-03 | Júlia Geral (#6): consulta RAG job_posting sem filtro de unidade | [x] |
 | S10-04 | Júlia Geral: direciona ao WhatsApp da unidade (não coleta CV) | [x] |
 | S10-05 | Orientação profissional 24h: dicas entrevista, currículo (sem candidatura ativa) | [x] |
+| S10-06 | Agente RAG: Divulgação cruzada de vagas de outras unidades (com link wa.me) e incentivo no encerramento | ⏳ |
 | S11-01 | Banco de Talentos: matching IA ao criar nova vaga (habilidades × requisitos, últimos 3 meses) | [x] |
 | S11-02 | Aba "Banco de Talentos" dentro da vaga: candidatos sugeridos por score | [x] |
 | S11-03 | Gestor pode adicionar talento como candidato com 1 clique | [x] |
-| S11-04 | 🚨 **DEPLOY VPS HOSTINGER**: Subir o Worker FastAPI na VPS e autenticar instâncias UAZAPI para Go-Live operacional | ⏳ |
+| S11-04 | UI: Interface de mensagens `/empregabilidade/mensagens` isolada do atendimento geral (RH independente) | ⏳ |
+| S11-05 | CRUD de Transbordo Humano: Tabela e Tela para configurar núm. de WhatsApp de responsáveis por módulo | ⏳ |
+| S11-06 | Worker Handover: IA detecta pedido de humano, busca número no banco, envia resumo e link pro gestor | ⏳ |
+| S11-07 | 🚨 **DEPLOY VPS HOSTINGER**: Subir o Worker FastAPI na VPS e autenticar instâncias UAZAPI para Go-Live operacional | ⏳ |
 
 ---
 

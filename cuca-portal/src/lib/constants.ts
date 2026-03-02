@@ -35,7 +35,10 @@ export const menuItems = [
         permission: { recurso: "empreg_banco_cv", acao: "read" },
         items: [
             { title: "Painel Geral", url: "/empregabilidade", permission: { recurso: "empreg_banco_cv", acao: "read" } },
+            { title: "Empresas", url: "/empregabilidade/empresas", permission: { recurso: "empreg_vagas", acao: "read" } },
             { title: "Vagas", url: "/empregabilidade/vagas", permission: { recurso: "empreg_vagas", acao: "read" } },
+            { title: "Candidatos", url: "/empregabilidade/candidatos", permission: { recurso: "empreg_banco_cv", acao: "read" } },
+            { title: "Banco de Talentos", url: "/empregabilidade/banco-talentos", permission: { recurso: "empreg_banco_cv", acao: "read" } },
         ],
     },
     {
