@@ -154,8 +154,8 @@ export function AppSidebar() {
                                                         key={subItem.title}
                                                         href={subItem.url}
                                                         className={`block text-xs px-3 py-1.5 rounded-md transition-colors ${pathname === subItem.url || pathname.startsWith(subItem.url + "/")
-                                                            ? "bg-primary/10 text-primary font-medium"
-                                                            : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                                                            ? "bg-white/20 text-white font-medium"
+                                                            : "text-white/70 hover:text-white hover:bg-white/10"
                                                             }`}
                                                     >
                                                         {subItem.title}
