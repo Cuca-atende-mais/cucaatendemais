@@ -3,6 +3,10 @@ import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  devIndicators: {
+    appIsrStatus: false,
+    buildActivity: false,
+  }
 };
 
 export default withSentryConfig(nextConfig, {

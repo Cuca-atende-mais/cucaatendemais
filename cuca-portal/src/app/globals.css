@@ -46,6 +46,9 @@
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
 
+  /* Fontes Customizadas */
+  --font-heading: var(--font-poppins);
+
   /* Cores CUCA */
   --color-cuca-yellow: var(--cuca-yellow);
   --color-cuca-blue: var(--cuca-blue);
@@ -54,37 +57,49 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* Soft Slate Background */
+  --background: oklch(0.97 0 0);
+  --foreground: oklch(0.20 0 0);
+
+  /* Cards brancos */
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.20 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --popover-foreground: oklch(0.20 0 0);
+
+  /* Cuca Blue Action Color */
+  --primary: var(--cuca-blue);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.95 0 0);
+  --secondary-foreground: oklch(0.20 0 0);
+  --muted: oklch(0.95 0 0);
+  --muted-foreground: oklch(0.55 0 0);
+  --accent: oklch(0.95 0 0);
+  --accent-foreground: oklch(0.20 0 0);
+  --destructive: oklch(0.58 0.25 27.3);
+  --border: oklch(0.90 0 0);
+  --input: oklch(0.90 0 0);
+  --ring: var(--cuca-blue);
+
+  /* Chart colors */
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Sidebar Queen Blue (#436B95) */
+  --sidebar: oklch(0.50 0.10 240);
+  /* Queen Blue aproximado em OKLCH */
+  --sidebar-foreground: oklch(0.98 0 0);
+  --sidebar-primary: oklch(0.98 0 0);
+  /* Texto ativo e hover em branco */
+  --sidebar-primary-foreground: oklch(0.50 0.10 240);
+  --sidebar-accent: oklch(0.45 0.10 240);
+  /* Leve variação do Queen Blue para hover */
+  --sidebar-accent-foreground: oklch(0.98 0 0);
+  --sidebar-border: oklch(0.45 0.10 240);
+  --sidebar-ring: oklch(0.98 0 0);
 
   /* Cores customizadas CUCA */
   --cuca-yellow: oklch(0.82 0.15 85);
@@ -139,7 +154,21 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground tracking-tight;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading, var(--font-poppins));
+  }
+
+  /* Aplica sombra soft a todos os cards mantendo compatibilidade */
+  .card-shadow {
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.025);
   }
 }
 
@@ -159,4 +188,13 @@
 
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-gray-400 dark:bg-gray-500;
+}
+
+/* Ocultar o indicador "N" de desenvolvimento do Next.js/Turbopack no canto inferior */
+nextjs-portal,
+[data-nextjs-dialog-overlay],
+#nextjs-dev-tools,
+.nextjs-turbopack-indicator {
+  display: none !important;
+  visibility: hidden !important;
 }

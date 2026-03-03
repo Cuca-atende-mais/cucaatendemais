@@ -107,8 +107,8 @@ export function AppSidebar() {
                     <Image
                         src="/logo-rede-cuca.png"
                         alt="Rede CUCA"
-                        width={36}
-                        height={36}
+                        width={64}
+                        height={64}
                         className="object-contain shrink-0"
                     />
                     {state === "expanded" && (
@@ -116,7 +116,7 @@ export function AppSidebar() {
                             <span className="font-bold text-xl tracking-tight uppercase">
                                 REDE CUCA
                             </span>
-                            <span className="text-xs text-cuca-yellow uppercase tracking-widest font-medium">
+                            <span className="text-[10px] w-fit px-1.5 py-0.5 rounded bg-cuca-yellow text-slate-900 font-bold uppercase tracking-widest mt-0.5">
                                 Atende+
                             </span>
                         </div>
@@ -138,6 +138,7 @@ export function AppSidebar() {
                                             asChild
                                             isActive={isActive}
                                             tooltip={item.title}
+                                            className={isActive ? "border-l-4 border-cuca-yellow bg-sidebar-accent text-white rounded-r-md rounded-l-none font-medium" : "text-white/80 hover:text-white transition-colors font-medium"}
                                         >
                                             <Link href={item.url}>
                                                 {IconComponent && <IconComponent />}
