@@ -64,6 +64,7 @@ export default function AcessoCucaPortalPage() {
     const [saving, setSaving] = useState(false)
 
     const { profile, isDeveloper, hasPermission } = useUser()
+    const isSuperAdmin = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
 
     useEffect(() => {
         if (profile) fetchSolicitacoes()
@@ -187,7 +188,7 @@ export default function AcessoCucaPortalPage() {
                         <TabsTrigger value="aprovados">Aprovados ({filtrarPorStatus("aprovado").length})</TabsTrigger>
                         <TabsTrigger value="reprovados">Reprovados ({filtrarPorStatus("reprovado").length})</TabsTrigger>
                         <TabsTrigger value="todos">Todos ({solicitacoes.length})</TabsTrigger>
-                        {isDeveloper && (
+                        {isSuperAdmin && (
                             <TabsTrigger value="canal-whatsapp" className="gap-1.5">
                                 <Shield className="h-4 w-4" /> Canal WhatsApp
                             </TabsTrigger>
@@ -216,7 +217,7 @@ export default function AcessoCucaPortalPage() {
                     </TabsContent>
 
                     {/* Aba exclusiva Super Admin: Canal WhatsApp do Acesso CUCA */}
-                    {isDeveloper && (
+                    {isSuperAdmin && (
                         <TabsContent value="canal-whatsapp">
                             <CanalWhatsappTab modulo="Acesso" />
                         </TabsContent>

@@ -49,7 +49,8 @@ export default function OuvidoriaPage() {
     const [loading, setLoading] = useState(true)
     const [detalhamento, setDetalhamento] = useState<OuvidoriaRegistro | null>(null)
     const [analysing, setAnalysing] = useState(false)
-    const { hasPermission, isDeveloper } = useUser()
+    const { hasPermission, profile, isDeveloper } = useUser()
+    const isSuperAdmin = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
 
     useEffect(() => { fetchRegistros() }, [])
 
@@ -186,7 +187,7 @@ export default function OuvidoriaPage() {
                         <TabsTrigger value="sugestoes" className="gap-2">
                             <Lightbulb className="h-4 w-4" /> Sugestões ({sugestoes.length})
                         </TabsTrigger>
-                        {isDeveloper && (
+                        {isSuperAdmin && (
                             <TabsTrigger value="canal-whatsapp" className="gap-2">
                                 <Phone className="h-4 w-4" /> Canal WhatsApp
                             </TabsTrigger>
@@ -247,7 +248,7 @@ export default function OuvidoriaPage() {
                     </TabsContent>
 
                     {/* Aba exclusiva Super Admin: Canal WhatsApp da Ouvidoria */}
-                    {isDeveloper && (
+                    {isSuperAdmin && (
                         <TabsContent value="canal-whatsapp">
                             <CanalWhatsappTab modulo="Ouvidoria" />
                         </TabsContent>
