@@ -187,7 +187,7 @@ export default function AcessoCucaPortalPage() {
                         <TabsTrigger value="aprovados">Aprovados ({filtrarPorStatus("aprovado").length})</TabsTrigger>
                         <TabsTrigger value="reprovados">Reprovados ({filtrarPorStatus("reprovado").length})</TabsTrigger>
                         <TabsTrigger value="todos">Todos ({solicitacoes.length})</TabsTrigger>
-                        {hasPermission("super_admin") && (
+                        {isDeveloper && (
                             <TabsTrigger value="canal-whatsapp" className="gap-1.5">
                                 <Shield className="h-4 w-4" /> Canal WhatsApp
                             </TabsTrigger>
@@ -216,7 +216,7 @@ export default function AcessoCucaPortalPage() {
                     </TabsContent>
 
                     {/* Aba exclusiva Super Admin: Canal WhatsApp do Acesso CUCA */}
-                    {hasPermission("super_admin") && (
+                    {isDeveloper && (
                         <TabsContent value="canal-whatsapp">
                             <CanalWhatsappTab modulo="Acesso" />
                         </TabsContent>
