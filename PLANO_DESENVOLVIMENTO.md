@@ -601,9 +601,10 @@ NÍVEL 5 — Depende de tudo
 | S5-11 | **UI Gestão Instâncias (Local)**: CRUD Completo em `/configuracoes/whatsapp` (Criação, Edição, Desativação e Vínculo de Transbordo Humano) para Admins de Unidade (Institucional e Empregabilidade) | [x] |
 | S5-12 | **Filtros RBAC**: Garantir que Admin local gerencie apenas instâncias da sua Unidade (Máximo 2 ativas: Institucional e Empregabilidade) | [x] |
 | S5-13 | **Estrutura de 20 Canais**: Banco migrado com `canal_tipo`, `reserva`, `observacoes` em `instancias_uazapi`, e nova tabela `transbordo_humano` com RLS por unidade. Isolamento de Ouvidoria/Acesso para Super Admin via RLS. | [x] |
-| S5-14 | **Isolamento Ouvidoria**: Módulo de Chat de Ouvidoria restrito apenas a Super Admin/Roles Específicas, totalmente oculto do gerente da unidade (`/ouvidoria/mensagens`) | ⏳ |
+| S5-14 | **Isolamento Ouvidoria**: Módulo de Chat de Ouvidoria restrito apenas a Super Admin/Roles Específicas, totalmente oculto do gerente da unidade (`/ouvidoria/mensagens`) | [x] |
 | S5-15 | **Worker UAZAPI Manager** (`worker/uazapi_manager.py`): Fluxo real de 3 passos (POST /instance/create → POST /webhook/set → GET /instance/connect). Endpoints: `/api/instancias/criar`, `/status`, `/qrcode`, `/logout`, `/excluir`. Handler `connection.update` atualiza banco automaticamente. | [x] |
 | S5-16 | **Hook `use-uazapi.ts`** no Portal: Criação real via Worker, QR Code base64, polling a cada 3s, refresh de QR expirado, logout seguro. Modal de QR com 4 estados visuais (loading/qr_ready/connected/error) em ambas as páginas de gestão. | [x] |
+| S5-17 | **Paineis por Módulo** (`CanalWhatsappTab`): Componente reutilizável com CRUD de instâncias e transbordo inserido como aba "Canal WhatsApp" em Ouvidoria (`/ouvidoria`) e Acesso CUCA (`/acesso-cuca`). Visível somente para Super Admin via `hasPermission("super_admin")`. | [x] |
 
 ---
 

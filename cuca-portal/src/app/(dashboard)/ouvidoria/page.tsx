@@ -4,8 +4,9 @@ import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
     MessageSquareWarning, Lightbulb, PieChart, Activity, UserX, User, Building2,
-    Calendar, CheckCircle2, AlertCircle, HelpCircle, Loader2, Sparkles
+    Calendar, CheckCircle2, AlertCircle, HelpCircle, Loader2, Sparkles, Phone,
 } from "lucide-react"
+import { CanalWhatsappTab } from "@/components/instancias/canal-whatsapp-tab"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
@@ -185,6 +186,11 @@ export default function OuvidoriaPage() {
                         <TabsTrigger value="sugestoes" className="gap-2">
                             <Lightbulb className="h-4 w-4" /> Sugestões ({sugestoes.length})
                         </TabsTrigger>
+                        {hasPermission("super_admin") && (
+                            <TabsTrigger value="canal-whatsapp" className="gap-2">
+                                <Phone className="h-4 w-4" /> Canal WhatsApp
+                            </TabsTrigger>
+                        )}
                     </TabsList>
 
                     <TabsContent value="overview">
@@ -239,6 +245,13 @@ export default function OuvidoriaPage() {
                             </div>
                         )}
                     </TabsContent>
+
+                    {/* Aba exclusiva Super Admin: Canal WhatsApp da Ouvidoria */}
+                    {hasPermission("super_admin") && (
+                        <TabsContent value="canal-whatsapp">
+                            <CanalWhatsappTab modulo="Ouvidoria" />
+                        </TabsContent>
+                    )}
                 </Tabs>
             )}
 

@@ -5,8 +5,9 @@ import { createClient } from "@/lib/supabase/client"
 import {
     ClipboardList, CheckCircle2, XCircle, Clock, Building2,
     Calendar, User, Phone, FileText, ChevronRight, Loader2,
-    AlertTriangle, Filter, Eye
+    AlertTriangle, Filter, Eye, Shield,
 } from "lucide-react"
+import { CanalWhatsappTab } from "@/components/instancias/canal-whatsapp-tab"
 import { useUser } from "@/lib/auth/user-provider"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -186,6 +187,11 @@ export default function AcessoCucaPortalPage() {
                         <TabsTrigger value="aprovados">Aprovados ({filtrarPorStatus("aprovado").length})</TabsTrigger>
                         <TabsTrigger value="reprovados">Reprovados ({filtrarPorStatus("reprovado").length})</TabsTrigger>
                         <TabsTrigger value="todos">Todos ({solicitacoes.length})</TabsTrigger>
+                        {hasPermission("super_admin") && (
+                            <TabsTrigger value="canal-whatsapp" className="gap-1.5">
+                                <Shield className="h-4 w-4" /> Canal WhatsApp
+                            </TabsTrigger>
+                        )}
                     </TabsList>
 
                     <TabsContent value="pendentes" className="space-y-3 mt-4">
@@ -208,6 +214,13 @@ export default function AcessoCucaPortalPage() {
                     <TabsContent value="todos" className="space-y-3 mt-4">
                         {solicitacoes.map(s => <SolicitacaoCard key={s.id} s={s} />)}
                     </TabsContent>
+
+                    {/* Aba exclusiva Super Admin: Canal WhatsApp do Acesso CUCA */}
+                    {hasPermission("super_admin") && (
+                        <TabsContent value="canal-whatsapp">
+                            <CanalWhatsappTab modulo="Acesso" />
+                        </TabsContent>
+                    )}
                 </Tabs>
             )}
 
