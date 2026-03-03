@@ -120,6 +120,10 @@ async def startup_event():
     logger.info("Agendando motor de Campanhas...")
     asyncio.create_task(campanhas_loop())
 
+# ─── Router: UAZAPI Manager ─────────────────────────────────────────────────
+from uazapi_manager import router as uazapi_router
+app.include_router(uazapi_router)
+
 async def process_webhook_payload(payload: dict, token: str):
     """Processa o payload do webhook em background."""
     try:
@@ -140,7 +144,20 @@ async def process_webhook_payload(payload: dict, token: str):
             logger.error(f"Erro ao salvar em logs_webhook: {str(e)}")
 
         # 2. Roteamento básico de eventos
-        if event_type == "messages.upsert":
+        if event_type == "connection.update":
+            # Atualiza status da instância no banco automaticamente
+            # O Gerente/Admin não precisa fazer nada — o portal sincroniza em tempo real
+            state = data.get("state") or data.get("status", "")
+            phone_jid = data.get("wuid") or data.get("me", {}).get("id", "")
+            phone = phone_jid.split("@")[0].split(":")[0] if phone_jid else None
+            try:
+                from uazapi_manager import handle_connection_update
+                await handle_connection_update(instance_name, state, token, phone)
+            except Exception as conn_err:
+                logger.error(f"Erro em handle_connection_update: {conn_err}")
+
+        elif event_type == "messages.upsert":
+
             logger.info(f"Nova mensagem recebida na instância {instance_name}")
             
             # Extrair dados básicos da mensagem

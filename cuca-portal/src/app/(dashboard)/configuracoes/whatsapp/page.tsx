@@ -24,6 +24,7 @@ import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Switch } from "@/components/ui/switch"
 import { unidadesCuca } from "@/lib/constants"
+import { useUazapi } from "@/hooks/use-uazapi"
 
 /* ─── Tipos ──────────────────────────────────────────────── */
 type CanalTipo = "Institucional" | "Empregabilidade" | "Acesso" | "Ouvidoria" | "Reserva"
@@ -109,6 +110,11 @@ export default function WhatsAppUnidadePage() {
     const [loadingQr, setLoadingQr] = useState<string | null>(null)
     const [openQr, setOpenQr] = useState<string | null>(null)
     const [instOpened, setInstOpened] = useState<string | null>(null)
+
+    // Hook de integração real com UAZAPI
+    const { qrStatus, qrCode, criarInstancia, refreshQrCode, logoutInstancia, excluirInstancia: excluirViaWorker, resetQr } = useUazapi()
+    const [modalQrReal, setModalQrReal] = useState(false)
+    const [nomeQrReal, setNomeQrReal] = useState("")
 
     useEffect(() => {
         loadAll()
@@ -206,39 +212,45 @@ export default function WhatsAppUnidadePage() {
             toast.error("Nome e Tipo de Canal são obrigatórios.")
             return
         }
-        if (!profile?.isSuperAdmin && !iUnidade) {
-            toast.error("Unidade é obrigatória.")
-            return
-        }
 
         setSavingInst(true)
         try {
-            const payload = {
-                nome: iNome.trim(),
-                canal_tipo: iCanalTipo,
-                unidade_cuca: profile?.isSuperAdmin ? (iUnidade || null) : profile?.unidade_cuca,
-                // agente_tipo mantido para retrocompatibilidade
-                agente_tipo: iCanalTipo,
-                telefone: iTelefone.trim() || null,
-                token: iToken.trim() || null,
-                webhook_url: iWebhook.trim() || null,
-                reserva: iReserva,
-                observacoes: iObs.trim() || null,
-                updated_at: new Date().toISOString(),
-            }
-
             if (editingInst) {
+                // EDITAR: atualiza apenas no banco (sem recriar na UAZAPI)
+                const payload = {
+                    nome: iNome.trim(),
+                    canal_tipo: iCanalTipo,
+                    unidade_cuca: profile?.isSuperAdmin ? (iUnidade || null) : profile?.unidade_cuca,
+                    agente_tipo: iCanalTipo,
+                    reserva: iReserva,
+                    observacoes: iObs.trim() || null,
+                    updated_at: new Date().toISOString(),
+                }
                 const { error } = await supabase.from("instancias_uazapi").update(payload).eq("id", editingInst.id)
                 if (error) throw error
                 toast.success("Instância atualizada com sucesso!")
+                setModalInst(false)
+                await fetchInstancias(profile!)
             } else {
-                const { error } = await supabase.from("instancias_uazapi").insert({ ...payload, ativa: false })
-                if (error) throw error
-                toast.success("Instância criada! Conecte o WhatsApp abaixo.")
-            }
+                // CRIAR: chama o Worker que executa o fluxo real da UAZAPI
+                // A→ POST /instance/create | B→ POST /webhook/set | C→ GET /instance/connect
+                setModalInst(false)
+                setNomeQrReal(iNome.trim())
+                setModalQrReal(true)
 
-            setModalInst(false)
-            await fetchInstancias(profile!)
+                await criarInstancia(
+                    {
+                        nome: iNome.trim(),
+                        canal_tipo: iCanalTipo,
+                        unidade_cuca: profile?.isSuperAdmin ? (iUnidade || null) : profile?.unidade_cuca,
+                        observacoes: iObs.trim() || null,
+                    },
+                    async () => {
+                        // Callback chamado quando o WhatsApp for pareado
+                        await fetchInstancias(profile!)
+                    }
+                )
+            }
         } catch (err: any) {
             toast.error(`Erro: ${err.message || "Tente novamente."}`)
         } finally {
@@ -247,45 +259,36 @@ export default function WhatsAppUnidadePage() {
     }
 
     const desativarInstancia = async (inst: Instancia) => {
-        if (!confirm(`Desativar "${inst.nome}"? O atendimento deste canal será interrompido.`)) return
+        if (!confirm(`Desconectar "${inst.nome}"? O chip será desconectado com segurança. Após isso, conecte um chip de reserva.`)) return
         try {
-            const { error } = await supabase
-                .from("instancias_uazapi")
-                .update({ ativa: false, telefone: null, updated_at: new Date().toISOString() })
-                .eq("id", inst.id)
-            if (error) throw error
-            toast.success("Instância desativada.")
-            await fetchInstancias(profile!)
+            const ok = await logoutInstancia(inst.nome)
+            if (ok) {
+                toast.success("Instância desconectada com segurança.")
+                await fetchInstancias(profile!)
+            }
         } catch {
-            toast.error("Erro ao desativar.")
+            toast.error("Erro ao desconectar.")
         }
     }
 
-    const excluirInstancia = async (inst: Instancia) => {
+    const excluirInstanciaHandler = async (inst: Instancia) => {
         if (!confirm(`EXCLUIR PERMANENTEMENTE "${inst.nome}"? Esta ação não pode ser desfeita.`)) return
-        try {
-            const { error } = await supabase.from("instancias_uazapi").delete().eq("id", inst.id)
-            if (error) throw error
+        const ok = await excluirViaWorker(inst.nome)
+        if (ok) {
             toast.success("Instância excluída.")
             await fetchInstancias(profile!)
-        } catch {
-            toast.error("Erro ao excluir.")
         }
     }
 
-    /* ─── Conectar / QR Code ─────────────────────────────── */
+    /* ─── Conectar: usa QR real via modal ─────────────── */
     const conectarInstancia = async (inst: Instancia) => {
-        setLoadingQr(inst.id)
-        try {
-            await supabase.from("instancias_uazapi").update({ ativa: true, updated_at: new Date().toISOString() }).eq("id", inst.id)
-            setOpenQr(inst.id)
+        setNomeQrReal(inst.nome)
+        setModalQrReal(true)
+        await refreshQrCode(inst.nome, async () => {
             await fetchInstancias(profile!)
-        } catch {
-            toast.error("Erro ao preparar conexão.")
-        } finally {
-            setLoadingQr(null)
-        }
+        })
     }
+
 
     /* ─── CRUD Transbordo ────────────────────────────────── */
     const openCreateTrans = () => {
@@ -466,7 +469,7 @@ export default function WhatsAppUnidadePage() {
                                     <Button
                                         variant="outline" size="sm"
                                         className="h-8 text-[11px] border-destructive/20 text-destructive hover:bg-destructive/5"
-                                        onClick={() => excluirInstancia(inst)}
+                                        onClick={() => excluirInstanciaHandler(inst)}
                                     >
                                         <Trash2 className="h-3 w-3" />
                                     </Button>
@@ -512,26 +515,83 @@ export default function WhatsAppUnidadePage() {
                 </div>
             )}
 
-            {/* ── Modal QR Code ── */}
-            <Dialog open={!!openQr} onOpenChange={() => setOpenQr(null)}>
+            {/* ── Modal QR Code REAL (base64 via UAZAPI) ── */}
+            <Dialog open={modalQrReal} onOpenChange={(open) => {
+                if (!open) {
+                    resetQr()
+                    setModalQrReal(false)
+                }
+            }}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
-                        <DialogTitle>Conectar WhatsApp</DialogTitle>
+                        <DialogTitle className="flex items-center gap-2">
+                            <QrCode className="h-5 w-5 text-primary" />
+                            Parear WhatsApp — {nomeQrReal}
+                        </DialogTitle>
                         <DialogDescription className="text-xs">
-                            Acesse o painel UAZAPI, encontre a instância e escaneie o QR Code com o celular deste canal.
+                            Abra o WhatsApp Business no celular → Dispositivos Vinculados → Vincular dispositivo → leia o QR Code abaixo.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="flex flex-col items-center gap-4 p-6 bg-muted/20 border-2 border-dashed rounded-xl">
-                        <QrCode className="h-32 w-32 text-slate-300" />
-                        <p className="text-xs text-center text-muted-foreground">
-                            O QR Code é gerado diretamente no painel UAZAPI.<br />
-                            <span className="text-primary font-medium">
-                                Após escanear, marque como "Ativo" editando a instância.
-                            </span>
-                        </p>
+
+                    <div className="flex flex-col items-center gap-4 py-2">
+                        {qrStatus === "loading" && (
+                            <div className="flex flex-col items-center gap-3 py-8">
+                                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                                <p className="text-sm text-muted-foreground">Criando instância na UAZAPI...</p>
+                            </div>
+                        )}
+
+                        {qrStatus === "qr_ready" && qrCode && (
+                            <>
+                                <div className="bg-white p-3 rounded-xl border-2 border-primary/20">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                        src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
+                                        alt="QR Code WhatsApp"
+                                        className="w-48 h-48"
+                                    />
+                                </div>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                                    Aguardando leitura... (verificando a cada 3s)
+                                </div>
+                                <p className="text-[11px] text-muted-foreground text-center">
+                                    O QR Code expira em 30 segundos. Leia rápido!
+                                </p>
+                            </>
+                        )}
+
+                        {qrStatus === "connected" && (
+                            <div className="flex flex-col items-center gap-3 py-8 text-emerald-600">
+                                <div className="h-16 w-16 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                                    <Wifi className="h-8 w-8" />
+                                </div>
+                                <p className="font-semibold text-lg">✅ WhatsApp Conectado!</p>
+                                <p className="text-xs text-muted-foreground text-center">
+                                    A instância foi ativada automaticamente. O atendimento está ativo.
+                                </p>
+                                <Button onClick={() => { resetQr(); setModalQrReal(false) }} className="mt-2">
+                                    Fechar
+                                </Button>
+                            </div>
+                        )}
+
+                        {qrStatus === "error" && (
+                            <div className="flex flex-col items-center gap-3 py-6 text-destructive">
+                                <TriangleAlert className="h-10 w-10" />
+                                <p className="font-medium">Falha ao gerar QR Code</p>
+                                <p className="text-xs text-muted-foreground text-center">
+                                    Verifique se o Worker está online (UAZAPI_MASTER_TOKEN configurado) e tente novamente.
+                                </p>
+                                <Button variant="outline" onClick={() => { resetQr(); setModalQrReal(false) }}>
+                                    Fechar
+                                </Button>
+                            </div>
+                        )}
                     </div>
                 </DialogContent>
             </Dialog>
+
 
             {/* ── Seção Transbordo Humano ── */}
             <div className="border rounded-xl p-5 space-y-4">
@@ -758,6 +818,6 @@ export default function WhatsAppUnidadePage() {
                     Nunca use WhatsApp pessoal como canal do sistema.
                 </p>
             </div>
-        </div>
+        </div >
     )
 }
