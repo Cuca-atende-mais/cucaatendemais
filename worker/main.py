@@ -359,52 +359,76 @@ async def process_webhook_payload(payload: dict, token: str):
                                     media_url = match_tag.group(1).strip()
                                     resposta_ia = resposta_ia.replace(match_tag.group(0), '').strip()
                                 
-                                # S11-06: 🤖 Transbordo Humano Inteligente
-                                match_handover = re.search(r'\[TRANSBORDO\]|\[HUMANO\]|\[TRANSBORDO_HUMANO\]', resposta_ia, re.IGNORECASE)
-                                if match_handover:
-                                    logger.info(f"Tag de Transbordo Humano detectada para o Lead {phone}! Iniciando handover...")
-                                    resposta_ia = resposta_ia.replace(match_handover.group(0), '').strip()
+                                # S11-06: Transbordo Humano Inteligente
+                                # Bug 4 corrigido: motor-agente emite [[HANDOVER]], alinhando a regex aqui
+                                handover_from_ia = data.get("handover", False)
+                                match_handover = re.search(
+                                    r'\[\[HANDOVER\]\]|\[TRANSBORDO\]|\[HUMANO\]|\[TRANSBORDO_HUMANO\]',
+                                    resposta_ia, re.IGNORECASE
+                                )
+                                if handover_from_ia or match_handover:
+                                    if match_handover:
+                                        resposta_ia = resposta_ia.replace(match_handover.group(0), '').strip()
+                                    logger.info(f"Transbordo Humano ativado para o Lead {phone}!")
                                     if not resposta_ia:
                                         resposta_ia = "Certo, estou te transferindo para um atendente humano. Aguarde um momento por favor!"
                                         
                                     try:
                                         # 1. Mapear Agente -> Módulo
                                         modulo_alvo = "geral"
-                                        if agente_tipo in ["julia_geral", "julia_unidade"]:
+                                        # Bug 4 extra: agente_tipo real usa 'julia' (não julia_geral/julia_unidade)
+                                        if agente_tipo in ["julia", "julia_geral", "julia_unidade"]:
                                             modulo_alvo = "empregabilidade"
-                                        elif agente_tipo == "ouvidoria":
+                                        elif agente_tipo in ["sofia", "ouvidoria"]:
                                             modulo_alvo = "ouvidoria"
+                                        elif agente_tipo in ["ana", "acesso"]:
+                                            modulo_alvo = "acesso"
                                             
-                                        # 2. Buscar o responsável na tabela de transbordo (com prioridade para unidade)
+                                        # 2. Buscar contato na tabela correta: transbordo_humano
+                                        # Bug 3 corrigido: era human_handover_contacts
                                         # Primeiro tenta específico da unidade
-                                        handover_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).eq("unidade_cuca", unidade_cuca).eq("ativo", True).execute() if unidade_cuca else None
+                                        handover_res = (
+                                            supabase.table("transbordo_humano")
+                                            .select("*")
+                                            .eq("modulo", modulo_alvo)
+                                            .eq("unidade_cuca", unidade_cuca)
+                                            .eq("ativo", True)
+                                            .execute()
+                                        ) if unidade_cuca else None
                                         contato_handover = None
                                         
                                         if handover_res and handover_res.data:
                                             contato_handover = handover_res.data[0]
                                         else:
-                                            # Se não achar por unidade, busca fallback global (unidade_cuca IS NULL ou 'todas')
-                                            fallback_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).is_("unidade_cuca", "null").eq("ativo", True).execute()
+                                            # Fallback global (sem unidade específica)
+                                            fallback_res = (
+                                                supabase.table("transbordo_humano")
+                                                .select("*")
+                                                .eq("modulo", modulo_alvo)
+                                                .is_("unidade_cuca", "null")
+                                                .eq("ativo", True)
+                                                .execute()
+                                            )
                                             if fallback_res.data:
                                                 contato_handover = fallback_res.data[0]
                                                 
                                         if contato_handover:
-                                            tel_destino = contato_handover["telefone_destino"]
-                                            setor_resp = contato_handover["nome_responsavel"] or "Atendimento"
+                                            # Bug 3 corrigido: colunas reais são 'telefone' e 'responsavel'
+                                            tel_destino = contato_handover["telefone"]
+                                            setor_resp = contato_handover.get("responsavel") or "Atendimento"
                                             
-                                            # Pega contexto do lead
                                             lead_nome = push_name or "Cidadão"
-                                            
-                                            msg_handover = f"🚨 *ATENÇÃO: NOVO TRANSBORDO HUMANIZADO*\n\n"
-                                            msg_handover += f"👤 *Lead:* {lead_nome}\n"
-                                            msg_handover += f"📱 *Telefone:* {phone}\n"
-                                            msg_handover += f"🏢 *Módulo/Setor:* {modulo_alvo.capitalize()} / {setor_resp}\n\n"
-                                            msg_handover += f"💬 *Última Mensagem do Lead:*\n\"{text_content}\"\n\n"
-                                            msg_handover += f"🔗 Inicie o chat com o lead clicando em:\nhttps://wa.me/{phone}"
+                                            msg_handover = (
+                                                f"🚨 *ATENÇÃO: NOVO TRANSBORDO HUMANIZADO*\n\n"
+                                                f"👤 *Lead:* {lead_nome}\n"
+                                                f"📱 *Telefone:* {phone}\n"
+                                                f"🏢 *Módulo/Setor:* {modulo_alvo.capitalize()} / {setor_resp}\n\n"
+                                                f"💬 *Última mensagem:*\n\"{text_content}\"\n\n"
+                                                f"🔗 Iniciar chat: https://wa.me/{phone}"
+                                            )
                                             
                                             UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
                                             async with httpx.AsyncClient() as hc:
-                                                # Dispara pro destino
                                                 await hc.post(
                                                     f"{UAZAPI_URL}/message/sendText/{instance_name}",
                                                     headers={"apikey": inst_token, "Content-Type": "application/json"},
@@ -413,7 +437,9 @@ async def process_webhook_payload(payload: dict, token: str):
                                                         "textMessage": {"text": msg_handover}
                                                     }
                                                 )
-                                            logger.info(f"Resumo de transbordo disparado com sucesso para {tel_destino}")
+                                            logger.info(f"Transbordo disparado para {tel_destino} ({setor_resp})")
+                                        else:
+                                            logger.warning(f"Nenhum contato de transbordo encontrado para módulo='{modulo_alvo}' unidade='{unidade_cuca}'")
                                     except Exception as eh:
                                         logger.error(f"Erro ao processar transbordo: {eh}")
                                 

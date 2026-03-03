@@ -41,20 +41,39 @@ def _update_db_sync(tabela: str, item_id: str, dados: dict):
     return supabase.table(tabela).update(dados).eq("id", item_id).execute()
 
 
-def _query_instancia_sync(unidade_id: str):
-    """Busca instância UAZAPI vinculada à unidade."""
-    return supabase.table("instancias_uazapi").select("nome, token").eq("cuca_unit_id", unidade_id).execute()
+def _query_instancia_sync(unidade: str):
+    """Busca instância UAZAPI Institucional ativa vinculada à unidade."""
+    return (
+        supabase.table("instancias_uazapi")
+        .select("nome, token")
+        .eq("unidade_cuca", unidade)       # Bug 1 corrigido: era cuca_unit_id
+        .eq("canal_tipo", "Institucional") # Garante que pega o canal certo
+        .eq("ativa", True)                 # Apenas instâncias conectadas
+        .eq("reserva", False)              # Nunca usar chips de reserva
+        .limit(1)
+        .execute()
+    )
 
 
-def _query_leads_sync():
-    """Busca leads com opt_in ativo."""
-    return supabase.table("leads").select("telefone, nome").eq("opt_in", True).eq("bloqueado", False).execute()
+def _query_leads_sync(unidade: str | None = None):
+    """Busca leads com opt_in ativo, filtrados pela unidade da campanha."""
+    query = (
+        supabase.table("leads")
+        .select("telefone, nome")
+        .eq("opt_in", True)
+        .eq("bloqueado", False)
+    )
+    # Bug 2 corrigido: filtrar por unidade para não vazar mensagens entre unidades
+    if unidade:
+        query = query.eq("unidade_cuca", unidade)
+    return query.execute()
 
 
 async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_max: int, daily_limit: int, error_threshold: int):
     """Processa e dispara mensagem para um evento aprovado."""
     item_id = item.get("id")
-    unidade_id = item.get("unidade_cuca_id") or item.get("unidade_id")
+    # Bug extra corrigido: campo real é unidade_cuca (não unidade_cuca_id nem unidade_id)
+    unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
     template_texto = item.get("template_texto") or item.get("titulo") or item.get("descricao") or "Olá, {{nome}}!"
     midia_url = item.get("midia_url") or item.get("flyer_url")
 
@@ -62,17 +81,17 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
     await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
 
     # Buscar instância UAZAPI
-    inst_res = await asyncio.to_thread(_query_instancia_sync, unidade_id)
+    inst_res = await asyncio.to_thread(_query_instancia_sync, unidade)
     if not inst_res.data:
-        logger.error(f"Nenhuma instância UAZAPI para unidade {unidade_id}. Pausando item {item_id}.")
+        logger.error(f"Nenhuma instância UAZAPI Institucional ativa para unidade '{unidade}'. Pausando item {item_id}.")
         await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
         return
 
     instance_name = inst_res.data[0]["nome"]
     inst_token = inst_res.data[0]["token"]
 
-    # Buscar leads com opt_in
-    leads_res = await asyncio.to_thread(_query_leads_sync)
+    # Buscar leads da unidade com opt_in
+    leads_res = await asyncio.to_thread(_query_leads_sync, unidade)
     leads = leads_res.data or []
     total = len(leads)
 
