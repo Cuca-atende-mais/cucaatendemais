@@ -93,8 +93,6 @@ export default function WhatsAppUnidadePage() {
     const [iCanalTipo, setICanalTipo] = useState<CanalTipo>("Institucional")
     const [iUnidade, setIUnidade] = useState("")
     const [iTelefone, setITelefone] = useState("")
-    const [iToken, setIToken] = useState("")
-    const [iWebhook, setIWebhook] = useState("")
     const [iReserva, setIReserva] = useState(false)
     const [iObs, setIObs] = useState("")
     const [savingInst, setSavingInst] = useState(false)
@@ -187,8 +185,6 @@ export default function WhatsAppUnidadePage() {
         setICanalTipo("Institucional")
         setIUnidade(profile?.unidade_cuca || "")
         setITelefone("")
-        setIToken("")
-        setIWebhook("")
         setIReserva(false)
         setIObs("")
         setModalInst(true)
@@ -200,8 +196,6 @@ export default function WhatsAppUnidadePage() {
         setICanalTipo(inst.canal_tipo)
         setIUnidade(inst.unidade_cuca || "")
         setITelefone(inst.telefone || "")
-        setIToken(inst.token || "")
-        setIWebhook(inst.webhook_url || "")
         setIReserva(inst.reserva)
         setIObs(inst.observacoes || "")
         setModalInst(true)
@@ -694,31 +688,14 @@ export default function WhatsAppUnidadePage() {
                             )}
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="grid gap-1.5">
-                                <Label>Telefone (com DDI)</Label>
-                                <Input
-                                    placeholder="+5585999998888"
-                                    value={iTelefone}
-                                    onChange={(e) => setITelefone(e.target.value)}
-                                />
-                            </div>
-                            <div className="grid gap-1.5">
-                                <Label>Token UAZAPI</Label>
-                                <Input
-                                    placeholder="token_da_instancia"
-                                    value={iToken}
-                                    onChange={(e) => setIToken(e.target.value)}
-                                />
-                            </div>
-                        </div>
-
                         <div className="grid gap-1.5">
-                            <Label>URL do Webhook</Label>
+                            <Label>Telefone (com DDI)
+                                <span className="ml-1 text-[10px] text-muted-foreground font-normal">(opcional — preenchido automaticamente ao parear)</span>
+                            </Label>
                             <Input
-                                placeholder="https://api.cucaatendemais.com.br/webhook"
-                                value={iWebhook}
-                                onChange={(e) => setIWebhook(e.target.value)}
+                                placeholder="+5585999998888"
+                                value={iTelefone}
+                                onChange={(e) => setITelefone(e.target.value)}
                             />
                         </div>
 
