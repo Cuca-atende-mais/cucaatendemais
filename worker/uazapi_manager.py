@@ -1,22 +1,24 @@
 """
-uazapi_manager.py
-─────────────────
-Módulo de integração real com a API uazapiGO.
+uazapi_manager.py  (v2 — baseado no OpenAPI spec oficial uazapiGO v2.0)
+──────────────────────────────────────────────────────────────────────
+Autenticação (spec lines 15-19):
+  - Endpoints admin   → header: admintoken: {UAZAPI_MASTER_TOKEN}
+  - Endpoints instância → header: token: {INSTANCE_TOKEN}
 
-Fluxo de criação de instância (conforme documentação oficial):
-  Passo A: POST /instance/create         → Cria a instância no servidor UAZAPI
-  Passo B: POST /webhook/set/{instance}  → Configura eventos do webhook
-  Passo C: GET  /instance/connect/{instance} → Retorna QR Code em base64
+Fluxo de criação (3 passos):
+  A: POST /instance/init          (admintoken) → cria instância, retorna {token, name}
+  B: POST /webhook                (token)      → configura webhook para nosso Worker
+  C: POST /instance/connect       (token)      → inicia conexão e retorna QR em base64
 
-O cliente nunca entra no painel UAZAPI — tudo é feito via este módulo.
+Parear → webhook connection dispara GET /instance/status → ativa no banco
 """
 import os
-import json
 import logging
 import asyncio
 from typing import Optional
+
 import httpx
-from fastapi import APIRouter, Request, Response, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from supabase import create_client, Client
 
@@ -27,24 +29,12 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-UAZAPI_BASE_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-UAZAPI_MASTER_TOKEN = os.getenv("UAZAPI_MASTER_TOKEN", "")  # Token global do painel UAZAPI
-WORKER_PUBLIC_URL = os.getenv("NEXT_PUBLIC_WORKER_URL", "https://api.cucaatendemais.com.br")
-
-# URL do webhook que a UAZAPI chamará para cada instância
-# (O worker usa a mesma rota /webhook/{token} que já existe em main.py)
-WEBHOOK_BASE_URL = f"{WORKER_PUBLIC_URL}/webhook"
+UAZAPI_BASE_URL = os.getenv("UAZAPI_BASE_URL", "https://cucaatendemais.uazapi.com")
+UAZAPI_MASTER_TOKEN = os.getenv("UAZAPI_MASTER_TOKEN", "")
+WORKER_PUBLIC_URL = os.getenv("WORKER_PUBLIC_URL", os.getenv("NEXT_PUBLIC_WORKER_URL", "https://api.cucaatendemais.com.br"))
 
 # Eventos que cada instância deve escutar
-WEBHOOK_EVENTS = [
-    "messages.upsert",     # Nova mensagem recebida
-    "messages.update",     # Status de entrega (enviado, entregue, lido)
-    "connection.update",   # Conexão/desconexão da instância
-    "qrcode.updated",      # QR Code expirou — novo gerado
-]
-
-# Tempo máximo para polling de conexão (segundos)
-QR_TIMEOUT_S = 120
+WEBHOOK_EVENTS = ["messages", "connection", "messages_update"]
 
 # ─── Router FastAPI ───────────────────────────────────────────────────────────
 router = APIRouter(prefix="/api/instancias", tags=["instancias"])
@@ -52,125 +42,144 @@ router = APIRouter(prefix="/api/instancias", tags=["instancias"])
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────
 class CriarInstanciaRequest(BaseModel):
-    nome: str               # Nome da instância (Ex: "cuca_barra_institucional")
-    canal_tipo: str         # Institucional | Empregabilidade | Acesso | Ouvidoria | Reserva
-    unidade_cuca: Optional[str] = None  # None = Global (Ouvidoria/Acesso)
+    nome: str
+    canal_tipo: str
+    unidade_cuca: Optional[str] = None
+    telefone: Optional[str] = None
     observacoes: Optional[str] = None
 
 
-class AtualizarTokenRequest(BaseModel):
-    instance_nome: str
-    token: str
-
-
 # ─── Helpers HTTP ─────────────────────────────────────────────────────────────
-def _headers(token: Optional[str] = None) -> dict:
-    """Monta o cabeçalho de autenticação para a API UAZAPI."""
+def _admin_headers() -> dict:
+    """Header para endpoints administrativos (criar/listar instâncias)."""
     return {
         "Content-Type": "application/json",
-        "apikey": token or UAZAPI_MASTER_TOKEN,
+        "admintoken": UAZAPI_MASTER_TOKEN,
     }
 
 
-async def _uazapi_get(path: str, token: Optional[str] = None) -> dict:
+def _instance_headers(token: str) -> dict:
+    """Header para endpoints de instância específica."""
+    return {
+        "Content-Type": "application/json",
+        "token": token,
+    }
+
+
+async def _post(path: str, body: dict, headers: dict) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(f"{UAZAPI_BASE_URL}{path}", headers=_headers(token))
+        resp = await client.post(f"{UAZAPI_BASE_URL}{path}", headers=headers, json=body)
         resp.raise_for_status()
         return resp.json()
 
 
-async def _uazapi_post(path: str, body: dict, token: Optional[str] = None) -> dict:
+async def _get(path: str, headers: dict) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{UAZAPI_BASE_URL}{path}",
-            headers=_headers(token),
-            json=body
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-
-async def _uazapi_delete(path: str, token: Optional[str] = None) -> dict:
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.delete(f"{UAZAPI_BASE_URL}{path}", headers=_headers(token))
+        resp = await client.get(f"{UAZAPI_BASE_URL}{path}", headers=headers)
         resp.raise_for_status()
         return resp.json()
 
 
 # ─── Lógica Interna ───────────────────────────────────────────────────────────
+
 async def _criar_instancia_na_uazapi(nome: str) -> dict:
-    """Passo A: Cria a instância no servidor UAZAPI."""
-    logger.info(f"[UAZAPI] Criando instância: {nome}")
-    result = await _uazapi_post("/instance/create", {"instanceName": nome})
-    # Retorna o token da instância criada
-    token = result.get("hash") or result.get("apikey") or result.get("token")
+    """
+    Passo A: POST /instance/init com admintoken.
+    Retorna {token, name, instance, ...}
+    """
+    logger.info(f"[UAZAPI] Passo A — Criando instância: {nome}")
+    result = await _post(
+        "/instance/init",
+        {"name": nome, "systemName": "cuca-atende-mais"},
+        _admin_headers(),
+    )
+    token = result.get("token")
     if not token:
-        logger.warning(f"[UAZAPI] Token não retornado na criação. Resposta: {result}")
+        logger.warning(f"[UAZAPI] Token ausente na resposta: {result}")
     return {"raw": result, "token": token}
 
 
-async def _configurar_webhook(nome: str, token: str) -> dict:
-    """Passo B: Configura o webhook da instância para apontar para nosso Worker."""
-    webhook_url = f"{WEBHOOK_BASE_URL}/{token}"
-    logger.info(f"[UAZAPI] Configurando webhook de {nome} → {webhook_url}")
+async def _configurar_webhook(instance_token: str, webhook_url: str) -> dict:
+    """
+    Passo B: POST /webhook com token da instância.
+    Modo simples: sem action/id — cria ou atualiza automaticamente.
+    """
+    logger.info(f"[UAZAPI] Passo B — Configurando webhook → {webhook_url}")
     body = {
-        "webhook": {
-            "enabled": True,
-            "url": webhook_url,
-            "byEvents": False,
-            "events": WEBHOOK_EVENTS,
-        }
+        "url": webhook_url,
+        "events": WEBHOOK_EVENTS,
+        "excludeMessages": ["wasSentByApi"],
     }
-    return await _uazapi_post(f"/webhook/set/{nome}", body, token=token)
+    try:
+        return await _post("/webhook", body, _instance_headers(instance_token))
+    except Exception as e:
+        logger.warning(f"[UAZAPI] Webhook config falhou (não crítico): {e}")
+        return {}
 
 
-async def _obter_qr_code(nome: str, token: str) -> dict:
-    """Passo C: Obtém o QR Code em base64 para exibir no modal do portal."""
-    logger.info(f"[UAZAPI] Obtendo QR Code para: {nome}")
-    result = await _uazapi_get(f"/instance/connect/{nome}", token=token)
-    # O QR pode vir em campos diferentes dependendo da versão da API
-    qr_code = (
-        result.get("base64")
-        or result.get("qrcode", {}).get("base64")
-        or result.get("qr")
-    )
+async def _obter_qr_code(instance_token: str) -> dict:
+    """
+    Passo C: POST /instance/connect com token da instância.
+    Sem body → gera QR Code (field qrcode em base64 na instância).
+    """
+    logger.info("[UAZAPI] Passo C — Iniciando conexão para gerar QR Code")
+    result = await _post("/instance/connect", {}, _instance_headers(instance_token))
+    # QR fica no objeto instance.qrcode
+    instance_data = result.get("instance", {})
+    qr_code = instance_data.get("qrcode")
     return {"qr_code": qr_code, "raw": result}
 
 
-async def _verificar_conexao_na_uazapi(nome: str, token: str) -> str:
-    """Consulta o estado atual da conexão de uma instância."""
-    try:
-        result = await _uazapi_get(f"/instance/connectionState/{nome}", token=token)
-        state = result.get("state") or result.get("status") or "unknown"
-        return state
-    except Exception as e:
-        logger.warning(f"[UAZAPI] Erro ao verificar conexão de {nome}: {e}")
-        return "error"
+async def _verificar_status(instance_token: str) -> dict:
+    """
+    GET /instance/status com token da instância.
+    Retorna {instance: {..., status, qrcode}, status: {connected, loggedIn, jid}}
+    """
+    result = await _get("/instance/status", _instance_headers(instance_token))
+    instance_data = result.get("instance", {})
+    status_data = result.get("status", {})
+    state = instance_data.get("status", "unknown")
+    is_connected = status_data.get("connected", False)
+    jid = status_data.get("jid")
+    phone = None
+    if jid and isinstance(jid, dict):
+        phone = jid.get("user")
+    qr_code = instance_data.get("qrcode")
+    return {
+        "state": state,
+        "is_connected": is_connected,
+        "phone": phone,
+        "qr_code": qr_code,
+    }
 
 
-async def _logout_na_uazapi(nome: str, token: str) -> bool:
-    """Executa logout seguro da instância antes de deletar."""
+async def _desconectar_na_uazapi(instance_token: str) -> bool:
+    """POST /instance/disconnect com token da instância."""
     try:
-        logger.info(f"[UAZAPI] Logout seguro: {nome}")
-        await _uazapi_delete(f"/instance/logout/{nome}", token=token)
+        logger.info("[UAZAPI] Desconectando instância")
+        await _post("/instance/disconnect", {}, _instance_headers(instance_token))
         return True
     except Exception as e:
-        logger.error(f"[UAZAPI] Erro no logout de {nome}: {e}")
+        logger.error(f"[UAZAPI] Erro ao desconectar: {e}")
         return False
 
 
-def _salvar_instancia_no_banco(nome: str, token: str, canal_tipo: str, unidade: Optional[str], obs: Optional[str]) -> str:
-    """Persiste a nova instância no Supabase e retorna o ID gerado."""
+def _salvar_instancia_no_banco(
+    nome: str, token: str, canal_tipo: str,
+    unidade: Optional[str], telefone: Optional[str], obs: Optional[str],
+    webhook_url: str,
+) -> str:
     payload = {
         "nome": nome,
         "token": token,
         "canal_tipo": canal_tipo,
-        "agente_tipo": canal_tipo,   # retrocompatibilidade
+        "agente_tipo": canal_tipo,
         "unidade_cuca": unidade,
-        "ativa": False,              # Só ativará após parear o celular
+        "telefone": telefone,
+        "ativa": False,
         "reserva": canal_tipo == "Reserva",
         "observacoes": obs,
-        "webhook_url": f"{WEBHOOK_BASE_URL}/{token}",
+        "webhook_url": webhook_url,
     }
     res = supabase.table("instancias_uazapi").insert(payload).execute()
     if res.data:
@@ -178,139 +187,112 @@ def _salvar_instancia_no_banco(nome: str, token: str, canal_tipo: str, unidade: 
     raise Exception("Falha ao persistir instância no banco.")
 
 
-def _atualizar_status_banco(
-    nome: str,
-    ativa: bool,
-    telefone: Optional[str] = None,
-    token: Optional[str] = None,
-):
-    """Atualiza status da instância no banco após evento de conexão."""
+def _atualizar_status_banco(nome: str, ativa: bool, telefone: Optional[str] = None):
     dados: dict = {"ativa": ativa}
     if telefone:
         dados["telefone"] = telefone
-    if token:
-        dados["token"] = token
-
     supabase.table("instancias_uazapi").update(dados).eq("nome", nome).execute()
-    logger.info(f"[Banco] Instância '{nome}' → ativa={ativa}, telefone={telefone}")
+    logger.info(f"[Banco] '{nome}' → ativa={ativa}, telefone={telefone}")
 
 
-# ─── Endpoints ────────────────────────────────────────────────────────────────
+# ─── Endpoints FastAPI ────────────────────────────────────────────────────────
 
 @router.post("/criar")
 async def criar_instancia(req: CriarInstanciaRequest):
     """
-    Cria uma nova instância no servidor UAZAPI e retorna o QR Code.
-
-    Fluxo:
-      1. POST /instance/create          → obtém token da instância
-      2. POST /webhook/set/{instance}   → aponta webhook para nosso Worker
-      3. GET  /instance/connect/{inst}  → retorna QR Code em base64
-      4. Salva no banco como inativa    → ativará via connection.update
+    Fluxo completo de criação de instância:
+      A) POST /instance/init      → cria e obtém token
+      B) POST /webhook            → configura eventos
+      C) POST /instance/connect   → gera QR Code
+      D) Salva no banco como inativa
     """
     nome = req.nome.strip().replace(" ", "_").lower()
 
-    # Verificar se já existe
+    # Verificar duplicata
     existing = supabase.table("instancias_uazapi").select("id").eq("nome", nome).execute()
     if existing.data:
         raise HTTPException(status_code=409, detail=f"Instância '{nome}' já existe.")
 
     try:
-        # Passo A: Criar na UAZAPI
+        # Passo A: criar na UAZAPI
         criacao = await _criar_instancia_na_uazapi(nome)
         token = criacao["token"]
-
         if not token:
             raise HTTPException(
                 status_code=502,
-                detail="UAZAPI não retornou token. Verifique UAZAPI_MASTER_TOKEN."
+                detail="UAZAPI não retornou token. Verifique UAZAPI_MASTER_TOKEN.",
             )
 
-        # Passo B: Configurar Webhook
-        try:
-            await _configurar_webhook(nome, token)
-        except Exception as wh_err:
-            logger.warning(f"[UAZAPI] Webhook possivelmente não configurado: {wh_err}")
-            # Não falha — prossegue para gerar QR Code
+        # Passo B: configurar webhook
+        webhook_url = f"{WORKER_PUBLIC_URL}/webhook/{token}"
+        await _configurar_webhook(token, webhook_url)
 
-        # Passo C: Obter QR Code
-        qr_data = await _obter_qr_code(nome, token)
+        # Passo C: gerar QR Code
+        qr_data = await _obter_qr_code(token)
         qr_code = qr_data.get("qr_code")
 
-        # Passo D: Salvar no banco
+        # Passo D: persistir no banco
         inst_id = await asyncio.to_thread(
             _salvar_instancia_no_banco,
-            nome, token, req.canal_tipo, req.unidade_cuca, req.observacoes
+            nome, token, req.canal_tipo, req.unidade_cuca, req.telefone, req.observacoes, webhook_url,
         )
 
-        logger.info(f"[✓] Instância '{nome}' criada. ID: {inst_id}. QR Code: {'sim' if qr_code else 'não'}")
+        logger.info(f"[✓] Instância '{nome}' criada. ID: {inst_id}. QR: {'sim' if qr_code else 'não'}")
 
         return {
             "success": True,
             "id": inst_id,
             "nome": nome,
             "token": token,
-            "qr_code": qr_code,   # base64 — o frontend renderiza como <img>
-            "webhook_url": f"{WEBHOOK_BASE_URL}/{token}",
-            "instrucao": "Escaneie o QR Code com o WhatsApp do celular desta instância.",
+            "qr_code": qr_code,
+            "webhook_url": webhook_url,
+            "instrucao": "Escaneie o QR Code com o WhatsApp Business do celular desta instância.",
         }
 
     except HTTPException:
         raise
     except httpx.HTTPStatusError as e:
-        logger.error(f"[UAZAPI] Erro HTTP ao criar instância: {e.response.text}")
+        logger.error(f"[UAZAPI] Erro HTTP: {e.response.status_code} — {e.response.text[:300]}")
         raise HTTPException(
             status_code=502,
-            detail=f"Erro na API UAZAPI: {e.response.status_code} — {e.response.text[:200]}"
+            detail=f"Erro na API UAZAPI: {e.response.status_code} — {e.response.text[:200]}",
         )
     except Exception as e:
-        logger.error(f"[UAZAPI] Falha inesperada ao criar instância: {e}")
+        logger.error(f"[UAZAPI] Falha inesperada: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{nome}/status")
 async def verificar_status(nome: str):
-    """
-    Verifica o estado atual de conexão de uma instância.
-    Atualiza o banco automaticamente se o estado mudar.
-
-    Estados possíveis: 'open' (conectado), 'close', 'connecting', 'error'
-    """
-    # Buscar token no banco
+    """Verifica status e atualiza banco se necessário."""
     res = supabase.table("instancias_uazapi").select("id, token, ativa, telefone").eq("nome", nome).maybeSingle().execute()
     if not res.data:
         raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
 
     inst = res.data
     token = inst.get("token")
-
     if not token:
         return {"nome": nome, "state": "sem_token", "ativa": inst["ativa"]}
 
-    # Verificar na UAZAPI
-    state = await _verificar_conexao_na_uazapi(nome, token)
+    status = await _verificar_status(token)
 
-    # Se connectou (state == "open") mas banco ainda marca inativa → sincronizar
-    is_connected = state in ("open", "CONNECTED", "connected")
-    if is_connected and not inst["ativa"]:
-        await asyncio.to_thread(_atualizar_status_banco, nome, True)
+    if status["is_connected"] and not inst["ativa"]:
+        await asyncio.to_thread(_atualizar_status_banco, nome, True, status.get("phone"))
         logger.info(f"[Sync] '{nome}' detectado como conectado. Banco atualizado.")
 
     return {
         "nome": nome,
-        "state": state,
-        "is_connected": is_connected,
-        "ativa": is_connected,
-        "telefone": inst.get("telefone"),
+        "state": status["state"],
+        "is_connected": status["is_connected"],
+        "ativa": status["is_connected"],
+        "telefone": inst.get("telefone") or status.get("phone"),
+        "qr_code": status.get("qr_code"),
     }
 
 
 @router.get("/{nome}/qrcode")
 async def obter_qrcode(nome: str):
-    """
-    Gera um novo QR Code para uma instância existente.
-    Útil quando o QR anterior expirou (30 segundos).
-    """
+    """Gera novo QR Code para instância existente (quando o anterior expirou)."""
     res = supabase.table("instancias_uazapi").select("token, ativa").eq("nome", nome).maybeSingle().execute()
     if not res.data:
         raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
@@ -323,44 +305,37 @@ async def obter_qrcode(nome: str):
     if not token:
         raise HTTPException(status_code=400, detail="Instância sem token configurado.")
 
-    qr_data = await _obter_qr_code(nome, token)
-    return {
-        "nome": nome,
-        "qr_code": qr_data.get("qr_code"),
-        "ja_conectado": False,
-    }
+    # Busca QR via /instance/status (não precisa reconectar se ainda está connecting)
+    status = await _verificar_status(token)
+    qr_code = status.get("qr_code")
+
+    # Se não houver QR no status, dispara novo connect
+    if not qr_code:
+        qr_data = await _obter_qr_code(token)
+        qr_code = qr_data.get("qr_code")
+
+    return {"nome": nome, "qr_code": qr_code, "ja_conectado": False}
 
 
 @router.delete("/{nome}/logout")
 async def logout_instancia(nome: str):
-    """
-    Desconecta a instância com segurança da sessão WhatsApp.
-    Deve ser chamado ANTES de deletar ou trocar o chip.
-    """
+    """Desconecta instância com segurança."""
     res = supabase.table("instancias_uazapi").select("id, token").eq("nome", nome).maybeSingle().execute()
     if not res.data:
         raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
 
     token = res.data.get("token")
     if token:
-        await _logout_na_uazapi(nome, token)
+        await _desconectar_na_uazapi(token)
 
-    # Marcar como inativa no banco e limpar telefone
-    await asyncio.to_thread(
-        _atualizar_status_banco, nome, False, None, None
-    )
+    await asyncio.to_thread(_atualizar_status_banco, nome, False)
     supabase.table("instancias_uazapi").update({"telefone": None}).eq("nome", nome).execute()
-
-    logger.info(f"[✓] Logout de '{nome}' concluído.")
     return {"success": True, "nome": nome, "mensagem": "Instância desconectada com segurança."}
 
 
 @router.delete("/{nome}/excluir")
 async def excluir_instancia(nome: str):
-    """
-    Faz logout + remove a instância do banco.
-    Irreversível.
-    """
+    """Desconecta + remove do banco. Irreversível."""
     res = supabase.table("instancias_uazapi").select("id, token").eq("nome", nome).maybeSingle().execute()
     if not res.data:
         raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
@@ -368,32 +343,23 @@ async def excluir_instancia(nome: str):
     token = res.data.get("token")
     inst_id = res.data["id"]
 
-    # Logout seguro antes de deletar
     if token:
-        await _logout_na_uazapi(nome, token)
+        await _desconectar_na_uazapi(token)
 
-    # Excluir também transbordos vinculados e mensagens
     supabase.table("instancias_uazapi").delete().eq("id", inst_id).execute()
-
     logger.info(f"[✓] Instância '{nome}' excluída permanentemente.")
     return {"success": True, "nome": nome}
 
 
-# ─── Handler interno: chamado pelo webhook quando connection.update ────────────
+# ─── Handler interno: connection.update ────────────────────────────────────────
 async def handle_connection_update(instance_name: str, status: str, token: str, phone: Optional[str] = None):
     """
-    Chamado por main.py quando o Worker recebe connection.update da UAZAPI.
-    Atualiza o banco automaticamente — o Gerente não precisa fazer nada.
+    Chamado por main.py quando o Worker recebe evento connection do webhook da UAZAPI.
+    Atualiza o banco automaticamente.
     """
-    is_connected = status in ("open", "CONNECTED")
-
+    is_connected = status in ("open", "CONNECTED", "connected")
     try:
-        await asyncio.to_thread(
-            _atualizar_status_banco,
-            instance_name,
-            is_connected,
-            phone if is_connected else None,
-        )
+        await asyncio.to_thread(_atualizar_status_banco, instance_name, is_connected, phone if is_connected else None)
         logger.info(f"[connection.update] '{instance_name}' → status={status} | ativa={is_connected}")
     except Exception as e:
         logger.error(f"[connection.update] Erro ao atualizar banco: {e}")

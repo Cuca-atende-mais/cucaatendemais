@@ -146,12 +146,20 @@ async def process_webhook_payload(payload: dict, token: str):
             logger.error(f"Erro ao salvar em logs_webhook: {str(e)}")
 
         # 2. Roteamento básico de eventos
-        if event_type == "connection.update":
-            # Atualiza status da instância no banco automaticamente
-            # O Gerente/Admin não precisa fazer nada — o portal sincroniza em tempo real
-            state = data.get("state") or data.get("status", "")
+        # UAZAPI v2: evento de conexão é 'connection'
+        if event_type in ("connection", "connection.update"):
+            # Status vem no campo instance.status ou data.status
+            instance_data = data.get("instance", data)
+            state = instance_data.get("status") or data.get("state") or data.get("status", "")
+            # Phone vem em data.status.jid.user ou data.wuid
+            status_info = data.get("status", {})
+            jid = status_info.get("jid") if isinstance(status_info, dict) else None
             phone_jid = data.get("wuid") or data.get("me", {}).get("id", "")
-            phone = phone_jid.split("@")[0].split(":")[0] if phone_jid else None
+            phone = None
+            if jid and isinstance(jid, dict):
+                phone = jid.get("user")
+            elif phone_jid:
+                phone = phone_jid.split("@")[0].split(":")[0]
             try:
                 from uazapi_manager import handle_connection_update
                 await handle_connection_update(instance_name, state, token, phone)
@@ -481,14 +489,6 @@ async def process_webhook_payload(payload: dict, token: str):
                 except Exception as e:
                     logger.error(f"Erro crítico no fluxo com motor-agente: {str(e)}")
             
-        elif event_type == "connection.update":
-            status = data.get("status")
-            logger.info(f"Instância {instance_name} mudou status para: {status}")
-            # Atualizar tabela instancias_uazapi
-            supabase.table("instancias_uazapi").update({
-                "ativa": status == "open",
-                "updated_at": "now()"
-            }).eq("nome", instance_name).execute()
 
     except Exception as e:
         logger.error(f"Erro no processamento em background: {str(e)}")
