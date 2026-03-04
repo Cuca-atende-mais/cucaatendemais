@@ -72,6 +72,8 @@ app = FastAPI(title="Worker Sistema CUCA", docs_url=None, redoc_url=None)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://cucaatendemais.com.br",
+        "https://www.cucaatendemais.com.br",
         "https://portal.cuca.ce.gov.br",
         "https://cuca-portal.vercel.app",
         "http://localhost:3000",
