@@ -352,14 +352,18 @@ async def excluir_instancia(nome: str):
 
 
 # ─── Handler interno: connection.update ────────────────────────────────────────
-async def handle_connection_update(instance_name: str, status: str, token: str, phone: Optional[str] = None):
+async def handle_connection_update(
+    instance_name: str, status: str, token: str,
+    phone: Optional[str] = None, bool_connected: bool = False
+):
     """
     Chamado por main.py quando o Worker recebe evento connection do webhook da UAZAPI.
     Atualiza o banco automaticamente.
+    Aceita tanto string status quanto bool_connected para maior robustez.
     """
-    is_connected = status in ("open", "CONNECTED", "connected")
+    is_connected = bool_connected or status in ("open", "CONNECTED", "connected")
     try:
         await asyncio.to_thread(_atualizar_status_banco, instance_name, is_connected, phone if is_connected else None)
-        logger.info(f"[connection.update] '{instance_name}' → status={status} | ativa={is_connected}")
+        logger.info(f"[connection.update] '{instance_name}' → status='{status}' | bool={bool_connected} | ativa={is_connected}")
     except Exception as e:
         logger.error(f"[connection.update] Erro ao atualizar banco: {e}")

@@ -148,11 +148,12 @@ async def process_webhook_payload(payload: dict, token: str):
         # 2. Roteamento básico de eventos
         # UAZAPI v2: evento de conexão é 'connection'
         if event_type in ("connection", "connection.update"):
-            # Status vem no campo instance.status ou data.status
-            instance_data = data.get("instance", data)
-            state = instance_data.get("status") or data.get("state") or data.get("status", "")
-            # Phone vem em data.status.jid.user ou data.wuid
+            # instance_data: objeto interno com status string (connected/disconnected)
+            instance_data = data.get("instance", {})
+            state = instance_data.get("status") or data.get("state") or ""
+            # status_info: objeto {connected: bool, loggedIn: bool, jid: {...}}
             status_info = data.get("status", {})
+            bool_connected = status_info.get("connected", False) if isinstance(status_info, dict) else False
             jid = status_info.get("jid") if isinstance(status_info, dict) else None
             phone_jid = data.get("wuid") or data.get("me", {}).get("id", "")
             phone = None
@@ -162,7 +163,7 @@ async def process_webhook_payload(payload: dict, token: str):
                 phone = phone_jid.split("@")[0].split(":")[0]
             try:
                 from uazapi_manager import handle_connection_update
-                await handle_connection_update(instance_name, state, token, phone)
+                await handle_connection_update(instance_name, state, token, phone, bool_connected)
             except Exception as conn_err:
                 logger.error(f"Erro em handle_connection_update: {conn_err}")
 
