@@ -336,19 +336,29 @@ async def logout_instancia(nome: str):
 @router.delete("/{nome}/excluir")
 async def excluir_instancia(nome: str):
     """Desconecta + remove do banco. Irreversível."""
-    res = supabase.table("instancias_uazapi").select("id, token").eq("nome", nome).maybeSingle().execute()
-    if not res.data:
-        raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
+    try:
+        res = supabase.table("instancias_uazapi").select("id, token").eq("nome", nome).maybeSingle().execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
 
-    token = res.data.get("token")
-    inst_id = res.data["id"]
+        token = res.data.get("token")
+        inst_id = res.data["id"]
 
-    if token:
-        await _desconectar_na_uazapi(token)
+        # Desconectar no UAZAPI (falha ignorada — instância pode já estar fora)
+        if token:
+            await _desconectar_na_uazapi(token)
 
-    supabase.table("instancias_uazapi").delete().eq("id", inst_id).execute()
-    logger.info(f"[✓] Instância '{nome}' excluída permanentemente.")
-    return {"success": True, "nome": nome}
+        # Remover do banco
+        supabase.table("instancias_uazapi").delete().eq("id", inst_id).execute()
+        logger.info(f"[✓] Instância '{nome}' excluída permanentemente.")
+        return {"success": True, "nome": nome}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[EXCLUIR] Erro inesperado ao excluir '{nome}': {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao excluir instância: {str(e)}")
+
 
 
 # ─── Handler interno: connection.update ────────────────────────────────────────

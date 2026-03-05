@@ -6,6 +6,7 @@ import time
 from typing import Optional
 from collections import defaultdict
 from fastapi import FastAPI, Request, Response, BackgroundTasks, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -121,6 +122,24 @@ async def startup_event():
     import asyncio
     logger.info("Agendando motor de Campanhas...")
     asyncio.create_task(campanhas_loop())
+
+# ─── Exception Handlers Globais ──────────────────────────────────────────────
+# Garante que TODOS os erros retornem CORS headers (sem isso, exceções não tratadas
+# passam pelo ServerErrorMiddleware ANTES do CORSMiddleware, sem headers)
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"[500] Exceção não tratada em {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Erro interno do servidor", "detail": str(exc)},
+    )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail},
+    )
 
 # ─── Router: UAZAPI Manager ─────────────────────────────────────────────────
 from uazapi_manager import router as uazapi_router
