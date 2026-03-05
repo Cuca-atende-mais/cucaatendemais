@@ -1595,98 +1595,149 @@ A regra engessada de "Perfis fixados no código" foi substituída por um gerenci
 
 **Cor visual**: Amarelo-âmbar (`#F9C74F`) — já existe no organograma.
 
-### 9.3 Fluxo de Disparo Mensal (revisado)
+### 9.3 Fluxo Completo: Do Upload ao Disparo (DEFINITIVO)
+
+> ⚠️ **BUG CRÍTICO IDENTIFICADO**: O código atual de importação (`import-planilha-modal.tsx`, linha 343) salva a campanha diretamente com `status: "aprovado"`, o que faz o motor disparar automaticamente 30 segundos após o upload. **Isso é errado e precisa ser corrigido antes de qualquer teste com leads reais.** O ticket S9-00 corrige isso.
 
 ```
-ANTES (Sprint 8):
-  Gerente/Aux Admin importa planilha por unidade
-    → campanhas_mensais (por unidade) com status=aprovado
-    → campanhas_engine detecta → busca instância Institucional da unidade
-    → dispara para leads daquela unidade
-
-DEPOIS (Sprint 9):
-  ETAPA 1 (igual — sem mudança):
-    Gerente/Aux Admin importa planilha por unidade
-    → campanhas_mensais + atividades_mensais + RAG por unidade (igual hoje)
-
-  ETAPA 2 (nova):
-    Gestor Divulgação vê painel: "X de 5 unidades prontas para [Mês]"
-    Quando conveniente (não necessariamente quando todas 5 estão prontas), aciona:
-    → "Disparar Aviso Global — [Mês/Ano]"
-    → Worker usa instância Divulgação (canal_tipo = 'Divulgação')
-    → Envia mensagem curta para TODOS os leads opt_in (sem filtro de unidade)
-    → Template: aviso + link portal + wa.me de cada CUCA
-    → warmup_started_at da instância Divulgação controla o limite diário
+╔══════════════════════════════════════════════════════════════╗
+║  ETAPA 1 — UPLOAD (cada unidade, sem mudança no processo)    ║
+╠══════════════════════════════════════════════════════════════╣
+║  Gerente / Aux Admin faz upload da planilha da sua unidade   ║
+║    → CORREÇÃO: status salvo como "pendente" (não "aprovado") ║
+║    → RAG da unidade é indexado automaticamente               ║
+║    → Cards da programação aparecem na tela para revisão      ║
+╠══════════════════════════════════════════════════════════════╣
+║  ETAPA 2 — APROVAÇÃO POR UNIDADE (Gerente da unidade)        ║
+╠══════════════════════════════════════════════════════════════╣
+║  Gerente revisa os cards da programação do seu CUCA          ║
+║    → Clica em "Aprovar Programação"                          ║
+║    → status vira "aprovado"                                  ║
+║    → NENHUM DISPARO ACONTECE AQUI                            ║
+╠══════════════════════════════════════════════════════════════╣
+║  ETAPA 3 — PAINEL DO GESTOR GERAL (novo perfil)              ║
+╠══════════════════════════════════════════════════════════════╣
+║  Gestor Geral acessa o painel de Divulgação e vê:            ║
+║                                                              ║
+║  Programação de Março/2026                                   ║
+║  ✅ CUCA Barra       → Aprovada (74 atividades)              ║
+║  ✅ CUCA Mondubim    → Aprovada (86 atividades)              ║
+║  ⏳ CUCA Jangurussu  → Carregada, aguardando aprovação       ║
+║  ✅ CUCA José Walter → Aprovada (61 atividades)              ║
+║  ❌ CUCA Pici        → Ainda não enviou a planilha           ║
+║                                                              ║
+║  Se alguma faltar: Gestor contata a unidade pelo canal       ║
+║  interno pedindo a liberação.                                ║
+║                                                              ║
+║  Quando decidir que está pronto:                             ║
+║    → Clica em "Disparar Aviso Global — Março/2026"           ║
+║    → Confirmação de segurança (modal de confirmação)         ║
+║    → Motor usa instância Divulgação                          ║
+║    → Envia mensagem curta para TODOS os leads opt_in         ║
+║       (sem filtro de unidade — base completa da Rede)        ║
+║    → Template: aviso + link portal + wa.me de cada CUCA      ║
+║    → Estratégia anti-ban ativa (distribuição por sessão,     ║
+║       spintax, warmup por instância)                         ║
+╚══════════════════════════════════════════════════════════════╝
 ```
 
-### 9.4 Painel do Gestor Divulgação (novo módulo `divulgacao`)
+**Regra fundamental**: O motor de disparo (`campanhas_engine.py`) **NUNCA** processa `campanhas_mensais` automaticamente. O disparo mensal global via Divulgação só acontece quando o Gestor Geral clica no botão. O motor passa a ler uma nova tabela `disparos_divulgacao` criada por esse botão.
 
-**Localização**: `/divulgacao` (novo submenu no dashboard, visível apenas para o role que tiver `divulgacao` com `can_read=true`)
+### 9.4 Painel do Gestor Geral de Divulgação (módulo `divulgacao`)
 
-**Funcionalidades do painel:**
+**Localização**: `/divulgacao` no menu lateral — visível apenas para quem tiver o módulo `divulgacao` habilitado.
 
-| Funcionalidade | RBAC module | Ação |
+**O que o painel mostra e permite:**
+
+| Área do painel | O que faz | Permissão |
 |---|---|---|
-| Ver status de programação por unidade + mês | `divulgacao` / `can_read` | Tabela: Barra ✅ / Mondubim ✅ / Jangurussu ❌ / J.Walter ✅ / Pici ✅ |
-| Acionar Disparo Global | `divulgacao` / `can_create` | Botão → cria registro em `disparos` com `tipo = 'divulgacao_global'` |
-| Ver histórico de disparos globais | `divulgacao` / `can_read` | Lista de disparos passados com status + contagem |
-| Ver conversas do canal Divulgação | `divulgacao` / `can_read` | Reusar componente de atendimentos filtrado pela instância Divulgação |
-| Gerenciar instância Divulgação | `config_whatsapp` / `can_update` | Reusar tela de Configurações WhatsApp (trocar chip, reconectar) |
+| **Visão de Status por Unidade** | Tabela com: unidade / status (sem planilha / pendente / aprovada) / qtd atividades / responsável / data upload | `can_read` |
+| **Botão "Disparar Aviso Global"** | Só fica ativo quando pelo menos 1 unidade está aprovada. Abre modal de confirmação antes de disparar. | `can_create` |
+| **Histórico de Disparos** | Lista de todos os envios anteriores: data, mês de referência, total enviado, status (em andamento / concluído / pausado) | `can_read` |
+| **Métricas do Último Disparo** | Entregas, respostas recebidas, STOP recebidos, taxa de engajamento | `can_read` |
+| **Conversas do Canal** | Visualização das conversas de atendimento no chip Divulgação | `can_read` |
+| **Gerenciar Chip Divulgação** | Conectar, trocar chip (banco + UAZAPI), ver QR Code — igual ao que existe em Config WhatsApp | `can_update` |
 
 ### 9.5 RAG Global (módulo `programacao_rag_global`)
 
-**O que é**: Base de conhecimento geral da Rede CUCA — não é a programação mensal (que já existe por unidade). É a base para responder perguntas gerais como "onde fica o CUCA da Barra?", "quem é o gerente?", "o que é o CUCA?", etc.
+**O que é**: Base de conhecimento geral da Rede CUCA — separada do RAG de programação por unidade. Responde perguntas como "onde fica o CUCA da Barra?", "quem é o gerente do Jangurussu?", "o que é o programa CUCA?".
 
-**Localização**: Configurações → aba "Base de Conhecimento Global" (visível para `programacao_rag_global` / `can_read`)
+**Localização**: Configurações → aba "Base de Conhecimento — Rede Geral" (módulo `programacao_rag_global`)
 
-**Formato**: Upload de documentos (PDF, TXT, DOCX) + campo de texto livre. Indexado como `source_type = 'rede_cuca_global'` no `rag_chunks` com `cuca_unit_id = NULL`.
+**Formato de entrada**: Upload de PDF, TXT, DOCX + campo de texto livre. Indexado com `source_type = 'rede_cuca_global'` e `cuca_unit_id = NULL` em `rag_chunks`.
 
-**Worker**: Quando a persona Divulgação ou qualquer Institucional não achar a resposta no RAG da unidade → faz fallback para chunks com `source_type = 'rede_cuca_global'`.
+**Comportamento do Worker**: Persona Divulgação busca primeiro em `rede_cuca_global`. Os Institucionais buscam no RAG da sua unidade e fazem fallback para `rede_cuca_global` se não encontrar.
 
-### 9.6 Novos Módulos RBAC em sys_permissions
+### 9.6 Anti-Ban — Estratégia Completa e Revisada (pesquisa Mar/2026)
 
-Dois novos módulos expostos na tela de Criação/Edição de Perfil:
+**O que já existe e continuará:**
 
-| Módulo (chave) | Label na UI | Descrição |
+| Estratégia | Detalhes |
+|---|---|
+| Delays aleatórios | 5s a 45s entre mensagens, configurável no banco |
+| Simulação "digitando…" | `presence: composing` antes de cada envio |
+| Bloqueio noturno | Envios apenas das 08h às 22h |
+| Pause por erro técnico | Pausa automática se taxa de falha HTTP > 8% |
+| Warmup por instância | 50→150→500→1500→global, controlado pelo `warmup_started_at` de cada chip |
+| Personalização | `{{nome}}` em todas as mensagens |
+| Logout seguro | `POST /instance/disconnect` antes de trocar chip |
+| WhatsApp Business | Uso obrigatório de contas comerciais |
+
+**O que será adicionado no Sprint 9:**
+
+| Estratégia nova | O que é | Como funciona |
 |---|---|---|
-| `divulgacao` | Divulgação CUCA | Painel de disparo global mensal, histórico, conversas do canal |
-| `programacao_rag_global` | Base Conhecimento Global | Upload e gestão do RAG geral da Rede CUCA |
+| **Spintax — variação de texto** | Evita que todas as mensagens sejam idênticas (principal trigger de ban) | Motor sorteia aleatoriamente entre variantes: `{Olá\|Oi\|Hey\|Bom dia}, {{nome}}!`. Template de Divulgação terá 3-5 variantes de abertura e fechamento. |
+| **Distribuição por sessão (limite/hora)** | Evita enviar 500 mensagens em 10 minutos | Além do limite diário, o motor divide em sessões de até 80 mensagens/hora com pausa de 10min entre sessões. |
+| **STOP automático** | Evita que usuários precisem bloquear o número para sair | Se qualquer lead responder "STOP", "Parar", "Sair", "Não quero", "Cancelar" → `opt_in = false` instantaneamente. Bot confirma: "Pronto! Você foi removido da lista." |
+| **Alerta de saúde do número** | Detecta rejeição social, não só erro técnico | A cada 50 mensagens: se >5% STOP/bloqueios detectados na sessão → motor pausa + alerta no painel do Gestor. Histórico salvo em `disparos_divulgacao.metricas_json`. |
+| **Filtro de contatos frios (60 dias)** | Leads sem nenhuma interação há mais de 60 dias têm taxa de bloqueio muito maior | Motor filtra `leads WHERE opt_in=true AND last_interaction_at > NOW() - 60 days`. Leads frios ficam em lista separada para campanha de reengajamento futura. |
+| **Primeira mensagem sem link externo** | WhatsApp bloqueia URLs externas em primeiros contatos | Para leads que nunca interagiram com o chip Divulgação: mensagem só com wa.me (link nativo). Links do portal só em segunda interação. |
+| **Log de qualidade por disparo** | Histórico de saúde para decisões futuras | Cada disparo salva: total enviado, respostas recebidas em 24h, STOP recebidos, taxa de engajamento. Esses dados ficam visíveis no painel. |
 
-> ⚠️ **Esses módulos NÃO aparecem na tela de perfil para Gerentes** — apenas para Developer e para roles que o Developer explicitamente liberar (futuramente o Gestor Divulgação).
+### 9.7 Novos Módulos RBAC em sys_permissions
 
-### 9.7 Disparo Pontual via Divulgação (opcional, fase 2)
+| Módulo (chave) | Label na UI | Quem pode ter |
+|---|---|---|
+| `divulgacao` | Divulgação CUCA | Apenas o perfil Gestor Geral que Valmir criar via RBAC |
+| `programacao_rag_global` | Base Conhecimento Global | Idem — controlado pelo Gestor Geral |
 
-Eventos de grande escala (ex: "Semana do Jovem — TODOS os CUCAs") poderão ser disparados pelo Gestor Divulgação. O fluxo é idêntico ao mensal: cria registro em `disparos` com `tipo = 'divulgacao_pontual'`, worker usa instância Divulgação, sem filtro de unidade.
+> ⚠️ Esses módulos **não aparecem** na tela de criação de perfil para Gerentes — filtrados via `isDeveloper` na UI de perfis.
 
-> ⚠️ Pontuais de **unidade específica** continuam sendo disparados pelo canal Institucional daquela unidade (mesmo fluxo de hoje).
+### 9.8 Disparo Pontual via Divulgação (fase 2 — planejado)
 
-### 9.8 Worker — Persona Divulgação
+Eventos de grande escala da Rede (ex: "Semana do Jovem") poderão ser disparados com a mesma lógica: Gestor cria o evento, escreve a mensagem, confirma e dispara via chip Divulgação para toda a base.
 
-No `main.py` (handler de webhooks), ao identificar que a mensagem veio de uma instância com `canal_tipo = 'Divulgação'`:
-- Ativa **Maria Geral** (sem unidade específica)
-- Aplica as 3 regras da seção 3 (aviso padrão / redirecionar unidade / RAG global)
-- RAG: busca em `rag_chunks WHERE source_type = 'rede_cuca_global'` (sem filtro de unidade)
+> ⚠️ Pontuais de **unidade específica** sempre usam o canal Institucional daquela unidade.
 
-### 9.9 Checklist de Execução Sprint 9
+### 9.9 Checklist de Execução Sprint 9 — DEFINITIVO
 
-| Ticket | Tarefa | Componente | Status |
+| Ticket | Tarefa | Impacto | Status |
 |---|---|---|---|
-| S9-01 | Adicionar `'Divulgação'` ao `CanalTipo` + cor/ícone em todos os arquivos do portal | Portal | [ ] |
-| S9-02 | Verificar CHECK constraint em `instancias_uazapi.canal_tipo` e adicionar `'Divulgação'` (migration) | Banco | [ ] |
-| S9-03 | Criar página `/divulgacao` no portal (painel do Gestor) com: status de programação por unidade, botão disparo global, histórico | Portal | [ ] |
-| S9-04 | Criar API route `/api/divulgacao/disparar` → cria registro em `disparos` com `tipo = 'divulgacao_global'` | Portal API | [ ] |
-| S9-05 | `campanhas_engine.py` — novo loop para `disparos WHERE tipo LIKE 'divulgacao%'` → busca instância Divulgação → envia para TODOS leads opt_in (sem filtro unidade) | Worker | [ ] |
-| S9-06 | Modal "Base de Conhecimento Global" em Configurações → upload de docs → indexa com `source_type = 'rede_cuca_global'` | Portal | [ ] |
-| S9-07 | Worker `main.py` — detectar instância Divulgação → ativar persona Maria Geral + RAG global | Worker | [ ] |
-| S9-08 | Adicionar módulos `divulgacao` e `programacao_rag_global` na tela de Criação/Edição de Perfil (RBAC UI) | Portal | [ ] |
-| S9-09 | Expor conversas do canal Divulgação na tela do painel (reusar componente de atendimentos) | Portal | [ ] |
-| S9-10 | Commit, push e deploy Worker (cuca-worker no Easypanel) | DevOps | [ ] |
+| **S9-00** | **BUG FIX**: Alterar `import-planilha-modal.tsx` para salvar `status: "pendente"` no upload (não "aprovado"). Adicionar botão "Aprovar Programação" na tela de programação mensal do Gerente. | CRÍTICO — impede disparo acidental | [ ] |
+| S9-01 | Adicionar `'Divulgação'` ao `CanalTipo` em todos os arquivos (portal + tipos TS + worker). Cor amarelo-âmbar, ícone `Megaphone`. | Portal + Worker | [ ] |
+| S9-02 | Verificar CHECK constraint em `instancias_uazapi.canal_tipo` e adicionar `'Divulgação'` via migration. | Banco | [ ] |
+| S9-03 | Criar página `/divulgacao` com painel: tabela de status por unidade, botão disparar (com modal de confirmação), histórico, métricas. | Portal | [ ] |
+| S9-04 | Criar tabela `disparos_divulgacao` (id, mes, ano, status, total_leads, metricas_json, criado_por, created_at) e API route `POST /api/divulgacao/disparar`. | Banco + Portal API | [ ] |
+| S9-05 | `campanhas_engine.py` — novo loop para `disparos_divulgacao WHERE status='pendente'` → busca instância Divulgação → envia para TODOS leads `opt_in=true AND last_interaction_at > 60d` → sem filtro de unidade. | Worker | [ ] |
+| S9-06 | Implementar Spintax no motor: templates com variantes `{A\|B\|C}` sortidas por lead. Variantes de abertura, corpo e fechamento para a mensagem de Divulgação. | Worker | [ ] |
+| S9-07 | Implementar distribuição por sessão: máx 80 mensagens/hora, pausa 10min entre sessões dentro do disparo diário. | Worker | [ ] |
+| S9-08 | Implementar STOP automático: detectar palavras-chave no handler de mensagens → `opt_in = false` + confirmação para o lead. | Worker | [ ] |
+| S9-09 | Implementar alerta de saúde: a cada 50 msgs, checar % de STOP → se >5% pausa sessão + grava alerta em `disparos_divulgacao.metricas_json`. | Worker | [ ] |
+| S9-10 | Implementar filtro de leads frios: no loop de disparo, excluir leads sem interação nos últimos 60 dias. | Worker | [ ] |
+| S9-11 | Aba "Gerenciar Chip Divulgação" no painel: conectar, trocar chip, QR Code — reusar componente existente de Configurações WhatsApp. | Portal | [ ] |
+| S9-12 | Modal "Base de Conhecimento — Rede Geral" em Configurações: upload de docs, indexação com `source_type = 'rede_cuca_global'`. | Portal + Worker | [ ] |
+| S9-13 | Worker `main.py`: detectar instância Divulgação → ativar persona Maria Geral + 3 regras de resposta + RAG global. | Worker | [ ] |
+| S9-14 | Adicionar módulos `divulgacao` e `programacao_rag_global` na tela de Criação/Edição de Perfil (RBAC UI). | Portal | [ ] |
+| S9-15 | Conversas do canal Divulgação no painel (filtrar atendimentos por instância Divulgação). | Portal | [ ] |
+| S9-16 | Commit, push e deploy Worker (cuca-worker no Easypanel). Smoke test com número de teste. | DevOps | [ ] |
 
 ### 9.10 O que NÃO muda no Sprint 9
 
-- ✅ Formato da planilha — sem alteração
-- ✅ Fluxo de import per-unidade (Gerente/Aux Admin) — sem alteração
+- ✅ Formato da planilha Excel — sem alteração
+- ✅ Fluxo de upload per-unidade — sem alteração no processo do Gerente (só o status inicial muda para "pendente")
 - ✅ RAG de programação por unidade — sem alteração
-- ✅ Canais Institucional e Empregabilidade — comportamento igual (apenas menos disparo mensal no Institucional)
-- ✅ Sistema de aprovação de programação mensal — sem alteração
-- ✅ Papel do Gerente, Super Admin, Developer — sem alteração de permissões
+- ✅ Canais Institucional e Empregabilidade — comportamento igual
+- ✅ Papel do Gerente, Super Admin, Developer — sem alteração de permissões existentes
+- ✅ Pontual por unidade — continua disparando via Institucional após aprovação do Gerente da unidade
+
