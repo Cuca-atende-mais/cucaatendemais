@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 5.14 | **Atualizado**: 04/03/2026
-> **STATUS ATUAL**: Sprint 4 Concluído (100%) | **Sprint 5: Conexão Real ✅ 100% — Integração UAZAPI v2 corrigida**
+> **Versão**: 5.15 | **Atualizado**: 05/03/2026
+> **STATUS ATUAL**: Sprint 8 Concluído (100%) | **Sprint 9: Canal Divulgação + RAG Global — PLANEJADO**
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -10,7 +10,7 @@
 
 1. [Stack Técnica](#1-stack)
 2. [Arquitetura Geral](#2-arquitetura)
-3. [Estrutura de 14 Canais WhatsApp (CORRIGIDA)](#3-canais)
+3. [Estrutura de 13 Canais WhatsApp — REVISÃO JAN/2026](#3-canais)
 4. [Agentes IA, Personas e RAG](#4-agentes)
 5. [RBAC — 4 Níveis de Acesso](#5-rbac)
 6. [Schema do Banco de Dados (26 tabelas)](#6-schema)
@@ -21,6 +21,7 @@
 11. [Mapa de Reflexos (Ação → Impacto)](#11-reflexos)
 12. [Integrações Externas](#12-integracoes)
 13. [Riscos e Mitigações](#13-riscos)
+14. [Sprint 9 — Canal Divulgação + RAG Global](#sprint9)
 
 ---
 
@@ -80,9 +81,60 @@ WhatsApp (14 instâncias)  ←→  UAZAPI v2 (webhooks: messages / messages_upda
 
 ---
 
-## 3. ESTRUTURA DE 14 CANAIS WHATSAPP ⚠️ NUMERAÇÃO CORRIGIDA {#3-canais}
+## 3. ESTRUTURA DE 13 CANAIS WHATSAPP — REVISÃO MAR/2026 {#3-canais}
 
-> **CORREÇÃO CRÍTICA**: Não existe "canal institucional" como entidade separada. Canais #1-5 são de **Empregabilidade** (por unidade). A informação geral é respondida por Maria nos canais **Pontuais** (#7-11) e no canal **Geral** (#14).
+> **ATUALIZAÇÃO v5.15 (05/03/2026)**: Após reunião com a Rede CUCA, a arquitetura de canais foi revisada. O organograma oficial passa a ter **13 chips** ao invés de 14. A separação entre "canal pontual" e "canal institucional" foi eliminada: os **Institucionais** absorvem a função de atendimento da programação. Um novo chip **Divulgação** assume os disparos globais. A numeração foi reorganizada.
+
+| # | Canal | Agente/Persona | Gerencia | Comunicação | Chip |
+|---|-------|---------------|----------|-------------|------|
+| 01 | Institucional — Barra | Maria (Barra) | Admin CUCA Barra | **Ativo + Passivo**: disparo pontual da unidade + RAG programação/unidade | Institucional |
+| 02 | Institucional — Mondubim | Maria (Mondubim) | Admin CUCA Mondubim | Ativo + Passivo | Institucional |
+| 03 | Institucional — Jangurussu | Maria (Jangurussu) | Admin CUCA Jangurussu | Ativo + Passivo | Institucional |
+| 04 | Institucional — José Walter | Maria (J. Walter) | Admin CUCA J. Walter | Ativo + Passivo | Institucional |
+| 05 | Institucional — Pici | Maria (Pici) | Admin CUCA Pici | Ativo + Passivo | Institucional |
+| 06 | Empregabilidade — Barra | Júlia (Barra) | Admin CUCA Barra | Passivo: vagas, orientação, CV | Empregabilidade |
+| 07 | Empregabilidade — Mondubim | Júlia (Mondubim) | Admin CUCA Mondubim | Passivo | Empregabilidade |
+| 08 | Empregabilidade — Jangurussu | Júlia (Jangurussu) | Admin CUCA Jangurussu | Passivo | Empregabilidade |
+| 09 | Empregabilidade — José Walter | Júlia (J. Walter) | Admin CUCA J. Walter | Passivo | Empregabilidade |
+| 10 | Empregabilidade — Pici | Júlia (Pici) | Admin CUCA Pici | Passivo | Empregabilidade |
+| 11 | Acesso CUCA | Ana (global) | Super Admin / Gestor Divulgação | Passivo: agendamento de espaços | Acesso |
+| 12 | Ouvidoria Jovem | Sofia (global) | Super Admin | Passivo + Ativo: pesquisas/escuta | Ouvidoria |
+| **13** | **Divulgação CUCA** | **Maria Geral** | **Gestor Divulgação** | **Ativo**: aviso mensal + pontual estratégico para toda a rede | **Divulgação** |
+
+### Por que Divulgação ao invés de 5 Institucionais disparando?
+
+| Cenário | Antes (5 chips disparando) | Depois (1 chip Divulgação) |
+|---|---|---|
+| Ban do chip de 1 unidade | Perde serviço + disparo daquela unidade | Os 5 Institucionais ficam intactos (apenas serviço) |
+| Volume mensal por chip | ~4k msgs/chip | ~20k msgs/chip Divulgação |
+| Risco de ban | Distribuído nos 5 | Concentrado no Divulgação (workaround: trocar chip mantém instância) |
+| Crítico para preservar | Institucional (relacionamento) | Divulgação (disparo) pode ser recuperado sem afetar atendimento |
+
+**Decisão**: O chip Divulgação envia **1 mensagem curta e direta** (não o programa completo), reduzindo o risco. Os Institucionais focam no atendimento RAG.
+
+### Regras da Persona Divulgação (Maria Geral)
+
+```
+Mensagem chega no chip Divulgação:
+  │
+  ├── Lead responde ao aviso / "obrigado" / saudação?
+  │       → Template padrão: link portal + números de cada CUCA
+  │
+  ├── Lead pergunta sobre programação específica de uma unidade?
+  │       → Identifica unidade + redireciona: "Fale com o CUCA [X]: wa.me/..."
+  │
+  └── Lead pergunta algo geral sobre a Rede (endereço, horário, missão)?
+          → Responde via RAG Global (base de conhecimento geral da Rede)
+```
+
+Template de aviso mensal (exemplo):
+> *"🎉 A programação de Março chegou! Acesse o Portal: cucaatendemais.com.br*
+> *Para saber o que rola no seu CUCA, fale direto:*
+> *📍 Barra: [wa.me/+558...]*
+> *📍 Mondubim: [wa.me/+558...]*
+> *📍 Jangurussu: [wa.me/+558...]*
+> *📍 José Walter: [wa.me/+558...]*
+> *📍 Pici: [wa.me/+558...]"*
 
 | # | Canal | Agente/Persona | Gerenciado por | Tipo de Comunicação |
 |---|-------|---------------|----------------|---------------------|
@@ -1511,3 +1563,130 @@ A regra engessada de "Perfis fixados no código" foi substituída por um gerenci
   - Analisar e garantir o bloqueio real dos botões de ação na View.
 - [x] **Revisão e Implementação da Engine de Controle de Interface**:
   - Varrer todas as tabelas, modais e actions (`Novo`, `Editar`, `Deletar`) nas telas citadas acima. Se o cargo só tem flag de `read` (Visualizar), os botões de ação devem ser **desativados ou ocultados**. Somente quem possui flags `create`, `update`, `delete` verá e poderá interagir com essas funcionalidades na interface.
+
+---
+
+## 🆕 Sprint 9 — Canal Divulgação + RAG Global {#sprint9}
+
+> **Versão**: 5.15 | **Data de planejamento**: 05/03/2026
+> **Motivação**: Reunião Rede CUCA estabeleceu nova arquitetura de 13 chips com um canal Divulgação global para disparos mensais, protegendo os 5 canais Institucionais para atendimento puro.
+
+### 9.1 Visão Geral e Decisões Arquiteturais
+
+| Decisão | Escolha | Justificativa |
+|---|---|---|
+| Import de planilha | **Mantém per-unidade** (sem mudança de formato) | A planilha "PROGRAMAÇÃO 2026 - REDE CUCA BARRA.xlsx" já existe por unidade. Forçar 1 planilha global exigiria reformatação de todos os documentos da comissão. |
+| Disparo mensal global | **Botão "Disparo Global" no painel do Gestor** | Após todas unidades terem sua programação importada para o mês, o Gestor Divulgação aciona o blast global pelo Divulgação. |
+| Mensagem do Divulgação | **Curta + lista de links de cada CUCA** | Não envia programação completa — apenas aviso + wa.me por unidade. Reduz risco de detecção de spam pela Meta. |
+| RAG Global | **Novo modal em Configurações** (módulo `programacao_rag_global`) | Base de conhecimento geral da Rede CUCA: endereços, missão, contatos dos gerentes. Separado do RAG de programação. |
+| Novo papel | **NÃO criado pelo código** | Valmir cria o papel pelo RBAC após as interfaces estarem disponíveis. O código apenas expõe os módulos necessários. |
+
+### 9.2 Novo CanalTipo: Divulgação
+
+**O que muda no código:**
+
+| Arquivo | Mudança |
+|---|---|
+| `cuca-portal/src/app/(dashboard)/configuracoes/whatsapp/page.tsx` | Adicionar `"Divulgação"` ao tipo `CanalTipo` e às constantes de cor/ícone/descrição |
+| `cuca-portal/src/app/(dashboard)/developer/instancias/page.tsx` | Idem — lista de tipos |
+| `cuca-portal/src/components/instancias/canal-whatsapp-tab.tsx` | Idem |
+| `worker/campanhas_engine.py` | Buscar instância `Divulgação` ao invés de `Institucional` para disparo mensal global |
+| Banco | Verificar se há CHECK constraint em `canal_tipo` e adicionar `'Divulgação'` |
+
+**Cor visual**: Amarelo-âmbar (`#F9C74F`) — já existe no organograma.
+
+### 9.3 Fluxo de Disparo Mensal (revisado)
+
+```
+ANTES (Sprint 8):
+  Gerente/Aux Admin importa planilha por unidade
+    → campanhas_mensais (por unidade) com status=aprovado
+    → campanhas_engine detecta → busca instância Institucional da unidade
+    → dispara para leads daquela unidade
+
+DEPOIS (Sprint 9):
+  ETAPA 1 (igual — sem mudança):
+    Gerente/Aux Admin importa planilha por unidade
+    → campanhas_mensais + atividades_mensais + RAG por unidade (igual hoje)
+
+  ETAPA 2 (nova):
+    Gestor Divulgação vê painel: "X de 5 unidades prontas para [Mês]"
+    Quando conveniente (não necessariamente quando todas 5 estão prontas), aciona:
+    → "Disparar Aviso Global — [Mês/Ano]"
+    → Worker usa instância Divulgação (canal_tipo = 'Divulgação')
+    → Envia mensagem curta para TODOS os leads opt_in (sem filtro de unidade)
+    → Template: aviso + link portal + wa.me de cada CUCA
+    → warmup_started_at da instância Divulgação controla o limite diário
+```
+
+### 9.4 Painel do Gestor Divulgação (novo módulo `divulgacao`)
+
+**Localização**: `/divulgacao` (novo submenu no dashboard, visível apenas para o role que tiver `divulgacao` com `can_read=true`)
+
+**Funcionalidades do painel:**
+
+| Funcionalidade | RBAC module | Ação |
+|---|---|---|
+| Ver status de programação por unidade + mês | `divulgacao` / `can_read` | Tabela: Barra ✅ / Mondubim ✅ / Jangurussu ❌ / J.Walter ✅ / Pici ✅ |
+| Acionar Disparo Global | `divulgacao` / `can_create` | Botão → cria registro em `disparos` com `tipo = 'divulgacao_global'` |
+| Ver histórico de disparos globais | `divulgacao` / `can_read` | Lista de disparos passados com status + contagem |
+| Ver conversas do canal Divulgação | `divulgacao` / `can_read` | Reusar componente de atendimentos filtrado pela instância Divulgação |
+| Gerenciar instância Divulgação | `config_whatsapp` / `can_update` | Reusar tela de Configurações WhatsApp (trocar chip, reconectar) |
+
+### 9.5 RAG Global (módulo `programacao_rag_global`)
+
+**O que é**: Base de conhecimento geral da Rede CUCA — não é a programação mensal (que já existe por unidade). É a base para responder perguntas gerais como "onde fica o CUCA da Barra?", "quem é o gerente?", "o que é o CUCA?", etc.
+
+**Localização**: Configurações → aba "Base de Conhecimento Global" (visível para `programacao_rag_global` / `can_read`)
+
+**Formato**: Upload de documentos (PDF, TXT, DOCX) + campo de texto livre. Indexado como `source_type = 'rede_cuca_global'` no `rag_chunks` com `cuca_unit_id = NULL`.
+
+**Worker**: Quando a persona Divulgação ou qualquer Institucional não achar a resposta no RAG da unidade → faz fallback para chunks com `source_type = 'rede_cuca_global'`.
+
+### 9.6 Novos Módulos RBAC em sys_permissions
+
+Dois novos módulos expostos na tela de Criação/Edição de Perfil:
+
+| Módulo (chave) | Label na UI | Descrição |
+|---|---|---|
+| `divulgacao` | Divulgação CUCA | Painel de disparo global mensal, histórico, conversas do canal |
+| `programacao_rag_global` | Base Conhecimento Global | Upload e gestão do RAG geral da Rede CUCA |
+
+> ⚠️ **Esses módulos NÃO aparecem na tela de perfil para Gerentes** — apenas para Developer e para roles que o Developer explicitamente liberar (futuramente o Gestor Divulgação).
+
+### 9.7 Disparo Pontual via Divulgação (opcional, fase 2)
+
+Eventos de grande escala (ex: "Semana do Jovem — TODOS os CUCAs") poderão ser disparados pelo Gestor Divulgação. O fluxo é idêntico ao mensal: cria registro em `disparos` com `tipo = 'divulgacao_pontual'`, worker usa instância Divulgação, sem filtro de unidade.
+
+> ⚠️ Pontuais de **unidade específica** continuam sendo disparados pelo canal Institucional daquela unidade (mesmo fluxo de hoje).
+
+### 9.8 Worker — Persona Divulgação
+
+No `main.py` (handler de webhooks), ao identificar que a mensagem veio de uma instância com `canal_tipo = 'Divulgação'`:
+- Ativa **Maria Geral** (sem unidade específica)
+- Aplica as 3 regras da seção 3 (aviso padrão / redirecionar unidade / RAG global)
+- RAG: busca em `rag_chunks WHERE source_type = 'rede_cuca_global'` (sem filtro de unidade)
+
+### 9.9 Checklist de Execução Sprint 9
+
+| Ticket | Tarefa | Componente | Status |
+|---|---|---|---|
+| S9-01 | Adicionar `'Divulgação'` ao `CanalTipo` + cor/ícone em todos os arquivos do portal | Portal | [ ] |
+| S9-02 | Verificar CHECK constraint em `instancias_uazapi.canal_tipo` e adicionar `'Divulgação'` (migration) | Banco | [ ] |
+| S9-03 | Criar página `/divulgacao` no portal (painel do Gestor) com: status de programação por unidade, botão disparo global, histórico | Portal | [ ] |
+| S9-04 | Criar API route `/api/divulgacao/disparar` → cria registro em `disparos` com `tipo = 'divulgacao_global'` | Portal API | [ ] |
+| S9-05 | `campanhas_engine.py` — novo loop para `disparos WHERE tipo LIKE 'divulgacao%'` → busca instância Divulgação → envia para TODOS leads opt_in (sem filtro unidade) | Worker | [ ] |
+| S9-06 | Modal "Base de Conhecimento Global" em Configurações → upload de docs → indexa com `source_type = 'rede_cuca_global'` | Portal | [ ] |
+| S9-07 | Worker `main.py` — detectar instância Divulgação → ativar persona Maria Geral + RAG global | Worker | [ ] |
+| S9-08 | Adicionar módulos `divulgacao` e `programacao_rag_global` na tela de Criação/Edição de Perfil (RBAC UI) | Portal | [ ] |
+| S9-09 | Expor conversas do canal Divulgação na tela do painel (reusar componente de atendimentos) | Portal | [ ] |
+| S9-10 | Commit, push e deploy Worker (cuca-worker no Easypanel) | DevOps | [ ] |
+
+### 9.10 O que NÃO muda no Sprint 9
+
+- ✅ Formato da planilha — sem alteração
+- ✅ Fluxo de import per-unidade (Gerente/Aux Admin) — sem alteração
+- ✅ RAG de programação por unidade — sem alteração
+- ✅ Canais Institucional e Empregabilidade — comportamento igual (apenas menos disparo mensal no Institucional)
+- ✅ Sistema de aprovação de programação mensal — sem alteração
+- ✅ Papel do Gerente, Super Admin, Developer — sem alteração de permissões
