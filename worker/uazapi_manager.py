@@ -265,11 +265,11 @@ async def criar_instancia(req: CriarInstanciaRequest):
 @router.get("/{nome}/status")
 async def verificar_status(nome: str):
     """Verifica status e atualiza banco se necessário."""
-    res = supabase.table("instancias_uazapi").select("id, token, ativa, telefone").eq("nome", nome).maybeSingle().execute()
+    res = supabase.table("instancias_uazapi").select("id, token, ativa, telefone").eq("nome", nome).limit(1).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
 
-    inst = res.data
+    inst = res.data[0]
     token = inst.get("token")
     if not token:
         return {"nome": nome, "state": "sem_token", "ativa": inst["ativa"]}
@@ -293,11 +293,11 @@ async def verificar_status(nome: str):
 @router.get("/{nome}/qrcode")
 async def obter_qrcode(nome: str):
     """Gera novo QR Code para instância existente (quando o anterior expirou)."""
-    res = supabase.table("instancias_uazapi").select("token, ativa").eq("nome", nome).maybeSingle().execute()
+    res = supabase.table("instancias_uazapi").select("token, ativa").eq("nome", nome).limit(1).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
 
-    inst = res.data
+    inst = res.data[0]
     if inst.get("ativa"):
         return {"nome": nome, "qr_code": None, "ja_conectado": True}
 
@@ -320,11 +320,11 @@ async def obter_qrcode(nome: str):
 @router.delete("/{nome}/logout")
 async def logout_instancia(nome: str):
     """Desconecta instância com segurança."""
-    res = supabase.table("instancias_uazapi").select("id, token").eq("nome", nome).maybeSingle().execute()
+    res = supabase.table("instancias_uazapi").select("id, token").eq("nome", nome).limit(1).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
 
-    token = res.data.get("token")
+    token = res.data[0].get("token")
     if token:
         await _desconectar_na_uazapi(token)
 
@@ -337,12 +337,12 @@ async def logout_instancia(nome: str):
 async def excluir_instancia(nome: str):
     """Desconecta + remove do banco. Irreversível."""
     try:
-        res = supabase.table("instancias_uazapi").select("id, token").eq("nome", nome).maybeSingle().execute()
+        res = supabase.table("instancias_uazapi").select("id, token").eq("nome", nome).limit(1).execute()
         if not res.data:
             raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
 
-        token = res.data.get("token")
-        inst_id = res.data["id"]
+        token = res.data[0].get("token")
+        inst_id = res.data[0]["id"]
 
         # Desconectar no UAZAPI (falha ignorada — instância pode já estar fora)
         if token:
