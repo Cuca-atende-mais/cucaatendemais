@@ -684,7 +684,7 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S8-03 | system_config: delays configuráveis via Developer Console | [x] |
 | S8-04 | Warm-up: tabela de progressão (50→150→500→1k→4k msgs/dia por 5 semanas) | [x] |
 | S8-05 | Monitoramento: se taxa de erro > limite → parar disparo + alertar | [x] |
-| S8-06 | **[PENDENTE]** Warm-up por instância: adicionar `warmup_started_at DATE` em `instancias_uazapi`. Worker detecta mudança de telefone no evento `connection` e reseta o contador de warm-up para aquela instância específica. Impede que troca de chip em uma instância banida resete o warm-up global das demais. | [ ] |
+| S8-06 | **Warm-up por instância**: `warmup_started_at TIMESTAMPTZ` adicionado em `instancias_uazapi`. `_atualizar_status_banco` detecta troca de telefone no evento `connection` e reseta warmup automaticamente. `_calcular_limite_warmup` em `campanhas_engine.py` calcula limite diário por instância: 50 (S1) → 150 (S2) → 500 (S3) → 1500 (S4) → global (S5+). Cada instância tem seu próprio contador independente. | [x] |
 
 ---
 
