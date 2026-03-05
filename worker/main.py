@@ -333,6 +333,37 @@ async def process_webhook_payload(payload: dict, token: str):
                             logger.error(f"Erro ao pedir opt-in: {e}")
                         return # Encerra processamento até ele responder Sim
 
+            # --- S9-08: STOP Automático (leads com opt_in=True que pedem saída) ---
+            PALAVRAS_STOP_HANDLER = {
+                "stop", "parar", "sair", "cancelar", "nao quero", "não quero",
+                "remover", "descadastrar", "chega", "pare", "encerrar", "encerra",
+                "sair da lista", "tirar da lista", "me remova"
+            }
+            if not from_me and opt_in:
+                texto_stop = text_content.lower().strip()
+                if any(p in texto_stop for p in PALAVRAS_STOP_HANDLER):
+                    try:
+                        supabase.table("leads").update({"opt_in": False}).eq("id", lead_id).execute()
+                        logger.info(f"[STOP] Lead {lead_id} ({phone}) removido da lista.")
+                        UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+                        inst_result = supabase.table("instancias_uazapi").select("token") \
+                            .eq("nome", instance_name).single().execute()
+                        inst_token = inst_result.data.get("token") if inst_result.data else ""
+                        import httpx
+                        async with httpx.AsyncClient() as client:
+                            await client.post(
+                                f"{UAZAPI_URL}/message/sendText/{instance_name}",
+                                headers={"apikey": inst_token, "Content-Type": "application/json"},
+                                json={
+                                    "number": phone,
+                                    "options": {"delay": 1200, "presence": "composing"},
+                                    "textMessage": {"text": "✅ Pronto! Você foi removido da nossa lista de mensagens. Sentiremos sua falta! Se mudar de ideia, é só mandar um 'Oi'."}
+                                }
+                            )
+                    except Exception as stop_err:
+                        logger.error(f"[STOP] Erro ao processar opt_out: {stop_err}")
+                    return  # Não processa IA após STOP
+
             # --- S5-02: Routing Automático para Motor de IA ---
             # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa' e se tiver opt-in LGPD aceito
             if not from_me and conversation_status == "ativa" and opt_in:
@@ -349,17 +380,26 @@ async def process_webhook_payload(payload: dict, token: str):
                             "Content-Type": "application/json",
                             "x-internal-token": os.getenv("WEBHOOK_INTERNAL_TOKEN")
                         }
-                        # Buscar dados da instância para passar ao motor-agente
-                        inst_result = supabase.table("instancias_uazapi").select("cuca_unit_id, agente_tipo, token").eq("nome", instance_name).single().execute()
+                        # S5-02 + S9-13: Buscar dados da instância (canal_tipo, agente, unidade)
+                        inst_result = supabase.table("instancias_uazapi") \
+                            .select("cuca_unit_id, agente_tipo, token, canal_tipo") \
+                            .eq("nome", instance_name).single().execute()
                         agente_tipo = inst_result.data.get("agente_tipo", "maria") if inst_result.data else "maria"
                         unidade_cuca = inst_result.data.get("cuca_unit_id") if inst_result.data else None
                         inst_token = inst_result.data.get("token") if inst_result.data else ""
-                        
+                        canal_tipo = inst_result.data.get("canal_tipo", "") if inst_result.data else ""
+
+                        # S9-13: Canal Divulgação — persona Maria Geral, RAG global, 3 regras
+                        if canal_tipo == "Divulgação":
+                            agente_tipo = "maria_divulgacao"  # sinaliza para motor-agente usar RAG rede_cuca_global
+                            unidade_cuca = None               # sem filtro de unidade
+
                         payload_edge = {
                             "telefone": phone,
                             "instancia_uazapi": instance_name,
                             "agente_tipo": agente_tipo,
                             "unidade_cuca": unidade_cuca,
+                            "canal_tipo": canal_tipo,
                             "mensagem": text_content,
                             "midia_tipo": "text"
                         }

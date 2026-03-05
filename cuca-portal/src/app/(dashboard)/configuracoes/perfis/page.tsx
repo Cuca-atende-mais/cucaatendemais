@@ -76,6 +76,13 @@ const MODULE_GROUPS = [
         ]
     },
     {
+        category: 'Divulgação & RAG Global',
+        modules: [
+            { id: 'divulgacao', label: 'Central de Divulgação (Painel Gestor Geral + Disparar Aviso Global)' },
+            { id: 'programacao_rag_global', label: 'Base de Conhecimento — Rede CUCA (RAG Global)' },
+        ]
+    },
+    {
         category: 'Módulo Técnico',
         modules: [
             { id: 'developer', label: 'Developer Console' },
