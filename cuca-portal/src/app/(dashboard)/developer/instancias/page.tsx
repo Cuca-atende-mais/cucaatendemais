@@ -5,7 +5,7 @@ import {
     Wifi, WifiOff, RefreshCw, QrCode, LogOut, Smartphone,
     Building2, Calendar, MessageSquare, Search, Filter,
     TriangleAlert, Plus, Pencil, Trash2, Shield, X, Save,
-    Loader2, Phone, UserCheck, Info,
+    Loader2, Phone, UserCheck, Info, Megaphone,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -27,7 +27,7 @@ import { createClient } from "@/lib/supabase/client"
 import { unidadesCuca } from "@/lib/constants"
 
 /* ─── Tipos ──────────────────────────────────────── */
-type CanalTipo = "Institucional" | "Empregabilidade" | "Acesso" | "Ouvidoria" | "Reserva"
+type CanalTipo = "Institucional" | "Empregabilidade" | "Acesso" | "Ouvidoria" | "Reserva" | "Divulgação"
 type StatusType = "connected" | "disconnected" | "error"
 
 type Instancia = {
@@ -54,7 +54,7 @@ type Transbordo = {
 }
 
 /* ─── Constantes ─────────────────────────────────── */
-const CANAL_TIPOS: CanalTipo[] = ["Institucional", "Empregabilidade", "Acesso", "Ouvidoria", "Reserva"]
+const CANAL_TIPOS: CanalTipo[] = ["Institucional", "Empregabilidade", "Acesso", "Ouvidoria", "Reserva", "Divulgação"]
 
 const CANAL_COLORS: Record<string, string> = {
     Institucional: "border-sky-500/40 hover:border-sky-500/70",
@@ -62,6 +62,7 @@ const CANAL_COLORS: Record<string, string> = {
     Acesso: "border-purple-500/40 hover:border-purple-500/70",
     Ouvidoria: "border-orange-500/40 hover:border-orange-500/70",
     Reserva: "border-amber-400/40 hover:border-amber-400/70 border-dashed",
+    Divulgação: "border-yellow-500/40 hover:border-yellow-500/70",
 }
 
 const CANAL_ICONS: Record<string, React.ReactNode> = {
@@ -70,6 +71,7 @@ const CANAL_ICONS: Record<string, React.ReactNode> = {
     Acesso: <Shield className="h-4 w-4" />,
     Ouvidoria: <MessageSquare className="h-4 w-4" />,
     Reserva: <Smartphone className="h-4 w-4" />,
+    Divulgação: <Megaphone className="h-4 w-4" />,
 }
 
 const CANAL_BADGE_CLASS: Record<string, string> = {
@@ -78,6 +80,7 @@ const CANAL_BADGE_CLASS: Record<string, string> = {
     Acesso: "bg-purple-500/10 text-purple-600 border-purple-500/30",
     Ouvidoria: "bg-orange-500/10 text-orange-600 border-orange-500/30",
     Reserva: "bg-amber-500/10 text-amber-600 border-amber-400/30",
+    Divulgação: "bg-yellow-500/10 text-yellow-600 border-yellow-500/30",
 }
 
 /* ─── Página ─────────────────────────────────────── */

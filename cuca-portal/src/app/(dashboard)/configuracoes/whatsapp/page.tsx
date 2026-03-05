@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client"
 import {
     Wifi, WifiOff, RefreshCw, QrCode, Building2, Calendar,
     Smartphone, TriangleAlert, Info, Loader2, Plus, Pencil,
-    Trash2, Phone, UserCheck, Shield, X, Save, ChevronDown,
+    Trash2, Phone, UserCheck, Shield, X, Save, ChevronDown, Megaphone,
 } from "lucide-react"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -27,7 +27,7 @@ import { unidadesCuca } from "@/lib/constants"
 import { useUazapi } from "@/hooks/use-uazapi"
 
 /* ─── Tipos ──────────────────────────────────────────────── */
-type CanalTipo = "Institucional" | "Empregabilidade" | "Acesso" | "Ouvidoria" | "Reserva"
+type CanalTipo = "Institucional" | "Empregabilidade" | "Acesso" | "Ouvidoria" | "Reserva" | "Divulgação"
 
 type Instancia = {
     id: string
@@ -59,7 +59,7 @@ type UserProfile = {
 
 /* ─── Constantes ─────────────────────────────────────────── */
 const CANAL_TIPOS_GERENTE: CanalTipo[] = ["Institucional", "Empregabilidade"]
-const CANAL_TIPOS_ADMIN: CanalTipo[] = ["Institucional", "Empregabilidade", "Acesso", "Ouvidoria", "Reserva"]
+const CANAL_TIPOS_ADMIN: CanalTipo[] = ["Institucional", "Empregabilidade", "Acesso", "Ouvidoria", "Reserva", "Divulgação"]
 
 const CANAL_ICONS: Record<string, React.ReactNode> = {
     Institucional: <Calendar className="h-5 w-5" />,
@@ -67,6 +67,7 @@ const CANAL_ICONS: Record<string, React.ReactNode> = {
     Acesso: <Shield className="h-5 w-5" />,
     Ouvidoria: <Phone className="h-5 w-5" />,
     Reserva: <Smartphone className="h-5 w-5" />,
+    Divulgação: <Megaphone className="h-5 w-5" />,
 }
 
 const CANAL_DESC: Record<string, string> = {
@@ -75,6 +76,7 @@ const CANAL_DESC: Record<string, string> = {
     Acesso: "Agendamento de espaços (GLOBAL)",
     Ouvidoria: "Críticas e sugestões (GLOBAL – Super Admin)",
     Reserva: "Chip em standby anti-ban",
+    Divulgação: "Aviso mensal global para toda a Rede — Gestor Geral",
 }
 
 /* ─── Componente Principal ───────────────────────────────── */

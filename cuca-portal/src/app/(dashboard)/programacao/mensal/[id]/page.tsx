@@ -7,7 +7,7 @@ import { CampanhaMensal } from "@/lib/types/database"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { ArrowLeft, Calendar, CheckCircle2, Clock, MapPin, Search, Send, FileText, Tag, Loader2 } from "lucide-react"
+import { ArrowLeft, Calendar, CheckCircle2, Clock, MapPin, Search, FileText, Tag, Loader2, ThumbsUp } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
@@ -28,7 +28,7 @@ export default function CampanhaMensalPage() {
     const [campanha, setCampanha] = useState<CampanhaMensal | null>(null)
     const [atividades, setAtividades] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
-    const [isDisparando, setIsDisparando] = useState(false)
+    const [isAprovando, setIsAprovando] = useState(false)
     const [searchTerm, setSearchTerm] = useState("")
     const [categoriaFilter, setCategoriaFilter] = useState("all")
     const [categoriasUnicas, setCategoriasUnicas] = useState<string[]>([])
@@ -81,27 +81,23 @@ export default function CampanhaMensalPage() {
         }
     }
 
-    const handleDispararWhatsApp = async () => {
-        if (!campanha) return
-
-        setIsDisparando(true)
+    // S9-00: Aprovação sem disparo — Gestor Geral dispara via painel /divulgacao
+    const handleAprovarProgramacao = async () => {
+        if (!campanha || campanha.status === "aprovado") return
+        setIsAprovando(true)
         try {
-            const res = await fetch("/api/disparos/mensal", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanhaId: campanha.id })
-            })
-
-            if (!res.ok) {
-                const err = await res.json()
-                throw new Error(err.error || "Falha na API de envio")
-            }
-
-            toast.success("Disparo criado com sucesso e enviado para fila da UAZAPI!")
+            const supabase = createClient()
+            const { error } = await supabase
+                .from("campanhas_mensais")
+                .update({ status: "aprovado" })
+                .eq("id", campanha.id)
+            if (error) throw error
+            setCampanha({ ...campanha, status: "aprovado" })
+            toast.success("Programação aprovada! O Gestor Geral poderá disparar o aviso para toda a Rede.")
         } catch (error: any) {
-            toast.error("Erro no disparo: " + error.message)
+            toast.error("Erro ao aprovar: " + error.message)
         } finally {
-            setIsDisparando(false)
+            setIsAprovando(false)
         }
     }
 
@@ -153,14 +149,22 @@ export default function CampanhaMensalPage() {
                     </div>
                 </div>
 
-                <Button
-                    className="bg-green-600 hover:bg-green-700 font-bold"
-                    onClick={handleDispararWhatsApp}
-                    disabled={isDisparando}
-                >
-                    {isDisparando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                    Aprovar Campanha e Disparar WhatsApp
-                </Button>
+                {/* Botão de Aprovação — sem disparo automático */}
+                {campanha.status === "aprovado" ? (
+                    <Badge className="bg-green-100 text-green-800 border-green-300 px-4 py-2 text-sm font-semibold flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Programação Aprovada
+                    </Badge>
+                ) : (
+                    <Button
+                        className="bg-green-600 hover:bg-green-700 font-bold"
+                        onClick={handleAprovarProgramacao}
+                        disabled={isAprovando}
+                    >
+                        {isAprovando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ThumbsUp className="mr-2 h-4 w-4" />}
+                        Aprovar Programação
+                    </Button>
+                )}
             </div>
 
             {/* View do Data Table (React-like structure natively implemented via component) */}

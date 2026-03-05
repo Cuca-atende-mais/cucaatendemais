@@ -229,23 +229,228 @@ async def campanhas_loop():
             daily_limit = await get_config("anti_ban_daily_limit", 500)
             error_threshold = await get_config("anti_ban_error_threshold", 10)
 
-            # 1. Programação Pontual (aprovada pelo Gerente da Unidade)
+            # 1. Programação Pontual (aprovada pelo Gerente da Unidade → dispara via Institucional)
             res_pontuais = await asyncio.to_thread(_query_db_sync, "eventos_pontuais", "aprovado")
             for evento in (res_pontuais.data or []):
                 await processar_item_disparo(evento, "eventos_pontuais", delay_min, delay_max, daily_limit, error_threshold)
 
-            # 2. Programação Mensal (aprovada pela Comissão/Excel)
-            res_mensais = await asyncio.to_thread(_query_db_sync, "campanhas_mensais", "aprovado")
-            for mensal in (res_mensais.data or []):
-                await processar_item_disparo(mensal, "campanhas_mensais", delay_min, delay_max, daily_limit, error_threshold)
-
-            # 3. Ouvidoria (aprovada pelo Super Admin CUCA)
+            # 2. Ouvidoria (aprovada pelo Super Admin CUCA)
             res_ouvidoria = await asyncio.to_thread(_query_db_sync, "ouvidoria_eventos", "aprovado")
             for ouv in (res_ouvidoria.data or []):
                 await processar_item_disparo(ouv, "ouvidoria_eventos", delay_min, delay_max, daily_limit, error_threshold)
+
+            # 3. Divulgação Global (S9-05): acionado manualmente pelo Gestor Geral
+            #    Campanha mensal NÃO é mais processada automaticamente — passou para o canal Divulgação
+            await processar_disparos_divulgacao(delay_min, delay_max, daily_limit, error_threshold)
 
         except Exception as e:
             logger.error(f"Erro no loop de disparos: {str(e)}")
 
         # Aguarda 30 segundos antes da próxima verificação
         await asyncio.sleep(30)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S9-05: Motor de Disparo Global via canal Divulgação
+# ─────────────────────────────────────────────────────────────────────────────
+
+PALAVRAS_STOP = {"stop", "parar", "sair", "cancelar", "nao quero", "não quero",
+                 "remover", "descadastrar", "descadastre", "chega", "pare"}
+
+SPINTAX_SAUDACOES = [
+    "Olá, {nome}!", "Oi, {nome}!", "Tudo bem, {nome}?",
+    "Bom dia, {nome}!", "Boa tarde, {nome}!", "Boa noite, {nome}!",
+    "Olá {nome}, tudo certo?",
+]
+
+LIMITE_SESSAO_HORA = 80      # S9-07: max msgs por hora
+PAUSA_SESSAO_SEGUNDOS = 600  # S9-07: pausa de 10min entre sessões
+STOP_ALERTA_THRESHOLD = 5    # S9-09: % de STOP para pausar sessão
+STOP_CHECK_INTERVALO = 50    # S9-09: checar a cada N mensagens
+
+
+def _aplicar_spintax(template: str, nome: str) -> str:
+    """S9-06: Aplica saudação aleatória e substitui {nome}."""
+    saudacao = random.choice(SPINTAX_SAUDACOES).format(nome=nome)
+    # Remove a primeira linha se não for saudação, insere saudação no início
+    linhas = template.strip().split("\n")
+    # Se as primeiras palavras já são uma saudação, substitui; senão, prepend
+    primeira = linhas[0].lower() if linhas else ""
+    if any(s in primeira for s in ["olá", "oi", "tudo", "bom dia", "boa tarde", "boa noite"]):
+        linhas[0] = saudacao
+    else:
+        linhas.insert(0, saudacao)
+    return "\n".join(linhas)
+
+
+def _query_leads_divulgacao_sync():
+    """S9-10: Leads opt-in com interação nos últimos 60 dias (sem filtro de unidade)."""
+    from datetime import datetime, timezone, timedelta
+    corte = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+    return (
+        supabase.table("leads")
+        .select("telefone, nome")
+        .eq("opt_in", True)
+        .eq("bloqueado", False)
+        .gte("last_interaction_at", corte)
+        .execute()
+    )
+
+
+def _query_instancia_divulgacao_sync():
+    """Busca instância UAZAPI do tipo Divulgação ativa."""
+    return (
+        supabase.table("instancias_uazapi")
+        .select("nome, token, warmup_started_at")
+        .eq("canal_tipo", "Divulgação")
+        .eq("ativa", True)
+        .eq("reserva", False)
+        .limit(1)
+        .execute()
+    )
+
+
+def _marcar_opt_out_sync(telefone: str):
+    """S9-08: Marca lead como opt_in=False após STOP."""
+    try:
+        supabase.table("leads").update({"opt_in": False}).eq("telefone", telefone).execute()
+    except Exception as e:
+        logger.warning(f"Erro ao marcar opt_out para {telefone}: {e}")
+
+
+def _update_metricas_sync(disparo_id: str, enviados: int, erros: int, stop: int, status: str):
+    """Atualiza métricas do disparo em progresso."""
+    try:
+        supabase.table("disparos_divulgacao").update({
+            "total_enviados": enviados,
+            "total_erros": erros,
+            "total_stop": stop,
+            "status": status,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", disparo_id).execute()
+    except Exception as e:
+        logger.warning(f"Erro ao atualizar métricas do disparo {disparo_id}: {e}")
+
+
+async def processar_disparos_divulgacao(delay_min: int, delay_max: int, daily_limit: int, error_threshold: int):
+    """S9-05: Processa fila de disparos globais da tabela disparos_divulgacao."""
+    # Buscar disparo pendente
+    res = await asyncio.to_thread(
+        lambda: supabase.table("disparos_divulgacao")
+        .select("*")
+        .eq("status", "pendente")
+        .order("created_at", desc=False)
+        .limit(1)
+        .execute()
+    )
+    if not res.data:
+        return  # Nada a processar
+
+    disparo = res.data[0]
+    disparo_id = disparo["id"]
+    template = disparo.get("mensagem_template", "")
+    inst_nome_salvo = disparo.get("instancia_uazapi")
+
+    logger.info(f"[Divulgação] Iniciando disparo global {disparo_id}")
+
+    # Marcar como em andamento
+    await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "em_andamento")
+
+    # Buscar instância Divulgação
+    inst_res = await asyncio.to_thread(_query_instancia_divulgacao_sync)
+    if not inst_res.data:
+        logger.error(f"[Divulgação] Nenhuma instância Divulgação ativa. Pausando disparo {disparo_id}.")
+        await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "pausado")
+        return
+
+    instancia = inst_res.data[0]
+    inst_nome = instancia["nome"]
+    inst_token = instancia["token"]
+    warmup_started = instancia.get("warmup_started_at")
+
+    # Limite diário (warmup da instância Divulgação)
+    inst_daily_limit = _calcular_limite_warmup(warmup_started, daily_limit)
+    logger.info(f"[Divulgação] Instância: {inst_nome} | Limite: {inst_daily_limit}/dia")
+
+    # Buscar leads (filtro 60 dias)
+    leads_res = await asyncio.to_thread(_query_leads_divulgacao_sync)
+    leads = leads_res.data or []
+    total = min(len(leads), inst_daily_limit)
+
+    if total == 0:
+        logger.info(f"[Divulgação] Sem leads elegíveis. Concluindo.")
+        await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "concluido")
+        return
+
+    logger.info(f"[Divulgação] {len(leads)} leads elegíveis → enviando {total}")
+
+    enviados = 0
+    erros = 0
+    total_stop = 0
+    msgs_na_sessao = 0
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for i, lead in enumerate(leads[:total]):
+                # S9-07: Pausa entre sessões (80/hora)
+                if msgs_na_sessao >= LIMITE_SESSAO_HORA:
+                    logger.info(f"[Divulgação] Sessão de {LIMITE_SESSAO_HORA} msgs concluída. Pausando {PAUSA_SESSAO_SEGUNDOS}s...")
+                    await asyncio.to_thread(_update_metricas_sync, disparo_id, enviados, erros, total_stop, "em_andamento")
+                    await asyncio.sleep(PAUSA_SESSAO_SEGUNDOS)
+                    msgs_na_sessao = 0
+
+                # S9-09: Alerta de saúde a cada STOP_CHECK_INTERVALO msgs
+                if (i + 1) % STOP_CHECK_INTERVALO == 0 and (i + 1) > 0:
+                    taxa_stop = (total_stop / (i + 1)) * 100
+                    if taxa_stop > STOP_ALERTA_THRESHOLD:
+                        logger.error(f"[Divulgação] ALERTA: {taxa_stop:.1f}% STOP em {i+1} msgs. Pausando sessão!")
+                        await asyncio.to_thread(_update_metricas_sync, disparo_id, enviados, erros, total_stop, "pausado")
+                        return
+
+                # Delay anti-ban aleatório
+                sleep_s = random.uniform(delay_min / 1000.0, delay_max / 1000.0)
+                await asyncio.sleep(sleep_s)
+
+                nome = lead.get("nome") or "jovem"
+                telefone = lead.get("telefone", "")
+                if not telefone:
+                    continue
+
+                # S9-06: Spintax — mensagem única por lead
+                texto = _aplicar_spintax(template, nome)
+
+                try:
+                    resp = await client.post(
+                        f"{UAZAPI_URL}/message/sendText/{inst_nome}",
+                        headers={"apikey": inst_token, "Content-Type": "application/json"},
+                        json={
+                            "number": telefone,
+                            "options": {"delay": 1200, "presence": "composing"},
+                            "textMessage": {"text": texto}
+                        }
+                    )
+                    if resp.status_code == 200:
+                        enviados += 1
+                        msgs_na_sessao += 1
+                    else:
+                        erros += 1
+                        logger.warning(f"[Divulgação] HTTP {resp.status_code} para {telefone}")
+
+                except Exception as req_err:
+                    erros += 1
+                    logger.error(f"[Divulgação] Erro request: {req_err}")
+
+                # Anti-ban: checar taxa de erro técnico
+                if (i + 1) > 5:
+                    taxa_erro = (erros / (i + 1)) * 100
+                    if taxa_erro > error_threshold:
+                        logger.error(f"[Divulgação] Taxa de erro {taxa_erro:.1f}% > {error_threshold}%. Pausando!")
+                        await asyncio.to_thread(_update_metricas_sync, disparo_id, enviados, erros, total_stop, "pausado")
+                        return
+
+        await asyncio.to_thread(_update_metricas_sync, disparo_id, enviados, erros, total_stop, "concluido")
+        logger.info(f"[Divulgação] Disparo {disparo_id} concluído. Enviados: {enviados} | Erros: {erros} | STOP: {total_stop}")
+
+    except Exception as exc:
+        logger.error(f"[Divulgação] Falha fatal: {exc}")
+        await asyncio.to_thread(_update_metricas_sync, disparo_id, enviados, erros, total_stop, "erro")

@@ -340,7 +340,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                         mes: mesInt,
                         ano: anoAtual,
                         total_atividades: atividadesToInsert.length,
-                        status: "aprovado" // Fluxo direto (wipe n replace)
+                        status: "pendente" // S9-00: pendente até Gerente aprovar explicitamente
                     })
                     .select("id")
                     .single()

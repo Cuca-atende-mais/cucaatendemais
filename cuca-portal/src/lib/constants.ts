@@ -62,6 +62,12 @@ export const menuItems = [
         ],
     },
     {
+        title: "Divulgação",
+        url: "/divulgacao",
+        icon: "Radio",
+        permission: { recurso: "divulgacao", acao: "read" },
+    },
+    {
         title: "Configurações",
         url: "/configuracoes",
         icon: "Settings",

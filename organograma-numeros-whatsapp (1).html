@@ -162,6 +162,10 @@
         .macro-box.ouvidoria {
             border-color: #F4845F;
         }
+
+        .macro-box.divulgacao {
+            border-color: #F9C74F;
+        }
         
         .macro-icon {
             font-size: 2.5rem;
@@ -258,10 +262,19 @@
         .number-box.ouvidoria {
             border-color: rgba(244, 132, 95, 0.6);
         }
-        
+
         .number-box.ouvidoria:hover {
             border-color: #F4845F;
             background: rgba(244, 132, 95, 0.1);
+        }
+
+        .number-box.divulgacao {
+            border-color: rgba(249, 199, 79, 0.6);
+        }
+
+        .number-box.divulgacao:hover {
+            border-color: #F9C74F;
+            background: rgba(249, 199, 79, 0.1);
         }
         
         .number-badge {
@@ -291,6 +304,11 @@
         .number-badge.ouvidoria {
             background: rgba(244, 132, 95, 0.25);
             color: #F4845F;
+        }
+
+        .number-badge.divulgacao {
+            background: rgba(249, 199, 79, 0.25);
+            color: #F9C74F;
         }
         
         .number-box .name {
@@ -367,6 +385,11 @@
             background: rgba(244, 132, 95, 0.3);
             border-color: #F4845F;
         }
+
+        .legend-color.divulgacao {
+            background: rgba(249, 199, 79, 0.3);
+            border-color: #F9C74F;
+        }
         
         .legend-text {
             font-size: 0.85rem;
@@ -424,7 +447,7 @@
             <div class="level-1">
                 <div class="root-box">
                     <h2>📱 CUCA Atende+</h2>
-                    <p>12 Números de WhatsApp</p>
+                    <p>13 Números de WhatsApp</p>
                 </div>
             </div>
             
@@ -440,7 +463,7 @@
                         <div class="macro-icon">🏢</div>
                         <h3>Institucional</h3>
                         <div class="count">5 números</div>
-                        <div class="description">Informação e programação</div>
+                        <div class="description">Informações gerais sobre a rede CUCA (passivo)</div>
                     </div>
                     
                     <!-- Números Institucionais -->
@@ -551,7 +574,7 @@
                         <div class="count">1 número</div>
                         <div class="description">Escuta ativa</div>
                     </div>
-                    
+
                     <!-- Número Ouvidoria -->
                     <div class="numbers-container">
                         <div class="vertical-line-numbers"></div>
@@ -559,6 +582,29 @@
                             <div class="number-box ouvidoria">
                                 <div class="number-badge ouvidoria">#12</div>
                                 <div class="name">Ouvidoria Jovem</div>
+                                <div class="territory">Toda a Rede</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DIVULGAÇÃO -->
+                <div class="macro-box-wrapper">
+                    <div class="vertical-line"></div>
+                    <div class="macro-box divulgacao">
+                        <div class="macro-icon">📢</div>
+                        <h3>Divulgação</h3>
+                        <div class="count">1 número</div>
+                        <div class="description">Notícias, eventos e malote (ativo)</div>
+                    </div>
+
+                    <!-- Número Divulgação -->
+                    <div class="numbers-container">
+                        <div class="vertical-line-numbers"></div>
+                        <div class="numbers-group">
+                            <div class="number-box divulgacao">
+                                <div class="number-badge divulgacao">#13</div>
+                                <div class="name">Divulgação CUCA</div>
                                 <div class="territory">Toda a Rede</div>
                             </div>
                         </div>
@@ -599,6 +645,13 @@
                         <span>Críticas, sugestões e escuta ativa</span>
                     </div>
                 </div>
+                <div class="legend-item">
+                    <div class="legend-color divulgacao"></div>
+                    <div class="legend-text">
+                        <strong>Divulgação</strong>
+                        <span>Notícias, eventos e malote — envio ativo para toda a rede</span>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -606,7 +659,7 @@
         <div class="info-box">
             <p><strong>CUCA Atende+ — Fevereiro 2026</strong></p>
             <p>Rede CUCA — Secretaria de Juventude de Fortaleza</p>
-            <p style="margin-top: 12px; font-size: 0.75rem;">📊 Arquitetura distribuída com 12 números para garantir resiliência e compliance</p>
+            <p style="margin-top: 12px; font-size: 0.75rem;">📊 Arquitetura distribuída com 13 números para garantir resiliência e compliance</p>
         </div>
     </div>
 </body>

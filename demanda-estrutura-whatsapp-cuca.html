@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demanda e Estrutura WhatsApp — CUCA Atende+</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0A1929 0%, #1A3D5C 100%);
+            color: #E8F1F8;
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* ── HEADER ── */
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 12px;
+            background: linear-gradient(135deg, #00B4D8, #06D6A0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .header p {
+            font-size: 1.1rem;
+            color: #94A3B8;
+        }
+
+        /* ── SECTION TITLE ── */
+        .section-title {
+            font-size: 1.6rem;
+            font-weight: 800;
+            margin-bottom: 24px;
+            padding-bottom: 14px;
+            border-bottom: 3px solid rgba(0, 180, 216, 0.4);
+        }
+
+        /* ════════════════════════════════════
+           SEÇÃO DE DEMANDA
+        ════════════════════════════════════ */
+        .demanda-section {
+            background: rgba(10, 25, 41, 0.85);
+            border: 2px solid rgba(251, 191, 36, 0.5);
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 60px;
+            position: relative;
+            overflow: hidden;
+        }
+        .demanda-section::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(ellipse at top left, rgba(251,191,36,0.06) 0%, transparent 60%);
+            pointer-events: none;
+        }
+
+        .demanda-tag {
+            display: inline-block;
+            background: rgba(251,191,36,0.15);
+            color: #FCD34D;
+            border: 1px solid rgba(251,191,36,0.4);
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 5px 14px;
+            margin-bottom: 18px;
+        }
+
+        .demanda-section h2 {
+            font-size: 1.9rem;
+            font-weight: 800;
+            margin-bottom: 10px;
+            color: #FCD34D;
+        }
+        .demanda-section .demanda-subtitle {
+            font-size: 1rem;
+            color: #94A3B8;
+            margin-bottom: 32px;
+            max-width: 700px;
+        }
+
+        /* Cards de demanda */
+        .demanda-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .demanda-card {
+            border-radius: 16px;
+            padding: 32px;
+            position: relative;
+            overflow: hidden;
+        }
+        .demanda-card.numeros {
+            background: rgba(0, 180, 216, 0.08);
+            border: 2px solid rgba(0, 180, 216, 0.4);
+        }
+        .demanda-card.reserva {
+            background: rgba(251, 191, 36, 0.07);
+            border: 2px solid rgba(251, 191, 36, 0.4);
+        }
+        .demanda-card.aparelhos {
+            background: rgba(6, 214, 160, 0.07);
+            border: 2px solid rgba(6, 214, 160, 0.4);
+        }
+
+        .demanda-card .card-icon {
+            font-size: 2.2rem;
+            margin-bottom: 16px;
+            display: block;
+        }
+        .demanda-card .big-number {
+            font-size: 4rem;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 6px;
+        }
+        .demanda-card.numeros  .big-number { color: #00B4D8; }
+        .demanda-card.reserva  .big-number { color: #FCD34D; }
+        .demanda-card.aparelhos .big-number { color: #06D6A0; }
+
+        .demanda-card .card-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            color: #E8F1F8;
+        }
+        .demanda-card .card-desc {
+            font-size: 0.88rem;
+            color: #94A3B8;
+            line-height: 1.7;
+        }
+
+        /* Breakdown 12+8=20 */
+        .breakdown {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+        .breakdown-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+        .breakdown-pill.ativos {
+            background: rgba(0,180,216,0.15);
+            border: 1px solid rgba(0,180,216,0.35);
+            color: #48CAE4;
+        }
+        .breakdown-pill.reserva {
+            background: rgba(251,191,36,0.12);
+            border: 1px solid rgba(251,191,36,0.35);
+            color: #FCD34D;
+        }
+        .breakdown-plus {
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: #94A3B8;
+        }
+        .breakdown-equals {
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: #94A3B8;
+        }
+        .breakdown-total {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 800;
+            background: rgba(251,191,36,0.2);
+            border: 1.5px solid rgba(251,191,36,0.5);
+            color: #FCD34D;
+        }
+
+        /* Explicação ban */
+        .demanda-alert {
+            background: rgba(251, 191, 36, 0.06);
+            border: 1.5px solid rgba(251, 191, 36, 0.3);
+            border-radius: 12px;
+            padding: 20px 24px;
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+        }
+        .demanda-alert .alert-icon {
+            font-size: 1.6rem;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .demanda-alert .alert-text {
+            font-size: 0.9rem;
+            color: #CBD5E1;
+            line-height: 1.7;
+        }
+        .demanda-alert .alert-text strong {
+            color: #FCD34D;
+        }
+
+        /* ════════════════════════════════════
+           ORGANOGRAMA
+        ════════════════════════════════════ */
+        .organograma-section {
+            margin-bottom: 60px;
+            overflow-x: auto;
+        }
+        .org-chart {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+            min-width: 900px;
+        }
+        .level-1 { margin-bottom: 0; }
+        .root-box {
+            background: linear-gradient(135deg, #00B4D8, #06D6A0);
+            color: #0A1929;
+            padding: 28px 50px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0, 180, 216, 0.4);
+        }
+        .root-box h2 { font-size: 1.7rem; font-weight: 800; margin-bottom: 6px; }
+        .root-box p  { font-size: 0.95rem; font-weight: 600; opacity: 0.9; }
+
+        .vertical-line-main {
+            width: 4px;
+            height: 50px;
+            background: linear-gradient(180deg, #00B4D8, rgba(0,180,216,0.3));
+            margin: 0 auto;
+        }
+        .level-2 {
+            display: flex;
+            justify-content: center;
+            gap: 32px;
+            position: relative;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .level-2::before {
+            content: '';
+            position: absolute;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 85%;
+            height: 4px;
+            background: linear-gradient(90deg,
+                transparent 0%,
+                rgba(0,180,216,0.3) 8%,
+                rgba(0,180,216,0.6) 50%,
+                rgba(0,180,216,0.3) 92%,
+                transparent 100%);
+        }
+        .macro-box-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .vertical-line {
+            width: 3px;
+            height: 25px;
+            background: linear-gradient(180deg, rgba(0,180,216,0.6), rgba(0,180,216,0.3));
+        }
+        .macro-box {
+            padding: 22px 28px;
+            border-radius: 14px;
+            text-align: center;
+            border: 3px solid;
+            min-width: 220px;
+            background: rgba(15, 43, 70, 0.9);
+            backdrop-filter: blur(10px);
+        }
+        .macro-box.institucional  { border-color: #00B4D8; }
+        .macro-box.empregabilidade{ border-color: #06D6A0; }
+        .macro-box.acesso         { border-color: #7B2CBF; }
+        .macro-box.ouvidoria      { border-color: #F4845F; }
+
+        .macro-box .macro-icon    { font-size: 2.2rem; margin-bottom: 10px; }
+        .macro-box h3             { font-size: 1.2rem; font-weight: 700; margin-bottom: 4px; }
+        .macro-box .count         { font-size: 0.85rem; color: #94A3B8; font-weight: 600; margin-bottom: 4px; }
+        .macro-box .macro-desc    { font-size: 0.72rem; color: #94A3B8; margin-top: 6px; font-style: italic; }
+
+        .numbers-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 16px;
+            gap: 12px;
+        }
+        .vertical-line-numbers {
+            width: 3px;
+            height: 32px;
+            background: linear-gradient(180deg, rgba(0,180,216,0.3), rgba(0,180,216,0.1));
+        }
+        .numbers-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 280px;
+        }
+        .number-box {
+            background: rgba(15,43,70,0.8);
+            border: 2px solid;
+            border-radius: 10px;
+            padding: 14px 16px;
+            text-align: center;
+            min-width: 120px;
+            transition: all 0.3s ease;
+        }
+        .number-box:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(0,0,0,0.4); }
+        .number-box.institucional   { border-color: rgba(0,180,216,0.55); }
+        .number-box.empregabilidade { border-color: rgba(6,214,160,0.55);  }
+        .number-box.acesso          { border-color: rgba(123,44,191,0.55); }
+        .number-box.ouvidoria       { border-color: rgba(244,132,95,0.55); }
+        .number-box.institucional:hover   { border-color:#00B4D8; background:rgba(0,180,216,0.1);   }
+        .number-box.empregabilidade:hover { border-color:#06D6A0; background:rgba(6,214,160,0.1);   }
+        .number-box.acesso:hover          { border-color:#7B2CBF; background:rgba(123,44,191,0.1);  }
+        .number-box.ouvidoria:hover       { border-color:#F4845F; background:rgba(244,132,95,0.1);  }
+
+        .number-badge {
+            display: inline-block;
+            padding: 3px 9px;
+            border-radius: 5px;
+            font-size: 0.68rem;
+            font-weight: 700;
+            margin-bottom: 7px;
+        }
+        .number-badge.institucional   { background:rgba(0,180,216,0.22);  color:#48CAE4; }
+        .number-badge.empregabilidade { background:rgba(6,214,160,0.22);  color:#06D6A0; }
+        .number-badge.acesso          { background:rgba(123,44,191,0.22); color:#C77DFF; }
+        .number-badge.ouvidoria       { background:rgba(244,132,95,0.22); color:#F4845F; }
+
+        .number-box .name      { font-size: 0.8rem; font-weight: 700; color:#E8F1F8; margin-bottom:3px; }
+        .number-box .territory { font-size: 0.68rem; color:#94A3B8; font-style:italic; }
+
+        /* ════════════════════════════════════
+           MAPA VISUAL (detalhes por macro área)
+        ════════════════════════════════════ */
+        .mapa-section { margin-bottom: 60px; }
+
+        .macro-area { margin-bottom: 44px; }
+
+        .macro-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+            padding-bottom: 14px;
+            border-bottom: 3px solid;
+        }
+        .macro-header.institucional   { border-bottom-color: #00B4D8; }
+        .macro-header.empregabilidade { border-bottom-color: #06D6A0; }
+        .macro-header.acesso          { border-bottom-color: #7B2CBF; }
+        .macro-header.ouvidoria       { border-bottom-color: #F4845F; }
+
+        .macro-icon-large {
+            font-size: 2.4rem;
+            width: 66px; height: 66px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 14px;
+        }
+        .macro-icon-large.institucional   { background: rgba(0,180,216,0.15); }
+        .macro-icon-large.empregabilidade { background: rgba(6,214,160,0.15); }
+        .macro-icon-large.acesso          { background: rgba(123,44,191,0.15); }
+        .macro-icon-large.ouvidoria       { background: rgba(244,132,95,0.15); }
+
+        .macro-info h2   { font-size: 1.6rem; font-weight: 700; margin-bottom: 3px; }
+        .macro-info .count{ font-size: 0.88rem; color: #94A3B8; font-weight: 600; }
+
+        .description-block {
+            background: rgba(15,43,70,0.4);
+            border-radius: 12px;
+            padding: 18px 22px;
+            margin-bottom: 20px;
+            border-left: 4px solid;
+        }
+        .description-block.institucional   { border-left-color: #00B4D8; }
+        .description-block.empregabilidade { border-left-color: #06D6A0; }
+        .description-block.acesso          { border-left-color: #7B2CBF; }
+        .description-block.ouvidoria       { border-left-color: #F4845F; }
+        .description-block h3 { font-size: 0.95rem; font-weight: 700; margin-bottom: 10px; color: #00B4D8; }
+        .description-block ul { list-style: none; padding: 0; }
+        .description-block li {
+            padding: 5px 0 5px 18px;
+            position: relative;
+            font-size: 0.88rem;
+            line-height: 1.6;
+            color: #94A3B8;
+        }
+        .description-block li::before { content:'▸'; position:absolute; left:0; color:#00B4D8; font-weight:bold; }
+
+        .numbers-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 14px;
+        }
+        .number-card {
+            background: rgba(15,43,70,0.6);
+            border: 2px solid;
+            border-radius: 12px;
+            padding: 22px;
+            transition: all 0.3s ease;
+        }
+        .number-card:hover { transform: translateY(-4px); box-shadow: 0 8px 28px rgba(0,0,0,0.3); }
+        .number-card.institucional   { border-color: rgba(0,180,216,0.35); }
+        .number-card.empregabilidade { border-color: rgba(6,214,160,0.35);  }
+        .number-card.acesso          { border-color: rgba(123,44,191,0.35); }
+        .number-card.ouvidoria       { border-color: rgba(244,132,95,0.35); }
+        .number-card.institucional:hover   { border-color:rgba(0,180,216,0.8);   background:rgba(0,180,216,0.07);   }
+        .number-card.empregabilidade:hover { border-color:rgba(6,214,160,0.8);   background:rgba(6,214,160,0.07);   }
+        .number-card.acesso:hover          { border-color:rgba(123,44,191,0.8);  background:rgba(123,44,191,0.07);  }
+        .number-card.ouvidoria:hover       { border-color:rgba(244,132,95,0.8);  background:rgba(244,132,95,0.07);  }
+
+        .number-card-badge {
+            display: inline-block;
+            padding: 5px 11px;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 10px;
+        }
+        .number-card-badge.institucional   { background:rgba(0,180,216,0.18);  color:#48CAE4; }
+        .number-card-badge.empregabilidade { background:rgba(6,214,160,0.18);  color:#06D6A0; }
+        .number-card-badge.acesso          { background:rgba(123,44,191,0.18); color:#C77DFF; }
+        .number-card-badge.ouvidoria       { background:rgba(244,132,95,0.18); color:#F4845F; }
+
+        .number-card h3        { font-size: 1.1rem; font-weight: 700; margin-bottom: 6px; color:#E8F1F8; }
+        .number-card .territory{ font-size: 0.82rem; color:#94A3B8; font-style:italic; }
+
+        /* ── LEGENDA ── */
+        .legend {
+            background: rgba(15,43,70,0.6);
+            border: 1px solid rgba(0,180,216,0.2);
+            border-radius: 16px;
+            padding: 28px;
+            margin-bottom: 50px;
+        }
+        .legend h3 { font-size: 1.2rem; font-weight: 700; margin-bottom: 18px; text-align: center; }
+        .legend-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px,1fr));
+            gap: 16px;
+        }
+        .legend-item {
+            display: flex; align-items: center; gap: 12px;
+            padding: 14px; background: rgba(0,0,0,0.2); border-radius: 10px;
+        }
+        .legend-color {
+            width: 36px; height: 36px; border-radius: 7px; flex-shrink: 0; border: 2px solid;
+        }
+        .legend-color.institucional   { background:rgba(0,180,216,0.28);  border-color:#00B4D8; }
+        .legend-color.empregabilidade { background:rgba(6,214,160,0.28);  border-color:#06D6A0; }
+        .legend-color.acesso          { background:rgba(123,44,191,0.28); border-color:#7B2CBF; }
+        .legend-color.ouvidoria       { background:rgba(244,132,95,0.28); border-color:#F4845F; }
+        .legend-text strong { display:block; font-weight:700; margin-bottom:2px; }
+        .legend-text span   { font-size:0.82rem; color:#94A3B8; }
+
+        /* ── FOOTER ── */
+        .footer {
+            text-align: center;
+            padding: 28px;
+            background: rgba(0,180,216,0.04);
+            border-radius: 16px;
+            border: 1px dashed rgba(0,180,216,0.3);
+        }
+        .footer p { font-size: 0.88rem; color: #94A3B8; margin: 4px 0; }
+
+        /* ── DIVIDER ── */
+        .section-divider {
+            border: none;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(0,180,216,0.3), transparent);
+            margin: 60px 0;
+        }
+
+        /* ── RESPONSIVE ── */
+        @media (max-width: 768px) {
+            .header h1 { font-size: 1.8rem; }
+            .demanda-section { padding: 28px 20px; }
+            .demanda-section h2 { font-size: 1.5rem; }
+            .numbers-grid { grid-template-columns: 1fr; }
+            .breakdown { flex-direction: column; align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <!-- ═══════════════════════════════
+         HEADER
+    ═══════════════════════════════ -->
+    <div class="header">
+        <h1>📱 CUCA Atende+ — Estrutura de Canais WhatsApp</h1>
+        <p>Demanda, organograma e mapa detalhado dos números — Rede CUCA · Secretaria de Juventude de Fortaleza</p>
+    </div>
+
+    <!-- ═══════════════════════════════
+         SEÇÃO DE DEMANDA
+    ═══════════════════════════════ -->
+    <div class="demanda-section">
+        <div class="demanda-tag">📋 Demanda à Rede CUCA</div>
+        <h2>O que precisamos que a Rede CUCA providencie</h2>
+        <p class="demanda-subtitle">
+            Para que o CUCA Atende+ funcione com segurança e resiliência, a Rede CUCA precisará adquirir
+            números de WhatsApp e disponibilizar aparelhos físicos dedicados. Veja abaixo o detalhamento.
+        </p>
+
+        <div class="demanda-cards">
+            <!-- Card: Total de números -->
+            <div class="demanda-card numeros">
+                <span class="card-icon">📲</span>
+                <div class="big-number">20</div>
+                <div class="card-title">Números de WhatsApp a adquirir</div>
+                <p class="card-desc">
+                    A Rede CUCA deverá comprar <strong style="color:#48CAE4">20 chips/números</strong> no total.
+                    Desses, 12 serão imediatamente ativados no sistema — 8 ficam em reserva estratégica.
+                </p>
+                <div class="breakdown">
+                    <div class="breakdown-pill ativos">✅ 12 números ativos</div>
+                    <span class="breakdown-plus">+</span>
+                    <div class="breakdown-pill reserva">🛡️ 8 números reserva</div>
+                    <span class="breakdown-equals">=</span>
+                    <div class="breakdown-total">20 no total</div>
+                </div>
+            </div>
+
+            <!-- Card: Reserva técnica -->
+            <div class="demanda-card reserva">
+                <span class="card-icon">🛡️</span>
+                <div class="big-number">8</div>
+                <div class="card-title">Números em reserva (anti-banimento)</div>
+                <p class="card-desc">
+                    O WhatsApp possui políticas rígidas e pode banir números sem aviso prévio, mesmo em operações
+                    legítimas de alto volume. Os <strong style="color:#FCD34D">8 números reserva</strong> garantem
+                    continuidade imediata do atendimento: se um número ativo for banido, um da reserva assume
+                    instantaneamente, sem interrupção do serviço para o jovem.
+                </p>
+            </div>
+
+            <!-- Card: Aparelhos -->
+            <div class="demanda-card aparelhos">
+                <span class="card-icon">📱</span>
+                <div class="big-number">12</div>
+                <div class="card-title">Aparelhos celulares dedicados</div>
+                <p class="card-desc">
+                    Cada um dos <strong style="color:#06D6A0">12 números ativos</strong> exige um aparelho físico
+                    com o chip inserido e conectado à internet — é um requisito técnico do WhatsApp Business API.
+                    Não é necessário nenhum modelo sofisticado: <strong style="color:#06D6A0">o celular mais simples
+                    disponível serve</strong>, desde que consiga rodar o WhatsApp e manter conexão estável.
+                    Eles ficam ligados e conectados continuamente.
+                </p>
+            </div>
+        </div>
+
+        <!-- Alerta explicativo -->
+        <div class="demanda-alert">
+            <span class="alert-icon">⚠️</span>
+            <div class="alert-text">
+                <strong>Por que a reserva é essencial?</strong> O WhatsApp pode banir números automaticamente
+                por volume de mensagens, denúncias de usuários ou mudanças de política — algo comum em
+                operações de atendimento em escala. Com <strong>8 números guardados</strong>, nunca ficamos
+                sem um canal de substituição imediata. A troca é feita em minutos pela equipe técnica,
+                e o jovem continua sendo atendido sem perceber a interrupção.
+                <br><br>
+                <strong>Resumo da demanda:</strong> comprar <strong>20 chips/números de WhatsApp</strong>
+                e disponibilizar <strong>12 aparelhos celulares</strong> (o modelo mais simples disponível)
+                com acesso à internet para uso exclusivo do sistema CUCA Atende+.
+            </div>
+        </div>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- ═══════════════════════════════
+         ORGANOGRAMA
+    ═══════════════════════════════ -->
+    <div class="organograma-section">
+        <div class="section-title">🗺️ Organograma — Estrutura dos 12 Canais Ativos</div>
+
+        <div class="org-chart">
+            <!-- Nível 1 -->
+            <div class="level-1">
+                <div class="root-box">
+                    <h2>📱 CUCA Atende+</h2>
+                    <p>12 Números de WhatsApp Ativos</p>
+                </div>
+            </div>
+
+            <div class="vertical-line-main"></div>
+
+            <!-- Nível 2 -->
+            <div class="level-2">
+
+                <!-- INSTITUCIONAL -->
+                <div class="macro-box-wrapper">
+                    <div class="vertical-line"></div>
+                    <div class="macro-box institucional">
+                        <div class="macro-icon">🏢</div>
+                        <h3>Institucional</h3>
+                        <div class="count">5 números</div>
+                        <div class="macro-desc">Informação e programação</div>
+                    </div>
+                    <div class="numbers-container">
+                        <div class="vertical-line-numbers"></div>
+                        <div class="numbers-group">
+                            <div class="number-box institucional">
+                                <div class="number-badge institucional">#01</div>
+                                <div class="name">Barra do Ceará</div>
+                                <div class="territory">CUCA</div>
+                            </div>
+                            <div class="number-box institucional">
+                                <div class="number-badge institucional">#02</div>
+                                <div class="name">Mondubim</div>
+                                <div class="territory">CUCA</div>
+                            </div>
+                            <div class="number-box institucional">
+                                <div class="number-badge institucional">#03</div>
+                                <div class="name">Jangurussu</div>
+                                <div class="territory">CUCA</div>
+                            </div>
+                            <div class="number-box institucional">
+                                <div class="number-badge institucional">#04</div>
+                                <div class="name">José Walter</div>
+                                <div class="territory">CUCA</div>
+                            </div>
+                            <div class="number-box institucional">
+                                <div class="number-badge institucional">#05</div>
+                                <div class="name">Pici</div>
+                                <div class="territory">CUCA</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- EMPREGABILIDADE -->
+                <div class="macro-box-wrapper">
+                    <div class="vertical-line"></div>
+                    <div class="macro-box empregabilidade">
+                        <div class="macro-icon">💼</div>
+                        <h3>Empregabilidade</h3>
+                        <div class="count">5 números</div>
+                        <div class="macro-desc">Vagas e orientação</div>
+                    </div>
+                    <div class="numbers-container">
+                        <div class="vertical-line-numbers"></div>
+                        <div class="numbers-group">
+                            <div class="number-box empregabilidade">
+                                <div class="number-badge empregabilidade">#06</div>
+                                <div class="name">Barra do Ceará</div>
+                                <div class="territory">Empregabilidade</div>
+                            </div>
+                            <div class="number-box empregabilidade">
+                                <div class="number-badge empregabilidade">#07</div>
+                                <div class="name">Mondubim</div>
+                                <div class="territory">Empregabilidade</div>
+                            </div>
+                            <div class="number-box empregabilidade">
+                                <div class="number-badge empregabilidade">#08</div>
+                                <div class="name">Jangurussu</div>
+                                <div class="territory">Empregabilidade</div>
+                            </div>
+                            <div class="number-box empregabilidade">
+                                <div class="number-badge empregabilidade">#09</div>
+                                <div class="name">José Walter</div>
+                                <div class="territory">Empregabilidade</div>
+                            </div>
+                            <div class="number-box empregabilidade">
+                                <div class="number-badge empregabilidade">#10</div>
+                                <div class="name">Pici</div>
+                                <div class="territory">Empregabilidade</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ACESSO CUCA -->
+                <div class="macro-box-wrapper">
+                    <div class="vertical-line"></div>
+                    <div class="macro-box acesso">
+                        <div class="macro-icon">🔑</div>
+                        <h3>Acesso CUCA</h3>
+                        <div class="count">1 número</div>
+                        <div class="macro-desc">Agendamento centralizado</div>
+                    </div>
+                    <div class="numbers-container">
+                        <div class="vertical-line-numbers"></div>
+                        <div class="numbers-group">
+                            <div class="number-box acesso">
+                                <div class="number-badge acesso">#11</div>
+                                <div class="name">Acesso CUCA</div>
+                                <div class="territory">Todos os CUCAs</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- OUVIDORIA -->
+                <div class="macro-box-wrapper">
+                    <div class="vertical-line"></div>
+                    <div class="macro-box ouvidoria">
+                        <div class="macro-icon">📣</div>
+                        <h3>Ouvidoria Jovem</h3>
+                        <div class="count">1 número</div>
+                        <div class="macro-desc">Escuta ativa</div>
+                    </div>
+                    <div class="numbers-container">
+                        <div class="vertical-line-numbers"></div>
+                        <div class="numbers-group">
+                            <div class="number-box ouvidoria">
+                                <div class="number-badge ouvidoria">#12</div>
+                                <div class="name">Ouvidoria Jovem</div>
+                                <div class="territory">Toda a Rede</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <hr class="section-divider">
+
+    <!-- ═══════════════════════════════
+         MAPA VISUAL DETALHADO
+    ═══════════════════════════════ -->
+    <div class="mapa-section">
+        <div class="section-title">📋 Detalhamento de Cada Canal</div>
+
+        <!-- INSTITUCIONAL -->
+        <div class="macro-area">
+            <div class="macro-header institucional">
+                <div class="macro-icon-large institucional">🏢</div>
+                <div class="macro-info">
+                    <h2>Institucional</h2>
+                    <div class="count">5 números — 1 por equipamento CUCA</div>
+                </div>
+            </div>
+            <div class="description-block institucional">
+                <h3>O que faz:</h3>
+                <ul>
+                    <li><strong>Modo Reativo:</strong> Responde dúvidas sobre Rede CUCA, PPJs, cursos e atividades</li>
+                    <li><strong>Modo Proativo:</strong> Dispara programação mensal, notícias e eventos (texto + flyer)</li>
+                    <li><strong>Pesquisas:</strong> Aplica pesquisas quantitativas e qualitativas (texto e áudio)</li>
+                    <li><strong>Base de conhecimento:</strong> Específica de cada equipamento</li>
+                </ul>
+            </div>
+            <div class="numbers-grid">
+                <div class="number-card institucional">
+                    <div class="number-card-badge institucional">Número 01</div>
+                    <h3>CUCA Barra do Ceará</h3>
+                    <div class="territory">Agente Institucional</div>
+                </div>
+                <div class="number-card institucional">
+                    <div class="number-card-badge institucional">Número 02</div>
+                    <h3>CUCA Mondubim</h3>
+                    <div class="territory">Agente Institucional</div>
+                </div>
+                <div class="number-card institucional">
+                    <div class="number-card-badge institucional">Número 03</div>
+                    <h3>CUCA Jangurussu</h3>
+                    <div class="territory">Agente Institucional</div>
+                </div>
+                <div class="number-card institucional">
+                    <div class="number-card-badge institucional">Número 04</div>
+                    <h3>CUCA José Walter</h3>
+                    <div class="territory">Agente Institucional</div>
+                </div>
+                <div class="number-card institucional">
+                    <div class="number-card-badge institucional">Número 05</div>
+                    <h3>CUCA Pici</h3>
+                    <div class="territory">Agente Institucional</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- EMPREGABILIDADE -->
+        <div class="macro-area">
+            <div class="macro-header empregabilidade">
+                <div class="macro-icon-large empregabilidade">💼</div>
+                <div class="macro-info">
+                    <h2>Empregabilidade</h2>
+                    <div class="count">5 números — 1 por equipamento CUCA</div>
+                </div>
+            </div>
+            <div class="description-block empregabilidade">
+                <h3>O que faz:</h3>
+                <ul>
+                    <li><strong>Candidaturas:</strong> Recebe CV via conversa quando jovem vê vaga nas redes sociais</li>
+                    <li><strong>Pré-cadastro:</strong> Coleta dados do jovem de forma conversacional</li>
+                    <li><strong>Portal:</strong> Dados ficam disponíveis para gestão de vagas e empresas parceiras</li>
+                    <li><strong>Orientação:</strong> Dicas de entrevista, construção de CV e desenvolvimento profissional</li>
+                </ul>
+            </div>
+            <div class="numbers-grid">
+                <div class="number-card empregabilidade">
+                    <div class="number-card-badge empregabilidade">Número 06</div>
+                    <h3>Empregabilidade</h3>
+                    <div class="territory">CUCA Barra do Ceará</div>
+                </div>
+                <div class="number-card empregabilidade">
+                    <div class="number-card-badge empregabilidade">Número 07</div>
+                    <h3>Empregabilidade</h3>
+                    <div class="territory">CUCA Mondubim</div>
+                </div>
+                <div class="number-card empregabilidade">
+                    <div class="number-card-badge empregabilidade">Número 08</div>
+                    <h3>Empregabilidade</h3>
+                    <div class="territory">CUCA Jangurussu</div>
+                </div>
+                <div class="number-card empregabilidade">
+                    <div class="number-card-badge empregabilidade">Número 09</div>
+                    <h3>Empregabilidade</h3>
+                    <div class="territory">CUCA José Walter</div>
+                </div>
+                <div class="number-card empregabilidade">
+                    <div class="number-card-badge empregabilidade">Número 10</div>
+                    <h3>Empregabilidade</h3>
+                    <div class="territory">CUCA Pici</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ACESSO CUCA -->
+        <div class="macro-area">
+            <div class="macro-header acesso">
+                <div class="macro-icon-large acesso">🔑</div>
+                <div class="macro-info">
+                    <h2>Acesso CUCA</h2>
+                    <div class="count">1 número — Centralizado para toda a Rede</div>
+                </div>
+            </div>
+            <div class="description-block acesso">
+                <h3>O que faz:</h3>
+                <ul>
+                    <li><strong>Formulário conversacional:</strong> Coleta CUCA, sala e necessidades técnicas</li>
+                    <li><strong>Aprovação 2 níveis:</strong> Gestor do CUCA demandado + Secretaria de Juventude</li>
+                    <li><strong>Retorno automático:</strong> Agente responde ao requerente após aprovações</li>
+                    <li><strong>Protocolo:</strong> Gera número de protocolo de agendamento rastreável</li>
+                </ul>
+            </div>
+            <div class="numbers-grid">
+                <div class="number-card acesso">
+                    <div class="number-card-badge acesso">Número 11</div>
+                    <h3>Acesso CUCA</h3>
+                    <div class="territory">Atende todos os 5 equipamentos</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- OUVIDORIA JOVEM -->
+        <div class="macro-area">
+            <div class="macro-header ouvidoria">
+                <div class="macro-icon-large ouvidoria">📣</div>
+                <div class="macro-info">
+                    <h2>Ouvidoria Jovem</h2>
+                    <div class="count">1 número — Centralizado para toda a Rede</div>
+                </div>
+            </div>
+            <div class="description-block ouvidoria">
+                <h3>O que faz:</h3>
+                <ul>
+                    <li><strong>Escuta ativa:</strong> Recebe críticas, sugestões e ideias da juventude</li>
+                    <li><strong>Registro estruturado:</strong> Todas as manifestações organizadas no Portal</li>
+                    <li><strong>Dados para gestão:</strong> Base estruturada para políticas públicas</li>
+                    <li><strong>Formato:</strong> Operação ainda sendo definida com a gestão</li>
+                </ul>
+            </div>
+            <div class="numbers-grid">
+                <div class="number-card ouvidoria">
+                    <div class="number-card-badge ouvidoria">Número 12</div>
+                    <h3>Ouvidoria Jovem</h3>
+                    <div class="territory">Atende toda a juventude da Rede CUCA</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════
+         LEGENDA
+    ═══════════════════════════════ -->
+    <div class="legend">
+        <h3>🎨 Legenda das Cores</h3>
+        <div class="legend-grid">
+            <div class="legend-item">
+                <div class="legend-color institucional"></div>
+                <div class="legend-text">
+                    <strong>Institucional</strong>
+                    <span>Informação e programação dos CUCAs</span>
+                </div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color empregabilidade"></div>
+                <div class="legend-text">
+                    <strong>Empregabilidade</strong>
+                    <span>Vagas, CVs e orientação profissional</span>
+                </div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color acesso"></div>
+                <div class="legend-text">
+                    <strong>Acesso CUCA</strong>
+                    <span>Agendamento e protocolos de uso</span>
+                </div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color ouvidoria"></div>
+                <div class="legend-text">
+                    <strong>Ouvidoria Jovem</strong>
+                    <span>Críticas, sugestões e escuta ativa</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════
+         FOOTER
+    ═══════════════════════════════ -->
+    <div class="footer">
+        <p><strong>CUCA Atende+ — Fevereiro 2026</strong></p>
+        <p>Rede CUCA — Secretaria de Juventude de Fortaleza</p>
+        <p style="margin-top: 10px; font-size: 0.78rem;">
+            📊 Arquitetura com 12 canais ativos + 8 de reserva · 20 números no total · 12 aparelhos dedicados
+        </p>
+    </div>
+
+</div>
+</body>
+</html>
