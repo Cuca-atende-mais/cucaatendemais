@@ -81,6 +81,9 @@ const CANAL_BADGE_CLASS: Record<string, string> = {
 }
 
 /* ─── Página ─────────────────────────────────────── */
+/* ─── Developer-only: apenas esses emails veem o botão EXCLUIR ─── */
+const DEVELOPER_EMAILS = ["valmir@cucateste.com", "dev.cucaatendemais@gmail.com"]
+
 export default function InstanciasPage() {
     const supabase = createClient()
     const [instancias, setInstancias] = useState<Instancia[]>([])
@@ -116,6 +119,7 @@ export default function InstanciasPage() {
     const [savingTrans, setSavingTrans] = useState(false)
 
     useEffect(() => {
+        supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null))
         fetchAll()
     }, [])
 
@@ -199,13 +203,21 @@ export default function InstanciasPage() {
     }
 
     const excluirInstancia = async (inst: Instancia) => {
-        if (!confirm(`EXCLUIR "${inst.nome}"? Esta ação é permanente.`)) return
+        if (!isDeveloper) return
+        if (!confirm(`EXCLUIR PERMANENTEMENTE "${inst.nome}"? Esta ação remove do UAZAPI e do banco. Não pode ser desfeita.`)) return
         try {
-            await supabase.from("instancias_uazapi").delete().eq("id", inst.id)
-            toast.success("Instância excluída.")
+            const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL || ""
+            const res = await fetch(`${WORKER_URL}/api/instancias/${encodeURIComponent(inst.nome)}/excluir`, {
+                method: "DELETE",
+            })
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}))
+                throw new Error(err.error || `Status ${res.status}`)
+            }
+            toast.success("Instância excluída permanentemente (UAZAPI + banco).")
             await fetchAll()
-        } catch {
-            toast.error("Erro ao excluir.")
+        } catch (e: any) {
+            toast.error(`Erro ao excluir: ${e.message}`)
         }
     }
 
@@ -409,10 +421,12 @@ export default function InstanciasPage() {
                                     <Button variant="outline" size="sm" className="flex-1 h-7 text-[10px]" onClick={() => openEdit(inst)}>
                                         <Pencil className="mr-1 h-3 w-3" /> Editar
                                     </Button>
-                                    <Button variant="outline" size="sm" className="h-7 text-[10px] border-destructive/20 text-destructive hover:bg-destructive/5"
-                                        onClick={() => excluirInstancia(inst)}>
-                                        <Trash2 className="h-3 w-3" />
-                                    </Button>
+                                    {isDeveloper && (
+                                        <Button variant="outline" size="sm" className="h-7 text-[10px] border-destructive/20 text-destructive hover:bg-destructive/5"
+                                            onClick={() => excluirInstancia(inst)}>
+                                            <Trash2 className="h-3 w-3" />
+                                        </Button>
+                                    )}
                                 </div>
 
                                 <Button

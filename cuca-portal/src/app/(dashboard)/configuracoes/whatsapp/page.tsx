@@ -110,7 +110,7 @@ export default function WhatsAppUnidadePage() {
     const [instOpened, setInstOpened] = useState<string | null>(null)
 
     // Hook de integração real com UAZAPI
-    const { qrStatus, qrCode, criarInstancia, refreshQrCode, logoutInstancia, excluirInstancia: excluirViaWorker, resetQr } = useUazapi()
+    const { qrStatus, qrCode, criarInstancia, refreshQrCode, logoutInstancia, resetQr } = useUazapi()
     const [modalQrReal, setModalQrReal] = useState(false)
     const [nomeQrReal, setNomeQrReal] = useState("")
 
@@ -265,14 +265,6 @@ export default function WhatsAppUnidadePage() {
         }
     }
 
-    const excluirInstanciaHandler = async (inst: Instancia) => {
-        if (!confirm(`EXCLUIR PERMANENTEMENTE "${inst.nome}"? Esta ação não pode ser desfeita.`)) return
-        const ok = await excluirViaWorker(inst.nome)
-        if (ok) {
-            toast.success("Instância excluída.")
-            await fetchInstancias(profile!)
-        }
-    }
 
     /* ─── Conectar: usa QR real via modal ─────────────── */
     const conectarInstancia = async (inst: Instancia) => {
@@ -452,349 +444,335 @@ export default function WhatsAppUnidadePage() {
 
                             <CardFooter className="flex flex-col gap-2 bg-secondary/10 pt-3 border-t">
                                 {/* Linha de ações */}
-                                <div className="flex w-full gap-2">
-                                    <Button
-                                        variant="outline" size="sm"
-                                        className="flex-1 h-8 text-[11px]"
-                                        onClick={() => openEditInst(inst)}
-                                    >
-                                        <Pencil className="mr-1.5 h-3 w-3" /> Editar
-                                    </Button>
-                                    <Button
-                                        variant="outline" size="sm"
-                                        className="h-8 text-[11px] border-destructive/20 text-destructive hover:bg-destructive/5"
-                                        onClick={() => excluirInstanciaHandler(inst)}
-                                    >
-                                        <Trash2 className="h-3 w-3" />
-                                    </Button>
-                                </div>
+                            </div>
 
-                                {/* Conectar / Desativar */}
-                                {inst.ativa ? (
-                                    <Button
-                                        variant="ghost" size="sm"
-                                        className="w-full h-8 text-[11px] text-amber-600 hover:bg-amber-500/10"
-                                        onClick={() => desativarInstancia(inst)}
-                                    >
-                                        <RefreshCw className="mr-1.5 h-3 w-3" /> Recuperar Ban / Trocar Chip
-                                    </Button>
-                                ) : (
-                                    <Button
-                                        size="sm"
-                                        className="w-full h-8 text-[11px]"
-                                        onClick={() => conectarInstancia(inst)}
-                                        disabled={loadingQr === inst.id}
-                                    >
-                                        {loadingQr === inst.id
-                                            ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                                            : <QrCode className="mr-1.5 h-3 w-3" />}
-                                        Conectar WhatsApp (QR)
-                                    </Button>
-                                )}
-                            </CardFooter>
-
-                            {/* Overlay de ban */}
-                            {!inst.ativa && !inst.reserva && inst.token && (
-                                <div className="absolute inset-0 bg-destructive/80 flex flex-col items-center justify-center p-4 text-white text-center">
-                                    <TriangleAlert className="h-10 w-10 mb-2" />
-                                    <h3 className="font-bold">Número Desconectado</h3>
-                                    <p className="text-xs mb-3 opacity-80">Configure um chip de reserva para restaurar o atendimento.</p>
-                                    <Button variant="secondary" size="sm" onClick={() => desativarInstancia(inst)}>
-                                        <RefreshCw className="mr-2 h-3.5 w-3.5" /> Trocar Chip
-                                    </Button>
-                                </div>
+                            {/* Conectar / Desativar */}
+                            {inst.ativa ? (
+                                <Button
+                                    variant="ghost" size="sm"
+                                    className="w-full h-8 text-[11px] text-amber-600 hover:bg-amber-500/10"
+                                    onClick={() => desativarInstancia(inst)}
+                                >
+                                    <RefreshCw className="mr-1.5 h-3 w-3" /> Recuperar Ban / Trocar Chip
+                                </Button>
+                            ) : (
+                                <Button
+                                    size="sm"
+                                    className="w-full h-8 text-[11px]"
+                                    onClick={() => conectarInstancia(inst)}
+                                    disabled={loadingQr === inst.id}
+                                >
+                                    {loadingQr === inst.id
+                                        ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                                        : <QrCode className="mr-1.5 h-3 w-3" />}
+                                    Conectar WhatsApp (QR)
+                                </Button>
                             )}
-                        </Card>
-                    ))}
+                        </CardFooter>
+
+                            {/* Overlay de ban */ }
+                            {!inst.ativa && !inst.reserva && inst.token && (
+                        <div className="absolute inset-0 bg-destructive/80 flex flex-col items-center justify-center p-4 text-white text-center">
+                            <TriangleAlert className="h-10 w-10 mb-2" />
+                            <h3 className="font-bold">Número Desconectado</h3>
+                            <p className="text-xs mb-3 opacity-80">Configure um chip de reserva para restaurar o atendimento.</p>
+                            <Button variant="secondary" size="sm" onClick={() => desativarInstancia(inst)}>
+                                <RefreshCw className="mr-2 h-3.5 w-3.5" /> Trocar Chip
+                            </Button>
+                        </div>
+                    )}
+                </Card>
+            ))}
+        </div>
+    )
+}
+
+{/* ── Modal QR Code REAL (base64 via UAZAPI) ── */ }
+<Dialog open={modalQrReal} onOpenChange={(open) => {
+    if (!open) {
+        resetQr()
+        setModalQrReal(false)
+    }
+}}>
+    <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+                <QrCode className="h-5 w-5 text-primary" />
+                Parear WhatsApp — {nomeQrReal}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+                Abra o WhatsApp Business no celular → Dispositivos Vinculados → Vincular dispositivo → leia o QR Code abaixo.
+            </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col items-center gap-4 py-2">
+            {qrStatus === "loading" && (
+                <div className="flex flex-col items-center gap-3 py-8">
+                    <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                    <p className="text-sm text-muted-foreground">Criando instância na UAZAPI...</p>
                 </div>
             )}
 
-            {/* ── Modal QR Code REAL (base64 via UAZAPI) ── */}
-            <Dialog open={modalQrReal} onOpenChange={(open) => {
-                if (!open) {
-                    resetQr()
-                    setModalQrReal(false)
-                }
-            }}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <QrCode className="h-5 w-5 text-primary" />
-                            Parear WhatsApp — {nomeQrReal}
-                        </DialogTitle>
-                        <DialogDescription className="text-xs">
-                            Abra o WhatsApp Business no celular → Dispositivos Vinculados → Vincular dispositivo → leia o QR Code abaixo.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="flex flex-col items-center gap-4 py-2">
-                        {qrStatus === "loading" && (
-                            <div className="flex flex-col items-center gap-3 py-8">
-                                <Loader2 className="h-10 w-10 animate-spin text-primary" />
-                                <p className="text-sm text-muted-foreground">Criando instância na UAZAPI...</p>
-                            </div>
-                        )}
-
-                        {qrStatus === "qr_ready" && qrCode && (
-                            <>
-                                <div className="bg-white p-3 rounded-xl border-2 border-primary/20">
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img
-                                        src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
-                                        alt="QR Code WhatsApp"
-                                        className="w-48 h-48"
-                                    />
-                                </div>
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                    <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                                    Aguardando leitura... (verificando a cada 3s)
-                                </div>
-                                <p className="text-[11px] text-muted-foreground text-center">
-                                    O QR Code expira em 30 segundos. Leia rápido!
-                                </p>
-                            </>
-                        )}
-
-                        {qrStatus === "connected" && (
-                            <div className="flex flex-col items-center gap-3 py-8 text-emerald-600">
-                                <div className="h-16 w-16 rounded-full bg-emerald-500/10 flex items-center justify-center">
-                                    <Wifi className="h-8 w-8" />
-                                </div>
-                                <p className="font-semibold text-lg">✅ WhatsApp Conectado!</p>
-                                <p className="text-xs text-muted-foreground text-center">
-                                    A instância foi ativada automaticamente. O atendimento está ativo.
-                                </p>
-                                <Button onClick={() => { resetQr(); setModalQrReal(false) }} className="mt-2">
-                                    Fechar
-                                </Button>
-                            </div>
-                        )}
-
-                        {qrStatus === "error" && (
-                            <div className="flex flex-col items-center gap-3 py-6 text-destructive">
-                                <TriangleAlert className="h-10 w-10" />
-                                <p className="font-medium">Falha ao gerar QR Code</p>
-                                <p className="text-xs text-muted-foreground text-center">
-                                    Verifique se o Worker está online (UAZAPI_MASTER_TOKEN configurado) e tente novamente.
-                                </p>
-                                <Button variant="outline" onClick={() => { resetQr(); setModalQrReal(false) }}>
-                                    Fechar
-                                </Button>
-                            </div>
-                        )}
+            {qrStatus === "qr_ready" && qrCode && (
+                <>
+                    <div className="bg-white p-3 rounded-xl border-2 border-primary/20">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                            src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
+                            alt="QR Code WhatsApp"
+                            className="w-48 h-48"
+                        />
                     </div>
-                </DialogContent>
-            </Dialog>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                        Aguardando leitura... (verificando a cada 3s)
+                    </div>
+                    <p className="text-[11px] text-muted-foreground text-center">
+                        O QR Code expira em 30 segundos. Leia rápido!
+                    </p>
+                </>
+            )}
+
+            {qrStatus === "connected" && (
+                <div className="flex flex-col items-center gap-3 py-8 text-emerald-600">
+                    <div className="h-16 w-16 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                        <Wifi className="h-8 w-8" />
+                    </div>
+                    <p className="font-semibold text-lg">✅ WhatsApp Conectado!</p>
+                    <p className="text-xs text-muted-foreground text-center">
+                        A instância foi ativada automaticamente. O atendimento está ativo.
+                    </p>
+                    <Button onClick={() => { resetQr(); setModalQrReal(false) }} className="mt-2">
+                        Fechar
+                    </Button>
+                </div>
+            )}
+
+            {qrStatus === "error" && (
+                <div className="flex flex-col items-center gap-3 py-6 text-destructive">
+                    <TriangleAlert className="h-10 w-10" />
+                    <p className="font-medium">Falha ao gerar QR Code</p>
+                    <p className="text-xs text-muted-foreground text-center">
+                        Verifique se o Worker está online (UAZAPI_MASTER_TOKEN configurado) e tente novamente.
+                    </p>
+                    <Button variant="outline" onClick={() => { resetQr(); setModalQrReal(false) }}>
+                        Fechar
+                    </Button>
+                </div>
+            )}
+        </div>
+    </DialogContent>
+</Dialog>
 
 
-            {/* ── Seção Transbordo Humano ── */}
-            <div className="border rounded-xl p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <UserCheck className="h-5 w-5 text-primary" />
+{/* ── Seção Transbordo Humano ── */ }
+<div className="border rounded-xl p-5 space-y-4">
+    <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+            <UserCheck className="h-5 w-5 text-primary" />
+            <div>
+                <h2 className="font-semibold text-base">Transbordo Humano</h2>
+                <p className="text-xs text-muted-foreground">
+                    Quando a IA não consegue ajudar, o sistema encaminha para estes números.
+                </p>
+            </div>
+        </div>
+        <Button size="sm" variant="outline" onClick={openCreateTrans} className="gap-2">
+            <Plus className="h-3.5 w-3.5" /> Adicionar
+        </Button>
+    </div>
+
+    {transbordos.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
+            <UserCheck className="h-8 w-8 mx-auto mb-2 opacity-20" />
+            <p className="text-xs">Nenhum atendente cadastrado.</p>
+        </div>
+    ) : (
+        <div className="space-y-2">
+            {transbordos.map((t) => (
+                <div key={t.id} className="flex items-center justify-between p-3 rounded-lg border bg-secondary/10">
+                    <div className="flex items-center gap-3">
+                        <div className="p-1.5 rounded-full bg-primary/10">
+                            <Phone className="h-4 w-4 text-primary" />
+                        </div>
                         <div>
-                            <h2 className="font-semibold text-base">Transbordo Humano</h2>
+                            <p className="text-sm font-medium">{t.responsavel}</p>
                             <p className="text-xs text-muted-foreground">
-                                Quando a IA não consegue ajudar, o sistema encaminha para estes números.
+                                <span className="font-mono">{t.telefone}</span>
+                                {" · "}
+                                <Badge variant="outline" className="text-[10px]">{t.modulo}</Badge>
                             </p>
                         </div>
                     </div>
-                    <Button size="sm" variant="outline" onClick={openCreateTrans} className="gap-2">
-                        <Plus className="h-3.5 w-3.5" /> Adicionar
-                    </Button>
-                </div>
-
-                {transbordos.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
-                        <UserCheck className="h-8 w-8 mx-auto mb-2 opacity-20" />
-                        <p className="text-xs">Nenhum atendente cadastrado.</p>
+                    <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditTrans(t)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => excluirTransbordo(t)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                     </div>
-                ) : (
-                    <div className="space-y-2">
-                        {transbordos.map((t) => (
-                            <div key={t.id} className="flex items-center justify-between p-3 rounded-lg border bg-secondary/10">
-                                <div className="flex items-center gap-3">
-                                    <div className="p-1.5 rounded-full bg-primary/10">
-                                        <Phone className="h-4 w-4 text-primary" />
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-medium">{t.responsavel}</p>
-                                        <p className="text-xs text-muted-foreground">
-                                            <span className="font-mono">{t.telefone}</span>
-                                            {" · "}
-                                            <Badge variant="outline" className="text-[10px]">{t.modulo}</Badge>
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="flex gap-1">
-                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditTrans(t)}>
-                                        <Pencil className="h-3.5 w-3.5" />
-                                    </Button>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => excluirTransbordo(t)}>
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
-                                </div>
-                            </div>
-                        ))}
+                </div>
+            ))}
+        </div>
+    )}
+</div>
+
+{/* ── Modal Instância ── */ }
+<Dialog open={modalInst} onOpenChange={setModalInst}>
+    <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+            <DialogTitle>{editingInst ? "Editar Instância" : "Nova Instância WhatsApp"}</DialogTitle>
+            <DialogDescription className="text-xs">
+                {editingInst
+                    ? "Atualize os dados do canal de atendimento."
+                    : "Configure um novo canal de atendimento para sua unidade."}
+            </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4 py-2">
+            <div className="grid gap-1.5">
+                <Label>Nome da Instância *</Label>
+                <Input
+                    placeholder="Ex: Cuca Barra – Institucional"
+                    value={iNome}
+                    onChange={(e) => setINome(e.target.value)}
+                />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1.5">
+                    <Label>Tipo de Canal *</Label>
+                    <Select value={iCanalTipo} onValueChange={(v) => setICanalTipo(v as CanalTipo)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                            {cantipoDisp.map(ct => (
+                                <SelectItem key={ct} value={ct}>{ct}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+                {profile?.isSuperAdmin && (
+                    <div className="grid gap-1.5">
+                        <Label>Unidade CUCA</Label>
+                        <Select value={iUnidade} onValueChange={setIUnidade}>
+                            <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="">Global (Todos)</SelectItem>
+                                {unidadesCuca.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
                     </div>
                 )}
             </div>
 
-            {/* ── Modal Instância ── */}
-            <Dialog open={modalInst} onOpenChange={setModalInst}>
-                <DialogContent className="sm:max-w-lg">
-                    <DialogHeader>
-                        <DialogTitle>{editingInst ? "Editar Instância" : "Nova Instância WhatsApp"}</DialogTitle>
-                        <DialogDescription className="text-xs">
-                            {editingInst
-                                ? "Atualize os dados do canal de atendimento."
-                                : "Configure um novo canal de atendimento para sua unidade."}
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="grid gap-4 py-2">
-                        <div className="grid gap-1.5">
-                            <Label>Nome da Instância *</Label>
-                            <Input
-                                placeholder="Ex: Cuca Barra – Institucional"
-                                value={iNome}
-                                onChange={(e) => setINome(e.target.value)}
-                            />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="grid gap-1.5">
-                                <Label>Tipo de Canal *</Label>
-                                <Select value={iCanalTipo} onValueChange={(v) => setICanalTipo(v as CanalTipo)}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        {cantipoDisp.map(ct => (
-                                            <SelectItem key={ct} value={ct}>{ct}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            {profile?.isSuperAdmin && (
-                                <div className="grid gap-1.5">
-                                    <Label>Unidade CUCA</Label>
-                                    <Select value={iUnidade} onValueChange={setIUnidade}>
-                                        <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="">Global (Todos)</SelectItem>
-                                            {unidadesCuca.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="grid gap-1.5">
-                            <Label>Telefone (com DDI)
-                                <span className="ml-1 text-[10px] text-muted-foreground font-normal">(opcional — preenchido automaticamente ao parear)</span>
-                            </Label>
-                            <Input
-                                placeholder="+5585999998888"
-                                value={iTelefone}
-                                onChange={(e) => setITelefone(e.target.value)}
-                            />
-                        </div>
-
-                        <div className="flex items-center gap-3 p-3 rounded-lg border bg-amber-500/5">
-                            <Switch checked={iReserva} onCheckedChange={setIReserva} />
-                            <div>
-                                <p className="text-sm font-medium">Chip de Reserva</p>
-                                <p className="text-xs text-muted-foreground">Não processa mensagens. Em standby para substituição anti-ban.</p>
-                            </div>
-                        </div>
-
-                        <div className="grid gap-1.5">
-                            <Label>Observações (opcional)</Label>
-                            <Textarea
-                                placeholder="Notas internas sobre este canal..."
-                                value={iObs}
-                                onChange={(e) => setIObs(e.target.value)}
-                                rows={2}
-                            />
-                        </div>
-                    </div>
-
-                    <DialogFooter className="gap-2">
-                        <Button variant="outline" onClick={() => setModalInst(false)}>
-                            <X className="mr-2 h-4 w-4" /> Cancelar
-                        </Button>
-                        <Button onClick={saveInstancia} disabled={savingInst}>
-                            {savingInst
-                                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                : <Save className="mr-2 h-4 w-4" />}
-                            {editingInst ? "Salvar Alterações" : "Criar Instância"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* ── Modal Transbordo ── */}
-            <Dialog open={modalTrans} onOpenChange={setModalTrans}>
-                <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>{editingTrans ? "Editar Atendente de Transbordo" : "Novo Atendente de Transbordo"}</DialogTitle>
-                        <DialogDescription className="text-xs">
-                            Quando a IA não conseguir resolver, o sistema enviará um alerta para este número pessoal.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="grid gap-4 py-2">
-                        <div className="grid gap-1.5">
-                            <Label>Nome do Responsável *</Label>
-                            <Input
-                                placeholder="Ex: Mariazinha do RH"
-                                value={tResponsavel}
-                                onChange={(e) => setTResponsavel(e.target.value)}
-                            />
-                        </div>
-                        <div className="grid gap-1.5">
-                            <Label>WhatsApp Pessoal (com DDI) *</Label>
-                            <Input
-                                placeholder="+5585999998888"
-                                value={tTelefone}
-                                onChange={(e) => setTTelefone(e.target.value)}
-                            />
-                        </div>
-                        <div className="grid gap-1.5">
-                            <Label>Módulo de Atuação</Label>
-                            <Select value={tModulo} onValueChange={setTModulo}>
-                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="Institucional">Institucional (Maria)</SelectItem>
-                                    <SelectItem value="Empregabilidade">Empregabilidade (Júlia)</SelectItem>
-                                    <SelectItem value="Acesso">Acesso CUCA (Ana)</SelectItem>
-                                    <SelectItem value="Ouvidoria">Ouvidoria (Sofia)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </div>
-
-                    <DialogFooter className="gap-2">
-                        <Button variant="outline" onClick={() => setModalTrans(false)}>
-                            <X className="mr-2 h-4 w-4" /> Cancelar
-                        </Button>
-                        <Button onClick={saveTransbordo} disabled={savingTrans}>
-                            {savingTrans
-                                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                : <Save className="mr-2 h-4 w-4" />}
-                            {editingTrans ? "Salvar" : "Cadastrar"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* ── Footer info ── */}
-            <div className="pt-2 border-t flex items-start gap-3 text-[11px] text-muted-foreground">
-                <Info className="h-4 w-4 mt-0.5 shrink-0" />
-                <p>
-                    Após criar, configure o Token e Webhook no campo "Editar". Conecte o celular físico via "QR Code" acima.
-                    Nunca use WhatsApp pessoal como canal do sistema.
-                </p>
+            <div className="grid gap-1.5">
+                <Label>Telefone (com DDI)
+                    <span className="ml-1 text-[10px] text-muted-foreground font-normal">(opcional — preenchido automaticamente ao parear)</span>
+                </Label>
+                <Input
+                    placeholder="+5585999998888"
+                    value={iTelefone}
+                    onChange={(e) => setITelefone(e.target.value)}
+                />
             </div>
+
+            <div className="flex items-center gap-3 p-3 rounded-lg border bg-amber-500/5">
+                <Switch checked={iReserva} onCheckedChange={setIReserva} />
+                <div>
+                    <p className="text-sm font-medium">Chip de Reserva</p>
+                    <p className="text-xs text-muted-foreground">Não processa mensagens. Em standby para substituição anti-ban.</p>
+                </div>
+            </div>
+
+            <div className="grid gap-1.5">
+                <Label>Observações (opcional)</Label>
+                <Textarea
+                    placeholder="Notas internas sobre este canal..."
+                    value={iObs}
+                    onChange={(e) => setIObs(e.target.value)}
+                    rows={2}
+                />
+            </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setModalInst(false)}>
+                <X className="mr-2 h-4 w-4" /> Cancelar
+            </Button>
+            <Button onClick={saveInstancia} disabled={savingInst}>
+                {savingInst
+                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    : <Save className="mr-2 h-4 w-4" />}
+                {editingInst ? "Salvar Alterações" : "Criar Instância"}
+            </Button>
+        </DialogFooter>
+    </DialogContent>
+</Dialog>
+
+{/* ── Modal Transbordo ── */ }
+<Dialog open={modalTrans} onOpenChange={setModalTrans}>
+    <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+            <DialogTitle>{editingTrans ? "Editar Atendente de Transbordo" : "Novo Atendente de Transbordo"}</DialogTitle>
+            <DialogDescription className="text-xs">
+                Quando a IA não conseguir resolver, o sistema enviará um alerta para este número pessoal.
+            </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4 py-2">
+            <div className="grid gap-1.5">
+                <Label>Nome do Responsável *</Label>
+                <Input
+                    placeholder="Ex: Mariazinha do RH"
+                    value={tResponsavel}
+                    onChange={(e) => setTResponsavel(e.target.value)}
+                />
+            </div>
+            <div className="grid gap-1.5">
+                <Label>WhatsApp Pessoal (com DDI) *</Label>
+                <Input
+                    placeholder="+5585999998888"
+                    value={tTelefone}
+                    onChange={(e) => setTTelefone(e.target.value)}
+                />
+            </div>
+            <div className="grid gap-1.5">
+                <Label>Módulo de Atuação</Label>
+                <Select value={tModulo} onValueChange={setTModulo}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="Institucional">Institucional (Maria)</SelectItem>
+                        <SelectItem value="Empregabilidade">Empregabilidade (Júlia)</SelectItem>
+                        <SelectItem value="Acesso">Acesso CUCA (Ana)</SelectItem>
+                        <SelectItem value="Ouvidoria">Ouvidoria (Sofia)</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setModalTrans(false)}>
+                <X className="mr-2 h-4 w-4" /> Cancelar
+            </Button>
+            <Button onClick={saveTransbordo} disabled={savingTrans}>
+                {savingTrans
+                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    : <Save className="mr-2 h-4 w-4" />}
+                {editingTrans ? "Salvar" : "Cadastrar"}
+            </Button>
+        </DialogFooter>
+    </DialogContent>
+</Dialog>
+
+{/* ── Footer info ── */ }
+<div className="pt-2 border-t flex items-start gap-3 text-[11px] text-muted-foreground">
+    <Info className="h-4 w-4 mt-0.5 shrink-0" />
+    <p>
+        Após criar, configure o Token e Webhook no campo "Editar". Conecte o celular físico via "QR Code" acima.
+        Nunca use WhatsApp pessoal como canal do sistema.
+    </p>
+</div>
         </div >
     )
 }

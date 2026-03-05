@@ -45,14 +45,45 @@ def _query_instancia_sync(unidade: str):
     """Busca instância UAZAPI Institucional ativa vinculada à unidade."""
     return (
         supabase.table("instancias_uazapi")
-        .select("nome, token")
-        .eq("unidade_cuca", unidade)       # Bug 1 corrigido: era cuca_unit_id
-        .eq("canal_tipo", "Institucional") # Garante que pega o canal certo
-        .eq("ativa", True)                 # Apenas instâncias conectadas
-        .eq("reserva", False)              # Nunca usar chips de reserva
+        .select("nome, token, warmup_started_at")
+        .eq("unidade_cuca", unidade)
+        .eq("canal_tipo", "Institucional")
+        .eq("ativa", True)
+        .eq("reserva", False)
         .limit(1)
         .execute()
     )
+
+
+def _calcular_limite_warmup(warmup_started_at: str | None, global_limit: int) -> int:
+    """
+    Progressão de warm-up por instância (PLANO S8-06):
+      Semana 1 (0-7d):   50 msgs/dia
+      Semana 2 (8-14d):  150 msgs/dia
+      Semana 3 (15-21d): 500 msgs/dia
+      Semana 4 (22-28d): 1500 msgs/dia
+      Semana 5+ (29d+):  usa o limite global do banco (sem restrição de warmup)
+    """
+    if not warmup_started_at:
+        # Sem warmup registrado: aplica limite conservador da semana 1
+        logger.warning("[Warmup] warmup_started_at não definido — aplicando limite conservador (50/dia).")
+        return 50
+
+    try:
+        from datetime import datetime, timezone
+        # Supabase retorna ISO string; parsear com ou sem 'Z'
+        ts = warmup_started_at.replace("Z", "+00:00")
+        started = datetime.fromisoformat(ts)
+        dias = (datetime.now(timezone.utc) - started).days
+
+        if dias < 8:   return 50
+        if dias < 15:  return 150
+        if dias < 22:  return 500
+        if dias < 29:  return 1500
+        return global_limit  # warmup concluído
+    except Exception as e:
+        logger.warning(f"[Warmup] Erro ao calcular limite: {e} — usando 50/dia.")
+        return 50
 
 
 def _query_leads_sync(unidade: str | None = None):
@@ -89,6 +120,11 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
 
     instance_name = inst_res.data[0]["nome"]
     inst_token = inst_res.data[0]["token"]
+    warmup_started = inst_res.data[0].get("warmup_started_at")
+
+    # Limitão diária por instância (warm-up individual, não global)
+    inst_daily_limit = _calcular_limite_warmup(warmup_started, daily_limit)
+    logger.info(f"[Warmup] '{instance_name}': limite hoje = {inst_daily_limit} msgs (warmup_started={warmup_started})")
 
     # Buscar leads da unidade com opt_in
     leads_res = await asyncio.to_thread(_query_leads_sync, unidade)
@@ -111,8 +147,8 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             for i, lead in enumerate(leads):
-                if i >= daily_limit:
-                    logger.warning(f"Limite diário anti-ban atingido ({daily_limit}). Pausando.")
+                if i >= inst_daily_limit:
+                    logger.warning(f"Limite warm-up diário da instância atingido ({inst_daily_limit}). Pausando.")                    
                     break
 
                 # Delay aleatório anti-ban

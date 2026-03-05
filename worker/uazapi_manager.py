@@ -15,6 +15,7 @@ Parear → webhook connection dispara GET /instance/status → ativa no banco
 import os
 import logging
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -188,9 +189,27 @@ def _salvar_instancia_no_banco(
 
 
 def _atualizar_status_banco(nome: str, ativa: bool, telefone: Optional[str] = None):
+    """Atualiza status da instância. Detecta troca de número e reseta warmup_started_at."""
     dados: dict = {"ativa": ativa}
+
     if telefone:
+        # Verificar se o número mudou (troca de chip ou ban+recuperação)
+        existing = supabase.table("instancias_uazapi").select("telefone, warmup_started_at") \
+            .eq("nome", nome).limit(1).execute()
+
+        if existing.data:
+            old_telefone = existing.data[0].get("telefone")
+            old_warmup = existing.data[0].get("warmup_started_at")
+            numero_mudou = old_telefone and old_telefone != telefone
+            primeira_conexao = not old_warmup
+
+            if primeira_conexao or numero_mudou:
+                motivo = "primeira conexão" if primeira_conexao else f"troca {old_telefone} → {telefone}"
+                logger.warning(f"[Warmup] '{nome}' {motivo} — warmup_started_at resetado.")
+                dados["warmup_started_at"] = datetime.now(timezone.utc).isoformat()
+
         dados["telefone"] = telefone
+
     supabase.table("instancias_uazapi").update(dados).eq("nome", nome).execute()
     logger.info(f"[Banco] '{nome}' → ativa={ativa}, telefone={telefone}")
 
