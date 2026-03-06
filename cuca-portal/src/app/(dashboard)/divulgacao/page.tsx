@@ -5,9 +5,9 @@ import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import {
     Megaphone, CheckCircle2, Clock, AlertCircle, Send,
-    RefreshCw, BarChart3, MessageSquare, Loader2, Radio,
-    Building2, CalendarCheck, ShieldAlert, Info, ChevronDown,
-    Wifi, WifiOff, QrCode, Settings, ExternalLink,
+    RefreshCw, BarChart3, Loader2, Radio,
+    Building2, CalendarCheck, ShieldAlert, Info,
+    Wifi, WifiOff, QrCode, Settings,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -103,10 +103,7 @@ export default function DivulgacaoPage() {
     const [template, setTemplate] = useState("")
     const [instanciaDisp, setInstanciaDisp] = useState<string | null>(null)
     const [chipDetalhes, setChipDetalhes] = useState<ChipDetalhes | null>(null)
-    const [chipStatusReq, setChipStatusReq] = useState(false)
     const [disparando, setDisparando] = useState(false)
-    const [qrModal, setQrModal] = useState(false)
-    const [qrCode, setQrCode] = useState<string | null>(null)
 
     const fetchData = useCallback(async () => {
         setCarregando(true)
@@ -114,12 +111,6 @@ export default function DivulgacaoPage() {
             // 1. Verificar permissão
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) { router.push("/login"); return }
-
-            const { data: perfil } = await supabase
-                .from("user_profiles")
-                .select("role_id")
-                .eq("id", user.id)
-                .single()
 
             // Verificar se é um dos 2 developers autorizados — email é a fonte da verdade
             const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
