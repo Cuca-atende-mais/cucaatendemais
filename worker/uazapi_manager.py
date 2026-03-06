@@ -109,7 +109,7 @@ async def _configurar_webhook(instance_token: str, webhook_url: str) -> dict:
     body = {
         "url": webhook_url,
         "events": WEBHOOK_EVENTS,
-        "excludeMessages": ["wasSentByApi"],
+        "excludeMessages": ["wasSentByApi", "isGroupYes"],
     }
     try:
         return await _post("/webhook", body, _instance_headers(instance_token))
