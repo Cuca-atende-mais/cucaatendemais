@@ -5,9 +5,8 @@ import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import {
     Megaphone, CheckCircle2, Clock, AlertCircle, Send,
-    RefreshCw, BarChart3, Loader2, Radio,
+    RefreshCw, BarChart3, Loader2,
     Building2, CalendarCheck, ShieldAlert, Info,
-    Wifi, WifiOff, QrCode, Settings,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -22,17 +21,16 @@ import { toast } from "sonner"
 import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
+import { ChipDivulgacaoTab } from "@/components/instancias/chip-divulgacao-tab"
 
 /* ─── Tipos ─── */
 type StatusCampanha = "sem_planilha" | "pendente" | "aprovado" | "em_andamento"
 type StatusDisparo = "pendente" | "em_andamento" | "concluido" | "pausado" | "erro"
-type ChipStatus = "connected" | "disconnected" | "unknown"
-
 type ChipDetalhes = {
     nome: string
     telefone: string | null
     token: string | null
-    status: ChipStatus
+    status: "connected" | "disconnected" | "unknown"
 }
 
 type UnidadeStatus = {
@@ -102,12 +100,12 @@ export default function DivulgacaoPage() {
     const [semPermissao, setSemPermissao] = useState(false)
     const [unidades, setUnidades] = useState<UnidadeStatus[]>([])
     const [historico, setHistorico] = useState<DisparoHistorico[]>([])
+    const [podeCriar, setPodeCriar] = useState(false)
 
     // Modal de disparo
     const [modalAberto, setModalAberto] = useState(false)
     const [template, setTemplate] = useState("")
     const [instanciaDisp, setInstanciaDisp] = useState<string | null>(null)
-    const [chipDetalhes, setChipDetalhes] = useState<ChipDetalhes | null>(null)
     const [disparando, setDisparando] = useState(false)
 
     const fetchData = useCallback(async () => {
@@ -121,22 +119,25 @@ export default function DivulgacaoPage() {
             const isDevEmail = DEVELOPER_EMAILS.includes(user.email ?? '')
 
             if (!isDevEmail) {
-                // Para não-developers: verificar permissão via RBAC
+                // Para não-developers: verificar permissão explicitamente via sys_permissions
                 const { data: colab } = await supabase
                     .from("colaboradores")
-                    .select("sys_roles(name, sys_permissions(module, can_read))")
+                    .select("sys_roles(name, sys_permissions(module, can_read, can_create))")
                     .eq("user_id", user.id)
                     .single()
 
                 const role = (colab?.sys_roles as any)
-                const isAdmin = role?.name === 'Super Admin Cuca' || role?.name === 'Developer'
                 const perms: any[] = role?.sys_permissions ?? []
-                const temLeitura = perms.some((p: any) => p.module === 'divulgacao' && p.can_read)
+                const perm = perms.find((p: any) => p.module === 'divulgacao')
 
-                if (!isAdmin && !temLeitura) {
-                    setSemPermissao(true)
-                    return
-                }
+                // Não tem can_read → bloqueia
+                if (!perm?.can_read) { setSemPermissao(true); return }
+
+                // Registra se pode criar (criar/reconectar chip, disparar)
+                setPodeCriar(!!perm?.can_create)
+            } else {
+                // Developer: pode tudo
+                setPodeCriar(true)
             }
 
             // 2. Buscar status das campanhas do mês atual por unidade
@@ -302,69 +303,8 @@ Para saber o que rola no seu CUCA, fale direto:
                 </div>
             </div>
 
-            {/* S9-11: Chip Divulgação — Status e QR Code */}
-            <Card className="shadow-sm border-slate-100">
-                <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center justify-between text-base">
-                        <span className="flex items-center gap-2">
-                            <Radio className="h-5 w-5 text-yellow-500" />
-                            Chip de Divulgação
-                        </span>
-                        <a href="/configuracoes/whatsapp" className="text-xs text-blue-500 hover:underline flex items-center gap-1">
-                            <Settings className="h-3.5 w-3.5" /> Gerenciar em Config
-                        </a>
-                    </CardTitle>
-                </CardHeader>
-                <CardContent>
-                    {!chipDetalhes ? (
-                        <div className="flex items-center gap-3 p-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-sm">
-                            <AlertCircle className="h-4 w-4 shrink-0" />
-                            <div>
-                                <p className="font-semibold">Nenhuma instância Divulgação criada.</p>
-                                <p className="text-xs mt-0.5">Vá em <strong>Configurações → WhatsApp</strong> e crie uma instância do tipo <strong>Divulgação</strong>.</p>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-3 rounded-lg border border-slate-100 bg-slate-50">
-                            <div className="flex items-center gap-3">
-                                {chipDetalhes.status === "connected" ? (
-                                    <Wifi className="h-5 w-5 text-green-500" />
-                                ) : (
-                                    <WifiOff className="h-5 w-5 text-red-400" />
-                                )}
-                                <div>
-                                    <p className="font-semibold text-slate-700 text-sm">{chipDetalhes.nome}</p>
-                                    <p className="text-xs text-slate-500">{chipDetalhes.telefone ?? "Número não registrado"}</p>
-                                </div>
-                                <Badge className={chipDetalhes.status === "connected"
-                                    ? "bg-green-100 text-green-700 border-green-200"
-                                    : chipDetalhes.status === "disconnected"
-                                        ? "bg-red-100 text-red-600 border-red-200"
-                                        : "bg-slate-100 text-slate-600 border-slate-200"
-                                }>
-                                    {chipDetalhes.status === "connected" ? "Conectado" :
-                                        chipDetalhes.status === "disconnected" ? "Desconectado" : "Desconhecido"}
-                                </Badge>
-                            </div>
-                            {chipDetalhes.status !== "connected" && (
-                                <a href="/configuracoes/whatsapp" className="shrink-0">
-                                    <Button size="sm" variant="outline" className="gap-1.5 text-xs border-yellow-200 text-yellow-700 hover:bg-yellow-50">
-                                        <QrCode className="h-3.5 w-3.5" />
-                                        Conectar Chip
-                                    </Button>
-                                </a>
-                            )}
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
-
-            {!instanciaDisp && (
-                <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-sm">
-                    <Info className="h-5 w-5 shrink-0 mt-0.5" />
-                    <span>Nenhuma instância do tipo <strong>Divulgação</strong> conectada. Crie e conecte o chip em <strong>Configurações → WhatsApp</strong> antes de disparar.</span>
-                </div>
-            )}
+            {/* Chip de Divulgação — gestão inline com QR Code */}
+            <ChipDivulgacaoTab podeCriar={podeCriar} />
 
             {/* Status por unidade */}
             <Card className="shadow-sm border-slate-100">

@@ -19,12 +19,12 @@ export async function POST(req: NextRequest) {
                 .single()
 
             const role = (colab?.sys_roles as any)
-            const isAdmin = role?.name === 'Super Admin Cuca' || role?.name === 'Developer'
             const perms: any[] = role?.sys_permissions ?? []
             const podeCriar = perms.some((p: any) => p.module === 'divulgacao' && p.can_create)
 
-            if (!isAdmin && !podeCriar) {
-                return NextResponse.json({ error: "Sem permissão para disparar." }, { status: 403 })
+            // Sem can_create marcado na matriz → sem acesso ao disparo
+            if (!podeCriar) {
+                return NextResponse.json({ error: "Sem permissão para disparar. Solicite can_create em divulgacao." }, { status: 403 })
             }
         }
 
