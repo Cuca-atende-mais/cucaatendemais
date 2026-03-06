@@ -16,8 +16,7 @@ import {
 import {
     Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@/components/ui/tabs"
-import {
-    Search, Plus, Calendar, Filter, MoreHorizontal, CheckCircle2, Clock, AlertCircle, FileSpreadsheet, Upload
+Search, Plus, Calendar, Filter, MoreHorizontal, CheckCircle2, Clock, AlertCircle, FileSpreadsheet, Upload, Trash2
 } from "lucide-react"
 import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
@@ -45,6 +44,25 @@ export default function ProgramacaoPage() {
     const { profile, isDeveloper, hasPermission } = useUser()
 
     const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+
+    const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
+    const canDelete = profile?.email && DEVELOPER_EMAILS.includes(profile.email)
+
+    const handleDelete = async (id: string, tipo: 'mensal' | 'pontual') => {
+        if (!confirm("Tem certeza que deseja excluir esta programação permanentemente? Isso apagará todas as atividades vinculadas e NÃO PODE SER DESFEITO.")) return
+
+        try {
+            const res = await fetch(`/api/programacao/excluir?id=${id}&tipo=${tipo}`, { method: 'DELETE' })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro ao excluir")
+
+            toast.success(data.message)
+            fetchData()
+        } catch (error: any) {
+            console.error(error)
+            toast.error(error.message)
+        }
+    }
 
     // Iniciar filtro com a unidade do perfil caso não seja super/master
     useEffect(() => {
@@ -250,8 +268,18 @@ export default function ProgramacaoPage() {
                                                 {p.data_fim && ` — ${format(new Date(p.data_fim), "dd/MM/yyyy", { locale: ptBR })}`}
                                             </TableCell>
                                             <TableCell>{getStatusBadge(p.status)}</TableCell>
-                                            <TableCell className="text-right">
+                                            <TableCell className="text-right flex items-center justify-end gap-2">
                                                 <Button variant="ghost" size="sm"><MoreHorizontal className="h-4 w-4" /></Button>
+                                                {canDelete && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleDelete(p.id, 'pontual')}
+                                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 h-8 w-8 p-0"
+                                                    >
+                                                        <Trash2 className="h-4 w-4" />
+                                                    </Button>
+                                                )}
                                             </TableCell>
                                         </TableRow>
                                     ))}
@@ -287,7 +315,7 @@ export default function ProgramacaoPage() {
                                             <TableCell>{m.total_atividades} atividades</TableCell>
                                             <TableCell>{getStatusBadge(m.status)}</TableCell>
                                             <TableCell>{format(new Date(m.created_at), "dd/MM/yyyy", { locale: ptBR })}</TableCell>
-                                            <TableCell className="text-right">
+                                            <TableCell className="text-right flex items-center justify-end gap-2">
                                                 <Button
                                                     variant="ghost"
                                                     size="sm"
@@ -296,6 +324,16 @@ export default function ProgramacaoPage() {
                                                 >
                                                     Ver Atividades
                                                 </Button>
+                                                {canDelete && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleDelete(m.id, 'mensal')}
+                                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 h-8 w-8 p-0"
+                                                    >
+                                                        <Trash2 className="h-4 w-4" />
+                                                    </Button>
+                                                )}
                                             </TableCell>
                                         </TableRow>
                                     ))}
