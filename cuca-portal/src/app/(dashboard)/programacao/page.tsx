@@ -16,7 +16,8 @@ import {
 import {
     Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@/components/ui/tabs"
-Search, Plus, Calendar, Filter, MoreHorizontal, CheckCircle2, Clock, AlertCircle, FileSpreadsheet, Upload, Trash2
+import {
+    Search, Plus, Calendar, Filter, MoreHorizontal, CheckCircle2, Clock, AlertCircle, FileSpreadsheet, Upload, Trash2
 } from "lucide-react"
 import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
