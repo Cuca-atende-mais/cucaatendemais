@@ -301,7 +301,7 @@ export function ChipDivulgacaoTab({ podeCriar }: Props) {
                             Cancelar
                         </Button>
                         {(qrStatus === "idle" || qrStatus === "error") && (
-                            <Button onClick={handleCriar} disabled={saving || qrStatus === "loading"}>
+                            <Button onClick={handleCriar} disabled={saving}>
                                 {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
                                 Criar e Gerar QR
                             </Button>
