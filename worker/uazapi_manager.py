@@ -35,7 +35,7 @@ UAZAPI_MASTER_TOKEN = os.getenv("UAZAPI_MASTER_TOKEN", "")
 WORKER_PUBLIC_URL = os.getenv("WORKER_PUBLIC_URL", os.getenv("NEXT_PUBLIC_WORKER_URL", "https://api.cucaatendemais.com.br"))
 
 # Eventos que cada instância deve escutar
-WEBHOOK_EVENTS = ["messages", "connection", "messages_update"]
+WEBHOOK_EVENTS = ["messages", "connection"]
 
 # ─── Router FastAPI ───────────────────────────────────────────────────────────
 router = APIRouter(prefix="/api/instancias", tags=["instancias"])
