@@ -98,6 +98,7 @@ export default function InstanciasPage() {
     const [loadingAction, setLoadingAction] = useState<string | null>(null)
     const [openQr, setOpenQr] = useState<Instancia | null>(null)
     const [userEmail, setUserEmail] = useState<string | null>(null)
+    const isDeveloper = DEVELOPER_EMAILS.includes(userEmail ?? '')
 
     // Modal Instância
     const [modalInst, setModalInst] = useState(false)
