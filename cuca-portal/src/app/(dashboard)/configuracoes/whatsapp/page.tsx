@@ -503,13 +503,31 @@ export default function WhatsAppUnidadePage() {
 
                             {/* Overlay de ban */}
                             {!inst.ativa && !inst.reserva && inst.token && (
-                                <div className="absolute inset-0 bg-destructive/80 flex flex-col items-center justify-center p-4 text-white text-center">
+                                <div className="absolute inset-0 bg-destructive/90 flex flex-col items-center justify-center p-4 text-white text-center z-10 transition-all">
+                                    <div className="absolute top-3 right-3 flex gap-2">
+                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/20" onClick={() => openEditInst(inst)}>
+                                            <Pencil className="h-4 w-4" />
+                                        </Button>
+                                    </div>
                                     <TriangleAlert className="h-10 w-10 mb-2" />
                                     <h3 className="font-bold">Número Desconectado</h3>
                                     <p className="text-xs mb-3 opacity-80">Configure um chip de reserva para restaurar o atendimento.</p>
-                                    <Button variant="secondary" size="sm" onClick={() => desativarInstancia(inst)}>
-                                        <RefreshCw className="mr-2 h-3.5 w-3.5" /> Trocar Chip
-                                    </Button>
+                                    <div className="flex flex-col w-full gap-2">
+                                        <Button variant="secondary" size="sm" onClick={() => desativarInstancia(inst)}>
+                                            <RefreshCw className="mr-2 h-3.5 w-3.5" /> Trocar Chip
+                                        </Button>
+
+                                        {/* Exclusão Definitiva P/ Developers dentro do Overlay */}
+                                        {isDevUser && (
+                                            <Button
+                                                variant="outline" size="sm"
+                                                className="w-full h-8 text-[11px] text-destructive border-transparent bg-white/10 hover:bg-white/20 hover:text-white"
+                                                onClick={() => handleDeleteInstancia(inst)}
+                                            >
+                                                <Trash2 className="mr-1.5 h-3 w-3" /> Deletar Instância
+                                            </Button>
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </Card>
