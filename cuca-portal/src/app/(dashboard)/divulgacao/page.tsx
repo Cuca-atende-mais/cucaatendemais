@@ -26,13 +26,6 @@ import { ChipDivulgacaoTab } from "@/components/instancias/chip-divulgacao-tab"
 /* ─── Tipos ─── */
 type StatusCampanha = "sem_planilha" | "pendente" | "aprovado" | "em_andamento"
 type StatusDisparo = "pendente" | "em_andamento" | "concluido" | "pausado" | "erro"
-type ChipDetalhes = {
-    nome: string
-    telefone: string | null
-    token: string | null
-    status: "connected" | "disconnected" | "unknown"
-}
-
 type UnidadeStatus = {
     unidade: string
     status: StatusCampanha
@@ -159,38 +152,16 @@ export default function DivulgacaoPage() {
             })
             setUnidades(statusPorUnidade)
 
-            // 3. Buscar instância Divulgação ativa (detalhes completos)
+            // 3. Buscar instância Divulgação ativa (apenas o nome para o modal)
             const { data: inst } = await supabase
                 .from("instancias_uazapi")
-                .select("nome, telefone, token")
+                .select("nome")
                 .eq("canal_tipo", "Divulgação")
                 .eq("ativa", true)
                 .limit(1)
                 .maybeSingle()
 
             setInstanciaDisp(inst?.nome ?? null)
-
-            if (inst) {
-                // Checar status de conexão via UAZAPI
-                try {
-                    const UAZAPI_URL = process.env.NEXT_PUBLIC_UAZAPI_URL || "https://uazapi.com.br"
-                    const statusRes = await fetch(`${UAZAPI_URL}/instance/connectionState/${inst.nome}`, {
-                        headers: { "apikey": inst.token || "" }
-                    })
-                    const statusJson = statusRes.ok ? await statusRes.json() : null
-                    const isConnected = statusJson?.state === "open" || statusJson?.status?.connected === true
-                    setChipDetalhes({
-                        nome: inst.nome,
-                        telefone: inst.telefone,
-                        token: inst.token,
-                        status: isConnected ? "connected" : "disconnected",
-                    })
-                } catch {
-                    setChipDetalhes({ nome: inst.nome, telefone: inst.telefone, token: inst.token, status: "unknown" })
-                }
-            } else {
-                setChipDetalhes(null)
-            }
 
             // 4. Histórico de disparos
             const { data: hist } = await supabase
