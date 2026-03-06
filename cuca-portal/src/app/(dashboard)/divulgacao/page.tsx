@@ -24,7 +24,7 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
 /* ─── Tipos ─── */
-type StatusCampanha = "sem_planilha" | "pendente" | "aprovado"
+type StatusCampanha = "sem_planilha" | "pendente" | "aprovado" | "em_andamento"
 type StatusDisparo = "pendente" | "em_andamento" | "concluido" | "pausado" | "erro"
 type ChipStatus = "connected" | "disconnected" | "unknown"
 
@@ -74,6 +74,11 @@ const STATUS_CONFIG: Record<StatusCampanha, { label: string; color: string; icon
         label: "Aprovada ✓",
         color: "bg-green-100 text-green-700 border-green-200",
         icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+    },
+    em_andamento: {
+        label: "Em andamento",
+        color: "bg-blue-100 text-blue-700 border-blue-200",
+        icon: <Clock className="h-3.5 w-3.5" />,
     },
 }
 
