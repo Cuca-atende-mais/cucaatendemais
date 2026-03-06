@@ -8,20 +8,31 @@
 
 > ## 🔴 REGRA DE OURO — ACESSO A NOVAS FUNCIONALIDADES
 >
-> **Toda e qualquer implementação nova** (tela, módulo, API route, botão, funcionalidade) deve ser desenvolvida, testada e controlada **exclusivamente** pelos dois Developers fundadores:
+> **Todo módulo/funcionalidade novo** aparece primeiro APENAS para os dois Developers. Após testes e aprovação, eles liberam via RBAC. O fluxo é sempre:
 >
-> - `valmir@cucateste.com` (Valmir)
-> - `dev.cucaatendemais@gmail.com` (Sócio)
+> ```
+> Dev implementa → Só os 2 veem e testam
+>     ↓
+> Aprovado → Devs marcam na Matriz (Perfis) para o Super Admin Cuca
+>     ↓
+> Super Admin Cuca decide quem mais acessa (novos perfis/usuários)
+> ```
 >
-> **Nenhum outro usuário, perfil, função ou nível hierárquico** — incluindo Super Admin Cuca — terá visibilidade, acesso ou controle sobre as novas funcionalidades até que ambos os Developers decidam liberar explicitamente.
+> **Acesso dos 2 Developers (`valmir@cucateste.com` / `dev.cucaatendemais@gmail.com`):**
+> - Bypass total por email em `user-provider.tsx` → `hasPermission()` retorna `true` para tudo
+> - Identificados via `DEVELOPER_EMAILS` — não pelo role
 >
-> **Implementação técnica desta regra:**
-> - `user-provider.tsx`: módulos em `DEVELOPER_ONLY_MODULES` exigem email na `DEVELOPER_EMAILS` — não role
-> - Páginas e API routes: verificam `user.email` contra `DEVELOPER_EMAILS` como primeira barreira
-> - Sidebar: item só aparece se `hasPermission('modulo', 'read')` retornar true, e para módulos developer-only, só retorna true para os 2 emails
-> - Módulos atualmente restritos: `developer`, `divulgacao`, `programacao_rag_global`
+> **Acesso de outros usuários (Super Admin, Gestor, etc.):**
+> - Dependem 100% da matriz `sys_permissions` no banco (can_read, can_create, can_update, can_delete)
+> - **Nenhum bypass automático por role** — Super Admin sem marcação explícita não acessa módulos novos
 >
-> **Para liberar um módulo para um novo perfil:** um dos dois Developers edita `DEVELOPER_ONLY_MODULES` no `user-provider.tsx` e na lógica de guarda da página/API, removendo o módulo da lista exclusiva. Depois configura as permissões no RBAC normalmente.
+> **Módulos permanentemente restritos (email-only, nunca via RBAC):**
+> - `developer` — Console de desenvolvedor
+> - `programacao_rag_global` — Base de conhecimento global
+>
+> **Módulos liberáveis via RBAC (marcação na Matriz de Perfis):**
+> - `divulgacao` — Chip de Divulgação + painel Gestor Geral
+> - Qualquer módulo futuro que os devs decidirem liberar
 
 ---
 
