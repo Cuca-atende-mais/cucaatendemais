@@ -292,7 +292,6 @@ def _query_leads_divulgacao_sync():
         .select("telefone, nome")
         .eq("opt_in", True)
         .eq("bloqueado", False)
-        .gte("last_interaction_at", corte)
         .execute()
     )
 
