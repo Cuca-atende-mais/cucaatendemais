@@ -475,7 +475,6 @@ export default function WhatsAppUnidadePage() {
                             </CardContent>
 
                             <CardFooter className="flex flex-col gap-2 bg-secondary/10 pt-3 border-t">
-                                {/* Conectar / Desativar */}
 
                                 {/* Conectar / Desativar */}
                                 {inst.ativa ? (
@@ -484,63 +483,51 @@ export default function WhatsAppUnidadePage() {
                                         className="w-full h-8 text-[11px] text-amber-600 hover:bg-amber-500/10"
                                         onClick={() => desativarInstancia(inst)}
                                     >
-                                        <RefreshCw className="mr-1.5 h-3 w-3" /> Recuperar Ban / Trocar Chip
+                                        <RefreshCw className="mr-1.5 h-3 w-3" /> Desconectar / Trocar Chip
                                     </Button>
                                 ) : (
-                                    <Button
-                                        size="sm"
-                                        className="w-full h-8 text-[11px]"
-                                        onClick={() => conectarInstancia(inst)}
-                                        disabled={loadingQr === inst.id}
-                                    >
-                                        {loadingQr === inst.id
-                                            ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                                            : <QrCode className="mr-1.5 h-3 w-3" />}
-                                        Conectar WhatsApp (QR)
-                                    </Button>
+                                    <div className="w-full flex flex-col gap-2">
+                                        {!inst.ativa && !inst.reserva && inst.token ? (
+                                            <>
+                                                <div className="bg-destructive/10 text-destructive text-xs p-2 rounded flex items-center gap-2 mb-1 border border-destructive/20">
+                                                    <TriangleAlert className="h-4 w-4 shrink-0" />
+                                                    <span><b>Desconectado.</b> Conecte o chip novamente ou um reserva.</span>
+                                                </div>
+                                                <Button
+                                                    variant="secondary" size="sm"
+                                                    className="w-full h-8 text-[11px]"
+                                                    onClick={() => desativarInstancia(inst)}
+                                                >
+                                                    <RefreshCw className="mr-1.5 h-3 w-3" /> Limpar Sessão / Trocar Chip
+                                                </Button>
+                                            </>
+                                        ) : (
+                                            <Button
+                                                size="sm"
+                                                className="w-full h-8 text-[11px]"
+                                                onClick={() => conectarInstancia(inst)}
+                                                disabled={loadingQr === inst.id}
+                                            >
+                                                {loadingQr === inst.id
+                                                    ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                                                    : <QrCode className="mr-1.5 h-3 w-3" />}
+                                                Conectar WhatsApp (QR)
+                                            </Button>
+                                        )}
+                                    </div>
                                 )}
 
                                 {/* Exclusão Definitiva P/ Developers */}
                                 {isDevUser && (
                                     <Button
                                         variant="outline" size="sm"
-                                        className="w-full h-8 text-[11px] text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                                        className="w-full h-8 text-[11px] text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 mt-1"
                                         onClick={() => handleDeleteInstancia(inst)}
                                     >
-                                        <Trash2 className="mr-1.5 h-3 w-3" /> Deletar Instância
+                                        <Trash2 className="mr-1.5 h-3 w-3" /> Deletar Instância Permanentemente
                                     </Button>
                                 )}
                             </CardFooter>
-
-                            {/* Overlay de ban */}
-                            {!inst.ativa && !inst.reserva && inst.token && (
-                                <div className="absolute inset-0 bg-destructive/90 flex flex-col items-center justify-center p-4 text-white text-center z-10 transition-all">
-                                    <div className="absolute top-3 right-3 flex gap-2">
-                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-white hover:bg-white/20" onClick={() => openEditInst(inst)}>
-                                            <Pencil className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                    <TriangleAlert className="h-10 w-10 mb-2" />
-                                    <h3 className="font-bold">Número Desconectado</h3>
-                                    <p className="text-xs mb-3 opacity-80">Configure um chip de reserva para restaurar o atendimento.</p>
-                                    <div className="flex flex-col w-full gap-2">
-                                        <Button variant="secondary" size="sm" onClick={() => desativarInstancia(inst)}>
-                                            <RefreshCw className="mr-2 h-3.5 w-3.5" /> Trocar Chip
-                                        </Button>
-
-                                        {/* Exclusão Definitiva P/ Developers dentro do Overlay */}
-                                        {isDevUser && (
-                                            <Button
-                                                variant="outline" size="sm"
-                                                className="w-full h-8 text-[11px] text-destructive border-transparent bg-white/10 hover:bg-white/20 hover:text-white"
-                                                onClick={() => handleDeleteInstancia(inst)}
-                                            >
-                                                <Trash2 className="mr-1.5 h-3 w-3" /> Deletar Instância
-                                            </Button>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
                         </Card>
                     ))}
                 </div>

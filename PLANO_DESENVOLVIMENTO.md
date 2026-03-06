@@ -922,9 +922,9 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
     3. `POST /instance/connect` com header `token` — gera QR Code
     4. `GET /instance/status` com header `token` — verifica status e obtém QR atualizado
 - **Gestão de Crise (Troca de Número / Ban)**:
-    - Botão "Trocar Chip": chama `POST /instance/disconnect` (header `token`) para limpar sessão → reescanear QR com novo chip
-    - ⚠️ **Nunca excluir a instância** para troca de número — isso quebra o histórico de conversas
-    - `DELETE /instance` (header `token`): apenas para encerramento definitivo de canal
+    - **Aviso "Desconectado" Limpo (Sem Overlay Blocks)**: O antigo overlay absoluto vermelho foi removido por prejudicar a usabilidade e a visualização. Foi substituído por uma faixa de alerta limpa no rodapé. Os botões "Limpar Sessão / Trocar Chip" ficam sempre visíveis no CardFooter normal, e o Lápis continua livre no cabeçalho.
+    - Botão de **Editar Instância (Lápis ✏️)**: Exibido abertamente no cabeçalho de todas as instâncias para gestores/admins com permissão. Acesso liberado independente da instância estar online, reserva ou desconectada.
+    - ⚠️ **Exclusão Definitiva (`DELETE /instance`)**: O botão de exclusão só é renderizado para perfis Developers restritos no frontend (via check de e-mail limitados). A requisição passa por uma rota blindada no Next.js `/api/instancias/excluir/route.ts` que valida o e-mail no backend com o Supabase antes de engatilhar a chamada no motor Python para limpar os servidores da Met/UAZAPI completamente.
 - **Vínculo Persistente**: Leads vinculados continuam ativos pois as conversas referenciam `instancia_id` que permanece o mesmo após troca de chip.
 
 **16.3.5 — Gatilhos de Aviso** (`developer_alerts`):
@@ -1744,23 +1744,23 @@ Eventos de grande escala da Rede (ex: "Semana do Jovem") poderão ser disparados
 
 | Ticket | Tarefa | Impacto | Status |
 |---|---|---|---|
-| **S9-00** | **BUG FIX**: Alterar `import-planilha-modal.tsx` para salvar `status: "pendente"` no upload (não "aprovado"). Adicionar botão "Aprovar Programação" na tela de programação mensal do Gerente. | CRÍTICO — impede disparo acidental | [ ] |
-| S9-01 | Adicionar `'Divulgação'` ao `CanalTipo` em todos os arquivos (portal + tipos TS + worker). Cor amarelo-âmbar, ícone `Megaphone`. | Portal + Worker | [ ] |
-| S9-02 | Verificar CHECK constraint em `instancias_uazapi.canal_tipo` e adicionar `'Divulgação'` via migration. | Banco | [ ] |
-| S9-03 | Criar página `/divulgacao` com painel: tabela de status por unidade, botão disparar (com modal de confirmação), histórico, métricas. | Portal | [ ] |
-| S9-04 | Criar tabela `disparos_divulgacao` (id, mes, ano, status, total_leads, metricas_json, criado_por, created_at) e API route `POST /api/divulgacao/disparar`. | Banco + Portal API | [ ] |
-| S9-05 | `campanhas_engine.py` — novo loop para `disparos_divulgacao WHERE status='pendente'` → busca instância Divulgação → envia para TODOS leads `opt_in=true AND last_interaction_at > 60d` → sem filtro de unidade. | Worker | [ ] |
-| S9-06 | Implementar Spintax no motor: templates com variantes `{A\|B\|C}` sortidas por lead. Variantes de abertura, corpo e fechamento para a mensagem de Divulgação. | Worker | [ ] |
-| S9-07 | Implementar distribuição por sessão: máx 80 mensagens/hora, pausa 10min entre sessões dentro do disparo diário. | Worker | [ ] |
-| S9-08 | Implementar STOP automático: detectar palavras-chave no handler de mensagens → `opt_in = false` + confirmação para o lead. | Worker | [ ] |
-| S9-09 | Implementar alerta de saúde: a cada 50 msgs, checar % de STOP → se >5% pausa sessão + grava alerta em `disparos_divulgacao.metricas_json`. | Worker | [ ] |
-| S9-10 | Implementar filtro de leads frios: no loop de disparo, excluir leads sem interação nos últimos 60 dias. | Worker | [ ] |
-| S9-11 | Aba "Gerenciar Chip Divulgação" no painel: conectar, trocar chip, QR Code — reusar componente existente de Configurações WhatsApp. | Portal | [ ] |
+| **S9-00** | **BUG FIX**: Alterar `import-planilha-modal.tsx` para salvar `status: "pendente"` no upload (não "aprovado"). Adicionar botão "Aprovar Programação" na tela de programação mensal do Gerente. | CRÍTICO — impede disparo acidental | [x] |
+| S9-01 | Adicionar `'Divulgação'` ao `CanalTipo` em todos os arquivos (portal + tipos TS + worker). Cor amarelo-âmbar, ícone `Megaphone`. | Portal + Worker | [x] |
+| S9-02 | Verificar CHECK constraint em `instancias_uazapi.canal_tipo` e adicionar `'Divulgação'` via migration. | Banco | [x] |
+| S9-03 | Criar página `/divulgacao` com painel: tabela de status por unidade, botão disparar (com modal de confirmação), histórico, métricas. | Portal | [x] |
+| S9-04 | Criar tabela `disparos_divulgacao` (id, mes, ano, status, total_leads, metricas_json, criado_por, created_at) e API route `POST /api/divulgacao/disparar`. | Banco + Portal API | [x] |
+| S9-05 | `campanhas_engine.py` — novo loop para `disparos_divulgacao WHERE status='pendente'` → busca instância Divulgação → envia para TODOS leads `opt_in=true AND last_interaction_at > 60d` → sem filtro de unidade. | Worker | [x] |
+| S9-06 | Implementar Spintax no motor: templates com variantes `{A\|B\|C}` sortidas por lead. Variantes de abertura, corpo e fechamento para a mensagem de Divulgação. | Worker | [x] |
+| S9-07 | Implementar distribuição por sessão: máx 80 mensagens/hora, pausa 10min entre sessões dentro do disparo diário. | Worker | [x] |
+| S9-08 | Implementar STOP automático: detectar palavras-chave no handler de mensagens → `opt_in = false` + confirmação para o lead. | Worker | [x] |
+| S9-09 | Implementar alerta de saúde: a cada 50 msgs, checar % de STOP → se >5% pausa sessão + grava alerta em `disparos_divulgacao.metricas_json`. | Worker | [x] |
+| S9-10 | Implementar filtro de leads frios: no loop de disparo, excluir leads sem interação nos últimos 60 dias. | Worker | [x] |
+| S9-11 | Aba "Gerenciar Chip Divulgação" no painel: conectar, trocar chip, QR Code — reusar componente existente de Configurações WhatsApp. | Portal | [x] |
 | S9-12 | Modal "Base de Conhecimento — Rede Geral" em Configurações: upload de docs, indexação com `source_type = 'rede_cuca_global'`. | Portal + Worker | [ ] |
 | S9-13 | Worker `main.py`: detectar instância Divulgação → ativar persona Maria Geral + 3 regras de resposta + RAG global. | Worker | [ ] |
 | S9-14 | Adicionar módulos `divulgacao` e `programacao_rag_global` na tela de Criação/Edição de Perfil (RBAC UI). | Portal | [ ] |
 | S9-15 | Conversas do canal Divulgação no painel (filtrar atendimentos por instância Divulgação). | Portal | [ ] |
-| S9-16 | Commit, push e deploy Worker (cuca-worker no Easypanel). Smoke test com número de teste. | DevOps | [ ] |
+| S9-16 | Commit, push e deploy Worker (cuca-worker no Easypanel). Smoke test com número de teste. | DevOps | [x] |
 
 ### 9.10 O que NÃO muda no Sprint 9
 
