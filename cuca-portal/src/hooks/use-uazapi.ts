@@ -176,10 +176,15 @@ export function useUazapi() {
      */
     const excluirInstancia = useCallback(async (nome: string): Promise<boolean> => {
         try {
-            const res = await fetch(`${WORKER_URL}/api/instancias/${encodeURIComponent(nome)}/excluir`, {
-                method: "DELETE",
+            const res = await fetch(`/api/instancias/excluir`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ nome })
             })
-            if (!res.ok) throw new Error(`Erro ${res.status}`)
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: res.statusText }))
+                throw new Error(err.error || `Erro ${res.status}`)
+            }
             return true
         } catch (err: any) {
             toast.error(`Erro ao excluir: ${err.message}`)

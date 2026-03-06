@@ -52,6 +52,7 @@ type Transbordo = {
 }
 
 type UserProfile = {
+    email: string | null
     unidade_cuca: string | null
     isSuperAdmin: boolean
     isGerente: boolean
@@ -112,7 +113,7 @@ export default function WhatsAppUnidadePage() {
     const [instOpened, setInstOpened] = useState<string | null>(null)
 
     // Hook de integração real com UAZAPI
-    const { qrStatus, qrCode, criarInstancia, refreshQrCode, logoutInstancia, resetQr } = useUazapi()
+    const { qrStatus, qrCode, criarInstancia, refreshQrCode, logoutInstancia, excluirInstancia, resetQr } = useUazapi()
     const [modalQrReal, setModalQrReal] = useState(false)
     const [nomeQrReal, setNomeQrReal] = useState("")
 
@@ -144,6 +145,7 @@ export default function WhatsAppUnidadePage() {
             const isGerente = ["Gerente", "Admin"].includes(roleName)
 
             const prof: UserProfile = {
+                email: user.email || null,
                 unidade_cuca: colab?.unidade_cuca || null,
                 isSuperAdmin,
                 isGerente,
@@ -339,6 +341,23 @@ export default function WhatsAppUnidadePage() {
         }
     }
 
+    const isDevUser = profile?.email === "valmir@cucateste.com" || profile?.email === "dev.cucaatendemais@gmail.com"
+
+    const handleDeleteInstancia = async (inst: Instancia) => {
+        if (!isDevUser) return
+        if (!confirm(`TEM CERTEZA ABSOLUTA que deseja E X C L U I R permanentemente a instância "${inst.nome}" do banco e do provedor? Isso é IRREVERSÍVEL e dados podem ser perdidos.`)) return
+
+        try {
+            const result = await excluirInstancia(inst.nome)
+            if (result) {
+                toast.success("Instância permanentemente removida!")
+                await fetchInstancias(profile!)
+            }
+        } catch (err: any) {
+            toast.error(`Falha ao excluir: ${err.message}`)
+        }
+    }
+
     /* ─── Render ──────────────────────────────────────────── */
     if (fetching) {
         return <div className="flex justify-center py-40"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
@@ -467,6 +486,17 @@ export default function WhatsAppUnidadePage() {
                                             ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
                                             : <QrCode className="mr-1.5 h-3 w-3" />}
                                         Conectar WhatsApp (QR)
+                                    </Button>
+                                )}
+
+                                {/* Exclusão Definitiva P/ Developers */}
+                                {isDevUser && (
+                                    <Button
+                                        variant="outline" size="sm"
+                                        className="w-full h-8 text-[11px] text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                                        onClick={() => handleDeleteInstancia(inst)}
+                                    >
+                                        <Trash2 className="mr-1.5 h-3 w-3" /> Deletar Instância
                                     </Button>
                                 )}
                             </CardFooter>
