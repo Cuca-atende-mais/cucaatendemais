@@ -113,15 +113,30 @@ export default function DivulgacaoPage() {
     const fetchData = useCallback(async () => {
         setCarregando(true)
         try {
-            // 1. Verificar permissão
+            // 1. Verificar acesso ao módulo divulgacao
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) { router.push("/login"); return }
 
-            // Verificar se é um dos 2 developers autorizados — email é a fonte da verdade
             const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
-            if (!DEVELOPER_EMAILS.includes(user.email ?? '')) {
-                setSemPermissao(true)
-                return
+            const isDevEmail = DEVELOPER_EMAILS.includes(user.email ?? '')
+
+            if (!isDevEmail) {
+                // Para não-developers: verificar permissão via RBAC
+                const { data: colab } = await supabase
+                    .from("colaboradores")
+                    .select("sys_roles(name, sys_permissions(module, can_read))")
+                    .eq("user_id", user.id)
+                    .single()
+
+                const role = (colab?.sys_roles as any)
+                const isAdmin = role?.name === 'Super Admin Cuca' || role?.name === 'Developer'
+                const perms: any[] = role?.sys_permissions ?? []
+                const temLeitura = perms.some((p: any) => p.module === 'divulgacao' && p.can_read)
+
+                if (!isAdmin && !temLeitura) {
+                    setSemPermissao(true)
+                    return
+                }
             }
 
             // 2. Buscar status das campanhas do mês atual por unidade

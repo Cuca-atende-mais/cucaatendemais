@@ -91,18 +91,19 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     // Emails autorizados como Developer real — APENAS estes dois
     const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
 
-    // Módulos exclusivos dos 2 Developers — ninguém mais acessa, nem Super Admin
-    const DEVELOPER_ONLY_MODULES = ['divulgacao', 'programacao_rag_global', 'developer']
+    // Módulos exclusivos dos 2 Developers — ninguém mais acessa nem via RBAC
+    const DEVELOPER_ONLY_MODULES = ['programacao_rag_global', 'developer']
 
     const hasPermission = (recurso: string, acao: string) => {
         if (!profile) return false
 
-        // Módulos DEVELOPER-ONLY: checar email, não role
-        if (DEVELOPER_ONLY_MODULES.includes(recurso)) {
-            return DEVELOPER_EMAILS.includes(profile.email || '')
-        }
+        // Developers reais (2 emails): acesso total a TUDO, inclusive módulos exclusivos
+        if (DEVELOPER_EMAILS.includes(profile.email || '')) return true
 
-        // Super Admin e Developer têm acesso a todos os outros módulos
+        // Módulos exclusive dos devs: bloquear qualquer outro usuário
+        if (DEVELOPER_ONLY_MODULES.includes(recurso)) return false
+
+        // Super Admin e Developer role: acesso a todos os módulos via RBAC
         if (profile.funcao.nome === 'Developer' || profile.funcao.nome === 'Super Admin Cuca') return true
 
         const resourcePerm = profile.funcao.permissoes.find((p: any) => p.module === recurso)

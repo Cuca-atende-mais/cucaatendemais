@@ -7,10 +7,25 @@ export async function POST(req: NextRequest) {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return NextResponse.json({ error: "Não autenticado" }, { status: 401 })
 
-        // Verificar se é um dos 2 developers autorizados — email é a fonte da verdade
+        // Verificar acesso: dev por email OU permissão RBAC can_create em divulgacao
         const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
-        if (!DEVELOPER_EMAILS.includes(user.email ?? '')) {
-            return NextResponse.json({ error: "Acesso restrito a desenvolvedores autorizados." }, { status: 403 })
+        const isDevEmail = DEVELOPER_EMAILS.includes(user.email ?? '')
+
+        if (!isDevEmail) {
+            const { data: colab } = await supabase
+                .from("colaboradores")
+                .select("sys_roles(name, sys_permissions(module, can_create))")
+                .eq("user_id", user.id)
+                .single()
+
+            const role = (colab?.sys_roles as any)
+            const isAdmin = role?.name === 'Super Admin Cuca' || role?.name === 'Developer'
+            const perms: any[] = role?.sys_permissions ?? []
+            const podeCriar = perms.some((p: any) => p.module === 'divulgacao' && p.can_create)
+
+            if (!isAdmin && !podeCriar) {
+                return NextResponse.json({ error: "Sem permissão para disparar." }, { status: 403 })
+            }
         }
 
         const body = await req.json()
