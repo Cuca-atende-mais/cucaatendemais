@@ -276,7 +276,7 @@ export function ChipDivulgacaoTab({ podeCriar }: Props) {
                         <div className="flex flex-col items-center gap-3 py-2">
                             <p className="text-sm font-medium text-slate-700">Escaneie com o WhatsApp:</p>
                             <img
-                                src={`data:image/png;base64,${qrCode}`}
+                                src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
                                 alt="QR Code WhatsApp"
                                 className="w-56 h-56 border-4 border-slate-200 rounded-lg"
                             />
@@ -332,7 +332,7 @@ export function ChipDivulgacaoTab({ podeCriar }: Props) {
                         <div className="flex flex-col items-center gap-3 py-2">
                             <p className="text-sm font-medium text-slate-700">Escaneie com o WhatsApp:</p>
                             <img
-                                src={`data:image/png;base64,${qrCode}`}
+                                src={qrCode.startsWith("data:") ? qrCode : `data:image/png;base64,${qrCode}`}
                                 alt="QR Code WhatsApp"
                                 className="w-56 h-56 border-4 border-slate-200 rounded-lg"
                             />
