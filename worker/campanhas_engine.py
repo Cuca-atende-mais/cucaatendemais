@@ -419,6 +419,7 @@ async def processar_disparos_divulgacao(delay_min: int, delay_max: int, daily_li
                 texto = _aplicar_spintax(template, nome)
 
                 try:
+                    UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
                     resp = await client.post(
                         f"{UAZAPI_URL}/message/sendText/{inst_nome}",
                         headers={"apikey": inst_token, "Content-Type": "application/json"},
@@ -447,6 +448,7 @@ async def processar_disparos_divulgacao(delay_min: int, delay_max: int, daily_li
                         await asyncio.to_thread(_update_metricas_sync, disparo_id, enviados, erros, total_stop, "pausado")
                         return
 
+        logger.info(f"[Divulgação] Disparo {disparo_id} concluído! Enviados: {enviados} | Erros: {erros}")
         await asyncio.to_thread(_update_metricas_sync, disparo_id, enviados, erros, total_stop, "concluido")
         logger.info(f"[Divulgação] Disparo {disparo_id} concluído. Enviados: {enviados} | Erros: {erros} | STOP: {total_stop}")
 
