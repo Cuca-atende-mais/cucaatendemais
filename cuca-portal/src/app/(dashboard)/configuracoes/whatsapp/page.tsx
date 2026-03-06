@@ -435,12 +435,22 @@ export default function WhatsAppUnidadePage() {
                                             )}
                                         </div>
                                     </div>
-                                    {inst.ativa
-                                        ? <Wifi className="h-5 w-5 text-emerald-500" />
-                                        : <WifiOff className="h-5 w-5 text-muted-foreground/40" />}
-                                </div>
-                                <CardTitle className="text-base mt-2">{inst.nome}</CardTitle>
-                                <CardDescription className="text-xs">{CANAL_DESC[inst.canal_tipo]}</CardDescription>
+                                    <div className="flex items-center gap-3">
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            onClick={() => openEditInst(inst)}
+                                            title="Editar Instância"
+                                        >
+                                            <Pencil className="h-3.5 w-3.5 text-muted-foreground hover:text-primary transition-colors" />
+                                        </Button>
+                                        {inst.ativa
+                                            ? <Wifi className="h-5 w-5 text-emerald-500" />
+                                            : <WifiOff className="h-5 w-5 text-muted-foreground/40" />}
+                                    </div>
+                                    <CardTitle className="text-base mt-2">{inst.nome}</CardTitle>
+                                    <CardDescription className="text-xs">{CANAL_DESC[inst.canal_tipo]}</CardDescription>
                             </CardHeader>
 
                             <CardContent className="space-y-2 text-xs">
