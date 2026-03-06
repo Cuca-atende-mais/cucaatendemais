@@ -268,7 +268,7 @@ Para saber o que rola no seu CUCA, fale direto:
                         onClick={abrirModal}
                         disabled={!podeDiparar}
                     >
-                        <Radio className="h-4 w-4" />
+                        <Megaphone className="h-4 w-4" />
                         Disparar Aviso Global
                     </Button>
                 </div>
