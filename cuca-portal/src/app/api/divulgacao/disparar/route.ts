@@ -7,32 +7,10 @@ export async function POST(req: NextRequest) {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return NextResponse.json({ error: "Não autenticado" }, { status: 401 })
 
-        // Verificar permissão do módulo divulgacao
-        const { data: perfil } = await supabase
-            .from("user_profiles")
-            .select("role_id")
-            .eq("id", user.id)
-            .single()
-
-        if (perfil?.role_id) {
-            const { data: role } = await supabase
-                .from("sys_roles")
-                .select("name")
-                .eq("id", perfil.role_id)
-                .single()
-
-            if (role?.name !== "Developer") {
-                const { count } = await supabase
-                    .from("sys_permissions")
-                    .select("*", { count: "exact", head: true })
-                    .eq("role_id", perfil.role_id)
-                    .eq("module", "divulgacao")
-                    .eq("can_create", true)
-
-                if (count === 0) {
-                    return NextResponse.json({ error: "Sem permissão para disparar" }, { status: 403 })
-                }
-            }
+        // Verificar se é um dos 2 developers autorizados — email é a fonte da verdade
+        const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
+        if (!DEVELOPER_EMAILS.includes(user.email ?? '')) {
+            return NextResponse.json({ error: "Acesso restrito a desenvolvedores autorizados." }, { status: 403 })
         }
 
         const body = await req.json()

@@ -88,8 +88,21 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         }
     }
 
+    // Emails autorizados como Developer real — APENAS estes dois
+    const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
+
+    // Módulos exclusivos dos 2 Developers — ninguém mais acessa, nem Super Admin
+    const DEVELOPER_ONLY_MODULES = ['divulgacao', 'programacao_rag_global', 'developer']
+
     const hasPermission = (recurso: string, acao: string) => {
         if (!profile) return false
+
+        // Módulos DEVELOPER-ONLY: checar email, não role
+        if (DEVELOPER_ONLY_MODULES.includes(recurso)) {
+            return DEVELOPER_EMAILS.includes(profile.email || '')
+        }
+
+        // Super Admin e Developer têm acesso a todos os outros módulos
         if (profile.funcao.nome === 'Developer' || profile.funcao.nome === 'Super Admin Cuca') return true
 
         const resourcePerm = profile.funcao.permissoes.find((p: any) => p.module === recurso)
@@ -105,7 +118,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }
 
     const isDeveloper = profile?.funcao?.nome === 'Developer' &&
-        ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com'].includes(profile?.email || '')
+        DEVELOPER_EMAILS.includes(profile?.email || '')
 
     useEffect(() => {
         const initializeUser = async () => {

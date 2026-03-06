@@ -6,6 +6,25 @@
 
 ---
 
+> ## 🔴 REGRA DE OURO — ACESSO A NOVAS FUNCIONALIDADES
+>
+> **Toda e qualquer implementação nova** (tela, módulo, API route, botão, funcionalidade) deve ser desenvolvida, testada e controlada **exclusivamente** pelos dois Developers fundadores:
+>
+> - `valmir@cucateste.com` (Valmir)
+> - `dev.cucaatendemais@gmail.com` (Sócio)
+>
+> **Nenhum outro usuário, perfil, função ou nível hierárquico** — incluindo Super Admin Cuca — terá visibilidade, acesso ou controle sobre as novas funcionalidades até que ambos os Developers decidam liberar explicitamente.
+>
+> **Implementação técnica desta regra:**
+> - `user-provider.tsx`: módulos em `DEVELOPER_ONLY_MODULES` exigem email na `DEVELOPER_EMAILS` — não role
+> - Páginas e API routes: verificam `user.email` contra `DEVELOPER_EMAILS` como primeira barreira
+> - Sidebar: item só aparece se `hasPermission('modulo', 'read')` retornar true, e para módulos developer-only, só retorna true para os 2 emails
+> - Módulos atualmente restritos: `developer`, `divulgacao`, `programacao_rag_global`
+>
+> **Para liberar um módulo para um novo perfil:** um dos dois Developers edita `DEVELOPER_ONLY_MODULES` no `user-provider.tsx` e na lógica de guarda da página/API, removendo o módulo da lista exclusiva. Depois configura as permissões no RBAC normalmente.
+
+---
+
 ## SUMÁRIO
 
 1. [Stack Técnica](#1-stack)

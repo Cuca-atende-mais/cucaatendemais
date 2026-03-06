@@ -121,25 +121,11 @@ export default function DivulgacaoPage() {
                 .eq("id", user.id)
                 .single()
 
-            if (perfil?.role_id) {
-                const { count } = await supabase
-                    .from("sys_permissions")
-                    .select("*", { count: "exact", head: true })
-                    .eq("role_id", perfil.role_id)
-                    .eq("module", "divulgacao")
-                    .eq("can_read", true)
-
-                // Developer sempre tem acesso
-                const { data: role } = await supabase
-                    .from("sys_roles")
-                    .select("name")
-                    .eq("id", perfil.role_id)
-                    .single()
-
-                if (count === 0 && role?.name !== "Developer") {
-                    setSemPermissao(true)
-                    return
-                }
+            // Verificar se é um dos 2 developers autorizados — email é a fonte da verdade
+            const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
+            if (!DEVELOPER_EMAILS.includes(user.email ?? '')) {
+                setSemPermissao(true)
+                return
             }
 
             // 2. Buscar status das campanhas do mês atual por unidade
