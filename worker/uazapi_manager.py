@@ -165,6 +165,21 @@ async def _desconectar_na_uazapi(instance_token: str) -> bool:
         return False
 
 
+async def _deletar_na_uazapi(instance_name: str) -> bool:
+    """DELETE /instance/delete/:instance (Requer Admin Token). Limpa permanentemente no painel remoto."""
+    try:
+        logger.info(f"[UAZAPI] Deletando instância definitivamente: {instance_name}")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.delete(
+                f"{UAZAPI_BASE_URL}/instance/delete/{instance_name}",
+                headers=_admin_headers()
+            )
+            return resp.status_code in (200, 404)
+    except Exception as e:
+        logger.error(f"[UAZAPI] Erro ao deletar do painel UAZAPI: {e}")
+        return False
+
+
 def _salvar_instancia_no_banco(
     nome: str, token: str, canal_tipo: str,
     unidade: Optional[str], telefone: Optional[str], obs: Optional[str],
@@ -366,6 +381,9 @@ async def excluir_instancia(nome: str):
         # Desconectar no UAZAPI (falha ignorada — instância pode já estar fora)
         if token:
             await _desconectar_na_uazapi(token)
+
+        # Deletar da UAZAPI definitivamente (limpa do painel deles)
+        await _deletar_na_uazapi(nome)
 
         # Remover do banco
         supabase.table("instancias_uazapi").delete().eq("id", inst_id).execute()
