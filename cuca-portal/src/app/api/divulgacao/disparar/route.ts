@@ -65,15 +65,10 @@ export async function POST(req: NextRequest) {
             }, { status: 422 })
         }
 
-        // Contar leads opt-in ativos (sem filtro de unidade, com filtro de 60 dias)
-        const sessenta_dias_atras = new Date()
-        sessenta_dias_atras.setDate(sessenta_dias_atras.getDate() - 60)
-
         const { count: totalLeads } = await supabase
             .from("leads")
             .select("*", { count: "exact", head: true })
             .eq("opt_in", true)
-            .gte("last_interaction_at", sessenta_dias_atras.toISOString())
 
         // Criar o registro de disparo
         const { data: disparo, error: errInsert } = await supabase
