@@ -14,6 +14,7 @@ import {
     LogOut,
     BarChart2,
     Megaphone,
+    Radio,
 } from "lucide-react"
 import {
     Sidebar,
@@ -44,6 +45,7 @@ const iconMap = {
     LogOut,
     BarChart2,
     Megaphone,
+    Radio,
 }
 
 export function AppSidebar() {
