@@ -170,7 +170,10 @@ export function CanalWhatsappTab({ modulo }: Props) {
                         unidade_cuca: null,   // Global — sem unidade
                         observacoes: iObs.trim() || null,
                     },
-                    async () => { await loadData() }
+                    async () => {
+                        await new Promise(r => setTimeout(r, 1500))
+                        await loadData()
+                    }
                 )
             }
         } catch (err: any) {
@@ -365,7 +368,7 @@ export function CanalWhatsappTab({ modulo }: Props) {
             </div>
 
             {/* ── Modal QR Code Real ── */}
-            <Dialog open={modalQr} onOpenChange={(open) => { if (!open) { resetQr(); setModalQr(false) } }}>
+            <Dialog open={modalQr} onOpenChange={(open) => { if (!open) { resetQr(); setModalQr(false); loadData() } }}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">

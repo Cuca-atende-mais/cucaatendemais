@@ -244,7 +244,8 @@ export default function WhatsAppUnidadePage() {
                         observacoes: iObs.trim() || null,
                     },
                     async () => {
-                        // Callback chamado quando o WhatsApp for pareado
+                        // Aguarda 1.5s para o Worker processar o webhook de conexão antes de buscar
+                        await new Promise(r => setTimeout(r, 1500))
                         await fetchInstancias(profile!)
                     }
                 )
@@ -539,6 +540,8 @@ export default function WhatsAppUnidadePage() {
                 if (!open) {
                     resetQr()
                     setModalQrReal(false)
+                    // Sempre atualiza a lista ao fechar o modal — independente do timing do onConnected
+                    if (profile) fetchInstancias(profile)
                 }
             }}>
                 <DialogContent className="sm:max-w-md">
