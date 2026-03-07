@@ -1773,47 +1773,70 @@ Eventos de grande escala da Rede (ex: "Semana do Jovem") poderão ser disparados
 
 ---
 
-## Sprint 10 — Leads Expandido + Percurso Formativo
+## Sprint 10 — Leads: Perfil de Atividades + Performance para 10k+ Registros *(REPLANEADO 07/03/2026)*
 
-**Objetivo:** Completar ficha do lead conforme modelo oficial CUCA (ficha.pdf — Percurso Formativo da Rede CUCA)
+**Objetivo:** Corrigir estrutura de leads após análise das fichas reais da Prefeitura de Fortaleza. Remover campos desnecessários, criar sistema de perfil automático por atividades/equipamentos, implementar paginação server-side e preparar integração futura com API da Prefeitura.
 
-**Contexto:** A tabela `leads` atual possui apenas 7 campos básicos. A ficha oficial da Rede exige número JUV, nome social, data de nascimento, UF e histórico de cursos/atividades por equipamento (Percurso Formativo). Reunião de Gestores (06/03/2026) priorizou essa expansão.
+**Contexto:** As fichas reais mostram que cada jovem tem um histórico de cursos/atividades em diferentes CUCAs (equipamentos). Campos como JUV, turma, freq%, nota, situação NÃO são necessários no sistema. O que importa para disparos: quais equipamentos ele frequenta mais (top 2) e quais atividades pratica mais (top 2). Com 10k+ leads esperados, a página precisa de paginação. Tudo fica na página `/leads` sem modais externos — drawer lateral inline. O perfil de atividades alimenta Programação Pontual e Ouvidoria para filtragem precisa de público-alvo.
 
-### 10.1 Banco de Dados
+> ⚠️ Sprint 10 original foi replaneado. Estrutura criada (lead_percurso_formativo + 5 colunas extras) foi revertida por ser desnecessária.
+
+### 10.1 Banco — Reversão e Nova Estrutura
 
 | Ticket | Tarefa | Status |
 |---|---|---|
-| S10-01 | Migration: adicionar colunas a `leads` — `nome_social TEXT`, `data_nascimento DATE`, `numero_juventude VARCHAR(20)`, `data_cadastro_juv DATE`, `contato_alternativo VARCHAR(20)`, `uf_origem VARCHAR(2)` | [x] |
-| S10-02 | Migration: criar tabela `lead_percurso_formativo` (`id UUID PK`, `lead_id UUID FK leads.id`, `programa TEXT`, `equipamento TEXT`, `ano INT`, `mes INT`, `curso_atividade TEXT`, `carga_horaria NUMERIC`, `turma TEXT`, `frequencia_pct NUMERIC`, `nota NUMERIC`, `situacao TEXT`, `created_at TIMESTAMPTZ`) | [x] |
-| S10-03 | RLS policies para `lead_percurso_formativo`: SELECT/INSERT/UPDATE/DELETE com `has_permission('leads', ...)` (mesma lógica da tabela `leads`) | [x] |
+| S10-R01 | Migration REVERTER: DROP colunas desnecessárias de `leads`: `nome_social`, `numero_juventude`, `data_cadastro_juv`, `contato_alternativo`, `uf_origem` | [ ] |
+| S10-R02 | Migration REVERTER: DROP TABLE `lead_percurso_formativo` | [ ] |
+| S10-01 | Migration: ADD em `leads` → `equipamentos_principais TEXT[] DEFAULT '{}'` e `atividades_principais TEXT[] DEFAULT '{}'` | [ ] |
+| S10-02 | Migration: CREATE TABLE `lead_atividades` (`id UUID PK`, `lead_id UUID FK ON DELETE CASCADE`, `equipamento TEXT NOT NULL`, `atividade TEXT NOT NULL`, `contagem INT DEFAULT 1`, `created_at TIMESTAMPTZ`, `UNIQUE(lead_id, equipamento, atividade)`) — UPSERT incrementa contagem | [ ] |
+| S10-03 | Migration: função SQL `recalcular_perfil_lead(p_lead_id UUID)` → atualiza `equipamentos_principais` (top 2 por SUM contagem) e `atividades_principais` (top 2 por SUM contagem) em `leads` | [ ] |
+| S10-04 | Migration: trigger `trg_lead_atividades_perfil` AFTER INSERT/UPDATE/DELETE em `lead_atividades` → chama `recalcular_perfil_lead` automaticamente | [ ] |
+| S10-05 | RLS para `lead_atividades`: SELECT/INSERT/UPDATE/DELETE com `has_permission('leads', ...)` | [ ] |
 
 ### 10.2 Tipos TypeScript
 
 | Ticket | Tarefa | Status |
 |---|---|---|
-| S10-04 | Atualizar tipo `Lead` em `src/lib/types/database.ts` com os 6 novos campos | [x] |
-| S10-05 | Criar tipo `LeadPercursoFormativo` em `src/lib/types/database.ts` | [x] |
+| S10-06 | Atualizar tipo `Lead` em `src/lib/types/database.ts`: remover 5 campos revertidos, adicionar `equipamentos_principais: string[]` e `atividades_principais: string[]`, manter `data_nascimento DATE` | [ ] |
+| S10-07 | Substituir `LeadPercursoFormativo` por `LeadAtividade` (`id, lead_id, equipamento, atividade, contagem, created_at`) | [ ] |
 
-### 10.3 UI — Modal / Drawer de Leads
+### 10.3 UI — Página `/leads` com Paginação e Drawer Inline
 
 | Ticket | Tarefa | Status |
 |---|---|---|
-| S10-06 | Expandir modal de criação em `src/app/(dashboard)/leads/page.tsx`: adicionar seção "Dados Complementares" com campos nome_social, data_nascimento, numero_juventude, data_cadastro_juv, contato_alternativo, uf_origem | [x] |
-| S10-07 | Adicionar aba/drawer "Percurso Formativo" no modal de detalhes do lead: tabela editável inline com colunas do percurso, botão "+ Adicionar Curso" e botão de exclusão por linha | [x] |
-| S10-08 | Queries Supabase para CRUD do percurso formativo (insert, update, delete por linha) | [x] |
+| S10-08 | Substituir `.limit(100)` por paginação server-side: 50 leads/página, busca e filtros via Supabase (ilike + eq), contador total via `.count()`, controles Anterior/Próxima | [ ] |
+| S10-09 | Drawer lateral inline (Sheet do shadcn/ui): ao clicar `...` → "Ver Lead" abre Sheet pela direita sem sair da página | [ ] |
+| S10-10 | Conteúdo do Sheet: **Dados** (nome, telefone, data_nascimento, email, unidade_cuca editáveis + Salvar) + **Perfil** (badges read-only: equipamentos_principais + atividades_principais) + **Atividades** (tabela: Equipamento \| Atividade \| Contagem \| [Excluir] + botão "+ Adicionar" com select CUCA + input atividade + contagem → UPSERT) | [ ] |
+| S10-11 | Modal "Novo Lead" simplificado: apenas nome, telefone, data_nascimento, email, unidade_cuca | [ ] |
+| S10-12 | Coluna "Perfil" na tabela de leads: badges de `atividades_principais` (máx 2, coloridos) e `equipamentos_principais` (máx 2, outline) | [ ] |
 
-### 10.4 Checklist Sprint 10
+### 10.4 API de Importação (preparação para API da Prefeitura de Fortaleza)
+
+| Ticket | Tarefa | Status |
+|---|---|---|
+| S10-13 | API route `POST /api/leads/importar-atividades`: recebe array de `{telefone, nome, data_nascimento, equipamento, atividade, contagem}`, faz UPSERT em `leads` (on_conflict: telefone) e UPSERT em `lead_atividades` (on_conflict: lead_id+equipamento+atividade → soma contagem). Retorna `{processados, erros}` | [ ] |
+| S10-14 | Suporte a batch com `offset`: retomar importação após timeout sem duplicar dados — idempotente por design | [ ] |
+
+### 10.5 Checklist Sprint 10
 
 | Ticket | Tarefa | Impacto | Status |
 |---|---|---|---|
-| S10-01 | Migration: colunas extras em `leads` | Banco | [x] |
-| S10-02 | Migration: tabela `lead_percurso_formativo` | Banco | [x] |
-| S10-03 | RLS `lead_percurso_formativo` | Banco | [x] |
-| S10-04 | Tipo `Lead` atualizado | Portal | [x] |
-| S10-05 | Tipo `LeadPercursoFormativo` criado | Portal | [x] |
-| S10-06 | Modal leads — campos complementares | Portal | [x] |
-| S10-07 | Aba percurso formativo no modal | Portal | [x] |
-| S10-08 | CRUD percurso via Supabase | Portal | [x] |
+| S10-R01 | DROP colunas desnecessárias em leads | Banco | [ ] |
+| S10-R02 | DROP lead_percurso_formativo | Banco | [ ] |
+| S10-01 | ADD equipamentos/atividades_principais em leads | Banco | [ ] |
+| S10-02 | CREATE lead_atividades | Banco | [ ] |
+| S10-03 | Função recalcular_perfil_lead | Banco | [ ] |
+| S10-04 | Trigger automático | Banco | [ ] |
+| S10-05 | RLS lead_atividades | Banco | [ ] |
+| S10-06 | Tipo Lead atualizado | Portal | [ ] |
+| S10-07 | Tipo LeadAtividade criado | Portal | [ ] |
+| S10-08 | Paginação server-side 50/pág | Portal | [ ] |
+| S10-09 | Sheet drawer inline | Portal | [ ] |
+| S10-10 | Conteúdo Sheet (dados + perfil + atividades) | Portal | [ ] |
+| S10-11 | Novo Lead simplificado | Portal | [ ] |
+| S10-12 | Badges perfil na tabela | Portal | [ ] |
+| S10-13 | API importar-atividades | Portal API | [ ] |
+| S10-14 | Suporte offset/batch | Portal API | [ ] |
 
 ---
 
