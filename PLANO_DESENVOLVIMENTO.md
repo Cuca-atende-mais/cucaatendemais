@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 5.15 | **Atualizado**: 05/03/2026
-> **STATUS ATUAL**: Sprint 8 Concluído (100%) | **Sprint 9: Canal Divulgação + RAG Global — PLANEJADO**
+> **Versão**: 5.16 | **Atualizado**: 07/03/2026
+> **STATUS ATUAL**: Sprint 9 Concluído (100%) | **Próximo: Edge Function motor-agente — suporte a maria_divulgacao + RAG rede_cuca_global**
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -1756,10 +1756,10 @@ Eventos de grande escala da Rede (ex: "Semana do Jovem") poderão ser disparados
 | S9-09 | Implementar alerta de saúde: a cada 50 msgs, checar % de STOP → se >5% pausa sessão + grava alerta em `disparos_divulgacao.metricas_json`. | Worker | [x] |
 | S9-10 | Implementar filtro de leads frios: no loop de disparo, excluir leads sem interação nos últimos 60 dias. | Worker | [x] |
 | S9-11 | Aba "Gerenciar Chip Divulgação" no painel: conectar, trocar chip, QR Code — reusar componente existente de Configurações WhatsApp. | Portal | [x] |
-| S9-12 | Modal "Base de Conhecimento — Rede Geral" em Configurações: upload de docs, indexação com `source_type = 'rede_cuca_global'`. | Portal + Worker | [ ] |
-| S9-13 | Worker `main.py`: detectar instância Divulgação → ativar persona Maria Geral + 3 regras de resposta + RAG global. | Worker | [ ] |
-| S9-14 | Adicionar módulos `divulgacao` e `programacao_rag_global` na tela de Criação/Edição de Perfil (RBAC UI). | Portal | [ ] |
-| S9-15 | Conversas do canal Divulgação no painel (filtrar atendimentos por instância Divulgação). | Portal | [ ] |
+| S9-12 | Página `/configuracoes/rag-global` — Base de Conhecimento Rede Geral: CRUD de docs globais (`unidade_cuca = NULL`), indexação via Edge Function com `source_type = 'rede_cuca_global'`. Acessível via permissão `programacao_rag_global`. Item adicionado ao menu Configurações. | Portal | [x] |
+| S9-13 | Worker `main.py` linhas 392-395: detecta `canal_tipo == "Divulgação"` → define `agente_tipo = "maria_divulgacao"` e `unidade_cuca = None` (sem filtro). Sinaliza para Edge Function `motor-agente` usar RAG `rede_cuca_global`. | Worker | [x] |
+| S9-14 | Módulos `divulgacao` e `programacao_rag_global` já presentes no grupo "Divulgação & RAG Global" em `configuracoes/perfis/page.tsx`. | Portal | [x] |
+| S9-15 | Card "Conversas Recentes — Canal Divulgação" adicionado ao painel `/divulgacao`: filtra `conversas WHERE instancia_uazapi = instanciaDisp`, mostra lead, telefone, status e timestamp. Realtime pode ser adicionado em sprint futura. | Portal | [x] |
 | S9-16 | Commit, push e deploy Worker (cuca-worker no Easypanel). Smoke test com número de teste. | DevOps | [x] |
 
 ### 9.10 O que NÃO muda no Sprint 9

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import {
     Megaphone, CheckCircle2, Clock, AlertCircle, Send,
     RefreshCw, BarChart3, Loader2,
-    Building2, CalendarCheck, ShieldAlert, Info,
+    Building2, CalendarCheck, ShieldAlert, Info, MessageSquare, User,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -94,6 +94,7 @@ export default function DivulgacaoPage() {
     const [unidades, setUnidades] = useState<UnidadeStatus[]>([])
     const [historico, setHistorico] = useState<DisparoHistorico[]>([])
     const [podeCriar, setPodeCriar] = useState(false)
+    const [conversas, setConversas] = useState<any[]>([])
 
     // Modal de disparo
     const [modalAberto, setModalAberto] = useState(false)
@@ -170,6 +171,17 @@ export default function DivulgacaoPage() {
                 .order("created_at", { ascending: false })
                 .limit(10)
             setHistorico(hist ?? [])
+
+            // 5. Conversas do canal Divulgação (filtradas pela instância)
+            if (inst?.nome) {
+                const { data: convs } = await supabase
+                    .from("conversas")
+                    .select("id, status, updated_at, leads(nome, telefone)")
+                    .eq("instancia_uazapi", inst.nome)
+                    .order("updated_at", { ascending: false })
+                    .limit(15)
+                setConversas(convs ?? [])
+            }
 
         } catch (e: any) {
             toast.error("Erro ao carregar: " + e.message)
@@ -363,6 +375,71 @@ Para saber o que rola no seu CUCA, fale direto:
                     )}
                 </CardContent>
             </Card>
+
+            {/* Conversas do Canal Divulgação */}
+            {instanciaDisp && (
+                <Card className="shadow-sm border-slate-100">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                            <MessageSquare className="h-5 w-5 text-slate-500" />
+                            Conversas Recentes — Canal Divulgação
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                            Respostas recebidas no chip Divulgação ({instanciaDisp}) após disparos.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                        {conversas.length === 0 ? (
+                            <div className="py-10 text-center text-slate-400 text-sm">
+                                Nenhuma conversa no canal Divulgação ainda.
+                            </div>
+                        ) : (
+                            <div className="divide-y divide-slate-50">
+                                {conversas.map((conv: any) => {
+                                    const lead = conv.leads as any
+                                    const statusColors: Record<string, string> = {
+                                        ativa: "bg-green-100 text-green-700",
+                                        awaiting_human: "bg-amber-100 text-amber-700",
+                                        encerrada: "bg-slate-100 text-slate-500",
+                                    }
+                                    const statusLabel: Record<string, string> = {
+                                        ativa: "Ativa",
+                                        awaiting_human: "Aguardando atendente",
+                                        encerrada: "Encerrada",
+                                    }
+                                    return (
+                                        <div key={conv.id} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/50 transition-colors">
+                                            <div className="flex items-center gap-3">
+                                                <div className="h-8 w-8 rounded-full bg-yellow-100 border border-yellow-200 flex items-center justify-center shrink-0">
+                                                    <User className="h-4 w-4 text-yellow-600" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-slate-700">
+                                                        {lead?.nome || lead?.telefone || "Desconhecido"}
+                                                    </p>
+                                                    {lead?.telefone && lead?.nome && (
+                                                        <p className="text-xs text-slate-400">{lead.telefone}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                {conv.updated_at && (
+                                                    <span className="text-xs text-slate-400 hidden sm:block">
+                                                        {format(new Date(conv.updated_at), "dd/MM HH:mm", { locale: ptBR })}
+                                                    </span>
+                                                )}
+                                                <Badge className={`text-xs font-medium ${statusColors[conv.status] ?? "bg-slate-100 text-slate-500"}`}>
+                                                    {statusLabel[conv.status] ?? conv.status}
+                                                </Badge>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
 
             {/* Modal de Disparo */}
             <Dialog open={modalAberto} onOpenChange={setModalAberto}>
