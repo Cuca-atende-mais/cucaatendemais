@@ -293,7 +293,7 @@ async def process_webhook_payload(payload: dict, token: str):
                                         "options": {"delay": 1200, "presence": "composing"},
                                         "textMessage": {"text": "Obrigado por confirmar! Aguarde um momento enquanto processo seu atendimento..." }
                                     }
-                                    await client.post(f"{UAZAPI_URL}/messages/sendText", json=payload_send, headers={"apiKey": inst_token})
+                                    await client.post(f"{UAZAPI_URL}/message/sendText/{instance_name}", json=payload_send, headers={"apikey": inst_token})
                             asyncio.create_task(notify_optin())
                         except Exception as e:
                             pass
@@ -311,7 +311,7 @@ async def process_webhook_payload(payload: dict, token: str):
                                     "options": {"delay": 1200, "presence": "composing"},
                                     "textMessage": {"text": "Tudo bem! Suas preferências foram salvas e você não receberá mensagens do Atende+. Caso mude de ideia no futuro, basta mandar um 'Oi'." }
                                 }
-                                await client.post(f"{UAZAPI_URL}/messages/sendText", json=payload_send, headers={"apiKey": inst_token})
+                                await client.post(f"{UAZAPI_URL}/message/sendText/{instance_name}", json=payload_send, headers={"apikey": inst_token})
                         except Exception as e:
                             logger.error(f"Erro ao tratar recusa de opt-in: {e}")
                         return # Encerra processamento
@@ -328,7 +328,7 @@ async def process_webhook_payload(payload: dict, token: str):
                                     "options": {"delay": 1200, "presence": "composing"},
                                     "textMessage": {"text": "👋 Olá! Bem-vindo ao *Atende+* da Rede CUCA.\n\nPara continuar o atendimento e de acordo com a LGPD, preciso que você aceite receber nossas mensagens e concorde com a nossa política.\n\nResponda *Sim* para continuar ou *Não* para encerrar." }
                                 }
-                                await client.post(f"{UAZAPI_URL}/messages/sendText", json=payload_send, headers={"apiKey": inst_token})
+                                await client.post(f"{UAZAPI_URL}/message/sendText/{instance_name}", json=payload_send, headers={"apikey": inst_token})
                         except Exception as e:
                             logger.error(f"Erro ao pedir opt-in: {e}")
                         return # Encerra processamento até ele responder Sim

@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import random
 import asyncio
@@ -6,6 +7,22 @@ import logging
 from datetime import datetime, timezone
 from supabase import create_client, Client
 import httpx
+
+
+def normalizar_telefone(tel: str) -> str:
+    """
+    Normaliza o telefone para o formato exigido pelo UAZAPI v2: somente dígitos com DDI.
+    - Remove +, (, ), -, espaços e qualquer caractere não numérico.
+    - Números brasileiros sem DDI (10 ou 11 dígitos) recebem o prefixo '55'.
+    - Números de outros países (já com DDI) são mantidos como estão.
+    - Garante compatibilidade com leads inseridos manualmente, via API externa
+      ou capturados por webhook do próprio UAZAPI.
+    """
+    digits = re.sub(r'\D', '', tel)
+    # Brasil: DDD (2 dígitos) + número (8 ou 9 dígitos) = 10 ou 11 dígitos sem DDI
+    if len(digits) in (10, 11) and not digits.startswith('55'):
+        return '55' + digits
+    return digits
 
 logger = logging.getLogger("campanhas_engine")
 
@@ -164,6 +181,7 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
 
                 nome_lead = lead.get("nome") or "cidadão"
                 texto = template_texto.replace("{{nome}}", nome_lead)
+                numero = normalizar_telefone(lead["telefone"])
 
                 try:
                     if midia_url:
@@ -171,7 +189,7 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                             f"{UAZAPI_URL}/message/sendMedia/{instance_name}",
                             headers={"apikey": inst_token, "Content-Type": "application/json"},
                             json={
-                                "number": lead["telefone"],
+                                "number": numero,
                                 "options": {"delay": 1200, "presence": "composing"},
                                 "mediaMessage": {
                                     "mediatype": "image",
@@ -185,7 +203,7 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                             f"{UAZAPI_URL}/message/sendText/{instance_name}",
                             headers={"apikey": inst_token, "Content-Type": "application/json"},
                             json={
-                                "number": lead["telefone"],
+                                "number": numero,
                                 "options": {"delay": 1200, "presence": "composing"},
                                 "textMessage": {"text": texto}
                             }
@@ -418,9 +436,10 @@ async def processar_disparos_divulgacao(delay_min: int, delay_max: int, daily_li
                 await asyncio.sleep(sleep_s)
 
                 nome = lead.get("nome") or "jovem"
-                telefone = lead.get("telefone", "")
-                if not telefone:
+                telefone_raw = lead.get("telefone", "")
+                if not telefone_raw:
                     continue
+                telefone = normalizar_telefone(telefone_raw)
 
                 # S9-06: Spintax — mensagem única por lead
                 texto = _aplicar_spintax(template, nome)

@@ -11,8 +11,30 @@ export type Lead = {
     opt_in: boolean
     bloqueado: boolean
     motivo_bloqueio: string | null
+    nome_social: string | null
+    data_nascimento: string | null
+    numero_juventude: string | null
+    data_cadastro_juv: string | null
+    contato_alternativo: string | null
+    uf_origem: string | null
     created_at: string
     updated_at: string
+}
+
+export type LeadPercursoFormativo = {
+    id: string
+    lead_id: string
+    programa: string | null
+    equipamento: string | null
+    ano: number | null
+    mes: number | null
+    curso_atividade: string | null
+    carga_horaria: number | null
+    turma: string | null
+    frequencia_pct: number | null
+    nota: number | null
+    situacao: string | null
+    created_at: string
 }
 
 export type Conversa = {
