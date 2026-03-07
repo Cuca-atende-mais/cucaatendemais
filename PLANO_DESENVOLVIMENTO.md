@@ -1769,5 +1769,5 @@ Eventos de grande escala da Rede (ex: "Semana do Jovem") poderão ser disparados
 - ✅ RAG de programação por unidade — sem alteração
 - ✅ Canais Institucional e Empregabilidade — comportamento igual
 - ✅ Papel do Gerente, Super Admin, Developer — sem alteração de permissões existentes
-- ✅ Pontual por unidade — continua disparando via Institucional após aprovação do Gerente da unidade
+- ✅ Pontual por unidade — Agora também compartilha a instância Global de "Divulgação" e tem o problema de Load infinito de "data_evento" ajustado.
 

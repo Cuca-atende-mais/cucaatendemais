@@ -84,6 +84,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     titulo,
                     descricao,
                     unidade_cuca: unidade,
+                    data_evento: dataInicio,  // Mapeamento extra para cobrir a coluna non-nullable
                     data_inicio: dataInicio,
                     data_fim: dataFim,
                     local,
