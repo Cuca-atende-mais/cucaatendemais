@@ -65,8 +65,8 @@ export default function ChatSidebar({ activeConversationId, onSelectConversation
         if (filterAgenteTipo && filterAgenteTipo.length > 0) {
             query = query.in('agente_tipo', filterAgenteTipo);
         } else {
-            // General Atendimento (exclude Empregabilidade to keep them isolated if desired)
-            query = query.not('agente_tipo', 'in', '("julia_geral","julia_unidade")');
+            // Atendimento Institucional: exclui Empregabilidade, Divulgação e Ouvidoria
+            query = query.not('agente_tipo', 'in', '("julia_geral","julia_unidade","maria_divulgacao","sofia_global","sofia_unidade","ana_global")');
         }
 
         const { data, error } = await query;

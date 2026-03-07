@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-import { User, Bot, Send, ShieldCheck, Zap, PauseCircle, PlayCircle } from "lucide-react";
+import { User, Bot, Send, ShieldCheck, Zap, PauseCircle, PlayCircle, HandshakeIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -262,6 +262,18 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                                 : "Modo de Intervenção Humana (IA Pausada)"}
                         </p>
                     </div>
+                    {conversation?.status === 'ativa' && hasPermission("atendimentos", "update") && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[10px] gap-1 border-primary/20 text-primary hover:bg-primary/10"
+                            title="Assumir atendimento — disponível em breve"
+                            disabled
+                        >
+                            <HandshakeIcon className="h-3 w-3" />
+                            Assumir Atendimento
+                        </Button>
+                    )}
                 </div>
             </div>
         </div>
