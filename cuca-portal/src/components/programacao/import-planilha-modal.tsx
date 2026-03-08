@@ -356,7 +356,24 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 const { error: batchErr } = await supabase.from("atividades_mensais").insert(finalBatch)
                 if (batchErr) throw new Error("Erro insert filhas: " + batchErr.message)
 
-                appendLog("success", "Finalizado", "Programação de " + mesObj.label + " criada e enviada ativamente ao RAG.")
+                appendLog("success", "Finalizado", "Programação de " + mesObj.label + " importada com sucesso para o banco.")
+                appendLog("info", "Classificação de Inteligência", "Iniciando estruturação automática de Eixos e Modalidades (Categorias) no Worker...")
+
+                // S19-02: Dispara a normalização de categorias no Worker via LLM em background
+                try {
+                    const workerUrl = process.env.NEXT_PUBLIC_WORKER_URL || "https://uazapi.cucaatendemais.com.br"
+                    await fetch(`${workerUrl}/extract-categories`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ campanha_id: newCamp.id })
+                    })
+                    appendLog("success", "Categorização Iniciada", "Taxonomia em processo de normalização no servidor.")
+                } catch (e) {
+                    // Falha não bloqueante
+                    console.error("Erro ao solicitar extração de categorias:", e)
+                    appendLog("warning", "Categorização", "Falha ao acionar a normalização, mas os dados principais foram salvos.")
+                }
+
                 toast.success("Importação concluída com sucesso!")
 
                 // Dispara refresh pra grid na background pós delay e redireciona pra Tabela Rica

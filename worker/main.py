@@ -685,6 +685,24 @@ async def buscar_vagas_endpoint(request: Request):
         logger.error(f"Erro ao buscar vagas: {str(e)}")
         return Response(status_code=500, content=str(e))
 
+@app.post("/extract-categories")
+async def extract_categories_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """S19-02: Normaliza as atividades importadas para a taxonomia pai/filho via LLM."""
+    try:
+        payload = await request.json()
+        campanha_id = payload.get("campanha_id")
+        
+        if not campanha_id:
+            return Response(status_code=400, content="Faltando parâmetro campanha_id")
+
+        from category_extractor import process_categories_for_campanha
+        background_tasks.add_task(process_categories_for_campanha, campanha_id)
+        
+        return {"status": "processing_started"}
+    except Exception as e:
+        logger.error(f"Erro ao disparar extração de categorias: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
 
 @app.post("/analyse-sentiment")
 async def analyse_sentiment_endpoint(request: Request):
