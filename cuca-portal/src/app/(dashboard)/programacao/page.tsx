@@ -79,28 +79,27 @@ export default function ProgramacaoPage() {
     const fetchData = async () => {
         setLoading(true)
         try {
-            const { data: pData, error: pError } = await supabase.from("eventos_pontuais").select("*").order("created_at", { ascending: false })
-            const { data: mData, error: mError } = await supabase.from("campanhas_mensais").select("*").order("created_at", { ascending: false })
+            // S14-02: Filtros aplicados diretamente na query (server-side)
+            let pQuery = supabase.from("eventos_pontuais").select("*").order("created_at", { ascending: false })
+            let mQuery = supabase.from("campanhas_mensais").select("*").order("created_at", { ascending: false })
+
+            if (unidadeFilter && unidadeFilter !== "all") {
+                pQuery = pQuery.eq("unidade_cuca", unidadeFilter)
+                mQuery = mQuery.eq("unidade_cuca", unidadeFilter)
+            }
+
+            if (searchTerm) {
+                pQuery = pQuery.ilike("titulo", `%${searchTerm}%`)
+                mQuery = mQuery.ilike("titulo", `%${searchTerm}%`)
+            }
+
+            const [{ data: pData, error: pError }, { data: mData, error: mError }] = await Promise.all([pQuery, mQuery])
 
             if (pError) console.error("Erro eventos pontuais:", pError)
             if (mError) console.error("Erro campanhas mensais:", mError)
 
-            let filteredP = pData || []
-            let filteredM = mData || []
-
-            if (unidadeFilter && unidadeFilter !== "all") {
-                filteredP = filteredP.filter(p => p.unidade_cuca === unidadeFilter)
-                filteredM = filteredM.filter(m => m.unidade_cuca === unidadeFilter)
-            }
-
-            if (searchTerm) {
-                const search = searchTerm.toLowerCase()
-                filteredP = filteredP.filter(p => p.titulo.toLowerCase().includes(search) || p.descricao?.toLowerCase().includes(search))
-                filteredM = filteredM.filter(m => m.titulo.toLowerCase().includes(search) || m.descricao?.toLowerCase().includes(search))
-            }
-
-            setPontuais(filteredP)
-            setMensais(filteredM)
+            setPontuais(pData || [])
+            setMensais(mData || [])
         } finally {
             setLoading(false)
         }

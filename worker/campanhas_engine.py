@@ -72,6 +72,18 @@ def _query_instancia_sync(unidade: str):
     )
 
 
+def _query_instancia_by_id_sync(instancia_id: str):
+    """S14-03: Busca instância UAZAPI específica pelo ID (roteamento manual)."""
+    return (
+        supabase.table("instancias_uazapi")
+        .select("nome, token, warmup_started_at")
+        .eq("id", instancia_id)
+        .eq("ativa", True)
+        .limit(1)
+        .execute()
+    )
+
+
 def _calcular_limite_warmup(warmup_started_at: str | None, global_limit: int) -> int:
     """
     Progressão de warm-up por instância (PLANO S8-06):
@@ -150,12 +162,22 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
     # Marcar como em andamento (em thread separada para não bloquear)
     await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
 
+    # S14-03: Instância específica definida no evento (roteamento manual)
+    instancia_id_especifica = item.get("instancia_id")
+
     # S13-06: Roteamento por flag expansiva
+    # - instancia_id definido: usa a instância específica escolhida pelo gestor
     # - expansiva=True (ou mensal): usa instância Divulgação Global
     # - expansiva=False + pontual: usa instância Institucional da unidade
     is_expansiva = item.get("expansiva", False)
 
-    if origem == "campanhas_mensais" or (origem == "eventos_pontuais" and is_expansiva):
+    if instancia_id_especifica:
+        inst_res = await asyncio.to_thread(_query_instancia_by_id_sync, instancia_id_especifica)
+        if not inst_res.data:
+            logger.error(f"Instância específica {instancia_id_especifica} não encontrada ou inativa. Pausando item {item_id}.")
+            await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
+            return
+    elif origem == "campanhas_mensais" or (origem == "eventos_pontuais" and is_expansiva):
         inst_res = await asyncio.to_thread(_query_instancia_divulgacao_sync)
         if not inst_res.data:
             logger.error(f"Nenhuma instância UAZAPI 'Divulgação' ativa. Pausando item {item_id}.")

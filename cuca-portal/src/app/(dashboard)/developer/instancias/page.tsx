@@ -100,6 +100,9 @@ export default function InstanciasPage() {
     const [userEmail, setUserEmail] = useState<string | null>(null)
     const isDeveloper = DEVELOPER_EMAILS.includes(userEmail ?? '')
 
+    // S14-05: Progresso de criação de instância
+    const [instProgress, setInstProgress] = useState<string | null>(null)
+
     // Modal Instância
     const [modalInst, setModalInst] = useState(false)
     const [editingInst, setEditingInst] = useState<Instancia | null>(null)
@@ -189,21 +192,28 @@ export default function InstanciasPage() {
             }
 
             if (editingInst) {
+                setInstProgress("Atualizando dados no banco...")
                 const { error } = await supabase.from("instancias_uazapi").update(payload).eq("id", editingInst.id)
                 if (error) throw error
                 toast.success("Instância atualizada!")
             } else {
+                setInstProgress("Registrando instância no banco de dados...")
+                await new Promise(r => setTimeout(r, 400))
                 const { error } = await supabase.from("instancias_uazapi").insert(payload)
                 if (error) throw error
-                toast.success("Instância criada com sucesso!")
+                setInstProgress("Instância criada! Configure o Token e Webhook no UAZAPI.")
+                await new Promise(r => setTimeout(r, 1200))
+                toast.success("Instância criada! Escaneie o QR Code para ativar.")
             }
 
+            setInstProgress(null)
             setModalInst(false)
             await fetchAll()
         } catch (err: any) {
             toast.error(`Erro: ${err.message}`)
         } finally {
             setSavingInst(false)
+            setInstProgress(null)
         }
     }
 
@@ -367,7 +377,7 @@ export default function InstanciasPage() {
                 </Select>
             </div>
 
-            {/* ── Grid de Instâncias ── */}
+            {/* ── Grid de Instâncias agrupado por canal_tipo (S14-04) ── */}
             {filtered.length === 0 ? (
                 <div className="text-center py-16 text-muted-foreground border rounded-xl border-dashed">
                     <Smartphone className="h-12 w-12 mx-auto mb-4 opacity-20" />
@@ -375,82 +385,99 @@ export default function InstanciasPage() {
                     <p className="text-xs mt-1">Ajuste os filtros ou crie uma nova instância.</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {filtered.map((inst) => (
-                        <Card key={inst.id}
-                            className={`overflow-hidden border shadow-sm transition-all ${CANAL_COLORS[inst.canal_tipo] || "border-border/50"} ${!inst.ativa ? "opacity-70" : ""}`}
-                        >
-                            <CardHeader className="pb-2 space-y-1">
-                                <div className="flex items-center justify-between">
-                                    <Badge variant="outline" className={`text-[10px] font-semibold uppercase tracking-wider gap-1 ${CANAL_BADGE_CLASS[inst.canal_tipo]}`}>
-                                        {CANAL_ICONS[inst.canal_tipo]}
-                                        {inst.canal_tipo}
-                                    </Badge>
-                                    {inst.ativa
-                                        ? <Wifi className="h-4 w-4 text-emerald-500" />
-                                        : <WifiOff className="h-4 w-4 text-muted-foreground/50" />
-                                    }
+                <div className="flex flex-col gap-8">
+                    {CANAL_TIPOS.map(tipo => {
+                        const grupo = filtered.filter(i => i.canal_tipo === tipo)
+                        if (grupo.length === 0) return null
+                        return (
+                            <div key={tipo} className="space-y-3">
+                                <div className="flex items-center gap-2">
+                                    <div className={`p-1.5 rounded-md ${CANAL_BADGE_CLASS[tipo]}`}>
+                                        {CANAL_ICONS[tipo]}
+                                    </div>
+                                    <h2 className="font-semibold text-sm">{tipo}</h2>
+                                    <Badge variant="outline" className="text-[10px]">{grupo.length}</Badge>
                                 </div>
-                                <CardTitle className="text-sm truncate">{inst.nome}</CardTitle>
-                                {inst.unidade_cuca && (
-                                    <CardDescription className="text-[10px]">{inst.unidade_cuca}</CardDescription>
-                                )}
-                                {inst.reserva && (
-                                    <Badge className="bg-amber-500/10 text-amber-600 border-amber-400/30 border text-[10px] w-fit">
-                                        🛡️ Reserva Anti-Ban
-                                    </Badge>
-                                )}
-                            </CardHeader>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                    {grupo.map((inst) => (
+                                        <Card key={inst.id}
+                                            className={`overflow-hidden border shadow-sm transition-all ${CANAL_COLORS[inst.canal_tipo] || "border-border/50"} ${!inst.ativa ? "opacity-70" : ""}`}
+                                        >
+                                            <CardHeader className="pb-2 space-y-1">
+                                                <div className="flex items-center justify-between">
+                                                    <Badge variant="outline" className={`text-[10px] font-semibold uppercase tracking-wider gap-1 ${CANAL_BADGE_CLASS[inst.canal_tipo]}`}>
+                                                        {CANAL_ICONS[inst.canal_tipo]}
+                                                        {inst.canal_tipo}
+                                                    </Badge>
+                                                    {inst.ativa
+                                                        ? <Wifi className="h-4 w-4 text-emerald-500" />
+                                                        : <WifiOff className="h-4 w-4 text-muted-foreground/50" />
+                                                    }
+                                                </div>
+                                                <CardTitle className="text-sm truncate">{inst.nome}</CardTitle>
+                                                {inst.unidade_cuca && (
+                                                    <CardDescription className="text-[10px]">{inst.unidade_cuca}</CardDescription>
+                                                )}
+                                                {inst.reserva && (
+                                                    <Badge className="bg-amber-500/10 text-amber-600 border-amber-400/30 border text-[10px] w-fit">
+                                                        🛡️ Reserva Anti-Ban
+                                                    </Badge>
+                                                )}
+                                            </CardHeader>
 
-                            <CardContent className="text-[11px] space-y-1.5 pb-2">
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Telefone:</span>
-                                    <span className="font-mono">{inst.telefone || "—"}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Token:</span>
-                                    <span className={inst.token ? "text-emerald-600 font-medium" : "text-amber-600"}>
-                                        {inst.token ? "✓ OK" : "⚠ Pendente"}
-                                    </span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Webhook:</span>
-                                    <span className={inst.webhook_url ? "text-emerald-600 font-medium" : "text-amber-600"}>
-                                        {inst.webhook_url ? "✓ OK" : "⚠ Pendente"}
-                                    </span>
-                                </div>
-                            </CardContent>
+                                            <CardContent className="text-[11px] space-y-1.5 pb-2">
+                                                <div className="flex justify-between">
+                                                    <span className="text-muted-foreground">Telefone:</span>
+                                                    <span className="font-mono">{inst.telefone || "—"}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-muted-foreground">Token:</span>
+                                                    <span className={inst.token ? "text-emerald-600 font-medium" : "text-amber-600"}>
+                                                        {inst.token ? "✓ OK" : "⚠ Pendente"}
+                                                    </span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-muted-foreground">Webhook:</span>
+                                                    <span className={inst.webhook_url ? "text-emerald-600 font-medium" : "text-amber-600"}>
+                                                        {inst.webhook_url ? "✓ OK" : "⚠ Pendente"}
+                                                    </span>
+                                                </div>
+                                            </CardContent>
 
-                            <CardFooter className="pt-2 border-t bg-secondary/20 flex flex-col gap-1.5">
-                                <div className="flex w-full gap-1.5">
-                                    <Button variant="outline" size="sm" className="flex-1 h-7 text-[10px]" onClick={() => openEdit(inst)}>
-                                        <Pencil className="mr-1 h-3 w-3" /> Editar
-                                    </Button>
-                                    {isDeveloper && (
-                                        <Button variant="outline" size="sm" className="h-7 text-[10px] border-destructive/20 text-destructive hover:bg-destructive/5"
-                                            onClick={() => excluirInstancia(inst)}>
-                                            <Trash2 className="h-3 w-3" />
-                                        </Button>
-                                    )}
-                                </div>
+                                            <CardFooter className="pt-2 border-t bg-secondary/20 flex flex-col gap-1.5">
+                                                <div className="flex w-full gap-1.5">
+                                                    <Button variant="outline" size="sm" className="flex-1 h-7 text-[10px]" onClick={() => openEdit(inst)}>
+                                                        <Pencil className="mr-1 h-3 w-3" /> Editar
+                                                    </Button>
+                                                    {isDeveloper && (
+                                                        <Button variant="outline" size="sm" className="h-7 text-[10px] border-destructive/20 text-destructive hover:bg-destructive/5"
+                                                            onClick={() => excluirInstancia(inst)}>
+                                                            <Trash2 className="h-3 w-3" />
+                                                        </Button>
+                                                    )}
+                                                </div>
 
-                                <Button
-                                    variant={inst.ativa ? "ghost" : "default"}
-                                    size="sm"
-                                    className={`w-full h-7 text-[10px] ${inst.ativa ? "text-amber-600 hover:bg-amber-500/10" : ""}`}
-                                    onClick={() => toggleAtiva(inst)}
-                                    disabled={loadingAction === inst.id}
-                                >
-                                    {loadingAction === inst.id
-                                        ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                                        : inst.ativa
-                                            ? <><RefreshCw className="mr-1 h-3 w-3" />Desativar / Trocar Chip</>
-                                            : <><QrCode className="mr-1 h-3 w-3" />Ativar / QR Code</>
-                                    }
-                                </Button>
-                            </CardFooter>
-                        </Card>
-                    ))}
+                                                <Button
+                                                    variant={inst.ativa ? "ghost" : "default"}
+                                                    size="sm"
+                                                    className={`w-full h-7 text-[10px] ${inst.ativa ? "text-amber-600 hover:bg-amber-500/10" : ""}`}
+                                                    onClick={() => toggleAtiva(inst)}
+                                                    disabled={loadingAction === inst.id}
+                                                >
+                                                    {loadingAction === inst.id
+                                                        ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                                        : inst.ativa
+                                                            ? <><RefreshCw className="mr-1 h-3 w-3" />Desativar / Trocar Chip</>
+                                                            : <><QrCode className="mr-1 h-3 w-3" />Ativar / QR Code</>
+                                                    }
+                                                </Button>
+                                            </CardFooter>
+                                        </Card>
+                                    ))}
+                                </div>
+                            </div>
+                        )
+                    })}
                 </div>
             )}
 
@@ -606,8 +633,16 @@ export default function InstanciasPage() {
                         </div>
                     </div>
 
+                    {/* S14-05: Feedback de progresso */}
+                    {instProgress && (
+                        <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs text-primary">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                            {instProgress}
+                        </div>
+                    )}
+
                     <DialogFooter className="gap-2">
-                        <Button variant="outline" onClick={() => setModalInst(false)}>
+                        <Button variant="outline" onClick={() => setModalInst(false)} disabled={savingInst}>
                             <X className="mr-2 h-4 w-4" /> Cancelar
                         </Button>
                         <Button onClick={saveInstancia} disabled={savingInst}>

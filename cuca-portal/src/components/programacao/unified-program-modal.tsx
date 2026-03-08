@@ -18,10 +18,12 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { unidadesCuca } from "@/lib/constants"
 import toast from "react-hot-toast"
-import { Calendar, MapPin, Sparkles, Upload, X, Users, Globe } from "lucide-react"
+import { Calendar, MapPin, Sparkles, Upload, X, Users, Globe, Wifi } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useUser } from "@/lib/auth/user-provider"
+
+type InstanciaOpcao = { id: string; nome: string; canal_tipo: string; unidade_cuca: string | null }
 
 interface UnifiedProgramModalProps {
     open: boolean
@@ -58,12 +60,19 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     const [categoriasAlvo, setCategoriasAlvo] = useState<string[]>([])
     const [alcanceEstimado, setAlcanceEstimado] = useState<number | null>(null)
 
+    // S14-03: Instância específica para roteamento
+    const [instancias, setInstancias] = useState<InstanciaOpcao[]>([])
+    const [instanciaId, setInstanciaId] = useState<string>("")
+
     const supabase = createClient()
 
     useEffect(() => {
         if (open) {
             supabase.from("categorias_interesse").select("id, nome, pai_id").eq("ativo", true).order("ordem")
                 .then(({ data }) => setCategorias(data ?? []))
+            supabase.from("instancias_uazapi").select("id, nome, canal_tipo, unidade_cuca")
+                .eq("ativa", true).eq("reserva", false).order("canal_tipo").order("nome")
+                .then(({ data }) => setInstancias(data ?? []))
         }
     }, [open])
 
@@ -114,6 +123,21 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
             }
 
             if (isPontual) {
+                // S14-01: Validação de conflito de datas (mesma unidade + sobreposição)
+                const { data: conflicts } = await supabase
+                    .from("eventos_pontuais")
+                    .select("titulo")
+                    .eq("unidade_cuca", unidade)
+                    .lte("data_inicio", dataFim)
+                    .gte("data_fim", dataInicio)
+                    .not("status", "eq", "concluido")
+
+                if (conflicts && conflicts.length > 0) {
+                    const nomes = conflicts.map((c: any) => `"${c.titulo}"`).join(", ")
+                    const continuar = confirm(`⚠ Conflito de datas com: ${nomes}\n\nEsses eventos já existem no mesmo período para esta unidade. Deseja criar mesmo assim?`)
+                    if (!continuar) { setLoading(false); return }
+                }
+
                 // Salvar em eventos_pontuais -> Status: aguardando_aprovacao
                 const { error } = await supabase.from("eventos_pontuais").insert({
                     titulo,
@@ -127,6 +151,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     status: "aguardando_aprovacao",
                     expansiva,
                     categorias_alvo: categoriasAlvo.length > 0 ? categoriasAlvo : [],
+                    instancia_id: instanciaId || null,
                 })
                 if (error) throw error
                 toast.success("Evento enviado para aprovação!")
@@ -174,6 +199,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
         setCategoriasAlvo([])
         setAlcanceEstimado(null)
         setExpansiva(false)
+        setInstanciaId("")
     }
 
     return (
@@ -301,6 +327,32 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                                 </p>
                             </div>
                             <Switch checked={expansiva} onCheckedChange={setExpansiva} onClick={e => e.stopPropagation()} />
+                        </div>
+                    )}
+
+                    {/* S14-03: Instância específica de disparo (Apenas Pontual) */}
+                    {isPontual && (
+                        <div className="grid gap-2">
+                            <Label className="flex items-center gap-2">
+                                <Wifi className="h-3.5 w-3.5" /> Canal de Disparo
+                            </Label>
+                            <Select value={instanciaId} onValueChange={setInstanciaId}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Automático (padrão da unidade)" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="">Automático (padrão da unidade)</SelectItem>
+                                    {instancias
+                                        .filter(i => !unidade || i.unidade_cuca === unidade || i.canal_tipo === "Divulgação")
+                                        .map(i => (
+                                            <SelectItem key={i.id} value={i.id}>
+                                                {i.nome} <span className="text-muted-foreground ml-1">({i.canal_tipo})</span>
+                                            </SelectItem>
+                                        ))
+                                    }
+                                </SelectContent>
+                            </Select>
+                            <p className="text-[10px] text-muted-foreground">Deixe em Automático para usar a instância institucional da unidade.</p>
                         </div>
                     )}
 
