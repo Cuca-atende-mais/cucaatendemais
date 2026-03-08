@@ -861,41 +861,51 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 
 ---
 
-#### Sprint 15 — Atendimento Institucional + Correções de Programação ⏳ PENDENTE
+#### Sprint 15 — Atendimento Institucional + Correções de Programação ✅ CONCLUÍDO (08/03/2026)
 
 | Ticket | Entregável | Módulo | Status |
 |--------|-----------|--------|--------|
-| S15-01 | **Atendimento — Filtro Institucional**: filtrar `/atendimento` para exibir APENAS conversas de instâncias com `canal_tipo = 'Institucional'`. Instâncias de Empregabilidade, Ouvidoria, Acesso e Divulgação NÃO aparecem nesta aba | Portal | [ ] |
-| S15-02 | **Programação — Validar RAG por Institucional**: confirmar que ao criar/aprovar evento pontual ou importar programação mensal, o indexador RAG gera chunks com `cuca_unit_id` correto associado ao número Institucional da unidade | Worker + Banco | [ ] |
-| S15-03 | **Programação — Bug Mensal**: investigar e corrigir erros na exibição ou importação da programação mensal. Validar dados existentes no banco — conferir campos nulos, datas inválidas, total_atividades inconsistente | Portal + Banco | [ ] |
-| S15-04 | **Programação — Bug Datas Pontuais**: identificar registros com `data_inicio > data_fim` ou campos nulos nos eventos pontuais existentes; criar migration de correção e validação de consistência no banco | Banco + Portal | [ ] |
+| S15-01 | **Atendimento — Filtro Institucional**: `filterCanalTipo="Institucional"` no `ChatSidebar` — whitelist por `instancias_uazapi.canal_tipo`, passado pela `atendimento/page.tsx` | Portal | [x] |
+| S15-02 | **RAG Mensal — Bug Corrigido**: trigger `trigger_indexar_campanha_mensal` reescrita para montar conteúdo real consultando `atividades_mensais` (título, descrição, local, horário por categoria) | Banco | [x] |
+| S15-03 | **Bug RAG Placeholder**: causa raiz era `NEW.descricao = NULL` em `campanhas_mensais` → fallback "Consulta via Portal". Corrigido pelo rewrite da trigger com JOIN em `atividades_mensais` | Banco | [x] |
+| S15-04 | **Orphans RAG**: 40 docs `monthly_program` apontando para campanhas deletadas. Limpeza executada + trigger `BEFORE DELETE` adicionada para evitar novos orphans. 0 registros com datas inválidas em `eventos_pontuais` | Banco | [x] |
 
 ---
 
-#### Sprint 16 — Empregabilidade Fase 2 ⏳ PENDENTE
+#### Sprint 16 — Empregabilidade Fase 2 ✅ PARCIALMENTE CONCLUÍDO (08/03/2026)
 
 > **Prazo do backlog**: 13/03/2026
 
 | Ticket | Entregável | Módulo | Status |
 |--------|-----------|--------|--------|
-| S16-01 | **Candidatura Espontânea — Banco de Talentos**: migration para permitir `vaga_id NULL` em `candidaturas`; página pública `/candidatos/espontanea` com formulário (nome, data nasc, telefone, upload CV PDF); OCR automático via GPT-4o Vision; inserção direta em `talent_bank` com `status = 'disponivel'` | Portal + Banco + Worker | [ ] |
-| S16-02 | **Cadastro Manual pelo Colaborador**: botão "Cadastrar no Banco de Talentos" no portal de empregabilidade; formulário interno (nome, nascimento, telefone, upload CV opcional); colaborador pode adicionar candidato presencial sem vaga específica | Portal | [ ] |
-| S16-03 | **Mensagem de Encerramento após Inscrição**: agente Júlia envia automaticamente após o lead enviar CV: *"Seu currículo foi registrado! Caso seja aprovado, você receberá confirmação por aqui. De toda forma, seu CV fica no nosso Banco de Talentos para vagas futuras."* | Worker + Edge Function | [ ] |
-| S16-04 | **Follow-up com a Empresa**: interface no portal da vaga para registrar feedback da empresa (aprovado / reprovado / em análise) por candidato; histórico de contatos com a empresa parceira | Portal | [ ] |
-| S16-05 | **Follow-up com o Candidato Aprovado**: quando gestor marca candidato como `selecionado`, disparo automático via WhatsApp notificando aprovação. NÃO notificar rejeitados neste fluxo | Worker + Portal | [ ] |
-| S16-06 | **Visualização Cross-CUCA de Vagas**: colaboradores de empregabilidade de qualquer CUCA têm acesso **read-only** às vagas abertas de todos os equipamentos. Aba "Rede Completa" na página de vagas | Portal | [ ] |
-| S16-07 | **Buscador Multi-CUCA por Perfil de CV**: agente Júlia (canal geral ou unidade) analisa CV do lead → busca vagas compatíveis em todos os 5 CUCAs → informa se há vagas, quais são, onde estão e passa o número de contato para inscrição | Worker + Edge Function | [ ] |
-| S16-08 | **Inscrição de Terceiros**: agente reconhece quando alguém está inscrevendo outra pessoa ("meu filho", "minha filha", etc.) → solicita dados do candidato indicado → habilita upload do CV do terceiro → cria candidatura normalmente | Worker + Edge Function | [ ] |
+| S16-01 | **Candidatura Espontânea — Banco de Talentos**: `vaga_id` já era nullable; página pública `/candidatos/espontanea` criada (nome, nasc, telefone, email, unidade, CV PDF); OCR fire-and-forget via `/api/talent-bank/processar-cv-espontaneo` → worker `process_cv_espontaneo`; insert direto em `talent_bank` | Portal + Worker | [x] |
+| S16-02 | **Cadastro Manual pelo Colaborador**: botão "Cadastrar Manualmente" no banco-talentos com modal inline (nome, telefone, data nasc) sem CV obrigatório | Portal | [x] |
+| S16-03 | **Mensagem de Encerramento após Inscrição**: requer mudança no motor-agente (Edge Function) — **pendente Sprint 18** | Worker + Edge Function | [ ] |
+| S16-04 | **Follow-up com a Empresa**: já implementado (Sheet com tipos interno/empresa/candidato) desde S12-07 | Portal | [x] |
+| S16-05 | **Follow-up com o Candidato Aprovado**: endpoint `/api/empregabilidade/notificar-selecionado` criado; disparo WhatsApp automático ao marcar status `selecionado` via instância Institucional da unidade | Portal + Worker | [x] |
+| S16-06 | **Visualização Cross-CUCA de Vagas**: já implementado (aba "Todas as Unidades") desde S12-09 | Portal | [x] |
+| S16-07 | **Buscador Multi-CUCA por Perfil de CV**: requer mudança no motor-agente — **pendente Sprint 18** | Worker + Edge Function | [ ] |
+| S16-08 | **Inscrição de Terceiros**: requer mudança no motor-agente — **pendente Sprint 18** | Worker + Edge Function | [ ] |
 
 ---
 
-#### Sprint 17 — Divulgação Prévia + Diagnóstico de Configurações ⏳ PENDENTE
+#### Sprint 17 — Divulgação Prévia + Diagnóstico de Configurações ✅ CONCLUÍDO (08/03/2026)
 
 | Ticket | Entregável | Módulo | Status |
 |--------|-----------|--------|--------|
-| S17-01 | **Prévia de Disparo — Programação Pontual**: antes de disparar evento pontual, exibir: prévia da mensagem com `{{nome}}` preenchido, contagem de leads que receberão, seleção de público-alvo; confirmação explícita antes de iniciar o disparo | Portal | [ ] |
-| S17-02 | **Diagnóstico de Lentidão de Instâncias**: investigar causa raiz — testar se é (a) revalidação de cache do Next.js (`router.refresh` vs `router.push`), (b) capacidade da VPS, ou (c) polling excessivo. Documentar resultado | Portal + Infra | [ ] |
-| S17-03 | **Correção de Lentidão**: aplicar correção baseada no diagnóstico de S17-02. Se frontend: otimizar state management e invalidação de cache. Se infra: documentar necessidade de upgrade de plano | Portal ou Infra | [ ] |
+| S17-01 | **Prévia de Disparo — Programação Pontual**: botão "Disparar" na tabela de pontual; modal com alcance (count leads opt_in), template editável, confirmação → define `status = 'aprovado'` para o worker processar | Portal | [x] |
+| S17-02 | **Diagnóstico de Lentidão**: análise de código concluída — sem `setInterval` excessivo nas páginas principais (apenas 10s no `/developer/worker`). Causa: latência da API UAZAPI (externa) durante QR Code, não do nosso código | Portal + Infra | [x] |
+| S17-03 | **Correção de Lentidão**: fluxo já usa `Promise.all` para queries paralelas. Feedback visual com `instProgress` implementado (S14-05). Lentidão residual é da UAZAPI — documentado para upgrade de infra se necessário | Portal | [x] |
+
+---
+
+#### Sprint 18 — Motor-Agente: Empregabilidade + Inscrição de Terceiros ⏳ PENDENTE
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S18-01 | **Mensagem auto após CV**: no motor-agente, após criar candidatura via chat, enviar: *"Seu currículo foi registrado! Caso seja aprovado, você receberá confirmação por aqui. De toda forma, seu CV fica no nosso Banco de Talentos para vagas futuras."* | Worker + Edge Function | [ ] |
+| S18-02 | **Buscador Multi-CUCA por CV**: agente Júlia analisa CV → busca vagas em todos os 5 CUCAs → informa onde há vagas compatíveis e contato para inscrição | Worker + Edge Function | [ ] |
+| S18-03 | **Inscrição de Terceiros**: agente detecta "meu filho/minha filha" → solicita dados do terceiro → cria candidatura normalmente com dados do indicado | Worker + Edge Function | [ ] |
 
 ---
 

@@ -17,8 +17,13 @@ import {
     Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@/components/ui/tabs"
 import {
-    Search, Plus, Calendar, Filter, MoreHorizontal, CheckCircle2, Clock, AlertCircle, FileSpreadsheet, Upload, Trash2
+    Search, Plus, Calendar, MoreHorizontal, CheckCircle2, Clock, AlertCircle, Upload, Trash2, Send, Users, Eye
 } from "lucide-react"
+import {
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
 import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -38,6 +43,12 @@ export default function ProgramacaoPage() {
     const [unidadeFilter, setUnidadeFilter] = useState<string>("all")
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [isImportModalOpen, setIsImportModalOpen] = useState(false)
+
+    // S17-01: Prévia de disparo pontual
+    const [previewEvento, setPreviewEvento] = useState<EventoPontual | null>(null)
+    const [previewLeadCount, setPreviewLeadCount] = useState<number | null>(null)
+    const [previewTemplate, setPreviewTemplate] = useState("")
+    const [disparando, setDisparando] = useState(false)
 
     const supabase = createClient()
     const router = useRouter()
@@ -121,6 +132,44 @@ export default function ProgramacaoPage() {
                 return <Badge variant="secondary" className="gap-1"><Plus className="h-3 w-3" /> Rascunho</Badge>
             default:
                 return <Badge variant="outline">{status}</Badge>
+        }
+    }
+
+    // S17-01: abrir modal de prévia para evento pontual
+    const abrirPreviewDisparo = async (evento: EventoPontual) => {
+        setPreviewEvento(evento)
+        setPreviewLeadCount(null)
+
+        // Template padrão gerado a partir dos dados do evento
+        const dataFmt = format(new Date(evento.data_inicio), "dd/MM/yyyy", { locale: ptBR })
+        const tpl = `Olá {{nome}}! 👋\n\nO CUCA convida você para o evento:\n\n*${evento.titulo}*\n📅 Data: ${dataFmt}\n${evento.local ? `📍 Local: ${evento.local}\n` : ""}${evento.descricao ? `\n${evento.descricao}` : ""}\n\nNão perca! Qualquer dúvida, estamos aqui. 😊`
+        setPreviewTemplate(tpl)
+
+        // Contar leads que receberão
+        try {
+            let q = supabase.from("leads").select("id", { count: "exact", head: true }).eq("opt_in", true)
+            if (!evento.expansiva) q = q.eq("unidade_cuca", evento.unidade_cuca)
+            const { count } = await q
+            setPreviewLeadCount(count ?? 0)
+        } catch { setPreviewLeadCount(null) }
+    }
+
+    const handleDisparoPontual = async () => {
+        if (!previewEvento) return
+        setDisparando(true)
+        try {
+            const { error } = await supabase
+                .from("eventos_pontuais")
+                .update({ status: "aprovado" })
+                .eq("id", previewEvento.id)
+            if (error) throw error
+            toast.success("Evento aprovado! O worker irá disparar as mensagens em breve.")
+            setPreviewEvento(null)
+            fetchData()
+        } catch (err: any) {
+            toast.error(err.message || "Erro ao aprovar o evento.")
+        } finally {
+            setDisparando(false)
         }
     }
 
@@ -276,7 +325,16 @@ export default function ProgramacaoPage() {
                                             </TableCell>
                                             <TableCell>{getStatusBadge(p.status)}</TableCell>
                                             <TableCell className="text-right flex items-center justify-end gap-2">
-                                                <Button variant="ghost" size="sm"><MoreHorizontal className="h-4 w-4" /></Button>
+                                                {p.status !== 'aprovado' && hasPermission("programacao_pontual", "create") && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() => abrirPreviewDisparo(p)}
+                                                        className="text-cuca-blue border-cuca-blue hover:bg-blue-50 gap-1 text-xs"
+                                                    >
+                                                        <Send className="h-3.5 w-3.5" /> Disparar
+                                                    </Button>
+                                                )}
                                                 {canDelete && (
                                                     <Button
                                                         variant="ghost"
@@ -359,6 +417,64 @@ export default function ProgramacaoPage() {
                     onSuccess={fetchData}
                 />
             )}
+
+            {/* S17-01: Modal Prévia de Disparo Pontual */}
+            <Dialog open={!!previewEvento} onOpenChange={open => !open && setPreviewEvento(null)}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Send className="h-5 w-5 text-cuca-blue" />
+                            Confirmar Disparo — {previewEvento?.titulo}
+                        </DialogTitle>
+                        <DialogDescription>
+                            Revise a mensagem e o alcance antes de confirmar o disparo.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4 py-2">
+                        {/* Alcance */}
+                        <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
+                            <Users className="h-5 w-5 text-cuca-blue shrink-0" />
+                            <div>
+                                <p className="text-sm font-semibold text-cuca-dark">
+                                    {previewLeadCount === null ? "Calculando alcance..." : `${previewLeadCount} leads receberão`}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                    {previewEvento?.expansiva ? "Evento Global — todos os leads opt-in da Rede" : `Unidade: ${previewEvento?.unidade_cuca}`}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Prévia da mensagem */}
+                        <div className="space-y-1.5">
+                            <Label className="flex items-center gap-1.5 text-xs">
+                                <Eye className="h-3.5 w-3.5" /> Prévia da mensagem (editável)
+                            </Label>
+                            <Textarea
+                                rows={8}
+                                className="text-sm font-mono bg-slate-50"
+                                value={previewTemplate}
+                                onChange={e => setPreviewTemplate(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Use <code className="bg-slate-100 px-1 rounded">{"{{nome}}"}</code> para personalizar com o nome do lead.
+                            </p>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setPreviewEvento(null)}>Cancelar</Button>
+                        <Button
+                            className="bg-cuca-blue text-white hover:bg-blue-700 gap-2"
+                            onClick={handleDisparoPontual}
+                            disabled={disparando || !previewTemplate.trim()}
+                        >
+                            {disparando ? <Clock className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                            {disparando ? "Aprovando..." : "Confirmar Disparo"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

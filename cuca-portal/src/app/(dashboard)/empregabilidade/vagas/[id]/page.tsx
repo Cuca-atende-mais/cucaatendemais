@@ -106,6 +106,24 @@ export default function VagaDetalhesPage() {
 
                 // S12-06: exibir mensagem de fechamento
                 setMsgFechamento({ candidato: candidatura })
+
+                // S16-05: disparar WhatsApp de aprovação em background
+                if (candidatura?.telefone && vaga) {
+                    fetch("/api/empregabilidade/notificar-selecionado", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            candidatura_id: candidaturaId,
+                            nome: candidatura.nome,
+                            telefone: candidatura.telefone,
+                            titulo_vaga: vaga.titulo,
+                            unidade_cuca: vaga.unidade_cuca,
+                        }),
+                    }).then(r => r.json()).then(result => {
+                        if (result.ok) toast.success("WhatsApp enviado ao candidato!")
+                        else console.info("[S16-05]", result.motivo || result.error)
+                    }).catch(err => console.error("[S16-05]", err))
+                }
             }
 
             if (novoStatus === "rejeitado") toast.success("Candidato movido para o Banco de Talentos.")

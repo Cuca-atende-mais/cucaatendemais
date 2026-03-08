@@ -645,6 +645,27 @@ async def process_cv_endpoint(request: Request, background_tasks: BackgroundTask
         logger.error(f"Erro ao startar OCR: {str(e)}")
         return Response(status_code=500, content=str(e))
 
+@app.post("/process-cv-espontaneo")
+async def process_cv_espontaneo_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """S16-01: OCR de currículo de candidatura espontânea (sem vaga). Atualiza talent_bank.skills_jsonb."""
+    try:
+        payload = await request.json()
+        nome = payload.get("nome", "")
+        telefone = payload.get("telefone", "")
+        cv_url = payload.get("cv_url")
+
+        if not cv_url or not telefone:
+            return Response(status_code=400, content="Faltando cv_url ou telefone")
+
+        from cv_processor import process_cv_espontaneo
+        background_tasks.add_task(process_cv_espontaneo, nome, telefone, cv_url)
+
+        return {"status": "processing_started"}
+    except Exception as e:
+        logger.error(f"Erro ao startar OCR espontâneo: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
+
 @app.post("/analyse-sentiment")
 async def analyse_sentiment_endpoint(request: Request):
     """S13-11: Rota para o portal disparar a análise de sentimento via Sofia (LLM)."""

@@ -14,10 +14,11 @@ interface ChatSidebarProps {
     activeConversationId: string | null;
     onSelectConversation: (id: string) => void;
     filterAgenteTipo?: string[];
+    filterCanalTipo?: string;
     title?: string;
 }
 
-export default function ChatSidebar({ activeConversationId, onSelectConversation, filterAgenteTipo, title = "Atendimento" }: ChatSidebarProps) {
+export default function ChatSidebar({ activeConversationId, onSelectConversation, filterAgenteTipo, filterCanalTipo, title = "Atendimento" }: ChatSidebarProps) {
     const [conversations, setConversations] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
@@ -26,7 +27,6 @@ export default function ChatSidebar({ activeConversationId, onSelectConversation
     useEffect(() => {
         fetchConversations();
 
-        // Subscribe to events
         const channel = supabase
             .channel('conversas-changes')
             .on('postgres_changes', {
@@ -53,20 +53,28 @@ export default function ChatSidebar({ activeConversationId, onSelectConversation
     async function fetchConversations() {
         let query = supabase
             .from('conversas')
-            .select(`
-        *,
-        leads (
-          nome,
-          telefone
-        )
-      `)
+            .select(`*, leads (nome, telefone)`)
             .order('updated_at', { ascending: false });
 
-        if (filterAgenteTipo && filterAgenteTipo.length > 0) {
+        if (filterCanalTipo) {
+            // Whitelist: busca instâncias do canal_tipo especificado e filtra conversas por elas
+            const { data: instancias } = await supabase
+                .from('instancias_uazapi')
+                .select('nome')
+                .eq('canal_tipo', filterCanalTipo)
+                .eq('ativa', true);
+
+            const nomes = instancias?.map(i => i.nome) ?? [];
+            if (nomes.length > 0) {
+                query = query.in('instancia_uazapi', nomes);
+            } else {
+                // Nenhuma instância institucional ativa — retorna lista vazia
+                setConversations([]);
+                setLoading(false);
+                return;
+            }
+        } else if (filterAgenteTipo && filterAgenteTipo.length > 0) {
             query = query.in('agente_tipo', filterAgenteTipo);
-        } else {
-            // Atendimento Institucional: exclui Empregabilidade, Divulgação e Ouvidoria
-            query = query.not('agente_tipo', 'in', '("julia_geral","julia_unidade","maria_divulgacao","sofia_global","sofia_unidade","ana_global")');
         }
 
         const { data, error } = await query;

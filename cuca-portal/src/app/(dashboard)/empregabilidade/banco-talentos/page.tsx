@@ -22,7 +22,8 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { Search, Eye, FileText, BrainCircuit, User, Phone } from "lucide-react"
+import { Search, FileText, BrainCircuit, User, Phone, Plus, X } from "lucide-react"
+import { Label } from "@/components/ui/label"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -36,6 +37,11 @@ export default function BancoTalentosPage() {
     const [filtroStatus, setFiltroStatus] = useState("todos")
     const [dialogOpen, setDialogOpen] = useState(false)
     const [selectedTalento, setSelectedTalento] = useState<TalentBank | null>(null)
+    const [cadastroOpen, setCadastroOpen] = useState(false)
+    const [formNome, setFormNome] = useState("")
+    const [formTelefone, setFormTelefone] = useState("")
+    const [formNasc, setFormNasc] = useState("")
+    const [savingCadastro, setSavingCadastro] = useState(false)
 
     const supabase = createClient()
 
@@ -69,6 +75,33 @@ export default function BancoTalentosPage() {
         setDialogOpen(true)
     }
 
+    const handleCadastroManual = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!formNome.trim() || !formTelefone.trim()) {
+            toast.error("Nome e telefone são obrigatórios.")
+            return
+        }
+        setSavingCadastro(true)
+        try {
+            const { error } = await supabase.from("talent_bank").insert({
+                nome: formNome.trim(),
+                telefone: formTelefone.replace(/\D/g, ""),
+                data_nascimento: formNasc || null,
+                status: "disponivel",
+                skills_jsonb: { origem: "cadastro_manual_colaborador" },
+            })
+            if (error) throw error
+            toast.success("Candidato adicionado ao Banco de Talentos!")
+            setCadastroOpen(false)
+            setFormNome(""); setFormTelefone(""); setFormNasc("")
+            fetchTalentos()
+        } catch (err: any) {
+            toast.error(err.message || "Erro ao cadastrar.")
+        } finally {
+            setSavingCadastro(false)
+        }
+    }
+
     const filteredTalentos = talentos.filter((t) => {
         const term = searchTerm.toLowerCase()
         const skillsStr = JSON.stringify(t.skills_jsonb || {}).toLowerCase()
@@ -83,10 +116,50 @@ export default function BancoTalentosPage() {
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Banco de Talentos</h1>
                     <p className="text-muted-foreground">
-                        Respositório inteligente de todos os candidatos não contratados para matching futuro.
+                        Repositório inteligente de candidatos para matching futuro.
                     </p>
                 </div>
+                <Button
+                    className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold"
+                    onClick={() => setCadastroOpen(true)}
+                >
+                    <Plus className="mr-2 h-4 w-4" /> Cadastrar Manualmente
+                </Button>
             </div>
+
+            {/* Modal cadastro manual S16-02 */}
+            {cadastroOpen && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+                        <div className="flex items-center justify-between p-5 border-b">
+                            <h2 className="text-lg font-bold">Cadastrar Candidato Presencial</h2>
+                            <button onClick={() => setCadastroOpen(false)} className="text-gray-400 hover:text-gray-600">
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+                        <form onSubmit={handleCadastroManual} className="p-5 space-y-4">
+                            <div className="space-y-1.5">
+                                <Label htmlFor="m-nome">Nome Completo *</Label>
+                                <Input id="m-nome" value={formNome} onChange={e => setFormNome(e.target.value)} placeholder="Nome do candidato" required />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="m-tel">Telefone / WhatsApp *</Label>
+                                <Input id="m-tel" value={formTelefone} onChange={e => setFormTelefone(e.target.value)} placeholder="(85) 99999-9999" required />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="m-nasc">Data de Nascimento</Label>
+                                <Input id="m-nasc" type="date" value={formNasc} onChange={e => setFormNasc(e.target.value)} max={new Date().toISOString().split("T")[0]} />
+                            </div>
+                            <div className="flex justify-end gap-3 pt-2">
+                                <Button type="button" variant="outline" onClick={() => setCadastroOpen(false)}>Cancelar</Button>
+                                <Button type="submit" className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold" disabled={savingCadastro}>
+                                    {savingCadastro ? "Salvando..." : "Adicionar ao Banco"}
+                                </Button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
 
             <div className="grid gap-4 md:grid-cols-3">
                 <Card>

@@ -125,7 +125,70 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
 
     except Exception as e:
         logger.error(f"Erro ao processar OCR da candidatura {candidatura_id}: {str(e)}")
-        # Atualizar status para erro de processamento
         supabase.table("candidaturas").update({
             "matching_justificativa": f"Erro OCR: {str(e)[:50]}"
         }).eq("id", candidatura_id).execute()
+
+
+async def process_cv_espontaneo(nome: str, telefone: str, cv_url: str):
+    """S16-01: OCR de currículo sem vaga. Extrai skills e atualiza talent_bank por telefone."""
+    logger.info(f"OCR espontâneo: {nome} ({telefone})")
+    try:
+        file_b64 = await download_file_as_base64(cv_url)
+
+        prompt_sys = """
+        Você é um especialista em análise de currículos da Rede CUCA.
+        Extraia as informações do currículo e retorne APENAS um JSON válido com este schema:
+        {
+            "escolaridade": "String (ex: Ensino Médio, Superior Incompleto, etc.)",
+            "experiencia_meses": Integer (total estimado),
+            "experiencia_resumo": "String resumindo as experiências",
+            "habilidades": ["lista", "de", "habilidades"],
+            "areas_interesse": ["áreas", "de", "atuação"],
+            "email": "String ou null"
+        }
+        """
+
+        is_pdf = cv_url.lower().endswith(".pdf")
+        media_type = "application/pdf" if is_pdf else "image/jpeg"
+
+        messages = [
+            {"role": "system", "content": prompt_sys},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Extraia as informações deste currículo:"},
+                {
+                    "type": "image_url" if not is_pdf else "text",
+                    **({"image_url": {"url": f"data:{media_type};base64,{file_b64}", "detail": "high"}}
+                       if not is_pdf else {"text": f"[Currículo PDF em base64 - URL: {cv_url}]"}),
+                },
+            ]}
+        ]
+
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            max_tokens=800,
+            temperature=0.0
+        )
+
+        raw_output = response.choices[0].message.content.strip()
+        if raw_output.startswith("```json"):
+            raw_output = raw_output[7:-3]
+        elif raw_output.startswith("```"):
+            raw_output = raw_output[3:-3]
+
+        json_data = json.loads(raw_output)
+
+        # Atualizar talent_bank pelo telefone
+        supabase.table("talent_bank").update({
+            "skills_jsonb": {
+                **json_data,
+                "origem": "candidatura_espontanea",
+                "ocr_processado": True,
+            }
+        }).eq("telefone", telefone).execute()
+
+        logger.info(f"OCR espontâneo finalizado para {nome}")
+
+    except Exception as e:
+        logger.error(f"Erro OCR espontâneo {nome}: {str(e)}")

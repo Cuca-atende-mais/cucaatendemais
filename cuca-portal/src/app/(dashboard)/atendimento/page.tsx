@@ -14,6 +14,8 @@ export default function AtendimentoPage() {
                 <ChatSidebar
                     activeConversationId={activeConversationId}
                     onSelectConversation={setActiveConversationId}
+                    filterCanalTipo="Institucional"
+                    title="Atendimento Institucional"
                 />
             </div>
 
