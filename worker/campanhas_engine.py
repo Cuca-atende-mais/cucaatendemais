@@ -239,26 +239,24 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                 try:
                     if midia_url:
                         resp = await client.post(
-                            f"{UAZAPI_URL}/message/sendMedia/{instance_name}",
-                            headers={"apikey": inst_token, "Content-Type": "application/json"},
+                            f"{UAZAPI_URL}/send/media",
+                            headers={"token": inst_token, "Content-Type": "application/json"},
                             json={
                                 "number": numero,
-                                "options": {"delay": 1200, "presence": "composing"},
-                                "mediaMessage": {
-                                    "mediatype": "image",
-                                    "caption": texto,
-                                    "media": midia_url
-                                }
+                                "type": "image",
+                                "file": midia_url,
+                                "caption": texto,
+                                "delay": 1200
                             }
                         )
                     else:
                         resp = await client.post(
-                            f"{UAZAPI_URL}/message/sendText/{instance_name}",
-                            headers={"apikey": inst_token, "Content-Type": "application/json"},
+                            f"{UAZAPI_URL}/send/text",
+                            headers={"token": inst_token, "Content-Type": "application/json"},
                             json={
                                 "number": numero,
-                                "options": {"delay": 1200, "presence": "composing"},
-                                "textMessage": {"text": texto}
+                                "text": texto,
+                                "delay": 1200
                             }
                         )
 
@@ -500,12 +498,12 @@ async def processar_disparos_divulgacao(delay_min: int, delay_max: int, daily_li
                 try:
                     UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://cucaatendemais.uazapi.com")
                     resp = await client.post(
-                        f"{UAZAPI_URL}/message/sendText/{inst_nome}",
-                        headers={"apikey": inst_token, "Content-Type": "application/json"},
+                        f"{UAZAPI_URL}/send/text",
+                        headers={"token": inst_token, "Content-Type": "application/json"},
                         json={
                             "number": telefone,
-                            "options": {"delay": 1200, "presence": "composing"},
-                            "textMessage": {"text": texto}
+                            "text": texto,
+                            "delay": 1200
                         }
                     )
                     if resp.status_code == 200:

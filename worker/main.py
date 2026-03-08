@@ -290,10 +290,10 @@ async def process_webhook_payload(payload: dict, token: str):
                                 async with httpx.AsyncClient() as client:
                                     payload_send = {
                                         "number": phone,
-                                        "options": {"delay": 1200, "presence": "composing"},
-                                        "textMessage": {"text": "Obrigado por confirmar! Aguarde um momento enquanto processo seu atendimento..." }
+                                        "delay": 1200,
+                                        "text": "Obrigado por confirmar! Aguarde um momento enquanto processo seu atendimento..."
                                     }
-                                    await client.post(f"{UAZAPI_URL}/message/sendText/{instance_name}", json=payload_send, headers={"apikey": inst_token})
+                                    await client.post(f"{UAZAPI_URL}/send/text", json=payload_send, headers={"token": inst_token, "Content-Type": "application/json"})
                             asyncio.create_task(notify_optin())
                         except Exception as e:
                             pass
@@ -308,10 +308,10 @@ async def process_webhook_payload(payload: dict, token: str):
                             async with httpx.AsyncClient() as client:
                                 payload_send = {
                                     "number": phone,
-                                    "options": {"delay": 1200, "presence": "composing"},
-                                    "textMessage": {"text": "Tudo bem! Suas preferências foram salvas e você não receberá mensagens do Atende+. Caso mude de ideia no futuro, basta mandar um 'Oi'." }
+                                    "delay": 1200,
+                                    "text": "Tudo bem! Suas preferências foram salvas e você não receberá mensagens do Atende+. Caso mude de ideia no futuro, basta mandar um 'Oi'."
                                 }
-                                await client.post(f"{UAZAPI_URL}/message/sendText/{instance_name}", json=payload_send, headers={"apikey": inst_token})
+                                await client.post(f"{UAZAPI_URL}/send/text", json=payload_send, headers={"token": inst_token, "Content-Type": "application/json"})
                         except Exception as e:
                             logger.error(f"Erro ao tratar recusa de opt-in: {e}")
                         return # Encerra processamento
@@ -325,10 +325,10 @@ async def process_webhook_payload(payload: dict, token: str):
                             async with httpx.AsyncClient() as client:
                                 payload_send = {
                                     "number": phone,
-                                    "options": {"delay": 1200, "presence": "composing"},
-                                    "textMessage": {"text": "👋 Olá! Bem-vindo ao *Atende+* da Rede CUCA.\n\nPara continuar o atendimento e de acordo com a LGPD, preciso que você aceite receber nossas mensagens e concorde com a nossa política.\n\nResponda *Sim* para continuar ou *Não* para encerrar." }
+                                    "delay": 1200,
+                                    "text": "👋 Olá! Bem-vindo ao *Atende+* da Rede CUCA.\n\nPara continuar o atendimento e de acordo com a LGPD, preciso que você aceite receber nossas mensagens e concorde com a nossa política.\n\nResponda *Sim* para continuar ou *Não* para encerrar."
                                 }
-                                await client.post(f"{UAZAPI_URL}/message/sendText/{instance_name}", json=payload_send, headers={"apikey": inst_token})
+                                await client.post(f"{UAZAPI_URL}/send/text", json=payload_send, headers={"token": inst_token, "Content-Type": "application/json"})
                         except Exception as e:
                             logger.error(f"Erro ao pedir opt-in: {e}")
                         return # Encerra processamento até ele responder Sim
@@ -352,12 +352,12 @@ async def process_webhook_payload(payload: dict, token: str):
                         import httpx
                         async with httpx.AsyncClient() as client:
                             await client.post(
-                                f"{UAZAPI_URL}/message/sendText/{instance_name}",
-                                headers={"apikey": inst_token, "Content-Type": "application/json"},
+                                f"{UAZAPI_URL}/send/text",
+                                headers={"token": inst_token, "Content-Type": "application/json"},
                                 json={
                                     "number": phone,
-                                    "options": {"delay": 1200, "presence": "composing"},
-                                    "textMessage": {"text": "✅ Pronto! Você foi removido da nossa lista de mensagens. Sentiremos sua falta! Se mudar de ideia, é só mandar um 'Oi'."}
+                                    "delay": 1200,
+                                    "text": "✅ Pronto! Você foi removido da nossa lista de mensagens. Sentiremos sua falta! Se mudar de ideia, é só mandar um 'Oi'."
                                 }
                             )
                     except Exception as stop_err:
@@ -500,11 +500,12 @@ async def process_webhook_payload(payload: dict, token: str):
                                             UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
                                             async with httpx.AsyncClient() as hc:
                                                 await hc.post(
-                                                    f"{UAZAPI_URL}/message/sendText/{instance_name}",
-                                                    headers={"apikey": inst_token, "Content-Type": "application/json"},
+                                                    f"{UAZAPI_URL}/send/text",
+                                                    headers={"token": inst_token, "Content-Type": "application/json"},
                                                     json={
                                                         "number": tel_destino,
-                                                        "textMessage": {"text": msg_handover}
+                                                        "text": msg_handover,
+                                                        "delay": 1200
                                                     }
                                                 )
                                             logger.info(f"Transbordo disparado para {tel_destino} ({setor_resp})")
@@ -534,12 +535,12 @@ async def process_webhook_payload(payload: dict, token: str):
                                 else:
                                     logger.info(f"Apenas texto detectado. Tamanho: {len(resposta_ia)}")
                                     await client.post(
-                                        f"{UAZAPI_URL}/message/sendText/{instance_name}",
-                                        headers={"apikey": inst_token, "Content-Type": "application/json"},
+                                        f"{UAZAPI_URL}/send/text",
+                                        headers={"token": inst_token, "Content-Type": "application/json"},
                                         json={
                                             "number": phone,
-                                            "options": {"delay": 1200, "presence": "composing"},
-                                            "textMessage": {"text": resposta_ia}
+                                            "delay": 1200,
+                                            "text": resposta_ia
                                         }
                                     )
                         else:
@@ -585,12 +586,12 @@ async def send_manual_message(token: str, request: Request):
         import httpx
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{UAZAPI_URL}/message/sendText/{instance}",
-                headers={"apikey": inst_token, "Content-Type": "application/json"},
+                f"{UAZAPI_URL}/send/text",
+                headers={"token": inst_token, "Content-Type": "application/json"},
                 json={
                     "number": number,
-                    "options": {"delay": 1200, "presence": "composing"},
-                    "textMessage": {"text": text}
+                    "delay": 1200,
+                    "text": text
                 }
             )
             return response.json()
