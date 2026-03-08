@@ -181,7 +181,7 @@ export default function ProgramacaoPage() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-cuca-dark flex items-center gap-3">
+                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3 flex-wrap">
                         Programas & Eventos
                         {unidadeFilter !== "all" && (
                             <Badge className="bg-cuca-blue text-white text-sm font-medium px-3 py-1">
@@ -221,50 +221,52 @@ export default function ProgramacaoPage() {
                         </TabsTrigger>
                     </TabsList>
 
-                    <div className="flex items-center gap-2">
-                        <div className="relative">
+                    <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+                        <div className="relative shrink-0">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input
                                 placeholder="Buscar..."
-                                className="pl-10 w-64 h-9 bg-white"
+                                className="pl-10 w-48 h-9"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
-                        <div className="flex items-center gap-3">
-                            <div className="flex bg-muted p-1 rounded-lg">
+
+                        {/* Filtros de unidade com scroll horizontal em telas pequenas */}
+                        <div className="overflow-x-auto flex-1 min-w-0">
+                            <div className="flex bg-muted p-1 rounded-lg flex-nowrap min-w-max gap-0.5">
                                 {canSeeAllUnits && (
                                     <Button
                                         variant={unidadeFilter === "all" ? "default" : "ghost"}
                                         size="sm"
                                         onClick={() => setUnidadeFilter("all")}
-                                        className={`h-8 text-xs px-3 ${unidadeFilter === "all" ? "bg-cuca-blue text-white hover:bg-cuca-blue/90 font-bold" : ""}`}
+                                        className={`h-8 text-xs px-3 whitespace-nowrap ${unidadeFilter === "all" ? "bg-primary text-primary-foreground font-bold" : ""}`}
                                     >
                                         Todas as Unidades
                                     </Button>
                                 )}
                                 {unidadesCuca.map((u) => {
-                                    // Se não pode ver tudo, e U não é a unidade dele, esconde o botão
                                     if (!canSeeAllUnits && u !== profile?.unidade_cuca) return null
-
                                     return (
                                         <Button
                                             key={u}
                                             variant={unidadeFilter === u ? "default" : "ghost"}
                                             size="sm"
                                             onClick={() => canSeeAllUnits && setUnidadeFilter(u)}
-                                            className={`h-8 text-xs px-3 ${unidadeFilter === u ? "bg-cuca-blue text-white hover:bg-cuca-blue/90 font-bold" : ""}`}
+                                            className={`h-8 text-xs px-3 whitespace-nowrap ${unidadeFilter === u ? "bg-primary text-primary-foreground font-bold" : ""}`}
                                         >
-                                            {u}
+                                            {u.replace("Cuca ", "")}
                                         </Button>
                                     )
                                 })}
                             </div>
+                        </div>
 
+                        <div className="flex items-center gap-2 shrink-0">
                             {hasPermission("programacao_mensal", "create") && (
                                 <Button
                                     variant="outline"
-                                    className="border-cuca-blue text-cuca-blue hover:bg-cuca-blue/10 gap-2"
+                                    className="gap-2 text-xs"
                                     onClick={() => {
                                         if (unidadeFilter === "all") {
                                             toast.error("Por favor, selecione uma unidade específica primeiro para a importação.")
@@ -273,8 +275,8 @@ export default function ProgramacaoPage() {
                                         setIsImportModalOpen(true)
                                     }}
                                 >
-                                    <Upload className="mr-1 h-4 w-4" />
-                                    Atualizar Programação
+                                    <Upload className="h-4 w-4" />
+                                    <span className="hidden sm:inline">Atualizar Programação</span>
                                 </Button>
                             )}
 
@@ -283,7 +285,8 @@ export default function ProgramacaoPage() {
                                     className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold"
                                     onClick={() => setIsModalOpen(true)}
                                 >
-                                    <Plus className="mr-2 h-4 w-4" /> Novo Item
+                                    <Plus className="h-4 w-4" />
+                                    <span className="hidden sm:inline ml-1">Novo Item</span>
                                 </Button>
                             )}
                         </div>
@@ -310,7 +313,7 @@ export default function ProgramacaoPage() {
                                         <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Nenhum evento pontual encontrado.</TableCell></TableRow>
                                     ) : filteredPontuais.map(p => (
                                         <TableRow key={p.id}>
-                                            <TableCell className="font-semibold text-cuca-dark">
+                                            <TableCell className="font-semibold">
                                                 <div className="flex items-center gap-2">
                                                     {p.titulo}
                                                     {p.expansiva && (
@@ -330,7 +333,7 @@ export default function ProgramacaoPage() {
                                                         variant="outline"
                                                         size="sm"
                                                         onClick={() => abrirPreviewDisparo(p)}
-                                                        className="text-cuca-blue border-cuca-blue hover:bg-blue-50 gap-1 text-xs"
+                                                        className="text-primary border-primary hover:bg-primary/10 gap-1 text-xs"
                                                     >
                                                         <Send className="h-3.5 w-3.5" /> Disparar
                                                     </Button>
@@ -340,7 +343,7 @@ export default function ProgramacaoPage() {
                                                         variant="ghost"
                                                         size="sm"
                                                         onClick={() => handleDelete(p.id, 'pontual')}
-                                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 h-8 w-8 p-0"
+                                                        className="text-red-500 hover:text-red-700 hover:bg-red-500/10 h-8 w-8 p-0"
                                                     >
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
@@ -374,7 +377,7 @@ export default function ProgramacaoPage() {
                                         <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Nenhuma programação mensal encontrada.</TableCell></TableRow>
                                     ) : filteredMensais.map(m => (
                                         <TableRow key={m.id}>
-                                            <TableCell className="font-semibold text-cuca-dark">
+                                            <TableCell className="font-semibold">
                                                 {m.titulo} ({m.mes}/{m.ano})
                                             </TableCell>
                                             <TableCell>{m.total_atividades} atividades</TableCell>
@@ -385,7 +388,7 @@ export default function ProgramacaoPage() {
                                                     variant="ghost"
                                                     size="sm"
                                                     onClick={() => openCampanhaDetails(m)}
-                                                    className="text-cuca-blue hover:text-blue-700 hover:bg-blue-50"
+                                                    className="text-primary hover:text-primary/80 hover:bg-primary/10"
                                                 >
                                                     Ver Atividades
                                                 </Button>
@@ -394,7 +397,7 @@ export default function ProgramacaoPage() {
                                                         variant="ghost"
                                                         size="sm"
                                                         onClick={() => handleDelete(m.id, 'mensal')}
-                                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 h-8 w-8 p-0"
+                                                        className="text-red-500 hover:text-red-700 hover:bg-red-500/10 h-8 w-8 p-0"
                                                     >
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
@@ -433,10 +436,10 @@ export default function ProgramacaoPage() {
 
                     <div className="space-y-4 py-2">
                         {/* Alcance */}
-                        <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
-                            <Users className="h-5 w-5 text-cuca-blue shrink-0" />
+                        <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/10 border border-primary/20">
+                            <Users className="h-5 w-5 text-primary shrink-0" />
                             <div>
-                                <p className="text-sm font-semibold text-cuca-dark">
+                                <p className="text-sm font-semibold">
                                     {previewLeadCount === null ? "Calculando alcance..." : `${previewLeadCount} leads receberão`}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
@@ -452,12 +455,12 @@ export default function ProgramacaoPage() {
                             </Label>
                             <Textarea
                                 rows={8}
-                                className="text-sm font-mono bg-slate-50"
+                                className="text-sm font-mono bg-muted"
                                 value={previewTemplate}
                                 onChange={e => setPreviewTemplate(e.target.value)}
                             />
                             <p className="text-xs text-muted-foreground">
-                                Use <code className="bg-slate-100 px-1 rounded">{"{{nome}}"}</code> para personalizar com o nome do lead.
+                                Use <code className="bg-muted px-1 rounded">{"{{nome}}"}</code> para personalizar com o nome do lead.
                             </p>
                         </div>
                     </div>

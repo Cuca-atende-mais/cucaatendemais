@@ -1,21 +1,17 @@
 export const dynamic = 'force-dynamic'
 
 import type { Metadata } from "next";
-import { Inter, Poppins } from "next/font/google";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { UserProvider } from "@/lib/auth/user-provider";
 import { Toaster } from "react-hot-toast";
 import { SentryInitializer } from "@/components/sentry-initializer";
+import { ThemeProvider } from "@/components/theme-provider";
 
-const inter = Inter({
-  variable: "--font-inter",
+const jakartaSans = Plus_Jakarta_Sans({
+  variable: "--font-jakarta",
   subsets: ["latin"],
-});
-
-const poppins = Poppins({
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-poppins",
-  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
 });
 
 export const metadata: Metadata = {
@@ -35,15 +31,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR">
-      <body
-        className={`${inter.variable} ${poppins.variable} font-sans antialiased bg-slate-100 text-slate-900`}
-      >
-        <UserProvider>
-          <SentryInitializer />
-          {children}
-          <Toaster position="top-right" />
-        </UserProvider>
+    <html lang="pt-BR" suppressHydrationWarning>
+      <body className={`${jakartaSans.variable} font-sans antialiased`}>
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+          <UserProvider>
+            <SentryInitializer />
+            {children}
+            <Toaster position="top-right" />
+          </UserProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

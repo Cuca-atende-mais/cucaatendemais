@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-jakarta, var(--font-inter));
   --font-mono: var(--font-geist-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -47,7 +47,7 @@
   --radius-4xl: calc(var(--radius) + 16px);
 
   /* Fontes Customizadas */
-  --font-heading: var(--font-poppins);
+  --font-heading: var(--font-jakarta, var(--font-poppins));
 
   /* Cores CUCA */
   --color-cuca-yellow: var(--cuca-yellow);
@@ -112,39 +112,52 @@
 
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: var(--cuca-dark);
-  /* Usar cuca-dark para sidebar */
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: var(--cuca-blue);
-  /* Usar cuca-blue para itens ativos */
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* ── Sophisticated dark — inspirado em Dot Bikes ~#1a1e2e ── */
+  --background: oklch(0.165 0.025 255);     /* #1a1e2e – fundo principal */
+  --foreground: oklch(0.93 0.008 255);      /* branco suave, legível */
+
+  /* Cards: levemente elevados sobre o fundo */
+  --card: oklch(0.205 0.022 255);           /* #21253a */
+  --card-foreground: oklch(0.93 0.008 255);
+
+  /* Popover/Dialog/Sheet: superfície ELEVADA — claramente diferente do card */
+  --popover: oklch(0.305 0.018 255);        /* #383d58 — modais com elevação real */
+  --popover-foreground: oklch(0.95 0.005 255);
+
+  /* Primary: azul #3b82f6 — suave, não violeta */
+  --primary: oklch(0.605 0.185 232);
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.235 0.020 255);
+  --secondary-foreground: oklch(0.93 0.008 255);
+
+  --muted: oklch(0.240 0.018 255);
+  --muted-foreground: oklch(0.75 0.010 255);   /* cinza LEGÍVEL — texto secundário claro */
+
+  --accent: oklch(0.265 0.028 232);             /* tinte azul sutil para hover */
+  --accent-foreground: oklch(0.95 0.005 255);
+
+  --destructive: oklch(0.65 0.22 27);
+  --border: oklch(0.30 0.022 255);              /* borda VISÍVEL mas harmoniosa */
+  --input: oklch(0.250 0.020 255);              /* inputs: fundo distinguível do card */
+  --ring: oklch(0.605 0.185 232);
+
+  /* Charts — harmoniosos no fundo escuro-azulado */
+  --chart-1: oklch(0.605 0.185 232);   /* azul #3b82f6 */
+  --chart-2: oklch(0.70 0.18 185);     /* ciano/teal */
+  --chart-3: oklch(0.78 0.17 85);      /* âmbar */
+  --chart-4: oklch(0.65 0.22 350);     /* rose */
+  --chart-5: oklch(0.72 0.16 160);     /* esmeralda */
+
+  /* Sidebar: mais escura que o fundo para hierarquia clara */
+  --sidebar: oklch(0.135 0.022 255);           /* #161927 */
+  --sidebar-foreground: oklch(0.86 0.008 255);
+  --sidebar-primary: oklch(0.605 0.185 232);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.215 0.025 255);
+  --sidebar-accent-foreground: oklch(0.93 0.008 255);
+  --sidebar-border: oklch(0.225 0.020 255);
+  --sidebar-ring: oklch(0.605 0.185 232);
 }
 
 
@@ -188,6 +201,38 @@
 
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-gray-400 dark:bg-gray-500;
+}
+
+/* ── Animações do Dashboard ──────────────────────────────── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-ring {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out forwards;
+}
+
+.stagger-1 { animation-delay: 0.05s; opacity: 0; }
+.stagger-2 { animation-delay: 0.10s; opacity: 0; }
+.stagger-3 { animation-delay: 0.15s; opacity: 0; }
+.stagger-4 { animation-delay: 0.20s; opacity: 0; }
+
+/* Focus ring customizado */
+:focus-visible {
+  outline: 2px solid oklch(0.605 0.185 232);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* Ocultar o indicador "N" de desenvolvimento do Next.js/Turbopack no canto inferior */

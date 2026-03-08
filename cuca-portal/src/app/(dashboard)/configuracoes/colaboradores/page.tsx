@@ -35,6 +35,24 @@ import { Users, Plus, Shield, Building2, Mail, Phone, Search, Loader2 } from "lu
 import { toast } from "react-hot-toast"
 import { unidadesCuca } from "@/lib/constants"
 
+// Badge de cargo com cor semântica por perfil — funciona em dark e light
+function RoleBadge({ name }: { name?: string }) {
+    const config: Record<string, string> = {
+        "Developer":       "bg-violet-500/15 text-violet-400 border-violet-500/30",
+        "Super Admin Cuca":"bg-blue-500/15 text-blue-400 border-blue-500/30",
+        "Gerente":         "bg-amber-500/15 text-amber-400 border-amber-500/30",
+        "Atendente":       "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+    }
+    const label = name || "Sem Perfil"
+    const cls = config[label] ?? "bg-muted text-muted-foreground border-border"
+    return (
+        <Badge variant="outline" className={`font-medium ${cls}`}>
+            <Shield className="w-3 h-3 mr-1" />
+            {label}
+        </Badge>
+    )
+}
+
 export default function ColaboradoresPage() {
     const [colaboradores, setColaboradores] = useState<any[]>([])
     const [roles, setRoles] = useState<any[]>([])
@@ -345,10 +363,7 @@ export default function ColaboradoresPage() {
                                             )}
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant="outline" className="font-medium bg-blue-50/50 text-blue-700 border-blue-200">
-                                                <Shield className="w-3 h-3 mr-1" />
-                                                {colab.sys_roles?.name || "Sem Perfil"}
-                                            </Badge>
+                                            <RoleBadge name={colab.sys_roles?.name} />
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex items-center gap-1 text-sm">
@@ -357,8 +372,10 @@ export default function ColaboradoresPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant={colab.ativo ? "default" : "secondary"}
-                                                className={colab.ativo ? "bg-green-100 text-green-700 hover:bg-green-100 border-green-200" : ""}>
+                                            <Badge variant="outline" className={colab.ativo
+                                                ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 font-semibold"
+                                                : "bg-rose-500/15 text-rose-400 border-rose-500/30 font-semibold"
+                                            }>
                                                 {colab.ativo ? "Ativo" : "Inativo"}
                                             </Badge>
                                         </TableCell>

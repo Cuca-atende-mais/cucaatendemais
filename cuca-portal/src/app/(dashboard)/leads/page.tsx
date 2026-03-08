@@ -22,9 +22,6 @@ import {
     Dialog, DialogContent, DialogDescription, DialogFooter,
     DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
-import {
-    Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -35,17 +32,17 @@ import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
-import { mascaraTelefone, limparTelefone } from "@/lib/utils"
+import { mascaraTelefone, limparTelefone, cn } from "@/lib/utils"
 
 const PAGE_SIZE = 50
 
 const BADGE_COLORS = [
-    "bg-blue-100 text-blue-800",
-    "bg-green-100 text-green-800",
-    "bg-purple-100 text-purple-800",
-    "bg-orange-100 text-orange-800",
-    "bg-pink-100 text-pink-800",
-    "bg-yellow-100 text-yellow-800",
+    "bg-blue-500/15 text-blue-400 border border-blue-500/25",
+    "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25",
+    "bg-violet-500/15 text-violet-400 border border-violet-500/25",
+    "bg-orange-500/15 text-orange-400 border border-orange-500/25",
+    "bg-pink-500/15 text-pink-400 border border-pink-500/25",
+    "bg-amber-500/15 text-amber-400 border border-amber-500/25",
 ]
 
 export default function LeadsPage() {
@@ -586,30 +583,32 @@ export default function LeadsPage() {
             )}
 
             {/* ============================
-                Sheet — Perfil do Lead
+                Dialog — Perfil do Lead
             ============================ */}
-            <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-                <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+            <Dialog open={sheetOpen} onOpenChange={setSheetOpen}>
+                <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+                    <DialogTitle className="sr-only">Perfil do Lead</DialogTitle>
+
                     {leadSelecionado && (
                         <>
-                            <SheetHeader className="mb-4">
-                                <SheetTitle>{leadSelecionado.nome ?? "Lead sem nome"}</SheetTitle>
-                                <SheetDescription>{leadSelecionado.telefone}</SheetDescription>
-                            </SheetHeader>
-
-                            {/* Seção: Dados */}
-                            <div className="mb-6">
-                                <div className="flex items-center justify-between mb-3">
-                                    <h3 className="font-semibold text-sm">Dados</h3>
+                            {/* ── Header fixo ── */}
+                            <div className="flex items-start gap-4 px-6 py-5 border-b border-border shrink-0 pr-14">
+                                <div className="h-14 w-14 rounded-2xl bg-primary/15 flex items-center justify-center text-primary font-black text-2xl shrink-0">
+                                    {(leadSelecionado.nome ?? "?").charAt(0).toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h2 className="text-lg font-bold leading-tight">{leadSelecionado.nome ?? "Lead sem nome"}</h2>
+                                    <p className="text-sm text-muted-foreground mt-0.5">{leadSelecionado.telefone}</p>
+                                    {leadSelecionado.unidade_cuca && (
+                                        <Badge variant="outline" className="mt-2 text-xs">{leadSelecionado.unidade_cuca}</Badge>
+                                    )}
+                                </div>
+                                <div className="shrink-0">
                                     {!editando ? (
-                                        <Button variant="outline" size="sm" onClick={() => setEditando(true)}>
-                                            Editar
-                                        </Button>
+                                        <Button variant="outline" size="sm" onClick={() => setEditando(true)}>Editar</Button>
                                     ) : (
                                         <div className="flex gap-2">
-                                            <Button variant="ghost" size="sm" onClick={() => setEditando(false)}>
-                                                Cancelar
-                                            </Button>
+                                            <Button variant="ghost" size="sm" onClick={() => setEditando(false)}>Cancelar</Button>
                                             <Button size="sm" onClick={salvarDados} disabled={salvandoDados}>
                                                 <Save className="mr-1 h-3 w-3" />
                                                 {salvandoDados ? "Salvando..." : "Salvar"}
@@ -617,246 +616,197 @@ export default function LeadsPage() {
                                         </div>
                                     )}
                                 </div>
-
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <Label className="text-xs">Nome</Label>
-                                        {editando ? (
-                                            <Input
-                                                value={formDados.nome}
-                                                onChange={e => setFormDados(f => ({ ...f, nome: e.target.value }))}
-                                                className="mt-1 h-8 text-sm"
-                                            />
-                                        ) : (
-                                            <p className="text-sm mt-1">{leadSelecionado.nome ?? "—"}</p>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <Label className="text-xs">Telefone</Label>
-                                        {editando ? (
-                                            <Input
-                                                value={mascaraTelefone(formDados.telefone)}
-                                                onChange={e => setFormDados(f => ({ ...f, telefone: limparTelefone(e.target.value) }))}
-                                                placeholder="+55 (85) 99999-9999"
-                                                className="mt-1 h-8 text-sm"
-                                            />
-                                        ) : (
-                                            <p className="text-sm mt-1">{leadSelecionado.telefone}</p>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <Label className="text-xs">Data de Nascimento</Label>
-                                        {editando ? (
-                                            <Input
-                                                type="date"
-                                                value={formDados.data_nascimento}
-                                                onChange={e => setFormDados(f => ({ ...f, data_nascimento: e.target.value }))}
-                                                className="mt-1 h-8 text-sm"
-                                            />
-                                        ) : (
-                                            <p className="text-sm mt-1">{formatarData(leadSelecionado.data_nascimento)}</p>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <Label className="text-xs">E-mail</Label>
-                                        {editando ? (
-                                            <Input
-                                                type="email"
-                                                value={formDados.email}
-                                                onChange={e => setFormDados(f => ({ ...f, email: e.target.value }))}
-                                                className="mt-1 h-8 text-sm"
-                                            />
-                                        ) : (
-                                            <p className="text-sm mt-1">{leadSelecionado.email ?? "—"}</p>
-                                        )}
-                                    </div>
-                                    <div className="col-span-2">
-                                        <Label className="text-xs">Unidade CUCA</Label>
-                                        {editando ? (
-                                            <Select
-                                                value={formDados.unidade_cuca}
-                                                onValueChange={v => setFormDados(f => ({ ...f, unidade_cuca: v }))}
-                                            >
-                                                <SelectTrigger className="mt-1 h-8 text-sm">
-                                                    <SelectValue placeholder="Selecionar..." />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {unidadesCuca.map(u => (
-                                                        <SelectItem key={u} value={u}>{u}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        ) : (
-                                            <p className="text-sm mt-1">{leadSelecionado.unidade_cuca ?? "—"}</p>
-                                        )}
-                                    </div>
-                                </div>
                             </div>
 
-                            {/* Seção: Perfil */}
-                            <div className="mb-6">
-                                <h3 className="font-semibold text-sm mb-3">Perfil Automático</h3>
-                                <div className="space-y-2">
+                            {/* ── Corpo scrollável ── */}
+                            <div className="flex-1 overflow-y-auto">
+                                <div className="px-6 py-5 space-y-6">
+
+                                    {/* Seção: Dados */}
                                     <div>
-                                        <p className="text-xs text-muted-foreground mb-1">Atividades principais</p>
-                                        <div className="flex flex-wrap gap-1">
-                                            {(leadSelecionado.atividades_principais ?? []).length === 0 ? (
-                                                <span className="text-xs text-muted-foreground italic">Nenhuma</span>
-                                            ) : (leadSelecionado.atividades_principais ?? []).map((a, i) => (
-                                                <span
-                                                    key={a}
-                                                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${BADGE_COLORS[i % BADGE_COLORS.length]}`}
-                                                >
-                                                    {a}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <p className="text-xs text-muted-foreground mb-1">Equipamentos principais</p>
-                                        <div className="flex flex-wrap gap-1">
-                                            {(leadSelecionado.equipamentos_principais ?? []).length === 0 ? (
-                                                <span className="text-xs text-muted-foreground italic">Nenhum</span>
-                                            ) : (leadSelecionado.equipamentos_principais ?? []).map(eq => (
-                                                <Badge key={eq} variant="outline" className="text-xs">{eq}</Badge>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Seção: Interesses (S13-10) */}
-                            {categoriasInteresse.length > 0 && (
-                                <div className="mb-6">
-                                    <h3 className="font-semibold text-sm mb-3">Interesses</h3>
-                                    <div className="space-y-3">
-                                        {categoriasInteresse.filter(c => !c.pai_id).map(pai => {
-                                            const subs = categoriasInteresse.filter(c => c.pai_id === pai.id)
-                                            return (
-                                                <div key={pai.id}>
-                                                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">{pai.nome}</p>
-                                                    <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                                                        {subs.map(sub => (
-                                                            <div key={sub.id} className="flex items-center gap-1.5">
-                                                                <Checkbox
-                                                                    id={`interesse-${sub.id}`}
-                                                                    checked={leadInteresses.includes(sub.id)}
-                                                                    onCheckedChange={() => toggleInteresse(sub.id)}
-                                                                    disabled={salvandoInteresses}
-                                                                />
-                                                                <label
-                                                                    htmlFor={`interesse-${sub.id}`}
-                                                                    className="text-xs cursor-pointer"
-                                                                >
-                                                                    {sub.nome}
-                                                                </label>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Seção: Atividades */}
-                            <div>
-                                <h3 className="font-semibold text-sm mb-3">Histórico de Atividades</h3>
-
-                                {loadingAtividades ? (
-                                    <p className="text-sm text-muted-foreground">Carregando...</p>
-                                ) : (
-                                    <>
-                                        {atividades.length > 0 && (
-                                            <Table className="mb-4">
-                                                <TableHeader>
-                                                    <TableRow>
-                                                        <TableHead className="text-xs">Equipamento</TableHead>
-                                                        <TableHead className="text-xs">Atividade</TableHead>
-                                                        <TableHead className="text-xs text-center">Qtd</TableHead>
-                                                        <TableHead className="w-8"></TableHead>
-                                                    </TableRow>
-                                                </TableHeader>
-                                                <TableBody>
-                                                    {atividades.map(a => (
-                                                        <TableRow key={a.id}>
-                                                            <TableCell className="text-xs py-2">{a.equipamento}</TableCell>
-                                                            <TableCell className="text-xs py-2">{a.atividade}</TableCell>
-                                                            <TableCell className="text-xs py-2 text-center">{a.contagem}</TableCell>
-                                                            <TableCell className="py-2">
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="icon"
-                                                                    className="h-6 w-6 text-destructive hover:text-destructive"
-                                                                    onClick={() => excluirAtividade(a.id)}
-                                                                >
-                                                                    <Trash2 className="h-3 w-3" />
-                                                                </Button>
-                                                            </TableCell>
-                                                        </TableRow>
-                                                    ))}
-                                                </TableBody>
-                                            </Table>
-                                        )}
-
-                                        {/* Adicionar atividade */}
-                                        <div className="border rounded-lg p-3 space-y-2">
-                                            <p className="text-xs font-medium">Adicionar atividade</p>
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <div>
-                                                    <Label className="text-xs">Equipamento (CUCA)</Label>
-                                                    <Select
-                                                        value={novaAtividade.equipamento}
-                                                        onValueChange={v => setNovaAtividade(n => ({ ...n, equipamento: v }))}
-                                                    >
-                                                        <SelectTrigger className="mt-1 h-8 text-xs">
-                                                            <SelectValue placeholder="Selecionar..." />
-                                                        </SelectTrigger>
+                                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Informações Pessoais</p>
+                                        <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1.5">Nome</p>
+                                                {editando ? (
+                                                    <Input value={formDados.nome} onChange={e => setFormDados(f => ({ ...f, nome: e.target.value }))} className="h-8 text-sm" />
+                                                ) : (
+                                                    <p className="text-sm font-medium">{leadSelecionado.nome ?? "—"}</p>
+                                                )}
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1.5">Telefone</p>
+                                                {editando ? (
+                                                    <Input value={mascaraTelefone(formDados.telefone)} onChange={e => setFormDados(f => ({ ...f, telefone: limparTelefone(e.target.value) }))} placeholder="+55 (85) 99999-9999" className="h-8 text-sm" />
+                                                ) : (
+                                                    <p className="text-sm font-medium">{leadSelecionado.telefone}</p>
+                                                )}
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1.5">Data de Nascimento</p>
+                                                {editando ? (
+                                                    <Input type="date" value={formDados.data_nascimento} onChange={e => setFormDados(f => ({ ...f, data_nascimento: e.target.value }))} className="h-8 text-sm" />
+                                                ) : (
+                                                    <p className="text-sm font-medium">{formatarData(leadSelecionado.data_nascimento)}</p>
+                                                )}
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1.5">E-mail</p>
+                                                {editando ? (
+                                                    <Input type="email" value={formDados.email} onChange={e => setFormDados(f => ({ ...f, email: e.target.value }))} className="h-8 text-sm" />
+                                                ) : (
+                                                    <p className="text-sm font-medium">{leadSelecionado.email ?? "—"}</p>
+                                                )}
+                                            </div>
+                                            <div className="col-span-2">
+                                                <p className="text-xs text-muted-foreground mb-1.5">Unidade CUCA</p>
+                                                {editando ? (
+                                                    <Select value={formDados.unidade_cuca} onValueChange={v => setFormDados(f => ({ ...f, unidade_cuca: v }))}>
+                                                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
                                                         <SelectContent>
-                                                            {unidadesCuca.map(u => (
-                                                                <SelectItem key={u} value={u}>{u}</SelectItem>
-                                                            ))}
+                                                            {unidadesCuca.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
                                                         </SelectContent>
                                                     </Select>
-                                                </div>
-                                                <div>
-                                                    <Label className="text-xs">Qtd</Label>
-                                                    <Input
-                                                        type="number"
-                                                        min={1}
-                                                        value={novaAtividade.contagem}
-                                                        onChange={e => setNovaAtividade(n => ({ ...n, contagem: parseInt(e.target.value) || 1 }))}
-                                                        className="mt-1 h-8 text-xs"
-                                                    />
+                                                ) : (
+                                                    <p className="text-sm font-medium">{leadSelecionado.unidade_cuca ?? "—"}</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Seção: Perfil Automático */}
+                                    <div className="pt-5 border-t border-border">
+                                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Perfil Automático</p>
+                                        <div className="space-y-3">
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-2">Atividades principais</p>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {(leadSelecionado.atividades_principais ?? []).length === 0 ? (
+                                                        <span className="text-xs text-muted-foreground italic">Nenhuma registrada</span>
+                                                    ) : (leadSelecionado.atividades_principais ?? []).map((a, i) => (
+                                                        <span key={a} className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${BADGE_COLORS[i % BADGE_COLORS.length]}`}>{a}</span>
+                                                    ))}
                                                 </div>
                                             </div>
                                             <div>
-                                                <Label className="text-xs">Atividade</Label>
-                                                <Input
-                                                    placeholder="Ex: NATAÇÃO, FUTSAL, DANÇA..."
-                                                    value={novaAtividade.atividade}
-                                                    onChange={e => setNovaAtividade(n => ({ ...n, atividade: e.target.value }))}
-                                                    className="mt-1 h-8 text-xs"
-                                                />
+                                                <p className="text-xs text-muted-foreground mb-2">Equipamentos principais</p>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {(leadSelecionado.equipamentos_principais ?? []).length === 0 ? (
+                                                        <span className="text-xs text-muted-foreground italic">Nenhum registrado</span>
+                                                    ) : (leadSelecionado.equipamentos_principais ?? []).map(eq => (
+                                                        <Badge key={eq} variant="outline" className="text-xs">{eq}</Badge>
+                                                    ))}
+                                                </div>
                                             </div>
-                                            <Button
-                                                size="sm"
-                                                className="w-full"
-                                                onClick={adicionarAtividade}
-                                                disabled={adicionandoAtividade}
-                                            >
-                                                <Plus className="mr-1 h-3 w-3" />
-                                                {adicionandoAtividade ? "Adicionando..." : "Adicionar"}
-                                            </Button>
                                         </div>
-                                    </>
-                                )}
+                                    </div>
+
+                                    {/* Seção: Interesses — pills interativas */}
+                                    {categoriasInteresse.length > 0 && (
+                                        <div className="pt-5 border-t border-border">
+                                            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Interesses</p>
+                                            <div className="space-y-4">
+                                                {categoriasInteresse.filter(c => !c.pai_id).map(pai => {
+                                                    const subs = categoriasInteresse.filter(c => c.pai_id === pai.id)
+                                                    return (
+                                                        <div key={pai.id}>
+                                                            <p className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider mb-2">{pai.nome}</p>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                {subs.map(sub => (
+                                                                    <button
+                                                                        key={sub.id}
+                                                                        type="button"
+                                                                        disabled={salvandoInteresses}
+                                                                        onClick={() => toggleInteresse(sub.id)}
+                                                                        className={cn(
+                                                                            "px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-150",
+                                                                            leadInteresses.includes(sub.id)
+                                                                                ? "bg-primary/20 text-primary border-primary/50 shadow-sm"
+                                                                                : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                                                                        )}
+                                                                    >
+                                                                        {sub.nome}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Seção: Histórico de Atividades */}
+                                    <div className="pt-5 border-t border-border pb-2">
+                                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Histórico de Atividades</p>
+
+                                        {loadingAtividades ? (
+                                            <p className="text-sm text-muted-foreground">Carregando...</p>
+                                        ) : (
+                                            <>
+                                                {atividades.length > 0 && (
+                                                    <Table className="mb-4">
+                                                        <TableHeader>
+                                                            <TableRow>
+                                                                <TableHead className="text-xs">Equipamento</TableHead>
+                                                                <TableHead className="text-xs">Atividade</TableHead>
+                                                                <TableHead className="text-xs text-center">Qtd</TableHead>
+                                                                <TableHead className="w-8"></TableHead>
+                                                            </TableRow>
+                                                        </TableHeader>
+                                                        <TableBody>
+                                                            {atividades.map(a => (
+                                                                <TableRow key={a.id}>
+                                                                    <TableCell className="text-xs py-2">{a.equipamento}</TableCell>
+                                                                    <TableCell className="text-xs py-2">{a.atividade}</TableCell>
+                                                                    <TableCell className="text-xs py-2 text-center">{a.contagem}</TableCell>
+                                                                    <TableCell className="py-2">
+                                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => excluirAtividade(a.id)}>
+                                                                            <Trash2 className="h-3 w-3" />
+                                                                        </Button>
+                                                                    </TableCell>
+                                                                </TableRow>
+                                                            ))}
+                                                        </TableBody>
+                                                    </Table>
+                                                )}
+
+                                                <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
+                                                    <p className="text-xs font-semibold text-foreground">Adicionar atividade</p>
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        <div>
+                                                            <Label className="text-xs">Equipamento (CUCA)</Label>
+                                                            <Select value={novaAtividade.equipamento} onValueChange={v => setNovaAtividade(n => ({ ...n, equipamento: v }))}>
+                                                                <SelectTrigger className="mt-1 h-8 text-xs"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+                                                                <SelectContent>
+                                                                    {unidadesCuca.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
+                                                        <div>
+                                                            <Label className="text-xs">Qtd</Label>
+                                                            <Input type="number" min={1} value={novaAtividade.contagem} onChange={e => setNovaAtividade(n => ({ ...n, contagem: parseInt(e.target.value) || 1 }))} className="mt-1 h-8 text-xs" />
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <Label className="text-xs">Atividade</Label>
+                                                        <Input placeholder="Ex: NATAÇÃO, FUTSAL, DANÇA..." value={novaAtividade.atividade} onChange={e => setNovaAtividade(n => ({ ...n, atividade: e.target.value }))} className="mt-1 h-8 text-xs" />
+                                                    </div>
+                                                    <Button size="sm" className="w-full" onClick={adicionarAtividade} disabled={adicionandoAtividade}>
+                                                        <Plus className="mr-1 h-3 w-3" />
+                                                        {adicionandoAtividade ? "Adicionando..." : "Adicionar"}
+                                                    </Button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+
+                                </div>
                             </div>
                         </>
                     )}
-                </SheetContent>
-            </Sheet>
+                </DialogContent>
+            </Dialog>
 
             {/* ============================
                 Modal — Novo Lead

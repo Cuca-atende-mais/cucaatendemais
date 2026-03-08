@@ -52,12 +52,12 @@ type Unidade = {
     created_at: string
 }
 
-const CORES_UNIDADES: Record<string, { bg: string; border: string; badge: string }> = {
-    barra: { bg: "bg-sky-50", border: "border-sky-400", badge: "bg-sky-100 text-sky-700" },
-    mondubim: { bg: "bg-emerald-50", border: "border-emerald-400", badge: "bg-emerald-100 text-emerald-700" },
-    jangurussu: { bg: "bg-violet-50", border: "border-violet-400", badge: "bg-violet-100 text-violet-700" },
-    "jose-walter": { bg: "bg-orange-50", border: "border-orange-400", badge: "bg-orange-100 text-orange-700" },
-    pici: { bg: "bg-rose-50", border: "border-rose-400", badge: "bg-rose-100 text-rose-700" },
+const CORES_UNIDADES: Record<string, { border: string; badge: string }> = {
+    barra: { border: "border-l-sky-500", badge: "bg-sky-500/15 text-sky-400 border border-sky-500/30" },
+    mondubim: { border: "border-l-emerald-500", badge: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" },
+    jangurussu: { border: "border-l-violet-500", badge: "bg-violet-500/15 text-violet-400 border border-violet-500/30" },
+    "jose-walter": { border: "border-l-orange-500", badge: "bg-orange-500/15 text-orange-400 border border-orange-500/30" },
+    pici: { border: "border-l-rose-500", badge: "bg-rose-500/15 text-rose-400 border border-rose-500/30" },
 }
 
 const EMPTY_FORM = {
@@ -180,9 +180,9 @@ export default function UnidadesPage() {
             ) : (
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                     {unidades.map((u) => {
-                        const cores = CORES_UNIDADES[u.slug] ?? { bg: "bg-gray-50", border: "border-gray-300", badge: "bg-gray-100 text-gray-700" }
+                        const cores = CORES_UNIDADES[u.slug] ?? { border: "border-l-muted-foreground", badge: "bg-muted text-muted-foreground border border-border" }
                         return (
-                            <Card key={u.id} className={`border-l-4 ${cores.border} ${cores.bg}`}>
+                            <Card key={u.id} className={`border-l-4 ${cores.border}`}>
                                 <CardHeader className="pb-3">
                                     <div className="flex items-start justify-between">
                                         <div>
@@ -195,7 +195,7 @@ export default function UnidadesPage() {
                                         </div>
                                         <div className="flex items-center gap-2">
                                             {u.ativo
-                                                ? <Badge className="bg-green-600 text-white">Ativa</Badge>
+                                                ? <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 font-semibold">Ativa</Badge>
                                                 : <Badge variant="secondary">Inativa</Badge>}
                                             <Button variant="ghost" size="sm" onClick={() => handleEdit(u)}>
                                                 <Pencil className="h-4 w-4" />
@@ -257,7 +257,7 @@ export default function UnidadesPage() {
                                         <TableCell className="text-muted-foreground">{u.telefone ?? "-"}</TableCell>
                                         <TableCell>
                                             {u.ativo
-                                                ? <Badge className="bg-green-600 text-white">Ativa</Badge>
+                                                ? <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 font-semibold">Ativa</Badge>
                                                 : <Badge variant="secondary">Inativa</Badge>}
                                         </TableCell>
                                         <TableCell className="text-right">
