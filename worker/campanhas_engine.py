@@ -103,14 +103,36 @@ def _calcular_limite_warmup(warmup_started_at: str | None, global_limit: int) ->
         return 50
 
 
-def _query_leads_sync(unidade: str | None = None):
-    """Busca leads com opt_in ativo, filtrados pela unidade da campanha."""
-    query = (
-        supabase.table("leads")
-        .select("telefone, nome")
-        .eq("opt_in", True)
-        .eq("bloqueado", False)
-    )
+def _query_leads_sync(unidade: str | None = None, categorias_alvo: list | None = None):
+    """Busca leads com opt_in ativo, filtrados pela unidade e/ou categorias de interesse."""
+    if categorias_alvo:
+        # S13-13: Buscar leads via lead_interesses quando há categorias_alvo definidas
+        interesses_res = (
+            supabase.table("lead_interesses")
+            .select("lead_id")
+            .in_("categoria_id", categorias_alvo)
+            .execute()
+        )
+        lead_ids = list(set(r["lead_id"] for r in (interesses_res.data or [])))
+        if not lead_ids:
+            # Sem leads com esses interesses
+            class _EmptyResult:
+                data = []
+            return _EmptyResult()
+        query = (
+            supabase.table("leads")
+            .select("telefone, nome")
+            .eq("opt_in", True)
+            .eq("bloqueado", False)
+            .in_("id", lead_ids)
+        )
+    else:
+        query = (
+            supabase.table("leads")
+            .select("telefone, nome")
+            .eq("opt_in", True)
+            .eq("bloqueado", False)
+        )
     # Bug 2 corrigido: filtrar por unidade para não vazar mensagens entre unidades
     if unidade:
         query = query.eq("unidade_cuca", unidade)
@@ -150,8 +172,13 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
     inst_daily_limit = _calcular_limite_warmup(warmup_started, daily_limit)
     logger.info(f"[Warmup] '{instance_name}': limite hoje = {inst_daily_limit} msgs (warmup_started={warmup_started})")
 
-    # Buscar leads da unidade com opt_in
-    leads_res = await asyncio.to_thread(_query_leads_sync, unidade)
+    # S13-13: Filtrar por categorias_alvo se definido no evento pontual
+    categorias_alvo = item.get("categorias_alvo") or None
+    if isinstance(categorias_alvo, list) and len(categorias_alvo) == 0:
+        categorias_alvo = None
+
+    # Buscar leads da unidade com opt_in (e filtro de interesses se pontual)
+    leads_res = await asyncio.to_thread(_query_leads_sync, unidade, categorias_alvo)
     leads = leads_res.data or []
     total = len(leads)
 

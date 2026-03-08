@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Lead, LeadAtividade } from "@/lib/types/database"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -96,6 +97,11 @@ export default function LeadsPage() {
     const [modalBloquear, setModalBloquear] = useState<Lead | null>(null)
     const [motivoBloqueio, setMotivoBloqueio] = useState("")
 
+    // --- Interesses ---
+    const [categoriasInteresse, setCategoriasInteresse] = useState<{ id: string; nome: string; pai_id: string | null }[]>([])
+    const [leadInteresses, setLeadInteresses] = useState<string[]>([]) // IDs de categorias selecionadas
+    const [salvandoInteresses, setSalvandoInteresses] = useState(false)
+
     // -------------------------
     // Busca com server-side pagination
     // -------------------------
@@ -164,20 +170,42 @@ export default function LeadsPage() {
         setSheetOpen(true)
         setNovaAtividade({ equipamento: "", atividade: "", contagem: 1 })
 
-        // Lazy load atividades
+        // Lazy load paralelo: atividades + categorias + interesses
         setLoadingAtividades(true)
         try {
-            const { data, error } = await supabase
-                .from("lead_atividades")
-                .select("*")
-                .eq("lead_id", lead.id)
-                .order("contagem", { ascending: false })
-            if (error) throw error
-            setAtividades(data ?? [])
+            const [atividadesRes, categoriasRes, interessesRes] = await Promise.all([
+                supabase.from("lead_atividades").select("*").eq("lead_id", lead.id).order("contagem", { ascending: false }),
+                supabase.from("categorias_interesse").select("id, nome, pai_id").eq("ativo", true).order("ordem"),
+                supabase.from("lead_interesses").select("categoria_id").eq("lead_id", lead.id),
+            ])
+            if (atividadesRes.error) throw atividadesRes.error
+            setAtividades(atividadesRes.data ?? [])
+            setCategoriasInteresse(categoriasRes.data ?? [])
+            setLeadInteresses((interessesRes.data ?? []).map((r: any) => r.categoria_id))
         } catch (err: any) {
-            toast.error("Erro ao carregar atividades")
+            toast.error("Erro ao carregar dados do lead")
         } finally {
             setLoadingAtividades(false)
+        }
+    }
+
+    const toggleInteresse = async (categoriaId: string) => {
+        if (!leadSelecionado) return
+        const jaTemInteresse = leadInteresses.includes(categoriaId)
+        setSalvandoInteresses(true)
+        try {
+            if (jaTemInteresse) {
+                await supabase.from("lead_interesses").delete()
+                    .eq("lead_id", leadSelecionado.id).eq("categoria_id", categoriaId)
+                setLeadInteresses(prev => prev.filter(id => id !== categoriaId))
+            } else {
+                await supabase.from("lead_interesses").insert({ lead_id: leadSelecionado.id, categoria_id: categoriaId })
+                setLeadInteresses(prev => [...prev, categoriaId])
+            }
+        } catch (err: any) {
+            toast.error("Erro ao salvar interesse")
+        } finally {
+            setSalvandoInteresses(false)
         }
     }
 
@@ -694,6 +722,41 @@ export default function LeadsPage() {
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Seção: Interesses (S13-10) */}
+                            {categoriasInteresse.length > 0 && (
+                                <div className="mb-6">
+                                    <h3 className="font-semibold text-sm mb-3">Interesses</h3>
+                                    <div className="space-y-3">
+                                        {categoriasInteresse.filter(c => !c.pai_id).map(pai => {
+                                            const subs = categoriasInteresse.filter(c => c.pai_id === pai.id)
+                                            return (
+                                                <div key={pai.id}>
+                                                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">{pai.nome}</p>
+                                                    <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                                                        {subs.map(sub => (
+                                                            <div key={sub.id} className="flex items-center gap-1.5">
+                                                                <Checkbox
+                                                                    id={`interesse-${sub.id}`}
+                                                                    checked={leadInteresses.includes(sub.id)}
+                                                                    onCheckedChange={() => toggleInteresse(sub.id)}
+                                                                    disabled={salvandoInteresses}
+                                                                />
+                                                                <label
+                                                                    htmlFor={`interesse-${sub.id}`}
+                                                                    className="text-xs cursor-pointer"
+                                                                >
+                                                                    {sub.nome}
+                                                                </label>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Seção: Atividades */}
                             <div>

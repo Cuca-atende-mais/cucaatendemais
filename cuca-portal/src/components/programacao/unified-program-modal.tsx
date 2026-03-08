@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter,
@@ -14,9 +14,11 @@ import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import { unidadesCuca } from "@/lib/constants"
 import toast from "react-hot-toast"
-import { Calendar, Clock, MapPin, Sparkles, Upload, Image as ImageIcon, X } from "lucide-react"
+import { Calendar, MapPin, Sparkles, Upload, X, Users } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useUser } from "@/lib/auth/user-provider"
@@ -48,7 +50,37 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     const [mes, setMes] = useState(new Date().getMonth() + 1)
     const [ano, setAno] = useState(new Date().getFullYear())
 
+    // S13-11: Público-alvo por categorias de interesse
+    const [categorias, setCategorias] = useState<{ id: string; nome: string; pai_id: string | null }[]>([])
+    const [categoriasAlvo, setCategoriasAlvo] = useState<string[]>([])
+    const [alcanceEstimado, setAlcanceEstimado] = useState<number | null>(null)
+
     const supabase = createClient()
+
+    useEffect(() => {
+        if (open) {
+            supabase.from("categorias_interesse").select("id, nome, pai_id").eq("ativo", true).order("ordem")
+                .then(({ data }) => setCategorias(data ?? []))
+        }
+    }, [open])
+
+    const toggleCategoriaAlvo = async (catId: string) => {
+        const novaLista = categoriasAlvo.includes(catId)
+            ? categoriasAlvo.filter(id => id !== catId)
+            : [...categoriasAlvo, catId]
+        setCategoriasAlvo(novaLista)
+
+        // Calcular alcance estimado
+        if (novaLista.length > 0) {
+            const { count } = await supabase
+                .from("lead_interesses")
+                .select("lead_id", { count: "exact", head: true })
+                .in("categoria_id", novaLista)
+            setAlcanceEstimado(count ?? 0)
+        } else {
+            setAlcanceEstimado(null)
+        }
+    }
 
     const handleSave = async () => {
         if (!titulo || (isPontual && (!unidade || !dataInicio || !dataFim))) {
@@ -89,7 +121,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     data_fim: dataFim,
                     local,
                     flyer_url: flyerUrl,
-                    status: "aguardando_aprovacao"
+                    status: "aguardando_aprovacao",
+                    categorias_alvo: categoriasAlvo.length > 0 ? categoriasAlvo : [],
                 })
                 if (error) throw error
                 toast.success("Evento enviado para aprovação!")
@@ -134,6 +167,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
         setLocal("")
         setFlyerFile(null)
         setFlyerPreview(null)
+        setCategoriasAlvo([])
+        setAlcanceEstimado(null)
     }
 
     return (
@@ -241,6 +276,47 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                                 <Label>Ano</Label>
                                 <Input type="number" value={ano} onChange={(e) => setAno(parseInt(e.target.value))} />
                             </div>
+                        </div>
+                    )}
+
+                    {/* S13-11: Público-alvo por Interesses (Apenas Pontual) */}
+                    {isPontual && categorias.length > 0 && (
+                        <div className="grid gap-2">
+                            <Label className="flex items-center gap-2">
+                                <Users className="h-3.5 w-3.5" /> Público-alvo por Interesses
+                                {alcanceEstimado !== null && (
+                                    <Badge variant="secondary" className="ml-auto text-xs">
+                                        ~{alcanceEstimado} leads com esses interesses
+                                    </Badge>
+                                )}
+                            </Label>
+                            <div className="border rounded-lg p-3 space-y-3 bg-muted/20">
+                                {categorias.filter(c => !c.pai_id).map(pai => {
+                                    const subs = categorias.filter(c => c.pai_id === pai.id)
+                                    return (
+                                        <div key={pai.id}>
+                                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">{pai.nome}</p>
+                                            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                                                {subs.map(sub => (
+                                                    <div key={sub.id} className="flex items-center gap-1.5">
+                                                        <Checkbox
+                                                            id={`cat-${sub.id}`}
+                                                            checked={categoriasAlvo.includes(sub.id)}
+                                                            onCheckedChange={() => toggleCategoriaAlvo(sub.id)}
+                                                        />
+                                                        <label htmlFor={`cat-${sub.id}`} className="text-xs cursor-pointer">
+                                                            {sub.nome}
+                                                        </label>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                Selecione os grupos de interesse para filtrar o disparo desse evento. Deixe em branco para atingir todos.
+                            </p>
                         </div>
                     )}
 

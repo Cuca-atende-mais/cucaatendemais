@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
     MessageSquareWarning, Lightbulb, PieChart, Activity, UserX, User, Building2,
-    Calendar, CheckCircle2, AlertCircle, HelpCircle, Loader2, Sparkles, Phone,
+    Calendar, CheckCircle2, AlertCircle, HelpCircle, Loader2, Sparkles, Phone, MessagesSquare,
 } from "lucide-react"
 import { CanalWhatsappTab } from "@/components/instancias/canal-whatsapp-tab"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,8 @@ import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import toast from "react-hot-toast"
 import { useUser } from "@/lib/auth/user-provider"
+import ChatSidebar from "@/components/chat/chat-sidebar"
+import ChatWindow from "@/components/chat/chat-window"
 
 type OuvidoriaRegistro = {
     id: string
@@ -49,6 +51,7 @@ export default function OuvidoriaPage() {
     const [loading, setLoading] = useState(true)
     const [detalhamento, setDetalhamento] = useState<OuvidoriaRegistro | null>(null)
     const [analysing, setAnalysing] = useState(false)
+    const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
     const { hasPermission, profile, isDeveloper } = useUser()
     const isSuperAdmin = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
 
@@ -187,6 +190,9 @@ export default function OuvidoriaPage() {
                         <TabsTrigger value="sugestoes" className="gap-2">
                             <Lightbulb className="h-4 w-4" /> Sugestões ({sugestoes.length})
                         </TabsTrigger>
+                        <TabsTrigger value="conversas" className="gap-2">
+                            <MessagesSquare className="h-4 w-4" /> Conversas Sofia
+                        </TabsTrigger>
                         {isSuperAdmin && (
                             <TabsTrigger value="canal-whatsapp" className="gap-2">
                                 <Phone className="h-4 w-4" /> Canal WhatsApp
@@ -245,6 +251,23 @@ export default function OuvidoriaPage() {
                                 {sugestoes.map(r => <ResumoCard key={r.id} r={r} />)}
                             </div>
                         )}
+                    </TabsContent>
+
+                    {/* S13-01: Conversas da Sofia (Ouvidoria) */}
+                    <TabsContent value="conversas" className="mt-0">
+                        <div className="flex h-[calc(100vh-14rem)] overflow-hidden border rounded-xl bg-background">
+                            <div className="w-80 flex-shrink-0 h-full border-r">
+                                <ChatSidebar
+                                    activeConversationId={activeConversationId}
+                                    onSelectConversation={setActiveConversationId}
+                                    filterAgenteTipo={["sofia_global", "sofia_unidade"]}
+                                    title="Ouvidoria — Conversas Sofia"
+                                />
+                            </div>
+                            <div className="flex-1 h-full relative">
+                                <ChatWindow conversationId={activeConversationId} />
+                            </div>
+                        </div>
                     </TabsContent>
 
                     {/* Aba exclusiva Super Admin: Canal WhatsApp da Ouvidoria */}
