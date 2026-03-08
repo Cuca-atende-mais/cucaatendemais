@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 5.16 | **Atualizado**: 07/03/2026
-> **STATUS ATUAL**: Sprint 9 Concluído (100%) | **Próximo: Edge Function motor-agente — suporte a maria_divulgacao + RAG rede_cuca_global**
+> **Versão**: 6.0 | **Atualizado**: 08/03/2026
+> **STATUS ATUAL**: Sprints 1–14 Concluídos | **Próximo: Sprint 15 — Atendimento Institucional + Correções Programação**
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -823,62 +823,79 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S12-11 | Insistência pós-reprovação: Ana repete redirecionamento à unidade (variações de texto) | [x] |
 | S12-12 | Ana identifica solicitação por protocolo ou CPF em contato posterior | [x] |
 
-#### Sprint 13 — Ouvidoria (Sofia) [x]
-| Ticket | Entregável | Status |
-|--------|-----------|--------|
-| S13-01 | Criação de Eventos de Escuta (Super Admin): título, descrição, datas, filtro CUCA | [x] |
-| S13-02 | Sofia: sempre pergunta "crítica ou sugestão?" na primeira mensagem | [x] |
-| S13-03 | Buffer 15s entre mensagens (lead pode fragmentar o texto) | [x] |
-| S13-04 | Fluxo crítica: anônima (sem remote_jid, sem nome), pergunta CUCA (opcional) | [x] |
-| S13-05 | Aviso de anonimato: *"Não estamos coletando seus dados pessoais."* | [x] |
-| S13-06 | Fluxo sugestão: coleta nome + CUCA + gera protocolo | [x] |
-| S13-07 | Loop de continuidade após cada mensagem ("Deseja enviar mais alguma?") | [x] |
-| S13-08 | Enceramento gracioso: "não"/"obrigado"/"valeu"/"era isso" → agradece e finaliza | [x] |
-| S13-09 | Em evento ativo: Sofia responde EXCLUSIVAMENTE dentro do escopo da descrição do evento | [x] |
-| S13-10 | Portal: páginas "Críticas" (anônimas) e "Sugestões" (identificadas) separadas | [x] |
-| S13-11 | Análise de sentimento: botão por evento → GPT-4o classifica positivo/negativo/neutro | [x] |
-| S13-12 | Temas recorrentes + resumo executivo + gráficos (pizza, linha, barras) | [x] |
-| S13-13 | Pesquisas de satisfação: quantitativa (botões WhatsApp) + qualitativa (texto/áudio) | [x] |
+#### Sprint 13 — Ouvidoria Fase 2 + Divulgação + Qualificação de Leads ✅ CONCLUÍDO
+> **Implementado em**: 06-07/03/2026 | **Commit**: `5387b8b`
 
-#### Sprint 14 — Pesquisas, LGPD e Governança [x]
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
-| S14-01 | Opt-in na primeira interação: *"Para continuar, preciso que aceite receber mensagens. [Sim] [Não]"* | [x] |
-| S14-02 | Se "Não": lead cadastrado mas nunca recebe disparos ativos | [x] |
-| S14-03 | Anonimização de dados: funcionalidade de "direito ao esquecimento" | [x] |
-| S14-04 | Audit logs automáticos em toda ação do portal (action, resource, user_id, old_data, new_data) | [x] |
-| S14-05 | pg_cron limpeza 60 dias em message_logs (02:00 AM) | [x] |
+| S13-01 | Tab "Conversas Sofia" na aba `/ouvidoria` com ChatSidebar + ChatWindow (Realtime) | [x] |
+| S13-02 | Menu boas-vindas Sofia: coluna `menu_boas_vindas` em `prompts_agentes`; motor-agente v6 envia na 1ª mensagem sem chamar GPT | [x] |
+| S13-03 | Botão "Assumir Atendimento" no ChatWindow — pausa IA, muda status para `awaiting_human` | [x] |
+| S13-04 | Restrição de identidade: Super Admin vê nome/telefone de leads; outros veem aviso de sigilo | [x] |
+| S13-05 | Máscara telefone internacional: `mascaraTelefone` / `limparTelefone` em `utils.ts`, aplicada em Leads + Vagas | [x] |
+| S13-06 | Flag `expansiva BOOLEAN` em `eventos_pontuais`; toggle no modal de programação; roteamento worker (expansiva → Divulgação, não-expansiva → Institucional da unidade) | [x] |
+| S13-07 | Migration `categorias_interesse` (pai + subcategoria, hierárquica) + `lead_interesses` (junction UNIQUE) com RLS | [x] |
+| S13-08 | Seed: 7 categorias pai + 29 subcategorias em `categorias_interesse` | [x] |
+| S13-09 | UI lead_interesses: checkboxes hierárquicos na Sheet de lead — toggle em tempo real (INSERT/DELETE) | [x] |
+| S13-10 | Público-alvo por categorias no modal de Programação Pontual: checkboxes + counter de alcance estimado | [x] |
+| S13-11 | Público-alvo por categorias nos Eventos de Ouvidoria: checkboxes + `categorias_alvo JSONB` na tabela | [x] |
+| S13-12 | Worker `campanhas_engine.py`: filtro `categorias_alvo` via JOIN em `lead_interesses` ao buscar leads | [x] |
+| S13-13 | RAG Global para Divulgação: instância Divulgação busca `rag_chunks` sem filtro de unidade (global) | [x] |
+
+#### Sprint 14 — Programação Ajustes + Configuração de Instâncias ✅ CONCLUÍDO
+> **Implementado em**: 08/03/2026 | **Commit**: `c740727` / `c6b0661`
+
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S14-01 | Validação de conflito de datas ao criar evento pontual: query de sobreposição na mesma unidade, `confirm()` se houver conflito | [x] |
+| S14-02 | Filtros de unidade e busca aplicados server-side (`.eq()` + `.ilike()`) na `fetchData` de `/programacao` | [x] |
+| S14-03 | Select "Canal de Disparo" no modal de criação pontual: carrega instâncias ativas filtradas por unidade; `instancia_id` salvo no evento; worker usa `_query_instancia_by_id_sync` quando definido | [x] |
+| S14-04 | Grid de instâncias agrupado por `canal_tipo` em `/developer/instancias` (seções Institucional, Empregabilidade, Acesso, Ouvidoria, Reserva, Divulgação) | [x] |
+| S14-05 | Feedback de progresso por etapas ao criar instância: mensagens de status em tempo real dentro do modal | [x] |
 
 ---
 
-### FASE 5 — DEVELOPER CONSOLE + DASHBOARDS + GO-LIVE
+### FASE 5 — BACKLOG PENDENTE (pós-reunião 06/03/2026)
 
-#### Sprints 15-17 [x]
-| Ticket | Entregável | Status |
-|--------|-----------|--------|
-| S15-01 | Rota `/developer` (exclusivo role super_admin no banco) | [x] |
-| S15-02 | Dashboard consumo OpenAI: tokens/dia, custo/modelo, breakdown por feature, projeção mensal | [x] |
-| S15-03 | Alertas de budget: 🟡 80% e 🔴 100% em ai_usage_logs | [x] |
-| S15-04 | Logs Worker em tempo real: WebSocket, últimas 1000 linhas, filtros (tipo, instância, lead, período) | [x] |
-| S15-05 | Download logs: últimos 7 dias em .txt/.json | [x] |
-| S15-06 | Métricas Worker: status, uptime, fila Celery (pendentes/executando/falhas), latência, CPU/memória | [x] |
-| S15-07 | Controle instâncias: tabela 14 instâncias, status 🟢/🔴/⚠️, criar, editar, deletar, QR Code | [x] |
-| S15-08 | Gatilhos de alerta: worker offline, erro alto, instância desconectada, budget alto, fila travada | [x] |
-| S15-09 | system_config UI: editar delays, limites, warm-up, modelo Whisper, budget — sem restart | [x] |
-| S15-10 | **Sentry Integration**: Configuração no Portal (Hostinger VPS) e no Worker (FastAPI) para captura de erros | [x] |
-| S15-11 | **Agente de Observabilidade**: Seed SQL do prompt especialista e integração com APIs de logs | [x] |
-| S15-12 | **Dashboard Observabilidade**: Visão consolidada IA (Saúde System) + Erros Sentry | [x] |
-| S15-13 | Audit log do Developer Console (toda ação registrada) | [x] |
-| S16-01 | Dashboards por CUCA: atendimentos, horários de pico, % IA vs humano, tempo médio resposta | [x] |
-| S16-02 | Dashboards globais (Super Admin): consolidado + comparativo entre unidades | [x] |
-| S16-03 | Dashboard Empregabilidade: vagas, candidaturas, taxa de contratação, tempo médio | [x] |
-| S16-04 | Dashboard Acesso CUCA: espaços demandados, taxa aprovação, no-shows | [x] |
-| S16-05 | Dashboard Ouvidoria: sentimento geral, temas, taxa resposta da gestão | [x] |
-| S17-01 | Testes E2E (Playwright): todas as rotas e fluxos principais | [x] |
-| S17-02 | Load testing: disparo 20k mensagens simultâneas | [x] |
-| S17-03 | Documentação: guia do gestor + guia do admin + guia de API interna | [x] |
-| S17-04 | Setup Multi-Ambiente: Configurar Redirect URLs no Supabase (Localhost + Produção) | ⏳ |
-| S17-05 | Handover técnico: treinamento e entrega de acessos VPS/Hostinger | ⏳ |
+> Itens identificados no backlog oficial (`backlog-portal-cucaatendemais.html`) que **não foram implementados** nos sprints anteriores ou foram implementados de forma divergente da especificação.
+
+---
+
+#### Sprint 15 — Atendimento Institucional + Correções de Programação ⏳ PENDENTE
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S15-01 | **Atendimento — Filtro Institucional**: filtrar `/atendimento` para exibir APENAS conversas de instâncias com `canal_tipo = 'Institucional'`. Instâncias de Empregabilidade, Ouvidoria, Acesso e Divulgação NÃO aparecem nesta aba | Portal | [ ] |
+| S15-02 | **Programação — Validar RAG por Institucional**: confirmar que ao criar/aprovar evento pontual ou importar programação mensal, o indexador RAG gera chunks com `cuca_unit_id` correto associado ao número Institucional da unidade | Worker + Banco | [ ] |
+| S15-03 | **Programação — Bug Mensal**: investigar e corrigir erros na exibição ou importação da programação mensal. Validar dados existentes no banco — conferir campos nulos, datas inválidas, total_atividades inconsistente | Portal + Banco | [ ] |
+| S15-04 | **Programação — Bug Datas Pontuais**: identificar registros com `data_inicio > data_fim` ou campos nulos nos eventos pontuais existentes; criar migration de correção e validação de consistência no banco | Banco + Portal | [ ] |
+
+---
+
+#### Sprint 16 — Empregabilidade Fase 2 ⏳ PENDENTE
+
+> **Prazo do backlog**: 13/03/2026
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S16-01 | **Candidatura Espontânea — Banco de Talentos**: migration para permitir `vaga_id NULL` em `candidaturas`; página pública `/candidatos/espontanea` com formulário (nome, data nasc, telefone, upload CV PDF); OCR automático via GPT-4o Vision; inserção direta em `talent_bank` com `status = 'disponivel'` | Portal + Banco + Worker | [ ] |
+| S16-02 | **Cadastro Manual pelo Colaborador**: botão "Cadastrar no Banco de Talentos" no portal de empregabilidade; formulário interno (nome, nascimento, telefone, upload CV opcional); colaborador pode adicionar candidato presencial sem vaga específica | Portal | [ ] |
+| S16-03 | **Mensagem de Encerramento após Inscrição**: agente Júlia envia automaticamente após o lead enviar CV: *"Seu currículo foi registrado! Caso seja aprovado, você receberá confirmação por aqui. De toda forma, seu CV fica no nosso Banco de Talentos para vagas futuras."* | Worker + Edge Function | [ ] |
+| S16-04 | **Follow-up com a Empresa**: interface no portal da vaga para registrar feedback da empresa (aprovado / reprovado / em análise) por candidato; histórico de contatos com a empresa parceira | Portal | [ ] |
+| S16-05 | **Follow-up com o Candidato Aprovado**: quando gestor marca candidato como `selecionado`, disparo automático via WhatsApp notificando aprovação. NÃO notificar rejeitados neste fluxo | Worker + Portal | [ ] |
+| S16-06 | **Visualização Cross-CUCA de Vagas**: colaboradores de empregabilidade de qualquer CUCA têm acesso **read-only** às vagas abertas de todos os equipamentos. Aba "Rede Completa" na página de vagas | Portal | [ ] |
+| S16-07 | **Buscador Multi-CUCA por Perfil de CV**: agente Júlia (canal geral ou unidade) analisa CV do lead → busca vagas compatíveis em todos os 5 CUCAs → informa se há vagas, quais são, onde estão e passa o número de contato para inscrição | Worker + Edge Function | [ ] |
+| S16-08 | **Inscrição de Terceiros**: agente reconhece quando alguém está inscrevendo outra pessoa ("meu filho", "minha filha", etc.) → solicita dados do candidato indicado → habilita upload do CV do terceiro → cria candidatura normalmente | Worker + Edge Function | [ ] |
+
+---
+
+#### Sprint 17 — Divulgação Prévia + Diagnóstico de Configurações ⏳ PENDENTE
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S17-01 | **Prévia de Disparo — Programação Pontual**: antes de disparar evento pontual, exibir: prévia da mensagem com `{{nome}}` preenchido, contagem de leads que receberão, seleção de público-alvo; confirmação explícita antes de iniciar o disparo | Portal | [ ] |
+| S17-02 | **Diagnóstico de Lentidão de Instâncias**: investigar causa raiz — testar se é (a) revalidação de cache do Next.js (`router.refresh` vs `router.push`), (b) capacidade da VPS, ou (c) polling excessivo. Documentar resultado | Portal + Infra | [ ] |
+| S17-03 | **Correção de Lentidão**: aplicar correção baseada no diagnóstico de S17-02. Se frontend: otimizar state management e invalidação de cache. Se infra: documentar necessidade de upgrade de plano | Portal ou Infra | [ ] |
 
 ---
 
