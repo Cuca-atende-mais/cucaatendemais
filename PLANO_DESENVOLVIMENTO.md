@@ -906,9 +906,9 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 |--------|-----------|--------|
 | S19-01 | **BD: Estrutura de Categorias Pai/Filho** <br/> Tabela de categorias para suportar `Eixo` (Pai) e `Modalidade` (Filho). Ex: Esportes -> Vôlei. | [x] |
 | S19-02 | **API: Motor de Normalização e Extração (Sanitizador)** <br/> No momento do import da Planilha Mensal (via portal), o Worker intercepta a coluna "Cursos/Atividades", extrai valores únicos, passa por um classificador (Regex/Keywords) e faz um `upsert` em `categorias_interesse`. | [x] |
-| S19-03 | **UI: Refatoração Formulário Manual (Leads/Ouvidoria/Pontual)** <br/> Substituir campos de texto aberto por Dropdowns em Cascata (Select de Eixo -> Select de Modalidade), buscando dinamicamente das categorias retroalimentadas do mês ativo. | [ ] |
-| S19-04 | **UI: Exibição no Perfil do Lead** <br/> Ajustar a tela de `Ver Perfil` para exibir os interesses formatados cleanly (Ex: `Esportes > Vôlei`), mantendo a string original "suja" nativa num campo tooltip para histórico. | [ ] |
-| S19-05 | **Backend: Atualização de Filtros (Pontual & Ouvidoria)** <br/> Ajustar queries de envio de mensagens para filtrar por `Categoria Pai/Filho` baseadas nas tags da tabela `categorias_interesse`. | [ ] |
+| S19-03 | **UI: Refatoração Formulário Manual (Leads/Ouvidoria/Pontual)** <br/> Substituir campos de texto aberto por Dropdowns em Cascata (Select de Eixo -> Select de Modalidade), buscando dinamicamente das categorias retroalimentadas do mês ativo. | [x] |
+| S19-04 | **UI: Exibição no Perfil do Lead** <br/> Ajustar a tela de `Ver Perfil` para exibir os interesses formatados cleanly (Ex: `Esportes > Vôlei`), mantendo a string original "suja" nativa num campo tooltip para histórico. | [x] |
+| S19-05 | **Backend: Atualização de Filtros (Pontual & Ouvidoria)** <br/> Ajustar queries de envio de mensagens para filtrar por `Categoria Pai/Filho` baseadas nas tags da tabela `categorias_interesse`. | [x] |
 
 ---
 

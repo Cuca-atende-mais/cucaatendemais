@@ -77,7 +77,7 @@ export default function LeadsPage() {
     const [salvandoDados, setSalvandoDados] = useState(false)
 
     // Adicionar atividade
-    const [novaAtividade, setNovaAtividade] = useState({ equipamento: "", atividade: "", contagem: 1 })
+    const [novaAtividade, setNovaAtividade] = useState({ equipamento: "", eixo: "", atividade: "", contagem: 1 })
     const [adicionandoAtividade, setAdicionandoAtividade] = useState(false)
 
     // --- Modal Novo Lead ---
@@ -166,7 +166,7 @@ export default function LeadsPage() {
         })
         setEditando(false)
         setSheetOpen(true)
-        setNovaAtividade({ equipamento: "", atividade: "", contagem: 1 })
+        setNovaAtividade({ equipamento: "", eixo: "", atividade: "", contagem: 1 })
 
         // Lazy load paralelo: atividades + categorias + interesses
         setLoadingAtividades(true)
@@ -254,7 +254,7 @@ export default function LeadsPage() {
                 )
             if (error) throw error
             toast.success("Atividade adicionada")
-            setNovaAtividade({ equipamento: "", atividade: "", contagem: 1 })
+            setNovaAtividade({ equipamento: "", eixo: "", atividade: "", contagem: 1 })
             // Recarregar atividades e lead (perfil foi recalculado pelo trigger)
             const { data: novasAtiv } = await supabase
                 .from("lead_atividades")
@@ -336,13 +336,12 @@ export default function LeadsPage() {
     }
 
     const limparTags = async (lead: Lead) => {
-        const { error } = await supabase
-            .from("leads")
-            .update({ tags: [] })
-            .eq("id", lead.id)
-        if (error) { toast.error("Erro"); return }
-        buscarLeads()
-        toast.success("Tags removidas")
+        if (!confirm("Remover todas as tags deste lead?")) return
+        const { error } = await supabase.from("leads").update({ tags: [] }).eq("id", lead.id)
+        if (!error) {
+            toast.success("Tags removidas")
+            buscarLeads()
+        }
     }
 
     // -------------------------
@@ -386,6 +385,16 @@ export default function LeadsPage() {
     const formatarData = (data: string | null) => {
         if (!data) return "—"
         try { return format(new Date(data), "dd/MM/yyyy", { locale: ptBR }) } catch { return data }
+    }
+
+    // S19-04: Helper para formatar cleanly (Eixo > Modalidade)
+    const formatarAtividade = (nomeAtividade: string) => {
+        const mod = categoriasInteresse.find(c => c.nome.toLowerCase() === nomeAtividade.toLowerCase() && c.pai_id)
+        if (mod) {
+            const pai = categoriasInteresse.find(c => c.id === mod.pai_id)
+            if (pai) return `${pai.nome} > ${mod.nome}`
+        }
+        return nomeAtividade
     }
 
     return (
@@ -485,14 +494,18 @@ export default function LeadsPage() {
                                     <TableCell>{lead.unidade_cuca ?? "—"}</TableCell>
                                     <TableCell>
                                         <div className="flex flex-wrap gap-1">
-                                            {(lead.atividades_principais ?? []).slice(0, 2).map((a, i) => (
-                                                <span
-                                                    key={a}
-                                                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${BADGE_COLORS[i % BADGE_COLORS.length]}`}
-                                                >
-                                                    {a}
-                                                </span>
-                                            ))}
+                                            {(lead.atividades_principais ?? []).slice(0, 2).map((a, i) => {
+                                                const cleanName = formatarAtividade(a)
+                                                return (
+                                                    <span
+                                                        key={a}
+                                                        title={`Original: ${a}`}
+                                                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium cursor-help ${BADGE_COLORS[i % BADGE_COLORS.length]}`}
+                                                    >
+                                                        {cleanName}
+                                                    </span>
+                                                )
+                                            })}
                                             {(lead.equipamentos_principais ?? []).slice(0, 2).map(eq => (
                                                 <Badge key={eq} variant="outline" className="text-xs">{eq}</Badge>
                                             ))}
@@ -683,9 +696,15 @@ export default function LeadsPage() {
                                                 <div className="flex flex-wrap gap-1.5">
                                                     {(leadSelecionado.atividades_principais ?? []).length === 0 ? (
                                                         <span className="text-xs text-muted-foreground italic">Nenhuma registrada</span>
-                                                    ) : (leadSelecionado.atividades_principais ?? []).map((a, i) => (
-                                                        <span key={a} className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${BADGE_COLORS[i % BADGE_COLORS.length]}`}>{a}</span>
-                                                    ))}
+                                                    ) : (leadSelecionado.atividades_principais ?? []).map((a, i) => {
+                                                        // S19-04: Formatar (Eixo > Modalidade) e Tooltip com original
+                                                        const cleanName = formatarAtividade(a)
+                                                        return (
+                                                            <span key={a} title={`Original: ${a}`} className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium cursor-help ${BADGE_COLORS[i % BADGE_COLORS.length]}`}>
+                                                                {cleanName}
+                                                            </span>
+                                                        )
+                                                    })}
                                                 </div>
                                             </div>
                                             <div>
@@ -771,8 +790,8 @@ export default function LeadsPage() {
                                                     </Table>
                                                 )}
 
-                                                <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
-                                                    <p className="text-xs font-semibold text-foreground">Adicionar atividade</p>
+                                                <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3 mt-4">
+                                                    <p className="text-xs font-semibold text-foreground">Adicionar atividade / interesse</p>
                                                     <div className="grid grid-cols-2 gap-3">
                                                         <div>
                                                             <Label className="text-xs">Equipamento (CUCA)</Label>
@@ -784,17 +803,51 @@ export default function LeadsPage() {
                                                             </Select>
                                                         </div>
                                                         <div>
-                                                            <Label className="text-xs">Qtd</Label>
+                                                            <Label className="text-xs">Qtd (Opcional)</Label>
                                                             <Input type="number" min={1} value={novaAtividade.contagem} onChange={e => setNovaAtividade(n => ({ ...n, contagem: parseInt(e.target.value) || 1 }))} className="mt-1 h-8 text-xs" />
                                                         </div>
                                                     </div>
-                                                    <div>
-                                                        <Label className="text-xs">Atividade</Label>
-                                                        <Input placeholder="Ex: NATAÇÃO, FUTSAL, DANÇA..." value={novaAtividade.atividade} onChange={e => setNovaAtividade(n => ({ ...n, atividade: e.target.value }))} className="mt-1 h-8 text-xs" />
+
+                                                    {/* S19-03: Dropdown Cascata Pai/Filho */}
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        <div>
+                                                            <Label className="text-xs">Eixo (Opcional Filtro)</Label>
+                                                            <Select
+                                                                value={novaAtividade.eixo || "todos"}
+                                                                onValueChange={v => {
+                                                                    setNovaAtividade(n => ({ ...n, eixo: v === "todos" ? "" : v, atividade: "" }))
+                                                                }}
+                                                            >
+                                                                <SelectTrigger className="mt-1 h-8 text-xs"><SelectValue placeholder="Todos os Eixos" /></SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="todos">Todos os Eixos</SelectItem>
+                                                                    {categoriasInteresse.filter(c => !c.pai_id).map(eixo => (
+                                                                        <SelectItem key={eixo.id} value={eixo.id}>{eixo.nome}</SelectItem>
+                                                                    ))}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
+                                                        <div>
+                                                            <Label className="text-xs">Modalidade</Label>
+                                                            <Select
+                                                                value={novaAtividade.atividade}
+                                                                onValueChange={v => setNovaAtividade(n => ({ ...n, atividade: v }))}
+                                                            >
+                                                                <SelectTrigger className="mt-1 h-8 text-xs"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+                                                                <SelectContent>
+                                                                    {categoriasInteresse
+                                                                        .filter(c => c.pai_id && (!novaAtividade.eixo || c.pai_id === novaAtividade.eixo))
+                                                                        .map(mod => (
+                                                                            <SelectItem key={mod.nome} value={mod.nome}>{mod.nome}</SelectItem>
+                                                                        ))}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
                                                     </div>
-                                                    <Button size="sm" className="w-full" onClick={adicionarAtividade} disabled={adicionandoAtividade}>
+
+                                                    <Button size="sm" className="w-full mt-2" onClick={adicionarAtividade} disabled={adicionandoAtividade}>
                                                         <Plus className="mr-1 h-3 w-3" />
-                                                        {adicionandoAtividade ? "Adicionando..." : "Adicionar"}
+                                                        {adicionandoAtividade ? "Adicionando..." : "Adicionar à Grade"}
                                                     </Button>
                                                 </div>
                                             </>
