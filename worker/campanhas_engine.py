@@ -29,7 +29,7 @@ logger = logging.getLogger("campanhas_engine")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://cucaatendemais.uazapi.com")
 
 
 def _get_config_sync(key: str, default_val: int) -> int:
@@ -498,7 +498,7 @@ async def processar_disparos_divulgacao(delay_min: int, delay_max: int, daily_li
                 texto = _aplicar_spintax(template, nome)
 
                 try:
-                    UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+                    UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://cucaatendemais.uazapi.com")
                     resp = await client.post(
                         f"{UAZAPI_URL}/message/sendText/{inst_nome}",
                         headers={"apikey": inst_token, "Content-Type": "application/json"},
