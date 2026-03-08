@@ -1,36 +1,10 @@
-CREATE TABLE IF NOT EXISTS public.categorias_interesse (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    nome TEXT NOT NULL,
-    parent_id UUID REFERENCES public.categorias_interesse(id) ON DELETE CASCADE,
-    ativo BOOLEAN DEFAULT true,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
+-- As tabelas categorias_interesse e lead_interesses já existem no Supabase.
+-- Esta migration limpa categorias antigas (mockadas) e insere a nova taxonomia minimalista.
 
--- Relação NxN entre leads e categorias_interesse
-CREATE TABLE IF NOT EXISTS public.lead_interesses (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    lead_id UUID REFERENCES public.leads(id) ON DELETE CASCADE NOT NULL,
-    categoria_id UUID REFERENCES public.categorias_interesse(id) ON DELETE CASCADE NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(lead_id, categoria_id)
-);
+-- 1. Limpar dados antigos (como lead_interesses está vazi, é seguro)
+DELETE FROM public.categorias_interesse;
 
--- RLS
-ALTER TABLE public.categorias_interesse ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.lead_interesses ENABLE ROW LEVEL SECURITY;
-
--- Policies for categorias_interesse
-CREATE POLICY "Leitura irrestrita para categorias_interesse" 
-ON public.categorias_interesse FOR SELECT 
-USING (true);
-
--- Policies for lead_interesses
-CREATE POLICY "Colaboradores podem ler e alterar lead_interesses" 
-ON public.lead_interesses FOR ALL 
-TO authenticated 
-USING (true) WITH CHECK (true);
-
--- Seeds
+-- Seeds com a taxonomia minimalista
 DO $$
 DECLARE
     eixo_esporte UUID := gen_random_uuid();
@@ -38,43 +12,43 @@ DECLARE
     eixo_curso UUID := gen_random_uuid();
 BEGIN
     -- Insert Eixos
-    INSERT INTO public.categorias_interesse (id, nome, parent_id) VALUES
-        (eixo_esporte, 'Esportes', NULL),
-        (eixo_cultura, 'Cultura', NULL),
-        (eixo_curso, 'Cursos (Formação e Qualificação)', NULL);
+    INSERT INTO public.categorias_interesse (id, nome, pai_id, ordem) VALUES
+        (eixo_esporte, 'Esportes', NULL, 1),
+        (eixo_cultura, 'Cultura', NULL, 2),
+        (eixo_curso, 'Cursos (Formação e Qualificação)', NULL, 3);
 
     -- Modalidades Esportes
-    INSERT INTO public.categorias_interesse (nome, parent_id) VALUES
-        ('Artes Marciais', eixo_esporte),
-        ('Basquete', eixo_esporte),
-        ('Capoeira', eixo_esporte),
-        ('Condicionamento Físico', eixo_esporte),
-        ('Futsal', eixo_esporte),
-        ('Ginástica', eixo_esporte),
-        ('Handebol', eixo_esporte),
-        ('Jiu-Jitsu', eixo_esporte),
-        ('Judô', eixo_esporte),
-        ('Karatê', eixo_esporte),
-        ('Natação', eixo_esporte),
-        ('Hidroginástica', eixo_esporte),
-        ('Pilates', eixo_esporte),
-        ('Vôlei', eixo_esporte);
+    INSERT INTO public.categorias_interesse (nome, pai_id, ordem) VALUES
+        ('Artes Marciais', eixo_esporte, 1),
+        ('Basquete', eixo_esporte, 2),
+        ('Capoeira', eixo_esporte, 3),
+        ('Condicionamento Físico', eixo_esporte, 4),
+        ('Futsal', eixo_esporte, 5),
+        ('Ginástica', eixo_esporte, 6),
+        ('Handebol', eixo_esporte, 7),
+        ('Jiu-Jitsu', eixo_esporte, 8),
+        ('Judô', eixo_esporte, 9),
+        ('Karatê', eixo_esporte, 10),
+        ('Natação', eixo_esporte, 11),
+        ('Hidroginástica', eixo_esporte, 12),
+        ('Pilates', eixo_esporte, 13),
+        ('Vôlei', eixo_esporte, 14);
 
     -- Modalidades Cultura
-    INSERT INTO public.categorias_interesse (nome, parent_id) VALUES
-        ('Dança', eixo_cultura),
-        ('Teatro', eixo_cultura),
-        ('Fotografia e Audiovisual', eixo_cultura),
-        ('Música — Instrumento', eixo_cultura),
-        ('Música — Canto e Banda', eixo_cultura);
+    INSERT INTO public.categorias_interesse (nome, pai_id, ordem) VALUES
+        ('Dança', eixo_cultura, 1),
+        ('Teatro', eixo_cultura, 2),
+        ('Fotografia e Audiovisual', eixo_cultura, 3),
+        ('Música — Instrumento', eixo_cultura, 4),
+        ('Música — Canto e Banda', eixo_cultura, 5);
 
     -- Modalidades Cursos
-    INSERT INTO public.categorias_interesse (nome, parent_id) VALUES
-        ('Informática Básica', eixo_curso),
-        ('Programação TI', eixo_curso),
-        ('Manutenção de Sistemas e Celulares', eixo_curso),
-        ('Infraestrutura e Elétrica', eixo_curso),
-        ('Design e Edição', eixo_curso),
-        ('Libras', eixo_curso),
-        ('Gestão e Empreendedorismo', eixo_curso);
+    INSERT INTO public.categorias_interesse (nome, pai_id, ordem) VALUES
+        ('Informática Básica', eixo_curso, 1),
+        ('Programação TI', eixo_curso, 2),
+        ('Manutenção de Sistemas e Celulares', eixo_curso, 3),
+        ('Infraestrutura e Elétrica', eixo_curso, 4),
+        ('Design e Edição', eixo_curso, 5),
+        ('Libras', eixo_curso, 6),
+        ('Gestão e Empreendedorismo', eixo_curso, 7);
 END $$;
