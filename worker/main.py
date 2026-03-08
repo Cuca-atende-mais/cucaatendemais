@@ -666,6 +666,26 @@ async def process_cv_espontaneo_endpoint(request: Request, background_tasks: Bac
         return Response(status_code=500, content=str(e))
 
 
+@app.post("/buscar-vagas")
+async def buscar_vagas_endpoint(request: Request):
+    """S18-02: Busca vagas abertas em todas as CUCAs para o motor-agente."""
+    try:
+        payload = await request.json()
+        busca = payload.get("busca", "")
+
+        from supabase import create_client
+        import os
+        sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
+
+        result = sb.rpc("buscar_vagas_multi_cuca", {"p_busca": busca}).execute()
+        vagas = result.data or []
+
+        return {"vagas": vagas, "total": len(vagas)}
+    except Exception as e:
+        logger.error(f"Erro ao buscar vagas: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
+
 @app.post("/analyse-sentiment")
 async def analyse_sentiment_endpoint(request: Request):
     """S13-11: Rota para o portal disparar a análise de sentimento via Sofia (LLM)."""

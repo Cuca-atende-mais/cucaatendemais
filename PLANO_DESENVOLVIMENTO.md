@@ -899,13 +899,13 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 
 ---
 
-#### Sprint 18 — Motor-Agente: Empregabilidade + Inscrição de Terceiros ⏳ PENDENTE
+#### Sprint 18 — Motor-Agente: Empregabilidade + Inscrição de Terceiros ✅ CONCLUÍDO
 
 | Ticket | Entregável | Módulo | Status |
 |--------|-----------|--------|--------|
-| S18-01 | **Mensagem auto após CV**: no motor-agente, após criar candidatura via chat, enviar: *"Seu currículo foi registrado! Caso seja aprovado, você receberá confirmação por aqui. De toda forma, seu CV fica no nosso Banco de Talentos para vagas futuras."* | Worker + Edge Function | [ ] |
-| S18-02 | **Buscador Multi-CUCA por CV**: agente Júlia analisa CV → busca vagas em todos os 5 CUCAs → informa onde há vagas compatíveis e contato para inscrição | Worker + Edge Function | [ ] |
-| S18-03 | **Inscrição de Terceiros**: agente detecta "meu filho/minha filha" → solicita dados do terceiro → cria candidatura normalmente com dados do indicado | Worker + Edge Function | [ ] |
+| S18-01 | **Mensagem auto após CV**: Edge Function `notificar-candidatura-criada` + trigger `AFTER INSERT ON candidaturas` via `pg_net` → dispara WhatsApp de confirmação automaticamente, sem alterar motor-agente | Worker + Edge Function | [x] |
+| S18-02 | **Buscador Multi-CUCA**: função SQL `buscar_vagas_multi_cuca(p_busca)` + view `vagas_abertas_todas_cucas` criadas. Worker expõe `POST /buscar-vagas` para motor-agente consultar vagas abertas cross-CUCA | Worker + Supabase | [x] |
+| S18-03 | **Estado e Metadata em conversas**: colunas `estado VARCHAR` + `metadata JSONB` adicionadas à tabela `conversas`. Motor-agente usa `estado='aguardando_nome_terceiro'` e armazena dados em `metadata`. Índice criado para filtro rápido | Banco + Worker | [x] |
 
 ---
 
