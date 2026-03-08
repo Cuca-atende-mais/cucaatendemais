@@ -899,6 +899,19 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 
 ---
 
+#### Sprint 18 — Refatoração da Taxonomia de Leads (Eixos e Modalidades) ⏳
+> **Objetivo**: Padronizar a entrada de dados (Cursos/Esportes/Cultura) para evitar sujeira no banco, unificando a estrutura do cadastro manual com o consumo futuro da API da Prefeitura.
+
+| Ticket | Entregável | Status |
+|--------|-----------|--------|
+| S18-01 | **BD: Estrutura de Categorias Pai/Filho** <br/> Criar ou adaptar tabela de categorias para suportar `Eixo` (Pai) e `Modalidade` (Filho). Ex: Esportes -> Vôlei. | [ ] |
+| S18-02 | **API: Motor de Normalização (Sanitizador)** <br/> Criar função/serviço (Regex/Keywords) que recebe a string suja da API (ex: "Vôlei Seleção") e traduz para a estrutura Pai/Filho ("Esportes" > "Vôlei"). | [ ] |
+| S18-03 | **UI: Refatoração Formulário Manual (Leads/Ouvidoria/Pontual)** <br/> Substituir campos de texto aberto por Dropdowns em Cascata (Select de Eixo bloqueia e filtra o Select de Modalidade). | [ ] |
+| S18-04 | **UI: Exibição no Perfil do Lead** <br/> Ajustar a tela de `Ver Perfil` para exibir os interesses formatados cleanly (Ex: `Esportes > Vôlei`), mantendo a string original "suja" nativa num campo tooltip apenas para histórico visual. | [ ] |
+| S18-05 | **Backend: Atualização de Filtros (Programação Pontual)** <br/> Ajustar as queries de filtro de envio da Programação Pontual para buscarem por `Categoria Pai` e `Filho`, ampliando o alcance do disparo. | [ ] |
+
+---
+
 #### Sprint 18 — Motor-Agente: Empregabilidade + Inscrição de Terceiros ✅ CONCLUÍDO
 
 | Ticket | Entregável | Módulo | Status |
