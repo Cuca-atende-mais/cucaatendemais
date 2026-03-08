@@ -66,6 +66,8 @@ export default function CampanhaMensalPage() {
         if (!campanha || campanha.status === "aprovado") return
         setIsAprovando(true)
         try {
+            // Refresh session to avoid stale JWT 403 errors
+            await supabase.auth.refreshSession()
             const { error } = await supabase
                 .from("campanhas_mensais").update({ status: "aprovado" }).eq("id", campanha.id)
             if (error) throw error
