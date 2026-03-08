@@ -3,84 +3,117 @@
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
-import { Vaga, Candidatura } from "@/lib/types/database"
+import { Vaga, Candidatura, EmpregabilidadeFollowup } from "@/lib/types/database"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { ArrowLeft, FileText, CheckCircle2, UserCheck, UserX, AlertCircle, Loader2, FileTerminal, Edit3, Eye, MoreHorizontal, Sparkles } from "lucide-react"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+    ArrowLeft, FileText, CheckCircle2, UserCheck, UserX, AlertCircle, Loader2,
+    FileTerminal, Eye, MoreHorizontal, Sparkles, Plus, MessageSquare, Send,
+    Building2, User, Info
+} from "lucide-react"
 import toast from "react-hot-toast"
-import { differenceInYears } from "date-fns"
+import { differenceInYears, format } from "date-fns"
+import { ptBR } from "date-fns/locale"
 import { MatchModal } from "@/components/empregabilidade/match-modal"
 
 export default function VagaDetalhesPage() {
     const params = useParams()
     const router = useRouter()
     const id = params.id as string
+    const supabase = createClient()
 
     const [vaga, setVaga] = useState<Vaga | null>(null)
     const [candidatos, setCandidatos] = useState<Candidatura[]>([])
     const [loading, setLoading] = useState(true)
+
+    // Match modal
     const [selectedCandidato, setSelectedCandidato] = useState<any>(null)
     const [isMatchModalOpen, setIsMatchModalOpen] = useState(false)
 
-    const supabase = createClient()
+    // S12-06: mensagem de fechamento
+    const [msgFechamento, setMsgFechamento] = useState<{ candidato: Candidatura } | null>(null)
+
+    // S12-07: follow-up Sheet
+    const [followupSheet, setFollowupSheet] = useState<Candidatura | null>(null)
+    const [followups, setFollowups] = useState<EmpregabilidadeFollowup[]>([])
+    const [loadingFollowup, setLoadingFollowup] = useState(false)
+    const [novoFollowup, setNovoFollowup] = useState({ tipo: "interno" as const, mensagem: "" })
+    const [enviandoFollowup, setEnviandoFollowup] = useState(false)
+
+    // S12-10: inscrição manual
+    const [modalInscricao, setModalInscricao] = useState(false)
+    const [inscricaoForm, setInscricaoForm] = useState({ nome: "", telefone: "", data_nascimento: "" })
+    const [criandoInscricao, setCriandoInscricao] = useState(false)
 
     useEffect(() => {
-        if (id) {
-            fetchData()
-        }
+        if (id) fetchData()
     }, [id])
 
     const fetchData = async () => {
         setLoading(true)
         try {
-            // Vaga
-            const { data: vData, error: vError } = await supabase.from('vagas').select('*').eq('id', id).single()
-            if (vError) throw vError
+            const [{ data: vData, error: vErr }, { data: cData, error: cErr }] = await Promise.all([
+                supabase.from("vagas").select("*").eq("id", id).single(),
+                supabase.from("candidaturas").select("*").eq("vaga_id", id).order("created_at", { ascending: false }),
+            ])
+            if (vErr) throw vErr
+            if (cErr) throw cErr
             setVaga(vData)
-
-            // Candidaturas
-            const { data: cData, error: cError } = await supabase
-                .from('candidaturas')
-                .select('*')
-                .eq('vaga_id', id)
-                .order('created_at', { ascending: false })
-
-            if (cError) throw cError
             setCandidatos(cData || [])
         } catch (error) {
             console.error("Erro ao buscar dados:", error)
+            toast.error("Erro ao carregar vaga")
         } finally {
             setLoading(false)
         }
     }
 
-    const calcularIdade = (dataStr: string) => {
+    const calcularIdade = (dataStr: string | null) => {
         if (!dataStr) return "-"
         return differenceInYears(new Date(), new Date(dataStr)) + " anos"
     }
 
-    const handleUpdateStatus = async (candidaturaId: string, novoStatus: string, jsonSkills: any) => {
+    // S12-05/06: ao marcar selecionado → enviar CV + exibir mensagem fechamento
+    const handleUpdateStatus = async (candidaturaId: string, novoStatus: string, candidatura?: Candidatura) => {
         try {
-            // 1. Atualizar candidaturas
             const { error } = await supabase.from("candidaturas").update({ status: novoStatus }).eq("id", candidaturaId)
             if (error) throw error
 
-            // 2. Se for rejeitado (S9-13), vai pro banco de talentos (MVP simplificado)
-            if (novoStatus === 'rejeitado') {
-                toast.success("Candidato movido para o Banco de Talentos.")
+            // S12-05: enviar CV por email ao selecionar
+            if (novoStatus === "selecionado" && candidatura) {
+                const { data: { session } } = await supabase.auth.getSession()
+                fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/send-cv-email`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${session?.access_token}`,
+                    },
+                    body: JSON.stringify({ candidatura_id: candidaturaId }),
+                }).then(r => r.json()).then(result => {
+                    if (result.success) toast.success("CV enviado para a empresa por email!")
+                    else if (result.motivo) console.info("[send-cv-email]", result.motivo)
+                }).catch(err => console.error("[send-cv-email]", err))
+
+                // S12-06: exibir mensagem de fechamento
+                setMsgFechamento({ candidato: candidatura })
             }
 
-            // 3. Se for contratado (S9-14), verifica vagas restantes
-            if (novoStatus === 'contratado' && vaga) {
-                const contratadosHoje = candidatos.filter(c => c.status === 'contratado').length + 1
-                if (contratadosHoje >= vaga.total_vagas) {
-                    await supabase.from("vagas").update({ status: 'preenchida' }).eq("id", vaga.id)
-                    toast.success("Todas as vagas foram preenchidas! Vaga encerrada.", { duration: 5000 })
-                    setVaga({ ...vaga, status: 'preenchida' })
+            if (novoStatus === "rejeitado") toast.success("Candidato movido para o Banco de Talentos.")
+            if (novoStatus === "contratado" && vaga) {
+                const contratados = candidatos.filter(c => c.status === "contratado").length + 1
+                if (contratados >= vaga.total_vagas) {
+                    await supabase.from("vagas").update({ status: "preenchida" }).eq("id", vaga.id)
+                    toast.success("Todas as vagas preenchidas! Vaga encerrada.", { duration: 5000 })
+                    setVaga({ ...vaga, status: "preenchida" })
                 }
             }
 
@@ -92,41 +125,113 @@ export default function VagaDetalhesPage() {
     }
 
     const refreshOcr = async (candidaturaId: string, cvUrl: string) => {
-        toast.loading("Re-processando OCR... aguarde uns segundos.", { id: 'ocr' })
+        toast.loading("Re-processando OCR...", { id: "ocr" })
         try {
-            const res = await fetch('/api/process-cv', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    candidatura_id: candidaturaId,
-                    vaga_id: vaga?.id,
-                    cv_url: cvUrl
-                })
+            const res = await fetch("/api/process-cv", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ candidatura_id: candidaturaId, vaga_id: vaga?.id, cv_url: cvUrl }),
             })
             if (!res.ok) throw new Error("Erro na API")
-            toast.success("OCR reiniciado.", { id: 'ocr' })
-            setTimeout(fetchData, 8000) // update after 8 seconds
-        } catch (error) {
-            toast.error("Falha ao chamar motor", { id: 'ocr' })
+            toast.success("OCR reiniciado.", { id: "ocr" })
+            setTimeout(fetchData, 8000)
+        } catch {
+            toast.error("Falha ao chamar motor", { id: "ocr" })
         }
+    }
+
+    // S12-07: abrir sheet de follow-up
+    const abrirFollowup = async (candidatura: Candidatura) => {
+        setFollowupSheet(candidatura)
+        setLoadingFollowup(true)
+        const { data, error } = await supabase
+            .from("empregabilidade_followup")
+            .select("*")
+            .eq("candidatura_id", candidatura.id)
+            .order("created_at", { ascending: true })
+        if (!error) setFollowups(data || [])
+        setLoadingFollowup(false)
+    }
+
+    const adicionarFollowup = async () => {
+        if (!followupSheet || !novoFollowup.mensagem.trim()) return
+        setEnviandoFollowup(true)
+        try {
+            const { error } = await supabase.from("empregabilidade_followup").insert({
+                candidatura_id: followupSheet.id,
+                tipo: novoFollowup.tipo,
+                mensagem: novoFollowup.mensagem.trim(),
+                status: "enviado",
+            })
+            if (error) throw error
+            setNovoFollowup({ tipo: "interno", mensagem: "" })
+            const { data } = await supabase
+                .from("empregabilidade_followup")
+                .select("*")
+                .eq("candidatura_id", followupSheet.id)
+                .order("created_at", { ascending: true })
+            setFollowups(data || [])
+            toast.success("Registro adicionado")
+        } catch (err: any) {
+            toast.error("Erro: " + err.message)
+        } finally {
+            setEnviandoFollowup(false)
+        }
+    }
+
+    // S12-10: inscrição manual
+    const criarInscricaoManual = async () => {
+        if (!inscricaoForm.nome.trim() || !inscricaoForm.telefone.trim()) {
+            toast.error("Nome e telefone são obrigatórios")
+            return
+        }
+        setCriandoInscricao(true)
+        try {
+            const { error } = await supabase.from("candidaturas").insert({
+                vaga_id: id,
+                nome: inscricaoForm.nome.trim(),
+                telefone: inscricaoForm.telefone.trim(),
+                data_nascimento: inscricaoForm.data_nascimento || null,
+                status: "pendente",
+                requisitos_atendidos: "Inscrito manualmente por colaborador CUCA",
+            })
+            if (error) throw error
+            toast.success("Candidato inscrito com sucesso")
+            setModalInscricao(false)
+            setInscricaoForm({ nome: "", telefone: "", data_nascimento: "" })
+            fetchData()
+        } catch (err: any) {
+            toast.error("Erro: " + err.message)
+        } finally {
+            setCriandoInscricao(false)
+        }
+    }
+
+    const tipoFollowupLabel = (tipo: string) => {
+        if (tipo === "empresa") return { label: "Empresa", color: "bg-blue-100 text-blue-800", icon: Building2 }
+        if (tipo === "candidato") return { label: "Candidato", color: "bg-green-100 text-green-800", icon: User }
+        return { label: "Interno", color: "bg-slate-100 text-slate-700", icon: Info }
     }
 
     return (
         <div className="space-y-6">
             <div className="flex items-center gap-4">
-                <Button variant="outline" size="icon" onClick={() => router.push('/empregabilidade/vagas')}>
+                <Button variant="outline" size="icon" onClick={() => router.push("/empregabilidade/vagas")}>
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight text-cuca-dark">{vaga?.titulo || "Detalhes da Vaga"}</h1>
                     <p className="text-muted-foreground flex items-center gap-2">
-                        {vaga?.status === 'aberta' ? <Badge className="bg-green-600">Aberta</Badge> : <Badge variant="secondary">{vaga?.status}</Badge>}
+                        {vaga?.status === "aberta" ? <Badge className="bg-green-600">Aberta</Badge> : <Badge variant="secondary">{vaga?.status}</Badge>}
                         <span>Total de vagas: {vaga?.total_vagas}</span>
+                        {vaga?.email_contato_empresa && (
+                            <span className="text-xs text-muted-foreground">· CV enviado para: {vaga.email_contato_empresa}</span>
+                        )}
                     </p>
                 </div>
             </div>
 
-            <Card className="border-none shadow-sm mt-6">
+            <Card className="border-none shadow-sm">
                 <CardHeader className="bg-muted/20 border-b flex flex-row items-center justify-between">
                     <div>
                         <CardTitle className="flex items-center gap-2">
@@ -136,6 +241,11 @@ export default function VagaDetalhesPage() {
                         </CardTitle>
                         <CardDescription>Gerencie o pipeline de seleção desta oportunidade</CardDescription>
                     </div>
+                    {/* S12-10: inscrição manual */}
+                    <Button size="sm" variant="outline" onClick={() => setModalInscricao(true)}>
+                        <Plus className="mr-1.5 h-4 w-4" />
+                        Inscrever Manualmente
+                    </Button>
                 </CardHeader>
                 <CardContent className="p-0">
                     <Table>
@@ -172,14 +282,9 @@ export default function VagaDetalhesPage() {
                                         <TableCell>
                                             <div
                                                 className="flex flex-col items-center cursor-pointer hover:bg-slate-50 p-1 rounded transition-colors"
-                                                onClick={() => {
-                                                    setSelectedCandidato(c)
-                                                    setIsMatchModalOpen(true)
-                                                }}
+                                                onClick={() => { setSelectedCandidato(c); setIsMatchModalOpen(true) }}
                                             >
-                                                <div className={`text-xl font-bold ${(c as any).match_score >= 80 ? "text-green-600" :
-                                                        (c as any).match_score >= 50 ? "text-amber-600" : "text-red-600"
-                                                    }`}>
+                                                <div className={`text-xl font-bold ${(c as any).match_score >= 80 ? "text-green-600" : (c as any).match_score >= 50 ? "text-amber-600" : "text-red-600"}`}>
                                                     {(c as any).match_score || 0}%
                                                 </div>
                                                 <div className="text-[10px] uppercase font-bold text-muted-foreground flex items-center gap-1">
@@ -188,36 +293,31 @@ export default function VagaDetalhesPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant={c.status === 'pendente' ? 'outline' : c.status === 'selecionado' ? 'default' : c.status === 'contratado' ? 'secondary' : 'destructive'}>
+                                            <Badge variant={c.status === "pendente" ? "outline" : c.status === "selecionado" ? "default" : c.status === "contratado" ? "secondary" : "destructive"}>
                                                 {c.status.toUpperCase()}
                                             </Badge>
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <div className="flex items-center justify-end gap-2">
-                                                {c.status === 'pendente' && (
-                                                    <div className="flex gap-1 mr-2 bg-slate-100 p-1 rounded-lg">
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
-                                                            onClick={() => handleUpdateStatus(c.id, 'selecionado', ocr)}
-                                                            title="Pré-selecionar"
-                                                        >
+                                            <div className="flex items-center justify-end gap-1">
+                                                {c.status === "pendente" && (
+                                                    <div className="flex gap-1 mr-1 bg-slate-100 p-1 rounded-lg">
+                                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-green-600 hover:bg-green-50"
+                                                            onClick={() => handleUpdateStatus(c.id, "selecionado", c)} title="Pré-selecionar">
                                                             <UserCheck className="h-4 w-4" />
                                                         </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                                            onClick={() => handleUpdateStatus(c.id, 'rejeitado', ocr)}
-                                                            title="Rejeitar"
-                                                        >
+                                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:bg-red-50"
+                                                            onClick={() => handleUpdateStatus(c.id, "rejeitado", c)} title="Rejeitar">
                                                             <UserX className="h-4 w-4" />
                                                         </Button>
                                                     </div>
                                                 )}
+                                                {/* S12-07: Follow-up */}
+                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:bg-blue-50"
+                                                    onClick={() => abrirFollowup(c)} title="Follow-up">
+                                                    <MessageSquare className="h-4 w-4" />
+                                                </Button>
                                                 {c.arquivo_cv_url && (
-                                                    <Button variant="ghost" size="icon" title="Ver Currículo PDF/Imagem" onClick={() => window.open(c.arquivo_cv_url!, '_blank')}>
+                                                    <Button variant="ghost" size="icon" title="Ver CV" onClick={() => window.open(c.arquivo_cv_url!, "_blank")}>
                                                         <Eye className="h-4 w-4 text-cuca-blue" />
                                                     </Button>
                                                 )}
@@ -226,13 +326,13 @@ export default function VagaDetalhesPage() {
                                                         <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                                                     </DropdownMenuTrigger>
                                                     <DropdownMenuContent align="end">
-                                                        <DropdownMenuItem onClick={() => handleUpdateStatus(c.id, 'selecionado', ocr)}>
+                                                        <DropdownMenuItem onClick={() => handleUpdateStatus(c.id, "selecionado", c)}>
                                                             <UserCheck className="mr-2 h-4 w-4 text-green-600" /> Marcar Selecionado
                                                         </DropdownMenuItem>
-                                                        <DropdownMenuItem onClick={() => handleUpdateStatus(c.id, 'contratado', ocr)}>
+                                                        <DropdownMenuItem onClick={() => handleUpdateStatus(c.id, "contratado", c)}>
                                                             <CheckCircle2 className="mr-2 h-4 w-4 text-blue-600" /> Marcar Contratado
                                                         </DropdownMenuItem>
-                                                        <DropdownMenuItem onClick={() => handleUpdateStatus(c.id, 'rejeitado', ocr)}>
+                                                        <DropdownMenuItem onClick={() => handleUpdateStatus(c.id, "rejeitado", c)}>
                                                             <UserX className="mr-2 h-4 w-4 text-red-600" /> Rejeitar (B. Talentos)
                                                         </DropdownMenuItem>
                                                         <DropdownMenuItem onClick={() => refreshOcr(c.id, c.arquivo_cv_url!)}>
@@ -250,12 +350,164 @@ export default function VagaDetalhesPage() {
                 </CardContent>
             </Card>
 
-            <MatchModal
-                isOpen={isMatchModalOpen}
-                onClose={() => setIsMatchModalOpen(false)}
-                candidato={selectedCandidato}
-                vaga={vaga}
-            />
+            {/* MatchModal */}
+            <MatchModal isOpen={isMatchModalOpen} onClose={() => setIsMatchModalOpen(false)} candidato={selectedCandidato} vaga={vaga} />
+
+            {/* S12-06: Modal mensagem de fechamento */}
+            <Dialog open={!!msgFechamento} onOpenChange={open => !open && setMsgFechamento(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <CheckCircle2 className="h-5 w-5 text-green-600" />
+                            Candidato Pré-Selecionado
+                        </DialogTitle>
+                        <DialogDescription>
+                            CV de <strong>{msgFechamento?.candidato.nome}</strong> enviado para a empresa. Use o texto abaixo para informar o candidato.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="bg-muted rounded-lg p-4 text-sm whitespace-pre-wrap leading-relaxed">
+                        {`Olá ${msgFechamento?.candidato.nome?.split(" ")[0]}! 🎉
+
+Temos uma boa notícia: seu perfil foi selecionado para a vaga de *${vaga?.titulo}* pela equipe CUCA Atende Mais.
+
+Seu currículo foi encaminhado para a empresa parceira e em breve você receberá o contato para a próxima etapa do processo seletivo.
+
+Continue atento ao seu WhatsApp. Qualquer dúvida, fale conosco aqui mesmo. Boa sorte! 💪`}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => {
+                            navigator.clipboard.writeText(`Olá ${msgFechamento?.candidato.nome?.split(" ")[0]}! Seu perfil foi selecionado para a vaga de ${vaga?.titulo}. Em breve a empresa entrará em contato.`)
+                            toast.success("Texto copiado!")
+                        }}>Copiar texto</Button>
+                        <Button onClick={() => setMsgFechamento(null)}>Fechar</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* S12-07: Sheet Follow-up */}
+            <Sheet open={!!followupSheet} onOpenChange={open => !open && setFollowupSheet(null)}>
+                <SheetContent className="w-full sm:max-w-md overflow-y-auto">
+                    <SheetHeader className="mb-4">
+                        <SheetTitle className="flex items-center gap-2">
+                            <MessageSquare className="h-5 w-5 text-blue-600" />
+                            Follow-up
+                        </SheetTitle>
+                        <SheetDescription>{followupSheet?.nome} — {vaga?.titulo}</SheetDescription>
+                    </SheetHeader>
+
+                    {loadingFollowup ? (
+                        <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+                    ) : (
+                        <div className="space-y-4">
+                            {/* Timeline */}
+                            <div className="space-y-3">
+                                {followups.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground text-center py-6">Nenhum registro ainda. Adicione o primeiro contato abaixo.</p>
+                                ) : followups.map(fu => {
+                                    const meta = tipoFollowupLabel(fu.tipo)
+                                    const Icon = meta.icon
+                                    return (
+                                        <div key={fu.id} className="flex gap-3">
+                                            <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${meta.color}`}>
+                                                <Icon className="h-3.5 w-3.5" />
+                                            </div>
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-0.5">
+                                                    <span className={`text-xs font-semibold rounded px-1.5 py-0.5 ${meta.color}`}>{meta.label}</span>
+                                                    <span className="text-xs text-muted-foreground">
+                                                        {format(new Date(fu.created_at), "dd/MM HH:mm", { locale: ptBR })}
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm leading-relaxed">{fu.mensagem}</p>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+
+                            {/* Novo registro */}
+                            <div className="border-t pt-4 space-y-3">
+                                <p className="text-xs font-semibold text-muted-foreground uppercase">Adicionar registro</p>
+                                <div>
+                                    <Label className="text-xs">Tipo</Label>
+                                    <Select value={novoFollowup.tipo} onValueChange={v => setNovoFollowup(n => ({ ...n, tipo: v as any }))}>
+                                        <SelectTrigger className="mt-1 h-8 text-sm">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="interno">Interno (CUCA)</SelectItem>
+                                            <SelectItem value="empresa">Empresa</SelectItem>
+                                            <SelectItem value="candidato">Candidato</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div>
+                                    <Label className="text-xs">Mensagem / Observação</Label>
+                                    <Textarea
+                                        className="mt-1 text-sm"
+                                        rows={3}
+                                        placeholder="Ex: Empresa confirmou entrevista para quinta-feira às 14h..."
+                                        value={novoFollowup.mensagem}
+                                        onChange={e => setNovoFollowup(n => ({ ...n, mensagem: e.target.value }))}
+                                    />
+                                </div>
+                                <Button className="w-full" size="sm" onClick={adicionarFollowup} disabled={enviandoFollowup}>
+                                    <Send className="mr-1.5 h-3.5 w-3.5" />
+                                    {enviandoFollowup ? "Salvando..." : "Adicionar"}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </SheetContent>
+            </Sheet>
+
+            {/* S12-10: Modal inscrição manual */}
+            <Dialog open={modalInscricao} onOpenChange={setModalInscricao}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Inscrever Candidato Manualmente</DialogTitle>
+                        <DialogDescription>
+                            Registre um candidato que compareceu presencialmente ao CUCA para a vaga <strong>{vaga?.titulo}</strong>.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4">
+                        <div>
+                            <Label>Nome completo *</Label>
+                            <Input
+                                className="mt-1"
+                                placeholder="Nome do candidato"
+                                value={inscricaoForm.nome}
+                                onChange={e => setInscricaoForm(f => ({ ...f, nome: e.target.value }))}
+                            />
+                        </div>
+                        <div>
+                            <Label>Telefone (WhatsApp) *</Label>
+                            <Input
+                                className="mt-1"
+                                placeholder="(85) 9 9999-9999"
+                                value={inscricaoForm.telefone}
+                                onChange={e => setInscricaoForm(f => ({ ...f, telefone: e.target.value }))}
+                            />
+                        </div>
+                        <div>
+                            <Label>Data de Nascimento</Label>
+                            <Input
+                                type="date"
+                                className="mt-1"
+                                value={inscricaoForm.data_nascimento}
+                                onChange={e => setInscricaoForm(f => ({ ...f, data_nascimento: e.target.value }))}
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setModalInscricao(false)}>Cancelar</Button>
+                        <Button onClick={criarInscricaoManual} disabled={criandoInscricao}>
+                            {criandoInscricao ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+                            Inscrever
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

@@ -22,7 +22,10 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { Search, Eye, FileText, BrainCircuit, User } from "lucide-react"
+import { Search, Eye, FileText, BrainCircuit, User, Phone } from "lucide-react"
+import {
+    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
 import { differenceInYears } from "date-fns"
 import toast from "react-hot-toast"
 
@@ -30,6 +33,7 @@ export default function BancoTalentosPage() {
     const [talentos, setTalentos] = useState<TalentBank[]>([])
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState("")
+    const [filtroStatus, setFiltroStatus] = useState("todos")
     const [dialogOpen, setDialogOpen] = useState(false)
     const [selectedTalento, setSelectedTalento] = useState<TalentBank | null>(null)
 
@@ -68,7 +72,9 @@ export default function BancoTalentosPage() {
     const filteredTalentos = talentos.filter((t) => {
         const term = searchTerm.toLowerCase()
         const skillsStr = JSON.stringify(t.skills_jsonb || {}).toLowerCase()
-        return t.nome.toLowerCase().includes(term) || skillsStr.includes(term) || (t.telefone && t.telefone.includes(term))
+        const matchBusca = t.nome.toLowerCase().includes(term) || skillsStr.includes(term) || (t.telefone && t.telefone.includes(term))
+        const matchStatus = filtroStatus === "todos" || t.status === filtroStatus
+        return matchBusca && matchStatus
     })
 
     return (
@@ -136,14 +142,27 @@ export default function BancoTalentosPage() {
                                 As Habilidades listadas abaixo foram inferidas silenciosamente via GPT-4o Vision a partir dos PDFs enviados outrora pelos candidatos.
                             </CardDescription>
                         </div>
-                        <div className="relative w-full md:w-80">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Buscar por nome, python, react, excel..."
-                                className="pl-10 w-full"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                            />
+                        <div className="flex gap-2 flex-wrap">
+                            <div className="relative w-full md:w-72">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    placeholder="Buscar por nome, skill, telefone..."
+                                    className="pl-10 w-full"
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                            </div>
+                            <Select value={filtroStatus} onValueChange={setFiltroStatus}>
+                                <SelectTrigger className="w-[150px]">
+                                    <SelectValue placeholder="Status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="todos">Todos</SelectItem>
+                                    <SelectItem value="disponivel">Disponíveis</SelectItem>
+                                    <SelectItem value="arquivado">Arquivados</SelectItem>
+                                    <SelectItem value="contratado">Contratados</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
                     </div>
                 </CardHeader>
@@ -207,6 +226,12 @@ export default function BancoTalentosPage() {
                                                     {t.arquivo_cv_url && (
                                                         <Button variant="ghost" size="icon" title="Ver Currículo Original" onClick={() => window.open(t.arquivo_cv_url!, '_blank')}>
                                                             <FileText className="h-4 w-4 text-slate-500" />
+                                                        </Button>
+                                                    )}
+                                                    {t.telefone && (
+                                                        <Button variant="ghost" size="icon" title="Contatar via WhatsApp"
+                                                            onClick={() => window.open(`https://wa.me/55${t.telefone!.replace(/\D/g, '')}`, '_blank')}>
+                                                            <Phone className="h-4 w-4 text-green-600" />
                                                         </Button>
                                                     )}
                                                 </div>

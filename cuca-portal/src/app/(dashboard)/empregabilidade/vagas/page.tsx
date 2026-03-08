@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin } from "lucide-react"
+import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin, Globe } from "lucide-react"
 import { VagaModal } from "@/components/empregabilidade/vaga-modal"
 import { useUser } from "@/lib/auth/user-provider"
 
@@ -21,6 +21,7 @@ export default function VagasPage() {
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState("")
     const [statusFilter, setStatusFilter] = useState<string>("all")
+    const [abaFiltro, setAbaFiltro] = useState<"minhas" | "todas">("minhas")
 
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [selectedVaga, setSelectedVaga] = useState<Vaga | null>(null)
@@ -29,7 +30,7 @@ export default function VagasPage() {
 
     useEffect(() => {
         fetchData()
-    }, [statusFilter, searchTerm])
+    }, [statusFilter, searchTerm, abaFiltro])
 
     const fetchData = async () => {
         setLoading(true)
@@ -129,7 +130,20 @@ export default function VagasPage() {
             />
 
             <div className="flex items-center justify-between gap-4 flex-wrap mt-6">
-                <div className="flex items-center gap-2 flex-wrap">
+                {/* S12-09: aba Todas as Unidades (read-only) */}
+            <div className="flex items-center gap-1 bg-muted p-1 rounded-lg w-fit">
+                <Button variant={abaFiltro === "minhas" ? "secondary" : "ghost"} size="sm" className="h-8 text-xs px-3" onClick={() => setAbaFiltro("minhas")}>
+                    Minha Unidade
+                </Button>
+                <Button variant={abaFiltro === "todas" ? "secondary" : "ghost"} size="sm" className="h-8 text-xs px-3 gap-1" onClick={() => setAbaFiltro("todas")}>
+                    <Globe className="h-3.5 w-3.5" /> Todas as Unidades
+                </Button>
+            </div>
+            {abaFiltro === "todas" && (
+                <p className="text-xs text-muted-foreground">Visualização somente-leitura das vagas de outras unidades.</p>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap">
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
@@ -186,7 +200,7 @@ export default function VagasPage() {
                             ) : vagas.length === 0 ? (
                                 <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
                             ) : vagas.map(v => (
-                                <TableRow key={v.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openEditModal(v)}>
+                                <TableRow key={v.id} className={abaFiltro === "todas" ? "hover:bg-muted/30" : "cursor-pointer hover:bg-muted/30"} onClick={() => abaFiltro === "minhas" && openEditModal(v)}>
                                     <TableCell>
                                         <div className="flex flex-col">
                                             <span className="font-semibold text-cuca-dark flex items-center gap-2">

@@ -44,6 +44,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [localEntrevista, setLocalEntrevista] = useState("na_empresa")
     const [tipoSelecao, setTipoSelecao] = useState("presencial")
     const [expansiva, setExpansiva] = useState(false)
+    const [emailContatoEmpresa, setEmailContatoEmpresa] = useState("")
 
     const supabase = createClient()
 
@@ -85,6 +86,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setLocalEntrevista(vaga.local_entrevista || "na_empresa")
                 setTipoSelecao(vaga.tipo_selecao || "presencial")
                 setExpansiva(vaga.expansiva || false)
+                setEmailContatoEmpresa(vaga.email_contato_empresa || "")
             } else {
                 resetForm()
             }
@@ -112,6 +114,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setLocalEntrevista("na_empresa")
         setTipoSelecao("presencial")
         setExpansiva(false)
+        setEmailContatoEmpresa("")
     }
 
     const handleSave = async () => {
@@ -136,6 +139,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 local_entrevista: localEntrevista,
                 tipo_selecao: tipoSelecao,
                 expansiva,
+                email_contato_empresa: emailContatoEmpresa || null,
                 data_abertura: status === 'aberta' ? new Date().toISOString() : null
             }
 
@@ -266,6 +270,17 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                     </SelectContent>
                                 </Select>
                             </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label>E-mail de Contato da Empresa</Label>
+                            <Input
+                                type="email"
+                                value={emailContatoEmpresa}
+                                onChange={e => setEmailContatoEmpresa(e.target.value)}
+                                placeholder="rh@empresa.com.br"
+                            />
+                            <p className="text-xs text-muted-foreground">Usado para envio automático de CVs selecionados.</p>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4 items-center bg-muted/40 p-4 rounded-xl border">

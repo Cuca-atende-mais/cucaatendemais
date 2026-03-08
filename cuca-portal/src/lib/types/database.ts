@@ -108,12 +108,23 @@ export type Vaga = {
     local_entrevista: string | null
     tipo_selecao: string | null
     expansiva: boolean
+    email_contato_empresa: string | null
     data_abertura: string
     data_fechamento: string | null
     disparo_id: string | null
     created_by: string | null
     created_at: string
     updated_at: string
+}
+
+export type EmpregabilidadeFollowup = {
+    id: string
+    candidatura_id: string
+    tipo: 'empresa' | 'candidato' | 'interno'
+    mensagem: string
+    enviado_por: string | null
+    status: string
+    created_at: string
 }
 
 export type Empresa = {
