@@ -62,7 +62,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
 
     // S14-03: Instância específica para roteamento
     const [instancias, setInstancias] = useState<InstanciaOpcao[]>([])
-    const [instanciaId, setInstanciaId] = useState<string>("")
+    const [instanciaId, setInstanciaId] = useState<string>("auto")
 
     const supabase = createClient()
 
@@ -151,7 +151,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     status: "aguardando_aprovacao",
                     expansiva,
                     categorias_alvo: categoriasAlvo.length > 0 ? categoriasAlvo : [],
-                    instancia_id: instanciaId || null,
+                    instancia_id: instanciaId && instanciaId !== "auto" ? instanciaId : null,
                 })
                 if (error) throw error
                 toast.success("Evento enviado para aprovação!")
@@ -199,7 +199,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
         setCategoriasAlvo([])
         setAlcanceEstimado(null)
         setExpansiva(false)
-        setInstanciaId("")
+        setInstanciaId("auto")
     }
 
     return (
@@ -341,7 +341,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                                     <SelectValue placeholder="Automático (padrão da unidade)" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="">Automático (padrão da unidade)</SelectItem>
+                                    <SelectItem value="auto">Automático (padrão da unidade)</SelectItem>
                                     {instancias
                                         .filter(i => !unidade || i.unidade_cuca === unidade || i.canal_tipo === "Divulgação")
                                         .map(i => (
