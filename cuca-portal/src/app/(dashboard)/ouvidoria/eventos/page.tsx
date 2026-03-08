@@ -4,13 +4,14 @@ import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
     CalendarDays, Plus, Pencil, Trash2, CheckCircle2,
-    AlertTriangle, Loader2, Megaphone
+    Loader2, Megaphone, Users
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
     Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
 } from "@/components/ui/dialog"
@@ -29,7 +30,14 @@ type EventoOuvidoria = {
     data_fim: string
     unidade_cuca: string | null
     status: "ativo" | "inativo" | "concluido"
+    categorias_alvo: string[] | null
     created_at: string
+}
+
+type CategoriaInteresse = {
+    id: string
+    nome: string
+    pai_id: string | null
 }
 
 const STATUS_CONFIG = {
@@ -56,7 +64,15 @@ export default function EventosOuvidoriaPage() {
     const [status, setStatus] = useState<"ativo" | "inativo" | "concluido">("ativo")
     const [saving, setSaving] = useState(false)
 
-    useEffect(() => { fetchEventos() }, [])
+    // S13-14: Público-alvo por interesses
+    const [categorias, setCategorias] = useState<CategoriaInteresse[]>([])
+    const [categoriasAlvo, setCategoriasAlvo] = useState<string[]>([])
+
+    useEffect(() => {
+        fetchEventos()
+        supabase.from("categorias_interesse").select("id, nome, pai_id").eq("ativo", true).order("ordem")
+            .then(({ data }) => setCategorias(data ?? []))
+    }, [])
 
     const fetchEventos = async () => {
         setLoading(true)
@@ -73,6 +89,7 @@ export default function EventosOuvidoriaPage() {
         setDataFim(ev?.data_fim ? ev.data_fim.split("T")[0] : "")
         setUnidade(ev?.unidade_cuca || "Geral")
         setStatus(ev?.status || "inativo")
+        setCategoriasAlvo(ev?.categorias_alvo || [])
         setModalOpen(true)
     }
 
@@ -86,7 +103,8 @@ export default function EventosOuvidoriaPage() {
                 data_inicio: dataInicio,
                 data_fim: dataFim,
                 unidade_cuca: unidade === "Geral" ? null : unidade,
-                status
+                status,
+                categorias_alvo: categoriasAlvo.length > 0 ? categoriasAlvo : [],
             }
             if (editing) {
                 await supabase.from("ouvidoria_eventos").update(payload).eq("id", editing.id)
@@ -228,6 +246,44 @@ export default function EventosOuvidoriaPage() {
                                 </Select>
                             </div>
                         </div>
+
+                        {/* S13-14: Público-alvo por categorias de interesse */}
+                        {categorias.length > 0 && (
+                            <div className="grid gap-2">
+                                <Label className="flex items-center gap-2">
+                                    <Users className="h-3.5 w-3.5" /> Público-alvo por Interesses
+                                </Label>
+                                <div className="border rounded-lg p-3 space-y-3 bg-muted/20 max-h-48 overflow-y-auto">
+                                    {categorias.filter(c => !c.pai_id).map(pai => {
+                                        const subs = categorias.filter(c => c.pai_id === pai.id)
+                                        return (
+                                            <div key={pai.id}>
+                                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">{pai.nome}</p>
+                                                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                                                    {subs.map(sub => (
+                                                        <div key={sub.id} className="flex items-center gap-1.5">
+                                                            <Checkbox
+                                                                id={`ouv-cat-${sub.id}`}
+                                                                checked={categoriasAlvo.includes(sub.id)}
+                                                                onCheckedChange={() =>
+                                                                    setCategoriasAlvo(prev =>
+                                                                        prev.includes(sub.id)
+                                                                            ? prev.filter(id => id !== sub.id)
+                                                                            : [...prev, sub.id]
+                                                                    )
+                                                                }
+                                                            />
+                                                            <label htmlFor={`ouv-cat-${sub.id}`} className="text-xs cursor-pointer">{sub.nome}</label>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                                <p className="text-xs text-muted-foreground">Deixe em branco para divulgar a todos os leads opt-in.</p>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2 border-t mt-2">

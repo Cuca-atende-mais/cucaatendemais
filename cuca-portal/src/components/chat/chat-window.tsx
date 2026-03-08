@@ -23,6 +23,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
     const [loading, setLoading] = useState(false);
     const [newMessage, setNewMessage] = useState("");
     const [sending, setSending] = useState(false);
+    const [assumindo, setAssumindo] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const supabase = createClient();
 
@@ -154,6 +155,25 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
         }
     }
 
+    // S13-03: Assumir Atendimento — pausa a IA e coloca conversa em modo humano
+    async function handleAssumirAtendimento() {
+        if (!conversationId || !conversation) return;
+        setAssumindo(true);
+        try {
+            const { error } = await supabase
+                .from("conversas")
+                .update({ status: "awaiting_human", updated_at: new Date().toISOString() })
+                .eq("id", conversationId);
+            if (error) throw error;
+            setConversation((prev: any) => prev ? { ...prev, status: "awaiting_human" } : prev);
+            toast.success("IA pausada. Você assumiu o atendimento.");
+        } catch (err: any) {
+            toast.error("Erro ao assumir atendimento: " + err.message);
+        } finally {
+            setAssumindo(false);
+        }
+    }
+
     // ... (toggleIA, fetchMessages, etc permanecem iguais)
 
     return (
@@ -267,11 +287,11 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                             variant="outline"
                             size="sm"
                             className="h-7 text-[10px] gap-1 border-primary/20 text-primary hover:bg-primary/10"
-                            title="Assumir atendimento — disponível em breve"
-                            disabled
+                            onClick={handleAssumirAtendimento}
+                            disabled={assumindo}
                         >
                             <HandshakeIcon className="h-3 w-3" />
-                            Assumir Atendimento
+                            {assumindo ? "Assumindo..." : "Assumir Atendimento"}
                         </Button>
                     )}
                 </div>

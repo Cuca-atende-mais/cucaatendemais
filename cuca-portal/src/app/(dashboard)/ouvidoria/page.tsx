@@ -310,11 +310,17 @@ export default function OuvidoriaPage() {
                                 <Badge variant="outline"><Calendar className="h-3 w-3 mr-1" /> {format(new Date(detalhamento.created_at), "dd/MM/yyyy HH:mm")}</Badge>
                             </div>
 
-                            {/* Informações do Solicitante (se houver) */}
-                            {!detalhamento.anonimo && (
+                            {/* S13-04: Informações do Solicitante — apenas Super Admin vê identidade mesmo quando não-anônimo */}
+                            {!detalhamento.anonimo && isSuperAdmin && (
                                 <div className="p-3 bg-muted/40 rounded-lg border border-border/50 text-sm">
                                     <p><span className="text-muted-foreground mr-2">Nome:</span> {detalhamento.nome_solicitante || "Não informado"}</p>
                                     <p><span className="text-muted-foreground mr-2">Telefone:</span> {detalhamento.telefone_solicitante || "Não informado"}</p>
+                                </div>
+                            )}
+                            {!detalhamento.anonimo && !isSuperAdmin && (
+                                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700 flex items-center gap-2">
+                                    <User className="h-4 w-4 flex-shrink-0" />
+                                    <span>Manifestação identificada. Dados do solicitante restritos a Super Administradores.</span>
                                 </div>
                             )}
 
