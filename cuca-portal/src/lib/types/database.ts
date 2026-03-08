@@ -68,6 +68,8 @@ export type EventoPontual = {
     segmentacao_id: string | null
     disparo_id: string | null
     status: string
+    expansiva: boolean
+    categorias_alvo: string[] | null
     created_by: string | null
     created_at: string
     updated_at: string

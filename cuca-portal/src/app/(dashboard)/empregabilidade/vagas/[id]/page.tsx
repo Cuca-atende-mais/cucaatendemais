@@ -24,6 +24,7 @@ import toast from "react-hot-toast"
 import { differenceInYears, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { MatchModal } from "@/components/empregabilidade/match-modal"
+import { mascaraTelefone, limparTelefone } from "@/lib/utils"
 
 export default function VagaDetalhesPage() {
     const params = useParams()
@@ -484,9 +485,9 @@ Continue atento ao seu WhatsApp. Qualquer dúvida, fale conosco aqui mesmo. Boa 
                             <Label>Telefone (WhatsApp) *</Label>
                             <Input
                                 className="mt-1"
-                                placeholder="(85) 9 9999-9999"
-                                value={inscricaoForm.telefone}
-                                onChange={e => setInscricaoForm(f => ({ ...f, telefone: e.target.value }))}
+                                placeholder="+55 (85) 99999-9999"
+                                value={mascaraTelefone(inscricaoForm.telefone)}
+                                onChange={e => setInscricaoForm(f => ({ ...f, telefone: limparTelefone(e.target.value) }))}
                             />
                         </div>
                         <div>

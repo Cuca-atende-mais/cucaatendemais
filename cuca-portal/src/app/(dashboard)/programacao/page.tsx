@@ -262,7 +262,14 @@ export default function ProgramacaoPage() {
                                         <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Nenhum evento pontual encontrado.</TableCell></TableRow>
                                     ) : filteredPontuais.map(p => (
                                         <TableRow key={p.id}>
-                                            <TableCell className="font-semibold text-cuca-dark">{p.titulo}</TableCell>
+                                            <TableCell className="font-semibold text-cuca-dark">
+                                                <div className="flex items-center gap-2">
+                                                    {p.titulo}
+                                                    {p.expansiva && (
+                                                        <Badge className="bg-cuca-yellow text-cuca-dark text-[10px] h-4 px-1.5">Global</Badge>
+                                                    )}
+                                                </div>
+                                            </TableCell>
                                             <TableCell><Badge variant="outline">{p.unidade_cuca}</Badge></TableCell>
                                             <TableCell>
                                                 {format(new Date(p.data_inicio), "dd/MM/yyyy", { locale: ptBR })}

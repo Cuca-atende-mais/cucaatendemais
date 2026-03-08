@@ -35,6 +35,7 @@ import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
+import { mascaraTelefone, limparTelefone } from "@/lib/utils"
 
 const PAGE_SIZE = 50
 
@@ -634,8 +635,9 @@ export default function LeadsPage() {
                                         <Label className="text-xs">Telefone</Label>
                                         {editando ? (
                                             <Input
-                                                value={formDados.telefone}
-                                                onChange={e => setFormDados(f => ({ ...f, telefone: e.target.value }))}
+                                                value={mascaraTelefone(formDados.telefone)}
+                                                onChange={e => setFormDados(f => ({ ...f, telefone: limparTelefone(e.target.value) }))}
+                                                placeholder="+55 (85) 99999-9999"
                                                 className="mt-1 h-8 text-sm"
                                             />
                                         ) : (
@@ -879,9 +881,9 @@ export default function LeadsPage() {
                             <Label>Telefone *</Label>
                             <Input
                                 className="mt-1"
-                                placeholder="85 99999-9999"
-                                value={novoLead.telefone}
-                                onChange={e => setNovoLead(l => ({ ...l, telefone: e.target.value }))}
+                                placeholder="+55 (85) 99999-9999"
+                                value={mascaraTelefone(novoLead.telefone)}
+                                onChange={e => setNovoLead(l => ({ ...l, telefone: limparTelefone(e.target.value) }))}
                             />
                         </div>
                         <div>

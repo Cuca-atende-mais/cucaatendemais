@@ -150,11 +150,15 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
     # Marcar como em andamento (em thread separada para não bloquear)
     await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
 
-    # Buscar instância UAZAPI conforme a origem (Eventos Pontuais agora também usam a Global de Divulgação)
-    if origem == "eventos_pontuais":
+    # S13-06: Roteamento por flag expansiva
+    # - expansiva=True (ou mensal): usa instância Divulgação Global
+    # - expansiva=False + pontual: usa instância Institucional da unidade
+    is_expansiva = item.get("expansiva", False)
+
+    if origem == "campanhas_mensais" or (origem == "eventos_pontuais" and is_expansiva):
         inst_res = await asyncio.to_thread(_query_instancia_divulgacao_sync)
         if not inst_res.data:
-            logger.error(f"Nenhuma instância UAZAPI 'Divulgação' ativa. Pausando item pontual {item_id}.")
+            logger.error(f"Nenhuma instância UAZAPI 'Divulgação' ativa. Pausando item {item_id}.")
             await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
             return
     else:

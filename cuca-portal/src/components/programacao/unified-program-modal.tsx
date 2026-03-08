@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { unidadesCuca } from "@/lib/constants"
 import toast from "react-hot-toast"
-import { Calendar, MapPin, Sparkles, Upload, X, Users } from "lucide-react"
+import { Calendar, MapPin, Sparkles, Upload, X, Users, Globe } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useUser } from "@/lib/auth/user-provider"
@@ -49,6 +49,9 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     // Mensal specific
     const [mes, setMes] = useState(new Date().getMonth() + 1)
     const [ano, setAno] = useState(new Date().getFullYear())
+
+    // S13-06: Expansiva (via Divulgação Global)
+    const [expansiva, setExpansiva] = useState(false)
 
     // S13-11: Público-alvo por categorias de interesse
     const [categorias, setCategorias] = useState<{ id: string; nome: string; pai_id: string | null }[]>([])
@@ -122,6 +125,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     local,
                     flyer_url: flyerUrl,
                     status: "aguardando_aprovacao",
+                    expansiva,
                     categorias_alvo: categoriasAlvo.length > 0 ? categoriasAlvo : [],
                 })
                 if (error) throw error
@@ -169,6 +173,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
         setFlyerPreview(null)
         setCategoriasAlvo([])
         setAlcanceEstimado(null)
+        setExpansiva(false)
     }
 
     return (
@@ -276,6 +281,26 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                                 <Label>Ano</Label>
                                 <Input type="number" value={ano} onChange={(e) => setAno(parseInt(e.target.value))} />
                             </div>
+                        </div>
+                    )}
+
+                    {/* S13-06: Toggle Expansiva / Via Divulgação Global (Apenas Pontual) */}
+                    {isPontual && (
+                        <div
+                            className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${expansiva ? "bg-cuca-yellow/10 border-cuca-yellow/40" : "bg-muted/30 border-muted-foreground/10"}`}
+                            onClick={() => setExpansiva(v => !v)}
+                        >
+                            <div className="space-y-0.5">
+                                <Label className="text-sm font-bold flex items-center gap-2 cursor-pointer">
+                                    <Globe className="h-4 w-4" /> Evento Expansivo
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                    {expansiva
+                                        ? "Disparo via instância Divulgação Global — atinge todas as unidades."
+                                        : "Disparo via canal institucional da unidade selecionada (padrão)."}
+                                </p>
+                            </div>
+                            <Switch checked={expansiva} onCheckedChange={setExpansiva} onClick={e => e.stopPropagation()} />
                         </div>
                     )}
 
