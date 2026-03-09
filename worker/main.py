@@ -221,8 +221,9 @@ async def process_webhook_payload(payload: dict, token: str):
 
             if is_audio:
                 midia_tipo = "ptt" if (media_type == "ptt" or msg_type in ("pttmessage", "ptt")) else "audio"
-                # Guardar messageid para download posterior (inst_token ainda não disponível)
-                _audio_messageid = message_data.get("messageid") or message_data.get("id")
+                # WhatsApp message ID (key.id) — não confundir com fileSHA256 (messageid)
+                _audio_wa_id = data.get("key", {}).get("id") or message_data.get("messageid") or message_data.get("id")
+                _audio_messageid = _audio_wa_id  # backward compat
             else:
                 # Mensagem de texto
                 if "conversation" in message_data:
@@ -307,41 +308,55 @@ async def process_webhook_payload(payload: dict, token: str):
             # Download de áudio via UAZAPI (inst_token agora disponível)
             if is_audio and not midia_url:
                 uazapi_base = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                # Opção 1: URL do campo 'URL' (maiúsculo) do content prefixado com uazapi_base
+                logger.info(f"[AUDIO] wa_id={_audio_messageid} uazapi_base={uazapi_base}")
                 if isinstance(content_val, dict):
-                    _content_url = content_val.get("URL") or content_val.get("url")
-                    if _content_url and _content_url.startswith("/"):
-                        _candidate = uazapi_base.rstrip("/") + _content_url
-                        logger.info(f"[AUDIO] Tentando URL construída: {_candidate[:80]}")
-                        try:
-                            import httpx as _httpx
-                            async with _httpx.AsyncClient() as _client:
-                                _r = await _client.get(_candidate, headers={"token": inst_token}, timeout=15.0, follow_redirects=True)
-                                logger.info(f"[AUDIO] URL construída status={_r.status_code}")
-                                if _r.status_code == 200:
-                                    midia_url = _candidate
-                        except Exception as _e:
-                            logger.error(f"[AUDIO] Erro URL construída: {_e}")
-                # Opção 2: /download/{messageid} (path param)
+                    logger.info(f"[AUDIO] content_keys={list(content_val.keys())} URL={content_val.get('URL','')[:120]}")
+
+                import httpx as _httpx
+
+                # Opção 1: POST /message/download com objeto da mensagem
                 if not midia_url:
                     try:
-                        import httpx as _httpx
                         async with _httpx.AsyncClient() as _client:
-                            for _path in [f"/download/{_audio_messageid}", f"/message/download/{_audio_messageid}"]:
-                                dl_resp = await _client.get(
+                            _r = await _client.post(
+                                uazapi_base.rstrip("/") + "/message/download",
+                                headers={"token": inst_token, "Content-Type": "application/json"},
+                                json={"messageId": _audio_messageid, "instance": instance_name},
+                                timeout=20.0
+                            )
+                            logger.info(f"[AUDIO] POST /message/download status={_r.status_code} body={_r.text[:200]}")
+                            if _r.status_code == 200:
+                                _d = _r.json()
+                                midia_url = _d.get("url") or _d.get("mediaUrl") or _d.get("fileUrl") or _d.get("downloadUrl")
+                    except Exception as _e:
+                        logger.error(f"[AUDIO] Erro POST /message/download: {_e}")
+
+                # Opção 2: GET /message/download/{wa_id}
+                if not midia_url:
+                    try:
+                        async with _httpx.AsyncClient() as _client:
+                            for _path in [f"/message/download/{_audio_messageid}", f"/download/{_audio_messageid}"]:
+                                _r = await _client.get(
                                     uazapi_base.rstrip("/") + _path,
                                     headers={"token": inst_token},
                                     timeout=20.0
                                 )
-                                logger.info(f"[AUDIO] {_path} status={dl_resp.status_code} body={dl_resp.text[:150]}")
-                                if dl_resp.status_code == 200:
-                                    dl_data = dl_resp.json()
-                                    midia_url = (dl_data.get("url") or dl_data.get("mediaUrl") or
-                                                 dl_data.get("fileUrl") or dl_data.get("downloadUrl"))
+                                logger.info(f"[AUDIO] GET {_path} status={_r.status_code} body={_r.text[:200]}")
+                                if _r.status_code == 200:
+                                    _d = _r.json()
+                                    midia_url = _d.get("url") or _d.get("mediaUrl") or _d.get("fileUrl") or _d.get("downloadUrl")
                                     if midia_url:
                                         break
-                    except Exception as dl_err:
-                        logger.error(f"[AUDIO] Erro download path: {dl_err}")
+                    except Exception as _e:
+                        logger.error(f"[AUDIO] Erro GET paths: {_e}")
+
+                # Opção 3: URL completa do content['URL'] se for absoluta
+                if not midia_url and isinstance(content_val, dict):
+                    _raw_url = content_val.get("URL") or content_val.get("url") or ""
+                    if _raw_url.startswith("http"):
+                        logger.info(f"[AUDIO] Tentando URL absoluta do content: {_raw_url[:120]}")
+                        midia_url = _raw_url
+
                 logger.info(f"[AUDIO] midia_url final={midia_url}")
             
             # Atualiza o agente_tipo da conversa se for a primeira mensagem e temos dados
