@@ -277,80 +277,24 @@ async def process_webhook_payload(payload: dict, token: str):
             except Exception as e:
                 logger.error(f"Erro ao salvar mensagem: {str(e)}")
             
-            # S14-01: Checar se o canal obriga LGPD
+            # S14-01: Checar dados da instância
             inst_result = supabase.table("instancias_uazapi").select("unidade_cuca, agente_tipo, token, canal_tipo").eq("nome", instance_name).single().execute()
             agente_tipo = inst_result.data.get("agente_tipo", "maria") if inst_result.data else "maria"
             unidade_cuca = inst_result.data.get("unidade_cuca") if inst_result.data else None
             inst_token = inst_result.data.get("token") if inst_result.data else ""
             canal_tipo = inst_result.data.get("canal_tipo", "") if inst_result.data else ""
             
-            # --- Modificação: Institucional bypassa LGPD sem mensagens extras ---
-            if canal_tipo == "Institucional":
-                opt_in = True
-            
             # Atualiza o agente_tipo da conversa se for a primeira mensagem e temos dados
             if conversation_status == "ativa" and inst_result.data:
                  supabase.table("conversas").update({"agente_tipo": agente_tipo}).eq("id", conversation_id).execute()
 
-            # --- S14-01 e S14-02: Opt-in LGPD para Divulgação/Padrão ---
-            if not from_me and conversation_status == "ativa":
-                if not opt_in:
-                    texto_limpo = text_content.lower().strip()
-                    import httpx
-                    
-                    # Verificando resposta ao opt-in
-                    if texto_limpo in ["sim", "aceito", "quero"]:
-                        try:
-                            supabase.table("leads").update({"opt_in": True}).eq("id", lead_id).execute()
-                            logger.info(f"Lead {lead_id} aceitou o LGPD Opt-in.")
-                        except Exception as e:
-                            logger.error(f"Erro ao setar opt-in: {e}")
-                        
-                        # Marca virtualmente como verdadeiro para continuar o fluxo para a IA nesta mesma mensagem
-                        opt_in = True
-                        
-                    elif texto_limpo in ["não", "nao", "sair", "parar"]:
-                        # Usuário negou o opt-in
-                        try:
-                            UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                            inst_result = supabase.table("instancias_uazapi").select("token").eq("nome", instance_name).single().execute()
-                            inst_token = inst_result.data.get("token") if inst_result.data else ""
-                            
-                            async with httpx.AsyncClient() as client:
-                                payload_send = {
-                                    "number": phone,
-                                    "delay": 1200,
-                                    "text": "Tudo bem! Suas preferências foram salvas e você não receberá mensagens do Atende+. Caso mude de ideia no futuro, basta mandar um 'Oi'."
-                                }
-                                await client.post(f"{UAZAPI_URL}/send/text", json=payload_send, headers={"token": inst_token, "Content-Type": "application/json"})
-                        except Exception as e:
-                            logger.error(f"Erro ao tratar recusa de opt-in: {e}")
-                        return # Encerra processamento
-                    else:
-                        # Manda a mensagem padrão pedindo aceite
-                        try:
-                            UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                            inst_result = supabase.table("instancias_uazapi").select("token").eq("nome", instance_name).single().execute()
-                            inst_token = inst_result.data.get("token") if inst_result.data else ""
-                            
-                            async with httpx.AsyncClient() as client:
-                                payload_send = {
-                                    "number": phone,
-                                    "delay": 1200,
-                                    "text": "👋 Olá! Bem-vindo ao *Atende+* da Rede CUCA.\n\nPara continuar o atendimento e de acordo com a LGPD, preciso que você aceite receber nossas mensagens e concorde com a nossa política.\n\nResponda *Sim* para continuar ou *Não* para encerrar."
-                                }
-                                await client.post(f"{UAZAPI_URL}/send/text", json=payload_send, headers={"token": inst_token, "Content-Type": "application/json"})
-                        except Exception as e:
-                            logger.error(f"Erro ao pedir opt-in: {e}")
-                        return # Encerra processamento até ele responder Sim
-
-            # --- S9-08: STOP Automático (leads com opt_in=True que pedem saída) ---
+            # --- S9-08: STOP Automático (qualquer pessoa que pedir saída) ---
             PALAVRAS_STOP_HANDLER = {
                 "stop", "parar", "sair", "cancelar", "nao quero", "não quero",
                 "remover", "descadastrar", "chega", "pare", "encerrar", "encerra",
                 "sair da lista", "tirar da lista", "me remova"
             }
-            if not from_me and opt_in:
+            if not from_me:
                 texto_stop = text_content.lower().strip()
                 if any(p in texto_stop for p in PALAVRAS_STOP_HANDLER):
                     try:
@@ -375,9 +319,8 @@ async def process_webhook_payload(payload: dict, token: str):
                         logger.error(f"[STOP] Erro ao processar opt_out: {stop_err}")
                     return  # Não processa IA após STOP
 
-            # --- S5-02: Routing Automático para Motor de IA ---
-            # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa' e se tiver opt-in LGPD aceito
-            if not from_me and conversation_status == "ativa" and opt_in:
+            # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa'
+            if not from_me and conversation_status == "ativa":
                 try:
                     # Chamar Edge Function motor-agente
                     # Nota: O token interno garante que a requisição partiu do nosso worker
