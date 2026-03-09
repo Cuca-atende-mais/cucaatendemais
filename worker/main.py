@@ -224,13 +224,15 @@ async def process_webhook_payload(payload: dict, token: str):
                 # UAZAPI v2: content é um dict com directPath relativo — precisa baixar via API do UAZAPI
                 messageid = message_data.get("messageid") or message_data.get("id")
                 uazapi_base = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+                # inst_token ainda não disponível aqui — usar token do payload
+                _token_download = (data.get("token") or token or "")
                 # Tentar download via endpoint UAZAPI que desencripta o áudio
                 try:
                     import httpx as _httpx
                     async with _httpx.AsyncClient() as _client:
                         dl_resp = await _client.post(
                             f"{uazapi_base}/download",
-                            headers={"token": inst_token, "Content-Type": "application/json"},
+                            headers={"token": _token_download, "Content-Type": "application/json"},
                             json={"messageid": messageid},
                             timeout=20.0
                         )
