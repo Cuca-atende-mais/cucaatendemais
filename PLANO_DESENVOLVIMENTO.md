@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 6.2 | **Atualizado**: 09/03/2026
-> **STATUS ATUAL**: Sprints 1–20 Concluídos | Próximo: Sprint 21 (a definir)
+> **Versão**: 6.3 | **Atualizado**: 09/03/2026
+> **STATUS ATUAL**: Sprints 1–21 Concluídos | Próximo: Sprint 22 (a definir)
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -898,6 +898,19 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S17-01 | **Prévia de Disparo — Programação Pontual**: botão "Disparar" na tabela de pontual; modal com alcance (count leads opt_in), template editável, confirmação → define `status = 'aprovado'` para o worker processar | Portal | [x] |
 | S17-02 | **Diagnóstico de Lentidão**: análise de código concluída — sem `setInterval` excessivo nas páginas principais (apenas 10s no `/developer/worker`). Causa: latência da API UAZAPI (externa) durante QR Code, não do nosso código | Portal + Infra | [x] |
 | S17-03 | **Correção de Lentidão**: fluxo já usa `Promise.all` para queries paralelas. Feedback visual com `instProgress` implementado (S14-05). Lentidão residual é da UAZAPI — documentado para upgrade de infra se necessário | Portal | [x] |
+
+---
+
+#### Sprint 21 — Blindagem do Agente: Data Real + Anti-Alucinação + Anti-Fora-de-Escopo ✅ CONCLUÍDO (09/03/2026)
+
+> **Objetivo**: Corrigir 3 problemas críticos identificados na homologação pelo cliente: IA informando mês errado (outubro em vez de março), IA inventando cursos de meses anteriores não presentes no RAG, e IA respondendo perguntas completamente fora do escopo CUCA.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S21-01 | **Data real no prompt**: motor-agente gera `DATA_ATUAL` via `new Date()` com timezone `America/Fortaleza` e injeta no `promptFinal` antes do `prompt_contexto` | Edge Function | [x] |
+| S21-02 | **Guardrail RAG obrigatório**: bloco `INSTRUCAO_SEGURANCA` exige que a IA responda APENAS com dados do contexto RAG; se não tiver, diz que não tem a informação | Edge Function | [x] |
+| S21-03 | **Guardrail fora-de-escopo**: bloco `INSTRUCAO_SEGURANCA` instrui redirecionar gentilmente perguntas não relacionadas ao CUCA ("Sou especialista no CUCA!") | Edge Function | [x] |
+| S21-04 | **`data_atual` no payload do worker**: `worker/main.py` envia campo `data_atual` (fuso Fortaleza -3h) ao motor-agente como belt-and-suspenders | Worker | [x] |
 
 ---
 
