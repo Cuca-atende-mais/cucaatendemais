@@ -209,24 +209,26 @@ async def process_webhook_payload(payload: dict, token: str):
             midia_url = None
             midia_tipo = "text"
 
-            # Detectar mensagem de áudio/ptt (UAZAPI v2)
-            logger.info(f"[MSG_KEYS] message_data keys: {list(message_data.keys()) if isinstance(message_data, dict) else type(message_data)}")
-            logger.info(f"[MSG_KEYS] data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-            if "audioMessage" in message_data:
-                audio_data = message_data["audioMessage"]
-                logger.info(f"[AUDIO] audioMessage keys: {list(audio_data.keys()) if isinstance(audio_data, dict) else audio_data}")
-                if isinstance(audio_data, dict):
-                    # Tentar campos alternativos: mediaUrl > url > directPath
-                    midia_url = (audio_data.get("mediaUrl") or audio_data.get("url") or
-                                 data.get("mediaUrl") or data.get("fileUrl"))
-                    midia_tipo = "ptt" if audio_data.get("ptt") else "audio"
-            elif "pttMessage" in message_data:
-                ptt_data = message_data["pttMessage"]
-                logger.info(f"[AUDIO] pttMessage keys: {list(ptt_data.keys()) if isinstance(ptt_data, dict) else ptt_data}")
-                if isinstance(ptt_data, dict):
-                    midia_url = (ptt_data.get("mediaUrl") or ptt_data.get("url") or
-                                 data.get("mediaUrl") or data.get("fileUrl"))
-                    midia_tipo = "ptt"
+            # Detectar mensagem de áudio/ptt — UAZAPI v2 usa campos planos: messageType + mediaType + content
+            msg_type = (message_data.get("messageType") or message_data.get("type") or "").lower()
+            media_type = (message_data.get("mediaType") or "").lower()
+            content_val = message_data.get("content")
+
+            is_audio = (
+                msg_type in ("audiomessage", "pttmessage", "audio", "ptt") or
+                media_type in ("audio", "ptt")
+            )
+
+            if is_audio:
+                midia_tipo = "ptt" if (media_type == "ptt" or msg_type in ("pttmessage", "ptt")) else "audio"
+                # content pode ser dict com url, ou string direta
+                if isinstance(content_val, dict):
+                    logger.info(f"[AUDIO] content keys: {list(content_val.keys())}")
+                    midia_url = (content_val.get("url") or content_val.get("mediaUrl") or
+                                 content_val.get("fileUrl") or content_val.get("directPath"))
+                elif isinstance(content_val, str) and content_val.startswith("http"):
+                    midia_url = content_val
+                logger.info(f"[AUDIO] detectado midia_tipo={midia_tipo}, midia_url={midia_url}")
             else:
                 # Mensagem de texto
                 if "conversation" in message_data:
@@ -235,12 +237,9 @@ async def process_webhook_payload(payload: dict, token: str):
                     text_content = message_data["extendedTextMessage"].get("text", "")
                 elif "text" in message_data and isinstance(message_data["text"], str):
                     text_content = message_data["text"]
-
-                # Adicional para content — só aceitar se for string
-                if not text_content and "content" in message_data:
-                    content_val = message_data["content"]
-                    if isinstance(content_val, str):
-                        text_content = content_val
+                # content só aceitar se for string
+                if not text_content and isinstance(content_val, str):
+                    text_content = content_val
 
             logger.info(f"[AUDIO] midia_url={midia_url}, midia_tipo={midia_tipo}, text_content={repr(text_content[:50]) if text_content else ''}")
 
