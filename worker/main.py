@@ -307,22 +307,41 @@ async def process_webhook_payload(payload: dict, token: str):
             # Download de áudio via UAZAPI (inst_token agora disponível)
             if is_audio and not midia_url:
                 uazapi_base = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                try:
-                    import httpx as _httpx
-                    async with _httpx.AsyncClient() as _client:
-                        dl_resp = await _client.get(
-                            f"{uazapi_base}/download",
-                            headers={"token": inst_token},
-                            params={"messageid": _audio_messageid},
-                            timeout=20.0
-                        )
-                        logger.info(f"[AUDIO] UAZAPI download status={dl_resp.status_code}, body={dl_resp.text[:300]}")
-                        if dl_resp.status_code == 200:
-                            dl_data = dl_resp.json()
-                            midia_url = (dl_data.get("url") or dl_data.get("mediaUrl") or
-                                         dl_data.get("fileUrl") or dl_data.get("downloadUrl"))
-                except Exception as dl_err:
-                    logger.error(f"[AUDIO] Erro ao baixar via UAZAPI: {dl_err}")
+                # Opção 1: URL do campo 'URL' (maiúsculo) do content prefixado com uazapi_base
+                if isinstance(content_val, dict):
+                    _content_url = content_val.get("URL") or content_val.get("url")
+                    if _content_url and _content_url.startswith("/"):
+                        _candidate = uazapi_base.rstrip("/") + _content_url
+                        logger.info(f"[AUDIO] Tentando URL construída: {_candidate[:80]}")
+                        try:
+                            import httpx as _httpx
+                            async with _httpx.AsyncClient() as _client:
+                                _r = await _client.get(_candidate, headers={"token": inst_token}, timeout=15.0, follow_redirects=True)
+                                logger.info(f"[AUDIO] URL construída status={_r.status_code}")
+                                if _r.status_code == 200:
+                                    midia_url = _candidate
+                        except Exception as _e:
+                            logger.error(f"[AUDIO] Erro URL construída: {_e}")
+                # Opção 2: /download/{messageid} (path param)
+                if not midia_url:
+                    try:
+                        import httpx as _httpx
+                        async with _httpx.AsyncClient() as _client:
+                            for _path in [f"/download/{_audio_messageid}", f"/message/download/{_audio_messageid}"]:
+                                dl_resp = await _client.get(
+                                    uazapi_base.rstrip("/") + _path,
+                                    headers={"token": inst_token},
+                                    timeout=20.0
+                                )
+                                logger.info(f"[AUDIO] {_path} status={dl_resp.status_code} body={dl_resp.text[:150]}")
+                                if dl_resp.status_code == 200:
+                                    dl_data = dl_resp.json()
+                                    midia_url = (dl_data.get("url") or dl_data.get("mediaUrl") or
+                                                 dl_data.get("fileUrl") or dl_data.get("downloadUrl"))
+                                    if midia_url:
+                                        break
+                    except Exception as dl_err:
+                        logger.error(f"[AUDIO] Erro download path: {dl_err}")
                 logger.info(f"[AUDIO] midia_url final={midia_url}")
             
             # Atualiza o agente_tipo da conversa se for a primeira mensagem e temos dados
