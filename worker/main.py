@@ -252,16 +252,11 @@ async def process_webhook_payload(payload: dict, token: str):
                     # Atualizar timestamp
                     supabase.table("conversas").update({"updated_at": "now()"}).eq("id", conversation_id).execute()
                 else:
-                    # Precisamos do agente_tipo da instância para criar a conversa
-                    inst_result = supabase.table("instancias_uazapi").select("agente_tipo").eq("nome", instance_name).single().execute()
-                    agente_tipo_inst = inst_result.data.get("agente_tipo") if inst_result.data else "maria"
-                    
-                    # Criar nova conversa
                     new_conv = supabase.table("conversas").insert({
                         "lead_id": lead_id,
                         "instancia_uazapi": instance_name,
                         "status": "ativa",
-                        "agente_tipo": agente_tipo_inst
+                        "agente_tipo": "maria_institucional" # Default is overriden if needed
                     }).execute()
                     conversation_id = new_conv.data[0]["id"]
             except Exception as e:
@@ -282,7 +277,22 @@ async def process_webhook_payload(payload: dict, token: str):
             except Exception as e:
                 logger.error(f"Erro ao salvar mensagem: {str(e)}")
             
-            # --- S14-01 e S14-02: Opt-in LGPD ---
+            # S14-01: Checar se o canal obriga LGPD
+            inst_result = supabase.table("instancias_uazapi").select("unidade_cuca, agente_tipo, token, canal_tipo").eq("nome", instance_name).single().execute()
+            agente_tipo = inst_result.data.get("agente_tipo", "maria") if inst_result.data else "maria"
+            unidade_cuca = inst_result.data.get("unidade_cuca") if inst_result.data else None
+            inst_token = inst_result.data.get("token") if inst_result.data else ""
+            canal_tipo = inst_result.data.get("canal_tipo", "") if inst_result.data else ""
+            
+            # --- Modificação: Institucional bypassa LGPD sem mensagens extras ---
+            if canal_tipo == "Institucional":
+                opt_in = True
+            
+            # Atualiza o agente_tipo da conversa se for a primeira mensagem e temos dados
+            if conversation_status == "ativa" and inst_result.data:
+                 supabase.table("conversas").update({"agente_tipo": agente_tipo}).eq("id", conversation_id).execute()
+
+            # --- S14-01 e S14-02: Opt-in LGPD para Divulgação/Padrão ---
             if not from_me and conversation_status == "ativa":
                 if not opt_in:
                     texto_limpo = text_content.lower().strip()
@@ -299,24 +309,6 @@ async def process_webhook_payload(payload: dict, token: str):
                         # Marca virtualmente como verdadeiro para continuar o fluxo para a IA nesta mesma mensagem
                         opt_in = True
                         
-                        # Responder agradecendo
-                        try:
-                            UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                            inst_result = supabase.table("instancias_uazapi").select("token").eq("nome", instance_name).single().execute()
-                            inst_token = inst_result.data.get("token") if inst_result.data else ""
-                            
-                            async def notify_optin():
-                                async with httpx.AsyncClient() as client:
-                                    payload_send = {
-                                        "number": phone,
-                                        "delay": 1200,
-                                        "text": "Obrigado por confirmar! Aguarde um momento enquanto processo seu atendimento..."
-                                    }
-                                    await client.post(f"{UAZAPI_URL}/send/text", json=payload_send, headers={"token": inst_token, "Content-Type": "application/json"})
-                            asyncio.create_task(notify_optin())
-                        except Exception as e:
-                            pass
-                            
                     elif texto_limpo in ["não", "nao", "sair", "parar"]:
                         # Usuário negou o opt-in
                         try:
@@ -399,19 +391,15 @@ async def process_webhook_payload(payload: dict, token: str):
                             "Content-Type": "application/json",
                             "x-internal-token": os.getenv("WEBHOOK_INTERNAL_TOKEN")
                         }
-                        # S5-02 + S9-13: Buscar dados da instância (canal_tipo, agente, unidade)
-                        inst_result = supabase.table("instancias_uazapi") \
-                            .select("cuca_unit_id, agente_tipo, token, canal_tipo") \
-                            .eq("nome", instance_name).single().execute()
-                        agente_tipo = inst_result.data.get("agente_tipo", "maria") if inst_result.data else "maria"
-                        unidade_cuca = inst_result.data.get("cuca_unit_id") if inst_result.data else None
-                        inst_token = inst_result.data.get("token") if inst_result.data else ""
-                        canal_tipo = inst_result.data.get("canal_tipo", "") if inst_result.data else ""
-
+                        # S5-02 + S9-13: Dados da instância já obtidos acima
+                        
                         # S9-13: Canal Divulgação — persona Maria Geral, RAG global, 3 regras
                         if canal_tipo == "Divulgação":
                             agente_tipo = "maria_divulgacao"  # sinaliza para motor-agente usar RAG rede_cuca_global
                             unidade_cuca = None               # sem filtro de unidade
+                        elif canal_tipo == "Institucional":
+                            # Quando chamado pela primeira vez, IA entende o RAG da unidade baseada no agente_tipo
+                            pass
 
                         payload_edge = {
                             "telefone": phone,
