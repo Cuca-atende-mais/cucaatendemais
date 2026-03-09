@@ -445,6 +445,9 @@ async def process_webhook_payload(payload: dict, token: str):
                             # Quando chamado pela primeira vez, IA entende o RAG da unidade baseada no agente_tipo
                             pass
 
+                        from datetime import datetime, timezone, timedelta
+                        _tz_fortaleza = timezone(timedelta(hours=-3))
+                        _agora = datetime.now(_tz_fortaleza)
                         payload_edge = {
                             "telefone": phone,
                             "instancia_uazapi": instance_name,
@@ -453,7 +456,8 @@ async def process_webhook_payload(payload: dict, token: str):
                             "canal_tipo": canal_tipo,
                             "mensagem": text_content,
                             "midia_url": midia_url,
-                            "midia_tipo": midia_tipo
+                            "midia_tipo": midia_tipo,
+                            "data_atual": _agora.strftime("%A, %d de %B de %Y, %H:%M"),
                         }
                         
                         logger.info(f"Roteando para motor-agente: {edge_url}")
