@@ -225,7 +225,6 @@ async def process_webhook_payload(payload: dict, token: str):
                     midia_url = (ptt_data.get("mediaUrl") or ptt_data.get("url") or
                                  data.get("mediaUrl") or data.get("fileUrl"))
                     midia_tipo = "ptt"
-            logger.info(f"[AUDIO] midia_url={midia_url}, midia_tipo={midia_tipo}")
             else:
                 # Mensagem de texto
                 if "conversation" in message_data:
@@ -240,7 +239,9 @@ async def process_webhook_payload(payload: dict, token: str):
                     content_val = message_data["content"]
                     if isinstance(content_val, str):
                         text_content = content_val
-            
+
+            logger.info(f"[AUDIO] midia_url={midia_url}, midia_tipo={midia_tipo}, text_content={repr(text_content[:50]) if text_content else ''}")
+
             if not phone:
                 logger.error("Phone number could not be extracted from payload.")
                 return
