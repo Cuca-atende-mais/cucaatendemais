@@ -204,18 +204,34 @@ async def process_webhook_payload(payload: dict, token: str):
                 
             push_name = data.get("pushName") or payload.get("chat", {}).get("wa_name") or payload.get("chat", {}).get("name", "Usuário")
             
-            # Conteúdo (texto base ou transcrição futura)
+            # Conteúdo (texto base ou áudio para transcrição)
             text_content = ""
-            if "conversation" in message_data:
-                text_content = message_data["conversation"]
-            elif "extendedTextMessage" in message_data:
-                text_content = message_data["extendedTextMessage"].get("text", "")
-            elif "text" in message_data and isinstance(message_data["text"], str):
-                text_content = message_data["text"]
-            
-            # Adicional para content
-            if not text_content and "content" in message_data:
-                text_content = message_data["content"]
+            midia_url = None
+            midia_tipo = "text"
+
+            # Detectar mensagem de áudio/ptt (UAZAPI v2)
+            if "audioMessage" in message_data:
+                audio_data = message_data["audioMessage"]
+                midia_url = audio_data.get("url") if isinstance(audio_data, dict) else None
+                midia_tipo = "ptt" if (isinstance(audio_data, dict) and audio_data.get("ptt")) else "audio"
+            elif "pttMessage" in message_data:
+                ptt_data = message_data["pttMessage"]
+                midia_url = ptt_data.get("url") if isinstance(ptt_data, dict) else None
+                midia_tipo = "ptt"
+            else:
+                # Mensagem de texto
+                if "conversation" in message_data:
+                    text_content = message_data["conversation"]
+                elif "extendedTextMessage" in message_data:
+                    text_content = message_data["extendedTextMessage"].get("text", "")
+                elif "text" in message_data and isinstance(message_data["text"], str):
+                    text_content = message_data["text"]
+
+                # Adicional para content — só aceitar se for string
+                if not text_content and "content" in message_data:
+                    content_val = message_data["content"]
+                    if isinstance(content_val, str):
+                        text_content = content_val
             
             if not phone:
                 logger.error("Phone number could not be extracted from payload.")
@@ -295,7 +311,7 @@ async def process_webhook_payload(payload: dict, token: str):
                 "sair da lista", "tirar da lista", "me remova"
             }
             if not from_me:
-                texto_stop = text_content.lower().strip()
+                texto_stop = text_content.lower().strip() if isinstance(text_content, str) else ""
                 if any(p in texto_stop for p in PALAVRAS_STOP_HANDLER):
                     try:
                         supabase.table("leads").update({"opt_in": False}).eq("id", lead_id).execute()
@@ -351,7 +367,8 @@ async def process_webhook_payload(payload: dict, token: str):
                             "unidade_cuca": unidade_cuca,
                             "canal_tipo": canal_tipo,
                             "mensagem": text_content,
-                            "midia_tipo": "text"
+                            "midia_url": midia_url,
+                            "midia_tipo": midia_tipo
                         }
                         
                         logger.info(f"Roteando para motor-agente: {edge_url}")
