@@ -421,7 +421,7 @@ async def process_webhook_payload(payload: dict, token: str):
                     return  # Não processa IA após STOP
 
             # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa'
-            if not from_me and conversation_status == "ativa":
+            if not from_me and conversation_status in ("ativa", "encerrada"):
                 try:
                     # Chamar Edge Function motor-agente
                     # Nota: O token interno garante que a requisição partiu do nosso worker
