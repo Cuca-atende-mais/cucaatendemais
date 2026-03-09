@@ -100,6 +100,7 @@ export default function DivulgacaoPage() {
     const [modalAberto, setModalAberto] = useState(false)
     const [template, setTemplate] = useState("")
     const [instanciaDisp, setInstanciaDisp] = useState<string | null>(null)
+    const [instanciasInstitucionais, setInstanciasInstitucionais] = useState<any[]>([])
     const [disparando, setDisparando] = useState(false)
 
     const fetchData = useCallback(async () => {
@@ -164,6 +165,16 @@ export default function DivulgacaoPage() {
 
             setInstanciaDisp(inst?.nome ?? null)
 
+            // 3.5 Buscar instâncias Institucionais ativas para popular os links do WhatsApp no Modal
+            const { data: instsInst } = await supabase
+                .from("instancias_uazapi")
+                .select("unidade_cuca, telefone")
+                .eq("canal_tipo", "Institucional")
+                .eq("ativa", true)
+                .not("unidade_cuca", "is", null)
+
+            setInstanciasInstitucionais(instsInst ?? [])
+
             // 4. Histórico de disparos
             const { data: hist } = await supabase
                 .from("disparos_divulgacao")
@@ -192,17 +203,28 @@ export default function DivulgacaoPage() {
 
     useEffect(() => { fetchData() }, [fetchData])
 
-    // Montar template padrão quando abrir o modal
+    // Montar template dinâmico quando abrir o modal
     const abrirModal = () => {
         const nomeMes = MESES[mesAtual - 1]
-        const tpl = `🎉 A programação de ${nomeMes}/${anoAtual} chegou! Acesse o Portal da Juventude: cucaatendemais.com.br
 
-Para saber o que rola no seu CUCA, fale direto:
-📍 CUCA Barra: [wa.me/+55...]
-📍 CUCA Mondubim: [wa.me/+55...]
-📍 CUCA Jangurussu: [wa.me/+55...]
-📍 CUCA José Walter: [wa.me/+55...]
-📍 CUCA Pici: [wa.me/+55...]`
+        let linksUnidades = "Para saber o que rola no seu CUCA, fale direto:\n"
+        let temLinks = false
+
+        unidadesCuca.forEach(u => {
+            const inst = instanciasInstitucionais.find(i => i.unidade_cuca === u)
+            if (inst && inst.telefone) {
+                const numeroLimpo = inst.telefone.replace(/\D/g, "")
+                linksUnidades += `📍 ${u}: wa.me/${numeroLimpo}\n`
+                temLinks = true
+            }
+        })
+
+        if (!temLinks) {
+            linksUnidades = "Para saber o que rola no seu CUCA, procure a nossa unidade mais próxima!"
+        }
+
+        const tpl = `🎉 A programação de ${nomeMes}/${anoAtual} chegou! Acesse o Portal da Juventude: cucaatendemais.com.br\n\n${linksUnidades.trim()}`
+
         setTemplate(tpl)
         setModalAberto(true)
     }
