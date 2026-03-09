@@ -210,6 +210,8 @@ async def process_webhook_payload(payload: dict, token: str):
             midia_tipo = "text"
 
             # Detectar mensagem de áudio/ptt (UAZAPI v2)
+            logger.info(f"[MSG_KEYS] message_data keys: {list(message_data.keys()) if isinstance(message_data, dict) else type(message_data)}")
+            logger.info(f"[MSG_KEYS] data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
             if "audioMessage" in message_data:
                 audio_data = message_data["audioMessage"]
                 logger.info(f"[AUDIO] audioMessage keys: {list(audio_data.keys()) if isinstance(audio_data, dict) else audio_data}")
