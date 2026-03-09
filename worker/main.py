@@ -310,10 +310,10 @@ async def process_webhook_payload(payload: dict, token: str):
                 try:
                     import httpx as _httpx
                     async with _httpx.AsyncClient() as _client:
-                        dl_resp = await _client.post(
+                        dl_resp = await _client.get(
                             f"{uazapi_base}/download",
-                            headers={"token": inst_token, "Content-Type": "application/json"},
-                            json={"messageid": _audio_messageid},
+                            headers={"token": inst_token},
+                            params={"messageid": _audio_messageid},
                             timeout=20.0
                         )
                         logger.info(f"[AUDIO] UAZAPI download status={dl_resp.status_code}, body={dl_resp.text[:300]}")
