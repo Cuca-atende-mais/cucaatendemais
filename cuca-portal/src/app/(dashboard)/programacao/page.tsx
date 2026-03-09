@@ -126,12 +126,29 @@ export default function ProgramacaoPage() {
         switch (status) {
             case 'aprovado':
                 return <Badge className="bg-green-600 text-white gap-1"><CheckCircle2 className="h-3 w-3" /> Aprovado</Badge>
+            case 'autorizado':
+                return <Badge className="bg-blue-600 text-white gap-1"><CheckCircle2 className="h-3 w-3" /> Autorizado</Badge>
             case 'aguardando_aprovacao':
                 return <Badge variant="outline" className="text-amber-600 border-amber-600 bg-amber-50 gap-1"><Clock className="h-3 w-3" /> Pendente</Badge>
             case 'rascunho':
                 return <Badge variant="secondary" className="gap-1"><Plus className="h-3 w-3" /> Rascunho</Badge>
             default:
                 return <Badge variant="outline">{status}</Badge>
+        }
+    }
+
+    const handleAutorizar = async (id: string) => {
+        if (!confirm("Autorizar este evento para disparo? Após autorizar, o responsável poderá confirmar o envio.")) return
+        try {
+            const { error } = await supabase
+                .from("eventos_pontuais")
+                .update({ status: "autorizado" })
+                .eq("id", id)
+            if (error) throw error
+            toast.success("Evento autorizado! Agora pode ser disparado.")
+            fetchData()
+        } catch (err: any) {
+            toast.error(err.message || "Erro ao autorizar o evento.")
         }
     }
 
@@ -328,14 +345,24 @@ export default function ProgramacaoPage() {
                                             </TableCell>
                                             <TableCell>{getStatusBadge(p.status)}</TableCell>
                                             <TableCell className="text-right flex items-center justify-end gap-2">
-                                                {p.status !== 'aprovado' && hasPermission("programacao_pontual", "create") && (
+                                                {p.status === 'aguardando_aprovacao' && hasPermission("programacao_pontual", "update") && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() => handleAutorizar(p.id)}
+                                                        className="text-amber-600 border-amber-600 hover:bg-amber-50 gap-1 text-xs"
+                                                    >
+                                                        <CheckCircle2 className="h-3.5 w-3.5" /> Autorizar
+                                                    </Button>
+                                                )}
+                                                {p.status === 'autorizado' && hasPermission("programacao_pontual", "update") && (
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
                                                         onClick={() => abrirPreviewDisparo(p)}
-                                                        className="text-primary border-primary hover:bg-primary/10 gap-1 text-xs"
+                                                        className="text-blue-600 border-blue-600 hover:bg-blue-50 gap-1 text-xs"
                                                     >
-                                                        <Send className="h-3.5 w-3.5" /> Disparar
+                                                        <Send className="h-3.5 w-3.5" /> Disparar Evento
                                                     </Button>
                                                 )}
                                                 {canDelete && (

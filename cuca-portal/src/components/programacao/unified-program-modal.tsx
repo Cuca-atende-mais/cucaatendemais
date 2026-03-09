@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
-import { Checkbox } from "@/components/ui/checkbox"
+import { cn } from "@/lib/utils"
 import { unidadesCuca } from "@/lib/constants"
 import toast from "react-hot-toast"
 import { Calendar, MapPin, Sparkles, Upload, X, Users, Globe, Wifi } from "lucide-react"
@@ -374,18 +374,21 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                                     return (
                                         <div key={pai.id}>
                                             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">{pai.nome}</p>
-                                            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                                            <div className="flex flex-wrap gap-1.5">
                                                 {subs.map(sub => (
-                                                    <div key={sub.id} className="flex items-center gap-1.5">
-                                                        <Checkbox
-                                                            id={`cat-${sub.id}`}
-                                                            checked={categoriasAlvo.includes(sub.id)}
-                                                            onCheckedChange={() => toggleCategoriaAlvo(sub.id)}
-                                                        />
-                                                        <label htmlFor={`cat-${sub.id}`} className="text-xs cursor-pointer">
-                                                            {sub.nome}
-                                                        </label>
-                                                    </div>
+                                                    <button
+                                                        key={sub.id}
+                                                        type="button"
+                                                        onClick={() => toggleCategoriaAlvo(sub.id)}
+                                                        className={cn(
+                                                            "px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-150",
+                                                            categoriasAlvo.includes(sub.id)
+                                                                ? "bg-primary/20 text-primary border-primary/50 shadow-sm"
+                                                                : "bg-muted/50 text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                                                        )}
+                                                    >
+                                                        {sub.nome}
+                                                    </button>
                                                 ))}
                                             </div>
                                         </div>

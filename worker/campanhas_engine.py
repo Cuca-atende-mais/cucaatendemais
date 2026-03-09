@@ -4,7 +4,7 @@ import time
 import random
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
 import httpx
 
@@ -133,7 +133,7 @@ def _query_leads_sync(unidade: str | None = None, categorias_alvo: list | None =
             return _EmptyResult()
         query = (
             supabase.table("leads")
-            .select("telefone, nome")
+            .select("id, telefone, nome")
             .eq("opt_in", True)
             .eq("bloqueado", False)
             .in_("id", lead_ids)
@@ -141,7 +141,7 @@ def _query_leads_sync(unidade: str | None = None, categorias_alvo: list | None =
     else:
         query = (
             supabase.table("leads")
-            .select("telefone, nome")
+            .select("id, telefone, nome")
             .eq("opt_in", True)
             .eq("bloqueado", False)
         )
@@ -262,6 +262,29 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
 
                     if resp.status_code == 200:
                         sucessos += 1
+                        # S23-05: Breadcrumb de disparo — grava contexto na conversa do lead
+                        lead_id = lead.get("id")
+                        if lead_id:
+                            titulo_disparo = (item.get("titulo") or item.get("descricao", ""))[:80]
+                            tz_fortaleza = timezone(timedelta(hours=-3))
+                            breadcrumb = {
+                                "ultimo_disparo": {
+                                    "tipo": origem,
+                                    "id": str(item_id),
+                                    "titulo": titulo_disparo,
+                                    "enviado_em": datetime.now(tz_fortaleza).isoformat()
+                                }
+                            }
+                            try:
+                                supabase.table("conversas").upsert({
+                                    "lead_id": lead_id,
+                                    "instancia_uazapi": instance_name,
+                                    "agente_tipo": "Institucional",
+                                    "status": "ativa",
+                                    "metadata": breadcrumb
+                                }, on_conflict="lead_id,instancia_uazapi").execute()
+                            except Exception as bc_err:
+                                logger.warning(f"[Breadcrumb] Erro ao gravar contexto: {bc_err}")
                     else:
                         erros += 1
                         logger.warning(f"UAZAPI HTTP {resp.status_code} para {lead['telefone']}")
