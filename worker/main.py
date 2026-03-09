@@ -1,4 +1,8 @@
 import os
+import io
+import hmac
+import base64
+import hashlib
 import json
 import logging
 import asyncio
@@ -16,6 +20,48 @@ from sentry_sdk.integrations.httpx import HttpxIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
 load_dotenv()
+
+
+# ─── WhatsApp Media Decryption ────────────────────────────────────────────────
+def _hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
+    """HKDF-Expand (RFC 5869) usando SHA-256."""
+    hash_len = 32
+    n = (length + hash_len - 1) // hash_len
+    okm, t = b"", b""
+    for i in range(1, n + 1):
+        t = hmac.new(prk, t + info + bytes([i]), hashlib.sha256).digest()
+        okm += t
+    return okm[:length]
+
+
+async def decrypt_whatsapp_audio(media_key_b64: str, enc_url: str, mimetype: str = "") -> bytes:
+    """Baixa e descriptografa arquivo de mídia WhatsApp (.enc) → bytes de áudio."""
+    import httpx
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.backends import default_backend
+
+    media_type = "audio"
+    info = b"WhatsApp Audio Keys"
+
+    media_key = base64.b64decode(media_key_b64 + "==")  # padding seguro
+    salt = bytes(32)
+    prk = hmac.new(salt, media_key, hashlib.sha256).digest()
+    expanded = _hkdf_expand(prk, info, 112)
+    iv = expanded[:16]
+    cipher_key = expanded[16:48]
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(enc_url, timeout=30.0, follow_redirects=True)
+        resp.raise_for_status()
+        enc_bytes = resp.content
+
+    # AES-256-CBC decrypt — remover últimos 10 bytes (HMAC-SHA256 truncado)
+    cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
+    decryptor = cipher.decryptor()
+    raw = decryptor.update(enc_bytes[:-10]) + decryptor.finalize()
+    # Remover padding PKCS7
+    pad_len = raw[-1] if raw else 0
+    return raw[:-pad_len] if pad_len else raw
 
 # ─── Sentry: Monitoramento de Erros ───────────────────────────────────────────
 _SENTRY_DSN = os.getenv("SENTRY_DSN_WORKER")
@@ -305,59 +351,39 @@ async def process_webhook_payload(payload: dict, token: str):
             inst_token = inst_result.data.get("token") if inst_result.data else ""
             canal_tipo = inst_result.data.get("canal_tipo", "") if inst_result.data else ""
 
-            # Download de áudio via UAZAPI (inst_token agora disponível)
-            if is_audio and not midia_url:
-                uazapi_base = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                logger.info(f"[AUDIO] wa_id={_audio_messageid} uazapi_base={uazapi_base}")
-                if isinstance(content_val, dict):
-                    logger.info(f"[AUDIO] content_keys={list(content_val.keys())} URL={content_val.get('URL','')[:120]}")
-
-                import httpx as _httpx
-
-                # Opção 1: POST /message/download com objeto da mensagem
-                if not midia_url:
+            # Descriptografar e transcrever áudio WhatsApp diretamente no worker
+            if is_audio and isinstance(content_val, dict):
+                _media_key = content_val.get("mediaKey") or content_val.get("MediaKey")
+                _enc_url = content_val.get("URL") or content_val.get("url") or ""
+                _mimetype = content_val.get("mimetype") or content_val.get("mimeType") or "audio/ogg"
+                logger.info(f"[AUDIO] Iniciando decrypt: mediaKey={'sim' if _media_key else 'nao'} url={_enc_url[:80]}")
+                if _media_key and _enc_url.startswith("http"):
                     try:
-                        async with _httpx.AsyncClient() as _client:
-                            _r = await _client.post(
-                                uazapi_base.rstrip("/") + "/message/download",
-                                headers={"token": inst_token, "Content-Type": "application/json"},
-                                json={"messageId": _audio_messageid, "instance": instance_name},
-                                timeout=20.0
-                            )
-                            logger.info(f"[AUDIO] POST /message/download status={_r.status_code} body={_r.text[:200]}")
-                            if _r.status_code == 200:
-                                _d = _r.json()
-                                midia_url = _d.get("url") or _d.get("mediaUrl") or _d.get("fileUrl") or _d.get("downloadUrl")
-                    except Exception as _e:
-                        logger.error(f"[AUDIO] Erro POST /message/download: {_e}")
-
-                # Opção 2: GET /message/download/{wa_id}
-                if not midia_url:
-                    try:
-                        async with _httpx.AsyncClient() as _client:
-                            for _path in [f"/message/download/{_audio_messageid}", f"/download/{_audio_messageid}"]:
-                                _r = await _client.get(
-                                    uazapi_base.rstrip("/") + _path,
-                                    headers={"token": inst_token},
-                                    timeout=20.0
-                                )
-                                logger.info(f"[AUDIO] GET {_path} status={_r.status_code} body={_r.text[:200]}")
-                                if _r.status_code == 200:
-                                    _d = _r.json()
-                                    midia_url = _d.get("url") or _d.get("mediaUrl") or _d.get("fileUrl") or _d.get("downloadUrl")
-                                    if midia_url:
-                                        break
-                    except Exception as _e:
-                        logger.error(f"[AUDIO] Erro GET paths: {_e}")
-
-                # Opção 3: URL completa do content['URL'] se for absoluta
-                if not midia_url and isinstance(content_val, dict):
-                    _raw_url = content_val.get("URL") or content_val.get("url") or ""
-                    if _raw_url.startswith("http"):
-                        logger.info(f"[AUDIO] Tentando URL absoluta do content: {_raw_url[:120]}")
-                        midia_url = _raw_url
-
-                logger.info(f"[AUDIO] midia_url final={midia_url}")
+                        audio_bytes = await decrypt_whatsapp_audio(_media_key, _enc_url, _mimetype)
+                        logger.info(f"[AUDIO] Decrypt OK: {len(audio_bytes)} bytes, mimetype={_mimetype}")
+                        # Determinar extensão para Whisper
+                        _ext = "ogg"
+                        if "mp4" in _mimetype or "mpeg" in _mimetype:
+                            _ext = "mp4"
+                        elif "webm" in _mimetype:
+                            _ext = "webm"
+                        # Transcrever via Whisper
+                        import openai as _openai
+                        _oa = _openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                        _buf = io.BytesIO(audio_bytes)
+                        _buf.name = f"audio.{_ext}"
+                        _tr = await _oa.audio.transcriptions.create(
+                            model="whisper-1",
+                            file=_buf,
+                            language="pt"
+                        )
+                        text_content = _tr.text
+                        midia_tipo = "text"  # agente receberá como texto já transcrito
+                        logger.info(f"[AUDIO] Transcrição: {text_content[:100]}")
+                    except Exception as _ae:
+                        logger.error(f"[AUDIO] Erro decrypt/transcrição: {_ae}")
+                else:
+                    logger.warning(f"[AUDIO] Sem mediaKey ou URL inválida — áudio ignorado")
             
             # Atualiza o agente_tipo da conversa se for a primeira mensagem e temos dados
             if conversation_status == "ativa" and inst_result.data:
