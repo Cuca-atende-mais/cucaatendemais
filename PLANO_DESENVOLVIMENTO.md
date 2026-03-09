@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 6.0 | **Atualizado**: 08/03/2026
-> **STATUS ATUAL**: Sprints 1–14 Concluídos | **Próximo: Sprint 15 — Atendimento Institucional + Correções Programação**
+> **Versão**: 6.2 | **Atualizado**: 09/03/2026
+> **STATUS ATUAL**: Sprints 1–20 Concluídos | Próximo: Sprint 21 (a definir)
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -869,6 +869,8 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S15-02 | **RAG Mensal — Bug Corrigido**: trigger `trigger_indexar_campanha_mensal` reescrita para montar conteúdo real consultando `atividades_mensais` (título, descrição, local, horário por categoria) | Banco | [x] |
 | S15-03 | **Bug RAG Placeholder**: causa raiz era `NEW.descricao = NULL` em `campanhas_mensais` → fallback "Consulta via Portal". Corrigido pelo rewrite da trigger com JOIN em `atividades_mensais` | Banco | [x] |
 | S15-04 | **Orphans RAG**: 40 docs `monthly_program` apontando para campanhas deletadas. Limpeza executada + trigger `BEFORE DELETE` adicionada para evitar novos orphans. 0 registros com datas inválidas em `eventos_pontuais` | Banco | [x] |
+| S15-05 | **Agente Institucional — Criação**: `prompts_agentes` INSERT `agente_tipo='Institucional'` copiando persona Maria; `motor-agente` v7 com `Institucional` em `RAG_FONTES_POR_AGENTE` (`FAQ + eventos_pontuais + campanhas_mensais`) | Banco + Edge Function | [x] |
+| S15-06 | **Agente Institucional — Prompt v1**: reescrita completa com saudação por unidade, listas estruturadas numeradas/marcadores, regra anti-redirecionamento para Instagram | Banco | [x] |
 
 ---
 
@@ -896,6 +898,22 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S17-01 | **Prévia de Disparo — Programação Pontual**: botão "Disparar" na tabela de pontual; modal com alcance (count leads opt_in), template editável, confirmação → define `status = 'aprovado'` para o worker processar | Portal | [x] |
 | S17-02 | **Diagnóstico de Lentidão**: análise de código concluída — sem `setInterval` excessivo nas páginas principais (apenas 10s no `/developer/worker`). Causa: latência da API UAZAPI (externa) durante QR Code, não do nosso código | Portal + Infra | [x] |
 | S17-03 | **Correção de Lentidão**: fluxo já usa `Promise.all` para queries paralelas. Feedback visual com `instProgress` implementado (S14-05). Lentidão residual é da UAZAPI — documentado para upgrade de infra se necessário | Portal | [x] |
+
+---
+
+#### Sprint 20 — Refinamento UX Agente Institucional ✅ CONCLUÍDO (09/03/2026)
+
+> **Objetivo**: Melhorar a experiência de conversa do agente Institucional: saudação+menu unificados, navegação fluida entre categorias, tratamento correto de mensagens de voz e lógica de encerramento por despedida/inatividade. Inclui suporte completo a mensagens de áudio/PTT para todos os agentes do sistema.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S20-01 | **Saudação + menu unificados**: na primeira interação combinar apresentação + menu de categorias em uma única mensagem | Banco (prompt) | [x] |
+| S20-02 | **Navegação entre categorias**: ao fim de cada resposta de categoria, reapresentar mini-menu; interpretar "quero ver outras opções" como retorno ao menu | Banco (prompt) | [x] |
+| S20-03 | **Mensagem de voz — prompt**: corrigir regra de áudio — worker já transcreve, agente deve responder naturalmente ao conteúdo sem pedir para "mandar em texto" | Banco (prompt) | [x] |
+| S20-04 | **Tag `[[ENCERRAR]]`**: motor-agente v8 detecta tag, atualiza `conversas.status = 'encerrada'`; nova mensagem em conversa encerrada reabre com saudação | Edge Function | [x] |
+| S20-05 | **Prompt de encerramento**: instruções para detectar despedida clara ("obrigado, até mais", "valeu") e emitir `[[ENCERRAR]]` | Banco (prompt) | [x] |
+| S20-06 | **pg_cron inatividade**: job `*/30 * * * *` fecha conversas `Institucional` ativas sem atualização há 2h (jobid=9) | Banco | [x] |
+| S20-07 | **Suporte a áudio/PTT (todos os agentes)**: descriptografia WhatsApp no worker + transcrição Whisper local. Substitui abordagem de URL de download UAZAPI (que retorna 404). Aplica-se a todos os `agente_tipo`. Ver Apêndice T-01 | Worker | [x] |
 
 ---
 
@@ -2074,4 +2092,117 @@ Eventos de grande escala da Rede (ex: "Semana do Jovem") poderão ser disparados
 | Agentes duplicados | DELETE duplicatas `Ana`/`ana`, `Sofia`/`sofia` em tabela de agentes | [ ] |
 | `instancias_uazapi` vazia | INSERT das instâncias reais após criação via UAZAPI | [ ] |
 | `rede_cuca_global` sem docs | INSERT de documentos base no RAG Global para agente Maria funcionar | [ ] |
+
+---
+
+## Apêndice Técnico
+
+---
+
+### T-01 — Suporte a Mensagens de Áudio/PTT no Worker (09/03/2026)
+
+**Contexto**: Durante o Sprint 20 foi identificado que mensagens de voz enviadas ao agente Institucional não geravam resposta. O processo de depuração percorreu diversas hipóteses antes da solução final.
+
+---
+
+#### Sintoma inicial
+
+```
+ERROR:worker-cuca: 'dict' object has no attribute 'lower'
+```
+
+O worker falhava ao processar mensagens de áudio porque o campo `content` do payload UAZAPI v2 é um **objeto JSON** (dict), não uma string. O código tentava chamar `.lower()` sobre ele.
+
+---
+
+#### Estrutura do payload UAZAPI v2 (mensagem de áudio)
+
+```json
+{
+  "EventType": "messages",
+  "instanceName": "institucionalbarra",
+  "key": { "id": "AC708367DF5A27E5308E84622C30CDDF", "fromMe": false, "remoteJid": "5585999...@s.whatsapp.net" },
+  "messageType": "pttMessage",
+  "mediaType": "ptt",
+  "content": {
+    "URL": "https://mmg.whatsapp.net/v/t62.7117-24/...n.enc?ccb=11-4&...",
+    "mimetype": "audio/ogg; codecs=opus",
+    "fileSHA256": "...",
+    "fileLength": 12345,
+    "seconds": 4,
+    "PTT": true,
+    "mediaKey": "abc123...base64...",
+    "fileEncSHA256": "...",
+    "directPath": "/v/t62.7117-24/...",
+    "mediaKeyTimestamp": "...",
+    "contextInfo": {},
+    "waveform": "..."
+  }
+}
+```
+
+**Atenção**: `messageid` no payload UAZAPI v2 é o **hash SHA256 do arquivo**, não o ID da mensagem WhatsApp. O ID real está em `key.id`.
+
+---
+
+#### Erros encontrados e soluções
+
+| # | Erro | Causa | Solução |
+|---|------|-------|---------|
+| 1 | `'dict' object has no attribute 'lower'` | `content` é dict, código atribuía ao `text_content` e chamava `.lower()` | Detectar áudio por `messageType`/`mediaType`, não por `content` |
+| 2 | `SyntaxError: invalid syntax` (else:) | `logger.info()` inserido entre `elif` e `else` quebra sintaxe Python | Mover logger para fora do bloco if/elif/else |
+| 3 | `cannot access local variable 'inst_token'` | Python resolve escopo em compile-time; referência antes da atribuição | Dividir em 2 fases: detecção precoce (sem token) + download após linha 304 |
+| 4 | `GET /download?messageid=... → 405` | UAZAPI download requer GET sem query param | Mudar para path param: `GET /download/{id}` |
+| 5 | `GET /download/{id} → 404` | `messageid` do payload é SHA256 do arquivo, não o ID da mensagem | Usar `data["key"]["id"]` como ID real da mensagem |
+| 6 | `POST /message/download → {"error":"Message not found"}` | UAZAPI não mantém mensagens em cache por muito tempo | Abandonar abordagem de download via UAZAPI |
+| 7 | `Whisper: Invalid file format` | `content['URL']` aponta para arquivo `.enc` (criptografado WhatsApp) | Descriptografar localmente antes de enviar ao Whisper |
+
+---
+
+#### Solução final — Descriptografia local no worker
+
+O WhatsApp criptografa todo arquivo de mídia com AES-256-CBC usando uma chave derivada via HKDF-SHA256 a partir da `mediaKey` presente no payload. O worker descriptografa o arquivo antes de enviá-lo ao Whisper.
+
+**Algoritmo**:
+1. `mediaKey` → base64 decode
+2. HKDF-Extract (salt=zeros[32], IKM=mediaKey) → PRK
+3. HKDF-Expand (PRK, info=`b"WhatsApp Audio Keys"`, length=112) → expanded
+4. `IV = expanded[:16]`, `cipherKey = expanded[16:48]`
+5. Download `content['URL']` (CDN WhatsApp, URL absoluta)
+6. AES-256-CBC decrypt de `enc_bytes[:-10]` (os últimos 10 bytes são HMAC truncado)
+7. Remover padding PKCS7 final
+8. Resultado: bytes `.ogg` (Opus) → enviar ao Whisper como `audio.ogg`
+
+**Arquivo modificado**: `worker/main.py`
+- Função helper `decrypt_whatsapp_audio(media_key_b64, enc_url, mimetype)` adicionada no topo
+- Dependência nova: `cryptography>=42.0.0` em `requirements.txt`
+- Transcrição ocorre no worker; motor-agente recebe `text_content` com o texto e `midia_tipo="text"`
+
+**Aplica-se a todos os agentes**: a lógica está no handler universal de mensagens, antes do roteamento por `agente_tipo`.
+
+---
+
+#### Verificação rápida (diagnóstico futuro)
+
+Se áudio parar de funcionar, checar nos logs do `cuca-worker`:
+
+```
+[AUDIO] Iniciando decrypt: mediaKey=sim url=https://mmg.whatsapp.net/...
+[AUDIO] Decrypt OK: XXXX bytes, mimetype=audio/ogg; codecs=opus
+[AUDIO] Transcrição: <texto transcrito>
+```
+
+Se `mediaKey=nao` → campo sumiu do payload UAZAPI (verificar versão/schema).
+Se status 403/404 no download → URL do CDN WhatsApp expirou (TTL ~5 min); testar enviar novo áudio.
+Se erro de decrypt → verificar se `cryptography` está instalado (`pip show cryptography`).
+
+---
+
+#### Commits relacionados
+
+| Hash | Descrição |
+|------|-----------|
+| `80ae516` | fix(worker): try multiple URL strategies for UAZAPI v2 audio download |
+| `9594be3` | fix(worker): use WhatsApp key.id for audio download + try POST /message/download first |
+| `9419a0d` | fix(worker): decrypt WhatsApp audio locally then transcribe via Whisper ✅ |
 
