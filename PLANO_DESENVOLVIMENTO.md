@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 6.3 | **Atualizado**: 09/03/2026
-> **STATUS ATUAL**: Sprints 1–21 Concluídos | Próximo: Sprint 22 (a definir)
+> **Versão**: 6.4 | **Atualizado**: 09/03/2026
+> **STATUS ATUAL**: Sprints 1–22 Concluídos | Próximo: Sprint 23 (a definir)
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -898,6 +898,16 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S17-01 | **Prévia de Disparo — Programação Pontual**: botão "Disparar" na tabela de pontual; modal com alcance (count leads opt_in), template editável, confirmação → define `status = 'aprovado'` para o worker processar | Portal | [x] |
 | S17-02 | **Diagnóstico de Lentidão**: análise de código concluída — sem `setInterval` excessivo nas páginas principais (apenas 10s no `/developer/worker`). Causa: latência da API UAZAPI (externa) durante QR Code, não do nosso código | Portal + Infra | [x] |
 | S17-03 | **Correção de Lentidão**: fluxo já usa `Promise.all` para queries paralelas. Feedback visual com `instProgress` implementado (S14-05). Lentidão residual é da UAZAPI — documentado para upgrade de infra se necessário | Portal | [x] |
+
+---
+
+#### Sprint 22 — Fix: Worker não respondia após conversa encerrada ✅ CONCLUÍDO (09/03/2026)
+
+> **Objetivo**: Corrigir bug onde o worker ignorava mensagens de usuários que tentavam reiniciar uma conversa após terem sido encerradas por despedida (`[[ENCERRAR]]`) ou inatividade (pg_cron).
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S22-01 | **Fix condição de roteamento**: `worker/main.py` linha 424 alterada de `conversation_status == "ativa"` para `conversation_status in ("ativa", "encerrada")` — worker agora passa a mensagem ao motor-agente mesmo quando conversa está encerrada; motor-agente já tem a lógica de reabertura (`conversaJustCreated = true`) | Worker | [x] |
 
 ---
 
