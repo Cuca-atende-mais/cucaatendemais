@@ -149,9 +149,9 @@ async def process_webhook_payload(payload: dict, token: str):
     """Processa o payload do webhook em background."""
     try:
         # 1. Salvar o log bruto do webhook para auditoria
-        event_type = payload.get("event", "unknown")
-        instance_name = payload.get("instance", "unknown")
-        data = payload.get("data", {})
+        event_type = payload.get("event") or payload.get("EventType", "unknown")
+        instance_name = payload.get("instance") or payload.get("instanceName", "unknown")
+        data = payload.get("data", payload)
         
         # Tenta salvar em logs_webhook
         try:
@@ -186,16 +186,23 @@ async def process_webhook_payload(payload: dict, token: str):
             except Exception as conn_err:
                 logger.error(f"Erro em handle_connection_update: {conn_err}")
 
-        elif event_type == "messages.upsert":
+        elif event_type in ("messages.upsert", "messages"):
 
             logger.info(f"Nova mensagem recebida na instância {instance_name}")
             
             # Extrair dados básicos da mensagem
-            message_data = data.get("message", {})
-            remote_jid = data.get("key", {}).get("remoteJid")
-            phone = remote_jid.split("@")[0] if remote_jid else None
-            from_me = data.get("key", {}).get("fromMe", False)
-            push_name = data.get("pushName", "Usuário")
+            # UAZAPI v1 usa data["message"], v2 costuma mandar o objeto "message" diretamente na raiz da payload
+            message_data = data.get("message", {}) if "message" in data else data
+            
+            # Ajuste de key / remoteJid para v2
+            remote_jid = data.get("key", {}).get("remoteJid") or payload.get("chat", {}).get("wa_chatid")
+            phone = remote_jid.split("@")[0] if remote_jid else (payload.get("chat", {}).get("phone", "").replace("+", "").replace(" ", "").replace("-", "") or payload.get("message", {}).get("owner"))
+            
+            from_me = data.get("key", {}).get("fromMe")
+            if from_me is None:
+                from_me = payload.get("message", {}).get("fromMe", False)
+                
+            push_name = data.get("pushName") or payload.get("chat", {}).get("wa_name") or payload.get("chat", {}).get("name", "Usuário")
             
             # Conteúdo (texto base ou transcrição futura)
             text_content = ""
@@ -203,8 +210,15 @@ async def process_webhook_payload(payload: dict, token: str):
                 text_content = message_data["conversation"]
             elif "extendedTextMessage" in message_data:
                 text_content = message_data["extendedTextMessage"].get("text", "")
+            elif "text" in message_data and isinstance(message_data["text"], str):
+                text_content = message_data["text"]
+            
+            # Adicional para content
+            if not text_content and "content" in message_data:
+                text_content = message_data["content"]
             
             if not phone:
+                logger.error("Phone number could not be extracted from payload.")
                 return
 
             # --- Fluxo de Banco de Dados ---
@@ -732,7 +746,8 @@ async def uazapi_webhook(token: str, request: Request, background_tasks: Backgro
     
     try:
         payload = await request.json()
-        logger.info(f"Webhook recebido: {payload.get('event')} via token: {token}")
+        evento_recebido = payload.get('event') or payload.get('EventType')
+        logger.info(f"Webhook recebido: {evento_recebido} via token: {token}")
         
         # 2. Agendar processamento pesado em background
         background_tasks.add_task(process_webhook_payload, payload, token)
