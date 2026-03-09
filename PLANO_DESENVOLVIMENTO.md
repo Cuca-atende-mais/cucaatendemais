@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 6.4 | **Atualizado**: 09/03/2026
-> **STATUS ATUAL**: Sprints 1–22 Concluídos | Próximo: Sprint 23 (a definir)
+> **Versão**: 6.5 | **Atualizado**: 09/03/2026
+> **STATUS ATUAL**: Sprints 1–22 Concluídos | Sprint 23 planejado — aguardando aprovação
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -898,6 +898,32 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S17-01 | **Prévia de Disparo — Programação Pontual**: botão "Disparar" na tabela de pontual; modal com alcance (count leads opt_in), template editável, confirmação → define `status = 'aprovado'` para o worker processar | Portal | [x] |
 | S17-02 | **Diagnóstico de Lentidão**: análise de código concluída — sem `setInterval` excessivo nas páginas principais (apenas 10s no `/developer/worker`). Causa: latência da API UAZAPI (externa) durante QR Code, não do nosso código | Portal + Infra | [x] |
 | S17-03 | **Correção de Lentidão**: fluxo já usa `Promise.all` para queries paralelas. Feedback visual com `instProgress` implementado (S14-05). Lentidão residual é da UAZAPI — documentado para upgrade de infra se necessário | Portal | [x] |
+
+---
+
+#### Sprint 23 — Programação Pontual: Autorização + Categorias + Contexto de Disparo ⏳ PLANEJADO
+
+> **Objetivo**: Completar a feature de Programação Pontual com fluxo de autorização separado do disparo (usando RBAC existente), alinhar a UX de categorias com o perfil do lead, resolver o problema de contexto de disparo para 20k+ jovens com perguntas sem padrão, e garantir que a IA conheça eventos pontuais no RAG assim que são criados.
+
+#### Fluxo após Sprint 23
+```
+can_create → Cria evento → "aguardando_aprovacao" → RAG indexa imediatamente
+can_update → Revisa → "Autorizar" → status = "autorizado"
+can_update → "Disparar Evento" (só após autorizado) → modal preview → "aprovado"
+Worker → mesma engine da mensal → breadcrumb gravado em conversas.metadata
+Jovem responde → motor-agente lê breadcrumb → contexto correto mesmo sem padrão de pergunta
+```
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S23-01 | **Trigger RAG ao salvar**: alterar trigger `tr_evento_index` para indexar evento pontual quando `status = 'aguardando_aprovacao'` (hoje só indexa em `'aprovado'`). IA conhece o evento assim que é criado, antes da autorização. | Banco (SQL) | [ ] |
+| S23-02 | **Botão "Autorizar"**: na tabela de Programação Pontual, exibir botão "Autorizar" para quem tem `can_update` quando `status = 'aguardando_aprovacao'`. Clique muda status para `'autorizado'`. Badge "Autorizado" (azul) adicionado à tabela. | Portal | [ ] |
+| S23-03 | **Botão "Disparar Evento"**: botão só aparece quando `status = 'autorizado'` + `can_update`. Substitui o botão "Disparar" atual que autorizava e disparava ao mesmo tempo. Modal de preview existente é mantido. | Portal | [ ] |
+| S23-04 | **Categorias como pills no modal pontual**: substituir os checkboxes da seção "Público-alvo por Interesses" por pills/badges interativos idênticos ao perfil do lead (`px-3 py-1.5 rounded-full`, toggle visual). Banco e lógica de `categoriasAlvo` não mudam. | Portal | [ ] |
+| S23-05 | **Breadcrumb de disparo em `conversas.metadata`**: após envio bem-sucedido de cada mensagem (pontual ou mensal) no `campanhas_engine.py`, fazer upsert em `conversas` com `metadata.ultimo_disparo = { tipo, id, titulo, enviado_em }`. Falha no breadcrumb não bloqueia o disparo. | Worker | [ ] |
+| S23-06 | **Motor-agente v10 — lê breadcrumb e injeta contexto**: alterar `.select("id, status")` para incluir `metadata`. Montar bloco `CONTEXTO_DISPARO` injetado no `promptFinal` entre `prompt_contexto` e `contextRAG`. Se jovem perguntar de forma vaga ("quando é?", "quero saber mais"), agente sabe qual disparo originou a conversa. | Edge Function | [ ] |
+| S23-07 | **RPC `buscar_chunks_similares` retorna `fonte_tipo`**: adicionar `dr.tipo AS fonte_tipo` ao SELECT da função SQL. Motor-agente monta `contextRAG` prefixando cada chunk com `[FAQ]`, `[eventos_pontuais]` ou `[campanhas_mensais]` para o GPT distinguir a origem do conteúdo. | Banco (migration) | [ ] |
+| S23-08 | **Prompt `maria` e `Institucional` — instrução sobre eventos pontuais**: adicionar bloco ao `prompt_contexto` dos dois agentes explicando que o CUCA realiza eventos pontuais ad-hoc e que a IA deve responder sobre eles com o mesmo entusiasmo da programação regular. | Banco (prompts_agentes) | [ ] |
 
 ---
 
