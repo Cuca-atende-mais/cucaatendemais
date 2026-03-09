@@ -221,29 +221,8 @@ async def process_webhook_payload(payload: dict, token: str):
 
             if is_audio:
                 midia_tipo = "ptt" if (media_type == "ptt" or msg_type in ("pttmessage", "ptt")) else "audio"
-                # UAZAPI v2: content é um dict com directPath relativo — precisa baixar via API do UAZAPI
-                messageid = message_data.get("messageid") or message_data.get("id")
-                uazapi_base = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                # inst_token ainda não disponível aqui — usar token do payload
-                _token_download = (data.get("token") or token or "")
-                # Tentar download via endpoint UAZAPI que desencripta o áudio
-                try:
-                    import httpx as _httpx
-                    async with _httpx.AsyncClient() as _client:
-                        dl_resp = await _client.post(
-                            f"{uazapi_base}/download",
-                            headers={"token": _token_download, "Content-Type": "application/json"},
-                            json={"messageid": messageid},
-                            timeout=20.0
-                        )
-                        logger.info(f"[AUDIO] UAZAPI download status={dl_resp.status_code}, body={dl_resp.text[:200]}")
-                        if dl_resp.status_code == 200:
-                            dl_data = dl_resp.json()
-                            midia_url = (dl_data.get("url") or dl_data.get("mediaUrl") or
-                                         dl_data.get("fileUrl") or dl_data.get("downloadUrl"))
-                except Exception as dl_err:
-                    logger.error(f"[AUDIO] Erro ao baixar via UAZAPI: {dl_err}")
-                logger.info(f"[AUDIO] midia_url final={midia_url}, midia_tipo={midia_tipo}")
+                # Guardar messageid para download posterior (inst_token ainda não disponível)
+                _audio_messageid = message_data.get("messageid") or message_data.get("id")
             else:
                 # Mensagem de texto
                 if "conversation" in message_data:
@@ -324,6 +303,27 @@ async def process_webhook_payload(payload: dict, token: str):
             unidade_cuca = inst_result.data.get("unidade_cuca") if inst_result.data else None
             inst_token = inst_result.data.get("token") if inst_result.data else ""
             canal_tipo = inst_result.data.get("canal_tipo", "") if inst_result.data else ""
+
+            # Download de áudio via UAZAPI (inst_token agora disponível)
+            if is_audio and not midia_url:
+                uazapi_base = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+                try:
+                    import httpx as _httpx
+                    async with _httpx.AsyncClient() as _client:
+                        dl_resp = await _client.post(
+                            f"{uazapi_base}/download",
+                            headers={"token": inst_token, "Content-Type": "application/json"},
+                            json={"messageid": _audio_messageid},
+                            timeout=20.0
+                        )
+                        logger.info(f"[AUDIO] UAZAPI download status={dl_resp.status_code}, body={dl_resp.text[:300]}")
+                        if dl_resp.status_code == 200:
+                            dl_data = dl_resp.json()
+                            midia_url = (dl_data.get("url") or dl_data.get("mediaUrl") or
+                                         dl_data.get("fileUrl") or dl_data.get("downloadUrl"))
+                except Exception as dl_err:
+                    logger.error(f"[AUDIO] Erro ao baixar via UAZAPI: {dl_err}")
+                logger.info(f"[AUDIO] midia_url final={midia_url}")
             
             # Atualiza o agente_tipo da conversa se for a primeira mensagem e temos dados
             if conversation_status == "ativa" and inst_result.data:
