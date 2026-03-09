@@ -208,22 +208,19 @@ export default function DivulgacaoPage() {
         const nomeMes = MESES[mesAtual - 1]
 
         let linksUnidades = ""
-        let temLinks = false
 
         unidadesCuca.forEach(u => {
             const inst = instanciasInstitucionais.find(i =>
                 (i.unidade_cuca || "").trim().toLowerCase() === u.trim().toLowerCase()
             )
+
             if (inst && inst.telefone) {
                 const numeroLimpo = inst.telefone.replace(/\D/g, "")
                 linksUnidades += `📍 ${u}: wa.me/${numeroLimpo}\n`
-                temLinks = true
+            } else {
+                linksUnidades += `📍 ${u}: [link do numero do whatsapp da instancia dessa unidade]\n`
             }
         })
-
-        if (!temLinks) {
-            linksUnidades = "Para saber o que rola no seu CUCA, procure a nossa unidade mais próxima!"
-        }
 
         const tpl = `🎉 Olá, {nome}! Essa mensagem vem da *Rede Cuca*.
 A programação de ${nomeMes}/${anoAtual} já está disponível!
