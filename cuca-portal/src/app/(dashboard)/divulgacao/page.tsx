@@ -207,11 +207,13 @@ export default function DivulgacaoPage() {
     const abrirModal = () => {
         const nomeMes = MESES[mesAtual - 1]
 
-        let linksUnidades = "Para saber o que rola no seu CUCA, fale direto:\n"
+        let linksUnidades = ""
         let temLinks = false
 
         unidadesCuca.forEach(u => {
-            const inst = instanciasInstitucionais.find(i => i.unidade_cuca === u)
+            const inst = instanciasInstitucionais.find(i =>
+                (i.unidade_cuca || "").trim().toLowerCase() === u.trim().toLowerCase()
+            )
             if (inst && inst.telefone) {
                 const numeroLimpo = inst.telefone.replace(/\D/g, "")
                 linksUnidades += `📍 ${u}: wa.me/${numeroLimpo}\n`
@@ -223,7 +225,14 @@ export default function DivulgacaoPage() {
             linksUnidades = "Para saber o que rola no seu CUCA, procure a nossa unidade mais próxima!"
         }
 
-        const tpl = `🎉 A programação de ${nomeMes}/${anoAtual} chegou! Acesse o Portal da Juventude: cucaatendemais.com.br\n\n${linksUnidades.trim()}`
+        const tpl = `🎉 Olá, {nome}! Essa mensagem vem da *Rede Cuca*.
+A programação de ${nomeMes}/${anoAtual} já está disponível!
+
+Se quiser se matricular nas nossas atividades e conferir a programação completa, acesse o Portal da Juventude:
+🔗 https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/
+
+Caso queira mais informações sobre a programação de uma unidade específica, fale diretamente conosco no WhatsApp:
+${linksUnidades.trim()}`
 
         setTemplate(tpl)
         setModalAberto(true)
