@@ -160,7 +160,7 @@ export default function InstanciasPage() {
         setEditingInst(inst)
         setINome(inst.nome)
         setICanalTipo(inst.canal_tipo)
-        setIUnidade(inst.unidade_cuca || "")
+        setIUnidade(inst.unidade_cuca || "global")
         setITelefone(inst.telefone || "")
         setIToken(inst.token || "")
         setIWebhook(inst.webhook_url || "")
@@ -181,7 +181,7 @@ export default function InstanciasPage() {
                 nome: iNome.trim(),
                 canal_tipo: iCanalTipo,
                 agente_tipo: iCanalTipo,
-                unidade_cuca: iUnidade || null,
+                unidade_cuca: iUnidade === "global" || !iUnidade ? null : iUnidade,
                 telefone: iTelefone.trim() || null,
                 token: iToken.trim() || null,
                 webhook_url: iWebhook.trim() || null,
@@ -264,7 +264,7 @@ export default function InstanciasPage() {
     const openEditTrans = (t: Transbordo) => {
         setEditingTrans(t)
         setTResponsavel(t.responsavel); setTTelefone(t.telefone)
-        setTModulo(t.modulo); setTUnidade(t.unidade_cuca || "")
+        setTModulo(t.modulo); setTUnidade(t.unidade_cuca || "global")
         setModalTrans(true)
     }
 
@@ -276,7 +276,7 @@ export default function InstanciasPage() {
         setSavingTrans(true)
         try {
             const payload = {
-                unidade_cuca: tUnidade || null,
+                unidade_cuca: tUnidade === "global" || !tUnidade ? null : tUnidade,
                 modulo: tModulo,
                 responsavel: tResponsavel.trim(),
                 telefone: tTelefone.trim(),
@@ -587,7 +587,7 @@ export default function InstanciasPage() {
                                 <Select value={iUnidade} onValueChange={setIUnidade}>
                                     <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="">Global / Sem Unidade</SelectItem>
+                                        <SelectItem value="global">Global / Sem Unidade</SelectItem>
                                         {unidadesCuca.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
                                     </SelectContent>
                                 </Select>
@@ -690,7 +690,7 @@ export default function InstanciasPage() {
                                 <Select value={tUnidade} onValueChange={setTUnidade}>
                                     <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="">Global</SelectItem>
+                                        <SelectItem value="global">Global</SelectItem>
                                         {unidadesCuca.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
                                     </SelectContent>
                                 </Select>
