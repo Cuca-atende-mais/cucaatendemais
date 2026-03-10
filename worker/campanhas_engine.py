@@ -303,7 +303,9 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                                 "delay": 1200
                             }
                         )
-                        # Sucesso se pelo menos o texto foi enviado
+                        # S26-01: Log por lead para auditoria de entrega
+                        logger.info(f"[Disparo] {numero} → flyer HTTP {resp_img.status_code} | {resp_img.text[:80]}")
+                        logger.info(f"[Disparo] {numero} → texto HTTP {resp.status_code} | {resp.text[:80]}")
                         if resp_img.status_code != 200:
                             logger.warning(f"Flyer HTTP {resp_img.status_code} para {lead['telefone']}")
                     else:
@@ -316,6 +318,7 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                                 "delay": 1200
                             }
                         )
+                        logger.info(f"[Disparo] {numero} → texto HTTP {resp.status_code} | {resp.text[:80]}")
 
                     if resp.status_code == 200:
                         sucessos += 1

@@ -177,6 +177,11 @@ export default function InstanciasPage() {
         }
         setSavingInst(true)
         try {
+            // S26-04: Garantir sessão válida antes de salvar (evita falha silenciosa por JWT expirado)
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+                await supabase.auth.refreshSession()
+            }
             const payload = {
                 nome: iNome.trim(),
                 canal_tipo: iCanalTipo,
@@ -210,6 +215,7 @@ export default function InstanciasPage() {
             setModalInst(false)
             await fetchAll()
         } catch (err: any) {
+            console.error("Erro ao salvar instância:", err)
             toast.error(`Erro: ${err.message}`)
         } finally {
             setSavingInst(false)

@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 6.7 | **Atualizado**: 10/03/2026
-> **STATUS ATUAL**: Sprints 1–22 + 24 + 25 Concluídos | Sprint 23 planejado (pendente)
+> **Versão**: 6.8 | **Atualizado**: 10/03/2026
+> **STATUS ATUAL**: Sprints 1–22 + 24 + 25 + 26 Concluídos | Sprint 23 planejado (pendente)
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -954,6 +954,51 @@ Jovem responde → motor-agente lê breadcrumb → contexto correto mesmo sem pa
 | S23-06 | **Motor-agente v10 — lê breadcrumb e injeta contexto**: alterar `.select("id, status")` para incluir `metadata`. Montar bloco `CONTEXTO_DISPARO` injetado no `promptFinal` entre `prompt_contexto` e `contextRAG`. Se jovem perguntar de forma vaga ("quando é?", "quero saber mais"), agente sabe qual disparo originou a conversa. | Edge Function | [ ] |
 | S23-07 | **RPC `buscar_chunks_similares` retorna `fonte_tipo`**: adicionar `dr.tipo AS fonte_tipo` ao SELECT da função SQL. Motor-agente monta `contextRAG` prefixando cada chunk com `[FAQ]`, `[eventos_pontuais]` ou `[campanhas_mensais]` para o GPT distinguir a origem do conteúdo. | Banco (migration) | [ ] |
 | S23-08 | **Prompt `maria` e `Institucional` — instrução sobre eventos pontuais**: adicionar bloco ao `prompt_contexto` dos dois agentes explicando que o CUCA realiza eventos pontuais ad-hoc e que a IA deve responder sobre eles com o mesmo entusiasmo da programação regular. | Banco (prompts_agentes) | [ ] |
+
+---
+
+#### Sprint 24 — Refatoração Disparo Pontual: FK, Caption, Roteamento, RAG ✅ CONCLUÍDO (10/03/2026)
+
+> **Objetivo**: Corrigir FK constraint no worker, incluir descrição completa e data/hora nas mensagens, padronizar roteamento via divulgacaoredecuca, indexar flyer no RAG e eliminar ambiguidade de overload na busca semântica.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S24-01 | Fix FK disparo_id: criar registro em `disparos` antes de atualizar `eventos_pontuais` | Worker | [x] |
+| S24-02 | Caption completo: `descricao` como corpo da mensagem | Worker | [x] |
+| S24-03 | Roteamento: pontual e mensal sempre usam `divulgacaoredecuca` | Worker | [x] |
+| S24-04 | Migration: `trigger_indexar_evento()` inclui flyer_url, data_inicio, data_fim, hora_inicio | Banco | [x] |
+| S24-05 | Prompt Institucional/maria: instrução FLYER no RAG | Banco | [x] |
+| S24-07 | Modal: campos hora_inicio e hora_fim no formulário de criação pontual | Portal | [x] |
+| S24-08 | Worker: template_texto inclui data, horário e local no disparo | Worker | [x] |
+| S24-09 | Migration: DROP overload antigo buscar_chunks_similares + fix cast varchar/text | Banco | [x] |
+
+---
+
+#### Sprint 25 — Preview Disparo + Visualizar + Editar Evento Pontual ✅ CONCLUÍDO (10/03/2026)
+
+> **Objetivo**: Corrigir data/horário no template de prévia de disparo, adicionar Sheet de visualização completa do evento e habilitar modo de edição no modal de criação (UPDATE ao invés de INSERT).
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S25-01 | Fix template de prévia: data início→fim sem bug de timezone + horário início–fim | Portal | [x] |
+| S25-02 | Sheet "Visualizar": botão Eye abre detalhes completos (flyer, período, horário, descrição, local, categorias) | Portal | [x] |
+| S25-03 | Botão "Editar" + modo edição no unified-program-modal (UPDATE ao invés de INSERT) | Portal | [x] |
+| S25-04 | fetchData confirmado com select("*") — inclui hora_inicio, hora_fim, data_fim, local | Portal | [x] |
+| S26-also | Migration: ALTER TABLE eventos_pontuais ALTER COLUMN unidade_cuca DROP NOT NULL (suporte "Toda a Rede") | Banco | [x] |
+
+---
+
+#### Sprint 26 — Logging por Lead + Fix Instâncias + Diagnóstico Número Internacional ✅ CONCLUÍDO (10/03/2026)
+
+> **Objetivo**: Adicionar logging detalhado por lead no worker para auditoria de entrega UAZAPI, corrigir edição de instâncias (refreshSession para JWT expirado), e diagnosticar por que número português não recebe mensagens.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S26-01 | Worker: logging `[Disparo] {numero} → HTTP {status} \| {body[:80]}` após cada envio | Worker | [x] |
+| S26-02 | Validação: filtro por unidade_cuca = null (Toda a Rede) inclui todos os leads corretamente | Worker | [x] |
+| S26-03 | Diagnóstico: número português `351911928387` é falha silenciosa do UAZAPI brasileiro — trocar para número +55 no lead de teste | Infra | [x] |
+| S26-04 | Fix edição de instâncias: refreshSession antes do update + console.error no catch | Portal | [x] |
+| S26-05 | PLANO_DESENVOLVIMENTO.md: documentar Sprints 24, 25 e 26 | Docs | [x] |
 
 ---
 
