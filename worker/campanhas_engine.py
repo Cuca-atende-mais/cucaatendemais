@@ -164,11 +164,34 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
     unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
     midia_url = item.get("midia_url") or item.get("flyer_url")
 
-    # S24-02: Para pontual, usar descricao como corpo (é o conteúdo completo da mensagem)
+    # S24-02/S24-08: Para pontual, usar descricao + data/hora/local como corpo da mensagem
     titulo_item = item.get("titulo", "")
     descricao_item = item.get("descricao", "")
     if origem == "eventos_pontuais" and descricao_item:
+        data_inicio = item.get("data_inicio") or item.get("data_evento") or ""
+        data_fim = item.get("data_fim") or ""
+        hora_inicio = item.get("hora_inicio") or ""
+        hora_fim = item.get("hora_fim") or ""
+        local_evento = item.get("local") or unidade or ""
+
+        data_str = data_inicio
+        if data_fim and data_fim != data_inicio:
+            data_str += f" até {data_fim}"
+
+        linhas_extra = []
+        if data_str:
+            linhas_extra.append(f"📅 *Data:* {data_str}")
+        if hora_inicio:
+            hora_str = hora_inicio
+            if hora_fim:
+                hora_str += f" às {hora_fim}"
+            linhas_extra.append(f"🕐 *Horário:* {hora_str}")
+        if local_evento:
+            linhas_extra.append(f"📍 *Local:* {local_evento}")
+
         template_texto = f"*{titulo_item}*\n\n{descricao_item}" if titulo_item else descricao_item
+        if linhas_extra:
+            template_texto += "\n\n" + "\n".join(linhas_extra)
     else:
         template_texto = item.get("template_texto") or item.get("titulo") or item.get("descricao") or "Olá, {{nome}}!"
 

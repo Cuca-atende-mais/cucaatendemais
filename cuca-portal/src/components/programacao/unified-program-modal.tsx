@@ -42,6 +42,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     // Pontual specific
     const [dataInicio, setDataInicio] = useState("")
     const [dataFim, setDataFim] = useState("")
+    const [horaInicio, setHoraInicio] = useState("")
+    const [horaFim, setHoraFim] = useState("")
     const [local, setLocal] = useState("")
     const [flyerFile, setFlyerFile] = useState<File | null>(null)
     const [flyerPreview, setFlyerPreview] = useState<string | null>(null)
@@ -145,6 +147,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     data_evento: dataInicio,
                     data_inicio: dataInicio,
                     data_fim: dataFim,
+                    hora_inicio: horaInicio || null,
+                    hora_fim: horaFim || null,
                     local,
                     flyer_url: flyerUrl,
                     status: "aguardando_aprovacao",
@@ -192,6 +196,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
         setUnidade("")
         setDataInicio("")
         setDataFim("")
+        setHoraInicio("")
+        setHoraFim("")
         setLocal("")
         setFlyerFile(null)
         setFlyerPreview(null)
@@ -263,6 +269,14 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                                 <div className="grid gap-2">
                                     <Label className="flex items-center gap-2"><Calendar className="h-3 w-3" /> Data Fim</Label>
                                     <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label>Hora Início</Label>
+                                    <Input type="time" value={horaInicio} onChange={(e) => setHoraInicio(e.target.value)} />
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label>Hora Fim</Label>
+                                    <Input type="time" value={horaFim} onChange={(e) => setHoraFim(e.target.value)} />
                                 </div>
                             </div>
                             <div className={`grid gap-4 ${todaRede ? "grid-cols-1" : "grid-cols-2"}`}>
