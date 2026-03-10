@@ -22,14 +22,16 @@ import { Calendar, MapPin, Sparkles, Upload, X, Users } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useUser } from "@/lib/auth/user-provider"
+import { EventoPontual } from "@/lib/types/database"
 
 interface UnifiedProgramModalProps {
     open: boolean
     onOpenChange: (open: boolean) => void
     onSuccess: () => void
+    editEvento?: EventoPontual | null
 }
 
-export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedProgramModalProps) {
+export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento }: UnifiedProgramModalProps) {
     const { hasPermission } = useUser()
     const [loading, setLoading] = useState(false)
     const [isPontual, setIsPontual] = useState(true)
@@ -75,6 +77,27 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                 .then(({ data }) => setCategorias(data ?? []))
         }
     }, [open])
+
+    // S25-03: Preencher form quando abrir em modo de edição
+    useEffect(() => {
+        if (open && editEvento) {
+            setIsPontual(true)
+            setTitulo(editEvento.titulo || "")
+            setDescricao(editEvento.descricao || "")
+            const temUnidade = !!editEvento.unidade_cuca
+            setTodaRede(!temUnidade)
+            setUnidade(editEvento.unidade_cuca || "")
+            setDataInicio(editEvento.data_inicio || "")
+            setDataFim(editEvento.data_fim || "")
+            setHoraInicio(editEvento.hora_inicio || "")
+            setHoraFim(editEvento.hora_fim || "")
+            setLocal(editEvento.local || "")
+            setFlyerPreview(editEvento.flyer_url || null)
+            setCategoriasAlvo(editEvento.categorias_alvo || [])
+        } else if (open && !editEvento) {
+            resetForm()
+        }
+    }, [open, editEvento])
 
     const toggleCategoriaAlvo = async (catId: string) => {
         const novaLista = categoriasAlvo.includes(catId)
@@ -123,24 +146,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
             }
 
             if (isPontual) {
-                // S14-01: Validação de conflito de datas (mesma unidade + sobreposição)
-                const { data: conflicts } = await supabase
-                    .from("eventos_pontuais")
-                    .select("titulo")
-                    .eq("unidade_cuca", unidade)
-                    .lte("data_inicio", dataFim)
-                    .gte("data_fim", dataInicio)
-                    .not("status", "eq", "concluido")
-
-                if (conflicts && conflicts.length > 0) {
-                    const nomes = conflicts.map((c: any) => `"${c.titulo}"`).join(", ")
-                    const continuar = confirm(`⚠ Conflito de datas com: ${nomes}\n\nEsses eventos já existem no mesmo período para esta unidade. Deseja criar mesmo assim?`)
-                    if (!continuar) { setLoading(false); return }
-                }
-
-                // Salvar em eventos_pontuais -> Status: aguardando_aprovacao
-                // unidade_cuca null = toda a rede CUCA (worker não filtra por unidade)
-                const { error } = await supabase.from("eventos_pontuais").insert({
+                const payload = {
                     titulo,
                     descricao,
                     unidade_cuca: todaRede ? null : unidade,
@@ -150,14 +156,43 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                     hora_inicio: horaInicio || null,
                     hora_fim: horaFim || null,
                     local,
-                    flyer_url: flyerUrl,
-                    status: "aguardando_aprovacao",
                     expansiva: todaRede,
                     categorias_alvo: categoriasAlvo.length > 0 ? categoriasAlvo : [],
-                    instancia_id: null,
-                })
-                if (error) throw error
-                toast.success("Evento enviado para aprovação!")
+                    ...(flyerUrl ? { flyer_url: flyerUrl } : {}),
+                }
+
+                if (editEvento) {
+                    // S25-03: Modo edição — UPDATE mantém status atual
+                    const { error } = await supabase.from("eventos_pontuais")
+                        .update(payload)
+                        .eq("id", editEvento.id)
+                    if (error) throw error
+                    toast.success("Evento atualizado com sucesso!")
+                } else {
+                    // S14-01: Validação de conflito de datas (somente no INSERT)
+                    const { data: conflicts } = await supabase
+                        .from("eventos_pontuais")
+                        .select("titulo")
+                        .eq("unidade_cuca", unidade)
+                        .lte("data_inicio", dataFim)
+                        .gte("data_fim", dataInicio)
+                        .not("status", "eq", "concluido")
+
+                    if (conflicts && conflicts.length > 0) {
+                        const nomes = conflicts.map((c: any) => `"${c.titulo}"`).join(", ")
+                        const continuar = confirm(`⚠ Conflito de datas com: ${nomes}\n\nEsses eventos já existem no mesmo período para esta unidade. Deseja criar mesmo assim?`)
+                        if (!continuar) { setLoading(false); return }
+                    }
+
+                    const { error } = await supabase.from("eventos_pontuais").insert({
+                        ...payload,
+                        flyer_url: flyerUrl,
+                        status: "aguardando_aprovacao",
+                        instancia_id: null,
+                    })
+                    if (error) throw error
+                    toast.success("Evento enviado para aprovação!")
+                }
             } else {
                 // Salvar em campanhas_mensais -> Status: aguardando_aprovacao
                 const { error } = await supabase.from("campanhas_mensais").insert({
@@ -214,7 +249,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                         <div className="p-2 bg-cuca-yellow/20 rounded-lg">
                             <Sparkles className="h-5 w-5 text-cuca-yellow" />
                         </div>
-                        <DialogTitle className="text-xl">Nova Programação</DialogTitle>
+                        <DialogTitle className="text-xl">{editEvento ? "Editar Evento Pontual" : "Nova Programação"}</DialogTitle>
                     </div>
                     <DialogDescription>
                         Cadastre eventos pontuais (cursos, festivais) ou a grade mensal de atividades.

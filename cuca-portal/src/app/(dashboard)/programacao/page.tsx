@@ -17,11 +17,14 @@ import {
     Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@/components/ui/tabs"
 import {
-    Search, Plus, Calendar, MoreHorizontal, CheckCircle2, Clock, AlertCircle, Upload, Trash2, Send, Users, Eye
+    Search, Plus, Calendar, CheckCircle2, Clock, Upload, Trash2, Send, Users, Eye, Pencil, MapPin, X
 } from "lucide-react"
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
+import {
+    Sheet, SheetContent, SheetHeader, SheetTitle,
+} from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { unidadesCuca } from "@/lib/constants"
@@ -49,6 +52,10 @@ export default function ProgramacaoPage() {
     const [previewLeadCount, setPreviewLeadCount] = useState<number | null>(null)
     const [previewTemplate, setPreviewTemplate] = useState("")
     const [disparando, setDisparando] = useState(false)
+
+    // S25: Visualizar + Editar evento pontual
+    const [visualizarEvento, setVisualizarEvento] = useState<EventoPontual | null>(null)
+    const [editEvento, setEditEvento] = useState<EventoPontual | null>(null)
 
     const supabase = createClient()
     const router = useRouter()
@@ -157,9 +164,30 @@ export default function ProgramacaoPage() {
         setPreviewEvento(evento)
         setPreviewLeadCount(null)
 
-        // Template padrão gerado a partir dos dados do evento
-        const dataFmt = format(new Date(evento.data_inicio), "dd/MM/yyyy", { locale: ptBR })
-        const tpl = `Olá {{nome}}! 👋\n\nO CUCA convida você para o evento:\n\n*${evento.titulo}*\n📅 Data: ${dataFmt}\n${evento.local ? `📍 Local: ${evento.local}\n` : ""}${evento.descricao ? `\n${evento.descricao}` : ""}\n\nNão perca! Qualquer dúvida, estamos aqui. 😊`
+        // S25-01: Fix timezone (split evita UTC→local) + data_fim + hora
+        const fmtDate = (iso: string) => { const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}` }
+        const dataInicioFmt = fmtDate(evento.data_inicio)
+        const dataFimFmt = evento.data_fim ? fmtDate(evento.data_fim) : null
+        const dataStr = dataFimFmt && dataFimFmt !== dataInicioFmt
+            ? `${dataInicioFmt} até ${dataFimFmt}`
+            : dataInicioFmt
+        const horaStr = evento.hora_inicio
+            ? `${evento.hora_inicio}${evento.hora_fim ? ` às ${evento.hora_fim}` : ""}`
+            : null
+        const tpl = [
+            `Olá {{nome}}! 👋`,
+            ``,
+            `O CUCA convida você para o evento:`,
+            ``,
+            `*${evento.titulo}*`,
+            `📅 Data: ${dataStr}`,
+            horaStr ? `🕐 Horário: ${horaStr}` : null,
+            evento.local ? `📍 Local: ${evento.local}` : null,
+            ``,
+            evento.descricao || "",
+            ``,
+            `Não perca! Qualquer dúvida, estamos aqui. 😊`,
+        ].filter(l => l !== null).join("\n")
         setPreviewTemplate(tpl)
 
         // Contar leads que receberão
@@ -223,8 +251,9 @@ export default function ProgramacaoPage() {
 
             <UnifiedProgramModal
                 open={isModalOpen}
-                onOpenChange={setIsModalOpen}
+                onOpenChange={(open) => { setIsModalOpen(open); if (!open) setEditEvento(null) }}
                 onSuccess={fetchData}
+                editEvento={editEvento}
             />
 
             <Tabs defaultValue="mensal" className="w-full">
@@ -340,11 +369,31 @@ export default function ProgramacaoPage() {
                                             </TableCell>
                                             <TableCell><Badge variant="outline">{p.unidade_cuca}</Badge></TableCell>
                                             <TableCell>
-                                                {format(new Date(p.data_inicio), "dd/MM/yyyy", { locale: ptBR })}
-                                                {p.data_fim && ` — ${format(new Date(p.data_fim), "dd/MM/yyyy", { locale: ptBR })}`}
+                                                {(() => { const [y,m,d] = p.data_inicio.split("-"); return `${d}/${m}/${y}` })()}
+                                                {p.data_fim && (() => { const [y,m,d] = p.data_fim!.split("-"); return ` — ${d}/${m}/${y}` })()}
                                             </TableCell>
                                             <TableCell>{getStatusBadge(p.status)}</TableCell>
                                             <TableCell className="text-right flex items-center justify-end gap-2">
+                                                {/* S25-02: Botão Visualizar — sempre visível */}
+                                                <Button
+                                                    variant="ghost" size="sm"
+                                                    onClick={() => setVisualizarEvento(p)}
+                                                    className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                                    title="Visualizar detalhes"
+                                                >
+                                                    <Eye className="h-4 w-4" />
+                                                </Button>
+                                                {/* S25-03: Botão Editar */}
+                                                {(p.status === 'aguardando_aprovacao' || p.status === 'autorizado') && hasPermission("programacao_pontual", "update") && (
+                                                    <Button
+                                                        variant="ghost" size="sm"
+                                                        onClick={() => { setEditEvento(p); setIsModalOpen(true) }}
+                                                        className="h-8 w-8 p-0 text-blue-500 hover:bg-blue-500/10"
+                                                        title="Editar evento"
+                                                    >
+                                                        <Pencil className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                )}
                                                 {p.status === 'aguardando_aprovacao' && hasPermission("programacao_pontual", "update") && (
                                                     <Button
                                                         variant="outline"
@@ -447,6 +496,90 @@ export default function ProgramacaoPage() {
                     onSuccess={fetchData}
                 />
             )}
+
+            {/* S25-02: Sheet Visualizar Evento Pontual */}
+            <Sheet open={!!visualizarEvento} onOpenChange={open => !open && setVisualizarEvento(null)}>
+                <SheetContent className="w-full sm:max-w-md overflow-y-auto">
+                    <SheetHeader className="pb-4">
+                        <SheetTitle className="flex items-center gap-2">
+                            <Eye className="h-5 w-5 text-primary" />
+                            {visualizarEvento?.titulo}
+                        </SheetTitle>
+                        <div className="flex items-center gap-2 flex-wrap">
+                            {visualizarEvento && getStatusBadge(visualizarEvento.status)}
+                            {visualizarEvento?.unidade_cuca && (
+                                <Badge variant="outline">{visualizarEvento.unidade_cuca}</Badge>
+                            )}
+                        </div>
+                    </SheetHeader>
+
+                    {visualizarEvento && (
+                        <div className="space-y-4 mt-2">
+                            {/* Flyer */}
+                            {visualizarEvento.flyer_url && (
+                                <img
+                                    src={visualizarEvento.flyer_url}
+                                    alt="Flyer do evento"
+                                    className="w-full rounded-lg object-cover max-h-64"
+                                />
+                            )}
+
+                            {/* Período + Horário */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <p className="text-xs text-muted-foreground font-medium">Período</p>
+                                    <p className="text-sm font-semibold">
+                                        {(() => { const [y,m,d] = visualizarEvento.data_inicio.split("-"); return `${d}/${m}/${y}` })()}
+                                        {visualizarEvento.data_fim && (() => { const [y,m,d] = visualizarEvento.data_fim!.split("-"); return ` até ${d}/${m}/${y}` })()}
+                                    </p>
+                                </div>
+                                {visualizarEvento.hora_inicio && (
+                                    <div className="space-y-1">
+                                        <p className="text-xs text-muted-foreground font-medium">Horário</p>
+                                        <p className="text-sm font-semibold">
+                                            {visualizarEvento.hora_inicio}
+                                            {visualizarEvento.hora_fim && ` às ${visualizarEvento.hora_fim}`}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Local */}
+                            {visualizarEvento.local && (
+                                <div className="space-y-1">
+                                    <p className="text-xs text-muted-foreground font-medium flex items-center gap-1">
+                                        <MapPin className="h-3 w-3" /> Local
+                                    </p>
+                                    <p className="text-sm">{visualizarEvento.local}</p>
+                                </div>
+                            )}
+
+                            {/* Descrição */}
+                            {visualizarEvento.descricao && (
+                                <div className="space-y-1">
+                                    <p className="text-xs text-muted-foreground font-medium">Descrição</p>
+                                    <p className="text-sm whitespace-pre-line leading-relaxed">{visualizarEvento.descricao}</p>
+                                </div>
+                            )}
+
+                            {/* Ações */}
+                            {(visualizarEvento.status === 'aguardando_aprovacao' || visualizarEvento.status === 'autorizado') && hasPermission("programacao_pontual", "update") && (
+                                <Button
+                                    variant="outline"
+                                    className="w-full gap-2"
+                                    onClick={() => {
+                                        setEditEvento(visualizarEvento)
+                                        setIsModalOpen(true)
+                                        setVisualizarEvento(null)
+                                    }}
+                                >
+                                    <Pencil className="h-4 w-4" /> Editar Evento
+                                </Button>
+                            )}
+                        </div>
+                    )}
+                </SheetContent>
+            </Sheet>
 
             {/* S17-01: Modal Prévia de Disparo Pontual */}
             <Dialog open={!!previewEvento} onOpenChange={open => !open && setPreviewEvento(null)}>

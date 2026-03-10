@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 6.5 | **Atualizado**: 09/03/2026
-> **STATUS ATUAL**: Sprints 1–22 Concluídos | Sprint 23 planejado — aguardando aprovação
+> **Versão**: 6.7 | **Atualizado**: 10/03/2026
+> **STATUS ATUAL**: Sprints 1–22 + 24 + 25 Concluídos | Sprint 23 planejado (pendente)
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -898,6 +898,36 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S17-01 | **Prévia de Disparo — Programação Pontual**: botão "Disparar" na tabela de pontual; modal com alcance (count leads opt_in), template editável, confirmação → define `status = 'aprovado'` para o worker processar | Portal | [x] |
 | S17-02 | **Diagnóstico de Lentidão**: análise de código concluída — sem `setInterval` excessivo nas páginas principais (apenas 10s no `/developer/worker`). Causa: latência da API UAZAPI (externa) durante QR Code, não do nosso código | Portal + Infra | [x] |
 | S17-03 | **Correção de Lentidão**: fluxo já usa `Promise.all` para queries paralelas. Feedback visual com `instProgress` implementado (S14-05). Lentidão residual é da UAZAPI — documentado para upgrade de infra se necessário | Portal | [x] |
+
+---
+
+#### Sprint 25 — Preview Disparo: Data/Hora correta + Visualizar + Editar ✅ CONCLUÍDO (10/03/2026)
+
+> **Objetivo**: Corrigir data/horário no template de prévia de disparo, adicionar visualização completa do evento (Sheet lateral) e habilitar edição de eventos pontuais (modo edição no modal de criação).
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S25-01 | Fix template de prévia: data início→fim sem bug de timezone + horário início–fim | Portal | [x] |
+| S25-02 | Sheet "Visualizar": botão Eye abre detalhes completos (flyer, período, horário, descrição, local) | Portal | [x] |
+| S25-03 | Botão "Editar" (Pencil) + modo edição no unified-program-modal (UPDATE ao invés de INSERT, form pré-populado) | Portal | [x] |
+| S25-04 | fetchData já usa `select("*")` — todos os campos incluídos | Portal | [x] |
+
+---
+
+#### Sprint 24 — Refatoração Disparo Pontual: FK, Caption, Roteamento, RAG ✅ CONCLUÍDO (10/03/2026)
+
+> **Objetivo**: Corrigir FK constraint no worker, incluir descrição completa e data/hora nas mensagens, padronizar roteamento via divulgacaoredecuca, indexar flyer no RAG e eliminar ambiguidade de overload na busca semântica.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S24-01 | Fix FK disparo_id: criar registro em `disparos` antes de atualizar `eventos_pontuais` | Worker | [x] |
+| S24-02 | Caption completo: `descricao` como corpo da mensagem | Worker | [x] |
+| S24-03 | Roteamento: pontual sempre usa `divulgacaoredecuca` | Worker | [x] |
+| S24-04 | Migration: trigger `trigger_indexar_evento()` inclui flyer_url, data_inicio, data_fim, hora_inicio | Banco | [x] |
+| S24-05 | Prompt Institucional/maria: instrução FLYER no RAG | Banco | [x] |
+| S24-07 | Modal: campos hora_inicio e hora_fim no formulário de criação | Portal | [x] |
+| S24-08 | Worker: template_texto inclui data, horário e local no disparo | Worker | [x] |
+| S24-09 | Migration: DROP overload antigo buscar_chunks_similares (elimina ambiguidade PostgREST) | Banco | [x] |
 
 ---
 
