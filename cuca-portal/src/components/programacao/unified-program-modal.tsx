@@ -34,7 +34,7 @@ interface UnifiedProgramModalProps {
 export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedProgramModalProps) {
     const { hasPermission } = useUser()
     const [loading, setLoading] = useState(false)
-    const [isPontual, setIsPontual] = useState(hasPermission("programacao_pontual", "create"))
+    const [isPontual, setIsPontual] = useState(true)
 
     // Form states
     const [titulo, setTitulo] = useState("")
@@ -49,8 +49,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     const [flyerPreview, setFlyerPreview] = useState<string | null>(null)
 
     // Mensal specific
-    const [mes, setMes] = useState(new Date().getMonth() + 1)
-    const [ano, setAno] = useState(new Date().getFullYear())
+    const [mes, setMes] = useState(1)
+    const [ano, setAno] = useState(2026)
 
     // S13-06: Expansiva (via Divulgação Global)
     const [expansiva, setExpansiva] = useState(false)
@@ -65,6 +65,13 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     const [instanciaId, setInstanciaId] = useState<string>("auto")
 
     const supabase = createClient()
+
+    useEffect(() => {
+        const now = new Date()
+        setMes(now.getMonth() + 1)
+        setAno(now.getFullYear())
+        setIsPontual(hasPermission("programacao_pontual", "create"))
+    }, [])
 
     useEffect(() => {
         if (open) {
@@ -347,7 +354,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                                         .filter(i => !unidade || i.unidade_cuca === unidade || i.canal_tipo === "Divulgação")
                                         .map(i => (
                                             <SelectItem key={i.id} value={i.id}>
-                                                {i.nome} <span className="text-muted-foreground ml-1">({i.canal_tipo})</span>
+                                                {`${i.nome} (${i.canal_tipo})`}
                                             </SelectItem>
                                         ))
                                     }
