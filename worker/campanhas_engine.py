@@ -152,33 +152,37 @@ def _query_leads_sync(unidade: str | None = None, categorias_alvo: list | None =
     return query.execute()
 
 
+def _criar_disparo_sync(dados: dict) -> str:
+    """S24-01: Cria registro em disparos e retorna o ID gerado (resolve FK constraint)."""
+    res = supabase.table("disparos").insert(dados).execute()
+    return res.data[0]["id"]
+
+
 async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_max: int, daily_limit: int, error_threshold: int):
     """Processa e dispara mensagem para um evento aprovado."""
     item_id = item.get("id")
-    # Bug extra corrigido: campo real é unidade_cuca (não unidade_cuca_id nem unidade_id)
     unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
-    template_texto = item.get("template_texto") or item.get("titulo") or item.get("descricao") or "Olá, {{nome}}!"
     midia_url = item.get("midia_url") or item.get("flyer_url")
+
+    # S24-02: Para pontual, usar descricao como corpo (é o conteúdo completo da mensagem)
+    titulo_item = item.get("titulo", "")
+    descricao_item = item.get("descricao", "")
+    if origem == "eventos_pontuais" and descricao_item:
+        template_texto = f"*{titulo_item}*\n\n{descricao_item}" if titulo_item else descricao_item
+    else:
+        template_texto = item.get("template_texto") or item.get("titulo") or item.get("descricao") or "Olá, {{nome}}!"
 
     # Marcar como em andamento (em thread separada para não bloquear)
     await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
 
-    # S14-03: Instância específica definida no evento (roteamento manual)
-    instancia_id_especifica = item.get("instancia_id")
-
-    # S13-06: Roteamento por flag expansiva
-    # - instancia_id definido: usa a instância específica escolhida pelo gestor
-    # - expansiva=True (ou mensal): usa instância Divulgação Global
-    # - expansiva=False + pontual: usa instância Institucional da unidade
-    is_expansiva = item.get("expansiva", False)
-
-    if instancia_id_especifica:
-        inst_res = await asyncio.to_thread(_query_instancia_by_id_sync, instancia_id_especifica)
+    # S24-03: Roteamento — pontual sempre usa Divulgação; mensal/ouvidoria mantém lógica anterior
+    if origem == "eventos_pontuais":
+        inst_res = await asyncio.to_thread(_query_instancia_divulgacao_sync)
         if not inst_res.data:
-            logger.error(f"Instância específica {instancia_id_especifica} não encontrada ou inativa. Pausando item {item_id}.")
+            logger.error(f"Nenhuma instância Divulgação ativa. Pausando item {item_id}.")
             await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
             return
-    elif origem == "campanhas_mensais" or (origem == "eventos_pontuais" and is_expansiva):
+    elif origem == "campanhas_mensais":
         inst_res = await asyncio.to_thread(_query_instancia_divulgacao_sync)
         if not inst_res.data:
             logger.error(f"Nenhuma instância UAZAPI 'Divulgação' ativa. Pausando item {item_id}.")
@@ -211,9 +215,23 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
 
     if total == 0:
         logger.info(f"Item {item_id}: Sem leads para disparar. Marcando como concluída.")
+        disparo_id_vazio = await asyncio.to_thread(_criar_disparo_sync, {
+            "tipo": origem,
+            "evento_id": item_id if origem == "eventos_pontuais" else None,
+            "campanha_mensal_id": item_id if origem == "campanhas_mensais" else None,
+            "instancia_uazapi": instance_name,
+            "mensagem_template": template_texto,
+            "midia_url": midia_url,
+            "total_destinatarios": 0,
+            "total_enviados": 0,
+            "total_erros": 0,
+            "status": "concluida",
+            "iniciado_em": datetime.now(timezone.utc).isoformat(),
+            "concluido_em": datetime.now(timezone.utc).isoformat(),
+        })
         await asyncio.to_thread(_update_db_sync, origem, item_id, {
             "status": "concluida",
-            "disparo_id": str(_uuid.uuid4())
+            "disparo_id": disparo_id_vazio
         })
         return
 
@@ -302,10 +320,24 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                         await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
                         return
 
-        # Finalizar disparo com sucesso
+        # S24-01: Criar registro em disparos antes de atualizar eventos_pontuais (resolve FK constraint)
+        disparo_id = await asyncio.to_thread(_criar_disparo_sync, {
+            "tipo": origem,
+            "evento_id": item_id if origem == "eventos_pontuais" else None,
+            "campanha_mensal_id": item_id if origem == "campanhas_mensais" else None,
+            "instancia_uazapi": instance_name,
+            "mensagem_template": template_texto,
+            "midia_url": midia_url,
+            "total_destinatarios": total,
+            "total_enviados": sucessos,
+            "total_erros": erros,
+            "status": "concluida",
+            "iniciado_em": datetime.now(timezone.utc).isoformat(),
+            "concluido_em": datetime.now(timezone.utc).isoformat(),
+        })
         await asyncio.to_thread(_update_db_sync, origem, item_id, {
             "status": "concluida",
-            "disparo_id": str(_uuid.uuid4())
+            "disparo_id": disparo_id
         })
         logger.info(f"Disparo {item_id} concluído. Sucessos: {sucessos} | Erros: {erros}")
 
