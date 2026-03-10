@@ -258,19 +258,31 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
 
                 try:
                     if midia_url:
-                        # Usa /message/sendMedia/{instance} — único endpoint UAZAPI que suporta caption
-                        resp = await client.post(
-                            f"{UAZAPI_URL}/message/sendMedia/{instance_name}",
-                            headers={"apikey": inst_token, "Content-Type": "application/json"},
+                        # 1) Envia o flyer
+                        resp_img = await client.post(
+                            f"{UAZAPI_URL}/send/media",
+                            headers={"token": inst_token, "Content-Type": "application/json"},
                             json={
                                 "number": numero,
-                                "mediaMessage": {
-                                    "mediatype": "image",
-                                    "caption": texto,
-                                    "media": midia_url,
-                                }
+                                "type": "image",
+                                "file": midia_url,
+                                "delay": 1200
                             }
                         )
+                        # 2) Envia o texto completo logo após
+                        await asyncio.sleep(1.5)
+                        resp = await client.post(
+                            f"{UAZAPI_URL}/send/text",
+                            headers={"token": inst_token, "Content-Type": "application/json"},
+                            json={
+                                "number": numero,
+                                "text": texto,
+                                "delay": 1200
+                            }
+                        )
+                        # Sucesso se pelo menos o texto foi enviado
+                        if resp_img.status_code != 200:
+                            logger.warning(f"Flyer HTTP {resp_img.status_code} para {lead['telefone']}")
                     else:
                         resp = await client.post(
                             f"{UAZAPI_URL}/send/text",
