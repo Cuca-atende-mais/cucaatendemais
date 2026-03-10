@@ -18,12 +18,10 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { unidadesCuca } from "@/lib/constants"
 import toast from "react-hot-toast"
-import { Calendar, MapPin, Sparkles, Upload, X, Users, Globe, Wifi } from "lucide-react"
+import { Calendar, MapPin, Sparkles, Upload, X, Users } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useUser } from "@/lib/auth/user-provider"
-
-type InstanciaOpcao = { id: string; nome: string; canal_tipo: string; unidade_cuca: string | null }
 
 interface UnifiedProgramModalProps {
     open: boolean
@@ -52,17 +50,13 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     const [mes, setMes] = useState(1)
     const [ano, setAno] = useState(2026)
 
-    // S13-06: Expansiva (via Divulgação Global)
-    const [expansiva, setExpansiva] = useState(false)
+    // Toda a Rede CUCA (sem filtro de unidade no disparo)
+    const [todaRede, setTodaRede] = useState(false)
 
-    // S13-11: Público-alvo por categorias de interesse
+    // Público-alvo por categorias de interesse
     const [categorias, setCategorias] = useState<{ id: string; nome: string; pai_id: string | null }[]>([])
     const [categoriasAlvo, setCategoriasAlvo] = useState<string[]>([])
     const [alcanceEstimado, setAlcanceEstimado] = useState<number | null>(null)
-
-    // S14-03: Instância específica para roteamento
-    const [instancias, setInstancias] = useState<InstanciaOpcao[]>([])
-    const [instanciaId, setInstanciaId] = useState<string>("auto")
 
     const supabase = createClient()
 
@@ -77,9 +71,6 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
         if (open) {
             supabase.from("categorias_interesse").select("id, nome, pai_id").eq("ativo", true).order("ordem")
                 .then(({ data }) => setCategorias(data ?? []))
-            supabase.from("instancias_uazapi").select("id, nome, canal_tipo, unidade_cuca")
-                .eq("ativa", true).eq("reserva", false).order("canal_tipo").order("nome")
-                .then(({ data }) => setInstancias(data ?? []))
         }
     }, [open])
 
@@ -102,7 +93,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
     }
 
     const handleSave = async () => {
-        if (!titulo || (isPontual && (!unidade || !dataInicio || !dataFim))) {
+        if (!titulo || (isPontual && (!dataInicio || !dataFim || (!todaRede && !unidade)))) {
             toast.error("Preencha os campos obrigatórios")
             return
         }
@@ -146,19 +137,20 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                 }
 
                 // Salvar em eventos_pontuais -> Status: aguardando_aprovacao
+                // unidade_cuca null = toda a rede CUCA (worker não filtra por unidade)
                 const { error } = await supabase.from("eventos_pontuais").insert({
                     titulo,
                     descricao,
-                    unidade_cuca: unidade,
-                    data_evento: dataInicio,  // Mapeamento extra para cobrir a coluna non-nullable
+                    unidade_cuca: todaRede ? null : unidade,
+                    data_evento: dataInicio,
                     data_inicio: dataInicio,
                     data_fim: dataFim,
                     local,
                     flyer_url: flyerUrl,
                     status: "aguardando_aprovacao",
-                    expansiva,
+                    expansiva: todaRede,
                     categorias_alvo: categoriasAlvo.length > 0 ? categoriasAlvo : [],
-                    instancia_id: instanciaId && instanciaId !== "auto" ? instanciaId : null,
+                    instancia_id: null,
                 })
                 if (error) throw error
                 toast.success("Evento enviado para aprovação!")
@@ -205,8 +197,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
         setFlyerPreview(null)
         setCategoriasAlvo([])
         setAlcanceEstimado(null)
-        setExpansiva(false)
-        setInstanciaId("auto")
+        setTodaRede(false)
     }
 
     return (
@@ -274,24 +265,26 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                                     <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
                                 </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className={`grid gap-4 ${todaRede ? "grid-cols-1" : "grid-cols-2"}`}>
                                 <div className="grid gap-2">
                                     <Label className="flex items-center gap-2"><MapPin className="h-3 w-3" /> Local</Label>
                                     <Input placeholder="Local do evento" value={local} onChange={(e) => setLocal(e.target.value)} />
                                 </div>
-                                <div className="grid gap-2">
-                                    <Label className="flex items-center gap-2"><MapPin className="h-3 w-3" /> Unidade</Label>
-                                    <Select value={unidade} onValueChange={setUnidade}>
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Selecione..." />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {unidadesCuca.map(u => (
-                                                <SelectItem key={u} value={u}>{u}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
+                                {!todaRede && (
+                                    <div className="grid gap-2">
+                                        <Label className="flex items-center gap-2"><MapPin className="h-3 w-3" /> Unidade</Label>
+                                        <Select value={unidade} onValueChange={setUnidade}>
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Selecione..." />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {unidadesCuca.map(u => (
+                                                    <SelectItem key={u} value={u}>{u}</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ) : (
@@ -318,49 +311,23 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess }: UnifiedPr
                         </div>
                     )}
 
-                    {/* S13-06: Toggle Expansiva / Via Divulgação Global (Apenas Pontual) */}
+                    {/* Alcance do disparo: unidade específica ou toda a Rede CUCA */}
                     {isPontual && (
                         <div
-                            className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${expansiva ? "bg-cuca-yellow/10 border-cuca-yellow/40" : "bg-muted/30 border-muted-foreground/10"}`}
-                            onClick={() => setExpansiva(v => !v)}
+                            className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-colors ${todaRede ? "bg-cuca-yellow/10 border-cuca-yellow/40" : "bg-muted/30 border-muted-foreground/10"}`}
+                            onClick={() => setTodaRede(v => !v)}
                         >
                             <div className="space-y-0.5">
-                                <Label className="text-sm font-bold flex items-center gap-2 cursor-pointer">
-                                    <Globe className="h-4 w-4" /> Evento Expansivo
+                                <Label className="text-sm font-bold cursor-pointer">
+                                    Toda a Rede CUCA
                                 </Label>
                                 <p className="text-xs text-muted-foreground">
-                                    {expansiva
-                                        ? "Disparo via instância Divulgação Global — atinge todas as unidades."
-                                        : "Disparo via canal institucional da unidade selecionada (padrão)."}
+                                    {todaRede
+                                        ? "Disparo para todos os leads da rede (sem filtro de unidade)."
+                                        : "Disparo apenas para leads da unidade selecionada."}
                                 </p>
                             </div>
-                            <Switch checked={expansiva} onCheckedChange={setExpansiva} onClick={e => e.stopPropagation()} />
-                        </div>
-                    )}
-
-                    {/* S14-03: Instância específica de disparo (Apenas Pontual) */}
-                    {isPontual && (
-                        <div className="grid gap-2">
-                            <Label className="flex items-center gap-2">
-                                <Wifi className="h-3.5 w-3.5" /> Canal de Disparo
-                            </Label>
-                            <Select value={instanciaId} onValueChange={setInstanciaId}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Automático (padrão da unidade)" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="auto">Automático (padrão da unidade)</SelectItem>
-                                    {instancias
-                                        .filter(i => !unidade || i.unidade_cuca === unidade || i.canal_tipo === "Divulgação")
-                                        .map(i => (
-                                            <SelectItem key={i.id} value={i.id}>
-                                                {`${i.nome} (${i.canal_tipo})`}
-                                            </SelectItem>
-                                        ))
-                                    }
-                                </SelectContent>
-                            </Select>
-                            <p className="text-[10px] text-muted-foreground">Deixe em Automático para usar a instância institucional da unidade.</p>
+                            <Switch checked={todaRede} onCheckedChange={setTodaRede} onClick={e => e.stopPropagation()} />
                         </div>
                     )}
 

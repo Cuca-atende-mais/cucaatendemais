@@ -215,8 +215,9 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
 
     if total == 0:
         logger.info(f"Item {item_id}: Sem leads para disparar. Marcando como concluída.")
+        tipo_disparo_vazio = "pontual" if origem == "eventos_pontuais" else "mensal"
         disparo_id_vazio = await asyncio.to_thread(_criar_disparo_sync, {
-            "tipo": origem,
+            "tipo": tipo_disparo_vazio,
             "evento_id": item_id if origem == "eventos_pontuais" else None,
             "campanha_mensal_id": item_id if origem == "campanhas_mensais" else None,
             "instancia_uazapi": instance_name,
@@ -321,8 +322,10 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                         return
 
         # S24-01: Criar registro em disparos antes de atualizar eventos_pontuais (resolve FK constraint)
+        # Mapear origem para os valores aceitos pelo check constraint: 'pontual' | 'mensal'
+        tipo_disparo = "pontual" if origem == "eventos_pontuais" else "mensal"
         disparo_id = await asyncio.to_thread(_criar_disparo_sync, {
-            "tipo": origem,
+            "tipo": tipo_disparo,
             "evento_id": item_id if origem == "eventos_pontuais" else None,
             "campanha_mensal_id": item_id if origem == "campanhas_mensais" else None,
             "instancia_uazapi": instance_name,
