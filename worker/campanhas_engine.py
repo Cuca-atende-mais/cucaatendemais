@@ -258,15 +258,17 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
 
                 try:
                     if midia_url:
+                        # Usa /message/sendMedia/{instance} — único endpoint UAZAPI que suporta caption
                         resp = await client.post(
-                            f"{UAZAPI_URL}/send/media",
-                            headers={"token": inst_token, "Content-Type": "application/json"},
+                            f"{UAZAPI_URL}/message/sendMedia/{instance_name}",
+                            headers={"apikey": inst_token, "Content-Type": "application/json"},
                             json={
                                 "number": numero,
-                                "type": "image",
-                                "file": midia_url,
-                                "caption": texto,
-                                "delay": 1200
+                                "mediaMessage": {
+                                    "mediatype": "image",
+                                    "caption": texto,
+                                    "media": midia_url,
+                                }
                             }
                         )
                     else:
