@@ -4,6 +4,7 @@ import time
 import random
 import asyncio
 import logging
+import uuid as _uuid
 from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
 import httpx
@@ -212,7 +213,7 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
         logger.info(f"Item {item_id}: Sem leads para disparar. Marcando como concluída.")
         await asyncio.to_thread(_update_db_sync, origem, item_id, {
             "status": "concluida",
-            "disparo_id": f"DISP-{int(time.time())}"
+            "disparo_id": str(_uuid.uuid4())
         })
         return
 
@@ -304,7 +305,7 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
         # Finalizar disparo com sucesso
         await asyncio.to_thread(_update_db_sync, origem, item_id, {
             "status": "concluida",
-            "disparo_id": f"DISP-{int(time.time())}"
+            "disparo_id": str(_uuid.uuid4())
         })
         logger.info(f"Disparo {item_id} concluído. Sucessos: {sucessos} | Erros: {erros}")
 
