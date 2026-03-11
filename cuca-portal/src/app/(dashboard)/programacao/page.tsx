@@ -108,8 +108,9 @@ export default function ProgramacaoPage() {
             let mQuery = supabase.from("campanhas_mensais").select("*").order("created_at", { ascending: false })
 
             if (unidadeFilter && unidadeFilter !== "all") {
-                // S27-01: incluir também eventos expansivos (toda a rede) na visão do gerente
-                pQuery = pQuery.or(`unidade_cuca.eq.${unidadeFilter},expansiva.eq.true`)
+                // S27-01: incluir eventos expansivos (toda a rede) na visão do gerente
+                // Aspas duplas necessárias para valores com espaço no filtro PostgREST
+                pQuery = pQuery.or(`unidade_cuca.eq."${unidadeFilter}",expansiva.eq.true`)
                 mQuery = mQuery.eq("unidade_cuca", unidadeFilter)
             }
 
