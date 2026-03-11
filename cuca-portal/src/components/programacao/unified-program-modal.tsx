@@ -36,6 +36,11 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
     const [loading, setLoading] = useState(false)
     const [isPontual, setIsPontual] = useState(true)
 
+    // Permissões calculadas em tempo real (hasPermission lê profile reativamente)
+    const canPontual = hasPermission("programacao_pontual", "create")
+    const canMensal = hasPermission("programacao_mensal", "create")
+    const canBoth = canPontual && canMensal
+
     // Form states
     const [titulo, setTitulo] = useState("")
     const [descricao, setDescricao] = useState("")
@@ -69,6 +74,14 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
         setMes(now.getMonth() + 1)
         setAno(now.getFullYear())
     }, [])
+
+    // Quando profile carrega, define o modo padrão baseado nas permissões reais
+    useEffect(() => {
+        if (!profile?.id) return
+        if (!editEvento) {
+            setIsPontual(canPontual)
+        }
+    }, [profile?.id])
 
     useEffect(() => {
         if (open) {
@@ -261,7 +274,8 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
 
                 <div className="flex-1 overflow-y-auto px-6 py-4">
                 <div className="grid gap-6">
-                    {/* Toggle Selector */}
+                    {/* Toggle Selector — visível apenas se tiver permissão para os dois tipos */}
+                    {canBoth && (
                     <div className="flex items-center justify-between p-3 bg-muted/40 rounded-xl border border-muted-foreground/10">
                         <div className="space-y-0.5">
                             <Label className="text-sm font-bold">Categoria</Label>
@@ -275,6 +289,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
                             <span className={isPontual ? "text-xs font-bold text-cuca-yellow" : "text-xs text-muted-foreground"}>Pontual</span>
                         </div>
                     </div>
+                    )}
 
                     <div className="grid gap-2">
                         <Label htmlFor="titulo">Título do Evento / Campanha</Label>
