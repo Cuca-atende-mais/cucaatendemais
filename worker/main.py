@@ -467,6 +467,7 @@ async def process_webhook_payload(payload: dict, token: str):
                         
                         if resp.status_code == 200:
                             data = resp.json()
+                            logger.info(f"[motor-agente] resposta: success={data.get('success')} | keys={list(data.keys())} | erro={data.get('error','')[:120] if not data.get('success') else ''}")
                             if data.get("success") and "resposta" in data:
                                 resposta_ia = data["resposta"]
                                 import re
