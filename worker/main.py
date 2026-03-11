@@ -395,15 +395,30 @@ async def process_webhook_payload(payload: dict, token: str):
             if conversation_status == "ativa" and inst_result.data:
                  supabase.table("conversas").update({"agente_tipo": agente_tipo}).eq("id", conversation_id).execute()
 
-            # --- S9-08: STOP Automático (qualquer pessoa que pedir saída) ---
+            # --- S9-08: STOP Automático — apenas intenções explícitas e inequívocas de remoção ---
+            # Despedidas educadas ("obrigado", "até logo", "valeu") NÃO são opt-out
             PALAVRAS_STOP_HANDLER = {
-                "stop", "parar", "sair", "cancelar", "nao quero", "não quero",
-                "remover", "descadastrar", "chega", "pare", "encerrar", "encerra",
-                "sair da lista", "tirar da lista", "me remova"
+                "stop", "parar de receber", "cancelar mensagens", "cancelar cadastro",
+                "nao quero mais receber", "não quero mais receber",
+                "remover da lista", "me remova da lista", "remova meu numero",
+                "descadastrar", "descadastre meu numero", "sair da lista",
+                "tirar da lista", "me tire da lista", "não quero mais mensagens",
+                "nao quero mais mensagens", "para de me mandar mensagem",
+                "pare de me mandar mensagem"
             }
             if not from_me:
                 texto_stop = text_content.lower().strip() if isinstance(text_content, str) else ""
-                if any(p in texto_stop for p in PALAVRAS_STOP_HANDLER):
+                # Verificar opt-out: apenas frases que indicam remoção explícita da lista
+                is_stop = any(p in texto_stop for p in PALAVRAS_STOP_HANDLER)
+
+                # Reativar lead que havia feito opt-out e agora retorna (qualquer mensagem que não seja novo opt-out)
+                lead_result = supabase.table("leads").select("opt_in").eq("id", lead_id).single().execute()
+                lead_opt_in = lead_result.data.get("opt_in", True) if lead_result.data else True
+                if not lead_opt_in and not is_stop:
+                    supabase.table("leads").update({"opt_in": True}).eq("id", lead_id).execute()
+                    logger.info(f"[RETORNO] Lead {lead_id} ({phone}) reativado automaticamente.")
+
+                if is_stop:
                     try:
                         supabase.table("leads").update({"opt_in": False}).eq("id", lead_id).execute()
                         logger.info(f"[STOP] Lead {lead_id} ({phone}) removido da lista.")
@@ -414,17 +429,17 @@ async def process_webhook_payload(payload: dict, token: str):
                         import httpx
                         async with httpx.AsyncClient() as client:
                             await client.post(
-                                f"{UAZAPI_URL}/send/text",
-                                headers={"token": inst_token, "Content-Type": "application/json"},
+                                f"{UAZAPI_URL}/message/sendText/{instance_name}",
+                                headers={"apikey": inst_token, "Content-Type": "application/json"},
                                 json={
                                     "number": phone,
                                     "delay": 1200,
-                                    "text": "✅ Pronto! Você foi removido da nossa lista de mensagens. Sentiremos sua falta! Se mudar de ideia, é só mandar um 'Oi'."
+                                    "text": "✅ Pronto! Você foi removido da nossa lista de mensagens. Sentiremos sua falta! Se mudar de ideia, é só nos mandar uma mensagem."
                                 }
                             )
                     except Exception as stop_err:
                         logger.error(f"[STOP] Erro ao processar opt_out: {stop_err}")
-                    return  # Não processa IA após STOP
+                    return  # Não processa IA após STOP explícito
 
             # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa'
             if not from_me and conversation_status in ("ativa", "encerrada"):
