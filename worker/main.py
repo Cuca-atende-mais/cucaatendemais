@@ -386,10 +386,10 @@ async def process_webhook_payload(payload: dict, token: str):
                     logger.warning(f"[AUDIO] Sem mediaKey ou URL inválida — áudio ignorado")
             
             # Normalizar agente_tipo pelo canal antes de usar em qualquer lugar
+            # Divulgação usa persona global; Institucional usa o valor do banco diretamente
             if canal_tipo == "Divulgação":
                 agente_tipo = "maria_divulgacao"
-            elif canal_tipo == "Institucional":
-                agente_tipo = "maria_institucional"
+                unidade_cuca = None
 
             # Atualiza o agente_tipo da conversa com valor já normalizado
             if conversation_status == "ativa" and inst_result.data:
@@ -458,10 +458,6 @@ async def process_webhook_payload(payload: dict, token: str):
                         }
                         # S5-02 + S9-13: Dados da instância já obtidos acima
                         
-                        # S9-13: Canal Divulgação — sem filtro de unidade no disparo
-                        if canal_tipo == "Divulgação":
-                            unidade_cuca = None
-
                         from datetime import datetime, timezone, timedelta
                         _tz_fortaleza = timezone(timedelta(hours=-3))
                         _agora = datetime.now(_tz_fortaleza)
