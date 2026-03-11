@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Settings2, Save, Loader2, Info, CheckCircle2, AlertTriangle, ArrowLeft } from "lucide-react"
+import { Settings2, Save, Loader2, Info, CheckCircle2, AlertTriangle, ArrowLeft, KeyRound, Eye, EyeOff } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -21,6 +21,9 @@ export default function DevConfigPage() {
     const [configs, setConfigs] = useState<SystemConfig[]>([])
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
+    const [openaiKey, setOpenaiKey] = useState("")
+    const [showKey, setShowKey] = useState(false)
+    const [savingKey, setSavingKey] = useState(false)
 
     useEffect(() => {
         fetchConfigs()
@@ -50,6 +53,29 @@ export default function DevConfigPage() {
             toast.success(`Configuração ${config.chave} atualizada`)
         }
         setSaving(false)
+    }
+
+    const handleUpdateVaultKey = async () => {
+        if (!openaiKey.trim()) {
+            toast.error("Cole a nova chave antes de salvar")
+            return
+        }
+        setSavingKey(true)
+        try {
+            const res = await fetch("/api/developer/update-vault-secret", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ secret_name: "openai_api_key", secret_value: openaiKey.trim() }),
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro desconhecido")
+            toast.success("Chave OpenAI atualizada no Vault com sucesso")
+            setOpenaiKey("")
+        } catch (err: any) {
+            toast.error(`Erro ao atualizar: ${err.message}`)
+        } finally {
+            setSavingKey(false)
+        }
     }
 
     const handleSaveAll = async () => {
@@ -121,6 +147,53 @@ export default function DevConfigPage() {
                                 </div>
                             </div>
                         ))}
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base font-semibold flex items-center gap-2">
+                            <KeyRound className="h-4 w-4 text-amber-500" /> Credenciais do Sistema
+                        </CardTitle>
+                        <CardDescription>
+                            Atualize chaves de API armazenadas de forma segura no Vault do Supabase. O valor atual não é exibido por segurança.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="flex flex-col md:flex-row md:items-end gap-4 p-4 rounded-lg border bg-slate-50/50">
+                            <div className="flex-1 space-y-1">
+                                <Label className="text-sm font-bold uppercase tracking-wider text-slate-700">OpenAI API Key</Label>
+                                <p className="text-xs text-muted-foreground">Usada pelo motor-agente para embeddings (RAG) e respostas GPT-4o. Cole a nova chave apenas quando a atual expirar.</p>
+                                <code className="bg-slate-200 px-1.5 py-0.5 rounded text-[10px] text-slate-600">Vault: openai_api_key</code>
+                            </div>
+                            <div className="flex flex-col md:items-end gap-2 w-full md:w-1/2">
+                                <div className="relative w-full">
+                                    <Input
+                                        type={showKey ? "text" : "password"}
+                                        placeholder="sk-proj-..."
+                                        value={openaiKey}
+                                        onChange={(e) => setOpenaiKey(e.target.value)}
+                                        className="font-mono bg-white pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowKey(v => !v)}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                    >
+                                        {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </button>
+                                </div>
+                                <Button
+                                    onClick={handleUpdateVaultKey}
+                                    disabled={savingKey || !openaiKey.trim()}
+                                    className="w-full md:w-auto bg-amber-500 hover:bg-amber-600 text-white"
+                                    size="sm"
+                                >
+                                    {savingKey ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <KeyRound className="h-4 w-4 mr-2" />}
+                                    Atualizar Chave no Vault
+                                </Button>
+                            </div>
+                        </div>
                     </CardContent>
                 </Card>
 

@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 6.9 | **Atualizado**: 11/03/2026
-> **STATUS ATUAL**: Sprints 1–22 + 24–27 Concluídos | Sprint 23 planejado (pendente)
+> **Versão**: 7.0 | **Atualizado**: 11/03/2026
+> **STATUS ATUAL**: Sprints 1–22 + 24–28 Concluídos | Sprint 23 planejado (pendente)
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -985,6 +985,29 @@ Jovem responde → motor-agente lê breadcrumb → contexto correto mesmo sem pa
 | S25-03 | Botão "Editar" + modo edição no unified-program-modal (UPDATE ao invés de INSERT) | Portal | [x] |
 | S25-04 | fetchData confirmado com select("*") — inclui hora_inicio, hora_fim, data_fim, local | Portal | [x] |
 | S26-also | Migration: ALTER TABLE eventos_pontuais ALTER COLUMN unidade_cuca DROP NOT NULL (suporte "Toda a Rede") | Banco | [x] |
+
+---
+
+#### Sprint 28 — Bugs E2E Pós-S27 + Painel de Credenciais no Developer Console ✅ CONCLUÍDO (11/03/2026)
+
+> **Objetivo**: Corrigir bugs críticos identificados em teste E2E pós-Sprint 27: RAG silencioso (motor-agente não respondia no canal Institucional), modal de programação travando para gerentes, STOP semântico muito abrangente capturando despedidas educadas como opt-out permanente, e chave OpenAI expirada no Vault. Adicionar mecanismo de atualização de credenciais diretamente pelo Developer Console (sem necessidade de acesso ao banco via SQL).
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S28-01 | Worker: normalizar `agente_tipo` antes do UPDATE da conversa — evita gravar valor errado no banco | Worker | [x] |
+| S28-02 | Worker: adicionar log de diagnóstico do motor-agente após cada resposta (`success`, `keys`, `erro`) | Worker | [x] |
+| S28-03 | Worker: adicionar `else` branch com `logger.error` quando motor-agente retorna `success=False` — elimina falha silenciosa | Worker | [x] |
+| S28-04 | Worker: STOP semântico refinado — lista explícita de frases de opt-out permanente (despedidas educadas não ativam mais) | Worker | [x] |
+| S28-05 | Worker: reativação automática de lead com `opt_in=false` que retorna com mensagem não-STOP | Worker | [x] |
+| S28-06 | Worker: endpoint UAZAPI para resposta de texto padronizado para `/message/sendText/{instance}` com header `apikey` | Worker | [x] |
+| S28-07 | Portal: `programacao/page.tsx` — usar `profile?.id` (estável) em vez do objeto `profile` na dependency array do `useEffect` — elimina re-render infinito para gerentes | Portal | [x] |
+| S28-08 | Portal: `unified-program-modal.tsx` — `isPontual` definido via `useEffect` com `profile?.id` como dependência (não mais com deps `[]` que executava antes do perfil carregar) | Portal | [x] |
+| S28-09 | Portal: modal de programação auto-preenche campo `unidade` com `profile?.unidade_cuca` ao abrir (elimina confusão para gerentes) | Portal | [x] |
+| S28-10 | Vault: chave `openai_api_key` atualizada com nova chave válida via `vault.update_secret` | Banco | [x] |
+| S28-11 | Migration SQL: função `update_vault_secret(p_name, p_value)` SECURITY DEFINER — permite que API route server-side atualize o Vault sem expor service_role ao browser | Banco | [x] |
+| S28-12 | Portal: API route `POST /api/developer/update-vault-secret` — intermediário server-side com service_role que chama a função SQL acima | Portal API | [x] |
+| S28-13 | Portal: seção "Credenciais do Sistema" em `/developer/configuracoes` — campo senha + toggle show/hide + botão Atualizar Chave → feedback toast | Portal | [x] |
+| S28-14 | PLANO_DESENVOLVIMENTO.md: documentar Sprint 28 | Docs | [x] |
 
 ---
 
