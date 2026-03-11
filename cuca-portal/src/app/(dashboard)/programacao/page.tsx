@@ -98,7 +98,7 @@ export default function ProgramacaoPage() {
         }
         if (profile) run()
         return () => { cancelled = true }
-    }, [unidadeFilter, searchTerm, profile])
+    }, [unidadeFilter, searchTerm, profile?.id])
 
     const fetchData = async (cancelled = false) => {
         setLoading(true)

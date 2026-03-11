@@ -32,7 +32,7 @@ interface UnifiedProgramModalProps {
 }
 
 export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento }: UnifiedProgramModalProps) {
-    const { hasPermission } = useUser()
+    const { hasPermission, profile } = useUser()
     const [loading, setLoading] = useState(false)
     const [isPontual, setIsPontual] = useState(true)
 
@@ -68,7 +68,6 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
         const now = new Date()
         setMes(now.getMonth() + 1)
         setAno(now.getFullYear())
-        setIsPontual(hasPermission("programacao_pontual", "create"))
     }, [])
 
     useEffect(() => {
@@ -96,6 +95,10 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
             setCategoriasAlvo(editEvento.categorias_alvo || [])
         } else if (open && !editEvento) {
             resetForm()
+            // Pré-preenche unidade para gerentes (quem tem unidade definida no perfil)
+            if (profile?.unidade_cuca) {
+                setUnidade(profile.unidade_cuca)
+            }
         }
     }, [open, editEvento])
 
