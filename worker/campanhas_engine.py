@@ -174,9 +174,17 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
         hora_fim = item.get("hora_fim") or ""
         local_evento = item.get("local") or unidade or ""
 
-        data_str = data_inicio
+        def fmt_data_br(iso: str) -> str:
+            """Converte YYYY-MM-DD para DD/MM/YYYY."""
+            try:
+                y, m, d = iso.split("-")
+                return f"{d}/{m}/{y}"
+            except Exception:
+                return iso
+
+        data_str = fmt_data_br(data_inicio)
         if data_fim and data_fim != data_inicio:
-            data_str += f" até {data_fim}"
+            data_str += f" até {fmt_data_br(data_fim)}"
 
         linhas_extra = []
         if data_str:
