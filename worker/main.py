@@ -385,7 +385,13 @@ async def process_webhook_payload(payload: dict, token: str):
                 else:
                     logger.warning(f"[AUDIO] Sem mediaKey ou URL inválida — áudio ignorado")
             
-            # Atualiza o agente_tipo da conversa se for a primeira mensagem e temos dados
+            # Normalizar agente_tipo pelo canal antes de usar em qualquer lugar
+            if canal_tipo == "Divulgação":
+                agente_tipo = "maria_divulgacao"
+            elif canal_tipo == "Institucional":
+                agente_tipo = "maria_institucional"
+
+            # Atualiza o agente_tipo da conversa com valor já normalizado
             if conversation_status == "ativa" and inst_result.data:
                  supabase.table("conversas").update({"agente_tipo": agente_tipo}).eq("id", conversation_id).execute()
 
@@ -437,12 +443,9 @@ async def process_webhook_payload(payload: dict, token: str):
                         }
                         # S5-02 + S9-13: Dados da instância já obtidos acima
                         
-                        # S9-13: Canal Divulgação — persona Maria Geral, RAG global, 3 regras
+                        # S9-13: Canal Divulgação — sem filtro de unidade no disparo
                         if canal_tipo == "Divulgação":
-                            agente_tipo = "maria_divulgacao"  # sinaliza para motor-agente usar RAG rede_cuca_global
-                            unidade_cuca = None               # sem filtro de unidade
-                        elif canal_tipo == "Institucional":
-                            agente_tipo = "maria_institucional"  # sinaliza para motor-agente usar RAG da unidade
+                            unidade_cuca = None
 
                         from datetime import datetime, timezone, timedelta
                         _tz_fortaleza = timezone(timedelta(hours=-3))
