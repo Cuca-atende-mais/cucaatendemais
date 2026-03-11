@@ -90,11 +90,17 @@ export default function ProgramacaoPage() {
         }
     }, [profile, canSeeAllUnits])
 
+    // S27-07: cleanup para cancelar fetchData em andamento ao sair da página
     useEffect(() => {
-        if (profile) fetchData()
-    }, [unidadeFilter, searchTerm, profile]) // Added searchTerm to dependencies for live filtering
+        let cancelled = false
+        const run = async () => {
+            await fetchData(cancelled)
+        }
+        if (profile) run()
+        return () => { cancelled = true }
+    }, [unidadeFilter, searchTerm, profile])
 
-    const fetchData = async () => {
+    const fetchData = async (cancelled = false) => {
         setLoading(true)
         try {
             // S14-02: Filtros aplicados diretamente na query (server-side)
@@ -102,7 +108,8 @@ export default function ProgramacaoPage() {
             let mQuery = supabase.from("campanhas_mensais").select("*").order("created_at", { ascending: false })
 
             if (unidadeFilter && unidadeFilter !== "all") {
-                pQuery = pQuery.eq("unidade_cuca", unidadeFilter)
+                // S27-01: incluir também eventos expansivos (toda a rede) na visão do gerente
+                pQuery = pQuery.or(`unidade_cuca.eq.${unidadeFilter},expansiva.eq.true`)
                 mQuery = mQuery.eq("unidade_cuca", unidadeFilter)
             }
 
@@ -113,13 +120,14 @@ export default function ProgramacaoPage() {
 
             const [{ data: pData, error: pError }, { data: mData, error: mError }] = await Promise.all([pQuery, mQuery])
 
+            if (cancelled) return
             if (pError) console.error("Erro eventos pontuais:", pError)
             if (mError) console.error("Erro campanhas mensais:", mError)
 
             setPontuais(pData || [])
             setMensais(mData || [])
         } finally {
-            setLoading(false)
+            if (!cancelled) setLoading(false)
         }
     }
 
@@ -367,7 +375,13 @@ export default function ProgramacaoPage() {
                                                     )}
                                                 </div>
                                             </TableCell>
-                                            <TableCell><Badge variant="outline">{p.unidade_cuca}</Badge></TableCell>
+                                            {/* S27-02: badge visual mostra escopo do evento */}
+                                            <TableCell>
+                                                {p.expansiva
+                                                    ? <Badge className="bg-cuca-blue/15 text-cuca-blue border-cuca-blue/30">Rede Toda</Badge>
+                                                    : <Badge variant="outline">{p.unidade_cuca}</Badge>
+                                                }
+                                            </TableCell>
                                             <TableCell>
                                                 {(() => { const [y,m,d] = p.data_inicio.split("-"); return `${d}/${m}/${y}` })()}
                                                 {p.data_fim && (() => { const [y,m,d] = p.data_fim!.split("-"); return ` — ${d}/${m}/${y}` })()}

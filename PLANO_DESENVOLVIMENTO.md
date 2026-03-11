@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 6.8 | **Atualizado**: 10/03/2026
-> **STATUS ATUAL**: Sprints 1–22 + 24 + 25 + 26 Concluídos | Sprint 23 planejado (pendente)
+> **Versão**: 6.9 | **Atualizado**: 11/03/2026
+> **STATUS ATUAL**: Sprints 1–22 + 24–27 Concluídos | Sprint 23 planejado (pendente)
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -985,6 +985,23 @@ Jovem responde → motor-agente lê breadcrumb → contexto correto mesmo sem pa
 | S25-03 | Botão "Editar" + modo edição no unified-program-modal (UPDATE ao invés de INSERT) | Portal | [x] |
 | S25-04 | fetchData confirmado com select("*") — inclui hora_inicio, hora_fim, data_fim, local | Portal | [x] |
 | S26-also | Migration: ALTER TABLE eventos_pontuais ALTER COLUMN unidade_cuca DROP NOT NULL (suporte "Toda a Rede") | Banco | [x] |
+
+---
+
+#### Sprint 27 — Programação Pontual Expansiva + RBAC Flexível + Fix Telefone Instâncias ✅ CONCLUÍDO (11/03/2026)
+
+> **Objetivo**: Corrigir visibilidade de eventos pontuais "Rede Toda" para gerentes de unidade (eventos com `unidade_cuca=null` sumiam da tela), garantir que qualquer gerente possa criar/autorizar/disparar programações pontuais expansivas, corrigir o campo telefone que não era salvo nas instâncias (bug no payload do gerente e validação ausente no Developer), padronizar o reconhecimento de Developer para ser baseado exclusivamente no email, proteger o menu Developer Cuca de aparecer para Super Admin, e eliminar race condition no carregamento da página de Programação.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S27-01 | Programação Pontual: query inclui eventos `expansiva=true` mesmo quando gerente filtra por sua unidade | Portal | [x] |
+| S27-02 | Badge visual na listagem: "Rede Toda" para expansivos, nome da unidade para específicos | Portal | [x] |
+| S27-03 | Fix `isDeveloper` em `user-provider.tsx`: baseado exclusivamente no email, não no nome do role | Portal | [x] |
+| S27-04 | Menu lateral "Developer Cuca": visível apenas para os 2 emails Developer, invisível para Super Admin | Portal | [x] |
+| S27-05 | Fix campo `telefone` em `/configuracoes/whatsapp`: incluir no payload de UPDATE (campo estava ausente) | Portal | [x] |
+| S27-06 | Validação obrigatória de telefone antes de salvar instância e antes de iniciar conexão QR (Developer + Gerente) | Portal | [x] |
+| S27-07 | Fix race condition `fetchData` em `/programacao`: cleanup de useEffect para cancelar buscas em andamento ao sair da página | Portal | [x] |
+| S27-08 | PLANO_DESENVOLVIMENTO.md: documentar Sprint 27 | Docs | [x] |
 
 ---
 

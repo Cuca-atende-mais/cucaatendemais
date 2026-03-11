@@ -210,6 +210,11 @@ export default function WhatsAppUnidadePage() {
             toast.error("Nome e Tipo de Canal são obrigatórios.")
             return
         }
+        // S27-06: telefone obrigatório ao salvar instância
+        if (!iTelefone.trim()) {
+            toast.error("Telefone é obrigatório. Informe o número com DDI (ex: 558599999888).")
+            return
+        }
 
         setSavingInst(true)
         try {
@@ -220,6 +225,7 @@ export default function WhatsAppUnidadePage() {
                     canal_tipo: iCanalTipo,
                     unidade_cuca: profile?.isSuperAdmin ? (iUnidade || null) : profile?.unidade_cuca,
                     agente_tipo: iCanalTipo,
+                    telefone: iTelefone.trim() || null, // S27-05: incluir telefone no payload de update
                     reserva: iReserva,
                     observacoes: iObs.trim() || null,
                     updated_at: new Date().toISOString(),

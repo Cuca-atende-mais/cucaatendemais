@@ -175,6 +175,11 @@ export default function InstanciasPage() {
             toast.error("Nome e Tipo de Canal são obrigatórios.")
             return
         }
+        // S27-06: telefone obrigatório ao salvar instância
+        if (!iTelefone.trim()) {
+            toast.error("Telefone é obrigatório. Informe o número com DDI (ex: 558599999888).")
+            return
+        }
         setSavingInst(true)
         try {
             // S26-04: Garantir sessão válida antes de salvar (evita falha silenciosa por JWT expirado)

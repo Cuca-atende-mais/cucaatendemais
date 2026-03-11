@@ -118,8 +118,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         }
     }
 
-    const isDeveloper = profile?.funcao?.nome === 'Developer' &&
-        DEVELOPER_EMAILS.includes(profile?.email || '')
+    // S27-03: isDeveloper baseado exclusivamente no email (não no nome do role)
+    const isDeveloper = DEVELOPER_EMAILS.includes(profile?.email || '')
 
     useEffect(() => {
         const initializeUser = async () => {
