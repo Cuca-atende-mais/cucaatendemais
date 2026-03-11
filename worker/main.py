@@ -442,8 +442,7 @@ async def process_webhook_payload(payload: dict, token: str):
                             agente_tipo = "maria_divulgacao"  # sinaliza para motor-agente usar RAG rede_cuca_global
                             unidade_cuca = None               # sem filtro de unidade
                         elif canal_tipo == "Institucional":
-                            # Quando chamado pela primeira vez, IA entende o RAG da unidade baseada no agente_tipo
-                            pass
+                            agente_tipo = "maria_institucional"  # sinaliza para motor-agente usar RAG da unidade
 
                         from datetime import datetime, timezone, timedelta
                         _tz_fortaleza = timezone(timedelta(hours=-3))
