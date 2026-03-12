@@ -27,7 +27,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
-import { Search, Plus, Pencil, Building2 } from "lucide-react"
+import { Search, Plus, Pencil, Building2, Download, Upload } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
@@ -142,6 +142,66 @@ export default function EmpresasPage() {
         })
     }
 
+    const exportarCSV = () => {
+        const cabecalho = "nome,cnpj,telefone,email,endereco,setor,porte,contato_responsavel"
+        const linhas = empresas.map((emp) =>
+            [
+                emp.nome,
+                emp.cnpj || "",
+                emp.telefone || "",
+                emp.email || "",
+                emp.endereco || "",
+                emp.setor || "",
+                emp.porte || "",
+                emp.contato_responsavel || "",
+            ]
+                .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+                .join(",")
+        )
+        const csv = [cabecalho, ...linhas].join("\n")
+        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `empresas_cuca_${new Date().toISOString().slice(0, 10)}.csv`
+        a.click()
+        URL.revokeObjectURL(url)
+        toast.success("CSV exportado com sucesso!")
+    }
+
+    const importarCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        const texto = await file.text()
+        const linhas = texto.trim().split("\n").slice(1) // pula cabeçalho
+        if (linhas.length === 0) { toast.error("Arquivo vazio ou sem dados."); return }
+
+        const registros = linhas.map((linha) => {
+            const cols = linha.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((c) => c.replace(/^"|"$/g, "").replace(/""/g, '"').trim())
+            return {
+                nome: cols[0] || "",
+                cnpj: cols[1] || null,
+                telefone: cols[2] || null,
+                email: cols[3] || null,
+                endereco: cols[4] || null,
+                setor: cols[5] || null,
+                porte: cols[6] || null,
+                contato_responsavel: cols[7] || null,
+                ativa: true,
+            }
+        }).filter((r) => r.nome)
+
+        const { error } = await supabase.from("empresas").upsert(registros, { onConflict: "cnpj" })
+        if (error) {
+            console.error("Erro ao importar CSV:", error)
+            toast.error("Erro na importação. Verifique o formato do arquivo.")
+        } else {
+            toast.success(`${registros.length} empresa(s) importada(s) com sucesso!`)
+            fetchEmpresas()
+        }
+        e.target.value = ""
+    }
+
     const filteredEmpresas = empresas.filter((emp) =>
         emp.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
         emp.cnpj?.includes(searchTerm) ||
@@ -157,7 +217,21 @@ export default function EmpresasPage() {
                         Gerencie os convênios e cadastro de empresas mantenedoras de vagas.
                     </p>
                 </div>
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={exportarCSV} disabled={empresas.length === 0}>
+                        <Download className="mr-2 h-4 w-4" />
+                        Exportar CSV
+                    </Button>
+                    <label>
+                        <input type="file" accept=".csv" className="hidden" onChange={importarCSV} />
+                        <Button variant="outline" size="sm" asChild>
+                            <span className="cursor-pointer">
+                                <Upload className="mr-2 h-4 w-4" />
+                                Importar CSV
+                            </span>
+                        </Button>
+                    </label>
+                    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                     <DialogTrigger asChild>
                         <Button className="bg-cuca-blue hover:bg-sky-800" onClick={() => setEditingEmpresa(null)}>
                             <Plus className="mr-2 h-4 w-4" />
@@ -271,6 +345,7 @@ export default function EmpresasPage() {
                         </form>
                     </DialogContent>
                 </Dialog>
+                </div>
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
