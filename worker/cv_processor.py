@@ -56,6 +56,7 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
             "experiencia_meses": Integer,
             "resumo_experiencias": ["String"],
             "habilidades": ["String"],
+            "telefone": "String com apenas dígitos ou null",
             "match_score": Integer (0 a 100),
             "analise_aderencia": {{
                 "pontos_fortes": ["Por que ele combina"],
@@ -63,6 +64,9 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
                 "veredito": "✅ ou ⚠️ ou ❌"
             }}
         }}
+
+        Se o currículo contiver número de telefone ou celular, extraia apenas os dígitos sem formatação.
+        Se houver mais de um número, priorize o celular. Retorne null se não encontrar nenhum número.
         """
 
         # Preparar mensagem dependendo do tipo (GPT-4o lida com PDF no endpoint vision/chat se convertido em imagem, 
@@ -113,13 +117,23 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
             "experiencias": json_data.get("resumo_experiencias", []),
             "habilidades": json_data.get("habilidades", []),
         }).eq("id", candidato_id).execute()
-        
+
         # 4. Atualizar no banco (Tabela: candidaturas - Match com a Vaga específica)
-        supabase.table("candidaturas").update({
+        update_candidatura = {
             "matching_score": match_score,
             "matching_justificativa": f"{veredito} - {pontos_fortes}",
-            "status": "selecionado" if veredito == "✅" else ("rejeitado" if veredito == "❌" else "pendente")
-        }).eq("id", candidatura_id).execute()
+            "status": "selecionado" if veredito == "✅" else ("rejeitado" if veredito == "❌" else "pendente"),
+            "dados_ocr_json": {**json_data, "telefone_ocr": json_data.get("telefone")},
+        }
+        supabase.table("candidaturas").update(update_candidatura).eq("id", candidatura_id).execute()
+
+        # S29-01: Preencher telefone da candidatura com o extraído do OCR, apenas se o campo estiver vazio
+        telefone_ocr = json_data.get("telefone")
+        if telefone_ocr:
+            cand_atual = supabase.table("candidaturas").select("telefone").eq("id", candidatura_id).single().execute()
+            if not cand_atual.data.get("telefone"):
+                supabase.table("candidaturas").update({"telefone": telefone_ocr}).eq("id", candidatura_id).execute()
+                logger.info(f"[S29-01] Telefone {telefone_ocr} extraído do currículo e salvo na candidatura {candidatura_id}")
         
         logger.info(f"OCR finalizado para {candidatura_id}. Score: {match_score}. Veredito: {veredito}")
 
