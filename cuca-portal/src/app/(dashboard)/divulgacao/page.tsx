@@ -53,32 +53,32 @@ const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "O
 const STATUS_CONFIG: Record<StatusCampanha, { label: string; color: string; icon: React.ReactNode }> = {
     sem_planilha: {
         label: "Sem planilha",
-        color: "bg-slate-100 text-slate-600 border-slate-200",
+        color: "bg-muted/60 text-muted-foreground border-border",
         icon: <AlertCircle className="h-3.5 w-3.5" />,
     },
     pendente: {
         label: "Aguardando aprovação",
-        color: "bg-amber-100 text-amber-700 border-amber-200",
+        color: "bg-amber-500/15 text-amber-400 border-amber-500/30",
         icon: <Clock className="h-3.5 w-3.5" />,
     },
     aprovado: {
         label: "Aprovada ✓",
-        color: "bg-green-100 text-green-700 border-green-200",
+        color: "bg-green-500/15 text-green-400 border-green-500/30",
         icon: <CheckCircle2 className="h-3.5 w-3.5" />,
     },
     em_andamento: {
         label: "Em andamento",
-        color: "bg-blue-100 text-blue-700 border-blue-200",
+        color: "bg-blue-500/15 text-blue-400 border-blue-500/30",
         icon: <Clock className="h-3.5 w-3.5" />,
     },
 }
 
 const DISPARO_STATUS_CONFIG: Record<StatusDisparo, { label: string; color: string }> = {
-    pendente: { label: "Na fila", color: "bg-blue-100 text-blue-700" },
-    em_andamento: { label: "Enviando...", color: "bg-amber-100 text-amber-700" },
-    concluido: { label: "Concluído", color: "bg-green-100 text-green-700" },
-    pausado: { label: "Pausado", color: "bg-orange-100 text-orange-700" },
-    erro: { label: "Erro", color: "bg-red-100 text-red-700" },
+    pendente: { label: "Na fila", color: "bg-blue-500/15 text-blue-400" },
+    em_andamento: { label: "Enviando...", color: "bg-amber-500/15 text-amber-400" },
+    concluido: { label: "Concluído", color: "bg-green-500/15 text-green-400" },
+    pausado: { label: "Pausado", color: "bg-orange-500/15 text-orange-400" },
+    erro: { label: "Erro", color: "bg-red-500/15 text-red-400" },
 }
 
 /* ─── Componente ─── */
@@ -277,9 +277,9 @@ ${linksUnidades.trim()}`
     if (semPermissao) {
         return (
             <div className="flex-1 flex flex-col items-center justify-center p-12 gap-4 text-center">
-                <ShieldAlert className="h-16 w-16 text-slate-300" />
-                <h2 className="text-xl font-bold text-slate-700">Acesso Restrito</h2>
-                <p className="text-slate-500 max-w-sm">Este módulo é exclusivo do Gestor de Divulgação. Solicite permissão ao Developer.</p>
+                <ShieldAlert className="h-16 w-16 text-muted-foreground/40" />
+                <h2 className="text-xl font-bold text-foreground">Acesso Restrito</h2>
+                <p className="text-muted-foreground max-w-sm">Este módulo é exclusivo do Gestor de Divulgação. Solicite permissão ao Developer.</p>
             </div>
         )
     }
@@ -289,12 +289,12 @@ ${linksUnidades.trim()}`
             {/* Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-yellow-100 border border-yellow-200">
-                        <Megaphone className="h-6 w-6 text-yellow-600" />
+                    <div className="p-2.5 rounded-xl bg-yellow-500/15 border border-yellow-500/30">
+                        <Megaphone className="h-6 w-6 text-yellow-400" />
                     </div>
                     <div>
-                        <h1 className="text-2xl font-bold text-slate-800">Central de Divulgação</h1>
-                        <p className="text-sm text-slate-500">
+                        <h1 className="text-2xl font-bold text-foreground">Central de Divulgação</h1>
+                        <p className="text-sm text-muted-foreground">
                             {MESES[mesAtual - 1]}/{anoAtual} — {aprovadas} de {unidadesCuca.length} unidades aprovadas
                         </p>
                     </div>
@@ -318,10 +318,10 @@ ${linksUnidades.trim()}`
             <ChipDivulgacaoTab podeCriar={podeCriar} />
 
             {/* Status por unidade */}
-            <Card className="shadow-sm border-slate-100">
+            <Card className="shadow-sm">
                 <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-base">
-                        <CalendarCheck className="h-5 w-5 text-slate-500" />
+                        <CalendarCheck className="h-5 w-5 text-muted-foreground" />
                         Status da Programação — {MESES[mesAtual - 1]}/{anoAtual}
                     </CardTitle>
                     <CardDescription className="text-xs">
@@ -329,23 +329,23 @@ ${linksUnidades.trim()}`
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
-                    <div className="divide-y divide-slate-50">
+                    <div className="divide-y divide-border/50">
                         {unidades.map(u => {
                             const cfg = STATUS_CONFIG[u.status]
                             return (
-                                <div key={u.unidade} className="flex items-center justify-between px-6 py-3.5 hover:bg-slate-50/50 transition-colors">
+                                <div key={u.unidade} className="flex items-center justify-between px-6 py-3.5 hover:bg-muted/30 transition-colors">
                                     <div className="flex items-center gap-3">
-                                        <Building2 className="h-4 w-4 text-slate-400 shrink-0" />
-                                        <span className="font-medium text-slate-700 text-sm">{u.unidade}</span>
+                                        <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                                        <span className="font-medium text-foreground text-sm">{u.unidade}</span>
                                     </div>
                                     <div className="flex items-center gap-4">
                                         {u.total_atividades > 0 && (
-                                            <span className="text-xs text-slate-500 hidden sm:block">
+                                            <span className="text-xs text-muted-foreground hidden sm:block">
                                                 {u.total_atividades} atividades
                                             </span>
                                         )}
                                         {u.updated_at && (
-                                            <span className="text-xs text-slate-400 hidden md:block">
+                                            <span className="text-xs text-muted-foreground/60 hidden md:block">
                                                 {format(new Date(u.updated_at), "dd/MM HH:mm", { locale: ptBR })}
                                             </span>
                                         )}
@@ -362,32 +362,32 @@ ${linksUnidades.trim()}`
             </Card>
 
             {/* Histórico */}
-            <Card className="shadow-sm border-slate-100">
+            <Card className="shadow-sm">
                 <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-base">
-                        <BarChart3 className="h-5 w-5 text-slate-500" />
+                        <BarChart3 className="h-5 w-5 text-muted-foreground" />
                         Histórico de Disparos Globais
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
                     {historico.length === 0 ? (
-                        <div className="py-12 text-center text-slate-400 text-sm">
+                        <div className="py-12 text-center text-muted-foreground text-sm">
                             Nenhum disparo realizado ainda.
                         </div>
                     ) : (
-                        <div className="divide-y divide-slate-50">
+                        <div className="divide-y divide-border/50">
                             {historico.map(d => {
                                 const cfg = DISPARO_STATUS_CONFIG[d.status]
                                 return (
                                     <div key={d.id} className="flex flex-col sm:flex-row sm:items-center justify-between px-6 py-3.5 gap-2">
                                         <div>
-                                            <p className="font-medium text-sm text-slate-700">{d.titulo || `Aviso ${MESES[d.mes - 1]}/${d.ano}`}</p>
-                                            <p className="text-xs text-slate-400 mt-0.5">
+                                            <p className="font-medium text-sm text-foreground">{d.titulo || `Aviso ${MESES[d.mes - 1]}/${d.ano}`}</p>
+                                            <p className="text-xs text-muted-foreground/60 mt-0.5">
                                                 {format(new Date(d.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
                                             </p>
                                         </div>
                                         <div className="flex items-center gap-3 flex-wrap">
-                                            <span className="text-xs text-slate-500">{d.total_enviados}/{d.total_leads} enviados</span>
+                                            <span className="text-xs text-muted-foreground">{d.total_enviados}/{d.total_leads} enviados</span>
                                             {d.total_stop > 0 && (
                                                 <span className="text-xs text-orange-600">{d.total_stop} STOP</span>
                                             )}
@@ -406,10 +406,10 @@ ${linksUnidades.trim()}`
 
             {/* Conversas do Canal Divulgação */}
             {instanciaDisp && (
-                <Card className="shadow-sm border-slate-100">
+                <Card className="shadow-sm">
                     <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-base">
-                            <MessageSquare className="h-5 w-5 text-slate-500" />
+                            <MessageSquare className="h-5 w-5 text-muted-foreground" />
                             Conversas Recentes — Canal Divulgação
                         </CardTitle>
                         <CardDescription className="text-xs">
@@ -418,17 +418,17 @@ ${linksUnidades.trim()}`
                     </CardHeader>
                     <CardContent className="p-0">
                         {conversas.length === 0 ? (
-                            <div className="py-10 text-center text-slate-400 text-sm">
+                            <div className="py-10 text-center text-muted-foreground text-sm">
                                 Nenhuma conversa no canal Divulgação ainda.
                             </div>
                         ) : (
-                            <div className="divide-y divide-slate-50">
+                            <div className="divide-y divide-border/50">
                                 {conversas.map((conv: any) => {
                                     const lead = conv.leads as any
                                     const statusColors: Record<string, string> = {
-                                        ativa: "bg-green-100 text-green-700",
-                                        awaiting_human: "bg-amber-100 text-amber-700",
-                                        encerrada: "bg-slate-100 text-slate-500",
+                                        ativa: "bg-green-500/15 text-green-400",
+                                        awaiting_human: "bg-amber-500/15 text-amber-400",
+                                        encerrada: "bg-muted/60 text-muted-foreground",
                                     }
                                     const statusLabel: Record<string, string> = {
                                         ativa: "Ativa",
@@ -436,27 +436,27 @@ ${linksUnidades.trim()}`
                                         encerrada: "Encerrada",
                                     }
                                     return (
-                                        <div key={conv.id} className="flex items-center justify-between px-6 py-3 hover:bg-slate-50/50 transition-colors">
+                                        <div key={conv.id} className="flex items-center justify-between px-6 py-3 hover:bg-muted/30 transition-colors">
                                             <div className="flex items-center gap-3">
-                                                <div className="h-8 w-8 rounded-full bg-yellow-100 border border-yellow-200 flex items-center justify-center shrink-0">
-                                                    <User className="h-4 w-4 text-yellow-600" />
+                                                <div className="h-8 w-8 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center shrink-0">
+                                                    <User className="h-4 w-4 text-yellow-400" />
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-medium text-slate-700">
+                                                    <p className="text-sm font-medium text-foreground">
                                                         {lead?.nome || lead?.telefone || "Desconhecido"}
                                                     </p>
                                                     {lead?.telefone && lead?.nome && (
-                                                        <p className="text-xs text-slate-400">{lead.telefone}</p>
+                                                        <p className="text-xs text-muted-foreground/60">{lead.telefone}</p>
                                                     )}
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-3">
                                                 {conv.updated_at && (
-                                                    <span className="text-xs text-slate-400 hidden sm:block">
+                                                    <span className="text-xs text-muted-foreground/60 hidden sm:block">
                                                         {format(new Date(conv.updated_at), "dd/MM HH:mm", { locale: ptBR })}
                                                     </span>
                                                 )}
-                                                <Badge className={`text-xs font-medium ${statusColors[conv.status] ?? "bg-slate-100 text-slate-500"}`}>
+                                                <Badge className={`text-xs font-medium ${statusColors[conv.status] ?? "bg-muted/60 text-muted-foreground"}`}>
                                                     {statusLabel[conv.status] ?? conv.status}
                                                 </Badge>
                                             </div>
@@ -484,7 +484,7 @@ ${linksUnidades.trim()}`
                     </DialogHeader>
 
                     <div className="space-y-4 py-2">
-                        <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm">
+                        <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
                             <Info className="h-4 w-4 shrink-0" />
                             <span>Chip de disparo: <strong>{instanciaDisp ?? "(nenhum)"}</strong> · {aprovadas}/{unidadesCuca.length} unidades aprovadas</span>
                         </div>
@@ -498,7 +498,7 @@ ${linksUnidades.trim()}`
                                 className="font-mono text-sm resize-none"
                                 placeholder="Digite a mensagem do aviso..."
                             />
-                            <p className="text-xs text-slate-500">
+                            <p className="text-xs text-muted-foreground">
                                 Use {"{nome}"} para personalizar com o nome do lead. O motor irá variar automaticamente as saudações (Spintax).
                             </p>
                         </div>

@@ -218,7 +218,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                                     <div className={cn(
                                         "p-4 rounded-2xl text-[13px] lg:text-sm shadow-sm relative transition-all group-hover:shadow-md",
                                         msg.remetente === 'lead'
-                                            ? "bg-white border border-border rounded-bl-none text-foreground"
+                                            ? "bg-muted border border-border/50 rounded-bl-none text-foreground"
                                             : "bg-primary text-primary-foreground rounded-br-none"
                                     )}>
                                         <p className="leading-relaxed whitespace-pre-wrap">{msg.conteudo}</p>

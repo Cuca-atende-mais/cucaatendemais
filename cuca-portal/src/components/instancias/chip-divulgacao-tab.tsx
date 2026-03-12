@@ -147,19 +147,19 @@ export function ChipDivulgacaoTab({ podeCriar }: Props) {
                         /* ── Instância existente ── */
                         <div className="space-y-3">
                             {/* Status row */}
-                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 rounded-lg bg-muted/50 border border-border">
                                 <div className="flex items-center gap-3">
                                     {isConectado
                                         ? <Wifi className="h-5 w-5 text-green-500" />
                                         : <WifiOff className="h-5 w-5 text-red-400" />
                                     }
                                     <div>
-                                        <p className="font-semibold text-slate-700 text-sm">{instancia.nome}</p>
-                                        <p className="text-xs text-slate-500">{instancia.telefone ?? "Número não registrado"}</p>
+                                        <p className="font-semibold text-foreground text-sm">{instancia.nome}</p>
+                                        <p className="text-xs text-muted-foreground">{instancia.telefone ?? "Número não registrado"}</p>
                                     </div>
                                     <Badge className={isConectado
-                                        ? "bg-green-100 text-green-700 border-green-200"
-                                        : "bg-red-100 text-red-600 border-red-200"
+                                        ? "bg-green-500/15 text-green-400 border-green-500/30"
+                                        : "bg-red-500/15 text-red-400 border-red-500/30"
                                     }>
                                         {isConectado ? "Conectado" : "Desconectado"}
                                     </Badge>
