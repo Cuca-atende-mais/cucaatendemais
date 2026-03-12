@@ -441,6 +441,24 @@ async def process_webhook_payload(payload: dict, token: str):
                         logger.error(f"[STOP] Erro ao processar opt_out: {stop_err}")
                     return  # Não processa IA após STOP explícito
 
+            # S29-03: Roteamento para motor de empregabilidade (instância tipo Empregabilidade)
+            if not from_me and agente_tipo == "Empregabilidade":
+                try:
+                    from empregabilidade_engine import processar_mensagem_empregabilidade
+                    inst_token_emp = inst_result.data.get("token", "") if inst_result.data else ""
+                    await processar_mensagem_empregabilidade(
+                        texto=text_content or "",
+                        phone=phone,
+                        instance_name=instance_name,
+                        token=inst_token_emp,
+                        lead_id=lead_id,
+                        conversa_id=conversation_id,
+                        unidade_cuca=unidade_cuca or "",
+                    )
+                except Exception as emp_err:
+                    logger.error(f"[Empregabilidade] Erro no motor: {emp_err}", exc_info=True)
+                return  # Não passa para o motor-agente genérico
+
             # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa'
             if not from_me and conversation_status in ("ativa", "encerrada"):
                 try:
