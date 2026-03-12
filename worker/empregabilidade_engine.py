@@ -16,7 +16,7 @@ logger = logging.getLogger("empregabilidade_engine")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-PORTAL_URL = os.getenv("PORTAL_URL", "https://portal.cuca.ce.gov.br")
+PORTAL_URL = os.getenv("PORTAL_URL", "https://www.cucaatendemais.com.br")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
