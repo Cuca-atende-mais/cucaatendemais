@@ -11,6 +11,7 @@ export async function POST(request: NextRequest) {
         const {
             empresa_id, titulo, descricao, requisitos,
             tipo_contrato, salario, total_vagas, escolaridade_minima,
+            beneficios, limite_curriculos, tipo_selecao, unidade_cuca,
         } = body
 
         if (!empresa_id || !titulo || !descricao || !tipo_contrato) {
@@ -40,6 +41,10 @@ export async function POST(request: NextRequest) {
                 salario: salario || null,
                 total_vagas: parseInt(total_vagas) || 1,
                 escolaridade_minima: escolaridade_minima || null,
+                beneficios: beneficios || null,
+                limite_curriculos: limite_curriculos ? parseInt(limite_curriculos) : null,
+                tipo_selecao: tipo_selecao || null,
+                unidade_cuca: unidade_cuca || null,
                 status: "pre_cadastro",
             })
             .select("id")

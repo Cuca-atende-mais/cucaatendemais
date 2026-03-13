@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Clock, ChevronRight } from "lucide-react"
+import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Gift, ShieldCheck, ChevronRight } from "lucide-react"
 import toast from "react-hot-toast"
 
 export default function CandidaturaPublicaPage() {
@@ -78,6 +78,18 @@ export default function CandidaturaPublicaPage() {
 
         setLoadingSubmit(true)
         try {
+            // Verificar limite de currículos antes de aceitar
+            let destinoBancoTalentos = false
+            if (vaga?.limite_curriculos) {
+                const { count } = await supabase
+                    .from("candidaturas")
+                    .select("id", { count: "exact", head: true })
+                    .eq("vaga_id", vagaId)
+                if ((count ?? 0) >= vaga.limite_curriculos) {
+                    destinoBancoTalentos = true
+                }
+            }
+
             const fileExt = arquivo.name.split(".").pop()
             const filePath = `${vagaId}/${Math.random()}.${fileExt}`
 
@@ -98,6 +110,7 @@ export default function CandidaturaPublicaPage() {
                     arquivo_cv_url: publicUrl,
                     status: "pendente",
                     requisitos_atendidos: "pendente",
+                    observacoes: destinoBancoTalentos ? "banco_talentos: limite de currículos atingido" : null,
                 })
                 .select("id")
                 .single()
@@ -207,12 +220,38 @@ export default function CandidaturaPublicaPage() {
                         <CardHeader className="border-b bg-muted/20">
                             <CardTitle className="text-base">Sobre a vaga</CardTitle>
                         </CardHeader>
-                        <CardContent className="p-6">
+                        <CardContent className="p-6 space-y-4">
                             <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{vaga.descricao}</p>
                             {vaga.requisitos && (
-                                <div className="mt-4">
+                                <div>
                                     <p className="text-sm font-medium mb-1">Requisitos</p>
                                     <p className="text-sm text-muted-foreground whitespace-pre-wrap">{vaga.requisitos}</p>
+                                </div>
+                            )}
+                            {vaga.beneficios && (
+                                <div>
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Gift className="h-4 w-4 text-cuca-blue" />
+                                        <p className="text-sm font-medium">Benefícios</p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {vaga.beneficios.split(", ").map((b: string) => (
+                                            <Badge key={b} variant="secondary" className="text-xs">{b}</Badge>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {vaga.tipo_selecao && (
+                                <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                                    <ShieldCheck className="h-4 w-4 text-cuca-blue mt-0.5 shrink-0" />
+                                    <div>
+                                        <p className="text-xs font-medium text-cuca-blue">Processo Seletivo</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {vaga.tipo_selecao === "coleta_curriculo" && "Coleta de Currículo — a empresa conduz o processo seletivo."}
+                                            {vaga.tipo_selecao === "entrevista_unidade" && "Entrevista na Unidade CUCA — a equipe agendará sua entrevista."}
+                                            {vaga.tipo_selecao === "triagem_cuca" && `Triagem Inicial pelo CUCA${vaga.unidade_cuca ? ` ${vaga.unidade_cuca}` : ""} — candidatos serão pré-selecionados antes do encaminhamento.`}
+                                        </p>
+                                    </div>
                                 </div>
                             )}
                         </CardContent>

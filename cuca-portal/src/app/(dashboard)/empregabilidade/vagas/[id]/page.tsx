@@ -240,13 +240,32 @@ export default function VagaDetalhesPage() {
                 </Button>
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight">{vaga?.titulo || "Detalhes da Vaga"}</h1>
-                    <p className="text-muted-foreground flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 mt-1">
                         {vaga?.status === "aberta" ? <Badge className="bg-green-600">Aberta</Badge> : <Badge variant="secondary">{vaga?.status}</Badge>}
-                        <span>Total de vagas: {vaga?.total_vagas}</span>
-                        {vaga?.email_contato_empresa && (
-                            <span className="text-xs text-muted-foreground">· CV enviado para: {vaga.email_contato_empresa}</span>
+                        <span className="text-muted-foreground text-sm">Posições: {vaga?.total_vagas}</span>
+                        {vaga?.limite_curriculos && (
+                            <span className={`text-sm font-medium ${candidatos.length >= vaga.limite_curriculos ? "text-red-500" : "text-amber-500"}`}>
+                                · Currículos: {candidatos.length} / {vaga.limite_curriculos}
+                            </span>
                         )}
-                    </p>
+                        {vaga?.tipo_selecao && (
+                            <Badge variant="outline" className="text-xs">
+                                {vaga.tipo_selecao === "coleta_curriculo" && "Coleta de Currículo"}
+                                {vaga.tipo_selecao === "entrevista_unidade" && "Entrevista na Unidade"}
+                                {vaga.tipo_selecao === "triagem_cuca" && `Triagem CUCA${vaga.unidade_cuca ? ` ${vaga.unidade_cuca}` : ""}`}
+                            </Badge>
+                        )}
+                        {vaga?.email_contato_empresa && (
+                            <span className="text-xs text-muted-foreground">· CV: {vaga.email_contato_empresa}</span>
+                        )}
+                    </div>
+                    {vaga?.beneficios && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                            {vaga.beneficios.split(", ").map((b: string) => (
+                                <Badge key={b} variant="secondary" className="text-[10px]">{b}</Badge>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
 

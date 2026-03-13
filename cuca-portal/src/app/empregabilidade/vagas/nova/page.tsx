@@ -8,15 +8,31 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle } from "lucide-react"
+import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift } from "lucide-react"
 import toast from "react-hot-toast"
 
 const TIPOS_CONTRATO = ["CLT", "PJ", "Estágio", "Temporário", "Aprendiz", "Freelancer"]
 const ESCOLARIDADES = ["Fundamental Incompleto", "Fundamental Completo", "Médio Incompleto", "Médio Completo", "Superior Incompleto", "Superior Completo"]
 
+const BENEFICIOS_OPCOES = [
+    "Plano de Saúde (co-participação)",
+    "Vale Refeição",
+    "Refeitório no Local",
+    "Vale Transporte",
+    "Cesta Básica",
+    "Cartão Alimentação/Refeição",
+]
+
+const TIPOS_SELECAO = [
+    { value: "coleta_curriculo", label: "Coleta de Currículo", desc: "A empresa conduz o processo seletivo de forma independente. O CUCA apenas coleta e encaminha os currículos." },
+    { value: "entrevista_unidade", label: "Entrevista na Unidade", desc: "O processo inclui entrevistas presenciais na unidade CUCA. A equipe agenda e organiza as entrevistas." },
+    { value: "triagem_cuca", label: "Triagem Inicial pelo CUCA", desc: "O CUCA realiza uma triagem inicial dos candidatos antes de encaminhar os pré-selecionados para a empresa." },
+]
+
 export default function NovaVagaEmpresaPage() {
     const searchParams = useSearchParams()
     const empresaId = searchParams.get("empresa_id")
+    const unidadeCuca = searchParams.get("unidade_cuca") || ""
 
     const [empresa, setEmpresa] = useState<{ id: string; nome: string } | null>(null)
     const [loadingEmpresa, setLoadingEmpresa] = useState(true)
@@ -29,6 +45,12 @@ export default function NovaVagaEmpresaPage() {
     const [salario, setSalario] = useState("")
     const [totalVagas, setTotalVagas] = useState("1")
     const [escolaridadeMinima, setEscolaridadeMinima] = useState("")
+
+    // Novos campos Sprint 30
+    const [beneficiosMarcados, setBeneficiosMarcados] = useState<string[]>([])
+    const [beneficiosOutros, setBeneficiosOutros] = useState("")
+    const [limiteCurriculos, setLimiteCurriculos] = useState("")
+    const [tipoSelecao, setTipoSelecao] = useState("")
 
     const [loadingSubmit, setLoadingSubmit] = useState(false)
     const [success, setSuccess] = useState(false)
@@ -56,6 +78,25 @@ export default function NovaVagaEmpresaPage() {
             })
     }, [empresaId])
 
+    const toggleBeneficio = (b: string) => {
+        setBeneficiosMarcados((prev) =>
+            prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]
+        )
+    }
+
+    const buildBeneficios = (): string | null => {
+        const partes: string[] = [...beneficiosMarcados]
+        if (beneficiosOutros.trim()) partes.push(`Outros: ${beneficiosOutros.trim()}`)
+        return partes.length > 0 ? partes.join(", ") : null
+    }
+
+    const getLabelTipoSelecao = (value: string) => {
+        if (value === "triagem_cuca" && unidadeCuca) {
+            return `Triagem Inicial pelo CUCA ${unidadeCuca}`
+        }
+        return TIPOS_SELECAO.find((t) => t.value === value)?.label || value
+    }
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
 
@@ -78,6 +119,10 @@ export default function NovaVagaEmpresaPage() {
                     salario,
                     total_vagas: totalVagas,
                     escolaridade_minima: escolaridadeMinima,
+                    beneficios: buildBeneficios(),
+                    limite_curriculos: limiteCurriculos ? parseInt(limiteCurriculos) : null,
+                    tipo_selecao: tipoSelecao || null,
+                    unidade_cuca: unidadeCuca || null,
                 }),
             })
             const data = await res.json()
@@ -154,7 +199,8 @@ export default function NovaVagaEmpresaPage() {
                 </div>
             </div>
 
-            <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 -mt-12">
+            <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 -mt-12 space-y-5">
+                {/* Dados da Vaga */}
                 <Card className="border-none shadow-md">
                     <CardHeader className="border-b bg-muted/20">
                         <CardTitle className="flex items-center gap-2 text-lg">
@@ -219,7 +265,7 @@ export default function NovaVagaEmpresaPage() {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label htmlFor="totalVagas">Nº de Vagas</Label>
+                                    <Label htmlFor="totalVagas">Nº de Posições</Label>
                                     <Input
                                         id="totalVagas"
                                         type="number"
@@ -254,6 +300,95 @@ export default function NovaVagaEmpresaPage() {
                                             <option key={e} value={e}>{e}</option>
                                         ))}
                                     </select>
+                                </div>
+                            </div>
+
+                            {/* S30-02: Benefícios */}
+                            <div className="space-y-3 pt-1">
+                                <div className="flex items-center gap-2">
+                                    <Gift className="h-4 w-4 text-cuca-blue" />
+                                    <Label className="text-base font-semibold">Benefícios Oferecidos</Label>
+                                    <span className="text-xs text-muted-foreground">(opcional)</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {BENEFICIOS_OPCOES.map((b) => (
+                                        <label
+                                            key={b}
+                                            className={`flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer text-sm transition-colors ${
+                                                beneficiosMarcados.includes(b)
+                                                    ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium"
+                                                    : "border-border hover:border-cuca-blue/50"
+                                            }`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                className="accent-cuca-blue"
+                                                checked={beneficiosMarcados.includes(b)}
+                                                onChange={() => toggleBeneficio(b)}
+                                            />
+                                            {b}
+                                        </label>
+                                    ))}
+                                </div>
+                                <div className="space-y-1">
+                                    <Label htmlFor="beneficiosOutros" className="text-sm text-muted-foreground">Outros benefícios</Label>
+                                    <Input
+                                        id="beneficiosOutros"
+                                        value={beneficiosOutros}
+                                        onChange={(e) => setBeneficiosOutros(e.target.value)}
+                                        placeholder="Ex: Gympass, seguro de vida, auxílio home office..."
+                                    />
+                                </div>
+                            </div>
+
+                            {/* S30-03: Limite de currículos */}
+                            <div className="space-y-2 pt-1">
+                                <Label htmlFor="limiteCurriculos">Quantos currículos deseja analisar?</Label>
+                                <Input
+                                    id="limiteCurriculos"
+                                    type="number"
+                                    min="1"
+                                    value={limiteCurriculos}
+                                    onChange={(e) => setLimiteCurriculos(e.target.value)}
+                                    placeholder="Ex: 20 (deixe em branco para sem limite)"
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Ao atingir esse limite, novos candidatos serão direcionados ao banco de talentos da unidade.
+                                </p>
+                            </div>
+
+                            {/* S30-04: Tipo de seleção */}
+                            <div className="space-y-3 pt-1">
+                                <Label className="text-base font-semibold">Tipo de Processo Seletivo</Label>
+                                <div className="space-y-2">
+                                    {TIPOS_SELECAO.map((ts) => {
+                                        const label = ts.value === "triagem_cuca" && unidadeCuca
+                                            ? `Triagem Inicial pelo CUCA ${unidadeCuca}`
+                                            : ts.label
+                                        return (
+                                            <label
+                                                key={ts.value}
+                                                className={`flex items-start gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
+                                                    tipoSelecao === ts.value
+                                                        ? "border-cuca-blue bg-cuca-blue/10"
+                                                        : "border-border hover:border-cuca-blue/50"
+                                                }`}
+                                            >
+                                                <input
+                                                    type="radio"
+                                                    name="tipoSelecao"
+                                                    value={ts.value}
+                                                    checked={tipoSelecao === ts.value}
+                                                    onChange={() => setTipoSelecao(ts.value)}
+                                                    className="mt-0.5 accent-cuca-blue"
+                                                />
+                                                <div>
+                                                    <p className={`text-sm font-medium ${tipoSelecao === ts.value ? "text-cuca-blue" : ""}`}>{label}</p>
+                                                    <p className="text-xs text-muted-foreground mt-0.5">{ts.desc}</p>
+                                                </div>
+                                            </label>
+                                        )
+                                    })}
                                 </div>
                             </div>
 

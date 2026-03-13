@@ -337,7 +337,8 @@ async def _processar_empresa(
         empresa_nome = fluxo.get("empresa_nome", "")
 
         if t in ("sim", "s", "quero", "vou", "yes", "ok"):
-            link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}"
+            unidade_param = f"&unidade_cuca={unidade_cuca}" if unidade_cuca else ""
+            link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
             await _enviar(
                 instance_name, token, phone,
                 f"Ótimo! 🎯 Acesse o link abaixo para preencher os dados da vaga:\n\n"
