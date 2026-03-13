@@ -41,7 +41,8 @@ export async function updateSession(request: NextRequest) {
         pathname.startsWith('/auth') ||
         pathname.startsWith('/setup-senha') ||
         pathname === '/api/colaboradores/setup-password' ||
-        pathname.startsWith('/empregabilidade')  // páginas públicas para empresas/candidatos externos
+        pathname.startsWith('/empregabilidade') ||     // páginas públicas para empresas/candidatos externos
+        pathname.startsWith('/api/empregabilidade')  // APIs públicas de empregabilidade
 
     // Usuário não autenticado tentando acessar rota protegida
     if (!user && !isPublicPath) {
