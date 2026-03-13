@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 7.0 | **Atualizado**: 11/03/2026
-> **STATUS ATUAL**: Sprints 1–22 + 24–28 Concluídos | Sprint 23 planejado (pendente)
+> **Versão**: 7.1 | **Atualizado**: 13/03/2026
+> **STATUS ATUAL**: Sprints 1–22 + 24–29 Concluídos | Sprint 23 planejado (pendente) | Sprint 30 planejado
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -1008,6 +1008,62 @@ Jovem responde → motor-agente lê breadcrumb → contexto correto mesmo sem pa
 | S28-12 | Portal: API route `POST /api/developer/update-vault-secret` — intermediário server-side com service_role que chama a função SQL acima | Portal API | [x] |
 | S28-13 | Portal: seção "Credenciais do Sistema" em `/developer/configuracoes` — campo senha + toggle show/hide + botão Atualizar Chave → feedback toast | Portal | [x] |
 | S28-14 | PLANO_DESENVOLVIMENTO.md: documentar Sprint 28 | Docs | [x] |
+
+---
+
+#### Sprint 30 — Formulário de Vaga: Benefícios, Limite de Currículos e Tipo de Processo Seletivo ⏳ PLANEJADO
+
+> **Objetivo**: Enriquecer o formulário público de cadastro de vaga (`/empregabilidade/vagas/nova`) com três novas dimensões que impactam diretamente o processo seletivo: benefícios estruturados com checkboxes + campo livre, controle de quantidade máxima de currículos por vaga com redirecionamento automático ao banco de talentos, e definição do tipo de processo seletivo adotado pela empresa. As informações coletadas refletem no painel de gestão, na tela pública de candidatura e na lógica de distribuição de currículos.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S30-01 | Migration: adicionar coluna `limite_curriculos integer nullable` na tabela `vagas` | Banco | [ ] |
+| S30-02 | Formulário público: seção "Benefícios Oferecidos" com checkboxes (Plano de Saúde co-participação, Vale Refeição, Refeitório no Local, Vale Transporte, Cesta Básica, Cartão Alimentação/Refeição) + campo texto livre "Outros" — nenhum obrigatório | Portal | [ ] |
+| S30-03 | Formulário público: campo numérico "Quantos currículos deseja analisar?" com nota explicativa sobre redirecionamento ao banco de talentos quando atingir o limite — campo opcional | Portal | [ ] |
+| S30-04 | Formulário público: campo "Tipo de Processo Seletivo" com três opções — Coleta de Currículo / Entrevista na Unidade / Triagem Inicial pelo CUCA {unidade} — a terceira opção interpola o nome da unidade dinamicamente via query param `unidade_cuca` | Portal | [ ] |
+| S30-05 | API route `POST /api/empregabilidade/vagas`: incluir `beneficios` (string serializada dos checkboxes + campo livre), `limite_curriculos` e `tipo_selecao` no insert da tabela `vagas` | Portal API | [ ] |
+| S30-06 | Worker `empregabilidade_engine.py`: acrescentar `&unidade_cuca={unidade_cuca}` no link gerado na etapa `aguardando_criar_vaga` para que o formulário receba o nome da unidade | Worker | [ ] |
+| S30-07 | Formulário público de candidatura (`/empregabilidade/candidatura`): exibir benefícios em badges e tipo de seleção como informação contextual para o candidato | Portal | [ ] |
+| S30-08 | Formulário público de candidatura: verificar contagem de candidaturas antes de aceitar — se count ≥ `limite_curriculos`, candidatura é aceita mas marcada internamente para o banco de talentos (experiência do candidato não muda) | Portal API | [ ] |
+| S30-09 | Dashboard `/empregabilidade/vagas/[id]`: exibir indicador "Currículos recebidos: X / Y" quando `limite_curriculos` estiver definido, exibir benefícios em badges e tipo de seleção | Portal | [ ] |
+| S30-10 | PLANO_DESENVOLVIMENTO.md: documentar Sprint 30 | Docs | [ ] |
+
+---
+
+#### Sprint 29 — Motor de Empregabilidade WhatsApp + Rota Pública de Cadastro de Empresa e Vaga ✅ CONCLUÍDO (13/03/2026)
+
+> **Objetivo**: Ativar e corrigir completamente o motor de empregabilidade via WhatsApp (instância `empregocucabarra`), corrigir todos os bugs do fluxo de estados do bot — incluindo dois loops críticos —, tornar o formulário público de cadastro de vaga acessível sem autenticação, e corrigir o dark mode de todas as páginas do módulo empregabilidade no dashboard.
+
+**Obstáculos superados e falhas resolvidas:**
+
+**Bug #1 — Instância criada sem webhook ativo**: A instância `empregocucabarra` foi criada pelo portal, mas o portal estava chamando `supabase.insert()` diretamente, bypassando completamente o Worker Python. O Worker é responsável pela sequência: `POST /instance/init → POST /webhook (com enabled:true) → POST /instance/connect`. Sem passar pelo Worker, o webhook nunca era configurado e nenhuma mensagem chegava ao sistema. Corrigido fazendo o portal chamar o hook `useUazapi().criarInstancia()` em vez do insert direto.
+
+**Bug #2 — Loop no menu inicial (primeiro loop)**: Quando o bot enviava o menu e o usuário digitava "1", o fluxo era salvo como `{"etapa": "menu_inicial"}` sem o campo `perfil`. Na próxima mensagem, o dispatcher verificava `perfil_atual` (null) e chamava `_identificar_perfil("1")` que retornava `"indefinido"` — enviando o menu novamente. Corrigido adicionando tratamento explícito para `etapa == "menu_inicial"` que interpreta "1"/"2"/"3" antes de qualquer identificação por palavras-chave.
+
+**Bug #3 — Loop por perda do campo `perfil` (segundo loop)**: Mesmo após o fix do Bug #2, cada `_set_fluxo()` dentro de `_processar_empresa()` sobrescrevia o dicionário completo sem preservar o campo `"perfil"`. Assim, ao chegar o CNPJ, o dispatcher lia `perfil_atual=None` e `etapa_atual="aguardando_cnpj"` — sem reconhecer o contexto, enviava o menu de novo. Corrigido criando três conjuntos de etapas (`_ETAPAS_EMPRESA`, `_ETAPAS_CANDIDATO`, `_ETAPAS_PUBLICO`) e usando-os como fallback de roteamento quando o campo `perfil` não está presente.
+
+**Bug #4 — Formulário de vaga redirecionando para login**: O link enviado pelo bot (`/empregabilidade/vagas/nova?empresa_id=...`) era interceptado pelo middleware do Next.js que redirecionava qualquer usuário não autenticado para `/login`. Corrigido adicionando `/empregabilidade` e `/api/empregabilidade` como rotas públicas no middleware (`src/lib/supabase/middleware.ts`).
+
+**Bug #5 — Erro de build por `createClient` no nível do módulo**: As API routes criadas para bypass de RLS (`/api/empregabilidade/empresa` e `/api/empregabilidade/vagas`) inicializavam o Supabase Admin Client no escopo do módulo (`const supabaseAdmin = createClient(...)`). Durante o build, o Next.js tenta avaliar o módulo antes das env vars estarem disponíveis, causando `supabaseKey is required`. Corrigido movendo o `createClient()` para dentro do handler de cada função.
+
+**Bug #6 — "Link inválido" após build correto**: O formulário público buscava a empresa chamando `supabase.from("empresas")` com o client-side anon key. Porém a API `/api/empregabilidade/empresa` também era bloqueada pelo middleware (rota `/api/` não estava na lista de rotas públicas). O fetch falhava silenciosamente e o componente exibia "Link inválido". Corrigido adicionando `pathname.startsWith('/api/empregabilidade')` nas rotas públicas do middleware.
+
+**Bug #7 — Dark mode apagado em toda a empregabilidade**: Múltiplos arquivos das páginas de empregabilidade no dashboard usavam `text-slate-800`, `text-slate-900`, `bg-white`, `text-cuca-dark` — classes incompatíveis com dark mode. Corrigido em `empresas/page.tsx`, `candidatos/page.tsx`, `banco-talentos/page.tsx`, `vagas/page.tsx` e `vagas/[id]/page.tsx` substituindo por tokens dark-mode-aware (`text-foreground`, `bg-popover`, `bg-muted`, `text-muted-foreground`).
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S29-01 | Worker: `_configurar_webhook` — remover try/except silencioso, tornar webhook CRÍTICO (falha interrompe criação), adicionar `"enabled": True` no payload POST | Worker | [x] |
+| S29-02 | Worker: endpoint `POST /{nome}/reconfigurar-webhook` para corrigir instâncias existentes sem webhook ativo | Worker | [x] |
+| S29-03 | Portal Developer `/developer/instancias`: corrigir criação para usar `useUazapi().criarInstancia()` em vez de `supabase.insert()` direto | Portal | [x] |
+| S29-04 | Portal `/configuracoes/whatsapp`: botão azul "Sincronizar Webhook" em cada card de instância | Portal | [x] |
+| S29-05 | Worker `empregabilidade_engine.py`: fix loop #1 — tratamento explícito de `etapa == "menu_inicial"` interpretando 1/2/3 e palavras-chave | Worker | [x] |
+| S29-06 | Worker `empregabilidade_engine.py`: fix loop #2 — conjuntos `_ETAPAS_EMPRESA/_CANDIDATO/_PUBLICO` como fallback de roteamento quando campo `perfil` ausente | Worker | [x] |
+| S29-07 | Middleware Next.js: adicionar `/empregabilidade` e `/api/empregabilidade` como rotas públicas (sem auth) | Portal | [x] |
+| S29-08 | Portal: API route `GET /api/empregabilidade/empresa` com service_role para buscar empresa sem RLS | Portal API | [x] |
+| S29-09 | Portal: API route `POST /api/empregabilidade/vagas` com service_role para inserir vaga bypassando RLS (que exige `has_permission`) | Portal API | [x] |
+| S29-10 | Fix build: mover `createClient()` das API routes para dentro dos handlers (evita erro de env var em build-time) | Portal | [x] |
+| S29-11 | Fix dark mode em `empresas`, `candidatos`, `banco-talentos`, `vagas` e `vagas/[id]` — substituir tokens hardcoded por dark-mode-aware | Portal | [x] |
+| S29-12 | PLANO_DESENVOLVIMENTO.md: documentar Sprint 29 e planejar Sprint 30 | Docs | [x] |
 
 ---
 
