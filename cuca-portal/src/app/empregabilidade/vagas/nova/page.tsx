@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react"
 import { useSearchParams } from "next/navigation"
-import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -35,26 +34,24 @@ export default function NovaVagaEmpresaPage() {
     const [success, setSuccess] = useState(false)
     const [numeroVaga, setNumeroVaga] = useState("")
 
-    const supabase = createClient()
-
     useEffect(() => {
         if (!empresaId) {
             setEmpresaInvalida(true)
             setLoadingEmpresa(false)
             return
         }
-        supabase
-            .from("empresas")
-            .select("id, nome")
-            .eq("id", empresaId)
-            .eq("ativa", true)
-            .single()
-            .then(({ data, error }) => {
-                if (error || !data) {
+        fetch(`/api/empregabilidade/empresa?id=${encodeURIComponent(empresaId)}`)
+            .then((r) => r.json())
+            .then((data) => {
+                if (data.error || !data.id) {
                     setEmpresaInvalida(true)
                 } else {
                     setEmpresa(data)
                 }
+                setLoadingEmpresa(false)
+            })
+            .catch(() => {
+                setEmpresaInvalida(true)
                 setLoadingEmpresa(false)
             })
     }, [empresaId])
@@ -69,23 +66,22 @@ export default function NovaVagaEmpresaPage() {
 
         setLoadingSubmit(true)
         try {
-            const { data, error } = await supabase
-                .from("vagas")
-                .insert({
+            const res = await fetch("/api/empregabilidade/vagas", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
                     empresa_id: empresaId,
                     titulo,
                     descricao,
-                    requisitos: requisitos || null,
+                    requisitos,
                     tipo_contrato: tipoContrato,
-                    salario: salario || null,
-                    total_vagas: parseInt(totalVagas) || 1,
-                    escolaridade_minima: escolaridadeMinima || null,
-                    status: "pre_cadastro",
-                })
-                .select("id")
-                .single()
-
-            if (error) throw error
+                    salario,
+                    total_vagas: totalVagas,
+                    escolaridade_minima: escolaridadeMinima,
+                }),
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
 
             setNumeroVaga(data.id.slice(-6).toUpperCase())
             setSuccess(true)

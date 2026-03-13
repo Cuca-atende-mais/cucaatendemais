@@ -36,7 +36,12 @@ export async function updateSession(request: NextRequest) {
     } = await supabase.auth.getUser()
 
     const { pathname } = request.nextUrl
-    const isPublicPath = pathname === '/login' || pathname.startsWith('/auth') || pathname.startsWith('/setup-senha') || pathname === '/api/colaboradores/setup-password'
+    const isPublicPath =
+        pathname === '/login' ||
+        pathname.startsWith('/auth') ||
+        pathname.startsWith('/setup-senha') ||
+        pathname === '/api/colaboradores/setup-password' ||
+        pathname.startsWith('/empregabilidade/')  // páginas públicas para empresas/candidatos externos
 
     // Usuário não autenticado tentando acessar rota protegida
     if (!user && !isPublicPath) {
