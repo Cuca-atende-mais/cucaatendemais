@@ -104,6 +104,7 @@ async def _configurar_webhook(instance_token: str, webhook_url: str) -> dict:
     """
     Passo B: POST /webhook com token da instância.
     Modo simples: sem action/id — cria ou atualiza automaticamente.
+    CRÍTICO: falha aqui propaga exceção — instância não deve ser criada sem webhook ativo.
     """
     logger.info(f"[UAZAPI] Passo B — Configurando webhook → {webhook_url}")
     body = {
@@ -111,11 +112,7 @@ async def _configurar_webhook(instance_token: str, webhook_url: str) -> dict:
         "events": WEBHOOK_EVENTS,
         "excludeMessages": ["wasSentByApi", "isGroupYes"],
     }
-    try:
-        return await _post("/webhook", body, _instance_headers(instance_token))
-    except Exception as e:
-        logger.warning(f"[UAZAPI] Webhook config falhou (não crítico): {e}")
-        return {}
+    return await _post("/webhook", body, _instance_headers(instance_token))
 
 
 async def _obter_qr_code(instance_token: str) -> dict:
@@ -326,7 +323,9 @@ async def verificar_status(nome: str):
 
 @router.get("/{nome}/qrcode")
 async def obter_qrcode(nome: str):
-    """Gera novo QR Code para instância existente (quando o anterior expirou)."""
+    """Gera novo QR Code para instância existente (quando o anterior expirou).
+    Reconfigura o webhook defensivamente antes de gerar QR — garante que
+    reconexão após troca de chip ou queda mantém o webhook ativo."""
     res = supabase.table("instancias_uazapi").select("token, ativa").eq("nome", nome).limit(1).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
@@ -339,6 +338,17 @@ async def obter_qrcode(nome: str):
     if not token:
         raise HTTPException(status_code=400, detail="Instância sem token configurado.")
 
+    # Reconfigurar webhook defensivamente antes de gerar QR
+    webhook_url = f"{WORKER_PUBLIC_URL}/webhook/{token}"
+    try:
+        await _configurar_webhook(token, webhook_url)
+        await asyncio.to_thread(
+            lambda: supabase.table("instancias_uazapi").update({"webhook_url": webhook_url}).eq("nome", nome).execute()
+        )
+        logger.info(f"[QRCode] Webhook reconfigurado para '{nome}' antes do QR.")
+    except Exception as wh_err:
+        logger.warning(f"[QRCode] Falha ao reconfigurar webhook para '{nome}': {wh_err}")
+
     # Busca QR via /instance/status (não precisa reconectar se ainda está connecting)
     status = await _verificar_status(token)
     qr_code = status.get("qr_code")
@@ -349,6 +359,34 @@ async def obter_qrcode(nome: str):
         qr_code = qr_data.get("qr_code")
 
     return {"nome": nome, "qr_code": qr_code, "ja_conectado": False}
+
+
+@router.post("/{nome}/reconfigurar-webhook")
+async def reconfigurar_webhook(nome: str):
+    """
+    Reconfigura o webhook de uma instância existente na UAZAPI.
+    Usado para corrigir instâncias com webhook perdido ou mal configurado,
+    sem precisar recriar a instância inteira.
+    """
+    res = supabase.table("instancias_uazapi").select("token").eq("nome", nome).limit(1).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
+
+    token = res.data[0].get("token")
+    if not token:
+        raise HTTPException(status_code=400, detail="Instância sem token. Configure o token primeiro no painel UAZAPI.")
+
+    webhook_url = f"{WORKER_PUBLIC_URL}/webhook/{token}"
+    try:
+        result = await _configurar_webhook(token, webhook_url)
+        await asyncio.to_thread(
+            lambda: supabase.table("instancias_uazapi").update({"webhook_url": webhook_url}).eq("nome", nome).execute()
+        )
+        logger.info(f"[✓] Webhook reconfigurado manualmente para '{nome}': {webhook_url}")
+        return {"success": True, "nome": nome, "webhook_url": webhook_url, "uazapi": result}
+    except Exception as e:
+        logger.error(f"[WEBHOOK] Falha ao reconfigurar '{nome}': {e}")
+        raise HTTPException(status_code=502, detail=f"Falha ao configurar webhook na UAZAPI: {str(e)}")
 
 
 @router.delete("/{nome}/logout")

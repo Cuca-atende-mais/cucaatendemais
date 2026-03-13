@@ -17,6 +17,7 @@ export interface CriarInstanciaPayload {
     nome: string
     canal_tipo: string
     unidade_cuca?: string | null
+    telefone?: string | null
     observacoes?: string | null
 }
 

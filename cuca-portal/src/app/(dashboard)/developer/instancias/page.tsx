@@ -25,6 +25,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { unidadesCuca } from "@/lib/constants"
+import { useUazapi } from "@/hooks/use-uazapi"
 
 /* ─── Tipos ──────────────────────────────────────── */
 type CanalTipo = "Institucional" | "Empregabilidade" | "Acesso" | "Ouvidoria" | "Reserva" | "Divulgação"
@@ -89,6 +90,9 @@ const DEVELOPER_EMAILS = ["valmir@cucateste.com", "dev.cucaatendemais@gmail.com"
 
 export default function InstanciasPage() {
     const supabase = createClient()
+    const { criarInstancia, refreshQrCode, logoutInstancia, qrStatus, qrCode, resetQr } = useUazapi()
+    const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL || ""
+
     const [instancias, setInstancias] = useState<Instancia[]>([])
     const [transbordos, setTransbordos] = useState<Transbordo[]>([])
     const [search, setSearch] = useState("")
@@ -206,19 +210,44 @@ export default function InstanciasPage() {
                 const { error } = await supabase.from("instancias_uazapi").update(payload).eq("id", editingInst.id)
                 if (error) throw error
                 toast.success("Instância atualizada!")
+                setInstProgress(null)
+                setModalInst(false)
+                await fetchAll()
             } else {
-                setInstProgress("Registrando instância no banco de dados...")
-                await new Promise(r => setTimeout(r, 400))
-                const { error } = await supabase.from("instancias_uazapi").insert(payload)
-                if (error) throw error
-                setInstProgress("Instância criada! Configure o Token e Webhook no UAZAPI.")
-                await new Promise(r => setTimeout(r, 1200))
-                toast.success("Instância criada! Escaneie o QR Code para ativar.")
+                // Criação via Worker: cria na UAZAPI, configura webhook, gera QR e salva no banco
+                setInstProgress("Criando instância na UAZAPI e configurando webhook...")
+                const result = await criarInstancia(
+                    {
+                        nome: iNome.trim(),
+                        canal_tipo: iCanalTipo,
+                        unidade_cuca: iUnidade === "global" || !iUnidade ? null : iUnidade,
+                        telefone: iTelefone.trim() || null,
+                        observacoes: iObs.trim() || null,
+                    },
+                    async () => {
+                        await fetchAll()
+                        setOpenQr(null)
+                    }
+                )
+                setInstProgress(null)
+                if (!result) return // criarInstancia já exibiu o toast de erro
+                // Abre modal de QR com os dados retornados pelo Worker
+                setOpenQr({
+                    id: result.id,
+                    nome: result.nome,
+                    canal_tipo: iCanalTipo,
+                    agente_tipo: iCanalTipo,
+                    unidade_cuca: iUnidade === "global" || !iUnidade ? null : iUnidade,
+                    telefone: iTelefone.trim() || null,
+                    token: result.token,
+                    ativa: false,
+                    reserva: iReserva,
+                    observacoes: iObs.trim() || null,
+                    webhook_url: result.webhook_url,
+                })
+                setModalInst(false)
+                await fetchAll()
             }
-
-            setInstProgress(null)
-            setModalInst(false)
-            await fetchAll()
         } catch (err: any) {
             console.error("Erro ao salvar instância:", err)
             toast.error(`Erro: ${err.message}`)
@@ -248,18 +277,52 @@ export default function InstanciasPage() {
     }
 
     const toggleAtiva = async (inst: Instancia) => {
-        const novo = !inst.ativa
+        const ativando = !inst.ativa
         setLoadingAction(inst.id)
         try {
-            const { error } = await supabase.from("instancias_uazapi")
-                .update({ ativa: novo, updated_at: new Date().toISOString() })
-                .eq("id", inst.id)
-            if (error) throw error
-            if (novo) setOpenQr(inst)
-            toast.success(novo ? "Instância ativada!" : "Instância desativada.")
+            if (!ativando) {
+                // Desativar: chama Worker para desconectar corretamente na UAZAPI
+                // (zera telefone, marca inativa, desconecta WhatsApp)
+                const res = await fetch(`${WORKER_URL}/api/instancias/${encodeURIComponent(inst.nome)}/logout`, {
+                    method: "DELETE",
+                })
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}))
+                    throw new Error(err.detail || `Status ${res.status}`)
+                }
+                toast.success("Instância desconectada com segurança.")
+                await fetchAll()
+            } else {
+                // Ativar: abre modal de QR e busca QR real via Worker
+                // O Worker reconfigura webhook defensivamente antes de gerar o QR
+                resetQr()
+                setOpenQr(inst)
+                refreshQrCode(inst.nome, async () => {
+                    await fetchAll()
+                    setOpenQr(null)
+                })
+            }
+        } catch (e: any) {
+            toast.error(`Erro: ${e.message}`)
+        } finally {
+            setLoadingAction(null)
+        }
+    }
+
+    const reconfigurarWebhook = async (inst: Instancia) => {
+        setLoadingAction(inst.id + "-webhook")
+        try {
+            const res = await fetch(`${WORKER_URL}/api/instancias/${encodeURIComponent(inst.nome)}/reconfigurar-webhook`, {
+                method: "POST",
+            })
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}))
+                throw new Error(err.detail || `Status ${res.status}`)
+            }
+            toast.success(`Webhook reconfigurado para "${inst.nome}".`)
             await fetchAll()
-        } catch {
-            toast.error("Erro ao alterar status.")
+        } catch (e: any) {
+            toast.error(`Erro ao reconfigurar webhook: ${e.message}`)
         } finally {
             setLoadingAction(null)
         }
@@ -460,6 +523,19 @@ export default function InstanciasPage() {
                                                     <Button variant="outline" size="sm" className="flex-1 h-7 text-[10px]" onClick={() => openEdit(inst)}>
                                                         <Pencil className="mr-1 h-3 w-3" /> Editar
                                                     </Button>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 text-[10px] border-sky-500/20 text-sky-600 hover:bg-sky-500/10"
+                                                        title="Reconfigurar Webhook na UAZAPI"
+                                                        onClick={() => reconfigurarWebhook(inst)}
+                                                        disabled={loadingAction === inst.id + "-webhook" || !inst.token}
+                                                    >
+                                                        {loadingAction === inst.id + "-webhook"
+                                                            ? <Loader2 className="h-3 w-3 animate-spin" />
+                                                            : <RefreshCw className="h-3 w-3" />
+                                                        }
+                                                    </Button>
                                                     {isDeveloper && (
                                                         <Button variant="outline" size="sm" className="h-7 text-[10px] border-destructive/20 text-destructive hover:bg-destructive/5"
                                                             onClick={() => excluirInstancia(inst)}>
@@ -547,22 +623,64 @@ export default function InstanciasPage() {
             </div>
 
             {/* ── Modal QR Code ── */}
-            <Dialog open={!!openQr} onOpenChange={() => setOpenQr(null)}>
+            <Dialog open={!!openQr} onOpenChange={(open) => { if (!open) { resetQr(); setOpenQr(null) } }}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle>Conectar — {openQr?.nome}</DialogTitle>
                         <DialogDescription className="text-xs">
-                            Acesse o painel UAZAPI, encontre a instância <strong>{openQr?.nome}</strong> e escaneie o QR Code com o celular do canal.
+                            Escaneie o QR Code abaixo com o WhatsApp Business do aparelho desta instância.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="flex flex-col items-center gap-4 p-6 bg-muted/20 border-2 border-dashed rounded-xl">
-                        <QrCode className="h-32 w-32 text-slate-300" />
-                        <div className="space-y-1 text-center">
-                            <p className="text-sm font-medium">Painel UAZAPI → Instâncias → QR Code</p>
-                            <p className="text-xs text-muted-foreground">
-                                Após escanear, o status mudará automaticamente para Conectado.
-                            </p>
-                        </div>
+                    <div className="flex flex-col items-center gap-4 p-4 bg-muted/20 border-2 border-dashed rounded-xl min-h-[220px] justify-center">
+                        {(qrStatus === "idle" || qrStatus === "loading") && (
+                            <div className="flex flex-col items-center gap-3">
+                                <Loader2 className="h-10 w-10 animate-spin text-primary/50" />
+                                <p className="text-xs text-muted-foreground">Gerando QR Code...</p>
+                            </div>
+                        )}
+                        {qrStatus === "qr_ready" && qrCode && (
+                            <div className="flex flex-col items-center gap-3">
+                                <img
+                                    src={`data:image/png;base64,${qrCode}`}
+                                    alt="QR Code WhatsApp"
+                                    className="w-48 h-48 rounded-lg border"
+                                />
+                                <p className="text-xs text-muted-foreground text-center">
+                                    QR Code expira em 30 segundos. Aguardando pareamento...
+                                </p>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="text-xs"
+                                    onClick={() => openQr && refreshQrCode(openQr.nome, async () => { await fetchAll(); setOpenQr(null) })}
+                                >
+                                    <RefreshCw className="mr-1.5 h-3 w-3" /> Atualizar QR
+                                </Button>
+                            </div>
+                        )}
+                        {qrStatus === "connected" && (
+                            <div className="flex flex-col items-center gap-3">
+                                <Wifi className="h-12 w-12 text-emerald-500" />
+                                <p className="text-sm font-semibold text-emerald-600">WhatsApp Conectado!</p>
+                                <p className="text-xs text-muted-foreground">A instância está ativa e recebendo mensagens.</p>
+                            </div>
+                        )}
+                        {qrStatus === "error" && (
+                            <div className="flex flex-col items-center gap-3">
+                                <TriangleAlert className="h-10 w-10 text-amber-500" />
+                                <p className="text-xs text-muted-foreground text-center">
+                                    Tempo expirado ou erro de conexão.
+                                </p>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="text-xs"
+                                    onClick={() => openQr && refreshQrCode(openQr.nome, async () => { await fetchAll(); setOpenQr(null) })}
+                                >
+                                    <RefreshCw className="mr-1.5 h-3 w-3" /> Tentar Novamente
+                                </Button>
+                            </div>
+                        )}
                     </div>
                 </DialogContent>
             </Dialog>
