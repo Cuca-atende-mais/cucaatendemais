@@ -111,11 +111,13 @@ export default function WhatsAppUnidadePage() {
     const [loadingQr, setLoadingQr] = useState<string | null>(null)
     const [openQr, setOpenQr] = useState<string | null>(null)
     const [instOpened, setInstOpened] = useState<string | null>(null)
+    const [loadingWebhook, setLoadingWebhook] = useState<string | null>(null)
 
     // Hook de integração real com UAZAPI
     const { qrStatus, qrCode, criarInstancia, refreshQrCode, logoutInstancia, excluirInstancia, resetQr } = useUazapi()
     const [modalQrReal, setModalQrReal] = useState(false)
     const [nomeQrReal, setNomeQrReal] = useState("")
+    const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL || ""
 
     useEffect(() => {
         loadAll()
@@ -348,6 +350,25 @@ export default function WhatsAppUnidadePage() {
         }
     }
 
+    const reconfigurarWebhook = async (inst: Instancia) => {
+        setLoadingWebhook(inst.id)
+        try {
+            const res = await fetch(`${WORKER_URL}/api/instancias/${encodeURIComponent(inst.nome)}/reconfigurar-webhook`, {
+                method: "POST",
+            })
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}))
+                throw new Error(err.detail || `Status ${res.status}`)
+            }
+            toast.success(`Webhook sincronizado para "${inst.nome}".`)
+            await fetchInstancias(profile!)
+        } catch (e: any) {
+            toast.error(`Erro ao sincronizar webhook: ${e.message}`)
+        } finally {
+            setLoadingWebhook(null)
+        }
+    }
+
     const isDevUser = profile?.email === "valmir@cucateste.com" || profile?.email === "dev.cucaatendemais@gmail.com"
 
     const handleDeleteInstancia = async (inst: Instancia) => {
@@ -442,7 +463,7 @@ export default function WhatsAppUnidadePage() {
                                             )}
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-2">
                                         <Button
                                             variant="ghost"
                                             size="icon"
@@ -451,6 +472,19 @@ export default function WhatsAppUnidadePage() {
                                             title="Editar Instância"
                                         >
                                             <Pencil className="h-3.5 w-3.5 text-muted-foreground hover:text-primary transition-colors" />
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7 text-sky-500 hover:text-sky-600 hover:bg-sky-500/10"
+                                            onClick={() => reconfigurarWebhook(inst)}
+                                            title="Sincronizar Webhook com UAZAPI"
+                                            disabled={loadingWebhook === inst.id || !inst.token}
+                                        >
+                                            {loadingWebhook === inst.id
+                                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                : <RefreshCw className="h-3.5 w-3.5" />
+                                            }
                                         </Button>
                                         {inst.ativa
                                             ? <Wifi className="h-5 w-5 text-emerald-500" />
