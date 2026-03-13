@@ -608,6 +608,19 @@ async def _processar_publico(
 # Ponto de entrada principal
 # ---------------------------------------------------------------------------
 
+_ETAPAS_EMPRESA = {
+    "solicitar_cnpj", "aguardando_cnpj", "confirmando_cadastro",
+    "confirmando_cadastro_com_correcao", "aguardando_criar_vaga",
+    "aguardando_retorno_vaga", "consulta_empresa", "empresa_ativa",
+}
+_ETAPAS_CANDIDATO = {
+    "solicitar_identificacao", "aguardando_id_candidato", "candidato_consultado",
+}
+_ETAPAS_PUBLICO = {
+    "inicio", "listou_vagas", "candidatura_enviada",
+}
+
+
 async def processar_mensagem_empregabilidade(
     texto: str,
     phone: str,
@@ -625,14 +638,14 @@ async def processar_mensagem_empregabilidade(
     perfil_atual = fluxo.get("perfil")
     etapa_atual = fluxo.get("etapa", "")
 
-    # Se já tem perfil definido, continuar no fluxo
-    if perfil_atual == "empresa":
+    # Rotear pelo perfil salvo OU pela etapa (evita loop quando _set_fluxo não preservou perfil)
+    if perfil_atual == "empresa" or etapa_atual in _ETAPAS_EMPRESA:
         await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         return
-    if perfil_atual == "candidato":
+    if perfil_atual == "candidato" or etapa_atual in _ETAPAS_CANDIDATO:
         await _processar_candidato(texto, phone, instance_name, token, lead_id, conversa_id)
         return
-    if perfil_atual == "publico":
+    if perfil_atual == "publico" or etapa_atual in _ETAPAS_PUBLICO:
         await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         return
 
