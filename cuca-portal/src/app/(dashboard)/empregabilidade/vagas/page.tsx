@@ -109,7 +109,7 @@ export default function VagasPage() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-cuca-dark flex items-center gap-2">
+                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
                         <Briefcase className="h-8 w-8 text-cuca-blue" />
                         Vagas de Emprego
                     </h1>
@@ -148,7 +148,7 @@ export default function VagasPage() {
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
                             placeholder="Buscar vaga ou empresa..."
-                            className="pl-10 w-72 h-9 bg-white"
+                            className="pl-10 w-72 h-9"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
@@ -203,9 +203,9 @@ export default function VagasPage() {
                                 <TableRow key={v.id} className={abaFiltro === "todas" ? "hover:bg-muted/30" : "cursor-pointer hover:bg-muted/30"} onClick={() => abaFiltro === "minhas" && openEditModal(v)}>
                                     <TableCell>
                                         <div className="flex flex-col">
-                                            <span className="font-semibold text-cuca-dark flex items-center gap-2">
+                                            <span className="font-semibold flex items-center gap-2">
                                                 {v.titulo}
-                                                {v.expansiva && <Badge className="bg-cuca-yellow text-cuca-dark text-[10px] h-4 px-1">Global</Badge>}
+                                                {v.expansiva && <Badge className="bg-cuca-yellow text-[10px] h-4 px-1">Global</Badge>}
                                             </span>
                                             <span className="text-xs text-muted-foreground flex items-center gap-1">
                                                 <Users className="h-3 w-3" /> {v.total_vagas} vaga(s) | {v.faixa_etaria}

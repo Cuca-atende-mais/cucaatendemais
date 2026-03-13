@@ -229,7 +229,7 @@ export default function VagaDetalhesPage() {
     const tipoFollowupLabel = (tipo: string) => {
         if (tipo === "empresa") return { label: "Empresa", color: "bg-blue-100 text-blue-800", icon: Building2 }
         if (tipo === "candidato") return { label: "Candidato", color: "bg-green-100 text-green-800", icon: User }
-        return { label: "Interno", color: "bg-slate-100 text-slate-700", icon: Info }
+        return { label: "Interno", color: "bg-muted text-muted-foreground", icon: Info }
     }
 
     return (
@@ -239,7 +239,7 @@ export default function VagaDetalhesPage() {
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
                 <div>
-                    <h1 className="text-2xl font-bold tracking-tight text-cuca-dark">{vaga?.titulo || "Detalhes da Vaga"}</h1>
+                    <h1 className="text-2xl font-bold tracking-tight">{vaga?.titulo || "Detalhes da Vaga"}</h1>
                     <p className="text-muted-foreground flex items-center gap-2">
                         {vaga?.status === "aberta" ? <Badge className="bg-green-600">Aberta</Badge> : <Badge variant="secondary">{vaga?.status}</Badge>}
                         <span>Total de vagas: {vaga?.total_vagas}</span>
@@ -256,7 +256,7 @@ export default function VagaDetalhesPage() {
                         <CardTitle className="flex items-center gap-2">
                             <FileText className="h-5 w-5 text-cuca-blue" />
                             Candidatos / Pipeline
-                            <Badge variant="outline" className="ml-2 bg-white">{candidatos.length}</Badge>
+                            <Badge variant="outline" className="ml-2">{candidatos.length}</Badge>
                         </CardTitle>
                         <CardDescription>Gerencie o pipeline de seleção desta oportunidade</CardDescription>
                     </div>

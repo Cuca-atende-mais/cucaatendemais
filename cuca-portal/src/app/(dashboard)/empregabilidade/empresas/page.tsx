@@ -437,7 +437,7 @@ export default function EmpresasPage() {
                             <TableBody>
                                 {filteredEmpresas.map((emp) => (
                                     <TableRow key={emp.id}>
-                                        <TableCell className="font-medium text-slate-800">{emp.nome}</TableCell>
+                                        <TableCell className="font-medium">{emp.nome}</TableCell>
                                         <TableCell className="text-muted-foreground">
                                             {emp.cnpj || "-"}
                                         </TableCell>

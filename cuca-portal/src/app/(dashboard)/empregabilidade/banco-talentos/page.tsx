@@ -120,7 +120,7 @@ export default function BancoTalentosPage() {
                     </p>
                 </div>
                 <Button
-                    className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold"
+                    className="bg-cuca-yellow hover:bg-yellow-500 font-bold"
                     onClick={() => setCadastroOpen(true)}
                 >
                     <Plus className="mr-2 h-4 w-4" /> Cadastrar Manualmente
@@ -130,10 +130,10 @@ export default function BancoTalentosPage() {
             {/* Modal cadastro manual S16-02 */}
             {cadastroOpen && (
                 <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+                    <div className="bg-popover rounded-xl shadow-xl w-full max-w-md">
                         <div className="flex items-center justify-between p-5 border-b">
                             <h2 className="text-lg font-bold">Cadastrar Candidato Presencial</h2>
-                            <button onClick={() => setCadastroOpen(false)} className="text-gray-400 hover:text-gray-600">
+                            <button onClick={() => setCadastroOpen(false)} className="text-muted-foreground hover:text-foreground">
                                 <X className="h-5 w-5" />
                             </button>
                         </div>
@@ -152,7 +152,7 @@ export default function BancoTalentosPage() {
                             </div>
                             <div className="flex justify-end gap-3 pt-2">
                                 <Button type="button" variant="outline" onClick={() => setCadastroOpen(false)}>Cancelar</Button>
-                                <Button type="submit" className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold" disabled={savingCadastro}>
+                                <Button type="submit" className="bg-cuca-yellow hover:bg-yellow-500 font-bold" disabled={savingCadastro}>
                                     {savingCadastro ? "Salvando..." : "Adicionar ao Banco"}
                                 </Button>
                             </div>
@@ -265,7 +265,7 @@ export default function BancoTalentosPage() {
                                     const ocr = t.skills_jsonb || {}
                                     return (
                                         <TableRow key={t.id}>
-                                            <TableCell className="font-medium text-slate-800">
+                                            <TableCell className="font-medium">
                                                 <div>{t.nome}</div>
                                                 <div className="text-xs text-muted-foreground">{calcularIdade(t.data_nascimento)}</div>
                                             </TableCell>
@@ -298,7 +298,7 @@ export default function BancoTalentosPage() {
                                                     </Button>
                                                     {t.arquivo_cv_url && (
                                                         <Button variant="ghost" size="icon" title="Ver Currículo Original" onClick={() => window.open(t.arquivo_cv_url!, '_blank')}>
-                                                            <FileText className="h-4 w-4 text-slate-500" />
+                                                            <FileText className="h-4 w-4 text-muted-foreground" />
                                                         </Button>
                                                     )}
                                                     {t.telefone && (
@@ -332,13 +332,13 @@ export default function BancoTalentosPage() {
                         {selectedTalento && (
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <h4 className="text-sm font-semibold text-slate-900">Escolaridade</h4>
+                                    <h4 className="text-sm font-semibold">Escolaridade</h4>
                                     <p className="text-sm text-muted-foreground mt-1">
                                         {selectedTalento.skills_jsonb?.escolaridade || "Não informada"}
                                     </p>
                                 </div>
                                 <div>
-                                    <h4 className="text-sm font-semibold text-slate-900">Tempo de Experiência</h4>
+                                    <h4 className="text-sm font-semibold">Tempo de Experiência</h4>
                                     <p className="text-sm text-muted-foreground mt-1">
                                         {selectedTalento.skills_jsonb?.experiencia_meses
                                             ? `${selectedTalento.skills_jsonb.experiencia_meses} meses / ${(selectedTalento.skills_jsonb.experiencia_meses / 12).toFixed(1)} anos`
@@ -346,13 +346,13 @@ export default function BancoTalentosPage() {
                                     </p>
                                 </div>
                                 <div className="col-span-2">
-                                    <h4 className="text-sm font-semibold text-slate-900">Resumo Profissional / Habilidades</h4>
-                                    <div className="mt-2 bg-slate-50 p-3 rounded-md border text-sm text-slate-700 whitespace-pre-wrap">
+                                    <h4 className="text-sm font-semibold">Resumo Profissional / Habilidades</h4>
+                                    <div className="mt-2 bg-muted/50 p-3 rounded-md border text-sm whitespace-pre-wrap">
                                         {selectedTalento.skills_jsonb?.experiencia_resumo || selectedTalento.skills_jsonb?.skills || "Nenhum detalhe extraído pelo processamento de currículo."}
                                     </div>
                                 </div>
                                 <div className="col-span-2">
-                                    <h4 className="text-sm font-semibold text-slate-900">Dados JSON Brutos (Debug Engine)</h4>
+                                    <h4 className="text-sm font-semibold">Dados JSON Brutos (Debug Engine)</h4>
                                     <pre className="mt-2 bg-slate-900 text-slate-100 p-3 rounded-md text-xs overflow-auto max-h-[200px]">
                                         {JSON.stringify(selectedTalento.skills_jsonb, null, 2)}
                                     </pre>

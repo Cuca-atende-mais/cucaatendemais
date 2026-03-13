@@ -194,7 +194,7 @@ export default function CandidatosGlobaisPage() {
                                     const ocr = c.dados_ocr_json || {}
                                     return (
                                         <TableRow key={c.id}>
-                                            <TableCell className="font-medium text-slate-800">
+                                            <TableCell className="font-medium">
                                                 <div>{c.nome}</div>
                                                 <div className="text-xs text-muted-foreground">{calcularIdade(c.data_nascimento)} • {c.telefone}</div>
                                             </TableCell>
@@ -210,7 +210,7 @@ export default function CandidatosGlobaisPage() {
                                                 <div className="text-sm max-w-[200px] truncate text-muted-foreground" title={ocr.escolaridade || "Sem dados de escolaridade"}>
                                                     {ocr.escolaridade || "Analisando OCR..."}
                                                 </div>
-                                                <div className="text-xs max-w-[200px] truncate text-slate-400" title={ocr.experiencia_resumo || ocr.skills || ""}>
+                                                <div className="text-xs max-w-[200px] truncate text-muted-foreground" title={ocr.experiencia_resumo || ocr.skills || ""}>
                                                     {ocr.experiencia_resumo || ocr.skills || ""}
                                                 </div>
                                             </TableCell>
