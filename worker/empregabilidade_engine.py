@@ -636,7 +636,33 @@ async def processar_mensagem_empregabilidade(
         await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         return
 
-    # Primeira interação ou perfil indefinido — identificar
+    # Usuário respondeu ao menu inicial com número ou palavra-chave
+    if etapa_atual == "menu_inicial":
+        t = texto.strip().lower()
+        if t in ("1", "empresa", "divulgar", "divulgar vaga", "quero divulgar"):
+            _set_fluxo(conversa_id, {"perfil": "empresa", "etapa": "solicitar_cnpj"})
+            await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+            return
+        if t in ("2", "candidato", "candidatura", "minha candidatura", "acompanhar"):
+            _set_fluxo(conversa_id, {"perfil": "candidato", "etapa": "solicitar_identificacao"})
+            await _processar_candidato(texto, phone, instance_name, token, lead_id, conversa_id)
+            return
+        if t in ("3", "vagas", "vaga", "ver vagas", "vagas abertas", "quero trabalhar", "emprego"):
+            _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+            await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+            return
+        # Não reconheceu — reenviar menu com instrução mais clara
+        await _enviar(
+            instance_name, token, phone,
+            "Não entendi sua resposta. Por favor, escolha uma das opções:\n\n"
+            "1️⃣ *Empresa* — Quero divulgar uma vaga\n"
+            "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
+            "3️⃣ *Vagas* — Quero ver vagas abertas\n\n"
+            "Digite *1*, *2* ou *3*."
+        )
+        return
+
+    # Primeira interação ou perfil indefinido — identificar pelo conteúdo da mensagem
     perfil = _identificar_perfil(texto, fluxo)
 
     if perfil == "empresa":
