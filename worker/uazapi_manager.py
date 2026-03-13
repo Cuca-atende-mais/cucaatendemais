@@ -168,23 +168,34 @@ async def _deletar_na_uazapi(instance_name: str) -> bool:
     try:
         logger.info(f"[UAZAPI] Deletando instância definitivamente: {instance_name}")
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Tenta desconectar primeiro (garante sessão limpa antes do delete)
-            try:
-                await client.post(
-                    f"{UAZAPI_BASE_URL}/instance/disconnect",
-                    headers=_instance_headers(instance_name),  # Nota: aqui precisa do token, não do nome
-                    json={}
-                )
-            except Exception:
-                pass  # Ignora falha na desconexão — segue para o delete
-
-            # DELETE com admintoken — endpoint oficial UAZAPI GO v2
+            # Tentativa 1: DELETE /instance/delete/{nome} com admintoken (padrão UAZAPI GO v2)
             resp = await client.delete(
                 f"{UAZAPI_BASE_URL}/instance/delete/{instance_name}",
                 headers=_admin_headers()
             )
-            logger.info(f"[UAZAPI] Delete response: {resp.status_code} — {resp.text[:200]}")
-            return resp.status_code in (200, 204, 404)
+            logger.info(f"[UAZAPI] Delete v1 response: {resp.status_code} — {resp.text[:300]}")
+
+            if resp.status_code in (200, 204):
+                # Verifica se realmente foi deletado (UAZAPI às vezes retorna 200 mas só desconecta)
+                check = await client.get(
+                    f"{UAZAPI_BASE_URL}/instance/status",
+                    headers=_instance_headers(instance_name),
+                )
+                if check.status_code == 404:
+                    logger.info(f"[UAZAPI] Instância '{instance_name}' confirmada como deletada.")
+                    return True
+                else:
+                    logger.warning(f"[UAZAPI] Instância ainda existe após DELETE (status {check.status_code}). Tentando via POST /instance/logout.")
+
+            # Tentativa 2: POST /instance/logout com admintoken (endpoint alternativo)
+            resp2 = await client.post(
+                f"{UAZAPI_BASE_URL}/instance/delete",
+                headers=_admin_headers(),
+                json={"name": instance_name}
+            )
+            logger.info(f"[UAZAPI] Delete v2 response: {resp2.status_code} — {resp2.text[:300]}")
+            return resp2.status_code in (200, 204, 404)
+
     except Exception as e:
         logger.error(f"[UAZAPI] Erro ao deletar do painel UAZAPI: {e}")
         return False
@@ -320,9 +331,34 @@ async def verificar_status(nome: str):
 
     status = await _verificar_status(token)
 
-    if status["is_connected"] and not inst["ativa"]:
-        await asyncio.to_thread(_atualizar_status_banco, nome, True, status.get("phone"))
-        logger.info(f"[Sync] '{nome}' detectado como conectado. Banco atualizado.")
+    if status["is_connected"]:
+        phone = status.get("phone")
+
+        # Race condition: jid pode ser null por 1-3s logo após a conexão do QR.
+        # Se conectado mas sem phone, aguarda 3s e consulta novamente.
+        if not phone:
+            await asyncio.sleep(3)
+            status_retry = await _verificar_status(token)
+            phone = status_retry.get("phone")
+            if phone:
+                logger.info(f"[Sync] '{nome}' phone capturado na segunda tentativa: {phone}")
+
+        if not inst["ativa"]:
+            # Primeira conexão: marca ativa + salva telefone
+            await asyncio.to_thread(_atualizar_status_banco, nome, True, phone)
+            logger.info(f"[Sync] '{nome}' conectado. ativa=True. Telefone: {phone}")
+        elif not inst.get("telefone") and phone:
+            # Já estava ativa mas sem telefone (ex: criado via polling anterior sem jid)
+            await asyncio.to_thread(
+                lambda: supabase.table("instancias_uazapi")
+                    .update({"telefone": phone, "updated_at": datetime.now(timezone.utc).isoformat()})
+                    .eq("nome", nome).execute()
+            )
+            logger.info(f"[Sync] '{nome}' telefone preenchido retroativamente: {phone}")
+    elif not status["is_connected"] and inst["ativa"]:
+        # Instância desconectada na UAZAPI mas banco mostra ativa — corrige inconsistência
+        await asyncio.to_thread(_atualizar_status_banco, nome, False, None)
+        logger.warning(f"[Sync] '{nome}' desconectado na UAZAPI. Banco corrigido para ativa=False.")
 
     return {
         "nome": nome,
