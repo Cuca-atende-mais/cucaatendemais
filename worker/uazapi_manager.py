@@ -108,6 +108,7 @@ async def _configurar_webhook(instance_token: str, webhook_url: str) -> dict:
     """
     logger.info(f"[UAZAPI] Passo B — Configurando webhook → {webhook_url}")
     body = {
+        "enabled": True,
         "url": webhook_url,
         "events": WEBHOOK_EVENTS,
         "excludeMessages": ["wasSentByApi", "isGroupYes"],

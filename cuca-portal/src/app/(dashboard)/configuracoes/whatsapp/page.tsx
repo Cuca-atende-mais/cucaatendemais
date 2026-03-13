@@ -249,6 +249,7 @@ export default function WhatsAppUnidadePage() {
                         nome: iNome.trim(),
                         canal_tipo: iCanalTipo,
                         unidade_cuca: profile?.isSuperAdmin ? (iUnidade || null) : profile?.unidade_cuca,
+                        telefone: iTelefone.trim() || null,
                         observacoes: iObs.trim() || null,
                     },
                     async () => {
