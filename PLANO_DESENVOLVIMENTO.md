@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
 > **Versão**: 7.1 | **Atualizado**: 13/03/2026
-> **STATUS ATUAL**: Sprints 1–22 + 24–29 Concluídos | Sprint 23 planejado (pendente) | Sprint 30 planejado
+> **STATUS ATUAL**: Sprints 1–22 + 24–31 Concluídos | Sprint 23 planejado (pendente)
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -1011,22 +1011,98 @@ Jovem responde → motor-agente lê breadcrumb → contexto correto mesmo sem pa
 
 ---
 
-#### Sprint 30 — Formulário de Vaga: Benefícios, Limite de Currículos e Tipo de Processo Seletivo ⏳ PLANEJADO
+#### Sprint 31 — Encerramento, Retomada e Fluxo Completo da Empregabilidade via WhatsApp ✅ CONCLUÍDO (13/03/2026)
+
+> **Objetivo**: Tornar o fluxo conversacional da empregabilidade no WhatsApp completo e autossuficiente. Atualmente o motor possui lacunas críticas: nenhum fluxo encerra formalmente, empresas que voltam ao número precisam redigitar o CNPJ, o número da vaga nunca é enviado ao contato da empresa, o número da candidatura nunca chega ao candidato via WhatsApp, e a transição entre buscar vaga e enviar currículo não é fluida. Este sprint implementa encerramento padronizado, retomada inteligente por contexto, numeração sequencial de vagas por empresa, confirmação de dados com nome fantasia, callback do portal para o worker, coleta mínima de dados do candidato antes do link, retomada do candidato por número de candidatura ou nome, validação etária antes de salvar candidatura, e transição fluida para banco de talentos.
+
+---
+
+**Narrativa do sprint — item a item**
+
+**Item 1 — Nome fantasia da empresa na confirmação de cadastro**
+
+Hoje, quando o bot consulta a API pública de CNPJ e exibe os dados para a empresa confirmar, apenas a razão social é mostrada. Empresas que fazem parte de grupos empresariais com razão social pouco conhecida ficam confusas — a razão social "GRUPO XYZ HOLDINGS LTDA" não diz muito, mas o nome fantasia "Restaurante do João" é imediatamente reconhecível. O worker deverá ser atualizado para também extrair e exibir o campo `nome_fantasia` (retornado pela API `publica.cnpj.ws`) na mensagem de confirmação, logo abaixo da razão social, com a label "Nome fantasia:" quando o campo estiver preenchido. Se a API não retornar nome fantasia, a exibição é omitida sem quebrar o fluxo. O campo `nome_fantasia` também deverá ser salvo na tabela `empresas` — se a coluna ainda não existir, será adicionada via migration como `text nullable`.
+
+**Item 2 — Numeração sequencial de vagas por empresa**
+
+Hoje as vagas são identificadas pelos últimos 6 caracteres do UUID, que são difíceis de lembrar e não têm significado. A empresa que criou a vaga via formulário precisa de um número legível para acompanhar pelo WhatsApp. Será adicionada à tabela `vagas` uma coluna `numero_vaga integer` que é preenchida automaticamente com um número sequencial por empresa — a primeira vaga de cada empresa recebe o número 1, a segunda recebe o 2, e assim por diante. Essa sequência será gerenciada via função SQL que calcula `MAX(numero_vaga) + 1` para aquele `empresa_id` no momento do insert. Quando o portal registrar a vaga com sucesso, a API route atualizará o metadata da conversa correspondente com o ID e o número sequencial da vaga criada. O worker, ao detectar essa atualização, enviará à empresa: "Vaga cadastrada com sucesso! Número desta vaga: #[NUMERO]. Título: [TITULO]. Use este número para acompanhar as candidaturas aqui no WhatsApp."
+
+**Item 3 — Callback do portal para o worker (ponte vaga criada)**
+
+Hoje a API route que cria vagas (`POST /api/empregabilidade/vagas`) registra a vaga no banco e devolve apenas o ID, sem notificar o worker. A etapa `aguardando_retorno_vaga` fica presa para sempre porque o worker não tem como saber que o formulário foi preenchido. Após o insert bem-sucedido da vaga, a API route buscará o registro de `conversas` onde o metadata `empreg_fluxo` contém o `empresa_id` da empresa que acabou de criar a vaga, e atualizará esse metadata adicionando `vaga_criada_id` com o UUID da vaga e `vaga_numero` com o número sequencial. O worker, na próxima mensagem da empresa (pode ser qualquer mensagem, inclusive "olá"), verificará se o metadata contém `vaga_criada_id`. Se sim, avança o fluxo para confirmação e pergunta de continuidade. Se não, reenvia o link como lembrete.
+
+**Item 4 — Encerramento pós-vaga e menu de continuidade para empresa**
+
+Após enviar a confirmação da vaga criada (Item 2), o bot perguntará: "Deseja divulgar outra vaga, acompanhar candidatos desta vaga ou encerrar por aqui?" Se a empresa responder que quer nova vaga, o fluxo retoma diretamente da etapa de criação de link (pulando o cadastro, pois a empresa já está identificada). Se quiser acompanhar, entra no fluxo de consulta que já existe (`empresa_ativa`). Se quiser encerrar ou disser palavras como "obrigado", "tchau", "até mais", o bot envia mensagem de despedida, limpa o estado `empreg_fluxo` e marca a conversa como encerrada.
+
+**Item 5 — Retomada inteligente de empresa (sem redigitar CNPJ)**
+
+Quando uma empresa retorna ao número em outro momento (horas ou dias depois), o metadata da conversa pode não ter mais o estado ativo, mas o `empresa_id` pode estar salvo de uma sessão anterior. O worker verificará se existe `empresa_id` no metadata mesmo quando `etapa` está vazio ou encerrado. Se encontrar, apresentará menu contextual direto: "Olá! Vi que você já tem cadastro conosco como [Nome Fantasia ou Razão Social]. Deseja criar uma nova vaga ou acompanhar suas vagas abertas?" Isso elimina completamente a necessidade de redigitar o CNPJ para empresas recorrentes.
+
+**Item 6 — Coleta de dados do candidato antes do link de candidatura**
+
+Hoje o fluxo público envia o link de candidatura imediatamente após o candidato selecionar a vaga, sem coletar nenhum dado no WhatsApp. Isso impede o rastreamento posterior. Antes de enviar o link, o bot coletará dois dados: o nome completo de quem vai se candidatar e se o currículo é para a própria pessoa que está no WhatsApp ou para outra (amigo, familiar). Essa distinção é necessária porque o mesmo número pode ser usado por uma pessoa para enviar currículo de outra. Se for para terceiro, o bot pede o nome do candidato real. O nome será passado como query param no link do formulário para pré-preenchimento, e o número de telefone de origem ficará registrado na conversa para posterior envio do número de candidatura.
+
+**Item 7 — Callback do portal para o worker (ponte candidatura criada)**
+
+Seguindo o mesmo padrão do Item 3, quando o candidato preenche e submete o formulário de candidatura no portal, a rota de candidatura (`/app/empregabilidade/candidatura/page.tsx`) deverá, após o insert bem-sucedido, buscar o registro de `conversas` associado ao número de telefone de origem (passado como query param no link) e atualizar o metadata com `candidatura_criada_id` e `candidatura_codigo` (os 6 caracteres de referência). O worker, ao processar a próxima mensagem daquele número (ou ao receber uma notificação via polling do metadata), enviará: "Candidatura recebida com sucesso! Seu número de acompanhamento é: [CODIGO]. Guarde esse número — com ele você pode retornar aqui para verificar o status."
+
+**Item 8 — Encerramento pós-candidatura e oferta de mais vagas**
+
+Após o envio do número de candidatura, o bot perguntará: "Deseja se candidatar a outra vaga ou encerrar por aqui?" Se o candidato quiser outra vaga, volta para a listagem. Se quiser encerrar ou usar palavras de despedida, o bot finaliza com "Boa sorte no processo! Fique de olho nas mensagens da equipe CUCA. 🤝", limpa o estado e encerra.
+
+**Item 9 — Retomada do candidato por número de candidatura, nome ou telefone**
+
+O fluxo de consulta de candidato (`aguardando_id_candidato`) aceita hoje apenas CPF ou fragmento do UUID. Como o CPF não será mais coletado no formulário de candidatura (apenas data de nascimento é mantida), novos candidatos não terão como usar CPF para consulta. O fluxo será expandido para aceitar três formas de identificação: o código de 6 caracteres gerado pelo sistema, o nome completo (busca tolerante com ILIKE `%nome%`) e o número de telefone cadastrado. Se a busca por nome retornar múltiplos resultados, o bot lista até 3 e pede confirmação de qual é o candidato. A busca por CPF é mantida apenas para candidaturas históricas. O menu de entrada será atualizado para orientar o candidato: "Informe seu número de candidatura, nome completo ou o telefone cadastrado."
+
+**Item 10 — Validação etária antes de salvar candidatura**
+
+No formulário de candidatura, após o submit e antes do insert no banco, o sistema verificará a `faixa_etaria` da vaga. Se a vaga indicar requisito de maior de 18 anos e a data de nascimento informada resultar em idade inferior a 18 anos na data atual, a candidatura é aceita e salva (para não frustrar o candidato), mas com `observacoes = "banco_talentos: menor de idade"` e sem acionar o OCR de currículo. A tela de confirmação exibirá mensagem diferenciada: "Seu currículo foi recebido e adicionado ao nosso banco de talentos. Você será notificado quando surgir uma oportunidade compatível com seu perfil." No worker, quando esse candidato retornar e consultar o status, o campo exibido será "⏳ Em banco de talentos — aguardando oportunidade compatível".
+
+**Item 11 — Transição fluida busca de vagas → banco de talentos**
+
+Na etapa `listou_vagas`, além dos códigos de vaga, o bot reconhecerá intenções como "nenhuma dessas", "não encontrei nada", "quero deixar meu currículo", "guardar meu currículo". Nesse caso, o bot explicará o banco de talentos e enviará um link de candidatura sem `vaga_id` específico — uma candidatura geral. O fluxo seguirá o mesmo caminho dos Itens 6 e 7: coleta de nome, identificação de terceiro, envio do link, recebimento do número de candidatura.
+
+**Item 12 — Função de encerramento padronizada**
+
+Será criada uma função utilitária `_encerrar_fluxo(conversa_id, perfil, instancia, numero_destino)` no worker que: envia mensagem de despedida contextualizada por perfil, limpa o estado `empreg_fluxo` do metadata e atualiza o status da conversa. O encerramento é acionado explicitamente (resposta "não" à pergunta de continuidade) ou por palavras-chave reconhecidas como "obrigado", "tchau", "encerrar", "até mais", "pronto", "ok pode fechar".
+
+---
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S31-01 | Migration: adicionar coluna `nome_fantasia text nullable` na tabela `empresas` e `numero_vaga integer nullable` na tabela `vagas` com função de sequência por empresa | Banco | [x] |
+| S31-02 | Worker: exibir `nome_fantasia` da API CNPJ na confirmação de cadastro da empresa, salvar na tabela `empresas` | Worker | [x] |
+| S31-03 | Worker: retomada inteligente de empresa — detectar `empresa_id` no metadata mesmo com etapa encerrada e apresentar menu contextual sem pedir CNPJ | Worker | [x] |
+| S31-04 | API route `POST /api/empregabilidade/vagas`: após insert, calcular `numero_vaga` sequencial por empresa e atualizar metadata da conversa com `vaga_criada_id` e `vaga_numero` | Portal API | [x] |
+| S31-05 | Worker: na etapa `aguardando_retorno_vaga`, detectar `vaga_criada_id` no metadata e enviar confirmação com número sequencial da vaga (#N) + menu de continuidade | Worker | [x] |
+| S31-06 | Worker: implementar `_encerrar_fluxo()` — despedida contextualizada por perfil, limpeza de estado, status encerrada — acionada por palavras-chave ou resposta "não" | Worker | [x] |
+| S31-07 | Worker: na etapa `listou_vagas`, antes de enviar o link de candidatura, coletar nome do candidato e verificar se é para ele ou terceiro — pré-preencher query params no link | Worker | [x] |
+| S31-08 | Portal: na rota de candidatura, após insert bem-sucedido, buscar conversa pelo telefone de origem (query param) e atualizar metadata com `candidatura_criada_id` e `candidatura_codigo` | Portal | [x] |
+| S31-09 | Worker: detectar `candidatura_criada_id` no metadata e enviar número de acompanhamento ao candidato, seguido de pergunta de continuidade | Worker | [x] |
+| S31-10 | Worker: expandir `aguardando_id_candidato` para aceitar número de candidatura (6 chars), nome completo (ILIKE) e telefone — manter CPF apenas para histórico | Worker | [x] |
+| S31-11 | Portal: validação etária no submit da candidatura — se vaga exige 18+ e data de nascimento indica menor, salvar com flag banco_talentos e exibir mensagem diferenciada | Portal | [x] |
+| S31-12 | Worker: na listagem de vagas (`listou_vagas`), reconhecer intenção de banco de talentos e enviar link de candidatura geral sem vaga_id específico | Worker | [x] |
+| S31-13 | PLANO_DESENVOLVIMENTO.md: documentar Sprint 31 | Docs | [x] |
+
+---
+
+#### Sprint 30 — Formulário de Vaga: Benefícios, Limite de Currículos e Tipo de Processo Seletivo ✅ CONCLUÍDO (13/03/2026)
 
 > **Objetivo**: Enriquecer o formulário público de cadastro de vaga (`/empregabilidade/vagas/nova`) com três novas dimensões que impactam diretamente o processo seletivo: benefícios estruturados com checkboxes + campo livre, controle de quantidade máxima de currículos por vaga com redirecionamento automático ao banco de talentos, e definição do tipo de processo seletivo adotado pela empresa. As informações coletadas refletem no painel de gestão, na tela pública de candidatura e na lógica de distribuição de currículos.
 
 | Ticket | Entregável | Módulo | Status |
 |--------|-----------|--------|--------|
-| S30-01 | Migration: adicionar coluna `limite_curriculos integer nullable` na tabela `vagas` | Banco | [ ] |
-| S30-02 | Formulário público: seção "Benefícios Oferecidos" com checkboxes (Plano de Saúde co-participação, Vale Refeição, Refeitório no Local, Vale Transporte, Cesta Básica, Cartão Alimentação/Refeição) + campo texto livre "Outros" — nenhum obrigatório | Portal | [ ] |
-| S30-03 | Formulário público: campo numérico "Quantos currículos deseja analisar?" com nota explicativa sobre redirecionamento ao banco de talentos quando atingir o limite — campo opcional | Portal | [ ] |
-| S30-04 | Formulário público: campo "Tipo de Processo Seletivo" com três opções — Coleta de Currículo / Entrevista na Unidade / Triagem Inicial pelo CUCA {unidade} — a terceira opção interpola o nome da unidade dinamicamente via query param `unidade_cuca` | Portal | [ ] |
-| S30-05 | API route `POST /api/empregabilidade/vagas`: incluir `beneficios` (string serializada dos checkboxes + campo livre), `limite_curriculos` e `tipo_selecao` no insert da tabela `vagas` | Portal API | [ ] |
-| S30-06 | Worker `empregabilidade_engine.py`: acrescentar `&unidade_cuca={unidade_cuca}` no link gerado na etapa `aguardando_criar_vaga` para que o formulário receba o nome da unidade | Worker | [ ] |
-| S30-07 | Formulário público de candidatura (`/empregabilidade/candidatura`): exibir benefícios em badges e tipo de seleção como informação contextual para o candidato | Portal | [ ] |
-| S30-08 | Formulário público de candidatura: verificar contagem de candidaturas antes de aceitar — se count ≥ `limite_curriculos`, candidatura é aceita mas marcada internamente para o banco de talentos (experiência do candidato não muda) | Portal API | [ ] |
-| S30-09 | Dashboard `/empregabilidade/vagas/[id]`: exibir indicador "Currículos recebidos: X / Y" quando `limite_curriculos` estiver definido, exibir benefícios em badges e tipo de seleção | Portal | [ ] |
-| S30-10 | PLANO_DESENVOLVIMENTO.md: documentar Sprint 30 | Docs | [ ] |
+| S30-01 | Migration: adicionar coluna `limite_curriculos integer nullable` na tabela `vagas` | Banco | [x] |
+| S30-02 | Formulário público: seção "Benefícios Oferecidos" com checkboxes (Plano de Saúde co-participação, Vale Refeição, Refeitório no Local, Vale Transporte, Cesta Básica, Cartão Alimentação/Refeição) + campo texto livre "Outros" — nenhum obrigatório | Portal | [x] |
+| S30-03 | Formulário público: campo numérico "Quantos currículos deseja analisar?" com nota explicativa sobre redirecionamento ao banco de talentos quando atingir o limite — campo opcional | Portal | [x] |
+| S30-04 | Formulário público: campo "Tipo de Processo Seletivo" com três opções — Coleta de Currículo / Entrevista na Unidade / Triagem Inicial pelo CUCA {unidade} — a terceira opção interpola o nome da unidade dinamicamente via query param `unidade_cuca` | Portal | [x] |
+| S30-05 | API route `POST /api/empregabilidade/vagas`: incluir `beneficios` (string serializada dos checkboxes + campo livre), `limite_curriculos` e `tipo_selecao` no insert da tabela `vagas` | Portal API | [x] |
+| S30-06 | Worker `empregabilidade_engine.py`: acrescentar `&unidade_cuca={unidade_cuca}` no link gerado na etapa `aguardando_criar_vaga` para que o formulário receba o nome da unidade | Worker | [x] |
+| S30-07 | Formulário público de candidatura (`/empregabilidade/candidatura`): exibir benefícios em badges e tipo de seleção como informação contextual para o candidato | Portal | [x] |
+| S30-08 | Formulário público de candidatura: verificar contagem de candidaturas antes de aceitar — se count ≥ `limite_curriculos`, candidatura é aceita mas marcada internamente para o banco de talentos (experiência do candidato não muda) | Portal API | [x] |
+| S30-09 | Dashboard `/empregabilidade/vagas/[id]`: exibir indicador "Currículos recebidos: X / Y" quando `limite_curriculos` estiver definido, exibir benefícios em badges e tipo de seleção | Portal | [x] |
+| S30-10 | PLANO_DESENVOLVIMENTO.md: documentar Sprint 30 | Docs | [x] |
 
 ---
 
