@@ -422,7 +422,7 @@ export default function WhatsAppUnidadePage() {
                 <AlertDescription className="text-xs text-muted-foreground">
                     {profile?.isSuperAdmin
                         ? "Você tem acesso a todos os 20 canais (12 ativos + 8 reserva). Os tipos Acesso e Ouvidoria são exclusivos do Super Admin."
-                        : `Você gerencia os canais Institucional e Empregabilidade da ${profile?.unidade_cuca}. Em caso de ban, clique em "Recuperar Ban / Trocar Chip" e conecte um chip de reserva.`}
+                        : `Você gerencia os canais Institucional e Empregabilidade${profile?.unidade_cuca ? ` da ${profile.unidade_cuca}` : ""}. Em caso de ban, clique em "Recuperar Ban / Trocar Chip" e conecte um chip de reserva.`}
                 </AlertDescription>
             </Alert>
 

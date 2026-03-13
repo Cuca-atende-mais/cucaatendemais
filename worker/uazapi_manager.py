@@ -168,11 +168,23 @@ async def _deletar_na_uazapi(instance_name: str) -> bool:
     try:
         logger.info(f"[UAZAPI] Deletando instância definitivamente: {instance_name}")
         async with httpx.AsyncClient(timeout=30.0) as client:
+            # Tenta desconectar primeiro (garante sessão limpa antes do delete)
+            try:
+                await client.post(
+                    f"{UAZAPI_BASE_URL}/instance/disconnect",
+                    headers=_instance_headers(instance_name),  # Nota: aqui precisa do token, não do nome
+                    json={}
+                )
+            except Exception:
+                pass  # Ignora falha na desconexão — segue para o delete
+
+            # DELETE com admintoken — endpoint oficial UAZAPI GO v2
             resp = await client.delete(
                 f"{UAZAPI_BASE_URL}/instance/delete/{instance_name}",
                 headers=_admin_headers()
             )
-            return resp.status_code in (200, 404)
+            logger.info(f"[UAZAPI] Delete response: {resp.status_code} — {resp.text[:200]}")
+            return resp.status_code in (200, 204, 404)
     except Exception as e:
         logger.error(f"[UAZAPI] Erro ao deletar do painel UAZAPI: {e}")
         return False
