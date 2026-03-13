@@ -105,6 +105,8 @@ export type Vaga = {
     local: string | null
     unidade_cuca: string | null
     total_vagas: number
+    limite_curriculos: number | null
+    escolaridade_minima: string | null
     status: string
     faixa_etaria: string | null
     local_entrevista: string | null
