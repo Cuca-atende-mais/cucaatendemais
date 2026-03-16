@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift } from "lucide-react"
+import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift, Copy, X } from "lucide-react"
 import toast from "react-hot-toast"
 
 const TIPOS_CONTRATO = ["CLT", "PJ", "Estágio", "Temporário", "Aprendiz", "Freelancer"]
@@ -55,6 +55,8 @@ export default function NovaVagaEmpresaPage() {
     const [loadingSubmit, setLoadingSubmit] = useState(false)
     const [success, setSuccess] = useState(false)
     const [numeroVaga, setNumeroVaga] = useState("")
+    const [copiado, setCopiado] = useState(false)
+    const [vagaResumo, setVagaResumo] = useState<{ titulo: string; tipo_contrato: string; total_vagas: string; salario: string } | null>(null)
 
     useEffect(() => {
         if (!empresaId) {
@@ -128,7 +130,9 @@ export default function NovaVagaEmpresaPage() {
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
 
-            setNumeroVaga(data.id.slice(-6).toUpperCase())
+            const ref = data.numero_vaga ? `#${data.numero_vaga}` : data.id.slice(-6).toUpperCase()
+            setNumeroVaga(ref)
+            setVagaResumo({ titulo, tipo_contrato: tipoContrato, total_vagas: totalVagas, salario })
             setSuccess(true)
             toast.success("Vaga cadastrada com sucesso!")
         } catch (error: any) {
@@ -161,25 +165,83 @@ export default function NovaVagaEmpresaPage() {
         )
     }
 
+    const copiarNumero = () => {
+        navigator.clipboard.writeText(numeroVaga).then(() => {
+            setCopiado(true)
+            setTimeout(() => setCopiado(false), 2000)
+        })
+    }
+
     if (success) {
         return (
             <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
-                <Card className="max-w-md w-full border-none shadow-xl text-center">
-                    <CardContent className="pt-10 pb-8 flex flex-col items-center">
-                        <div className="h-20 w-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
-                            <CheckCircle2 className="h-10 w-10 text-green-600" />
+                <Card className="max-w-md w-full border-none shadow-xl">
+                    <CardContent className="pt-10 pb-8 flex flex-col items-center text-center">
+                        <div className="h-20 w-20 bg-green-500/15 rounded-full flex items-center justify-center mb-6">
+                            <CheckCircle2 className="h-10 w-10 text-green-500" />
                         </div>
                         <h2 className="text-2xl font-bold tracking-tight mb-2">Vaga Cadastrada!</h2>
-                        <p className="text-muted-foreground text-sm mb-4">
+                        <p className="text-muted-foreground text-sm mb-6">
                             Sua vaga foi recebida pela equipe do CUCA e será revisada antes de ser publicada.
                         </p>
-                        <div className="bg-muted rounded-lg px-6 py-3 mb-6">
-                            <p className="text-xs text-muted-foreground mb-1">Número de referência da vaga</p>
-                            <p className="text-2xl font-bold tracking-widest text-cuca-blue">{numeroVaga}</p>
+
+                        {/* Número de referência com botão copiar */}
+                        <div className="w-full bg-muted rounded-lg px-6 py-4 mb-4">
+                            <p className="text-xs text-muted-foreground mb-2">Número de referência da vaga</p>
+                            <div className="flex items-center justify-center gap-3">
+                                <p className="text-3xl font-bold tracking-widest text-cuca-blue">{numeroVaga}</p>
+                                <button
+                                    onClick={copiarNumero}
+                                    className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md border border-cuca-blue/40 text-cuca-blue hover:bg-cuca-blue/10 transition-colors"
+                                >
+                                    <Copy className="h-3.5 w-3.5" />
+                                    {copiado ? "Copiado!" : "Copiar"}
+                                </button>
+                            </div>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                            Guarde esse número para acompanhar o status da vaga pelo WhatsApp da unidade.
+
+                        {/* Resumo da vaga */}
+                        {vagaResumo && (
+                            <div className="w-full bg-muted/50 rounded-lg px-5 py-4 mb-6 text-left space-y-2">
+                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Resumo da Vaga</p>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground">Cargo</span>
+                                    <span className="font-medium">{vagaResumo.titulo}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground">Contrato</span>
+                                    <span className="font-medium">{vagaResumo.tipo_contrato}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground">Posições</span>
+                                    <span className="font-medium">{vagaResumo.total_vagas}</span>
+                                </div>
+                                {vagaResumo.salario && (
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-muted-foreground">Remuneração</span>
+                                        <span className="font-medium">{vagaResumo.salario}</span>
+                                    </div>
+                                )}
+                                {unidadeCuca && (
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-muted-foreground">Unidade</span>
+                                        <span className="font-medium">{unidadeCuca}</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <p className="text-xs text-muted-foreground mb-6">
+                            Guarde esse número para acompanhar o status pelo WhatsApp da unidade. Em breve você receberá uma confirmação.
                         </p>
+
+                        <button
+                            onClick={() => window.close()}
+                            className="flex items-center gap-2 w-full justify-center px-4 py-3 rounded-lg bg-muted hover:bg-muted/80 text-sm font-medium transition-colors"
+                        >
+                            <X className="h-4 w-4" />
+                            Encerrar
+                        </button>
                     </CardContent>
                 </Card>
             </div>

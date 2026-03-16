@@ -165,9 +165,12 @@ async def security_middleware(request: Request, call_next):
 @app.on_event("startup")
 async def startup_event():
     from campanhas_engine import campanhas_loop
+    from empregabilidade_engine import empregabilidade_notify_loop
     import asyncio
     logger.info("Agendando motor de Campanhas...")
     asyncio.create_task(campanhas_loop())
+    logger.info("Agendando loop de notificação de vagas (Empregabilidade)...")
+    asyncio.create_task(empregabilidade_notify_loop())
 
 # ─── Exception Handlers Globais ──────────────────────────────────────────────
 # Garante que TODOS os erros retornem CORS headers (sem isso, exceções não tratadas

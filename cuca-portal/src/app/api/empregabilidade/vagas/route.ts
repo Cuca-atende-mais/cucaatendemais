@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
             const { data: conversas } = await supabaseAdmin
                 .from("conversas")
                 .select("id, metadata")
-                .filter("metadata->empreg_fluxo->empresa_id", "eq", empresa_id)
+                .filter("metadata->empreg_fluxo->>empresa_id", "eq", empresa_id)
                 .in("status", ["ativa", "aberta"])
                 .order("updated_at", { ascending: false })
                 .limit(1)

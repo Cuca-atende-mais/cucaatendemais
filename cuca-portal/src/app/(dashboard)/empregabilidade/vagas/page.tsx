@@ -13,10 +13,9 @@ import { VagaModal } from "@/components/empregabilidade/vaga-modal"
 import { useUser } from "@/lib/auth/user-provider"
 
 export default function VagasPage() {
-    const { hasPermission } = useUser()
+    const { hasPermission, profile, isDeveloper } = useUser()
     const [vagas, setVagas] = useState<Vaga[]>([])
     const [empresasMap, setEmpresasMap] = useState<Record<string, Empresa>>({})
-    const [unidadesMap, setUnidadesMap] = useState<Record<string, string>>({})
 
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState("")
@@ -35,7 +34,7 @@ export default function VagasPage() {
     const fetchData = async () => {
         setLoading(true)
         try {
-            // Load maps if missing
+            // Load empresas map if missing
             if (Object.keys(empresasMap).length === 0) {
                 const { data: emp } = await supabase.from('empresas').select('*')
                 if (emp) {
@@ -45,20 +44,16 @@ export default function VagasPage() {
                 }
             }
 
-            if (Object.keys(unidadesMap).length === 0) {
-                const { data: ud } = await supabase.from('unidades_cuca').select('id, nome')
-                if (ud) {
-                    const map: Record<string, string> = {}
-                    ud.forEach(u => map[u.id] = u.nome)
-                    setUnidadesMap(map)
-                }
-            }
-
             // Fetch Vagas
             const { data, error } = await supabase.from("vagas").select("*").order("created_at", { ascending: false })
             if (error) throw error
 
             let filtered = data || []
+
+            // Filtrar por unidade na aba "Minha Unidade" (exceto developer)
+            if (abaFiltro === "minhas" && !isDeveloper && profile?.unidade_cuca) {
+                filtered = filtered.filter(v => v.unidade_cuca === profile.unidade_cuca)
+            }
 
             if (statusFilter && statusFilter !== "all") {
                 filtered = filtered.filter(v => v.status === statusFilter)
@@ -219,7 +214,7 @@ export default function VagasPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        <Badge variant="outline" className="bg-muted/50">{unidadesMap[v.unidade_cuca || ""] || 'Desconhecida'}</Badge>
+                                        <Badge variant="outline" className="bg-muted/50">{v.unidade_cuca || 'Não definida'}</Badge>
                                     </TableCell>
                                     <TableCell>
                                         <div className="flex flex-col space-y-1 text-xs text-muted-foreground">

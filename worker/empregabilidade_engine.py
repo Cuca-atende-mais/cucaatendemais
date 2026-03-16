@@ -10,6 +10,7 @@ import re
 import logging
 import httpx
 from datetime import date
+from urllib.parse import quote
 from supabase import create_client, Client
 
 logger = logging.getLogger("empregabilidade_engine")
@@ -226,7 +227,7 @@ async def _processar_empresa(
         empresa_id = fluxo.get("empresa_id")
         empresa_nome = fluxo.get("empresa_nome_exibicao") or fluxo.get("empresa_nome", "")
         if t in ("1", "nova vaga", "divulgar", "criar"):
-            unidade_param = f"&unidade_cuca={unidade_cuca}" if unidade_cuca else ""
+            unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
             link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
             await _enviar(
                 instance_name, token, phone,
@@ -436,7 +437,7 @@ async def _processar_empresa(
         nome_exibicao = fluxo.get("empresa_nome_exibicao") or empresa_nome
 
         if t in ("sim", "s", "quero", "vou", "yes", "ok", "1"):
-            unidade_param = f"&unidade_cuca={unidade_cuca}" if unidade_cuca else ""
+            unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
             link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
             await _enviar(
                 instance_name, token, phone,
@@ -502,7 +503,7 @@ async def _processar_empresa(
         else:
             # Formulário ainda não preenchido — reenviar link como lembrete
             empresa_id = fluxo.get("empresa_id")
-            unidade_param = f"&unidade_cuca={unidade_cuca}" if unidade_cuca else ""
+            unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
             link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
             await _enviar(
                 instance_name, token, phone,
@@ -517,7 +518,7 @@ async def _processar_empresa(
         t = texto.strip().lower()
         empresa_id = fluxo.get("empresa_id")
         if t in ("1", "nova vaga", "divulgar outra", "outra vaga"):
-            unidade_param = f"&unidade_cuca={unidade_cuca}" if unidade_cuca else ""
+            unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
             link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
             await _enviar(
                 instance_name, token, phone,
@@ -1115,3 +1116,89 @@ async def processar_mensagem_empregabilidade(
             "Responda com o número ou descreva o que precisa."
         )
         _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
+
+
+# ---------------------------------------------------------------------------
+# Loop proativo: detecta vagas criadas e notifica empresa via WhatsApp
+# ---------------------------------------------------------------------------
+
+async def empregabilidade_notify_loop():
+    """
+    Roda em background a cada 20s.
+    Detecta conversas em aguardando_retorno_vaga com vaga_criada_id já preenchido
+    pelo portal e envia a confirmação via WhatsApp sem esperar nova mensagem.
+    """
+    import asyncio
+
+    logger.info("[empreg-notify] Loop de notificação de vagas iniciado.")
+    while True:
+        try:
+            res = supabase.table("conversas").select(
+                "id, metadata, instancia_uazapi"
+            ).eq("agente_tipo", "Empregabilidade").in_("status", ["ativa", "aberta"]).execute()
+
+            conversas = res.data or []
+            for c in conversas:
+                metadata = c.get("metadata") or {}
+                fluxo = metadata.get("empreg_fluxo", {})
+                if fluxo.get("etapa") != "aguardando_retorno_vaga":
+                    continue
+                vaga_criada_id = fluxo.get("vaga_criada_id")
+                if not vaga_criada_id:
+                    continue
+
+                # Buscar dados da conversa e instância para envio
+                conversa_id = c["id"]
+                instance_name = c.get("instancia_uazapi", "")
+                inst_res = supabase.table("instancias_uazapi").select(
+                    "token, unidade_cuca"
+                ).eq("nome", instance_name).single().execute()
+                inst = inst_res.data or {}
+                token = inst.get("token", "")
+                unidade_cuca = inst.get("unidade_cuca", "")
+
+                lead_res = supabase.table("conversas").select(
+                    "lead_id"
+                ).eq("id", conversa_id).single().execute()
+                lead_id = (lead_res.data or {}).get("lead_id", "")
+
+                lead_phone_res = supabase.table("leads").select(
+                    "telefone"
+                ).eq("id", lead_id).single().execute()
+                phone = (lead_phone_res.data or {}).get("telefone", "")
+
+                if not phone or not token or not instance_name:
+                    continue
+
+                vaga_numero = fluxo.get("vaga_numero")
+                vaga_titulo = fluxo.get("vaga_titulo", "")
+                empresa_nome = fluxo.get("empresa_nome_exibicao") or fluxo.get("empresa_nome", "")
+                empresa_id = fluxo.get("empresa_id")
+                numero_ref = f"#{vaga_numero}" if vaga_numero else f"...{vaga_criada_id[-6:].upper()}"
+
+                await _enviar(
+                    instance_name, token, phone,
+                    f"✅ *Vaga cadastrada com sucesso!*\n\n"
+                    f"📋 *Título:* {vaga_titulo}\n"
+                    f"🔢 *Número da vaga:* {numero_ref}\n\n"
+                    "Nossa equipe irá revisar e publicar a vaga em breve.\n\n"
+                    "O que deseja fazer agora?\n"
+                    "1️⃣ Cadastrar outra vaga\n"
+                    "2️⃣ Consultar minhas vagas\n"
+                    "3️⃣ Encerrar"
+                )
+                _set_fluxo(conversa_id, {
+                    "perfil": "empresa",
+                    "etapa": "menu_pos_vaga",
+                    "empresa_id": empresa_id,
+                    "empresa_nome": fluxo.get("empresa_nome", ""),
+                    "empresa_nome_exibicao": empresa_nome,
+                    "cnpj": fluxo.get("cnpj"),
+                    "ultima_vaga_id": vaga_criada_id,
+                })
+                logger.info(f"[empreg-notify] Notificação enviada para conversa {conversa_id} — vaga {numero_ref}")
+
+        except Exception as e:
+            logger.error(f"[empreg-notify] Erro no loop: {e}")
+
+        await asyncio.sleep(20)
