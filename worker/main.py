@@ -816,6 +816,25 @@ async def analyse_sentiment_endpoint(request: Request):
         logger.error(f"Erro ao processar sentimento: {str(e)}")
         return Response(status_code=500, content=str(e))
 
+@app.post("/triar-banco-talentos")
+async def triar_banco_talentos_endpoint(request: Request):
+    """Triagem de candidatos do banco de talentos contra uma vaga usando GPT-4o."""
+    try:
+        payload = await request.json()
+        vaga_id = payload.get("vaga_id")
+
+        if not vaga_id:
+            return Response(status_code=400, content="Faltando parâmetro vaga_id")
+
+        from talent_bank_matcher import triar_banco_talentos
+        candidatos = await triar_banco_talentos(vaga_id)
+
+        return {"candidatos": candidatos}
+    except Exception as e:
+        logger.error(f"[triar_banco_talentos] Erro: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
+
 @app.post("/webhook/{token}")
 async def uazapi_webhook(token: str, request: Request, background_tasks: BackgroundTasks):
     # 1. Resposta 200 OK imediata (Requisito Crítico UAZAPI / Anti-Ban)
