@@ -1087,6 +1087,37 @@ Será criada uma função utilitária `_encerrar_fluxo(conversa_id, perfil, inst
 
 ---
 
+#### Sprint 32 — Correções de Bugs pós-Sprint 31: unidade_cuca, notificação WhatsApp e página de sucesso ✅ CONCLUÍDO (16/03/2026)
+
+> **Objetivo**: Corrigir quatro bugs identificados durante os testes do fluxo de empregabilidade: (1) `unidade_cuca` sendo salva incorretamente nas vagas por falta de URL-encode no link WhatsApp; (2) worker nunca enviava confirmação da vaga por filtro JSON errado na busca da conversa; (3) página de sucesso do formulário de vaga sem botão copiar, sem botão encerrar e sem resumo; (4) dashboard não filtrava vagas por unidade do usuário.
+
+**Bug #1 — unidade_cuca incorreta nas vagas criadas via WhatsApp**
+O engine.py montava a URL sem URL-encode: `f"&unidade_cuca={unidade_cuca}"`. Com "Cuca Barra" (espaço), o WhatsApp enviava o link com o espaço literal, que ao abrir no navegador resultava em query param truncado ("Cuca" em vez de "Cuca Barra"). Corrigido adicionando `from urllib.parse import quote` e usando `quote(unidade_cuca)` em todos os 4 pontos de geração de link no engine.
+
+**Bug #2 — Worker não enviava confirmação WhatsApp da vaga**
+A API route `POST /api/empregabilidade/vagas` buscava a conversa da empresa com o filtro `.filter("metadata->empreg_fluxo->empresa_id", "eq", empresa_id)`. A sintaxe PostgREST para extrair valor de JSON aninhado exige `->>`  (double arrow), não `->`. Com `->`, o valor extraído é JSONB e a comparação com string nunca bate. Corrigido para `.filter("metadata->empreg_fluxo->>empresa_id", "eq", empresa_id)`. Além disso, adicionado `empregabilidade_notify_loop()` no worker — loop assíncrono a cada 20s que detecta conversas em `aguardando_retorno_vaga` com `vaga_criada_id` já preenchido e envia a confirmação proativamente, sem depender de nova mensagem da empresa.
+
+**Bug #3 — Página de sucesso incompleta**
+A tela exibida após criação da vaga mostrava apenas o número em texto estático. Corrigido: adicionado botão "Copiar" (usa `navigator.clipboard`), adicionado botão "Encerrar" (`window.close()`), e adicionado card de resumo da vaga (cargo, contrato, posições, remuneração, unidade).
+
+**Bug #4 — Dashboard não filtrava vagas por unidade**
+A aba "Minha Unidade" no dashboard (`/empregabilidade/vagas`) não filtrava dados — apenas mudava o comportamento de clique. Corrigido para filtrar por `v.unidade_cuca === profile.unidade_cuca` quando `abaFiltro === "minhas"` e usuário não é developer. Também corrigido o display da coluna "Unidade Base" que tentava fazer lookup por UUID quando `vagas.unidade_cuca` é texto direto.
+
+**Correção no banco**: Vaga "Eletricista predial" (id: a84ef7a9) tinha `unidade_cuca = "Cuca"` — corrigido para `"Cuca Barra"` via SQL direto.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S32-01 | Worker `empregabilidade_engine.py`: URL-encode de `unidade_cuca` com `quote()` em todos os links gerados | Worker | [x] |
+| S32-02 | API route `vagas/route.ts`: corrigir filtro JSON de `->` para `->>` na busca da conversa por empresa_id | Portal API | [x] |
+| S32-03 | Worker `empregabilidade_engine.py`: adicionar `empregabilidade_notify_loop()` — polling 20s para detectar vagas criadas e notificar empresa | Worker | [x] |
+| S32-04 | `main.py`: registrar `empregabilidade_notify_loop` no startup event | Worker | [x] |
+| S32-05 | Formulário `/empregabilidade/vagas/nova`: melhorar página de sucesso com botão Copiar, botão Encerrar e resumo da vaga | Portal | [x] |
+| S32-06 | Dashboard `/empregabilidade/vagas`: filtrar por `unidade_cuca` do usuário na aba "Minha Unidade" | Portal | [x] |
+| S32-07 | Dashboard: corrigir display da coluna Unidade (texto direto, não UUID) | Portal | [x] |
+| S32-08 | DB: corrigir `unidade_cuca` da vaga Eletricista predial de "Cuca" para "Cuca Barra" | Banco | [x] |
+
+---
+
 #### Sprint 30 — Formulário de Vaga: Benefícios, Limite de Currículos e Tipo de Processo Seletivo ✅ CONCLUÍDO (13/03/2026)
 
 > **Objetivo**: Enriquecer o formulário público de cadastro de vaga (`/empregabilidade/vagas/nova`) com três novas dimensões que impactam diretamente o processo seletivo: benefícios estruturados com checkboxes + campo livre, controle de quantidade máxima de currículos por vaga com redirecionamento automático ao banco de talentos, e definição do tipo de processo seletivo adotado pela empresa. As informações coletadas refletem no painel de gestão, na tela pública de candidatura e na lógica de distribuição de currículos.
