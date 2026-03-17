@@ -27,9 +27,7 @@ export default function CandidaturaPublicaPage() {
     const [nome, setNome] = useState(nomeParam)
     const [dataNascimento, setDataNascimento] = useState("")
     const [telefone, setTelefone] = useState(
-        origemTel
-            ? origemTel.replace(/^(\d{2})(\d)/, "($1) $2").replace(/(\d)(\d{4})$/, "$1-$2").substring(0, 15)
-            : ""
+        origemTel ? formatPhoneInit(origemTel) : ""
     )
     const [arquivo, setArquivo] = useState<File | null>(null)
 
@@ -70,12 +68,29 @@ export default function CandidaturaPublicaPage() {
             })
     }, [vagaId])
 
-    const formatPhone = (value: string) =>
-        value
-            .replace(/\D/g, "")
+    const formatPhone = (value: string) => {
+        let digits = value.replace(/\D/g, "")
+        // Remove prefixo 55 (Brasil) se presente e resultar em 13 dígitos
+        if (digits.length === 13 && digits.startsWith("55")) digits = digits.slice(2)
+        if (digits.length === 12 && digits.startsWith("55")) digits = digits.slice(2)
+        return digits
             .replace(/^(\d{2})(\d)/g, "($1) $2")
-            .replace(/(\d)(\d{4})$/, "$1-$2")
+            .replace(/(\d{5})(\d{4})$/, "$1-$2")
+            .replace(/(\d{4})(\d{4})$/, "$1-$2")
             .substring(0, 15)
+    }
+
+    // Usado apenas para o valor inicial vindo do parâmetro da URL
+    function formatPhoneInit(raw: string) {
+        let digits = raw.replace(/\D/g, "")
+        if (digits.length === 13 && digits.startsWith("55")) digits = digits.slice(2)
+        if (digits.length === 12 && digits.startsWith("55")) digits = digits.slice(2)
+        return digits
+            .replace(/^(\d{2})(\d)/g, "($1) $2")
+            .replace(/(\d{5})(\d{4})$/, "$1-$2")
+            .replace(/(\d{4})(\d{4})$/, "$1-$2")
+            .substring(0, 15)
+    }
 
     const calcularIdade = (dataNasc: string): number => {
         const nasc = new Date(dataNasc)
@@ -135,9 +150,10 @@ export default function CandidaturaPublicaPage() {
                 obsArr[0] = "banco_talentos: menor de idade"
             }
 
-            const { data: candData, error: candError } = await supabase
-                .from("candidaturas")
-                .insert({
+            const res = await fetch("/api/empregabilidade/candidaturas", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
                     vaga_id: vagaId || null,
                     nome,
                     data_nascimento: dataNascimento,
@@ -146,37 +162,13 @@ export default function CandidaturaPublicaPage() {
                     status: "pendente",
                     requisitos_atendidos: "pendente",
                     observacoes: obsArr.length > 0 ? obsArr[0] : null,
-                })
-                .select("id")
-                .single()
-            if (candError) throw candError
+                    conversa_id: conversaId || null,
+                }),
+            })
+            const candData = await res.json()
+            if (!res.ok) throw new Error(candData.error || `Erro ${res.status}`)
 
-            const codigo = candData.id.replace(/-/g, "").slice(-6).toUpperCase()
-
-            // Notificar worker via metadata da conversa de origem
-            if (conversaId) {
-                try {
-                    const { data: convData } = await supabase
-                        .from("conversas")
-                        .select("metadata")
-                        .eq("id", conversaId)
-                        .single()
-                    if (convData) {
-                        const metadata = convData.metadata || {}
-                        metadata.empreg_fluxo = {
-                            ...(metadata.empreg_fluxo || {}),
-                            candidatura_criada_id: candData.id,
-                            candidatura_codigo: codigo,
-                        }
-                        await supabase
-                            .from("conversas")
-                            .update({ metadata })
-                            .eq("id", conversaId)
-                    }
-                } catch (notifyErr) {
-                    console.warn("Erro ao notificar worker:", notifyErr)
-                }
-            }
+            const codigo = candData.codigo
 
             // Disparar OCR assíncrono (apenas para candidaturas não-banco de talentos)
             if (!destinoBancoTalentos) {
@@ -190,6 +182,7 @@ export default function CandidaturaPublicaPage() {
                     }),
                 }).catch((err) => console.error("OCR warning:", err))
             }
+
 
             setNumeroCandidatura(codigo)
             setDestinadoBancoTalentos(destinoBancoTalentos)
