@@ -386,7 +386,7 @@ export default function CandidaturaPublicaPage() {
                                     value={telefone}
                                     onChange={(e) => setTelefone(formatPhone(e.target.value))}
                                     placeholder="(85) 90000-0000"
-                                    maxLength={15}
+                                    maxLength={16}
                                     required
                                 />
                             </div>
