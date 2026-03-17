@@ -179,7 +179,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 tipo_contrato: tipoContrato,
                 carga_horaria: cargaHoraria || null,
                 local: local || null,
-                unidade_cuca: unidadeCucaId,
+                unidade_cuca: unidadesMap[unidadeCucaId] || unidadeCucaId,
                 total_vagas: parseInt(totalVagas) || 1,
                 status,
                 faixa_etaria: faixaEtaria,
@@ -220,9 +220,11 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setErro("")
         setLoading(true)
         try {
+            // Salvar nome da unidade (não o UUID) para compatibilidade com o worker
+            const unidadeNome = unidadesMap[unidadeCucaId] || unidadeCucaId
             const { error } = await supabase.from('vagas').update({
                 status,
-                unidade_cuca: unidadeCucaId,
+                unidade_cuca: unidadeNome,
                 expansiva,
                 data_abertura: status === 'aberta' ? new Date().toISOString() : undefined,
             }).eq('id', vaga.id)
