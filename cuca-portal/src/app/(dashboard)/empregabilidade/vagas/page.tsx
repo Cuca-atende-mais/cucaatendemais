@@ -182,6 +182,7 @@ export default function VagasPage() {
                     <Table>
                         <TableHeader className="bg-muted/30">
                             <TableRow>
+                                <TableHead className="w-16 text-center">#</TableHead>
                                 <TableHead>Oportunidade</TableHead>
                                 <TableHead>Empresa Parceira</TableHead>
                                 <TableHead>Unidade Base</TableHead>
@@ -191,11 +192,18 @@ export default function VagasPage() {
                         </TableHeader>
                         <TableBody>
                             {loading ? (
-                                <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
                             ) : vagas.length === 0 ? (
-                                <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
                             ) : vagas.map(v => (
                                 <TableRow key={v.id} className={abaFiltro === "todas" ? "hover:bg-muted/30" : "cursor-pointer hover:bg-muted/30"} onClick={() => abaFiltro === "minhas" && openEditModal(v)}>
+                                    <TableCell className="text-center">
+                                        {v.numero_vaga ? (
+                                            <span className="text-xs font-mono font-semibold text-muted-foreground">#{v.numero_vaga}</span>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground/40">—</span>
+                                        )}
+                                    </TableCell>
                                     <TableCell>
                                         <div className="flex flex-col">
                                             <span className="font-semibold flex items-center gap-2">
