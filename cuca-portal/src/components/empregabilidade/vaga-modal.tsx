@@ -212,14 +212,40 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     }
 
     const canEdit = hasPermission("empreg_vagas", "update") || hasPermission("empreg_vagas", "create")
+    // Campos preenchidos pela empresa — CUCA não edita
+    const camposEmpresaReadOnly = !!vaga
+
+    const handleSaveStatus = async () => {
+        if (!vaga) return
+        setErro("")
+        setLoading(true)
+        try {
+            const { error } = await supabase.from('vagas').update({
+                status,
+                unidade_cuca: unidadeCucaId,
+                expansiva,
+                data_abertura: status === 'aberta' ? new Date().toISOString() : undefined,
+            }).eq('id', vaga.id)
+            if (error) throw error
+            onSuccess()
+            onOpenChange(false)
+        } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message : String(error)
+            setErro(msg || "Erro ao salvar.")
+        } finally {
+            setLoading(false)
+        }
+    }
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
-                    <DialogTitle>{vaga ? "Editar Vaga" : "Cadastrar Nova Vaga"}</DialogTitle>
+                    <DialogTitle>{vaga ? `Vaga: ${titulo || "—"}` : "Cadastrar Nova Vaga"}</DialogTitle>
                     <DialogDescription>
-                        Preencha os detalhes da oportunidade de emprego ou estágio.
+                        {vaga
+                            ? "As informações da vaga foram preenchidas pela empresa. O CUCA pode alterar status, unidade e divulgação."
+                            : "Preencha os detalhes da oportunidade de emprego ou estágio."}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -228,16 +254,28 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 ) : (
                     <div className="grid gap-6 py-4">
 
+                        {/* Aviso quando visualizando vaga existente */}
+                        {camposEmpresaReadOnly && (
+                            <div className="flex items-start gap-2 text-sm text-amber-600 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                                <span>Os dados abaixo foram preenchidos pela empresa e são de responsabilidade dela. O CUCA não pode alterá-los.</span>
+                            </div>
+                        )}
+
                         {/* Empresa + Unidade */}
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label>Empresa Parceira *</Label>
-                                <Select value={empresaId} onValueChange={setEmpresaId}>
-                                    <SelectTrigger><SelectValue placeholder="Selecione a empresa" /></SelectTrigger>
-                                    <SelectContent>
-                                        {empresas.map(e => <SelectItem key={e.id} value={e.id}>{e.nome} - {e.cnpj}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                <Label>Empresa Parceira {!camposEmpresaReadOnly && "*"}</Label>
+                                {camposEmpresaReadOnly ? (
+                                    <p className="text-sm font-medium px-3 py-2 bg-muted rounded-md">{empresas.find(e => e.id === empresaId)?.nome || empresaId}</p>
+                                ) : (
+                                    <Select value={empresaId} onValueChange={setEmpresaId}>
+                                        <SelectTrigger><SelectValue placeholder="Selecione a empresa" /></SelectTrigger>
+                                        <SelectContent>
+                                            {empresas.map(e => <SelectItem key={e.id} value={e.id}>{e.nome} - {e.cnpj}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                )}
                             </div>
                             <div className="space-y-2">
                                 <Label>Unidade Rede CUCA (Ancoragem) *</Label>
@@ -250,185 +288,68 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                             </div>
                         </div>
 
-                        {/* Título */}
-                        <div className="space-y-2">
-                            <Label>Título da Vaga *</Label>
-                            <Input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Ex: Jovem Aprendiz Administrativo" />
-                        </div>
-
-                        {/* Descrição */}
-                        <div className="space-y-2">
-                            <Label>Descrição da Vaga *</Label>
-                            <Textarea value={descricao} onChange={e => setDescricao(e.target.value)} placeholder="Descreva as atividades, ambiente de trabalho, etc." className="h-24" />
-                        </div>
-
-                        {/* Requisitos */}
-                        <div className="space-y-2">
-                            <Label>Requisitos e Perfil Desejado</Label>
-                            <Textarea value={requisitos} onChange={e => setRequisitos(e.target.value)} placeholder="Conhecimento em informática, boa comunicação..." />
-                        </div>
-
-                        {/* Faixa etária + Salário + Total + Escolaridade */}
-                        <div className="grid grid-cols-4 gap-4">
+                        {/* Dados da vaga — somente leitura quando editando */}
+                        <div className={`grid gap-4 ${camposEmpresaReadOnly ? "opacity-70 pointer-events-none" : ""}`}>
                             <div className="space-y-2">
-                                <Label>Faixa Etária</Label>
-                                <Input value={faixaEtaria} onChange={e => setFaixaEtaria(e.target.value)} placeholder="15 a 29 anos" />
+                                <Label>Título da Vaga *</Label>
+                                <Input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Ex: Jovem Aprendiz Administrativo" readOnly={camposEmpresaReadOnly} />
                             </div>
                             <div className="space-y-2">
-                                <Label>Salário / Bolsa</Label>
-                                <Input value={salario} onChange={e => setSalario(e.target.value)} placeholder="R$ 1.412,00" />
+                                <Label>Descrição da Vaga *</Label>
+                                <Textarea value={descricao} onChange={e => setDescricao(e.target.value)} placeholder="Descreva as atividades..." className="h-24" readOnly={camposEmpresaReadOnly} />
                             </div>
                             <div className="space-y-2">
-                                <Label>Total de Vagas</Label>
-                                <Input type="number" value={totalVagas} onChange={e => setTotalVagas(e.target.value)} min="1" />
+                                <Label>Requisitos e Perfil Desejado</Label>
+                                <Textarea value={requisitos} onChange={e => setRequisitos(e.target.value)} placeholder="Conhecimento em informática, boa comunicação..." readOnly={camposEmpresaReadOnly} />
                             </div>
-                            <div className="space-y-2">
-                                <Label>Escolaridade Mínima</Label>
-                                <Select value={escolaridadeMinima || "qualquer"} onValueChange={v => setEscolaridadeMinima(v === "qualquer" ? "" : v)}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="qualquer">Qualquer</SelectItem>
-                                        <SelectItem value="fundamental_incompleto">Fund. Incompleto</SelectItem>
-                                        <SelectItem value="fundamental_completo">Fund. Completo</SelectItem>
-                                        <SelectItem value="medio_incompleto">Médio Incompleto</SelectItem>
-                                        <SelectItem value="medio_completo">Médio Completo</SelectItem>
-                                        <SelectItem value="superior_incompleto">Superior Incompleto</SelectItem>
-                                        <SelectItem value="superior_completo">Superior Completo</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
-
-                        {/* Tipo de Contrato */}
-                        <div className="space-y-2">
-                            <Label>Tipo de Contrato</Label>
-                            <Select value={tipoContrato} onValueChange={setTipoContrato}>
-                                <SelectTrigger><SelectValue placeholder="Selecione o tipo" /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="jovem_aprendiz">Jovem Aprendiz</SelectItem>
-                                    <SelectItem value="estagio">Estágio</SelectItem>
-                                    <SelectItem value="clt">CLT</SelectItem>
-                                    <SelectItem value="pj">PJ</SelectItem>
-                                    <SelectItem value="temporario">Temporário</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        {/* Carga Horária estruturada */}
-                        <div className="space-y-3 border rounded-xl p-4 bg-muted/20">
-                            <Label className="text-sm font-semibold">Carga Horária</Label>
-                            <div className="grid grid-cols-3 gap-3">
-                                {(["horario_comercial", "escala", "jornada_corrida"] as const).map(t => (
-                                    <button
-                                        key={t}
-                                        type="button"
-                                        onClick={() => setCargaTipo(t)}
-                                        className={`text-xs px-3 py-2 rounded-lg border transition-colors ${cargaTipo === t ? "bg-cuca-blue text-white border-cuca-blue" : "border-border text-muted-foreground hover:bg-muted"}`}
-                                    >
-                                        {t === "horario_comercial" ? "Horário Comercial" : t === "escala" ? "Escala" : "Jornada Corrida"}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {cargaTipo === "escala" && (
-                                <div className="flex items-center gap-2 mt-2">
-                                    <Input className="w-20 text-center" value={cargaEscalaT} onChange={e => setCargaEscalaT(e.target.value)} placeholder="6" />
-                                    <span className="text-muted-foreground font-bold">×</span>
-                                    <Input className="w-20 text-center" value={cargaEscalaF} onChange={e => setCargaEscalaF(e.target.value)} placeholder="2" />
-                                    <span className="text-xs text-muted-foreground">(dias trabalhados × dias de folga)</span>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Tipo de Contrato</Label>
+                                    <Input value={tipoContrato} readOnly className="bg-muted" />
                                 </div>
-                            )}
+                                <div className="space-y-2">
+                                    <Label>Salário / Bolsa</Label>
+                                    <Input value={salario} readOnly={camposEmpresaReadOnly} onChange={e => setSalario(e.target.value)} className={camposEmpresaReadOnly ? "bg-muted" : ""} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Total de Vagas</Label>
+                                    <Input type="number" value={totalVagas} readOnly={camposEmpresaReadOnly} onChange={e => setTotalVagas(e.target.value)} className={camposEmpresaReadOnly ? "bg-muted" : ""} />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>Carga Horária</Label>
+                                    <Input value={buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte) || vaga?.carga_horaria || ""} readOnly className="bg-muted" />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Localização da Vaga</Label>
+                                    <Input value={local} readOnly={camposEmpresaReadOnly} onChange={e => setLocal(e.target.value)} className={camposEmpresaReadOnly ? "bg-muted" : ""} />
+                                </div>
+                            </div>
+                        </div>
 
-                            {(cargaTipo === "horario_comercial" || cargaTipo === "jornada_corrida") && (
-                                <div className="space-y-3 mt-2">
-                                    <div className="flex items-center gap-2">
-                                        <Input className="w-20 text-center" value={cargaHoras} onChange={e => setCargaHoras(e.target.value)} placeholder="8" />
-                                        <span className="text-sm text-muted-foreground">horas / dia</span>
+                        {/* Status + Unidade + Expansiva — editável pela CUCA */}
+                        <div className="space-y-4 bg-muted/40 p-4 rounded-xl border">
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Controles da Rede CUCA</p>
+                            <div className="grid grid-cols-2 gap-4 items-center">
+                                <div className="space-y-2">
+                                    <Label>Status da Vaga</Label>
+                                    <Select value={status} onValueChange={setStatus}>
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="pre_cadastro">Pré-Cadastro (Rascunho)</SelectItem>
+                                            <SelectItem value="aberta">Pública / Aberta</SelectItem>
+                                            <SelectItem value="preenchida">Preenchida</SelectItem>
+                                            <SelectItem value="cancelada">Cancelada</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="flex flex-row items-start space-x-3 space-y-0 mt-6">
+                                    <Checkbox id="expansiva" checked={expansiva} onCheckedChange={c => setExpansiva(c as boolean)} />
+                                    <div className="space-y-1 leading-none">
+                                        <Label htmlFor="expansiva">Vaga Expansiva</Label>
+                                        <p className="text-sm text-muted-foreground">Divulgada para todas as unidades do CUCA.</p>
                                     </div>
-                                    {cargaTipo === "horario_comercial" && (
-                                        <>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-sm text-muted-foreground w-28">Dias:</span>
-                                                <Input value={cargaDias} onChange={e => setCargaDias(e.target.value)} placeholder="Seg à Sex" className="flex-1" />
-                                            </div>
-                                            <div className="flex items-center gap-3 flex-wrap">
-                                                <div className="flex items-center gap-2">
-                                                    <Checkbox id="trab-sabado" checked={cargaTrabSabado} onCheckedChange={c => setCargaTrabSabado(c as boolean)} />
-                                                    <Label htmlFor="trab-sabado" className="text-sm font-normal cursor-pointer">Trabalha aos sábados até</Label>
-                                                </div>
-                                                {cargaTrabSabado && (
-                                                    <Input
-                                                        type="time"
-                                                        value={cargaSabadoAte}
-                                                        onChange={e => setCargaSabadoAte(e.target.value)}
-                                                        className="w-32"
-                                                    />
-                                                )}
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* Preview */}
-                            {buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte) && (
-                                <p className="text-xs text-muted-foreground bg-muted px-3 py-1.5 rounded-md">
-                                    Resumo: <span className="font-medium text-foreground">{buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte)}</span>
-                                </p>
-                            )}
-                        </div>
-
-                        {/* Localização + Local Entrevista */}
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label>Localização da Vaga</Label>
-                                <Input value={local} onChange={e => setLocal(e.target.value)} placeholder="Bairro ou endereço do trabalho" />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Local da Entrevista</Label>
-                                <Select value={localEntrevista} onValueChange={setLocalEntrevista}>
-                                    <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="na_empresa">Na Empresa Contratante</SelectItem>
-                                        <SelectItem value="no_cuca">No CUCA / Empregabilidade</SelectItem>
-                                        <SelectItem value="online">Online</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
-
-                        {/* E-mail */}
-                        <div className="space-y-2">
-                            <Label>E-mail de Contato da Empresa</Label>
-                            <Input type="email" value={emailContatoEmpresa} onChange={e => setEmailContatoEmpresa(e.target.value)} placeholder="rh@empresa.com.br" />
-                            <p className="text-xs text-muted-foreground">Usado para envio automático de CVs selecionados.</p>
-                        </div>
-
-                        {/* Benefícios */}
-                        <div className="space-y-2">
-                            <Label>Benefícios</Label>
-                            <Input value={beneficios} onChange={e => setBeneficios(e.target.value)} placeholder="Vale transporte, Vale alimentação..." />
-                        </div>
-
-                        {/* Status + Expansiva */}
-                        <div className="grid grid-cols-2 gap-4 items-center bg-muted/40 p-4 rounded-xl border">
-                            <div className="space-y-2">
-                                <Label>Status da Vaga</Label>
-                                <Select value={status} onValueChange={setStatus}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="pre_cadastro">Pré-Cadastro (Rascunho)</SelectItem>
-                                        <SelectItem value="aberta">Pública / Aberta</SelectItem>
-                                        <SelectItem value="preenchida">Preenchida</SelectItem>
-                                        <SelectItem value="cancelada">Cancelada</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="flex flex-row items-start space-x-3 space-y-0 mt-6">
-                                <Checkbox id="expansiva" checked={expansiva} onCheckedChange={c => setExpansiva(c as boolean)} />
-                                <div className="space-y-1 leading-none">
-                                    <Label htmlFor="expansiva">Vaga Expansiva</Label>
-                                    <p className="text-sm text-muted-foreground">Essa vaga será divulgada para todas as unidades do CUCA.</p>
                                 </div>
                             </div>
                         </div>
@@ -449,11 +370,11 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                             {canEdit && (
                                 <Button
                                     className="bg-cuca-blue hover:bg-sky-800 text-white"
-                                    onClick={handleSave}
-                                    disabled={loading || !empresaId || !titulo || !descricao || !unidadeCucaId}
+                                    onClick={camposEmpresaReadOnly ? handleSaveStatus : handleSave}
+                                    disabled={loading || (!camposEmpresaReadOnly && (!empresaId || !titulo || !descricao || !unidadeCucaId))}
                                 >
                                     {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                                    Salvar Vaga
+                                    {camposEmpresaReadOnly ? "Salvar Alterações" : "Salvar Vaga"}
                                 </Button>
                             )}
                         </div>

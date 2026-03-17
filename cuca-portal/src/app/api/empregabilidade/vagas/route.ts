@@ -11,6 +11,7 @@ export async function POST(request: NextRequest) {
         const {
             empresa_id, titulo, descricao, requisitos,
             tipo_contrato, salario, total_vagas, escolaridade_minima,
+            faixa_etaria, carga_horaria, local, local_entrevista,
             beneficios, limite_curriculos, tipo_selecao, unidade_cuca,
         } = body
 
@@ -52,6 +53,10 @@ export async function POST(request: NextRequest) {
                 salario: salario || null,
                 total_vagas: parseInt(total_vagas) || 1,
                 escolaridade_minima: escolaridade_minima || null,
+                faixa_etaria: faixa_etaria || "15 a 29 anos",
+                carga_horaria: carga_horaria || null,
+                local: local || null,
+                local_entrevista: local_entrevista || "na_empresa",
                 beneficios: beneficios || null,
                 limite_curriculos: limite_curriculos ? parseInt(limite_curriculos) : null,
                 tipo_selecao: tipo_selecao || null,
