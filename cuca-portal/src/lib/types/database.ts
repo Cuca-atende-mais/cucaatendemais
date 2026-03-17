@@ -116,6 +116,7 @@ export type Vaga = {
     data_abertura: string
     data_fechamento: string | null
     disparo_id: string | null
+    numero_vaga: number | null
     created_by: string | null
     created_at: string
     updated_at: string
