@@ -111,12 +111,13 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
         match_score = json_data.get("match_score", 0)
         pontos_fortes = " ".join(analise.get("pontos_fortes", []))
         
-        # 3. Atualizar no banco (Tabela: candidatos - Habilidades Gerais)
-        supabase.table("candidatos").update({
-            "escolaridade": json_data.get("escolaridade", ""),
-            "experiencias": json_data.get("resumo_experiencias", []),
-            "habilidades": json_data.get("habilidades", []),
-        }).eq("id", candidato_id).execute()
+        # 3. Atualizar no banco (Tabela: candidatos - Habilidades Gerais), se candidato_id disponível
+        if candidato_id:
+            supabase.table("candidatos").update({
+                "escolaridade": json_data.get("escolaridade", ""),
+                "experiencias": json_data.get("resumo_experiencias", []),
+                "habilidades": json_data.get("habilidades", []),
+            }).eq("id", candidato_id).execute()
 
         # 4. Atualizar no banco (Tabela: candidaturas - Match com a Vaga específica)
         update_candidatura = {

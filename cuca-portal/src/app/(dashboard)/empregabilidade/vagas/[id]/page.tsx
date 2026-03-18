@@ -17,7 +17,7 @@ import {
     ArrowLeft, FileText, Loader2, Plus, MessageSquare, Send,
     Building2, User, Info, Briefcase, GraduationCap, Clock,
     Phone, Calendar, Sparkles, Users, Database, RefreshCw,
-    ChevronRight, AlertCircle, MapPin, Mail
+    ChevronRight, AlertCircle, MapPin, Mail, LayoutGrid, Columns
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { differenceInYears, format } from "date-fns"
@@ -86,6 +86,7 @@ export default function VagaDetalhesPage() {
     const [candidatos, setCandidatos] = useState<Candidatura[]>([])
     const [loading, setLoading] = useState(true)
     const [filtroStatus, setFiltroStatus] = useState("todos")
+    const [viewMode, setViewMode] = useState<"grid" | "kanban">("grid")
 
     // Banco de Talentos
     const [talentResults, setTalentResults] = useState<TalentBankCandidate[]>([])
@@ -376,13 +377,36 @@ export default function VagaDetalhesPage() {
                         <h2 className="text-lg font-semibold">Candidatos Inscritos</h2>
                         <Badge variant="outline">{candidatos.length}</Badge>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => setModalInscricao(true)}>
-                        <Plus className="mr-1.5 h-4 w-4" />
-                        Inscrever Manualmente
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        <Button size="sm" variant="outline" onClick={() => setModalInscricao(true)}>
+                            <Plus className="mr-1.5 h-4 w-4" />
+                            Inscrever Manualmente
+                        </Button>
+                        <div className="flex items-center gap-1 bg-muted p-1 rounded-lg">
+                            <Button
+                                variant={viewMode === "grid" ? "secondary" : "ghost"}
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => setViewMode("grid")}
+                                title="Grade"
+                            >
+                                <LayoutGrid className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                                variant={viewMode === "kanban" ? "secondary" : "ghost"}
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => setViewMode("kanban")}
+                                title="Kanban"
+                            >
+                                <Columns className="h-3.5 w-3.5" />
+                            </Button>
+                        </div>
+                    </div>
                 </div>
 
-                {/* Filtros por status */}
+                {/* Filtros por status — só no modo grid */}
+                {viewMode === "grid" && (
                 <div className="flex flex-wrap gap-2">
                     {(["todos", "pendente", "selecionado", "contratado", "rejeitado"] as const).map(s => (
                         <button
@@ -396,9 +420,65 @@ export default function VagaDetalhesPage() {
                         </button>
                     ))}
                 </div>
+                )}
 
-                {/* Grid de cards */}
-                {candidatosFiltrados.length === 0 ? (
+                {/* Kanban view */}
+                {viewMode === "kanban" ? (
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 overflow-x-auto">
+                        {(["pendente", "selecionado", "contratado", "rejeitado"] as const).map(colStatus => {
+                            const colCandidatos = candidatos.filter(c => c.status === colStatus)
+                            const colColors: Record<string, string> = {
+                                pendente: "border-amber-500/30 bg-amber-500/5",
+                                selecionado: "border-blue-500/30 bg-blue-500/5",
+                                contratado: "border-green-500/30 bg-green-500/5",
+                                rejeitado: "border-red-500/30 bg-red-500/5",
+                            }
+                            const colHeader: Record<string, string> = {
+                                pendente: "text-amber-400",
+                                selecionado: "text-blue-400",
+                                contratado: "text-green-400",
+                                rejeitado: "text-red-400",
+                            }
+                            return (
+                                <div key={colStatus} className={`rounded-xl border p-3 space-y-2 min-h-[200px] ${colColors[colStatus]}`}>
+                                    <div className={`flex items-center justify-between mb-1 ${colHeader[colStatus]}`}>
+                                        <span className="text-xs font-semibold uppercase tracking-wide">
+                                            {colStatus.charAt(0).toUpperCase() + colStatus.slice(1)}
+                                        </span>
+                                        <span className="text-xs font-bold">{colCandidatos.length}</span>
+                                    </div>
+                                    {colCandidatos.length === 0 ? (
+                                        <p className="text-xs text-muted-foreground text-center py-4">Nenhum</p>
+                                    ) : colCandidatos.map(c => {
+                                        const ocr = c.dados_ocr_json || {}
+                                        const score = ocr?.match_score ?? (c as any).match_score ?? null
+                                        const idade = calcularIdade(c.data_nascimento)
+                                        return (
+                                            <div
+                                                key={c.id}
+                                                className="bg-popover rounded-lg border border-border p-2.5 cursor-pointer hover:border-cuca-blue/50 transition-colors space-y-1"
+                                                onClick={() => router.push(`/empregabilidade/vagas/${id}/candidatos/${c.id}`)}
+                                            >
+                                                <div className="flex items-center justify-between gap-1">
+                                                    <span className="text-xs font-medium truncate">{c.nome}</span>
+                                                    {score !== null && (
+                                                        <span className={`text-[10px] font-bold rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 ${score >= 70 ? "bg-green-500/20 text-green-400" : score >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>
+                                                            {score}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="text-[10px] text-muted-foreground">{idade ? `${idade} anos` : "—"}</p>
+                                                <p className="text-[10px] text-muted-foreground">{format(new Date(c.created_at || Date.now()), "dd/MM/yy", { locale: ptBR })}</p>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            )
+                        })}
+                    </div>
+                ) : (
+                /* Grid de cards */
+                candidatosFiltrados.length === 0 ? (
                     <div className="text-center py-12 text-muted-foreground border border-dashed rounded-xl">
                         <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
                         <p className="text-sm">
@@ -426,6 +506,7 @@ export default function VagaDetalhesPage() {
                             )
                         })}
                     </div>
+                )
                 )}
             </div>
 

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Vaga, Empresa } from "@/lib/types/database"
 import { Card, CardContent } from "@/components/ui/card"
@@ -14,8 +15,10 @@ import { useUser } from "@/lib/auth/user-provider"
 
 export default function VagasPage() {
     const { hasPermission, profile, isDeveloper } = useUser()
+    const router = useRouter()
     const [vagas, setVagas] = useState<Vaga[]>([])
     const [empresasMap, setEmpresasMap] = useState<Record<string, Empresa>>({})
+    const [candidaturasCount, setCandidaturasCount] = useState<Record<string, number>>({})
 
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState("")
@@ -68,6 +71,20 @@ export default function VagasPage() {
             }
 
             setVagas(filtered)
+
+            // Buscar contagem de candidaturas por vaga
+            if (filtered.length > 0) {
+                const vagaIds = filtered.map(v => v.id)
+                const { data: cands } = await supabase
+                    .from("candidaturas")
+                    .select("vaga_id")
+                    .in("vaga_id", vagaIds)
+                const countMap: Record<string, number> = {}
+                for (const c of cands || []) {
+                    countMap[c.vaga_id] = (countMap[c.vaga_id] || 0) + 1
+                }
+                setCandidaturasCount(countMap)
+            }
         } catch (error) {
             console.error("Erro ao buscar vagas:", error)
         } finally {
@@ -188,13 +205,14 @@ export default function VagasPage() {
                                 <TableHead>Unidade Base</TableHead>
                                 <TableHead>Detalhes</TableHead>
                                 <TableHead>Status</TableHead>
+                                <TableHead className="text-center">Candidatos</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {loading ? (
-                                <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={7} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
                             ) : vagas.length === 0 ? (
-                                <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={7} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
                             ) : vagas.map(v => (
                                 <TableRow key={v.id} className={abaFiltro === "todas" ? "hover:bg-muted/30" : "cursor-pointer hover:bg-muted/30"} onClick={() => abaFiltro === "minhas" && openEditModal(v)}>
                                     <TableCell className="text-center">
@@ -231,6 +249,17 @@ export default function VagasPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell>{getStatusBadge(v.status)}</TableCell>
+                                    <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 text-xs gap-1 px-2"
+                                            onClick={() => router.push(`/empregabilidade/vagas/${v.id}`)}
+                                        >
+                                            <Users className="h-3 w-3" />
+                                            {candidaturasCount[v.id] ?? 0}
+                                        </Button>
+                                    </TableCell>
                                 </TableRow>
                             ))}
                         </TableBody>

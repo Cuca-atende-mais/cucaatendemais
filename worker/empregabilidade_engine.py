@@ -264,7 +264,7 @@ async def _processar_empresa(
             })
         elif t in ("2", "consultar", "status", "acompanhar", "vagas"):
             _set_fluxo(conversa_id, {**fluxo, "etapa": "consulta_empresa"})
-            await _processar_consulta_empresa(texto, phone, instance_name, token, fluxo, conversa_id)
+            await _processar_consulta_empresa("todas", phone, instance_name, token, fluxo, conversa_id)
         elif t in ("3", "editar", "alterar", "modificar"):
             _set_fluxo(conversa_id, {**fluxo, "etapa": "selecionando_vaga_edicao"})
             await _listar_vagas_para_acao(empresa_id, instance_name, token, phone, "edicao", conversa_id, fluxo)
@@ -1411,7 +1411,7 @@ async def empregabilidade_notify_loop():
                 etapa_c = fluxo.get("etapa", "")
 
                 # Só processa etapas que esperam retorno do portal
-                if etapa_c not in ("aguardando_retorno_vaga", "aguardando_retorno_edicao"):
+                if etapa_c not in ("aguardando_retorno_vaga", "aguardando_retorno_edicao", "aguardando_confirmacao_candidatura"):
                     continue
 
                 # Buscar dados da conversa e instância para envio
@@ -1502,6 +1502,28 @@ async def empregabilidade_notify_loop():
                         "cnpj": fluxo.get("cnpj"),
                     })
                     logger.info(f"[empreg-notify] Confirmação de edição enviada para conversa {conversa_id} — vaga {vaga_editada_id}")
+
+                # --- Notificação de candidatura confirmada (candidato) ---
+                elif etapa_c == "aguardando_confirmacao_candidatura":
+                    candidatura_id = fluxo.get("candidatura_criada_id")
+                    if not candidatura_id:
+                        continue
+                    candidatura_codigo = fluxo.get("candidatura_codigo")
+                    codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
+                    await _enviar(
+                        instance_name, token, phone,
+                        f"🎉 *Candidatura recebida com sucesso!*\n\n"
+                        f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
+                        "Guarde esse número! Com ele você pode retornar aqui a qualquer momento "
+                        "para verificar o status da sua candidatura.\n\n"
+                        "Nossa equipe fará a triagem e você será notificado pelo WhatsApp. ✅"
+                    )
+                    _set_fluxo(conversa_id, {
+                        "etapa": "candidatura_confirmada",
+                        "perfil": "publico",
+                        "ultima_candidatura_codigo": codigo,
+                    })
+                    logger.info(f"[empreg-notify] Confirmação de candidatura enviada para conversa {conversa_id} — código {codigo}")
 
         except Exception as e:
             logger.error(f"[empreg-notify] Erro no loop: {e}")

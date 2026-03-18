@@ -162,6 +162,24 @@ async def security_middleware(request: Request, call_next):
     return response
 
 
+async def ocr_pending_loop():
+    """Loop que verifica candidaturas com CV mas sem análise e dispara OCR automaticamente."""
+    from cv_processor import process_cv_ocr
+    logger.info("[ocr-loop] Loop de OCR pendente iniciado.")
+    while True:
+        try:
+            res = supabase.table("candidaturas").select(
+                "id, vaga_id, arquivo_cv_url"
+            ).not_.is_("arquivo_cv_url", "null").is_("matching_score", "null").is_("dados_ocr_json", "null").not_.is_("vaga_id", "null").limit(3).execute()
+            pendentes = res.data or []
+            for p in pendentes:
+                if p.get("arquivo_cv_url") and p.get("vaga_id"):
+                    logger.info(f"[ocr-loop] Disparando OCR para candidatura {p['id']}")
+                    await process_cv_ocr(p["id"], p["arquivo_cv_url"], p["vaga_id"])
+        except Exception as e:
+            logger.error(f"[ocr-loop] Erro: {e}")
+        await asyncio.sleep(60)
+
 @app.on_event("startup")
 async def startup_event():
     from campanhas_engine import campanhas_loop
@@ -171,6 +189,8 @@ async def startup_event():
     asyncio.create_task(campanhas_loop())
     logger.info("Agendando loop de notificação de vagas (Empregabilidade)...")
     asyncio.create_task(empregabilidade_notify_loop())
+    logger.info("Agendando loop de OCR pendente...")
+    asyncio.create_task(ocr_pending_loop())
 
 # ─── Exception Handlers Globais ──────────────────────────────────────────────
 # Garante que TODOS os erros retornem CORS headers (sem isso, exceções não tratadas

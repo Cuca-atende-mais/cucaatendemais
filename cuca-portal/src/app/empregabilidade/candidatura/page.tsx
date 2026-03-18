@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Gift, ShieldCheck, ChevronRight, Bookmark } from "lucide-react"
+import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Gift, ShieldCheck, ChevronRight, Bookmark, Camera, Upload, X } from "lucide-react"
 import toast from "react-hot-toast"
 
 export default function CandidaturaPublicaPage() {
@@ -30,6 +30,9 @@ export default function CandidaturaPublicaPage() {
         origemTel ? formatPhoneInit(origemTel) : ""
     )
     const [arquivo, setArquivo] = useState<File | null>(null)
+    const fileInputRef = useRef<HTMLInputElement>(null)
+    const cameraInputRef = useRef<HTMLInputElement>(null)
+    const [arquivoPreview, setArquivoPreview] = useState<string | null>(null)
 
     const [loadingSubmit, setLoadingSubmit] = useState(false)
     const [success, setSuccess] = useState(false)
@@ -101,11 +104,26 @@ export default function CandidaturaPublicaPage() {
         return idade
     }
 
+    const handleFileSelected = (file: File | null) => {
+        setArquivo(file)
+        if (file && file.type.startsWith("image/")) {
+            const reader = new FileReader()
+            reader.onload = (e) => setArquivoPreview(e.target?.result as string)
+            reader.readAsDataURL(file)
+        } else {
+            setArquivoPreview(null)
+        }
+    }
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
 
-        if (!nome || !dataNascimento || !telefone || !arquivo) {
-            toast.error("Preencha todos os campos e anexe seu currículo.")
+        if (!nome || !dataNascimento || !telefone) {
+            toast.error("Preencha todos os campos obrigatórios.")
+            return
+        }
+        if (!arquivo) {
+            toast.error("Anexe seu currículo ou tire uma foto do documento.")
             return
         }
 
@@ -385,15 +403,54 @@ export default function CandidaturaPublicaPage() {
                             </div>
 
                             <div className="space-y-2">
-                                <Label htmlFor="cv">Currículo (PDF, JPG, PNG) *</Label>
-                                <Input
-                                    id="cv"
+                                <Label>Currículo (PDF, JPG, PNG) *</Label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="flex items-center justify-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-3 text-sm font-medium hover:bg-muted/70 transition-colors"
+                                    >
+                                        <Upload className="h-4 w-4" />
+                                        Escolher Arquivo
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => cameraInputRef.current?.click()}
+                                        className="flex items-center justify-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-3 text-sm font-medium hover:bg-muted/70 transition-colors"
+                                    >
+                                        <Camera className="h-4 w-4" />
+                                        Tirar Foto
+                                    </button>
+                                </div>
+                                <input
+                                    ref={fileInputRef}
                                     type="file"
                                     accept=".pdf,image/png,image/jpeg"
-                                    onChange={(e) => setArquivo(e.target.files?.[0] || null)}
-                                    className="cursor-pointer file:bg-muted file:text-muted-foreground file:border-0 file:mr-4 file:px-4 file:py-2 file:rounded-md hover:file:bg-muted/80"
-                                    required
+                                    className="hidden"
+                                    onChange={(e) => handleFileSelected(e.target.files?.[0] || null)}
                                 />
+                                <input
+                                    ref={cameraInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    capture="environment"
+                                    className="hidden"
+                                    onChange={(e) => handleFileSelected(e.target.files?.[0] || null)}
+                                />
+                                {arquivo && (
+                                    <div className="flex items-center gap-2 rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2">
+                                        {arquivoPreview ? (
+                                            <img src={arquivoPreview} alt="Preview" className="h-10 w-10 object-cover rounded" />
+                                        ) : null}
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-medium truncate">{arquivo.name}</p>
+                                            <p className="text-[10px] text-muted-foreground">{(arquivo.size / 1024).toFixed(0)} KB</p>
+                                        </div>
+                                        <button type="button" onClick={() => { handleFileSelected(null); if(fileInputRef.current) fileInputRef.current.value=""; if(cameraInputRef.current) cameraInputRef.current.value=""; }}>
+                                            <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                                        </button>
+                                    </div>
+                                )}
                                 <p className="text-[10px] text-muted-foreground">
                                     Seu currículo será lido por nossa Inteligência Artificial para análise de compatibilidade.
                                 </p>
