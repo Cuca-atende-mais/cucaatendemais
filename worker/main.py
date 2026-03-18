@@ -169,10 +169,14 @@ async def ocr_pending_loop():
     while True:
         try:
             res = supabase.table("candidaturas").select(
-                "id, vaga_id, arquivo_cv_url"
-            ).not_.is_("arquivo_cv_url", "null").is_("matching_score", "null").is_("dados_ocr_json", "null").not_.is_("vaga_id", "null").limit(3).execute()
+                "id, vaga_id, arquivo_cv_url, matching_justificativa"
+            ).not_.is_("arquivo_cv_url", "null").is_("matching_score", "null").is_("dados_ocr_json", "null").not_.is_("vaga_id", "null").limit(5).execute()
             pendentes = res.data or []
             for p in pendentes:
+                # Pular candidaturas que já tiveram erro de OCR (evitar loop infinito)
+                just = p.get("matching_justificativa") or ""
+                if just.startswith("Erro OCR:"):
+                    continue
                 if p.get("arquivo_cv_url") and p.get("vaga_id"):
                     logger.info(f"[ocr-loop] Disparando OCR para candidatura {p['id']}")
                     await process_cv_ocr(p["id"], p["arquivo_cv_url"], p["vaga_id"])

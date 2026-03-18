@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import logging
 import base64
@@ -14,20 +15,33 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-async def download_file_as_base64(url: str) -> str:
-    """Faz download do arquivo via URL e retorna base64."""
+async def download_file_bytes(url: str) -> bytes:
+    """Faz download do arquivo via URL e retorna bytes brutos."""
     async with httpx.AsyncClient() as http_client:
         response = await http_client.get(url)
         response.raise_for_status()
-        return base64.b64encode(response.content).decode("utf-8")
+        return response.content
+
+
+async def download_file_as_base64(url: str) -> str:
+    """Faz download do arquivo via URL e retorna base64."""
+    content = await download_file_bytes(url)
+    return base64.b64encode(content).decode("utf-8")
+
+
+def extract_text_from_pdf(pdf_bytes: bytes) -> str:
+    """Extrai texto de um PDF usando pdfminer.six."""
+    from pdfminer.high_level import extract_text_to_fp
+    from pdfminer.layout import LAParams
+    output = io.StringIO()
+    extract_text_to_fp(io.BytesIO(pdf_bytes), output, laparams=LAParams())
+    return output.getvalue().strip()
 
 async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
     """Lê o currículo com GPT-4o Vision / Document, e salva os dados OCR na candidatura."""
     logger.info(f"Iniciando OCR para candidatura {candidatura_id} ({cv_url})")
     
     try:
-        # 1. Obter base64 do arquivo
-        file_b64 = await download_file_as_base64(cv_url)
         is_pdf = cv_url.lower().endswith(".pdf")
         
         # 1.5 Buscar relacionamento
@@ -69,24 +83,31 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
         Se houver mais de um número, priorize o celular. Retorne null se não encontrar nenhum número.
         """
 
-        # Preparar mensagem dependendo do tipo (GPT-4o lida com PDF no endpoint vision/chat se convertido em imagem, 
-        # mas como estamos mandando cru, se for PDF é ideal usar a API Assistants ou tratar a extração de texto primeiro.
-        # Para MVPs com GPT-4o (Chat Completions API), passamos a URL direta de imagem. Se for PDF real precisaria do PDF2Image.
-        # Como hack MVP, se for PDF vamos pedir pro frontend fazer upload de PNG ou assumir que o AssistantAPI é melhor.
-        # Por simplicidade da Fase 3: assumiremos que a URL é acessível e usaremos o detail high de imagem se for jpeg/png.
-        
-        messages = [
-            {"role": "system", "content": prompt_sys},
-            {"role": "user", "content": [
-                {"type": "text", "text": "Extraia os dados deste currículo e retorne APENAS o JSON válido:"},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": cv_url,
+        # Montar mensagem: PDF → extração de texto; imagem → vision (base64)
+        if is_pdf:
+            pdf_bytes = await download_file_bytes(cv_url)
+            cv_text = extract_text_from_pdf(pdf_bytes)
+            if not cv_text:
+                cv_text = "(conteúdo do PDF não pôde ser extraído automaticamente)"
+            messages = [
+                {"role": "system", "content": prompt_sys},
+                {"role": "user", "content": f"Extraia os dados deste currículo e retorne APENAS o JSON válido:\n\n{cv_text}"}
+            ]
+        else:
+            file_b64 = await download_file_as_base64(cv_url)
+            messages = [
+                {"role": "system", "content": prompt_sys},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Extraia os dados deste currículo e retorne APENAS o JSON válido:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{file_b64}",
+                            "detail": "high",
+                        },
                     },
-                },
-            ]}
-        ]
+                ]}
+            ]
 
         response = await client.chat.completions.create(
             model="gpt-4o",
