@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
         const {
             vaga_id, nome, data_nascimento, telefone,
             arquivo_cv_url, status, requisitos_atendidos, observacoes,
-            conversa_id,
+            conversa_id, area_interesse,
         } = body
 
         if (!nome || !telefone) {
@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
                 status: status || "pendente",
                 requisitos_atendidos: requisitos_atendidos || "pendente",
                 observacoes: observacoes || null,
+                area_interesse: area_interesse || [],
             })
             .select("id")
             .single()

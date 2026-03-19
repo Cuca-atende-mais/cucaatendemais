@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
             tipo_contrato, salario, total_vagas, escolaridade_minima,
             faixa_etaria, carga_horaria, local, local_entrevista,
             beneficios, limite_curriculos, tipo_selecao, unidade_cuca,
+            setor, email_responsavel, telefone_responsavel,
         } = body
 
         if (!empresa_id || !titulo || !descricao || !tipo_contrato) {
@@ -63,6 +64,10 @@ export async function POST(request: NextRequest) {
                 unidade_cuca: unidade_cuca || null,
                 numero_vaga,
                 status: "pre_cadastro",
+                setor: setor || [],
+                email_responsavel: email_responsavel || null,
+                email_contato_empresa: email_responsavel || null,
+                telefone_responsavel: telefone_responsavel || null,
             })
             .select("id, titulo, numero_vaga")
             .single()

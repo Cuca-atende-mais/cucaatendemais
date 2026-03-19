@@ -14,6 +14,19 @@ import toast from "react-hot-toast"
 const TIPOS_CONTRATO = ["CLT", "PJ", "Estágio", "Temporário", "Aprendiz", "Freelancer"]
 const ESCOLARIDADES = ["Fundamental Incompleto", "Fundamental Completo", "Médio Incompleto", "Médio Completo", "Superior Incompleto", "Superior Completo"]
 
+const SETORES_VAGA = [
+    "Serviços Gerais (limpeza, portaria, zeladoria)",
+    "Construção Civil (pedreiro, ajudante, eletricista, encanador)",
+    "Logística e Entregas (estoque, separação, entregador, motorista)",
+    "Comércio e Vendas (vendedor, caixa, atendimento)",
+    "Alimentação (cozinha, garçom, lanchonete)",
+    "Tecnologia (suporte técnico, programação, dados)",
+    "Criativo / Digital (design, vídeo, redes sociais)",
+    "Beleza e Estética (barbeiro, manicure, cabeleireiro)",
+    "Cuidados Pessoais (babá, cuidador de idosos)",
+    "Administrativo / Escritório (recepção, auxiliar administrativo)",
+]
+
 const BENEFICIOS_OPCOES = [
     "Plano de Saúde (co-participação)",
     "Vale Refeição",
@@ -42,6 +55,8 @@ export default function NovaVagaEmpresaPage() {
     const searchParams = useSearchParams()
     const empresaId = searchParams.get("empresa_id")
     const unidadeCuca = searchParams.get("unidade_cuca") || ""
+    const emailParam = searchParams.get("email_responsavel") || ""
+    const telefoneParam = searchParams.get("telefone_responsavel") || ""
 
     const [empresa, setEmpresa] = useState<{ id: string; nome: string } | null>(null)
     const [loadingEmpresa, setLoadingEmpresa] = useState(true)
@@ -53,6 +68,10 @@ export default function NovaVagaEmpresaPage() {
     const [requisitos, setRequisitos] = useState("")
     const [tipoContrato, setTipoContrato] = useState("")
     const [salario, setSalario] = useState("")
+    const [setoresMarcados, setSetoresMarcados] = useState<string[]>([])
+    // Responsável pela vaga (pré-preenchido se vindo do bot)
+    const [emailResponsavel, setEmailResponsavel] = useState(emailParam)
+    const [telefoneResponsavel, setTelefoneResponsavel] = useState(telefoneParam)
     const [totalVagas, setTotalVagas] = useState("1")
     const [escolaridadeMinima, setEscolaridadeMinima] = useState("")
     const [faixaEtaria, setFaixaEtaria] = useState("15 a 29 anos")
@@ -94,6 +113,21 @@ export default function NovaVagaEmpresaPage() {
             .catch(() => { setEmpresaInvalida(true); setLoadingEmpresa(false) })
     }, [empresaId])
 
+    const toggleSetor = (s: string) => {
+        setSetoresMarcados(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
+    }
+
+    const formatarSalario = (value: string) => {
+        // Permite "A combinar" como texto livre
+        if (/^[aA]/.test(value) && value.length <= 12) return value
+        // Remove tudo que não é dígito
+        const digits = value.replace(/\D/g, "")
+        if (!digits) return ""
+        // Formata como moeda brasileira: 1234567 → 12.345,67
+        const number = parseInt(digits, 10) / 100
+        return "R$ " + number.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }
+
     const toggleBeneficio = (b: string) => {
         setBeneficiosMarcados(prev => prev.includes(b) ? prev.filter(x => x !== b) : [...prev, b])
     }
@@ -110,6 +144,14 @@ export default function NovaVagaEmpresaPage() {
             toast.error("Preencha pelo menos título, descrição e tipo de contrato.")
             return
         }
+        if (setoresMarcados.length === 0) {
+            toast.error("Selecione pelo menos uma área da vaga.")
+            return
+        }
+        if (!emailResponsavel || !telefoneResponsavel) {
+            toast.error("Informe o e-mail e o telefone do responsável pela seleção.")
+            return
+        }
         setLoadingSubmit(true)
         try {
             const cargaHoraria = buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte)
@@ -122,7 +164,7 @@ export default function NovaVagaEmpresaPage() {
                     descricao,
                     requisitos,
                     tipo_contrato: tipoContrato,
-                    salario,
+                    salario: salario || null,
                     total_vagas: totalVagas,
                     escolaridade_minima: escolaridadeMinima,
                     faixa_etaria: faixaEtaria,
@@ -133,6 +175,9 @@ export default function NovaVagaEmpresaPage() {
                     limite_curriculos: limiteCurriculos ? parseInt(limiteCurriculos) : null,
                     tipo_selecao: tipoSelecao || null,
                     unidade_cuca: unidadeCuca || null,
+                    setor: setoresMarcados,
+                    email_responsavel: emailResponsavel,
+                    telefone_responsavel: telefoneResponsavel.replace(/\D/g, ""),
                 }),
             })
             const data = await res.json()
@@ -274,8 +319,7 @@ export default function NovaVagaEmpresaPage() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <Label htmlFor="salario">Remuneração</Label>
-                                    <Input id="salario" value={salario} onChange={e => setSalario(e.target.value)} placeholder="Ex: R$ 1.500 ou A combinar" />
-                                </div>
+                                    <Input id="salario" value={salario} onChange={e => setSalario(formatarSalario(e.target.value))} placeholder="Ex: R$ 1.500,00 ou A combinar" /></div>
                                 <div className="space-y-2">
                                     <Label htmlFor="escolaridade">Escolaridade Mínima</Label>
                                     <select id="escolaridade" value={escolaridadeMinima} onChange={e => setEscolaridadeMinima(e.target.value)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -397,6 +441,40 @@ export default function NovaVagaEmpresaPage() {
                                 <Label htmlFor="limiteCurriculos">Quantos currículos deseja analisar?</Label>
                                 <Input id="limiteCurriculos" type="number" min="1" value={limiteCurriculos} onChange={e => setLimiteCurriculos(e.target.value)} placeholder="Ex: 20 (deixe em branco para sem limite)" />
                                 <p className="text-xs text-muted-foreground">Ao atingir esse limite, novos candidatos serão direcionados ao banco de talentos da unidade.</p>
+                            </div>
+
+                            {/* Área da vaga */}
+                            <div className="space-y-3 pt-1">
+                                <div>
+                                    <Label className="text-base font-semibold">Área da Vaga *</Label>
+                                    <p className="text-xs text-muted-foreground mt-0.5">Selecione pelo menos uma categoria que melhor representa esta vaga.</p>
+                                </div>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {SETORES_VAGA.map(s => (
+                                        <label key={s} className={`flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer text-sm transition-colors ${setoresMarcados.includes(s) ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium" : "border-border hover:border-cuca-blue/50"}`}>
+                                            <input type="checkbox" className="accent-cuca-blue" checked={setoresMarcados.includes(s)} onChange={() => toggleSetor(s)} />
+                                            {s}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Responsável pela seleção */}
+                            <div className="space-y-3 pt-1 border rounded-xl p-4 bg-amber-500/5 border-amber-500/20">
+                                <div>
+                                    <Label className="text-base font-semibold">Contato do Responsável pela Seleção *</Label>
+                                    <p className="text-xs text-muted-foreground mt-0.5">Informe os dados de quem coordena o processo seletivo nesta empresa — pode ser diferente do contato geral da empresa.</p>
+                                </div>
+                                <div className="grid grid-cols-1 gap-3">
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="emailResponsavel">E-mail para receber currículos *</Label>
+                                        <Input id="emailResponsavel" type="email" value={emailResponsavel} onChange={e => setEmailResponsavel(e.target.value)} placeholder="rh@empresa.com.br" required />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="telefoneResponsavel">Telefone / WhatsApp do responsável *</Label>
+                                        <Input id="telefoneResponsavel" type="tel" value={telefoneResponsavel} onChange={e => setTelefoneResponsavel(e.target.value)} placeholder="(85) 99999-9999" required />
+                                    </div>
+                                </div>
                             </div>
 
                             {/* Tipo de seleção */}

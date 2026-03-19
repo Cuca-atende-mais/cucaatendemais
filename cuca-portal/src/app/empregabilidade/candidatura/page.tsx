@@ -8,7 +8,20 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Gift, ShieldCheck, ChevronRight, Bookmark, Camera, Upload, X } from "lucide-react"
+import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Gift, ShieldCheck, ChevronRight, Bookmark, Camera, Upload, X, Tag } from "lucide-react"
+
+const AREAS_INTERESSE = [
+    "Serviços Gerais (limpeza, portaria, zeladoria)",
+    "Construção Civil (pedreiro, ajudante, eletricista, encanador)",
+    "Logística e Entregas (estoque, separação, entregador, motorista)",
+    "Comércio e Vendas (vendedor, caixa, atendimento)",
+    "Alimentação (cozinha, garçom, lanchonete)",
+    "Tecnologia (suporte técnico, programação, dados)",
+    "Criativo / Digital (design, vídeo, redes sociais)",
+    "Beleza e Estética (barbeiro, manicure, cabeleireiro)",
+    "Cuidados Pessoais (babá, cuidador de idosos)",
+    "Administrativo / Escritório (recepção, auxiliar administrativo)",
+]
 import toast from "react-hot-toast"
 
 export default function CandidaturaPublicaPage() {
@@ -33,6 +46,12 @@ export default function CandidaturaPublicaPage() {
     const fileInputRef = useRef<HTMLInputElement>(null)
     const cameraInputRef = useRef<HTMLInputElement>(null)
     const [arquivoPreview, setArquivoPreview] = useState<string | null>(null)
+
+    const [areasInteresse, setAreasInteresse] = useState<string[]>([])
+
+    const toggleArea = (a: string) => {
+        setAreasInteresse(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a])
+    }
 
     const [loadingSubmit, setLoadingSubmit] = useState(false)
     const [success, setSuccess] = useState(false)
@@ -126,6 +145,10 @@ export default function CandidaturaPublicaPage() {
             toast.error("Anexe seu currículo ou tire uma foto do documento.")
             return
         }
+        if (areasInteresse.length === 0) {
+            toast.error("Selecione pelo menos uma área de interesse.")
+            return
+        }
 
         setLoadingSubmit(true)
         try {
@@ -139,12 +162,13 @@ export default function CandidaturaPublicaPage() {
                 }
             }
 
-            // Verificar limite de currículos
+            // Verificar limite de currículos (conta apenas candidaturas reais, não banco de talentos)
             if (!destinoBancoTalentos && vaga?.limite_curriculos && vagaId) {
                 const { count } = await supabase
                     .from("candidaturas")
                     .select("id", { count: "exact", head: true })
                     .eq("vaga_id", vagaId)
+                    .not("observacoes", "ilike", "banco_talentos:%")
                 if ((count ?? 0) >= vaga.limite_curriculos) {
                     destinoBancoTalentos = true
                 }
@@ -181,6 +205,7 @@ export default function CandidaturaPublicaPage() {
                     requisitos_atendidos: "pendente",
                     observacoes: obsArr.length > 0 ? obsArr[0] : null,
                     conversa_id: conversaId || null,
+                    area_interesse: areasInteresse,
                 }),
             })
             const candData = await res.json()
@@ -454,6 +479,23 @@ export default function CandidaturaPublicaPage() {
                                 <p className="text-[10px] text-muted-foreground">
                                     Seu currículo será lido por nossa Inteligência Artificial para análise de compatibilidade.
                                 </p>
+                            </div>
+
+                            {/* Área de interesse */}
+                            <div className="space-y-3 pt-1">
+                                <div className="flex items-center gap-2">
+                                    <Tag className="h-4 w-4 text-cuca-blue" />
+                                    <Label className="text-base font-semibold">Área de Interesse *</Label>
+                                </div>
+                                <p className="text-xs text-muted-foreground -mt-1">Em quais áreas você quer trabalhar? Selecione todas que se aplicam.</p>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {AREAS_INTERESSE.map(a => (
+                                        <label key={a} className={`flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer text-sm transition-colors ${areasInteresse.includes(a) ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium" : "border-border hover:border-cuca-blue/50"}`}>
+                                            <input type="checkbox" className="accent-cuca-blue" checked={areasInteresse.includes(a)} onChange={() => toggleArea(a)} />
+                                            {a}
+                                        </label>
+                                    ))}
+                                </div>
                             </div>
 
                             <Button

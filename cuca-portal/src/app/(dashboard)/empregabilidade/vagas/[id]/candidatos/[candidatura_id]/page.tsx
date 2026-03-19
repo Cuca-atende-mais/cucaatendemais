@@ -11,7 +11,7 @@ import {
     ArrowLeft, FileText, Loader2, ExternalLink, Printer,
     Mail, CheckCircle, XCircle, Briefcase, GraduationCap,
     Clock, Phone, Calendar, Star, AlertTriangle, User,
-    Database, TrendingUp
+    Database, TrendingUp, SendHorizonal
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { differenceInYears, format } from "date-fns"
@@ -198,8 +198,9 @@ export default function CandidatoDetalhesPage() {
     }
 
     const enviarCVporEmail = async () => {
-        if (!vaga?.email_contato_empresa) {
-            toast.error("Email de contato da empresa não cadastrado na vaga.")
+        const emailDestino = vaga?.email_responsavel || vaga?.email_contato_empresa
+        if (!emailDestino) {
+            toast.error("E-mail de contato da empresa não cadastrado na vaga.")
             return
         }
         setEnviandoEmail(true)
@@ -212,6 +213,12 @@ export default function CandidatoDetalhesPage() {
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || "Erro ao enviar email")
             toast.success("Currículo enviado para a empresa!")
+            // Atualiza localmente para refletir o envio
+            setCandidatura((prev: any) => ({
+                ...prev,
+                email_enviado_em: new Date().toISOString(),
+                email_enviado_para: emailDestino,
+            }))
         } catch (err: any) {
             toast.error(err.message)
         } finally {
@@ -231,14 +238,49 @@ export default function CandidatoDetalhesPage() {
 
     const imprimirCV = () => {
         const ocr = candidatura?.dados_ocr_json || {}
-        const url = ocr?.arquivo_cv_url || candidatura?.arquivo_cv_url
-        if (!url) {
+        const cvUrl = ocr?.arquivo_cv_url || candidatura?.arquivo_cv_url
+        if (!cvUrl) {
             toast.error("Currículo ainda não disponível.")
             return
         }
-        const win = window.open(url, "_blank")
+
+        const score = ocr?.match_score ?? candidatura?.match_score ?? null
+        const pontosFortesArr: string[] = ocr?.pontos_fortes || ocr?.analise_aderencia?.pontos_fortes || []
+        const pontosAtencaoArr: string[] = ocr?.pontos_atencao || ocr?.analise_aderencia?.pontos_atencao || []
+        const vereditoFinal: string = ocr?.veredito_final || ocr?.analise_aderencia?.veredito_final || ""
+        const habilidades: string[] = ocr?.habilidades || []
+        const resumoExp: string[] = ocr?.resumo_experiencias || []
+
+        const analiseHtml = `
+            <div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;padding:32px;color:#111;">
+                <div style="background:#0066cc;padding:20px 28px;border-radius:8px;margin-bottom:24px;">
+                    <h1 style="color:white;margin:0;font-size:20px;">Análise de Aderência</h1>
+                    <p style="color:#cce0ff;margin:4px 0 0;font-size:14px;">
+                        ${candidatura.nome} — Vaga: ${vaga?.titulo}${vaga?.numero_vaga ? ` #${vaga.numero_vaga}` : ""}
+                    </p>
+                </div>
+                ${score !== null ? `<div style="margin-bottom:20px;display:flex;align-items:center;gap:16px;">
+                    <div style="width:64px;height:64px;border-radius:50%;border:3px solid ${score >= 70 ? "#22c55e" : score >= 50 ? "#f59e0b" : "#ef4444"};display:flex;flex-direction:column;align-items:center;justify-content:center;background:${score >= 70 ? "#f0fdf4" : score >= 50 ? "#fffbeb" : "#fef2f2"};">
+                        <span style="font-size:22px;font-weight:bold;color:${score >= 70 ? "#16a34a" : score >= 50 ? "#d97706" : "#dc2626"};">${score}</span>
+                        <span style="font-size:10px;color:#666;">match</span>
+                    </div>
+                    <div><p style="margin:0;font-weight:bold;font-size:15px;">Score de Compatibilidade</p><p style="margin:2px 0 0;font-size:13px;color:#555;">${score >= 70 ? "Alta compatibilidade" : score >= 50 ? "Compatibilidade moderada" : "Baixa compatibilidade"}</p></div>
+                </div>` : ""}
+                ${habilidades.length > 0 ? `<div style="margin-bottom:18px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#0066cc;margin-bottom:6px;">Habilidades Identificadas</p><p style="font-size:13px;color:#333;">${habilidades.join(" · ")}</p></div>` : ""}
+                ${resumoExp.length > 0 ? `<div style="margin-bottom:18px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#0066cc;margin-bottom:6px;">Experiências Anteriores</p><ul style="margin:0;padding-left:18px;">${resumoExp.map(e => `<li style="font-size:13px;color:#333;margin-bottom:4px;">${e}</li>`).join("")}</ul></div>` : ""}
+                ${pontosFortesArr.length > 0 ? `<div style="margin-bottom:18px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#16a34a;margin-bottom:6px;">Pontos Fortes</p><ul style="margin:0;padding-left:18px;">${pontosFortesArr.map(p => `<li style="font-size:13px;color:#333;margin-bottom:4px;">${p}</li>`).join("")}</ul></div>` : ""}
+                ${pontosAtencaoArr.length > 0 ? `<div style="margin-bottom:18px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#d97706;margin-bottom:6px;">Pontos de Atenção</p><ul style="margin:0;padding-left:18px;">${pontosAtencaoArr.map(p => `<li style="font-size:13px;color:#333;margin-bottom:4px;">${p}</li>`).join("")}</ul></div>` : ""}
+                ${vereditoFinal ? `<div style="background:#f0f4ff;border-left:4px solid #0066cc;padding:14px 16px;border-radius:0 8px 8px 0;margin-bottom:20px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#0066cc;margin-bottom:4px;">Veredito Final</p><p style="font-size:14px;color:#111;margin:0;">${vereditoFinal}</p></div>` : ""}
+                <div style="page-break-after:always;"></div>
+                <iframe src="${cvUrl}" width="100%" height="1100px" style="border:none;margin-top:16px;" frameborder="0"></iframe>
+            </div>
+        `
+
+        const win = window.open("", "_blank")
         if (win) {
-            win.onload = () => win.print()
+            win.document.write(`<!DOCTYPE html><html><head><title>Currículo — ${candidatura.nome}</title></head><body style="margin:0;">${analiseHtml}</body></html>`)
+            win.document.close()
+            setTimeout(() => win.print(), 1200)
         }
     }
 
@@ -265,7 +307,7 @@ export default function CandidatoDetalhesPage() {
         : null
     const score = ocr?.match_score ?? candidatura.match_score ?? null
     const temCV = !!(ocr?.arquivo_cv_url || candidatura?.arquivo_cv_url)
-    const temEmail = !!vaga?.email_contato_empresa
+    const temEmail = !!(vaga?.email_responsavel || vaga?.email_contato_empresa)
     const podeAprovar = candidatura.status === "pendente"
     const podeRejeitar = candidatura.status === "pendente"
     const podeMarcarContratado = candidatura.status === "selecionado"
@@ -571,13 +613,23 @@ export default function CandidatoDetalhesPage() {
 
                             {!temEmail && (
                                 <p className="text-xs text-muted-foreground text-center">
-                                    Cadastre o email da empresa na vaga para habilitar o envio.
+                                    Cadastre o e-mail do responsável na vaga para habilitar o envio.
                                 </p>
                             )}
                             {!temCV && (
                                 <p className="text-xs text-amber-400 text-center">
                                     Currículo ainda não processado.
                                 </p>
+                            )}
+                            {candidatura?.email_enviado_em && (
+                                <div className="flex items-start gap-2 text-xs bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 text-green-400">
+                                    <SendHorizonal className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="font-medium">E-mail enviado à empresa</p>
+                                        {candidatura.email_enviado_para && <p className="text-muted-foreground">{candidatura.email_enviado_para}</p>}
+                                        <p className="text-muted-foreground">{format(new Date(candidatura.email_enviado_em), "dd/MM/yy HH:mm", { locale: ptBR })}</p>
+                                    </div>
+                                </div>
                             )}
                         </CardContent>
                     </Card>

@@ -670,17 +670,14 @@ async def _processar_empresa(
         nome_exibicao = fluxo.get("empresa_nome_exibicao") or empresa_nome
 
         if t in ("sim", "s", "quero", "vou", "yes", "ok", "1"):
-            unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
-            link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
             await _enviar(
                 instance_name, token, phone,
-                f"Ótimo! 🎯 Acesse o link abaixo para preencher os dados da vaga:\n\n"
-                f"🔗 {link_vaga}\n\n"
-                "Após o preenchimento, você receberá aqui o *número da vaga* e a confirmação. "
-                "A vaga será revisada pela equipe do CUCA antes de ser publicada."
+                "Ótimo! 🎯 Antes de gerar o link da vaga, preciso de algumas informações do *responsável pelo processo seletivo*.\n\n"
+                "Qual é o *e-mail* para receber os currículos?\n"
+                "(pode ser diferente do e-mail geral da empresa)"
             )
             _set_fluxo(conversa_id, {
-                "etapa": "aguardando_retorno_vaga",
+                "etapa": "coletando_email_responsavel",
                 "empresa_id": empresa_id,
                 "empresa_nome": empresa_nome,
                 "empresa_nome_exibicao": nome_exibicao,
@@ -704,6 +701,67 @@ async def _processar_empresa(
                 "empresa_nome": empresa_nome,
                 "empresa_nome_exibicao": nome_exibicao,
             })
+        return
+
+    # --- ETAPA: coletando_email_responsavel ---
+    if etapa == "coletando_email_responsavel":
+        email_candidato = texto.strip()
+        # Validação básica de e-mail
+        if "@" not in email_candidato or "." not in email_candidato.split("@")[-1]:
+            await _enviar(
+                instance_name, token, phone,
+                "⚠️ Esse e-mail não parece válido. Por favor, informe um e-mail no formato correto (ex: rh@empresa.com.br):"
+            )
+            return
+        await _enviar(
+            instance_name, token, phone,
+            f"Perfeito! E-mail registrado: *{email_candidato}*\n\n"
+            "Agora informe o *telefone/WhatsApp do responsável* pela seleção:\n"
+            "(com DDD, ex: 85999990000)"
+        )
+        _set_fluxo(conversa_id, {
+            **fluxo,
+            "etapa": "coletando_telefone_responsavel",
+            "email_responsavel": email_candidato,
+        })
+        return
+
+    # --- ETAPA: coletando_telefone_responsavel ---
+    if etapa == "coletando_telefone_responsavel":
+        tel_digits = re.sub(r"\D", "", texto.strip())
+        if len(tel_digits) < 10:
+            await _enviar(
+                instance_name, token, phone,
+                "⚠️ Telefone inválido. Por favor, informe o número com DDD (ex: 85999990000):"
+            )
+            return
+        empresa_id = fluxo.get("empresa_id")
+        empresa_nome = fluxo.get("empresa_nome", "")
+        nome_exibicao = fluxo.get("empresa_nome_exibicao") or empresa_nome
+        email_responsavel = fluxo.get("email_responsavel", "")
+        unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
+        email_param = f"&email_responsavel={quote(email_responsavel)}" if email_responsavel else ""
+        tel_param = f"&telefone_responsavel={quote(tel_digits)}"
+        link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}{email_param}{tel_param}"
+        await _enviar(
+            instance_name, token, phone,
+            f"✅ Dados registrados!\n\n"
+            f"📧 E-mail: {email_responsavel}\n"
+            f"📱 Telefone: {tel_digits}\n\n"
+            "Agora acesse o link abaixo para preencher os dados completos da vaga:\n\n"
+            f"🔗 {link_vaga}\n\n"
+            "Após o preenchimento, você receberá aqui o *número da vaga* e a confirmação. "
+            "A vaga será revisada pela equipe do CUCA antes de ser publicada."
+        )
+        _set_fluxo(conversa_id, {
+            "etapa": "aguardando_retorno_vaga",
+            "empresa_id": empresa_id,
+            "empresa_nome": empresa_nome,
+            "empresa_nome_exibicao": nome_exibicao,
+            "cnpj": fluxo.get("cnpj"),
+            "email_responsavel": email_responsavel,
+            "telefone_responsavel": tel_digits,
+        })
         return
 
     # --- ETAPA: aguardando_retorno_vaga (após link enviado) ---
@@ -1179,20 +1237,31 @@ async def _processar_publico(
         })
         return
 
-    # Verificar se quer se candidatar a vaga específica (por código ou "quero essa")
-    match_codigo = re.search(r"\b([A-Za-z0-9]{6})\b", texto)
-    match_num_seq = re.search(r"\b(\d{1,4})\b", texto)
+    # Verificar se quer se candidatar a vaga específica (por número sequencial, título ou "quero essa")
     vaga_id_ref = None
+    match_num_seq = re.search(r"\b(\d{1,2})\b", texto)
 
-    if match_codigo and etapa == "listou_vagas":
-        ref = match_codigo.group(1).upper()
-        for v in vagas:
-            if v["id"][-6:].upper() == ref:
-                vaga_id_ref = v["id"]
-                break
+    if etapa == "listou_vagas":
+        mapa_vagas = fluxo.get("mapa_vagas", {})  # {"1": vaga_id, "2": vaga_id, ...}
 
-    if not vaga_id_ref and (etapa == "listou_vagas") and ("quero essa" in t_lower or "candidatar" in t_lower):
-        vaga_id_ref = fluxo.get("ultima_vaga_id")
+        # Candidatura por número da lista (ex: "1", "2", "quero a 1")
+        if match_num_seq:
+            num_digitado = match_num_seq.group(1)
+            if num_digitado in mapa_vagas:
+                vaga_id_ref = mapa_vagas[num_digitado]
+
+        # Candidatura por nome parcial da vaga
+        if not vaga_id_ref:
+            for v in vagas:
+                titulo_lower = v["titulo"].lower()
+                palavras = [p for p in titulo_lower.split() if len(p) > 3]
+                if any(p in t_lower for p in palavras):
+                    vaga_id_ref = v["id"]
+                    break
+
+        # "quero essa" → última vaga listada
+        if not vaga_id_ref and ("quero essa" in t_lower or "candidatar" in t_lower or "quero" in t_lower):
+            vaga_id_ref = fluxo.get("ultima_vaga_id")
 
     if vaga_id_ref:
         await _enviar(
@@ -1219,22 +1288,29 @@ async def _processar_publico(
 
     linhas = ["💼 *Vagas abertas no CUCA:*\n"]
     ultima_vaga_id = None
-    for v in vagas:
-        salario = f" | 💰 R$ {v['salario']}" if v.get("salario") else ""
-        contrato = f" | 📄 {v['tipo_contrato']}" if v.get("tipo_contrato") else ""
-        escolaridade = f" | 🎓 {v['escolaridade_minima']}" if v.get("escolaridade_minima") else ""
+    mapa_vagas = {}
+    for i, v in enumerate(vagas, start=1):
+        salario = f"\n   💰 {v['salario']}" if v.get("salario") else ""
+        contrato = f" · {v['tipo_contrato']}" if v.get("tipo_contrato") else ""
+        escolaridade = f"\n   🎓 {v['escolaridade_minima']}" if v.get("escolaridade_minima") else ""
         linhas.append(
-            f"• *{v['titulo']}*{contrato}{salario}{escolaridade}\n"
-            f"  Para se candidatar: informe o código *{v['id'][-6:].upper()}*"
+            f"*{i}.* {v['titulo']}{contrato}{salario}{escolaridade}"
         )
         ultima_vaga_id = v["id"]
+        mapa_vagas[str(i)] = v["id"]
 
     linhas.append(
-        "\nInforme o *código* da vaga para se candidatar, "
-        "ou diga *nenhuma dessas* para entrar no banco de talentos."
+        "\nDigite o *número* da vaga para se candidatar (ex: *1*, *2*...), "
+        "ou diga o nome da vaga.\n"
+        "Se preferir, diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
     )
     await _enviar(instance_name, token, phone, "\n".join(linhas))
-    _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "listou_vagas", "ultima_vaga_id": ultima_vaga_id})
+    _set_fluxo(conversa_id, {
+        "perfil": "publico",
+        "etapa": "listou_vagas",
+        "ultima_vaga_id": ultima_vaga_id,
+        "mapa_vagas": mapa_vagas,
+    })
 
 
 async def _enviar_link_candidatura(

@@ -850,8 +850,9 @@ async def triar_banco_talentos_endpoint(request: Request):
         if not vaga_id:
             return Response(status_code=400, content="Faltando parâmetro vaga_id")
 
+        setor_vaga = payload.get("setor_vaga") or []
         from talent_bank_matcher import triar_banco_talentos
-        candidatos = await triar_banco_talentos(vaga_id)
+        candidatos = await triar_banco_talentos(vaga_id, setor_vaga=setor_vaga)
 
         return {"candidatos": candidatos}
     except Exception as e:

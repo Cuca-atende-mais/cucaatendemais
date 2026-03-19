@@ -13,22 +13,44 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-async def triar_banco_talentos(vaga_id: str) -> list[dict]:
-    """Compara todos os candidatos disponíveis no banco de talentos com os requisitos da vaga via GPT-4o."""
+async def triar_banco_talentos(vaga_id: str, setor_vaga: list[str] | None = None) -> list[dict]:
+    """Compara candidatos do banco de talentos com os requisitos da vaga via GPT-4o.
+    Se setor_vaga for fornecido, filtra previamente por área_de_interesse para reduzir custo."""
 
     # 1. Buscar dados da vaga
     vaga_res = supabase.table("vagas").select(
-        "titulo, descricao, requisitos, escolaridade_minima, tipo_contrato"
+        "titulo, descricao, requisitos, escolaridade_minima, tipo_contrato, setor"
     ).eq("id", vaga_id).single().execute()
     vaga = vaga_res.data
     if not vaga:
         raise ValueError(f"Vaga {vaga_id} não encontrada.")
 
-    # 2. Buscar todos os candidatos disponíveis no banco de talentos
-    tb_res = supabase.table("talent_bank").select(
-        "id, nome, data_nascimento, telefone, arquivo_cv_url, skills_jsonb"
-    ).eq("status", "disponivel").execute()
-    candidatos = tb_res.data or []
+    setores = setor_vaga or vaga.get("setor") or []
+
+    # 2. Buscar candidatos disponíveis no banco de talentos
+    # Se a vaga tem setor definido, filtra por overlap de área_de_interesse para reduzir custo
+    query = supabase.table("talent_bank").select(
+        "id, nome, data_nascimento, telefone, arquivo_cv_url, skills_jsonb, area_interesse"
+    ).eq("status", "disponivel")
+    tb_res = query.execute()
+    candidatos_todos = tb_res.data or []
+
+    # Filtro por área de interesse (apenas candidatos com overlap no setor da vaga)
+    if setores:
+        candidatos = []
+        candidatos_sem_area = []
+        for c in candidatos_todos:
+            areas_candidato = c.get("area_interesse") or []
+            if not areas_candidato:
+                # Candidato sem área de interesse → inclui mas marca para avaliação posterior
+                candidatos_sem_area.append(c)
+            elif any(a in setores for a in areas_candidato):
+                candidatos.append(c)
+        # Inclui até 5 candidatos sem área definida para não perder talentos antigos
+        candidatos += candidatos_sem_area[:5]
+        logger.info(f"[triar_banco_talentos] Filtro por setor: {len(candidatos)} de {len(candidatos_todos)} candidatos")
+    else:
+        candidatos = candidatos_todos
 
     if not candidatos:
         return []

@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 7.1 | **Atualizado**: 13/03/2026
-> **STATUS ATUAL**: Sprints 1–22 + 24–31 Concluídos | Sprint 23 planejado (pendente)
+> **Versão**: 7.2 | **Atualizado**: 19/03/2026
+> **STATUS ATUAL**: Sprints 1–22 + 24–35 Concluídos | Sprint 23 planejado (pendente) | Sprint 36 planejado
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -1115,6 +1115,168 @@ A aba "Minha Unidade" no dashboard (`/empregabilidade/vagas`) não filtrava dado
 | S32-06 | Dashboard `/empregabilidade/vagas`: filtrar por `unidade_cuca` do usuário na aba "Minha Unidade" | Portal | [x] |
 | S32-07 | Dashboard: corrigir display da coluna Unidade (texto direto, não UUID) | Portal | [x] |
 | S32-08 | DB: corrigir `unidade_cuca` da vaga Eletricista predial de "Cuca" para "Cuca Barra" | Banco | [x] |
+
+---
+
+#### Sprint 35 — Fix OCR PDF + Stop Loop Infinito de Retry ✅ CONCLUÍDO (18/03/2026)
+
+> **Objetivo**: Corrigir o processamento de currículos em PDF (GPT-4o Vision rejeita PDF diretamente) e eliminar loop infinito no `ocr_pending_loop` que reprocessava indefinidamente candidaturas com erro anterior.
+
+**Problema #1 — OCR falhava para PDFs**
+O `cv_processor.py` enviava qualquer arquivo como imagem para o GPT-4o Vision. PDFs causavam erro 400 ("invalid image format"). Corrigido: detectar extensão `.pdf`, extrair texto via `pdfminer.six` e enviar como texto plano ao GPT-4o. Imagens agora enviadas como base64 inline com `detail: high`.
+
+**Problema #2 — Loop infinito no ocr_pending_loop**
+Candidaturas que já tinham falhado ficavam no pool de pendentes (campo `matching_justificativa` continha `'Erro OCR:'`). O loop as reprocessava indefinidamente consumindo tokens. Corrigido: `ocr_pending_loop` agora skipa candidaturas onde `matching_justificativa ILIKE 'Erro OCR:%'`.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S35-01 | `cv_processor.py`: detectar PDF e extrair texto com `pdfminer.six` em vez de enviar como imagem | Worker | [x] |
+| S35-02 | `cv_processor.py`: imagens enviadas como base64 inline com `detail: high` | Worker | [x] |
+| S35-03 | `ocr_pending_loop`: skip candidaturas com `matching_justificativa ILIKE 'Erro OCR:%'` | Worker | [x] |
+| S35-04 | `requirements.txt`: adicionar `pdfminer.six>=20221105` | Worker | [x] |
+
+##### Commits
+
+| Hash | Descrição |
+|------|-----------|
+| `0477b20` | fix(ocr): suporte a PDF via extração de texto e stop infinite retry loop |
+
+---
+
+#### Sprint 34 — 4 Bugs Pós-Candidatura: Notificação, OCR Loop, Kanban Vagas, Menu Consulta ✅ CONCLUÍDO (18/03/2026)
+
+> **Objetivo**: Corrigir quatro bugs encontrados durante testes do fluxo completo de candidatura e gestão de vagas.
+
+**Bug #1 — Worker não enviava número ao candidato após upload do currículo**
+A etapa `aguardando_confirmacao_candidatura` existia no estado mas o `loop_proativo` não a tratava — o candidato nunca recebia a confirmação via WhatsApp. Corrigido adicionando tratamento explícito dessa etapa no loop proativo para enviar o número da vaga automaticamente.
+
+**Bug #2 — Menu consulta empresa interpretava "2" como número de vaga**
+Quando a empresa escolhia a opção "2" (consultar) no menu de ações, o worker chamava `_processar_consulta_empresa("2")` passando a opção como se fosse número de vaga. Corrigido para chamar sempre com `"todas"`.
+
+**Bug #3 — OCR pendente dependia de chamada HTTP do portal → worker**
+O processamento OCR só era disparado se o portal fizesse uma chamada HTTP explícita ao worker após o candidato enviar o currículo. Se a chamada falhasse, a candidatura ficava sem análise. Corrigido: novo `ocr_pending_loop` no worker verifica a cada N segundos candidaturas sem análise e dispara OCR automaticamente.
+
+**Bug #4 — `cv_processor` quebrava quando `candidato_id` era null**
+Candidaturas do formulário público podiam chegar sem `candidato_id` preenchido. O `cv_processor` tentava fazer `UPDATE candidatos SET ...` com `null` e quebrava. Corrigido: verificação defensiva — se `candidato_id` for null, pula o update da tabela `candidatos`.
+
+**Melhorias de UX no portal**:
+- Formulário de candidatura: botão câmera ("Tirar Foto") com `capture=environment` e preview da imagem antes do envio
+- Listagem de vagas: coluna "Candidatos" com contagem e link direto para a subpágina
+- Detalhe da vaga: toggle kanban/grade com colunas agrupadas por status de candidatura
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S34-01 | Worker: tratar `aguardando_confirmacao_candidatura` no loop proativo — enviar número da vaga ao candidato | Worker | [x] |
+| S34-02 | Worker: corrigir `_processar_consulta_empresa` para receber `"todas"` em vez da opção digitada | Worker | [x] |
+| S34-03 | Worker: `ocr_pending_loop` — verificação periódica de candidaturas sem OCR, disparo automático | Worker | [x] |
+| S34-04 | `main.py`: registrar `ocr_pending_loop` no startup event | Worker | [x] |
+| S34-05 | `cv_processor.py`: defensivo quando `candidato_id` é null | Worker | [x] |
+| S34-06 | Portal `/empregabilidade/candidatura`: botão câmera + preview de imagem | Portal | [x] |
+| S34-07 | Portal `/empregabilidade/vagas`: coluna "Candidatos" com contagem e link | Portal | [x] |
+| S34-08 | Portal `/empregabilidade/vagas/[id]`: toggle kanban/grade com colunas por status | Portal | [x] |
+
+##### Commits
+
+| Hash | Descrição |
+|------|-----------|
+| `9efd8a8` | fix(empregabilidade): corrigir 4 bugs — notificação candidatura, OCR travado, kanban vagas, menu consulta |
+
+---
+
+#### Sprint 33 — Formulário Empresa Completo + Carga Horária Estruturada + Candidatura service_role + Fixes Telefone ✅ CONCLUÍDO (17/03/2026)
+
+> **Objetivo**: Enriquecer o formulário público de cadastro de vaga com carga horária estruturada e campos adicionais (localização, entrevista, faixa etária); corrigir o RLS de vagas que bloqueava o gerente; mover o INSERT de candidaturas para API route com `service_role`; corrigir o prefixo 55 no telefone e as máscaras de entrada.
+
+**Formulário da empresa — campos novos**
+- Carga horária estruturada substituindo campo livre: UI com opção Horário Comercial / Escala / Jornada Corrida, com horas/dia, dias da semana e sábado opcional com hora limite
+- Campos adicionados: localização, local da entrevista, faixa etária e escolaridade mínima
+- VagaModal no portal: dados preenchidos pela empresa passam a ser somente leitura — CUCA só altera status, unidade e expansiva. Aviso visual informando a responsabilidade da empresa.
+
+**RLS vagas corrigida**
+O módulo configurado em `sys_permissions` era `'empreg_vagas'`, mas o frontend usava `'empregabilidade'` no helper de permissões. O gerente não conseguia salvar status, tipo_contrato, local e local_entrevista. Corrigido alinhando o nome do módulo.
+
+**Candidatura via API route com service_role**
+O INSERT em `candidaturas` no formulário público era feito diretamente pelo cliente anônimo, causando erro de RLS. Movido para `POST /api/empregabilidade/candidaturas` usando cliente `service_role` no servidor.
+
+**Fix prefixo 55 e máscara de telefone**
+`formatPhone` removia apenas os zeros iniciais mas não o prefixo internacional 55 (Brasil). Corrigido para strip de `55` antes de formatar DDD. Regex de máscara ajustada para tratar celular (9 dígitos) e fixo (8 dígitos) corretamente.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S33-01 | Formulário `/empregabilidade/vagas/nova`: carga horária estruturada (Horário Comercial/Escala/Jornada Corrida) com horas/dia, dias semana, sábado opcional | Portal | [x] |
+| S33-02 | Formulário: adicionar localização, local da entrevista, faixa etária e escolaridade mínima | Portal | [x] |
+| S33-03 | API `POST /api/empregabilidade/vagas`: aceitar e salvar `carga_horaria`, `local`, `local_entrevista`, `faixa_etaria` | Portal API | [x] |
+| S33-04 | `VagaModal`: campos da empresa somente leitura + aviso visual | Portal | [x] |
+| S33-05 | Corrigir RLS vagas: alinhar módulo `'empreg_vagas'` em `sys_permissions` | Portal | [x] |
+| S33-06 | Criar `POST /api/empregabilidade/candidaturas` com `service_role` | Portal API | [x] |
+| S33-07 | `/empregabilidade/candidatura`: mover INSERT para nova API route | Portal | [x] |
+| S33-08 | `formatPhone`: remover prefixo `55` antes de formatar DDD | Portal | [x] |
+| S33-09 | Regex de máscara: tratar 9 dígitos (celular) e 8 dígitos (fixo) corretamente | Portal | [x] |
+| S33-10 | `types/database.ts`: adicionar campo `numero_vaga` ao tipo `Vaga` | Portal | [x] |
+| S33-11 | Dashboard vagas: exibir coluna "Nº Vaga" na listagem | Portal | [x] |
+
+##### Commits
+
+| Hash | Descrição |
+|------|-----------|
+| `ed5c3c3` | fix(empregabilidade): salvar unidade_cuca como nome no modal (não UUID) |
+| `de09ec8` | fix(empregabilidade): corrigir máscara de telefone e adicionar colunas faltantes em candidaturas |
+| `fe84415` | fix(empregabilidade): candidatura via API route (service_role) e corrigir prefixo 55 no telefone |
+| `d37d27f` | fix(empregabilidade): corrigir RLS vagas, carga horária estruturada e erro visível no modal |
+| `46d192b` | feat(empregabilidade): carga horária estruturada e campos completos no formulário da empresa |
+| `3cc860e` | fix(empregabilidade): adicionar numero_vaga ao tipo Vaga |
+| `6f05d47` | feat(empregabilidade): exibir coluna número da vaga na listagem de vagas |
+
+---
+
+#### Sprint 32-B — Edição/Cancelamento de Vaga via WhatsApp + Detalhes Candidato + Banco de Talentos + Triagem IA ✅ CONCLUÍDO (16/03/2026)
+
+> **Objetivo**: Implementar o fluxo completo de edição e cancelamento de vaga pela empresa via WhatsApp; criar as subpáginas de detalhe de candidato e banco de talentos no portal; adicionar triagem IA com matching GPT-4o entre candidatos do banco de talentos e requisitos da vaga.
+
+**Fluxo de edição e cancelamento via WhatsApp (Worker)**
+- Novo menu `menu_empresa_acoes` com 4 opções: criar, consultar, editar, cancelar — substituindo os antigos menus de 3 opções
+- Novas etapas: `selecionando_vaga_edicao`, `aguardando_retorno_edicao`, `selecionando_vaga_cancelamento`, `confirmando_cancelamento`
+- Loop proativo unificado detecta `vaga_criada_id` e `vaga_editada_id`, enviando confirmação proativa nos dois casos
+- Cancelamento registra `historico_alteracoes` (JSONB) na vaga e notifica o lead responsável via WhatsApp
+
+**Página pública `/empregabilidade/vagas/editar`**
+Formulário pré-preenchido com os dados atuais da vaga, snapshot do estado original e cálculo de diff antes de salvar — apenas campos alterados são enviados ao banco.
+
+**Endpoint `PATCH /api/empregabilidade/vagas/[id]`**
+Whitelist de campos editáveis, UPDATE parcial (apenas diff), rebaixamento automático do status para `pre_cadastro` após edição e registro em `historico_alteracoes`.
+
+**Subpágina `/vagas/[id]/candidatos/[candidatura_id]`**
+Dados completos extraídos pelo OCR (nome, telefone, escolaridade, experiências, habilidades, análise IA, score), ações: aprovar (notifica via WhatsApp), rejeitar → envia para `talent_bank`, enviar CV por email (`/api/empregabilidade/enviar-cv` via Resend), ver/imprimir CV.
+
+**Subpágina `/vagas/[id]/banco-talentos/[talent_id]`**
+Detalhes do candidato do banco de talentos; ações: aprovar para a vaga (cria candidatura + notifica), rejeitar para a vaga (sem remover do banco global).
+
+**Matching IA — `talent_bank_matcher.py`**
+GPT-4o compara `talent_bank.skills_jsonb` com os requisitos da vaga e retorna lista ordenada por score ≥ 40.
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S32B-01 | Worker: `menu_empresa_acoes` com 4 opções (criar/consultar/editar/cancelar) | Worker | [x] |
+| S32B-02 | Worker: novas etapas `selecionando_vaga_edicao`, `aguardando_retorno_edicao`, `selecionando_vaga_cancelamento`, `confirmando_cancelamento` | Worker | [x] |
+| S32B-03 | Worker: loop proativo unificado para `vaga_criada_id` e `vaga_editada_id` | Worker | [x] |
+| S32B-04 | Worker: cancelamento registra `historico_alteracoes` e notifica lead | Worker | [x] |
+| S32B-05 | Portal: página pública `/empregabilidade/vagas/editar` com diff e pré-preenchimento | Portal | [x] |
+| S32B-06 | Portal API: `PATCH /api/empregabilidade/vagas/[id]` com whitelist, diff e rebaixamento de status | Portal API | [x] |
+| S32B-07 | Supabase: migration — campo `historico_alteracoes JSONB` na tabela `vagas` | Banco | [x] |
+| S32B-08 | Portal: subpágina `/vagas/[id]/candidatos/[candidatura_id]` com dados OCR e ações | Portal | [x] |
+| S32B-09 | Portal: subpágina `/vagas/[id]/banco-talentos/[talent_id]` com ações de aprovação/rejeição | Portal | [x] |
+| S32B-10 | Portal API: `POST /api/empregabilidade/enviar-cv` via Resend | Portal API | [x] |
+| S32B-11 | Portal API: `POST /api/empregabilidade/vagas/[id]/triar-banco-talentos` | Portal API | [x] |
+| S32B-12 | Worker: `talent_bank_matcher.py` — matching GPT-4o com score ≥ 40 | Worker | [x] |
+| S32B-13 | Worker `main.py`: endpoint `POST /triar-banco-talentos` | Worker | [x] |
+| S32B-14 | Rejeição corrigida: INSERT real no `talent_bank` com upsert por telefone | Portal/Worker | [x] |
+
+##### Commits
+
+| Hash | Descrição |
+|------|-----------|
+| `d176f57` | feat(empregabilidade): fluxo de edição e cancelamento de vaga pela empresa via WhatsApp |
+| `39f3b58` | feat(empregabilidade): página de detalhes candidato, banco de talentos e triagem IA |
 
 ---
 
@@ -2533,3 +2695,76 @@ Se erro de decrypt → verificar se `cryptography` está instalado (`pip show cr
 | `9594be3` | fix(worker): use WhatsApp key.id for audio download + try POST /message/download first |
 | `9419a0d` | fix(worker): decrypt WhatsApp audio locally then transcribe via Whisper ✅ |
 
+
+---
+
+## Sprint 36 — Importação do Legado de Currículos → Banco de Talentos + Matching com Vagas
+
+> **Status**: Planejado | **Data**: 17/03/2026
+
+### O que estamos resolvendo
+
+A Rede CUCA acumulou 913 currículos físicos em um Google Drive, organizados por cargo e perfil (Comunidade, Alunos do Esporte, Alunos Formados). Esses candidatos nunca entraram no sistema. O objetivo é trazê-los para dentro do banco de talentos digital, fazer a IA processar cada currículo automaticamente, e torná-los disponíveis para matching com as vagas cadastradas — substituindo completamente o Drive manual.
+
+---
+
+### 1 — Upload em lote dos currículos para o sistema
+
+Será criado um script de importação que percorre todas as pastas do Drive local, coleta cada arquivo (PDF, DOCX, imagem) e envia automaticamente para o armazenamento em nuvem do sistema. Cada currículo será organizado por categoria de origem (Comunidade / Alunos do Esporte / Alunos Formados) e pelo cargo da subpasta onde estava (ex: MOTORISTA, ATENDIMENTO, CAIXA).
+
+**Alternativa A — Rodar o script manualmente uma vez** (recomendada para esse volume). Executa localmente, faz o upload de todos os 913 arquivos de uma vez, gera um relatório ao final informando quantos subiram com sucesso, quantos foram pulados por duplicata e quais falharam.
+
+**Alternativa B — Criar uma tela no portal para arrastar e soltar pastas** (melhor para o futuro, quando novos currículos chegarem). Permite que a equipe CUCA faça uploads futuros diretamente pelo painel, sem depender de scripts.
+
+Recomendação: fazer a Alternativa A agora para o acervo atual e construir a Alternativa B depois para uso contínuo.
+
+---
+
+### 2 — Entrada automática no Banco de Talentos
+
+Ao ser enviado, cada currículo gera automaticamente um registro no banco de talentos com o que já se sabe imediatamente: a categoria de origem, o cargo desejado derivado da pasta e o nome da pessoa — quando o nome do arquivo permitir extrair. O candidato entra com um status especial de "aguardando processamento" que o distingue visualmente no painel de quem já está pronto para matching.
+
+---
+
+### 3 — Processamento inteligente pela IA (OCR em lote)
+
+A IA (GPT-4o Vision) já existe no sistema e já sabe processar currículos. Será criado um processo que roda em grupos de 10 currículos por vez. Para cada currículo, a IA extrai nome, telefone, data de nascimento, escolaridade, experiências e habilidades, e o candidato passa automaticamente para o status "disponível" ao terminar.
+
+**Alternativa A — Botão manual no portal** "Processar próximos 10". O gerente clica quando quiser, acompanha o progresso em tempo real com barra de porcentagem. Dá controle total e evita custos inesperados com a API da OpenAI. **Recomendada.**
+
+**Alternativa B — Processamento automático em background**, rodando em intervalos sem intervenção humana. Mais prático, mas processa tudo de uma vez e pode gerar custo elevado de API em um único dia.
+
+---
+
+### 4 — Identificação de duplicatas
+
+Os currículos da subpasta "Formulário de Captação / Já no Banco de Dados" (115 arquivos) podem já existir no sistema. O processo de importação vai checar automaticamente e, em caso de duplicata, apenas vincula o arquivo ao registro existente em vez de criar um novo.
+
+---
+
+### 5 — Matching automático com as vagas
+
+Nenhuma mudança necessária no sistema de matching — já funciona e já está pronto. Assim que um candidato do legado for processado pela IA, ele entra automaticamente no pool para matching. Quando o gerente abrir uma vaga e clicar em "Analisar Banco de Talentos", esses 913 candidatos (os processados) já aparecerão ranqueados por score de compatibilidade.
+
+---
+
+### 6 — Melhorias de usabilidade no painel Banco de Talentos
+
+— Um contador visível mostrando quantos candidatos ainda estão "aguardando processamento" da IA, com botão de ação direto na página.
+
+— Um badge de origem em cada card de candidato (Legado Drive / Candidatura Espontânea / Cadastro Manual / Rejeição de Vaga).
+
+— Um filtro por origem e por cargo desejado.
+
+— Candidatos em processamento aparecem com indicador visual claro (badge "processando") e não interferem nas listagens de candidatos prontos.
+
+---
+
+### Ordem de execução
+
+1. Criar e rodar o script de upload em lote
+2. Ajustar a IA para processar por ID de registro (não apenas por telefone)
+3. Criar o endpoint de processamento em lote controlado no worker
+4. Adicionar os novos campos de origem e cargo desejado ao sistema
+5. Atualizar o painel do Banco de Talentos com as melhorias de usabilidade
+6. Processar os currículos aos poucos, 10 por vez, acompanhando pelo portal

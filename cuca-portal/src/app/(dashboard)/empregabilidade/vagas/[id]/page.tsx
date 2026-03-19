@@ -362,9 +362,43 @@ export default function VagaDetalhesPage() {
                         </div>
                     )}
 
-                    {/* Descrição resumida */}
+                    {/* Descrição completa */}
                     {vaga?.descricao && (
-                        <p className="text-sm text-muted-foreground pt-1 border-t line-clamp-3">{vaga.descricao}</p>
+                        <div className="pt-1 border-t space-y-3">
+                            <p className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">{vaga.descricao}</p>
+                            {vaga?.requisitos && (
+                                <div>
+                                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Requisitos</p>
+                                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{vaga.requisitos}</p>
+                                </div>
+                            )}
+                            {(vaga as any)?.faixa_etaria && (
+                                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                    <span className="font-medium">Faixa etária:</span>
+                                    <span>{(vaga as any).faixa_etaria}</span>
+                                </div>
+                            )}
+                            {(vaga as any)?.local_entrevista && (
+                                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                    <span className="font-medium">Local da entrevista:</span>
+                                    <span>
+                                        {(vaga as any).local_entrevista === "na_empresa" && "Na empresa contratante"}
+                                        {(vaga as any).local_entrevista === "no_cuca" && "No CUCA"}
+                                        {(vaga as any).local_entrevista === "online" && "Online"}
+                                    </span>
+                                </div>
+                            )}
+                            {(vaga as any)?.setor && (vaga as any).setor.length > 0 && (
+                                <div>
+                                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Área da vaga</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {((vaga as any).setor as string[]).map((s: string) => (
+                                            <Badge key={s} className="text-xs bg-cuca-blue/15 text-cuca-blue border-cuca-blue/30">{s}</Badge>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     )}
                 </CardContent>
             </Card>
