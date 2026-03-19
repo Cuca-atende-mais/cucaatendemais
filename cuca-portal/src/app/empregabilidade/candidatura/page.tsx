@@ -290,13 +290,17 @@ export default function CandidaturaPublicaPage() {
                                 </p>
                             </>
                         )}
-                        <div className="bg-muted rounded-lg px-6 py-3 mb-4">
-                            <p className="text-xs text-muted-foreground mb-1">Número de acompanhamento</p>
-                            <p className="text-2xl font-bold tracking-widest text-cuca-blue">{numeroCandidatura}</p>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            Use esse número para acompanhar pelo WhatsApp da unidade CUCA.
-                        </p>
+                        {!destinadoBancoTalentos && (
+                            <>
+                                <div className="bg-muted rounded-lg px-6 py-3 mb-4">
+                                    <p className="text-xs text-muted-foreground mb-1">Número de acompanhamento</p>
+                                    <p className="text-2xl font-bold tracking-widest text-cuca-blue">{numeroCandidatura}</p>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    Use esse número para acompanhar pelo WhatsApp da unidade CUCA.
+                                </p>
+                            </>
+                        )}
                     </CardContent>
                 </Card>
             </div>
