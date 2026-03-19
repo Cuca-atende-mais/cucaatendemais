@@ -712,11 +712,12 @@ function CandidatoCard({
     onClick: () => void
 }) {
     const semOcr = !candidato.dados_ocr_json
+    const ehBancoTalentos = candidato.observacoes?.toLowerCase().includes("banco_talentos")
 
     return (
         <div
             onClick={onClick}
-            className="group relative bg-card border border-border rounded-xl p-4 cursor-pointer hover:border-cuca-blue/50 hover:shadow-md transition-all"
+            className={`group relative bg-card border rounded-xl p-4 cursor-pointer hover:shadow-md transition-all ${ehBancoTalentos ? "border-purple-500/20 hover:border-purple-500/50" : "border-border hover:border-cuca-blue/50"}`}
         >
             {/* Linha topo: score + nome + status */}
             <div className="flex items-start gap-3 mb-3">
@@ -726,8 +727,13 @@ function CandidatoCard({
                     {idade !== null && (
                         <p className="text-xs text-muted-foreground">{idade} anos</p>
                     )}
-                    <div className="mt-1">
+                    <div className="mt-1 flex flex-wrap gap-1">
                         <StatusBadge status={candidato.status} />
+                        {ehBancoTalentos && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-purple-500/10 text-purple-400 border-purple-500/30">
+                                <Database className="h-3 w-3" /> Banco de Talentos
+                            </span>
+                        )}
                     </div>
                 </div>
             </div>

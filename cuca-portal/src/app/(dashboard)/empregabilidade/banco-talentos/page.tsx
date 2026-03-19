@@ -41,7 +41,22 @@ export default function BancoTalentosPage() {
     const [formNome, setFormNome] = useState("")
     const [formTelefone, setFormTelefone] = useState("")
     const [formNasc, setFormNasc] = useState("")
+    const [formArea, setFormArea] = useState("")
+    const [formArquivo, setFormArquivo] = useState<File | null>(null)
     const [savingCadastro, setSavingCadastro] = useState(false)
+
+    const AREAS_INTERESSE = [
+        "Tecnologia e Informática",
+        "Comércio e Vendas (vendedor, caixa, atendimento)",
+        "Saúde e Bem-Estar",
+        "Educação e Pedagogia",
+        "Administração e Financeiro",
+        "Construção Civil e Manutenção",
+        "Gastronomia e Alimentação",
+        "Logística e Transporte",
+        "Arte, Cultura e Comunicação",
+        "Serviços Gerais e Limpeza",
+    ]
 
     const supabase = createClient()
 
@@ -83,17 +98,23 @@ export default function BancoTalentosPage() {
         }
         setSavingCadastro(true)
         try {
-            const { error } = await supabase.from("talent_bank").insert({
-                nome: formNome.trim(),
-                telefone: formTelefone.replace(/\D/g, ""),
-                data_nascimento: formNasc || null,
-                status: "disponivel",
-                skills_jsonb: { origem: "cadastro_manual_colaborador" },
+            const fd = new FormData()
+            fd.append("nome", formNome.trim())
+            fd.append("telefone", formTelefone)
+            if (formNasc) fd.append("data_nascimento", formNasc)
+            if (formArea) fd.append("area_interesse", formArea)
+            if (formArquivo) fd.append("arquivo", formArquivo)
+
+            const res = await fetch("/api/empregabilidade/talent-bank/cadastrar", {
+                method: "POST",
+                body: fd,
             })
-            if (error) throw error
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro ao cadastrar")
+
             toast.success("Candidato adicionado ao Banco de Talentos!")
             setCadastroOpen(false)
-            setFormNome(""); setFormTelefone(""); setFormNasc("")
+            setFormNome(""); setFormTelefone(""); setFormNasc(""); setFormArea(""); setFormArquivo(null)
             fetchTalentos()
         } catch (err: any) {
             toast.error(err.message || "Erro ao cadastrar.")
@@ -149,6 +170,30 @@ export default function BancoTalentosPage() {
                             <div className="space-y-1.5">
                                 <Label htmlFor="m-nasc">Data de Nascimento</Label>
                                 <Input id="m-nasc" type="date" value={formNasc} onChange={e => setFormNasc(e.target.value)} max={new Date().toISOString().split("T")[0]} />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="m-area">Área de Interesse</Label>
+                                <Select value={formArea} onValueChange={setFormArea}>
+                                    <SelectTrigger id="m-area">
+                                        <SelectValue placeholder="Selecione a área" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {AREAS_INTERESSE.map(a => (
+                                            <SelectItem key={a} value={a}>{a}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="m-cv">Currículo (PDF)</Label>
+                                <Input
+                                    id="m-cv"
+                                    type="file"
+                                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                                    onChange={e => setFormArquivo(e.target.files?.[0] || null)}
+                                    className="cursor-pointer"
+                                />
+                                <p className="text-xs text-muted-foreground">A análise de IA será disparada após o salvamento.</p>
                             </div>
                             <div className="flex justify-end gap-3 pt-2">
                                 <Button type="button" variant="outline" onClick={() => setCadastroOpen(false)}>Cancelar</Button>

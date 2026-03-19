@@ -228,3 +228,70 @@ async def process_cv_espontaneo(nome: str, telefone: str, cv_url: str):
 
     except Exception as e:
         logger.error(f"Erro OCR espontâneo {nome}: {str(e)}")
+
+
+async def process_cv_talent_bank_id(talent_id: str, cv_url: str) -> dict | None:
+    """Processa OCR de um currículo do talent_bank por ID. Atualiza skills_jsonb e retorna os dados extraídos."""
+    logger.info(f"[OCR talent_bank] Iniciando OCR para talent_id={talent_id}")
+    try:
+        is_pdf = cv_url.lower().endswith(".pdf")
+
+        if is_pdf:
+            pdf_bytes = await download_file_bytes(cv_url)
+            texto_pdf = extract_text_from_pdf(pdf_bytes)
+            if len(texto_pdf) > 200:
+                prompt_content = [{"type": "text", "text": f"Extraia as informações deste currículo:\n\n{texto_pdf[:6000]}"}]
+            else:
+                file_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+                prompt_content = [
+                    {"type": "text", "text": "Extraia as informações deste currículo PDF:"},
+                    {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{file_b64}", "detail": "high"}},
+                ]
+        else:
+            file_b64 = await download_file_as_base64(cv_url)
+            prompt_content = [
+                {"type": "text", "text": "Extraia as informações deste currículo:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{file_b64}", "detail": "high"}},
+            ]
+
+        prompt_sys = """Você é especialista em análise de currículos da Rede CUCA.
+Extraia as informações e retorne APENAS um JSON válido:
+{
+    "escolaridade": "String",
+    "experiencia_meses": Integer,
+    "experiencia_resumo": "String resumindo experiências",
+    "habilidades": ["lista", "de", "habilidades"],
+    "resumo_experiencias": ["frase por experiência"],
+    "email": "String ou null"
+}"""
+
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": prompt_sys},
+                {"role": "user", "content": prompt_content},
+            ],
+            max_tokens=800,
+            temperature=0.0,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```json"):
+            raw = raw[7:-3]
+        elif raw.startswith("```"):
+            raw = raw[3:-3]
+
+        json_data = json.loads(raw)
+        skills = {**json_data, "origem": "talent_bank_ocr_demanda", "ocr_processado": True}
+
+        supabase.table("talent_bank").update({
+            "skills_jsonb": skills,
+            "updated_at": __import__("datetime").datetime.utcnow().isoformat(),
+        }).eq("id", talent_id).execute()
+
+        logger.info(f"[OCR talent_bank] Concluído para talent_id={talent_id}")
+        return skills
+
+    except Exception as e:
+        logger.error(f"[OCR talent_bank] Erro talent_id={talent_id}: {e}")
+        return None

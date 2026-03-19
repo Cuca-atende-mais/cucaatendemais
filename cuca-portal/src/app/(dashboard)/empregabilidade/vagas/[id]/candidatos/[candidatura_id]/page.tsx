@@ -148,46 +148,11 @@ export default function CandidatoDetalhesPage() {
     const rejeitarParaBancoTalentos = async () => {
         setRejeitando(true)
         try {
-            // 1. Atualizar status da candidatura
-            const { error: statusErr } = await supabase
-                .from("candidaturas")
-                .update({ status: "rejeitado", updated_at: new Date().toISOString() })
-                .eq("id", candidaturaId)
-            if (statusErr) throw statusErr
-
-            // 2. Inserir/atualizar no banco de talentos
-            const ocr = candidatura?.dados_ocr_json || {}
-            const talentPayload = {
-                nome: candidatura.nome,
-                telefone: candidatura.telefone || null,
-                data_nascimento: candidatura.data_nascimento || null,
-                arquivo_cv_url: ocr?.arquivo_cv_url || candidatura.arquivo_cv_url || null,
-                candidatura_origem_id: candidaturaId,
-                vaga_origem_id: vagaId,
-                skills_jsonb: ocr,
-                status: "disponivel",
-                updated_at: new Date().toISOString(),
-            }
-
-            // Upsert por telefone se disponível
-            if (candidatura.telefone) {
-                const { data: existing } = await supabase
-                    .from("talent_bank")
-                    .select("id")
-                    .eq("telefone", candidatura.telefone)
-                    .maybeSingle()
-
-                if (existing) {
-                    await supabase.from("talent_bank")
-                        .update(talentPayload)
-                        .eq("id", existing.id)
-                } else {
-                    await supabase.from("talent_bank").insert(talentPayload)
-                }
-            } else {
-                await supabase.from("talent_bank").insert(talentPayload)
-            }
-
+            const res = await fetch(`/api/empregabilidade/candidaturas/${candidaturaId}/rejeitar`, {
+                method: "POST",
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro ao rejeitar candidato")
             setCandidatura((prev: any) => ({ ...prev, status: "rejeitado" }))
             toast.success("Candidato rejeitado e adicionado ao Banco de Talentos!")
         } catch (err: any) {

@@ -1120,22 +1120,37 @@ async def _processar_publico(
         candidatura_codigo = fluxo_atual.get("candidatura_codigo")
 
         if candidatura_id:
-            codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
-            await _enviar(
-                instance_name, token, phone,
-                f"🎉 *Candidatura recebida com sucesso!*\n\n"
-                f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
-                "Guarde esse número! Com ele você pode retornar aqui a qualquer momento "
-                "para verificar o status da sua candidatura.\n\n"
-                "Nossa equipe fará a triagem e você será notificado pelo WhatsApp. ✅\n\n"
-                "Deseja se candidatar a outra vaga ou encerrar?\n"
-                "Responda *outra* para ver mais vagas ou *encerrar*."
-            )
-            _set_fluxo(conversa_id, {
-                "etapa": "candidatura_confirmada",
-                "perfil": "publico",
-                "ultima_candidatura_codigo": codigo,
-            })
+            eh_banco_talentos = fluxo_atual.get("banco_talentos", False)
+            if eh_banco_talentos:
+                await _enviar(
+                    instance_name, token, phone,
+                    "✅ *Currículo salvo com sucesso!*\n\n"
+                    "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
+                    "Assim que surgir uma oportunidade compatível com seu perfil e área de interesse, "
+                    "nossa equipe entrará em contato diretamente por aqui. 🎯\n\n"
+                    "Obrigado por confiar na CUCA!"
+                )
+                _set_fluxo(conversa_id, {
+                    "etapa": "candidatura_confirmada",
+                    "perfil": "publico",
+                })
+            else:
+                codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
+                await _enviar(
+                    instance_name, token, phone,
+                    f"🎉 *Candidatura recebida com sucesso!*\n\n"
+                    f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
+                    "Guarde esse número! Com ele você pode retornar aqui a qualquer momento "
+                    "para verificar o status da sua candidatura.\n\n"
+                    "Nossa equipe fará a triagem e você será notificado pelo WhatsApp. ✅\n\n"
+                    "Deseja se candidatar a outra vaga ou encerrar?\n"
+                    "Responda *outra* para ver mais vagas ou *encerrar*."
+                )
+                _set_fluxo(conversa_id, {
+                    "etapa": "candidatura_confirmada",
+                    "perfil": "publico",
+                    "ultima_candidatura_codigo": codigo,
+                })
         else:
             # Ainda aguardando — link reenviado se necessário
             link_reenviado = fluxo_atual.get("link_candidatura", "")
@@ -1351,6 +1366,7 @@ async def _enviar_link_candidatura(
         "nome_candidato": nome_candidato,
         "link_candidatura": link,
         "vaga_id_selecionada": vaga_id,
+        "banco_talentos": banco_talentos,
     })
 
 
@@ -1426,13 +1442,30 @@ async def processar_mensagem_empregabilidade(
             _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
             await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
             return
+        if t in ("4", "enviar curriculo", "enviar currículo", "deixar curriculo", "deixar currículo",
+                 "sem vaga", "curriculo sem vaga", "currículo sem vaga", "banco", "cadastrar curriculo",
+                 "cadastrar currículo"):
+            _set_fluxo(conversa_id, {
+                "perfil": "publico",
+                "etapa": "coletando_nome_candidato",
+                "banco_talentos": True,
+            })
+            await _enviar(
+                instance_name, token, phone,
+                "📁 *Enviar Currículo (sem vaga)*\n\n"
+                "Vamos cadastrar seu currículo no banco de talentos da rede CUCA. "
+                "Quando surgir uma oportunidade compatível com seu perfil, a equipe entrará em contato.\n\n"
+                "Para começar, preciso do seu *nome completo*:"
+            )
+            return
         await _enviar(
             instance_name, token, phone,
             "Não entendi sua resposta. Por favor, escolha uma das opções:\n\n"
             "1️⃣ *Empresa* — Quero divulgar uma vaga\n"
             "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
-            "3️⃣ *Vagas* — Quero ver vagas abertas\n\n"
-            "Digite *1*, *2* ou *3*."
+            "3️⃣ *Vagas* — Quero ver vagas abertas\n"
+            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
+            "Digite *1*, *2*, *3* ou *4*."
         )
         return
 
@@ -1455,7 +1488,8 @@ async def processar_mensagem_empregabilidade(
             "Como posso te ajudar?\n\n"
             "1️⃣ *Empresa* — Quero divulgar uma vaga\n"
             "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
-            "3️⃣ *Vagas* — Quero ver vagas abertas\n\n"
+            "3️⃣ *Vagas* — Quero ver vagas abertas\n"
+            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
             "Responda com o número ou descreva o que precisa."
         )
         _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
@@ -1584,22 +1618,38 @@ async def empregabilidade_notify_loop():
                     candidatura_id = fluxo.get("candidatura_criada_id")
                     if not candidatura_id:
                         continue
-                    candidatura_codigo = fluxo.get("candidatura_codigo")
-                    codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
-                    await _enviar(
-                        instance_name, token, phone,
-                        f"🎉 *Candidatura recebida com sucesso!*\n\n"
-                        f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
-                        "Guarde esse número! Com ele você pode retornar aqui a qualquer momento "
-                        "para verificar o status da sua candidatura.\n\n"
-                        "Nossa equipe fará a triagem e você será notificado pelo WhatsApp. ✅"
-                    )
-                    _set_fluxo(conversa_id, {
-                        "etapa": "candidatura_confirmada",
-                        "perfil": "publico",
-                        "ultima_candidatura_codigo": codigo,
-                    })
-                    logger.info(f"[empreg-notify] Confirmação de candidatura enviada para conversa {conversa_id} — código {codigo}")
+                    eh_banco_talentos = fluxo.get("banco_talentos", False)
+                    if eh_banco_talentos:
+                        await _enviar(
+                            instance_name, token, phone,
+                            "✅ *Currículo salvo com sucesso!*\n\n"
+                            "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
+                            "Assim que surgir uma oportunidade compatível com seu perfil e área de interesse, "
+                            "nossa equipe entrará em contato diretamente por aqui. 🎯\n\n"
+                            "Obrigado por confiar na CUCA!"
+                        )
+                        _set_fluxo(conversa_id, {
+                            "etapa": "candidatura_confirmada",
+                            "perfil": "publico",
+                        })
+                        logger.info(f"[empreg-notify] Banco de talentos confirmado para conversa {conversa_id}")
+                    else:
+                        candidatura_codigo = fluxo.get("candidatura_codigo")
+                        codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
+                        await _enviar(
+                            instance_name, token, phone,
+                            f"🎉 *Candidatura recebida com sucesso!*\n\n"
+                            f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
+                            "Guarde esse número! Com ele você pode retornar aqui a qualquer momento "
+                            "para verificar o status da sua candidatura.\n\n"
+                            "Nossa equipe fará a triagem e você será notificado pelo WhatsApp. ✅"
+                        )
+                        _set_fluxo(conversa_id, {
+                            "etapa": "candidatura_confirmada",
+                            "perfil": "publico",
+                            "ultima_candidatura_codigo": codigo,
+                        })
+                        logger.info(f"[empreg-notify] Confirmação de candidatura enviada para conversa {conversa_id} — código {codigo}")
 
         except Exception as e:
             logger.error(f"[empreg-notify] Erro no loop: {e}")

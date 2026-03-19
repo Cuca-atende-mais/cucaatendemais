@@ -175,6 +175,12 @@ export type Candidatura = {
     dados_ocr_json: any
     requisitos_atendidos: string
     status: string
+    observacoes: string | null
+    match_score: number | null
+    area_interesse: string[] | null
+    email_enviado_em: string | null
+    email_enviado_para: string | null
+    unidade_cuca: string | null
     created_at: string
     updated_at: string
 }
