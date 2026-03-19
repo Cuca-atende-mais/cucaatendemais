@@ -63,6 +63,36 @@ export async function POST(request: NextRequest) {
             }
         }
 
+        // Se for banco de talentos, upsert direto no talent_bank
+        const ehBancoTalentos = (observacoes || "").toLowerCase().includes("banco_talentos")
+        if (ehBancoTalentos) {
+            const talentPayload = {
+                nome,
+                telefone,
+                data_nascimento: data_nascimento || null,
+                arquivo_cv_url: arquivo_cv_url || null,
+                candidatura_origem_id: data.id,
+                area_interesse: area_interesse?.length > 0 ? area_interesse : null,
+                status: "disponivel",
+                skills_jsonb: null,
+                updated_at: new Date().toISOString(),
+            }
+            if (telefone) {
+                const { data: existing } = await supabaseAdmin
+                    .from("talent_bank")
+                    .select("id")
+                    .eq("telefone", telefone)
+                    .maybeSingle()
+                if (existing) {
+                    await supabaseAdmin.from("talent_bank").update(talentPayload).eq("id", existing.id)
+                } else {
+                    await supabaseAdmin.from("talent_bank").insert(talentPayload)
+                }
+            } else {
+                await supabaseAdmin.from("talent_bank").insert(talentPayload)
+            }
+        }
+
         return NextResponse.json({ id: data.id, codigo })
     } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Erro interno"

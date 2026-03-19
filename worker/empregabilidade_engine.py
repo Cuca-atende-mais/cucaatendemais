@@ -1354,12 +1354,19 @@ async def _enviar_link_candidatura(
     query = urllib.parse.urlencode(params)
     link = f"{PORTAL_URL}/empregabilidade/candidatura?{query}"
 
-    await _enviar(
-        instance_name, token, phone,
-        f"Ótimo! 🎯 Acesse o link abaixo para enviar o currículo de *{nome_candidato}*:\n\n"
-        f"🔗 {link}\n\n"
-        "Após o envio, você receberá aqui o *número de acompanhamento* da candidatura. ✅"
-    )
+    if banco_talentos:
+        mensagem_link = (
+            f"Ótimo! 📁 Acesse o link abaixo para enviar o currículo de *{nome_candidato}*:\n\n"
+            f"🔗 {link}\n\n"
+            "Após o envio, seu currículo será salvo no banco de talentos da rede CUCA. ✅"
+        )
+    else:
+        mensagem_link = (
+            f"Ótimo! 🎯 Acesse o link abaixo para enviar o currículo de *{nome_candidato}*:\n\n"
+            f"🔗 {link}\n\n"
+            "Após o envio, você receberá aqui o *número de acompanhamento* da candidatura. ✅"
+        )
+    await _enviar(instance_name, token, phone, mensagem_link)
     _set_fluxo(conversa_id, {
         "perfil": "publico",
         "etapa": "aguardando_confirmacao_candidatura",
