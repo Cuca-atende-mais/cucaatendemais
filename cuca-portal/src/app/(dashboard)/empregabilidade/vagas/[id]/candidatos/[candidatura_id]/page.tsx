@@ -236,11 +236,11 @@ export default function CandidatoDetalhesPage() {
         window.open(url, "_blank")
     }
 
-    const imprimirCV = () => {
+    const imprimirAnalise = () => {
         const ocr = candidatura?.dados_ocr_json || {}
-        const cvUrl = ocr?.arquivo_cv_url || candidatura?.arquivo_cv_url
-        if (!cvUrl) {
-            toast.error("Currículo ainda não disponível.")
+        const temAnalise = !!(ocr?.pontos_fortes?.length || ocr?.veredito_final || ocr?.analise_aderencia)
+        if (!temAnalise) {
+            toast.error("Análise de IA ainda não disponível para este candidato.")
             return
         }
 
@@ -250,38 +250,66 @@ export default function CandidatoDetalhesPage() {
         const vereditoFinal: string = ocr?.veredito_final || ocr?.analise_aderencia?.veredito_final || ""
         const habilidades: string[] = ocr?.habilidades || []
         const resumoExp: string[] = ocr?.resumo_experiencias || []
+        const cvUrl = ocr?.arquivo_cv_url || candidatura?.arquivo_cv_url
 
-        const analiseHtml = `
-            <div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;padding:32px;color:#111;">
-                <div style="background:#0066cc;padding:20px 28px;border-radius:8px;margin-bottom:24px;">
-                    <h1 style="color:white;margin:0;font-size:20px;">Análise de Aderência</h1>
-                    <p style="color:#cce0ff;margin:4px 0 0;font-size:14px;">
-                        ${candidatura.nome} — Vaga: ${vaga?.titulo}${vaga?.numero_vaga ? ` #${vaga.numero_vaga}` : ""}
-                    </p>
-                </div>
-                ${score !== null ? `<div style="margin-bottom:20px;display:flex;align-items:center;gap:16px;">
-                    <div style="width:64px;height:64px;border-radius:50%;border:3px solid ${score >= 70 ? "#22c55e" : score >= 50 ? "#f59e0b" : "#ef4444"};display:flex;flex-direction:column;align-items:center;justify-content:center;background:${score >= 70 ? "#f0fdf4" : score >= 50 ? "#fffbeb" : "#fef2f2"};">
-                        <span style="font-size:22px;font-weight:bold;color:${score >= 70 ? "#16a34a" : score >= 50 ? "#d97706" : "#dc2626"};">${score}</span>
-                        <span style="font-size:10px;color:#666;">match</span>
-                    </div>
-                    <div><p style="margin:0;font-weight:bold;font-size:15px;">Score de Compatibilidade</p><p style="margin:2px 0 0;font-size:13px;color:#555;">${score >= 70 ? "Alta compatibilidade" : score >= 50 ? "Compatibilidade moderada" : "Baixa compatibilidade"}</p></div>
-                </div>` : ""}
-                ${habilidades.length > 0 ? `<div style="margin-bottom:18px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#0066cc;margin-bottom:6px;">Habilidades Identificadas</p><p style="font-size:13px;color:#333;">${habilidades.join(" · ")}</p></div>` : ""}
-                ${resumoExp.length > 0 ? `<div style="margin-bottom:18px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#0066cc;margin-bottom:6px;">Experiências Anteriores</p><ul style="margin:0;padding-left:18px;">${resumoExp.map(e => `<li style="font-size:13px;color:#333;margin-bottom:4px;">${e}</li>`).join("")}</ul></div>` : ""}
-                ${pontosFortesArr.length > 0 ? `<div style="margin-bottom:18px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#16a34a;margin-bottom:6px;">Pontos Fortes</p><ul style="margin:0;padding-left:18px;">${pontosFortesArr.map(p => `<li style="font-size:13px;color:#333;margin-bottom:4px;">${p}</li>`).join("")}</ul></div>` : ""}
-                ${pontosAtencaoArr.length > 0 ? `<div style="margin-bottom:18px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#d97706;margin-bottom:6px;">Pontos de Atenção</p><ul style="margin:0;padding-left:18px;">${pontosAtencaoArr.map(p => `<li style="font-size:13px;color:#333;margin-bottom:4px;">${p}</li>`).join("")}</ul></div>` : ""}
-                ${vereditoFinal ? `<div style="background:#f0f4ff;border-left:4px solid #0066cc;padding:14px 16px;border-radius:0 8px 8px 0;margin-bottom:20px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#0066cc;margin-bottom:4px;">Veredito Final</p><p style="font-size:14px;color:#111;margin:0;">${vereditoFinal}</p></div>` : ""}
-                <div style="page-break-after:always;"></div>
-                <iframe src="${cvUrl}" width="100%" height="1100px" style="border:none;margin-top:16px;" frameborder="0"></iframe>
-            </div>
-        `
+        const scoreColor = score !== null ? (score >= 70 ? "#16a34a" : score >= 50 ? "#d97706" : "#dc2626") : "#666"
+        const scoreBg = score !== null ? (score >= 70 ? "#f0fdf4" : score >= 50 ? "#fffbeb" : "#fef2f2") : "#f9f9f9"
+
+        const html = `<!DOCTYPE html><html><head><title>Análise de Aderência — ${candidatura.nome}</title>
+        <style>
+            body{font-family:Arial,sans-serif;max-width:760px;margin:32px auto;padding:0 24px;color:#111;}
+            h1{margin:0;font-size:20px;color:white;}
+            .header{background:#0066cc;padding:20px 28px;border-radius:8px;margin-bottom:24px;}
+            .sub{color:#cce0ff;margin:4px 0 0;font-size:14px;}
+            .score-row{display:flex;align-items:center;gap:16px;margin-bottom:20px;}
+            .score-circle{width:64px;height:64px;border-radius:50%;border:3px solid ${scoreColor};display:flex;flex-direction:column;align-items:center;justify-content:center;background:${scoreBg};flex-shrink:0;}
+            .score-num{font-size:22px;font-weight:bold;color:${scoreColor};}
+            .score-label{font-size:9px;color:#666;}
+            .section-title{font-weight:bold;font-size:12px;text-transform:uppercase;margin-bottom:6px;margin-top:0;}
+            .section{margin-bottom:18px;}
+            ul{margin:0;padding-left:18px;}
+            li{font-size:13px;color:#333;margin-bottom:4px;}
+            .veredito{background:#f0f4ff;border-left:4px solid #0066cc;padding:14px 16px;border-radius:0 8px 8px 0;margin-bottom:20px;}
+            .habilidades{font-size:13px;color:#333;}
+            .cv-link{text-align:center;margin:28px 0 12px;}
+            .cv-link a{background:#0066cc;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;}
+            .footer{border-top:1px solid #e0e0e0;padding-top:12px;font-size:11px;color:#999;text-align:center;}
+            @media print{body{margin:16px;}.no-print{display:none;}}
+        </style></head><body>
+        <div class="header">
+            <h1>Análise de Aderência</h1>
+            <p class="sub">${candidatura.nome} — Vaga: ${vaga?.titulo}${vaga?.numero_vaga ? ` #${vaga.numero_vaga}` : ""}</p>
+        </div>
+        ${score !== null ? `<div class="score-row">
+            <div class="score-circle"><span class="score-num">${score}</span><span class="score-label">match</span></div>
+            <div><p style="margin:0;font-weight:bold;font-size:15px;color:${scoreColor};">Score de Compatibilidade: ${score}/100</p>
+            <p style="margin:2px 0 0;font-size:13px;color:#555;">${score >= 70 ? "Alta compatibilidade com os requisitos da vaga" : score >= 50 ? "Compatibilidade moderada" : "Baixa compatibilidade"}</p></div>
+        </div>` : ""}
+        ${habilidades.length > 0 ? `<div class="section"><p class="section-title" style="color:#0066cc;">Habilidades Identificadas</p><p class="habilidades">${habilidades.join(" · ")}</p></div>` : ""}
+        ${resumoExp.length > 0 ? `<div class="section"><p class="section-title" style="color:#0066cc;">Experiências Anteriores</p><ul>${resumoExp.map(e => `<li>${e}</li>`).join("")}</ul></div>` : ""}
+        ${pontosFortesArr.length > 0 ? `<div class="section"><p class="section-title" style="color:#16a34a;">✅ Pontos Fortes</p><ul>${pontosFortesArr.map(p => `<li>${p}</li>`).join("")}</ul></div>` : ""}
+        ${pontosAtencaoArr.length > 0 ? `<div class="section"><p class="section-title" style="color:#d97706;">⚠️ Pontos de Atenção</p><ul>${pontosAtencaoArr.map(p => `<li>${p}</li>`).join("")}</ul></div>` : ""}
+        ${vereditoFinal ? `<div class="veredito"><p class="section-title" style="color:#0066cc;">Veredito Final</p><p style="font-size:14px;margin:0;">${vereditoFinal}</p></div>` : ""}
+        ${cvUrl ? `<div class="cv-link no-print"><a href="${cvUrl}" target="_blank">📄 Abrir Currículo Original</a></div>` : ""}
+        <p class="footer">Análise gerada pelo sistema de empregabilidade CUCA · ${new Date().toLocaleDateString("pt-BR")}</p>
+        </body></html>`
 
         const win = window.open("", "_blank")
         if (win) {
-            win.document.write(`<!DOCTYPE html><html><head><title>Currículo — ${candidatura.nome}</title></head><body style="margin:0;">${analiseHtml}</body></html>`)
+            win.document.write(html)
             win.document.close()
-            setTimeout(() => win.print(), 1200)
+            setTimeout(() => win.print(), 800)
         }
+    }
+
+    const abrirCVParaImprimir = () => {
+        const ocr = candidatura?.dados_ocr_json || {}
+        const url = ocr?.arquivo_cv_url || candidatura?.arquivo_cv_url
+        if (!url) {
+            toast.error("Currículo ainda não disponível.")
+            return
+        }
+        window.open(url, "_blank")
     }
 
     if (loading) {
@@ -585,17 +613,27 @@ export default function CandidatoDetalhesPage() {
                                 disabled={!temCV}
                             >
                                 <ExternalLink className="mr-2 h-4 w-4" />
-                                Ver Currículo
+                                Ver Currículo Original
                             </Button>
 
                             <Button
                                 variant="outline"
                                 className="w-full"
-                                onClick={imprimirCV}
-                                disabled={!temCV}
+                                onClick={imprimirAnalise}
+                                disabled={!candidatura?.dados_ocr_json}
                             >
                                 <Printer className="mr-2 h-4 w-4" />
-                                Imprimir Currículo
+                                Imprimir Análise de IA
+                            </Button>
+
+                            <Button
+                                variant="outline"
+                                className="w-full"
+                                onClick={abrirCVParaImprimir}
+                                disabled={!temCV}
+                            >
+                                <FileText className="mr-2 h-4 w-4" />
+                                Imprimir Currículo Original
                             </Button>
 
                             <Button
