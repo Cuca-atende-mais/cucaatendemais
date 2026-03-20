@@ -132,10 +132,10 @@ export default function VagaDetalhesPage() {
         return differenceInYears(new Date(), new Date(dataStr))
     }
 
-    // Slots disponíveis = vagas da empresa - candidatos já inscritos (não rejeitados)
+    // Slots disponíveis = currículos que a empresa quer receber - candidatos já inscritos (não rejeitados)
     const inscritos = candidatos.filter(c => c.status !== "rejeitado").length
-    const vagasTotal = vaga?.total_vagas ?? 0
-    const slotsDisponiveis = Math.max(0, vagasTotal - inscritos)
+    const limiteCurriculos = vaga?.limite_curriculos ?? 0
+    const slotsDisponiveis = Math.max(0, limiteCurriculos - inscritos)
 
     const abrirDialogTalent = () => {
         const sugestao = Math.min(5, slotsDisponiveis || 5)
@@ -623,9 +623,9 @@ export default function VagaDetalhesPage() {
                         </DialogTitle>
                         <DialogDescription asChild>
                             <div className="space-y-1 mt-1">
-                                {vagasTotal > 0 && (
+                                {limiteCurriculos > 0 && (
                                     <p className="text-sm">
-                                        Vagas disponíveis: <strong>{vagasTotal}</strong> — {inscritos} já inscrito(s) — <strong className="text-purple-400">{slotsDisponiveis} slot(s) livre(s)</strong>
+                                        Limite da empresa: <strong>{limiteCurriculos}</strong> currículos — {inscritos} já inscrito(s) — <strong className="text-purple-400">{slotsDisponiveis} disponível(is)</strong>
                                     </p>
                                 )}
                                 <p className="text-xs text-muted-foreground">
@@ -648,7 +648,7 @@ export default function VagaDetalhesPage() {
                             />
                             {slotsDisponiveis > 0 && (
                                 <p className="text-xs text-muted-foreground text-center">
-                                    Máximo recomendado: {slotsDisponiveis} (slots disponíveis na vaga)
+                                    Máximo recomendado: {slotsDisponiveis} ({limiteCurriculos} pedidos − {inscritos} inscrito(s))
                                 </p>
                             )}
                         </div>
