@@ -88,12 +88,30 @@ export default function VagaDetalhesPage() {
     const [filtroStatus, setFiltroStatus] = useState("todos")
     const [viewMode, setViewMode] = useState<"grid" | "kanban">("grid")
 
-    // Banco de Talentos
-    const [talentResults, setTalentResults] = useState<TalentBankCandidate[]>([])
+    // Banco de Talentos — resultados persistidos em localStorage para sobreviver à navegação
+    const storageKey = `talent_triagem_${id}`
+    const [talentResults, setTalentResultsRaw] = useState<TalentBankCandidate[]>(() => {
+        if (typeof window === "undefined") return []
+        try {
+            const saved = localStorage.getItem(`talent_triagem_${id}`)
+            return saved ? JSON.parse(saved) : []
+        } catch { return [] }
+    })
     const [loadingTalent, setLoadingTalent] = useState(false)
-    const [talentTriado, setTalentTriado] = useState(false)
+    const [talentTriado, setTalentTriado] = useState(() => {
+        if (typeof window === "undefined") return false
+        try { return !!localStorage.getItem(`talent_triagem_${id}`) } catch { return false }
+    })
     const [dialogTalent, setDialogTalent] = useState(false)
     const [quantidadeAnalise, setQuantidadeAnalise] = useState("5")
+
+    const setTalentResults = (updater: TalentBankCandidate[] | ((prev: TalentBankCandidate[]) => TalentBankCandidate[])) => {
+        setTalentResultsRaw(prev => {
+            const next = typeof updater === "function" ? updater(prev) : updater
+            try { localStorage.setItem(storageKey, JSON.stringify(next)) } catch {}
+            return next
+        })
+    }
 
     // Follow-up Sheet
     const [followupSheet, setFollowupSheet] = useState<Candidatura | null>(null)
@@ -576,6 +594,21 @@ export default function VagaDetalhesPage() {
                             <Badge variant="outline" className="border-purple-500/30 text-purple-400">{talentResults.length} encontrado(s)</Badge>
                         )}
                     </div>
+                    {talentTriado && (
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-muted-foreground hover:text-red-400"
+                            title="Limpar resultados e recomeçar"
+                            onClick={() => {
+                                try { localStorage.removeItem(storageKey) } catch {}
+                                setTalentResultsRaw([])
+                                setTalentTriado(false)
+                            }}
+                        >
+                            <RefreshCw className="h-4 w-4" />
+                        </Button>
+                    )}
                     <Button
                         size="sm"
                         variant="outline"
