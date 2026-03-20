@@ -11,9 +11,10 @@ export async function POST(
     )
 
     const { id: vagaId } = await params
+    const body = await request.json().catch(() => ({}))
+    const quantidade: number = Math.max(1, Math.min(Number(body.quantidade) || 5, 50))
 
     try {
-        // Buscar dados da vaga (incluindo setor para filtrar por área de interesse)
         const { data: vaga, error: vagaErr } = await supabase
             .from("vagas")
             .select("titulo, descricao, requisitos, escolaridade_minima, tipo_contrato, setor")
@@ -24,12 +25,15 @@ export async function POST(
             return NextResponse.json({ error: "Vaga não encontrada." }, { status: 404 })
         }
 
-        // Chamar worker Python para triagem (passa setor da vaga para filtrar por área de interesse)
         const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
         const res = await fetch(`${workerUrl}/triar-banco-talentos`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ vaga_id: vagaId, setor_vaga: (vaga as any).setor || [] }),
+            body: JSON.stringify({
+                vaga_id: vagaId,
+                quantidade,
+                setor_vaga: (vaga as any).setor || [],
+            }),
         })
 
         if (!res.ok) {

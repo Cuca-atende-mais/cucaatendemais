@@ -13,9 +13,15 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-async def triar_banco_talentos(vaga_id: str, setor_vaga: list[str] | None = None) -> list[dict]:
-    """Compara candidatos do banco de talentos com os requisitos da vaga via GPT-4o.
-    Se setor_vaga for fornecido, filtra previamente por área_de_interesse para reduzir custo."""
+async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: list[str] | None = None) -> list[dict]:
+    """Triagem controlada por quantidade.
+
+    Fluxo:
+    1. Filtra candidatos disponíveis por área de interesse (setor da vaga)
+    2. Pega os primeiros `quantidade` que ainda NÃO têm skills_jsonb (sem OCR)
+    3. Roda OCR/IA nesses candidatos e salva skills_jsonb
+    4. Ranqueia via GPT-4o e retorna ordenados por score
+    """
 
     # 1. Buscar dados da vaga
     vaga_res = supabase.table("vagas").select(
@@ -27,56 +33,62 @@ async def triar_banco_talentos(vaga_id: str, setor_vaga: list[str] | None = None
 
     setores = setor_vaga or vaga.get("setor") or []
 
-    # 2. Buscar candidatos disponíveis no banco de talentos
-    # Se a vaga tem setor definido, filtra por overlap de área_de_interesse para reduzir custo
+    # 2. Buscar candidatos disponíveis sem OCR, filtrando por área
     query = supabase.table("talent_bank").select(
         "id, nome, data_nascimento, telefone, arquivo_cv_url, skills_jsonb, area_interesse"
-    ).eq("status", "disponivel")
+    ).eq("status", "disponivel").is_("skills_jsonb", "null")
+
     tb_res = query.execute()
-    candidatos_todos = tb_res.data or []
+    candidatos_sem_ocr = tb_res.data or []
 
-    # Filtro por área de interesse (apenas candidatos com overlap no setor da vaga)
+    # Filtrar por área de interesse compatível com o setor da vaga
     if setores:
-        candidatos = []
-        candidatos_sem_area = []
-        for c in candidatos_todos:
-            areas_candidato = c.get("area_interesse") or []
-            if not areas_candidato:
-                # Candidato sem área de interesse → inclui mas marca para avaliação posterior
-                candidatos_sem_area.append(c)
-            elif any(a in setores for a in areas_candidato):
-                candidatos.append(c)
-        # Inclui até 5 candidatos sem área definida para não perder talentos antigos
-        candidatos += candidatos_sem_area[:5]
-        logger.info(f"[triar_banco_talentos] Filtro por setor: {len(candidatos)} de {len(candidatos_todos)} candidatos")
+        compatíveis = []
+        sem_area = []
+        for c in candidatos_sem_ocr:
+            areas = c.get("area_interesse") or []
+            if not areas:
+                sem_area.append(c)
+            elif any(a in setores for a in areas):
+                compatíveis.append(c)
+        # Inclui candidatos sem área no final (menor prioridade)
+        pool = compatíveis + sem_area
     else:
-        candidatos = candidatos_todos
+        pool = candidatos_sem_ocr
 
-    if not candidatos:
+    # Pegar apenas os primeiros N (quantidade solicitada)
+    lote = pool[:quantidade]
+
+    logger.info(
+        f"[triar_banco_talentos] Vaga {vaga_id}: {len(pool)} sem OCR na área, "
+        f"processando {len(lote)} (solicitado: {quantidade})"
+    )
+
+    if not lote:
         return []
 
-    # Processar OCR on-demand para candidatos sem skills (limitado a 10 para evitar timeout)
-    candidatos_sem_skills = [c for c in candidatos if not c.get("skills_jsonb") and c.get("arquivo_cv_url")]
-    if candidatos_sem_skills:
-        from cv_processor import process_cv_talent_bank_id
-        lote = candidatos_sem_skills[:10]
-        logger.info(f"[triar_banco_talentos] Processando OCR on-demand para {len(lote)} de {len(candidatos_sem_skills)} candidatos sem skills")
-        for c in lote:
+    # 3. Rodar OCR nos candidatos do lote que têm arquivo
+    from cv_processor import process_cv_talent_bank_id
+    import asyncio
+
+    for c in lote:
+        if c.get("arquivo_cv_url"):
             try:
                 skills = await process_cv_talent_bank_id(c["id"], c["arquivo_cv_url"])
                 if skills:
                     c["skills_jsonb"] = skills
+                await asyncio.sleep(0.3)  # anti-rate-limit leve
             except Exception as ocr_err:
                 logger.warning(f"[triar_banco_talentos] OCR falhou para {c['id']}: {ocr_err}")
 
-    # Separar candidatos com e sem skills após processamento
-    candidatos_com_skills = [c for c in candidatos if c.get("skills_jsonb")]
+    # 4. Manter apenas quem tem skills após OCR
+    candidatos_com_skills = [c for c in lote if c.get("skills_jsonb")]
 
     if not candidatos_com_skills:
-        logger.info(f"[triar_banco_talentos] Nenhum candidato com skills_jsonb para vaga {vaga_id}")
+        logger.info(f"[triar_banco_talentos] Nenhum candidato com skills após OCR para vaga {vaga_id}")
         return []
 
-    # 3. Montar prompt para GPT
+    # 5. Montar prompt para GPT ranquear
     candidatos_texto = []
     for c in candidatos_com_skills:
         skills = c["skills_jsonb"]
@@ -132,8 +144,6 @@ Regras:
     )
 
     raw = response.choices[0].message.content.strip()
-
-    # Limpar possível markdown
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -143,7 +153,7 @@ Regras:
     resultado = json.loads(raw)
     matches = resultado.get("candidatos", [])
 
-    # 4. Enriquecer resultado com dados completos do candidato
+    # 6. Enriquecer resultado com dados completos
     candidatos_map = {c["id"]: c for c in candidatos_com_skills}
     resultado_final = []
 
@@ -164,5 +174,5 @@ Regras:
             "skills_jsonb": skills,
         })
 
-    logger.info(f"[triar_banco_talentos] Vaga {vaga_id}: {len(resultado_final)} candidatos compatíveis encontrados")
+    logger.info(f"[triar_banco_talentos] Vaga {vaga_id}: {len(resultado_final)} compatíveis de {len(lote)} processados")
     return resultado_final

@@ -92,6 +92,8 @@ export default function VagaDetalhesPage() {
     const [talentResults, setTalentResults] = useState<TalentBankCandidate[]>([])
     const [loadingTalent, setLoadingTalent] = useState(false)
     const [talentTriado, setTalentTriado] = useState(false)
+    const [dialogTalent, setDialogTalent] = useState(false)
+    const [quantidadeAnalise, setQuantidadeAnalise] = useState("5")
 
     // Follow-up Sheet
     const [followupSheet, setFollowupSheet] = useState<Candidatura | null>(null)
@@ -130,20 +132,40 @@ export default function VagaDetalhesPage() {
         return differenceInYears(new Date(), new Date(dataStr))
     }
 
-    const analisarBancoTalentos = async () => {
+    // Slots disponíveis = vagas da empresa - candidatos já inscritos (não rejeitados)
+    const inscritos = candidatos.filter(c => c.status !== "rejeitado").length
+    const vagasTotal = (vaga as any)?.quantidade_vagas ?? 0
+    const slotsDisponiveis = Math.max(0, vagasTotal - inscritos)
+
+    const abrirDialogTalent = () => {
+        const sugestao = Math.min(5, slotsDisponiveis || 5)
+        setQuantidadeAnalise(String(sugestao))
+        setDialogTalent(true)
+    }
+
+    const analisarBancoTalentos = async (qtd: number) => {
+        setDialogTalent(false)
         setLoadingTalent(true)
         try {
             const res = await fetch(`/api/empregabilidade/vagas/${id}/triar-banco-talentos`, {
                 method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ quantidade: qtd }),
             })
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || "Erro ao triar banco de talentos")
-            setTalentResults(data.candidatos || [])
+            const novos = data.candidatos || []
+            // Acumula com resultados anteriores (para "Analisar mais")
+            setTalentResults(prev => {
+                const existingIds = new Set(prev.map((c: TalentBankCandidate) => c.id))
+                const unique = novos.filter((c: TalentBankCandidate) => !existingIds.has(c.id))
+                return [...prev, ...unique]
+            })
             setTalentTriado(true)
-            if ((data.candidatos || []).length === 0) {
-                toast("Nenhum candidato compatível encontrado no banco de talentos.", { icon: "ℹ️" })
+            if (novos.length === 0) {
+                toast("Nenhum candidato compatível encontrado neste lote.", { icon: "ℹ️" })
             } else {
-                toast.success(`${data.candidatos.length} candidato(s) encontrado(s) no banco de talentos!`)
+                toast.success(`${novos.length} candidato(s) analisados e adicionados!`)
             }
         } catch (err: any) {
             toast.error(err.message || "Falha ao analisar banco de talentos")
@@ -558,13 +580,13 @@ export default function VagaDetalhesPage() {
                         size="sm"
                         variant="outline"
                         className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
-                        onClick={analisarBancoTalentos}
+                        onClick={abrirDialogTalent}
                         disabled={loadingTalent}
                     >
                         {loadingTalent ? (
                             <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Analisando...</>
                         ) : (
-                            <><Sparkles className="mr-1.5 h-4 w-4" />{talentTriado ? "Reanalisar" : "Analisar Banco de Talentos"}</>
+                            <><Sparkles className="mr-1.5 h-4 w-4" />{talentTriado ? "Analisar mais" : "Analisar Banco de Talentos"}</>
                         )}
                     </Button>
                 </div>
@@ -590,6 +612,60 @@ export default function VagaDetalhesPage() {
                     </div>
                 )}
             </div>
+
+            {/* ── Dialog: Quantos currículos analisar ── */}
+            <Dialog open={dialogTalent} onOpenChange={setDialogTalent}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Sparkles className="h-5 w-5 text-purple-400" />
+                            Analisar Banco de Talentos
+                        </DialogTitle>
+                        <DialogDescription asChild>
+                            <div className="space-y-1 mt-1">
+                                {vagasTotal > 0 && (
+                                    <p className="text-sm">
+                                        Vagas disponíveis: <strong>{vagasTotal}</strong> — {inscritos} já inscrito(s) — <strong className="text-purple-400">{slotsDisponiveis} slot(s) livre(s)</strong>
+                                    </p>
+                                )}
+                                <p className="text-xs text-muted-foreground">
+                                    A IA vai processar o OCR dos currículos selecionados e ranquear os mais compatíveis com esta vaga. Cada análise consome créditos da OpenAI.
+                                </p>
+                            </div>
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 py-2">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="qtd-analise">Quantos currículos analisar?</Label>
+                            <Input
+                                id="qtd-analise"
+                                type="number"
+                                min={1}
+                                max={slotsDisponiveis > 0 ? slotsDisponiveis : 50}
+                                value={quantidadeAnalise}
+                                onChange={e => setQuantidadeAnalise(e.target.value)}
+                                className="text-center text-lg font-bold"
+                            />
+                            {slotsDisponiveis > 0 && (
+                                <p className="text-xs text-muted-foreground text-center">
+                                    Máximo recomendado: {slotsDisponiveis} (slots disponíveis na vaga)
+                                </p>
+                            )}
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setDialogTalent(false)}>Cancelar</Button>
+                        <Button
+                            className="bg-purple-600 hover:bg-purple-700 text-white font-bold"
+                            onClick={() => analisarBancoTalentos(Math.max(1, parseInt(quantidadeAnalise) || 5))}
+                            disabled={!quantidadeAnalise || parseInt(quantidadeAnalise) < 1}
+                        >
+                            <Sparkles className="mr-1.5 h-4 w-4" />
+                            Analisar {quantidadeAnalise || "?"} currículo(s)
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* ── Sheet Follow-up ── */}
             <Sheet open={!!followupSheet} onOpenChange={open => !open && setFollowupSheet(null)}>

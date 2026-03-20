@@ -2768,3 +2768,65 @@ Nenhuma mudança necessária no sistema de matching — já funciona e já está
 4. Adicionar os novos campos de origem e cargo desejado ao sistema
 5. Atualizar o painel do Banco de Talentos com as melhorias de usabilidade
 6. Processar os currículos aos poucos, 10 por vez, acompanhando pelo portal
+
+---
+
+## Sprint 39 — Triagem Banco de Talentos Controlada por Quantidade (OCR sob Demanda)
+
+> **Status**: Em execução | **Data**: 20/03/2026
+
+### Por que essa abordagem (e por que não a anterior)
+
+O Sprint 36 planejou um botão "Processar próximos 10" para OCR em lote — mas isso gasta créditos da OpenAI **sem vínculo com uma necessidade real**. A IA ia processar currículos que talvez nunca fossem usados para nenhuma vaga.
+
+A abordagem correta, definida em 20/03/2026, é: **o OCR só roda quando um colaborador está ativamente triando candidatos para uma vaga específica**. O custo é controlado pela quantidade que o próprio colaborador define, limitado pelas vagas disponíveis.
+
+Também foi corrigido um erro anterior (20/03/2026) onde foi adicionado um botão "Processar CVs com IA" na página do Banco de Talentos — isso contradizia a lógica de custo zero na importação e foi removido.
+
+---
+
+### O que muda no fluxo "Analisar Banco de Talentos"
+
+**Antes**: clicar no botão disparava triagem sem controle de quantidade → timeout/500 com 1112 candidatos sem OCR.
+
+**Depois**:
+
+1. Colaborador clica em **"Analisar Banco de Talentos"** na página da vaga
+2. Abre um **dialog de configuração** com:
+   - Informação: quantidade de vagas da empresa e quantas já foram preenchidas por candidatos inscritos
+   - Campo numérico: "Quantos currículos analisar?" — máximo = vagas disponíveis (vagas da empresa - candidatos já inscritos)
+   - Texto informativo mostrando o cálculo para o colaborador entender o teto
+3. Ao confirmar:
+   - Backend filtra `talent_bank` por `area_interesse` compatível com o `setor` da vaga
+   - Pega os primeiros N candidatos **que ainda não têm `skills_jsonb`** (sem OCR)
+   - Roda OCR/IA nesses N candidatos sequencialmente
+   - Salva `skills_jsonb` em cada um
+   - Retorna os N candidatos com score de compatibilidade via GPT-4o
+4. Resultados aparecem na tela como cards clicáveis
+5. Se o colaborador **descartar** alguns e quiser mais, clica em **"Analisar mais"** — repete o processo com os próximos N que ainda não têm OCR
+
+---
+
+### Regra do teto máximo
+
+```
+vagas_empresa = vaga.quantidade_vagas
+candidatos_inscritos = COUNT(candidaturas WHERE vaga_id = X AND status != 'rejeitado')
+slots_disponiveis = vagas_empresa - candidatos_inscritos
+max_analise = slots_disponiveis (mínimo 1, mesmo se slots = 0 para fins de teste)
+```
+
+Exemplo: vaga "Caixa de Supermercado" tem 20 vagas, 1 candidato inscrito → colaborador pode analisar até 19.
+
+---
+
+### Arquivos alterados
+
+| Arquivo | O que muda |
+|---|---|
+| `vagas/[id]/page.tsx` | Botão abre dialog (não dispara direto); novo estado `dialogQuantidade`; remove botão "Processar CVs com IA" |
+| `api/vagas/[id]/triar-banco-talentos/route.ts` | Recebe parâmetro `quantidade`; passa para worker |
+| `worker/talent_bank_matcher.py` | Filtra por área, pega N sem OCR, roda OCR nesses N, retorna com score |
+| `worker/main.py` | Remove endpoint `/processar-cvs-pendentes` (foi erro — contradiz a lógica) |
+| `banco-talentos/page.tsx` | Remove botão "Processar CVs com IA" (foi erro) |
+
