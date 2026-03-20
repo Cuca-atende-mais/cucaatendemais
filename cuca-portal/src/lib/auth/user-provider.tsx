@@ -92,7 +92,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
 
     // Módulos exclusivos dos 2 Developers — ninguém mais acessa nem via RBAC
-    const DEVELOPER_ONLY_MODULES = ['programacao_rag_global', 'developer']
+    const DEVELOPER_ONLY_MODULES = ['developer']
 
     const hasPermission = (recurso: string, acao: string) => {
         if (!profile) return false

@@ -76,8 +76,9 @@ export default function RagGlobalPage() {
             setSemPermissao(true)
             return
         }
+        setSemPermissao(false)
         fetchDocs()
-    }, [isDeveloper])
+    }, [isDeveloper, hasPermission])
 
     const fetchDocs = async () => {
         setLoading(true)
