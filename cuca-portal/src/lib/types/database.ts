@@ -209,6 +209,7 @@ export type TalentBank = {
     skills_jsonb: any
     status: string
     arquivo_cv_url: string | null
+    area_interesse: string[] | null
     created_at: string
     updated_at: string
 }

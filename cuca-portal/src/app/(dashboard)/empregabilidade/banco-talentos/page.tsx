@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { TalentBank } from "@/lib/types/database"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,34 +8,138 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@/components/ui/table"
-import {
     Dialog,
     DialogContent,
-    DialogDescription,
     DialogHeader,
     DialogTitle,
+    DialogDescription,
 } from "@/components/ui/dialog"
-import { Search, FileText, BrainCircuit, User, Phone, Plus, X } from "lucide-react"
+import {
+    Search, FileText, BrainCircuit, User, Phone, Plus, X,
+    ShoppingCart, Building2, Truck, Wrench, UtensilsCrossed,
+    Palette, HardHat, Cpu, HelpCircle, Star, Clock, GraduationCap,
+    CheckCircle, AlertCircle, ExternalLink, MessageCircle,
+} from "lucide-react"
 import { Label } from "@/components/ui/label"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
-import { differenceInYears } from "date-fns"
+import { differenceInYears, format } from "date-fns"
+import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
+
+// ─── Configuração de áreas ────────────────────────────────────────────────────
+
+type AreaConfig = {
+    label: string
+    key: string | null   // null = sem área definida
+    icon: React.ReactNode
+    color: string        // tailwind color key (bg/text/border)
+    bgClass: string
+    textClass: string
+    borderClass: string
+}
+
+const AREAS: AreaConfig[] = [
+    {
+        label: "Comércio e Vendas",
+        key: "Comércio e Vendas (vendedor, caixa, atendimento)",
+        icon: <ShoppingCart className="h-5 w-5" />,
+        color: "blue",
+        bgClass: "bg-blue-500/15",
+        textClass: "text-blue-400",
+        borderClass: "border-blue-500/30",
+    },
+    {
+        label: "Administrativo",
+        key: "Administrativo / Escritório (recepção, auxiliar administrativo)",
+        icon: <Building2 className="h-5 w-5" />,
+        color: "violet",
+        bgClass: "bg-violet-500/15",
+        textClass: "text-violet-400",
+        borderClass: "border-violet-500/30",
+    },
+    {
+        label: "Logística",
+        key: "Logística e Entregas (estoque, separação, entregador, motorista)",
+        icon: <Truck className="h-5 w-5" />,
+        color: "orange",
+        bgClass: "bg-orange-500/15",
+        textClass: "text-orange-400",
+        borderClass: "border-orange-500/30",
+    },
+    {
+        label: "Serviços Gerais",
+        key: "Serviços Gerais (limpeza, portaria, zeladoria)",
+        icon: <Wrench className="h-5 w-5" />,
+        color: "slate",
+        bgClass: "bg-slate-500/15",
+        textClass: "text-slate-400",
+        borderClass: "border-slate-500/30",
+    },
+    {
+        label: "Alimentação",
+        key: "Alimentação (cozinha, garçom, lanchonete)",
+        icon: <UtensilsCrossed className="h-5 w-5" />,
+        color: "amber",
+        bgClass: "bg-amber-500/15",
+        textClass: "text-amber-400",
+        borderClass: "border-amber-500/30",
+    },
+    {
+        label: "Criativo / Digital",
+        key: "Criativo / Digital (design, vídeo, redes sociais)",
+        icon: <Palette className="h-5 w-5" />,
+        color: "pink",
+        bgClass: "bg-pink-500/15",
+        textClass: "text-pink-400",
+        borderClass: "border-pink-500/30",
+    },
+    {
+        label: "Construção Civil",
+        key: "Construção Civil (pedreiro, ajudante, eletricista, encanador)",
+        icon: <HardHat className="h-5 w-5" />,
+        color: "yellow",
+        bgClass: "bg-yellow-500/15",
+        textClass: "text-yellow-400",
+        borderClass: "border-yellow-500/30",
+    },
+    {
+        label: "Tecnologia",
+        key: "Tecnologia (suporte técnico, programação, dados)",
+        icon: <Cpu className="h-5 w-5" />,
+        color: "cyan",
+        bgClass: "bg-cyan-500/15",
+        textClass: "text-cyan-400",
+        borderClass: "border-cyan-500/30",
+    },
+    {
+        label: "Sem área definida",
+        key: null,
+        icon: <HelpCircle className="h-5 w-5" />,
+        color: "zinc",
+        bgClass: "bg-zinc-500/15",
+        textClass: "text-zinc-400",
+        borderClass: "border-zinc-500/30",
+    },
+]
+
+function getAreaConfig(areaInteresse: string[] | null | undefined): AreaConfig {
+    if (!areaInteresse || areaInteresse.length === 0) {
+        return AREAS.find(a => a.key === null)!
+    }
+    const found = AREAS.find(a => a.key && areaInteresse.includes(a.key))
+    return found ?? AREAS.find(a => a.key === null)!
+}
+
+// ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function BancoTalentosPage() {
     const [talentos, setTalentos] = useState<TalentBank[]>([])
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState("")
     const [filtroStatus, setFiltroStatus] = useState("todos")
-    const [dialogOpen, setDialogOpen] = useState(false)
+    const [filtroArea, setFiltroArea] = useState<string | null | undefined>(undefined) // undefined = todos
     const [selectedTalento, setSelectedTalento] = useState<TalentBank | null>(null)
     const [cadastroOpen, setCadastroOpen] = useState(false)
     const [formNome, setFormNome] = useState("")
@@ -45,18 +149,7 @@ export default function BancoTalentosPage() {
     const [formArquivo, setFormArquivo] = useState<File | null>(null)
     const [savingCadastro, setSavingCadastro] = useState(false)
 
-    const AREAS_INTERESSE = [
-        "Tecnologia e Informática",
-        "Comércio e Vendas (vendedor, caixa, atendimento)",
-        "Saúde e Bem-Estar",
-        "Educação e Pedagogia",
-        "Administração e Financeiro",
-        "Construção Civil e Manutenção",
-        "Gastronomia e Alimentação",
-        "Logística e Transporte",
-        "Arte, Cultura e Comunicação",
-        "Serviços Gerais e Limpeza",
-    ]
+    const AREAS_INTERESSE = AREAS.filter(a => a.key !== null).map(a => a.key as string)
 
     const supabase = createClient()
 
@@ -81,13 +174,8 @@ export default function BancoTalentosPage() {
     }
 
     const calcularIdade = (dataStr: string | null) => {
-        if (!dataStr) return "-"
-        return differenceInYears(new Date(), new Date(dataStr)) + " anos"
-    }
-
-    const handleViewSkills = (talento: TalentBank) => {
-        setSelectedTalento(talento)
-        setDialogOpen(true)
+        if (!dataStr) return null
+        return differenceInYears(new Date(), new Date(dataStr))
     }
 
     const handleCadastroManual = async (e: React.FormEvent) => {
@@ -123,16 +211,39 @@ export default function BancoTalentosPage() {
         }
     }
 
-    const filteredTalentos = talentos.filter((t) => {
-        const term = searchTerm.toLowerCase()
-        const skillsStr = JSON.stringify(t.skills_jsonb || {}).toLowerCase()
-        const matchBusca = t.nome.toLowerCase().includes(term) || skillsStr.includes(term) || (t.telefone && t.telefone.includes(term))
-        const matchStatus = filtroStatus === "todos" || t.status === filtroStatus
-        return matchBusca && matchStatus
-    })
+    // Contagens por área
+    const contagemPorArea = useMemo(() => {
+        const map = new Map<string | null, number>()
+        for (const t of talentos) {
+            const cfg = getAreaConfig(t.area_interesse as string[] | null)
+            map.set(cfg.key, (map.get(cfg.key) ?? 0) + 1)
+        }
+        return map
+    }, [talentos])
+
+    // Filtro
+    const filteredTalentos = useMemo(() => {
+        return talentos.filter((t) => {
+            const term = searchTerm.toLowerCase()
+            const skillsStr = JSON.stringify(t.skills_jsonb || {}).toLowerCase()
+            const matchBusca = !term || t.nome.toLowerCase().includes(term) || skillsStr.includes(term) || (t.telefone && t.telefone.includes(term))
+            const matchStatus = filtroStatus === "todos" || t.status === filtroStatus
+            let matchArea = true
+            if (filtroArea !== undefined) {
+                const cfg = getAreaConfig(t.area_interesse as string[] | null)
+                matchArea = cfg.key === filtroArea
+            }
+            return matchBusca && matchStatus && matchArea
+        })
+    }, [talentos, searchTerm, filtroStatus, filtroArea])
+
+    const areaAtiva = filtroArea !== undefined
+        ? AREAS.find(a => a.key === filtroArea)
+        : null
 
     return (
         <div className="space-y-6">
+            {/* Cabeçalho */}
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Banco de Talentos</h1>
@@ -148,7 +259,224 @@ export default function BancoTalentosPage() {
                 </Button>
             </div>
 
-            {/* Modal cadastro manual S16-02 */}
+            {/* Cards de métricas */}
+            <div className="grid gap-4 md:grid-cols-3">
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Total no Banco</CardTitle>
+                        <User className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{talentos.length.toLocaleString("pt-BR")}</div>
+                        <p className="text-xs text-muted-foreground">{filteredTalentos.length} exibidos</p>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Disponíveis</CardTitle>
+                        <BrainCircuit className="h-4 w-4 text-cuca-blue" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">
+                            {talentos.filter(c => c.status === "disponivel").length.toLocaleString("pt-BR")}
+                        </div>
+                        <p className="text-xs text-muted-foreground">Aguardando nova oportunidade</p>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Arquivados / Contratados</CardTitle>
+                        <FileText className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">
+                            {talentos.filter(c => c.status !== "disponivel").length.toLocaleString("pt-BR")}
+                        </div>
+                        <p className="text-xs text-muted-foreground">Não mais disponíveis</p>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* ── Áreas de interesse ─────────────────────────────────────────── */}
+            <div>
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                    Áreas de interesse — clique para filtrar
+                </h2>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                    {AREAS.map((area) => {
+                        const total = contagemPorArea.get(area.key) ?? 0
+                        const isActive = filtroArea !== undefined && filtroArea === area.key
+                        return (
+                            <button
+                                key={String(area.key)}
+                                onClick={() => setFiltroArea(isActive ? undefined : area.key)}
+                                className={[
+                                    "flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all duration-150 hover:scale-[1.02] active:scale-[0.98]",
+                                    area.bgClass,
+                                    area.borderClass,
+                                    isActive ? "ring-2 ring-offset-2 ring-offset-background " + area.textClass.replace("text-", "ring-") : "",
+                                ].join(" ")}
+                            >
+                                <div className={["flex items-center justify-between w-full", area.textClass].join(" ")}>
+                                    {area.icon}
+                                    <span className="text-2xl font-bold tabular-nums">{total}</span>
+                                </div>
+                                <span className={["text-xs font-medium leading-tight", area.textClass].join(" ")}>
+                                    {area.label}
+                                </span>
+                            </button>
+                        )
+                    })}
+                    {/* Card "Todos" */}
+                    <button
+                        onClick={() => setFiltroArea(undefined)}
+                        className={[
+                            "flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-all duration-150 hover:scale-[1.02] active:scale-[0.98]",
+                            "bg-green-500/15 border-green-500/30",
+                            filtroArea === undefined ? "ring-2 ring-offset-2 ring-offset-background ring-green-400" : "",
+                        ].join(" ")}
+                    >
+                        <div className="flex items-center justify-between w-full text-green-400">
+                            <Star className="h-5 w-5" />
+                            <span className="text-2xl font-bold tabular-nums">{talentos.length}</span>
+                        </div>
+                        <span className="text-xs font-medium leading-tight text-green-400">Todos</span>
+                    </button>
+                </div>
+            </div>
+
+            {/* ── Lista de candidatos ────────────────────────────────────────── */}
+            <Card>
+                <CardHeader>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                            <CardTitle>
+                                {areaAtiva ? areaAtiva.label : "Todos os Talentos"}
+                            </CardTitle>
+                            <CardDescription>
+                                {areaAtiva
+                                    ? `${filteredTalentos.length} candidatos nessa área — clique em qualquer linha para ver o currículo completo.`
+                                    : "Clique em qualquer candidato para abrir o currículo completo."
+                                }
+                            </CardDescription>
+                        </div>
+                        <div className="flex gap-2 flex-wrap">
+                            <div className="relative w-full md:w-72">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    placeholder="Buscar nome, skill, telefone..."
+                                    className="pl-10 w-full"
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                            </div>
+                            <Select value={filtroStatus} onValueChange={setFiltroStatus}>
+                                <SelectTrigger className="w-[150px]">
+                                    <SelectValue placeholder="Status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="todos">Todos</SelectItem>
+                                    <SelectItem value="disponivel">Disponíveis</SelectItem>
+                                    <SelectItem value="arquivado">Arquivados</SelectItem>
+                                    <SelectItem value="contratado">Contratados</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    {loading ? (
+                        <div className="text-center py-12 text-muted-foreground">
+                            Carregando talentos...
+                        </div>
+                    ) : filteredTalentos.length === 0 ? (
+                        <div className="text-center py-12 text-muted-foreground">
+                            Nenhum talento encontrado com os filtros aplicados.
+                        </div>
+                    ) : (
+                        <div className="divide-y divide-border">
+                            {filteredTalentos.map((t) => {
+                                const ocr = t.skills_jsonb || {}
+                                const area = getAreaConfig(t.area_interesse as string[] | null)
+                                const idade = calcularIdade(t.data_nascimento)
+                                return (
+                                    <div
+                                        key={t.id}
+                                        className="flex items-center gap-4 py-3 px-2 rounded-lg cursor-pointer hover:bg-muted/40 transition-colors group"
+                                        onClick={() => setSelectedTalento(t)}
+                                    >
+                                        {/* Avatar inicial */}
+                                        <div className={["flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold", area.bgClass, area.textClass].join(" ")}>
+                                            {t.nome.charAt(0).toUpperCase()}
+                                        </div>
+
+                                        {/* Nome + área */}
+                                        <div className="flex-1 min-w-0">
+                                            <p className="font-medium truncate group-hover:text-foreground">{t.nome}</p>
+                                            <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                                                <span className={["inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-medium", area.bgClass, area.textClass, area.borderClass].join(" ")}>
+                                                    {area.label}
+                                                </span>
+                                                {idade !== null && <span>· {idade} anos</span>}
+                                            </p>
+                                        </div>
+
+                                        {/* Escolaridade */}
+                                        <div className="hidden md:block w-36 text-xs text-muted-foreground truncate">
+                                            {ocr.escolaridade || "—"}
+                                        </div>
+
+                                        {/* Resumo */}
+                                        <div className="hidden lg:block flex-1 text-xs text-muted-foreground truncate">
+                                            {ocr.experiencia_resumo || ocr.skills || "Sem resumo"}
+                                        </div>
+
+                                        {/* Status */}
+                                        <div className="flex-shrink-0">
+                                            <Badge
+                                                variant="outline"
+                                                className={
+                                                    t.status === "disponivel"
+                                                        ? "border-green-500/40 text-green-400 bg-green-500/10"
+                                                        : t.status === "contratado"
+                                                            ? "border-blue-500/40 text-blue-400 bg-blue-500/10"
+                                                            : "border-zinc-500/40 text-zinc-400 bg-zinc-500/10"
+                                                }
+                                            >
+                                                {t.status}
+                                            </Badge>
+                                        </div>
+
+                                        {/* Ações rápidas */}
+                                        <div className="flex-shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                                            {t.arquivo_cv_url && (
+                                                <Button variant="ghost" size="icon" title="Ver PDF" onClick={() => window.open(t.arquivo_cv_url!, "_blank")}>
+                                                    <FileText className="h-4 w-4 text-muted-foreground" />
+                                                </Button>
+                                            )}
+                                            {t.telefone && (
+                                                <Button variant="ghost" size="icon" title="WhatsApp"
+                                                    onClick={() => window.open(`https://wa.me/55${t.telefone!.replace(/\D/g, "")}`, "_blank")}>
+                                                    <Phone className="h-4 w-4 text-green-500" />
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* ── Modal currículo completo ───────────────────────────────────── */}
+            <Dialog open={!!selectedTalento} onOpenChange={(o) => !o && setSelectedTalento(null)}>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    {selectedTalento && <CurriculoModal talento={selectedTalento} />}
+                </DialogContent>
+            </Dialog>
+
+            {/* ── Modal cadastro manual ──────────────────────────────────────── */}
             {cadastroOpen && (
                 <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
                     <div className="bg-popover rounded-xl shadow-xl w-full max-w-md">
@@ -205,208 +533,215 @@ export default function BancoTalentosPage() {
                     </div>
                 </div>
             )}
+        </div>
+    )
+}
 
-            <div className="grid gap-4 md:grid-cols-3">
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Total no Banco</CardTitle>
-                        <User className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{talentos.length}</div>
-                        <p className="text-xs text-muted-foreground">
-                            {filteredTalentos.length} listados na busca
-                        </p>
-                    </CardContent>
-                </Card>
+// ─── Modal de currículo completo ──────────────────────────────────────────────
 
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Disponíveis</CardTitle>
-                        <BrainCircuit className="h-4 w-4 text-cuca-blue" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">
-                            {talentos.filter((c) => c.status === 'disponivel').length}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            Aguardando nova oportunidade
-                        </p>
-                    </CardContent>
-                </Card>
+function CurriculoModal({ talento }: { talento: TalentBank }) {
+    const ocr = talento.skills_jsonb || {}
+    const area = getAreaConfig(talento.area_interesse as string[] | null)
+    const idade = talento.data_nascimento
+        ? differenceInYears(new Date(), new Date(talento.data_nascimento))
+        : null
+    const dataNasc = talento.data_nascimento
+        ? format(new Date(talento.data_nascimento + "T12:00:00"), "dd/MM/yyyy", { locale: ptBR })
+        : null
+    const dataEntrada = talento.created_at
+        ? format(new Date(talento.created_at), "dd/MM/yyyy", { locale: ptBR })
+        : null
 
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Arquivados/Contratados (Outras)</CardTitle>
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">
-                            {talentos.filter((c) => c.status !== 'disponivel').length}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            Não mais disponíveis
-                        </p>
-                    </CardContent>
-                </Card>
-            </div>
+    const habilidades: string[] = Array.isArray(ocr.habilidades)
+        ? ocr.habilidades
+        : typeof ocr.habilidades === "string"
+            ? ocr.habilidades.split(/[,;]/).map((s: string) => s.trim()).filter(Boolean)
+            : []
 
-            <Card>
-                <CardHeader>
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div>
-                            <CardTitle>Pool Lógico de Talentos (IA)</CardTitle>
-                            <CardDescription>
-                                As Habilidades listadas abaixo foram inferidas silenciosamente via GPT-4o Vision a partir dos PDFs enviados outrora pelos candidatos.
-                            </CardDescription>
-                        </div>
-                        <div className="flex gap-2 flex-wrap">
-                            <div className="relative w-full md:w-72">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                    placeholder="Buscar por nome, skill, telefone..."
-                                    className="pl-10 w-full"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
+    const pontosFortesArr: string[] = Array.isArray(ocr.pontos_fortes)
+        ? ocr.pontos_fortes
+        : typeof ocr.pontos_fortes === "string"
+            ? [ocr.pontos_fortes]
+            : []
+
+    const pontosAtencaoArr: string[] = Array.isArray(ocr.pontos_atencao)
+        ? ocr.pontos_atencao
+        : typeof ocr.pontos_atencao === "string"
+            ? [ocr.pontos_atencao]
+            : []
+
+    return (
+        <>
+            <DialogHeader>
+                <div className="flex items-start gap-4">
+                    <div className={["w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-lg font-bold", area.bgClass, area.textClass].join(" ")}>
+                        {talento.nome.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <DialogTitle className="text-xl">{talento.nome}</DialogTitle>
+                        <DialogDescription asChild>
+                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                                <span className={["inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-xs font-medium", area.bgClass, area.textClass, area.borderClass].join(" ")}>
+                                    {area.icon}
+                                    {area.label}
+                                </span>
+                                <Badge variant="outline" className={
+                                    talento.status === "disponivel"
+                                        ? "border-green-500/40 text-green-400 bg-green-500/10"
+                                        : "border-zinc-500/40 text-zinc-400 bg-zinc-500/10"
+                                }>
+                                    {talento.status}
+                                </Badge>
                             </div>
-                            <Select value={filtroStatus} onValueChange={setFiltroStatus}>
-                                <SelectTrigger className="w-[150px]">
-                                    <SelectValue placeholder="Status" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="todos">Todos</SelectItem>
-                                    <SelectItem value="disponivel">Disponíveis</SelectItem>
-                                    <SelectItem value="arquivado">Arquivados</SelectItem>
-                                    <SelectItem value="contratado">Contratados</SelectItem>
-                                </SelectContent>
-                            </Select>
+                        </DialogDescription>
+                    </div>
+                </div>
+            </DialogHeader>
+
+            <div className="space-y-5 pt-2">
+                {/* Dados pessoais */}
+                <div className="grid grid-cols-2 gap-3">
+                    {talento.telefone && (
+                        <div className="flex items-center gap-2 text-sm">
+                            <Phone className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <span>{talento.telefone}</span>
+                        </div>
+                    )}
+                    {dataNasc && (
+                        <div className="flex items-center gap-2 text-sm">
+                            <User className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <span>{dataNasc}{idade !== null ? ` (${idade} anos)` : ""}</span>
+                        </div>
+                    )}
+                    {dataEntrada && (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Clock className="h-4 w-4 flex-shrink-0" />
+                            <span>Entrou em {dataEntrada}</span>
+                        </div>
+                    )}
+                    {ocr.escolaridade && (
+                        <div className="flex items-center gap-2 text-sm">
+                            <GraduationCap className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <span>{ocr.escolaridade}</span>
+                        </div>
+                    )}
+                    {ocr.experiencia_meses != null && (
+                        <div className="flex items-center gap-2 text-sm col-span-2">
+                            <BrainCircuit className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <span>
+                                {ocr.experiencia_meses} meses de experiência ({(ocr.experiencia_meses / 12).toFixed(1)} anos)
+                            </span>
+                        </div>
+                    )}
+                </div>
+
+                {/* Habilidades */}
+                {habilidades.length > 0 && (
+                    <div>
+                        <h4 className="text-sm font-semibold mb-2">Habilidades</h4>
+                        <div className="flex flex-wrap gap-1.5">
+                            {habilidades.map((h, i) => (
+                                <span key={i} className="px-2 py-0.5 rounded-full bg-muted text-xs border border-border">
+                                    {h}
+                                </span>
+                            ))}
                         </div>
                     </div>
-                </CardHeader>
-                <CardContent>
-                    {loading ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                            Puxando rede de talentos...
-                        </div>
-                    ) : filteredTalentos.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                            Nenhum talento retido até o momento.
-                        </div>
-                    ) : (
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Candidato (Idade)</TableHead>
-                                    <TableHead>Contato</TableHead>
-                                    <TableHead>Escolaridade</TableHead>
-                                    <TableHead>Resumo de Skills</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead className="text-right">Ações</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {filteredTalentos.map((t) => {
-                                    const ocr = t.skills_jsonb || {}
-                                    return (
-                                        <TableRow key={t.id}>
-                                            <TableCell className="font-medium">
-                                                <div>{t.nome}</div>
-                                                <div className="text-xs text-muted-foreground">{calcularIdade(t.data_nascimento)}</div>
-                                            </TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">
-                                                {t.telefone || "-"}
-                                            </TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">
-                                                {ocr.escolaridade || "-"}
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="text-xs truncate max-w-[200px] text-muted-foreground">
-                                                    {ocr.experiencia_resumo || ocr.skills || "Nenhum resumo detectado."}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge variant={t.status === 'disponivel' ? 'outline' : 'secondary'} className={t.status === 'disponivel' ? 'border-green-300 text-green-700 bg-green-50' : ''}>
-                                                    {t.status.toUpperCase()}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <div className="flex justify-end gap-2">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        className="text-cuca-blue hover:text-sky-800 hover:bg-sky-50"
-                                                        onClick={() => handleViewSkills(t)}
-                                                    >
-                                                        <BrainCircuit className="h-4 w-4 mr-1" />
-                                                        Ver Raio-X IA
-                                                    </Button>
-                                                    {t.arquivo_cv_url && (
-                                                        <Button variant="ghost" size="icon" title="Ver Currículo Original" onClick={() => window.open(t.arquivo_cv_url!, '_blank')}>
-                                                            <FileText className="h-4 w-4 text-muted-foreground" />
-                                                        </Button>
-                                                    )}
-                                                    {t.telefone && (
-                                                        <Button variant="ghost" size="icon" title="Contatar via WhatsApp"
-                                                            onClick={() => window.open(`https://wa.me/55${t.telefone!.replace(/\D/g, '')}`, '_blank')}>
-                                                            <Phone className="h-4 w-4 text-green-600" />
-                                                        </Button>
-                                                    )}
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    )
-                                })}
-                            </TableBody>
-                        </Table>
-                    )}
-                </CardContent>
-            </Card>
+                )}
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogContent className="max-w-2xl">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <BrainCircuit className="w-5 h-5 text-cuca-blue" /> Raio-X de Competências
-                        </DialogTitle>
-                        <DialogDescription>
-                            Dados extraídos via GPT Vision OCR sobre <strong>{selectedTalento?.nome}</strong>
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                        {selectedTalento && (
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <h4 className="text-sm font-semibold">Escolaridade</h4>
-                                    <p className="text-sm text-muted-foreground mt-1">
-                                        {selectedTalento.skills_jsonb?.escolaridade || "Não informada"}
-                                    </p>
-                                </div>
-                                <div>
-                                    <h4 className="text-sm font-semibold">Tempo de Experiência</h4>
-                                    <p className="text-sm text-muted-foreground mt-1">
-                                        {selectedTalento.skills_jsonb?.experiencia_meses
-                                            ? `${selectedTalento.skills_jsonb.experiencia_meses} meses / ${(selectedTalento.skills_jsonb.experiencia_meses / 12).toFixed(1)} anos`
-                                            : "Não detectada"}
-                                    </p>
-                                </div>
-                                <div className="col-span-2">
-                                    <h4 className="text-sm font-semibold">Resumo Profissional / Habilidades</h4>
-                                    <div className="mt-2 bg-muted/50 p-3 rounded-md border text-sm whitespace-pre-wrap">
-                                        {selectedTalento.skills_jsonb?.experiencia_resumo || selectedTalento.skills_jsonb?.skills || "Nenhum detalhe extraído pelo processamento de currículo."}
-                                    </div>
-                                </div>
-                                <div className="col-span-2">
-                                    <h4 className="text-sm font-semibold">Dados JSON Brutos (Debug Engine)</h4>
-                                    <pre className="mt-2 bg-slate-900 text-slate-100 p-3 rounded-md text-xs overflow-auto max-h-[200px]">
-                                        {JSON.stringify(selectedTalento.skills_jsonb, null, 2)}
-                                    </pre>
-                                </div>
+                {/* Resumo profissional */}
+                {(ocr.experiencia_resumo || ocr.skills) && (
+                    <div>
+                        <h4 className="text-sm font-semibold mb-2">Resumo Profissional</h4>
+                        <div className="bg-muted/50 p-3 rounded-lg border text-sm whitespace-pre-wrap leading-relaxed">
+                            {ocr.experiencia_resumo || ocr.skills}
+                        </div>
+                    </div>
+                )}
+
+                {/* Pontos fortes e atenção */}
+                {(pontosFortesArr.length > 0 || pontosAtencaoArr.length > 0) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {pontosFortesArr.length > 0 && (
+                            <div>
+                                <h4 className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-green-400">
+                                    <CheckCircle className="h-4 w-4" /> Pontos Fortes
+                                </h4>
+                                <ul className="space-y-1">
+                                    {pontosFortesArr.map((p, i) => (
+                                        <li key={i} className="text-xs text-muted-foreground flex gap-1.5">
+                                            <span className="text-green-400 mt-0.5">·</span> {p}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                        {pontosAtencaoArr.length > 0 && (
+                            <div>
+                                <h4 className="text-sm font-semibold mb-2 flex items-center gap-1.5 text-amber-400">
+                                    <AlertCircle className="h-4 w-4" /> Pontos de Atenção
+                                </h4>
+                                <ul className="space-y-1">
+                                    {pontosAtencaoArr.map((p, i) => (
+                                        <li key={i} className="text-xs text-muted-foreground flex gap-1.5">
+                                            <span className="text-amber-400 mt-0.5">·</span> {p}
+                                        </li>
+                                    ))}
+                                </ul>
                             </div>
                         )}
                     </div>
-                </DialogContent>
-            </Dialog>
-        </div>
+                )}
+
+                {/* Veredito */}
+                {ocr.veredito_final && (
+                    <div>
+                        <h4 className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                            <Star className="h-4 w-4 text-cuca-yellow" /> Veredito da IA
+                        </h4>
+                        <div className="bg-muted/50 p-3 rounded-lg border text-sm italic">
+                            {ocr.veredito_final}
+                        </div>
+                    </div>
+                )}
+
+                {/* Match score */}
+                {ocr.match_score != null && (
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-semibold">Match Score:</span>
+                        <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                            <div
+                                className="h-full rounded-full transition-all"
+                                style={{
+                                    width: `${Math.min(100, ocr.match_score)}%`,
+                                    backgroundColor: ocr.match_score >= 70 ? "#22c55e" : ocr.match_score >= 40 ? "#f59e0b" : "#ef4444",
+                                }}
+                            />
+                        </div>
+                        <span className="text-sm font-bold tabular-nums w-10 text-right">{ocr.match_score}%</span>
+                    </div>
+                )}
+
+                {/* Ações */}
+                <div className="flex flex-wrap gap-2 pt-2 border-t">
+                    {talento.arquivo_cv_url && (
+                        <Button variant="outline" size="sm" onClick={() => window.open(talento.arquivo_cv_url!, "_blank")}>
+                            <FileText className="h-4 w-4 mr-1.5" /> Ver Currículo Original
+                            <ExternalLink className="h-3 w-3 ml-1.5 text-muted-foreground" />
+                        </Button>
+                    )}
+                    {talento.telefone && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-green-500/40 text-green-400 hover:bg-green-500/10"
+                            onClick={() => window.open(`https://wa.me/55${talento.telefone!.replace(/\D/g, "")}`, "_blank")}
+                        >
+                            <MessageCircle className="h-4 w-4 mr-1.5" /> WhatsApp
+                        </Button>
+                    )}
+                </div>
+            </div>
+        </>
     )
 }
