@@ -857,7 +857,8 @@ async def triar_banco_talentos_endpoint(request: Request):
 
         return {"candidatos": candidatos}
     except Exception as e:
-        logger.error(f"[triar_banco_talentos] Erro: {str(e)}")
+        import traceback
+        logger.error(f"[triar_banco_talentos] Erro: {str(e)}\n{traceback.format_exc()}")
         return Response(status_code=500, content=str(e))
 
 

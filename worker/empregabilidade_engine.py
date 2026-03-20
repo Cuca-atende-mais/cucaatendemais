@@ -1524,7 +1524,7 @@ async def empregabilidade_notify_loop():
             conversas = res.data or []
             for c in conversas:
                 metadata = c.get("metadata") or {}
-                fluxo = metadata.get("empreg_fluxo", {})
+                fluxo = metadata.get("empreg_fluxo") or {}
                 etapa_c = fluxo.get("etapa", "")
 
                 # Só processa etapas que esperam retorno do portal
