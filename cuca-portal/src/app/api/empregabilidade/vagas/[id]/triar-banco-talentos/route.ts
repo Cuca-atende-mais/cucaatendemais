@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 
+// OCR pode demorar até 5 min para lotes maiores
+export const maxDuration = 300
+
 export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
@@ -26,6 +29,9 @@ export async function POST(
         }
 
         const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
+        // OCR por PDF demora ~15-30s cada — timeout de 5 min para cobrir até 10 currículos
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000)
         const res = await fetch(`${workerUrl}/triar-banco-talentos`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -34,7 +40,9 @@ export async function POST(
                 quantidade,
                 setor_vaga: (vaga as any).setor || [],
             }),
+            signal: controller.signal,
         })
+        clearTimeout(timeoutId)
 
         if (!res.ok) {
             const err = await res.text()

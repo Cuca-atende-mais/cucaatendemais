@@ -134,7 +134,7 @@ export default function VagaDetalhesPage() {
 
     // Slots disponíveis = vagas da empresa - candidatos já inscritos (não rejeitados)
     const inscritos = candidatos.filter(c => c.status !== "rejeitado").length
-    const vagasTotal = (vaga as any)?.quantidade_vagas ?? 0
+    const vagasTotal = vaga?.total_vagas ?? 0
     const slotsDisponiveis = Math.max(0, vagasTotal - inscritos)
 
     const abrirDialogTalent = () => {
