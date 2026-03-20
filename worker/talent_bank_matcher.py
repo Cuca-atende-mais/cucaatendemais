@@ -55,17 +55,19 @@ async def triar_banco_talentos(vaga_id: str, setor_vaga: list[str] | None = None
     if not candidatos:
         return []
 
-    # Processar OCR on-demand para candidatos sem skills que tenham arquivo de CV
-    candidatos_sem_skills = [c for c in candidatos if not c.get("skills_jsonb")]
+    # Processar OCR on-demand para candidatos sem skills (limitado a 10 para evitar timeout)
+    candidatos_sem_skills = [c for c in candidatos if not c.get("skills_jsonb") and c.get("arquivo_cv_url")]
     if candidatos_sem_skills:
         from cv_processor import process_cv_talent_bank_id
-        logger.info(f"[triar_banco_talentos] Processando OCR para {len(candidatos_sem_skills)} candidatos sem skills")
-        for c in candidatos_sem_skills:
-            cv_url = c.get("arquivo_cv_url")
-            if cv_url:
-                skills = await process_cv_talent_bank_id(c["id"], cv_url)
+        lote = candidatos_sem_skills[:10]
+        logger.info(f"[triar_banco_talentos] Processando OCR on-demand para {len(lote)} de {len(candidatos_sem_skills)} candidatos sem skills")
+        for c in lote:
+            try:
+                skills = await process_cv_talent_bank_id(c["id"], c["arquivo_cv_url"])
                 if skills:
                     c["skills_jsonb"] = skills
+            except Exception as ocr_err:
+                logger.warning(f"[triar_banco_talentos] OCR falhou para {c['id']}: {ocr_err}")
 
     # Separar candidatos com e sem skills após processamento
     candidatos_com_skills = [c for c in candidatos if c.get("skills_jsonb")]

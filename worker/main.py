@@ -860,6 +860,51 @@ async def triar_banco_talentos_endpoint(request: Request):
         return Response(status_code=500, content=str(e))
 
 
+@app.post("/processar-cvs-pendentes")
+async def processar_cvs_pendentes_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """Processa em background os CVs do talent_bank que ainda não têm skills_jsonb.
+    Retorna imediatamente com a contagem de pendentes e inicia o processamento em background."""
+    try:
+        payload = await request.json()
+        lote_size = min(int(payload.get("lote", 20)), 50)  # máx 50 por vez
+
+        # Buscar pendentes
+        res = supabase.table("talent_bank").select("id, arquivo_cv_url").is_("skills_jsonb", "null").eq("status", "disponivel").limit(lote_size).execute()
+        pendentes = [r for r in (res.data or []) if r.get("arquivo_cv_url")]
+
+        if not pendentes:
+            return {"message": "Nenhum CV pendente.", "pendentes": 0, "iniciados": 0}
+
+        async def _processar_lote():
+            from cv_processor import process_cv_talent_bank_id
+            import asyncio
+            ok = 0
+            for item in pendentes:
+                try:
+                    await process_cv_talent_bank_id(item["id"], item["arquivo_cv_url"])
+                    ok += 1
+                    await asyncio.sleep(0.5)  # anti-rate-limit
+                except Exception as e:
+                    logger.warning(f"[processar-cvs-pendentes] Falhou {item['id']}: {e}")
+
+            logger.info(f"[processar-cvs-pendentes] Lote concluído: {ok}/{len(pendentes)} processados")
+
+        background_tasks.add_task(_processar_lote)
+
+        # Contar total pendente real
+        total_res = supabase.table("talent_bank").select("id", count="exact").is_("skills_jsonb", "null").eq("status", "disponivel").execute()
+        total_pendentes = total_res.count or len(pendentes)
+
+        return {
+            "message": f"Processando {len(pendentes)} CVs em background.",
+            "iniciados": len(pendentes),
+            "total_pendentes": total_pendentes,
+        }
+    except Exception as e:
+        logger.error(f"[processar-cvs-pendentes] Erro: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
+
 @app.post("/webhook/{token}")
 async def uazapi_webhook(token: str, request: Request, background_tasks: BackgroundTasks):
     # 1. Resposta 200 OK imediata (Requisito Crítico UAZAPI / Anti-Ban)

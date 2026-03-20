@@ -18,7 +18,7 @@ import {
     Search, FileText, BrainCircuit, User, Phone, Plus, X,
     ShoppingCart, Building2, Truck, Wrench, UtensilsCrossed,
     Palette, HardHat, Cpu, HelpCircle, Star, Clock, GraduationCap,
-    CheckCircle, AlertCircle, ExternalLink, MessageCircle,
+    CheckCircle, AlertCircle, ExternalLink, MessageCircle, Zap,
 } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import {
@@ -148,6 +148,7 @@ export default function BancoTalentosPage() {
     const [formArea, setFormArea] = useState("")
     const [formArquivo, setFormArquivo] = useState<File | null>(null)
     const [savingCadastro, setSavingCadastro] = useState(false)
+    const [processandoCvs, setProcessandoCvs] = useState(false)
 
     const AREAS_INTERESSE = AREAS.filter(a => a.key !== null).map(a => a.key as string)
 
@@ -176,6 +177,25 @@ export default function BancoTalentosPage() {
     const calcularIdade = (dataStr: string | null) => {
         if (!dataStr) return null
         return differenceInYears(new Date(), new Date(dataStr))
+    }
+
+    const handleProcessarCvs = async () => {
+        setProcessandoCvs(true)
+        try {
+            const res = await fetch("/api/empregabilidade/talent-bank/processar-pendentes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lote: 20 }),
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error)
+            toast.success(`${data.iniciados} CVs em processamento. Total pendente: ${data.total_pendentes}`)
+            setTimeout(fetchTalentos, 15000) // recarrega após 15s para pegar novos skills
+        } catch (err: any) {
+            toast.error(err.message || "Erro ao processar CVs.")
+        } finally {
+            setProcessandoCvs(false)
+        }
     }
 
     const handleCadastroManual = async (e: React.FormEvent) => {
@@ -251,12 +271,24 @@ export default function BancoTalentosPage() {
                         Repositório inteligente de candidatos para matching futuro.
                     </p>
                 </div>
-                <Button
-                    className="bg-cuca-yellow hover:bg-yellow-500 font-bold"
-                    onClick={() => setCadastroOpen(true)}
-                >
-                    <Plus className="mr-2 h-4 w-4" /> Cadastrar Manualmente
-                </Button>
+                <div className="flex gap-2">
+                    <Button
+                        variant="outline"
+                        className="border-violet-500/40 text-violet-400 hover:bg-violet-500/10"
+                        onClick={handleProcessarCvs}
+                        disabled={processandoCvs}
+                        title="Processa 20 CVs pendentes de análise IA por vez"
+                    >
+                        <Zap className="mr-2 h-4 w-4" />
+                        {processandoCvs ? "Processando..." : "Processar CVs com IA"}
+                    </Button>
+                    <Button
+                        className="bg-cuca-yellow hover:bg-yellow-500 font-bold"
+                        onClick={() => setCadastroOpen(true)}
+                    >
+                        <Plus className="mr-2 h-4 w-4" /> Cadastrar Manualmente
+                    </Button>
+                </div>
             </div>
 
             {/* Cards de métricas */}
