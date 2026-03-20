@@ -29,6 +29,7 @@ export async function POST(
         }
 
         const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
+        console.log(`[triar-banco-talentos] workerUrl=${workerUrl} vagaId=${vagaId} quantidade=${quantidade} setor=${JSON.stringify((vaga as any).setor)}`)
         // OCR por PDF demora ~15-30s cada — timeout de 5 min para cobrir até 10 currículos
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000)
