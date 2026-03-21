@@ -406,15 +406,6 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 // 1. Criar a Campanha Mensal "Pai"
                 appendLog("info", "Banco de Dados", "Registrando " + atividadesToInsert.length + " atividades validadas...")
 
-                // Garante sessão ativa com timeout para não travar indefinidamente
-                const refreshResult = await Promise.race([
-                    supabase.auth.refreshSession(),
-                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout ao renovar sessão (15s)")), 15000))
-                ])
-                if (refreshResult.error) {
-                    console.warn("refreshSession falhou, tentando com sessão atual:", refreshResult.error.message)
-                }
-
                 const { data: newCamp, error: insErr } = await supabase
                     .from("campanhas_mensais")
                     .insert({
