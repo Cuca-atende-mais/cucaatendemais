@@ -196,16 +196,23 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                     // raw: false força o conversor a mastigar as células numéricas devolvendo textos formatados como aparecem no Excel
                     const data: any[] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: "dd/mm/yyyy" })
 
-                    const rows = data.slice(6) // Header pull
+                    // FIX2: dados começam na linha 3 (índice 2), header na linha 2 (índice 1)
+                    const rows = data.slice(2)
 
                     let countNaAba = 0
                     const fallbackDate = new Date(anoAtual, mesInt - 1, 1).toISOString().split('T')[0]
 
                     const parseTimeString = (timeStr: string | null | undefined): string | null => {
                         if (!timeStr) return null;
-                        let s = String(timeStr).trim().toLowerCase();
+                        // FIX4: normaliza maiúsculos e variações de acentuação antes de processar
+                        let s = String(timeStr).trim().toLowerCase().replace(/\bás\b/g, 'às').replace(/\bàs\b/g, 'às');
 
-                        s = s.replace('h', ':');
+                        // Se contém "às", é um campo de horário composto — retorna apenas a parte antes de "às"
+                        if (s.includes('às')) {
+                            s = s.split('às')[0].trim();
+                        }
+
+                        s = s.replace(/h$/g, ':').replace(/h(\d)/g, ':$1');
                         if (s.endsWith(':')) s = s + '00';
 
                         const parts = s.split(':');
@@ -220,6 +227,23 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                         }
                         return null;
                     }
+
+                    // FIX3: mapeamento dinâmico de colunas ESPORTES por nome de header
+                    const esportesIdx = (() => {
+                        if (categoriaVal !== "ESPORTES") return null;
+                        const headerRow: any[] = data[1] || [];
+                        const find = (re: RegExp) => headerRow.findIndex((h: any) => re.test(String(h || '').toLowerCase()));
+                        return {
+                            titulo:      find(/modalidade/),
+                            professor:   find(/professor/),
+                            turma:       find(/turma/),
+                            faixaEtaria: find(/faixa|idade/),
+                            sexo:        find(/sexo|naipe/),
+                            vagas:       find(/vagas/),
+                            dias:        find(/dias/),
+                            horario:     find(/hor[aá]rio/),
+                        };
+                    })();
 
                     rows.forEach(row => {
                         let titulo = ""
@@ -245,52 +269,102 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                             local = "Não informado"
 
                             if (row[8] && typeof row[8] === 'string') {
-                                const parts = row[8].split("às")
+                                // FIX4: normaliza maiúsculos antes do split
+                                const rawH = row[8].toLowerCase().replace(/\bás\b/g, 'às')
+                                const parts = rawH.split("às")
                                 if (parts.length === 2) {
                                     horaInicioStr = parts[0].trim()
                                     horaFimStr = parts[1].trim()
                                 }
                             }
-                        } else if (categoriaVal === "ESPORTES") {
-                            titulo = row[1]
+                        } else if (categoriaVal === "ESPORTES" && esportesIdx) {
+                            // FIX3: usa índices detectados dinamicamente pelo header
+                            const gi = (k: keyof typeof esportesIdx, fb: number) => {
+                                const i = esportesIdx[k];
+                                return (i >= 0 ? row[i] : row[fb]) || "";
+                            };
+                            titulo = gi('titulo', 1)
+                            const horarioRaw = gi('horario', 8)
                             meta = {
-                                professor: row[2] || "",
-                                turma: row[3] || "",
-                                faixa_etaria: row[4] || "",
-                                sexo: row[5] || "",
-                                vagas: row[6] || "",
-                                dias_semana: row[7] || "",
-                                horario: row[8] || ""
+                                professor:   gi('professor', 2),
+                                turma:       gi('turma', 3),
+                                faixa_etaria: gi('faixaEtaria', 4),
+                                sexo:        gi('sexo', 5),
+                                vagas:       gi('vagas', 6),
+                                dias_semana: gi('dias', 7),
+                                horario:     horarioRaw
                             }
 
                             descricao = `Esporte Modalidade: ${titulo} - Turma ${meta.turma}. Professor: ${meta.professor}. Vagas: ${meta.vagas}. Público: ${meta.sexo} (Idade: ${meta.faixa_etaria}). Dias: ${meta.dias_semana}. Horário: ${meta.horario}.`
                             local = "Não informado"
 
-                            if (row[8] && typeof row[8] === 'string') {
-                                const parts = row[8].replace("ás", "às").split("às")
+                            if (horarioRaw && typeof horarioRaw === 'string') {
+                                // FIX4: normaliza variações de acentuação e maiúsculos
+                                const rawH = horarioRaw.toLowerCase().replace(/\bás\b/g, 'às').replace(/\bàs\b/g, 'às')
+                                const parts = rawH.split("às")
                                 if (parts.length === 2) {
                                     horaInicioStr = parts[0].trim()
                                     horaFimStr = parts[1].trim()
                                 }
                             }
                         } else if (categoriaVal === "DIA A DIA" || categoriaVal === "ESPECIAIS") {
-                            // Assumindo Especiais com mesma estrutura do Dia a Dia pelo visual
-                            titulo = row[4] || row[3] // Dia a dia é 4, Especiais é 3
+                            titulo = row[4] || row[3]
+                            const horaInicioRaw = row[6] || row[5] || ""
+                            const horaFimRaw = row[7] || ""
+
+                            // FIX4: detecta se hora_inicio contém horário composto (ex: "19:00 ÀS 20:30")
+                            const horaInicioNorm = String(horaInicioRaw).toLowerCase().replace(/\bás\b/g, 'às').replace(/\bàs\b/g, 'às')
+                            if (horaInicioNorm.includes('às')) {
+                                const parts = horaInicioNorm.split('às')
+                                horaInicioStr = parts[0].trim()
+                                horaFimStr = parts[1].trim()
+                            } else {
+                                horaInicioStr = horaInicioNorm.trim()
+                                horaFimStr = String(horaFimRaw).toLowerCase().trim()
+                            }
+
+                            // FIX5: usa a data real do evento (row[2]) em vez do fallback de 1º do mês
+                            let dataAtividade = fallbackDate
+                            if (row[2]) {
+                                const rawDate = row[2]
+                                if (typeof rawDate === 'string' && /\d{2}\/\d{2}\/\d{4}/.test(rawDate)) {
+                                    const [d, m, y] = rawDate.split('/')
+                                    dataAtividade = `${y}-${m}-${d}`
+                                } else if (typeof rawDate === 'string' && /\d{4}-\d{2}-\d{2}/.test(rawDate)) {
+                                    dataAtividade = rawDate.substring(0, 10)
+                                }
+                            }
+
                             meta = {
                                 sessao: row[1] || "",
                                 data_real: row[2] || "",
-                                dia_semana: row[3] || "", // em dia-a-dia
+                                dia_semana: row[3] || "",
                                 atividade: row[5] || row[4] || "",
                                 local: row[8] || row[6] || "",
                                 informacoes: row[9] || row[7] || "",
-                                hora_inicio: row[6] || row[5] || "",
-                                hora_fim: row[7] || ""
+                                hora_inicio: horaInicioStr,
+                                hora_fim: horaFimStr
                             }
 
-                            descricao = `Programa (${categoriaVal}): ${titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${meta.hora_inicio} às ${meta.hora_fim}. Local: ${meta.local}. Informações: ${meta.informacoes}. Sessão: ${meta.sessao}.`
+                            descricao = `Programa (${categoriaVal}): ${titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${horaInicioStr} às ${horaFimStr}. Local: ${meta.local}. Informações: ${meta.informacoes}. Sessão: ${meta.sessao}.`
                             local = meta.local || "Não informado"
-                            horaInicioStr = String(meta.hora_inicio).trim()
-                            horaFimStr = String(meta.hora_fim).trim()
+
+                            // Usa dataAtividade calculada acima
+                            if (titulo && typeof titulo === 'string' && titulo.trim() !== "") {
+                                atividadesToInsert.push({
+                                    unidade_cuca: unidadeCuca,
+                                    titulo: titulo.substring(0, 100),
+                                    descricao: String(descricao).substring(0, 1500),
+                                    local: String(local).substring(0, 255),
+                                    data_atividade: dataAtividade,
+                                    hora_inicio: parseTimeString(horaInicioStr),
+                                    hora_fim: parseTimeString(horaFimStr),
+                                    categoria: categoriaVal,
+                                    metadata: meta
+                                })
+                                countNaAba++
+                            }
+                            return // Evita o push duplicado abaixo
                         } else {
                             // Fallback Genérico
                             titulo = row[2] || row[1] || row[4]
@@ -365,10 +439,12 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 // S19-02: Dispara a normalização de categorias no Worker via LLM em background
                 try {
                     const workerUrl = process.env.NEXT_PUBLIC_WORKER_URL || "https://uazapi.cucaatendemais.com.br"
+                    // FIX1: timeout de 15s para não travar o spinner se o worker não responder
                     await fetch(`${workerUrl}/extract-categories`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ campanha_id: newCamp.id })
+                        body: JSON.stringify({ campanha_id: newCamp.id }),
+                        signal: AbortSignal.timeout(15000)
                     })
                     appendLog("success", "Categorização Iniciada", "Taxonomia em processo de normalização no servidor.")
                 } catch (e) {
@@ -378,6 +454,9 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 }
 
                 toast.success("Importação concluída com sucesso!")
+
+                // FIX1: garante que o loading para antes de fechar o modal
+                setIsLoading(false)
 
                 // Dispara refresh pra grid na background pós delay e redireciona pra Tabela Rica
                 setTimeout(() => {
