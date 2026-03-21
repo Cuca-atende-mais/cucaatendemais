@@ -22,6 +22,7 @@ import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { ChipDivulgacaoTab } from "@/components/instancias/chip-divulgacao-tab"
+import { useUser } from "@/lib/auth/user-provider"
 
 /* ─── Tipos ─── */
 type StatusCampanha = "sem_planilha" | "pendente" | "aprovado" | "em_andamento"
@@ -85,6 +86,7 @@ const DISPARO_STATUS_CONFIG: Record<StatusDisparo, { label: string; color: strin
 export default function DivulgacaoPage() {
     const router = useRouter()
     const supabase = createClient()
+    const { hasPermission } = useUser()
     const hoje = new Date()
     const [mesAtual] = useState(hoje.getMonth() + 1)
     const [anoAtual] = useState(hoje.getFullYear())
@@ -106,34 +108,12 @@ export default function DivulgacaoPage() {
     const fetchData = useCallback(async () => {
         setCarregando(true)
         try {
-            // 1. Verificar acesso ao módulo divulgacao
+            // 1. Verificar acesso ao módulo divulgacao via RBAC
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) { router.push("/login"); return }
 
-            const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
-            const isDevEmail = DEVELOPER_EMAILS.includes(user.email ?? '')
-
-            if (!isDevEmail) {
-                // Para não-developers: verificar permissão explicitamente via sys_permissions
-                const { data: colab } = await supabase
-                    .from("colaboradores")
-                    .select("sys_roles(name, sys_permissions(module, can_read, can_create))")
-                    .eq("user_id", user.id)
-                    .single()
-
-                const role = (colab?.sys_roles as any)
-                const perms: any[] = role?.sys_permissions ?? []
-                const perm = perms.find((p: any) => p.module === 'divulgacao')
-
-                // Não tem can_read → bloqueia
-                if (!perm?.can_read) { setSemPermissao(true); return }
-
-                // Registra se pode criar (criar/reconectar chip, disparar)
-                setPodeCriar(!!perm?.can_create)
-            } else {
-                // Developer: pode tudo
-                setPodeCriar(true)
-            }
+            if (!hasPermission("divulgacao", "read")) { setSemPermissao(true); return }
+            setPodeCriar(hasPermission("divulgacao", "create"))
 
             // 2. Buscar status das campanhas do mês atual por unidade
             const { data: campanhas } = await supabase

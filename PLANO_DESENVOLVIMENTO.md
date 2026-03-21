@@ -2830,3 +2830,103 @@ Exemplo: vaga "Caixa de Supermercado" tem 20 vagas, 1 candidato inscrito → col
 | `worker/main.py` | Remove endpoint `/processar-cvs-pendentes` (foi erro — contradiz a lógica) |
 | `banco-talentos/page.tsx` | Remove botão "Processar CVs com IA" (foi erro) |
 
+
+
+---
+
+## Problemas identificados em 20/03/2026 — A resolver em sessão futura
+
+### 1. Duplicatas no Banco de Talentos
+
+**Problema:**
+O script `import_curriculos.py` criou 1 registro por arquivo encontrado. Como o mesmo CV estava em múltiplas pastas de área (ex: ADMINISTRATIVO, ATENDIMENTO, VENDAS), o mesmo candidato gerou múltiplos registros. Exemplos: "Emilly Maria Silva Bezerra" tem 11 registros, "Deyse Silva" tem 25. Total estimado: ~601 duplicatas em 1.112 registros.
+
+**Consequência:**
+- Candidato aparece múltiplas vezes nas listagens do banco de talentos
+- Cada instância duplicada sem OCR aparece como "novo" candidato na triagem
+- Desperdício de créditos OpenAI ao processar o mesmo candidato N vezes
+
+**Sugestão de solução:**
+1. Definir critério de deduplicação — opções discutidas:
+   - **Pelo nome exato** (mais agressivo, risco de colapsar homônimos)
+   - **Pelo nome + telefone** (mais seguro, mas muitos não têm telefone)
+   - **Pelo arquivo_cv_url** (só remove literalmente o mesmo arquivo)
+2. Corrigir o `import_curriculos.py` para checar duplicata por nome antes de inserir (ou usar UPSERT por nome)
+3. Adicionar constraint UNIQUE no banco para prevenir futuras duplicatas (ex: `UNIQUE (nome, telefone)` ou `UNIQUE (arquivo_cv_url)`)
+4. Rodar limpeza pontual com o critério acordado
+
+---
+
+### 2. Match score zerado ao abrir detalhe do candidato (Banco de Talentos)
+
+**Problema:**
+Na lista da vaga, os cards do banco de talentos mostram o score correto (ex: 75, 90) porque os dados vêm do `localStorage` (`talent_triagem_${vagaId}`). Ao clicar para abrir o detalhe, a página `vagas/[id]/banco-talentos/[talent_id]/page.tsx` busca o candidato diretamente do banco (`talent_bank`), que **não possui campo `match_score` por vaga** — o score fica apenas na memória do navegador. Resultado: score sempre exibido como 0.
+
+**Arquivo:** `src/app/(dashboard)/empregabilidade/vagas/[id]/banco-talentos/[talent_id]/page.tsx` — linha 158:
+```typescript
+const score = (talent as any).match_score ?? skills?.match_score ?? null
+// match_score nunca está no banco → sempre null → exibe 0
+```
+
+**Sugestão de solução:**
+Na página de detalhe, ler o localStorage com a mesma key `talent_triagem_${vagaId}` e buscar o `match_score` do candidato pelo ID antes de exibir:
+```typescript
+const [score, setScore] = useState<number | null>(null)
+useEffect(() => {
+    try {
+        const saved = localStorage.getItem(`talent_triagem_${vagaId}`)
+        if (saved) {
+            const results = JSON.parse(saved)
+            const found = results.find((c: any) => c.id === talentId)
+            setScore(found?.match_score ?? null)
+        }
+    } catch {}
+}, [vagaId, talentId])
+```
+
+---
+
+### 3. Match score zerado na candidatura após aprovação
+
+**Problema:**
+Quando o colaborador aprova um candidato do banco de talentos, é criada uma candidatura com `status = "selecionado"`. O `match_score` específico daquela triagem (calculado pelo GPT para aquela vaga) não é salvo na candidatura. O candidato aparece na lista de inscritos com score 0.
+
+**Arquivo:** `src/app/(dashboard)/empregabilidade/vagas/[id]/banco-talentos/[talent_id]/page.tsx` — função `aprovarParaVaga()` (linha 74):
+```typescript
+// O insert não passa match_score:
+.insert({
+    vaga_id: vagaId,
+    nome: talent.nome,
+    dados_ocr_json: talent.skills_jsonb || null,  // skills_jsonb tem score genérico do OCR, não o score da vaga
+    status: "selecionado",
+    ...
+})
+```
+
+**Sugestão de solução:**
+Antes do insert, ler o score do localStorage e injetá-lo no `dados_ocr_json`:
+```typescript
+const savedTriagem = localStorage.getItem(`talent_triagem_${vagaId}`)
+let matchScoreVaga = null
+if (savedTriagem) {
+    const results = JSON.parse(savedTriagem)
+    const found = results.find((c: any) => c.id === talentId)
+    matchScoreVaga = found?.match_score ?? null
+}
+
+const ocrComScore = {
+    ...(talent.skills_jsonb || {}),
+    match_score: matchScoreVaga ?? talent.skills_jsonb?.match_score ?? null,
+}
+
+// No insert: dados_ocr_json: ocrComScore
+```
+
+---
+
+### Prioridade sugerida
+| # | Problema | Impacto | Esforço |
+|---|---|---|---|
+| 1 | Match score zerado no detalhe | Alto (UX confusa) | Baixo (só frontend) |
+| 2 | Match score zerado na candidatura | Alto (UX confusa) | Baixo (só frontend) |
+| 3 | Duplicatas no banco | Alto (desperdício IA + UX) | Médio (requer decisão de critério) |

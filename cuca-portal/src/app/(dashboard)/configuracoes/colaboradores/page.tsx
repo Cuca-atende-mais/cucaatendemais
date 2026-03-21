@@ -61,9 +61,9 @@ export default function ColaboradoresPage() {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingColaborador, setEditingColaborador] = useState<any>(null)
     const [searchTerm, setSearchTerm] = useState("")
-    const { profile, isDeveloper } = useUser()
+    const { profile, isDeveloper, hasPermission } = useUser()
 
-    const canManageStatus = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca' || profile?.funcao?.nome === 'Gerente'
+    const canManageStatus = hasPermission('config_colaboradores', 'update')
 
     const supabase = createClient()
 
@@ -89,7 +89,7 @@ export default function ColaboradoresPage() {
         ])
 
         if (cRes.data) {
-            const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+            const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
 
             let filteredColabs = cRes.data
 
@@ -111,7 +111,7 @@ export default function ColaboradoresPage() {
         if (rRes.data) {
             // Filtro simples de Hierarquia para criação de Cargos
             let disponiveis = rRes.data
-            const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+            const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
 
             if (!isDeveloper) {
                 disponiveis = rRes.data.filter(r => r.name !== 'Developer')

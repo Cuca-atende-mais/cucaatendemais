@@ -53,7 +53,7 @@ export default function OuvidoriaPage() {
     const [analysing, setAnalysing] = useState(false)
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
     const { hasPermission, profile, isDeveloper } = useUser()
-    const isSuperAdmin = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+    const isSuperAdmin = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
 
     useEffect(() => { fetchRegistros() }, [])
 

@@ -54,7 +54,7 @@ export default function VagasPage() {
             let filtered = data || []
 
             // Filtrar por unidade na aba "Minha Unidade" (exceto developer)
-            if (abaFiltro === "minhas" && !isDeveloper && profile?.unidade_cuca) {
+            if (abaFiltro === "minhas" && profile?.unidade_cuca && profile?.unidade_cuca !== 'Geral') {
                 filtered = filtered.filter(v => v.unidade_cuca === profile.unidade_cuca)
             }
 

@@ -103,8 +103,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // Módulos exclusive dos devs: bloquear qualquer outro usuário
         if (DEVELOPER_ONLY_MODULES.includes(recurso)) return false
 
-        // Super Admin e Developer role: acesso a todos os módulos via RBAC
-        if (profile.funcao.nome === 'Developer' || profile.funcao.nome === 'Super Admin Cuca') return true
+        // Super Admin: acesso a todos os módulos operacionais (developer já foi bloqueado acima)
+        if (profile.funcao.nome === 'Super Admin Cuca') return true
 
         const resourcePerm = profile.funcao.permissoes.find((p: any) => p.module === recurso)
         if (!resourcePerm) return false

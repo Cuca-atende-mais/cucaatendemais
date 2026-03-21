@@ -62,7 +62,8 @@ export default function ProgramacaoPage() {
 
     const { profile, isDeveloper, hasPermission } = useUser()
 
-    const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+    // Vê todas as unidades quem não tem unidade atribuída (sem vínculo ou "Geral")
+    const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
 
     const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
     const canDelete = profile?.email && DEVELOPER_EMAILS.includes(profile.email)
@@ -250,12 +251,6 @@ export default function ProgramacaoPage() {
                     </h1>
                     <p className="text-muted-foreground mt-1">Gestão unificada da programação da Rede CUCA</p>
                 </div>
-                <Button
-                    className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold"
-                    onClick={() => setIsModalOpen(true)}
-                >
-                    <Plus className="mr-2 h-4 w-4" /> Novo Item
-                </Button>
             </div>
 
             <UnifiedProgramModal

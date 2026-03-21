@@ -64,7 +64,7 @@ export default function AcessoCucaPortalPage() {
     const [saving, setSaving] = useState(false)
 
     const { profile, isDeveloper, hasPermission } = useUser()
-    const isSuperAdmin = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+    const isSuperAdmin = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
 
     useEffect(() => {
         if (profile) fetchSolicitacoes()
@@ -78,7 +78,7 @@ export default function AcessoCucaPortalPage() {
             .select("*, espacos_cuca(nome)")
             .order("created_at", { ascending: false })
 
-        const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+        const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
 
         if (!canSeeAllUnits && profile?.unidade_cuca) {
             query = query.eq('unidade_cuca', profile.unidade_cuca)

@@ -72,7 +72,7 @@ export default function EspacosPage() {
     const [savingEquip, setSavingEquip] = useState(false)
 
     const { profile, isDeveloper, hasPermission } = useUser()
-    const canSeeAllUnits = isDeveloper || profile?.funcao?.nome === 'Super Admin Cuca'
+    const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
 
     useEffect(() => {
         if (profile) fetchEspacos()
