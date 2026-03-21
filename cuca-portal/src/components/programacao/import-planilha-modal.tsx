@@ -415,8 +415,6 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                     console.warn("refreshSession falhou, tentando com sessão atual:", refreshResult.error.message)
                 }
 
-                const dbSignal = AbortSignal.timeout(30000)
-
                 const { data: newCamp, error: insErr } = await supabase
                     .from("campanhas_mensais")
                     .insert({
@@ -429,7 +427,6 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                     })
                     .select("id")
                     .single()
-                    .abortSignal(dbSignal)
 
                 if (insErr) throw new Error("Erro insert pai: " + insErr.message)
 
@@ -442,10 +439,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 const CHUNK = 50
                 for (let i = 0; i < finalBatch.length; i += CHUNK) {
                     const chunk = finalBatch.slice(i, i + CHUNK)
-                    const { error: batchErr } = await supabase
-                        .from("atividades_mensais")
-                        .insert(chunk)
-                        .abortSignal(AbortSignal.timeout(30000))
+                    const { error: batchErr } = await supabase.from("atividades_mensais").insert(chunk)
                     if (batchErr) throw new Error(`Erro insert atividades (lote ${Math.floor(i/CHUNK)+1}): ` + batchErr.message)
                 }
 
