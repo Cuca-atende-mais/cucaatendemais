@@ -406,8 +406,16 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 // 1. Criar a Campanha Mensal "Pai"
                 appendLog("info", "Banco de Dados", "Registrando " + atividadesToInsert.length + " atividades validadas...")
 
-                // Garante sessão ativa (JWT pode expirar durante parse do Excel)
-                await supabase.auth.refreshSession()
+                // Garante sessão ativa com timeout para não travar indefinidamente
+                const refreshResult = await Promise.race([
+                    supabase.auth.refreshSession(),
+                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout ao renovar sessão (15s)")), 15000))
+                ])
+                if (refreshResult.error) {
+                    console.warn("refreshSession falhou, tentando com sessão atual:", refreshResult.error.message)
+                }
+
+                const dbSignal = AbortSignal.timeout(30000)
 
                 const { data: newCamp, error: insErr } = await supabase
                     .from("campanhas_mensais")
@@ -417,21 +425,29 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                         mes: mesInt,
                         ano: anoAtual,
                         total_atividades: atividadesToInsert.length,
-                        status: "pendente" // S9-00: pendente até Gerente aprovar explicitamente
+                        status: "pendente"
                     })
                     .select("id")
                     .single()
+                    .abortSignal(dbSignal)
 
-                if (insErr) throw new Error("Erro insert pain pai: " + insErr.message)
+                if (insErr) throw new Error("Erro insert pai: " + insErr.message)
 
-                // 2. Vincular as fileiras à Campanha
+                // 2. Vincular as fileiras à Campanha em lotes de 50 para evitar timeout
                 const finalBatch = atividadesToInsert.map(act => ({
                     ...act,
                     campanha_id: newCamp.id
                 }))
 
-                const { error: batchErr } = await supabase.from("atividades_mensais").insert(finalBatch)
-                if (batchErr) throw new Error("Erro insert filhas: " + batchErr.message)
+                const CHUNK = 50
+                for (let i = 0; i < finalBatch.length; i += CHUNK) {
+                    const chunk = finalBatch.slice(i, i + CHUNK)
+                    const { error: batchErr } = await supabase
+                        .from("atividades_mensais")
+                        .insert(chunk)
+                        .abortSignal(AbortSignal.timeout(30000))
+                    if (batchErr) throw new Error(`Erro insert atividades (lote ${Math.floor(i/CHUNK)+1}): ` + batchErr.message)
+                }
 
                 appendLog("success", "Finalizado", "Programação de " + mesObj.label + " importada com sucesso para o banco.")
                 appendLog("info", "Classificação de Inteligência", "Iniciando estruturação automática de Eixos e Modalidades (Categorias) no Worker...")
