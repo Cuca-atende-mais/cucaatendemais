@@ -332,6 +332,9 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 // 1. Criar a Campanha Mensal "Pai"
                 appendLog("info", "Banco de Dados", "Registrando " + atividadesToInsert.length + " atividades validadas...")
 
+                // Garante sessão ativa (JWT pode expirar durante parse do Excel)
+                await supabase.auth.refreshSession()
+
                 const { data: newCamp, error: insErr } = await supabase
                     .from("campanhas_mensais")
                     .insert({
