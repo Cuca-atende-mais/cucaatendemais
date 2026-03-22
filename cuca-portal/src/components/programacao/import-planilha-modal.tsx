@@ -326,12 +326,16 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                             // FIX5: usa a data real do evento (row[2]) em vez do fallback de 1º do mês
                             let dataAtividade = fallbackDate
                             if (row[2]) {
-                                const rawDate = row[2]
-                                if (typeof rawDate === 'string' && /\d{2}\/\d{2}\/\d{4}/.test(rawDate)) {
-                                    const [d, m, y] = rawDate.split('/')
-                                    dataAtividade = `${y}-${m}-${d}`
-                                } else if (typeof rawDate === 'string' && /\d{4}-\d{2}-\d{2}/.test(rawDate)) {
-                                    dataAtividade = rawDate.substring(0, 10)
+                                const rawDate = String(row[2])
+                                if (/\d{2}\/\d{2}\/\d{4}/.test(rawDate)) {
+                                    const parts = rawDate.split('/')
+                                    const d = parts[0].replace(/\D/g, '').padStart(2, '0')
+                                    const m = parts[1].replace(/\D/g, '').padStart(2, '0')
+                                    const y = (parts[2] || '').match(/\d{4}/)?.[0] || String(anoAtual)
+                                    const candidate = `${y}-${m}-${d}`
+                                    if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) dataAtividade = candidate
+                                } else if (/\d{4}-\d{2}-\d{2}/.test(rawDate)) {
+                                    dataAtividade = rawDate.match(/\d{4}-\d{2}-\d{2}/)![0]
                                 }
                             }
 
