@@ -199,16 +199,14 @@ export default function DivulgacaoPage() {
         // Número do institucionalredecuca — canal RAG da Rede Cuca
         const numeroRAG = "5585921907649"
 
-        const tpl = `🎉 Olá, {nome}! Aqui é a *Rede Cuca* de Fortaleza. 🌟
+        const tpl = `Bom dia, {nome}!
+A programação de ${nomeMes}/${anoAtual} já está disponível!
 
-A programação de *${nomeMes}/${anoAtual}* já está disponível em todas as unidades!
+Se quiser se matricular nas nossas atividades e conferir a programação completa, acesse o Portal da Juventude:
+🔗 https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/
 
-📚 Cursos, 🏋️ Esportes, 🎭 Atividades Culturais e muito mais — com acesso gratuito para jovens de 15 a 29 anos.
-
-Para saber tudo sobre as atividades, horários e como se matricular, fale com a gente agora pelo WhatsApp:
-👉 https://wa.me/${numeroRAG}?text=Ol%C3%A1%2C+quero+saber+sobre+a+programa%C3%A7%C3%A3o+de+${nomeMes.toLowerCase()}
-
-Nosso assistente está pronto para te ajudar! 🤖`
+Caso queira mais informações sobre a programação de qualquer unidade, fale diretamente conosco no WhatsApp:
+📍 Rede Cuca: wa.me/${numeroRAG}`
 
         setTemplate(tpl)
         setModalAberto(true)
