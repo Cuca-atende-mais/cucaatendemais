@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import {
     Megaphone, CheckCircle2, Clock, AlertCircle, Send,
     RefreshCw, BarChart3, Loader2,
-    Building2, CalendarCheck, ShieldAlert, Info, MessageSquare, User,
+    Building2, CalendarCheck, ShieldAlert, Info, MessageSquare, User, ChevronLeft, ChevronRight,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -88,8 +88,17 @@ export default function DivulgacaoPage() {
     const supabase = createClient()
     const { hasPermission } = useUser()
     const hoje = new Date()
-    const [mesAtual] = useState(hoje.getMonth() + 1)
-    const [anoAtual] = useState(hoje.getFullYear())
+    const [mesAtual, setMesAtual] = useState(hoje.getMonth() + 1)
+    const [anoAtual, setAnoAtual] = useState(hoje.getFullYear())
+
+    const navegarMes = (delta: number) => {
+        setMesAtual(prev => {
+            let novoMes = prev + delta
+            if (novoMes < 1) { setAnoAtual(a => a - 1); return 12 }
+            if (novoMes > 12) { setAnoAtual(a => a + 1); return 1 }
+            return novoMes
+        })
+    }
 
     const [carregando, setCarregando] = useState(true)
     const [semPermissao, setSemPermissao] = useState(false)
@@ -187,29 +196,19 @@ export default function DivulgacaoPage() {
     const abrirModal = () => {
         const nomeMes = MESES[mesAtual - 1]
 
-        let linksUnidades = ""
+        // Número do institucionalredecuca — canal RAG da Rede Cuca
+        const numeroRAG = "5585921907649"
 
-        unidadesCuca.forEach(u => {
-            const inst = instanciasInstitucionais.find(i =>
-                (i.unidade_cuca || "").trim().toLowerCase() === u.trim().toLowerCase()
-            )
+        const tpl = `🎉 Olá, {nome}! Aqui é a *Rede Cuca* de Fortaleza. 🌟
 
-            if (inst && inst.telefone) {
-                const numeroLimpo = inst.telefone.replace(/\D/g, "")
-                linksUnidades += `📍 ${u}: wa.me/${numeroLimpo}\n`
-            } else {
-                linksUnidades += `📍 ${u}: [link do numero do whatsapp da instancia dessa unidade]\n`
-            }
-        })
+A programação de *${nomeMes}/${anoAtual}* já está disponível em todas as unidades!
 
-        const tpl = `🎉 Olá, {nome}! Essa mensagem vem da *Rede Cuca*.
-A programação de ${nomeMes}/${anoAtual} já está disponível!
+📚 Cursos, 🏋️ Esportes, 🎭 Atividades Culturais e muito mais — com acesso gratuito para jovens de 15 a 29 anos.
 
-Se quiser se matricular nas nossas atividades e conferir a programação completa, acesse o Portal da Juventude:
-🔗 https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/
+Para saber tudo sobre as atividades, horários e como se matricular, fale com a gente agora pelo WhatsApp:
+👉 https://wa.me/${numeroRAG}?text=Ol%C3%A1%2C+quero+saber+sobre+a+programa%C3%A7%C3%A3o+de+${nomeMes.toLowerCase()}
 
-Caso queira mais informações sobre a programação de uma unidade específica, fale diretamente conosco no WhatsApp:
-${linksUnidades.trim()}`
+Nosso assistente está pronto para te ajudar! 🤖`
 
         setTemplate(tpl)
         setModalAberto(true)
@@ -279,7 +278,19 @@ ${linksUnidades.trim()}`
                         </p>
                     </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                    {/* Seletor de mês */}
+                    <div className="flex items-center gap-1 border border-border rounded-lg px-1 py-1 bg-muted/30">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navegarMes(-1)}>
+                            <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <span className="text-sm font-semibold text-foreground min-w-[80px] text-center">
+                            {MESES[mesAtual - 1]}/{anoAtual}
+                        </span>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navegarMes(1)}>
+                            <ChevronRight className="h-4 w-4" />
+                        </Button>
+                    </div>
                     <Button variant="outline" size="sm" onClick={fetchData}>
                         <RefreshCw className="h-4 w-4 mr-1.5" /> Atualizar
                     </Button>
