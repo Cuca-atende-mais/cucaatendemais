@@ -41,6 +41,14 @@ export async function POST(req: NextRequest) {
         // 4. Usa admin client (service role) para bypassar o RLS no insert
         const admin = createAdminClient()
 
+        // Remove campanha existente para o mesmo mês/ano/unidade (pode ser órfã de import com falha)
+        await admin
+            .from("campanhas_mensais")
+            .delete()
+            .eq("mes", campanha.mes)
+            .eq("ano", campanha.ano)
+            .eq("unidade_cuca", campanha.unidade_cuca)
+
         const { data: newCamp, error: campErr } = await admin
             .from("campanhas_mensais")
             .insert(campanha)
