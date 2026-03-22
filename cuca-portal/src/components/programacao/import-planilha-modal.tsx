@@ -406,33 +406,31 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 // 1. Criar a Campanha Mensal "Pai"
                 appendLog("info", "Banco de Dados", "Registrando " + atividadesToInsert.length + " atividades validadas...")
 
-                const { data: newCamp, error: insErr } = await supabase
-                    .from("campanhas_mensais")
-                    .insert({
-                        titulo: `Programação Mensal - ${mesInt}/${anoAtual}`,
-                        unidade_cuca: unidadeCuca,
-                        mes: mesInt,
-                        ano: anoAtual,
-                        total_atividades: atividadesToInsert.length,
-                        status: "pendente"
-                    })
-                    .select("id")
-                    .single()
+                // Usa API route server-side para bypassar problema de JWT expirado no client
+                const importRes = await fetch("/api/programacao/importar", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        campanha: {
+                            titulo: `Programação Mensal - ${mesInt}/${anoAtual}`,
+                            unidade_cuca: unidadeCuca,
+                            mes: mesInt,
+                            ano: anoAtual,
+                            total_atividades: atividadesToInsert.length,
+                            status: "pendente"
+                        },
+                        atividades: atividadesToInsert
+                    }),
+                    signal: AbortSignal.timeout(60000)
+                })
 
-                if (insErr) throw new Error("Erro insert pai: " + insErr.message)
-
-                // 2. Vincular as fileiras à Campanha em lotes de 50 para evitar timeout
-                const finalBatch = atividadesToInsert.map(act => ({
-                    ...act,
-                    campanha_id: newCamp.id
-                }))
-
-                const CHUNK = 50
-                for (let i = 0; i < finalBatch.length; i += CHUNK) {
-                    const chunk = finalBatch.slice(i, i + CHUNK)
-                    const { error: batchErr } = await supabase.from("atividades_mensais").insert(chunk)
-                    if (batchErr) throw new Error(`Erro insert atividades (lote ${Math.floor(i/CHUNK)+1}): ` + batchErr.message)
+                if (!importRes.ok) {
+                    const errData = await importRes.json().catch(() => ({ error: importRes.statusText }))
+                    throw new Error("Erro ao salvar no banco: " + (errData.error || importRes.statusText))
                 }
+
+                const { campanha_id } = await importRes.json()
+                const newCamp = { id: campanha_id }
 
                 appendLog("success", "Finalizado", "Programação de " + mesObj.label + " importada com sucesso para o banco.")
                 appendLog("info", "Classificação de Inteligência", "Iniciando estruturação automática de Eixos e Modalidades (Categorias) no Worker...")
