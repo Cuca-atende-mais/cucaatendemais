@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client"
 import {
     MessageSquareWarning, Lightbulb, Activity, UserX, User, Building2,
     Calendar, CheckCircle2, AlertCircle, HelpCircle, Loader2, Sparkles, Phone, MessagesSquare,
-    TrendingUp, Tag, BarChart2,
+    TrendingUp, Tag, BarChart2, Brain, Thermometer, ShieldAlert, Star, Zap, ChevronRight,
 } from "lucide-react"
 import { CanalWhatsappTab } from "@/components/instancias/canal-whatsapp-tab"
 import { Button } from "@/components/ui/button"
@@ -57,6 +57,37 @@ const TOOLTIP_STYLE = {
     color: "hsl(var(--foreground))",
 }
 
+type InsightsData = {
+    temperatura: { score: number; nivel: string; frase: string }
+    resumo_executivo: string
+    mais_reclamado: { tema: string; frequencia: number; trecho: string; unidades: string[] }[]
+    mais_elogiado: { tema: string; frequencia: number; trecho: string }[]
+    melhores_ideias: { ideia: string; impacto: string; trecho: string; unidade: string }[]
+    alertas: { tipo: string; descricao: string; unidade: string }[]
+}
+
+const TEMPERATURA_CONFIG: Record<string, { label: string; cor: string; bg: string; border: string }> = {
+    critico:   { label: "Crítico",   cor: "text-red-500",     bg: "bg-red-500/10",     border: "border-red-500/30" },
+    alerta:    { label: "Alerta",    cor: "text-amber-500",   bg: "bg-amber-500/10",   border: "border-amber-500/30" },
+    moderado:  { label: "Moderado",  cor: "text-yellow-500",  bg: "bg-yellow-500/10",  border: "border-yellow-500/30" },
+    bom:       { label: "Bom",       cor: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
+    excelente: { label: "Excelente", cor: "text-indigo-500",  bg: "bg-indigo-500/10",  border: "border-indigo-500/30" },
+}
+
+const IMPACTO_CONFIG: Record<string, { label: string; cor: string }> = {
+    alto:  { label: "Alto impacto",  cor: "text-indigo-400 bg-indigo-500/15 border-indigo-500/30" },
+    medio: { label: "Médio impacto", cor: "text-amber-400 bg-amber-500/15 border-amber-500/30" },
+    baixo: { label: "Baixo impacto", cor: "text-slate-400 bg-slate-500/15 border-slate-500/30" },
+}
+
+const ALERTA_ICON: Record<string, typeof ShieldAlert> = {
+    infraestrutura: ShieldAlert,
+    atendimento: AlertCircle,
+    segurança: ShieldAlert,
+    urgente: Zap,
+    outro: AlertCircle,
+}
+
 export default function OuvidoriaPage() {
     const supabase = createClient()
     const [registros, setRegistros] = useState<OuvidoriaRegistro[]>([])
@@ -65,10 +96,32 @@ export default function OuvidoriaPage() {
     const [detalhamento, setDetalhamento] = useState<OuvidoriaRegistro | null>(null)
     const [analysing, setAnalysing] = useState(false)
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+    const [insights, setInsights] = useState<InsightsData | null>(null)
+    const [loadingInsights, setLoadingInsights] = useState(false)
+    const [insightsMeta, setInsightsMeta] = useState<{ gerado_em: string } | null>(null)
     const { hasPermission, profile, isDeveloper } = useUser()
     const isSuperAdmin = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
 
     useEffect(() => { fetchRegistros() }, [])
+
+    const handleGerarInsights = async () => {
+        setLoadingInsights(true)
+        try {
+            const res = await fetch('/api/ouvidoria/insights', { method: 'POST' })
+            if (!res.ok) {
+                const err = await res.json()
+                throw new Error(err.error || 'Erro ao gerar insights')
+            }
+            const data = await res.json()
+            setInsights(data.insights)
+            setInsightsMeta(data.meta)
+            toast.success('Análise de IA gerada!')
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : 'Falha ao gerar insights')
+        } finally {
+            setLoadingInsights(false)
+        }
+    }
 
     const fetchRegistros = async () => {
         setLoading(true)
@@ -307,10 +360,191 @@ export default function OuvidoriaPage() {
                             <div className="border rounded-xl p-10 bg-card flex flex-col items-center justify-center text-muted-foreground">
                                 <TrendingUp className="h-10 w-10 mb-3 opacity-20" />
                                 <p className="font-medium text-foreground/70">Nenhuma manifestação analisada ainda</p>
-                                <p className="text-sm mt-1 text-center max-w-xs">Abra uma manifestação e clique em "Analisar com IA Sofia" para ver os insights aqui.</p>
+                                <p className="text-sm mt-1 text-center max-w-xs">Clique em "Analisar todas" acima para ver os insights aqui.</p>
                             </div>
                         ) : (
                             <>
+                                {/* ── PAINEL DE INTELIGÊNCIA IA ── */}
+                                <div className="border rounded-xl p-5 bg-card space-y-5">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div className="flex items-center gap-2">
+                                            <Brain className="h-5 w-5 text-indigo-500" />
+                                            <p className="text-sm font-semibold">Inteligência de Gestão — Análise IA</p>
+                                            {insightsMeta && (
+                                                <span className="text-[10px] text-muted-foreground">
+                                                    atualizado {new Date(insightsMeta.gerado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={handleGerarInsights}
+                                            disabled={loadingInsights}
+                                            className="shrink-0 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
+                                        >
+                                            {loadingInsights
+                                                ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Analisando...</>
+                                                : <><Sparkles className="h-3.5 w-3.5 mr-1.5" /> {insights ? 'Atualizar Análise' : 'Gerar Análise IA'}</>
+                                            }
+                                        </Button>
+                                    </div>
+
+                                    {!insights && !loadingInsights && (
+                                        <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
+                                            <Brain className="h-10 w-10 opacity-20" />
+                                            <p className="text-sm">Clique em "Gerar Análise IA" para ver o panorama completo</p>
+                                            <p className="text-xs opacity-60">A IA vai sintetizar temperatura, alertas, melhores ideias e resumo executivo</p>
+                                        </div>
+                                    )}
+
+                                    {loadingInsights && (
+                                        <div className="flex flex-col items-center justify-center py-8 gap-3">
+                                            <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+                                            <p className="text-sm text-muted-foreground">Processando {analisados.length} manifestações...</p>
+                                        </div>
+                                    )}
+
+                                    {insights && !loadingInsights && (
+                                        <div className="space-y-5">
+                                            {/* Temperatura + Resumo Executivo */}
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                {/* Temperatura */}
+                                                {(() => {
+                                                    const cfg = TEMPERATURA_CONFIG[insights.temperatura.nivel] || TEMPERATURA_CONFIG.moderado
+                                                    const pct = insights.temperatura.score
+                                                    const corBarra = insights.temperatura.nivel === 'critico' ? '#ef4444'
+                                                        : insights.temperatura.nivel === 'alerta' ? '#f59e0b'
+                                                        : insights.temperatura.nivel === 'moderado' ? '#eab308'
+                                                        : insights.temperatura.nivel === 'bom' ? '#10b981' : '#6366f1'
+                                                    return (
+                                                        <div className={`rounded-xl border p-5 flex flex-col gap-3 ${cfg.bg} ${cfg.border}`}>
+                                                            <div className="flex items-center gap-2">
+                                                                <Thermometer className={`h-4 w-4 ${cfg.cor}`} />
+                                                                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Temperatura</span>
+                                                            </div>
+                                                            <div className="flex items-end gap-2">
+                                                                <span className={`text-4xl font-bold ${cfg.cor}`}>{pct}</span>
+                                                                <span className="text-muted-foreground text-sm mb-1">/100</span>
+                                                            </div>
+                                                            <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                                                                <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: corBarra }} />
+                                                            </div>
+                                                            <div>
+                                                                <span className={`text-xs font-bold uppercase ${cfg.cor}`}>{cfg.label}</span>
+                                                                <p className="text-xs text-muted-foreground mt-0.5">{insights.temperatura.frase}</p>
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                })()}
+
+                                                {/* Resumo Executivo */}
+                                                <div className="md:col-span-2 rounded-xl border p-5 bg-background/50 space-y-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <Brain className="h-4 w-4 text-indigo-400" />
+                                                        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Resumo Executivo</span>
+                                                    </div>
+                                                    <p className="text-sm leading-relaxed text-foreground/80">{insights.resumo_executivo}</p>
+                                                </div>
+                                            </div>
+
+                                            {/* Alertas */}
+                                            {insights.alertas.length > 0 && (
+                                                <div className="space-y-2">
+                                                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                                        <ShieldAlert className="h-3.5 w-3.5 text-red-400" /> Alertas de Atenção
+                                                    </p>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                        {insights.alertas.map((alerta, i) => {
+                                                            const Icon = ALERTA_ICON[alerta.tipo] || AlertCircle
+                                                            return (
+                                                                <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-red-500/20 bg-red-500/5">
+                                                                    <Icon className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                                                                    <div>
+                                                                        <p className="text-sm font-medium text-red-300">{alerta.descricao}</p>
+                                                                        {alerta.unidade && <p className="text-[10px] text-muted-foreground mt-0.5">{alerta.unidade}</p>}
+                                                                    </div>
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Mais reclamado + Mais elogiado */}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div className="space-y-2">
+                                                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                                        <AlertCircle className="h-3.5 w-3.5 text-amber-400" /> O Que Mais Se Reclama
+                                                    </p>
+                                                    {insights.mais_reclamado.map((item, i) => (
+                                                        <div key={i} className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5 space-y-1">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="text-sm font-semibold capitalize">{item.tema}</span>
+                                                                <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-bold">{item.frequencia}x</span>
+                                                            </div>
+                                                            <p className="text-xs text-muted-foreground line-clamp-2 italic">&ldquo;{item.trecho}&rdquo;</p>
+                                                            {item.unidades?.length > 0 && (
+                                                                <div className="flex gap-1 flex-wrap">
+                                                                    {item.unidades.map(u => (
+                                                                        <span key={u} className="text-[9px] bg-muted/60 text-muted-foreground px-1.5 py-0.5 rounded">{u}</span>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                <div className="space-y-2">
+                                                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                                        <Star className="h-3.5 w-3.5 text-emerald-400" /> O Que Mais Se Elogia
+                                                    </p>
+                                                    {insights.mais_elogiado.map((item, i) => (
+                                                        <div key={i} className="p-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 space-y-1">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="text-sm font-semibold capitalize">{item.tema}</span>
+                                                                <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-bold">{item.frequencia}x</span>
+                                                            </div>
+                                                            <p className="text-xs text-muted-foreground line-clamp-2 italic">&ldquo;{item.trecho}&rdquo;</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Melhores Ideias */}
+                                            {insights.melhores_ideias.length > 0 && (
+                                                <div className="space-y-2">
+                                                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                                        <Lightbulb className="h-3.5 w-3.5 text-indigo-400" /> Melhores Ideias para Implementar
+                                                    </p>
+                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                                        {insights.melhores_ideias.map((ideia, i) => {
+                                                            const imp = IMPACTO_CONFIG[ideia.impacto] || IMPACTO_CONFIG.medio
+                                                            return (
+                                                                <div key={i} className="p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 space-y-2 relative overflow-hidden">
+                                                                    <div className="absolute top-2 right-2 opacity-10">
+                                                                        <Lightbulb className="h-8 w-8 text-indigo-400" />
+                                                                    </div>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${imp.cor}`}>{imp.label}</span>
+                                                                    </div>
+                                                                    <p className="text-sm font-semibold text-foreground/90 leading-snug">{ideia.ideia}</p>
+                                                                    <p className="text-xs text-muted-foreground line-clamp-2 italic">&ldquo;{ideia.trecho}&rdquo;</p>
+                                                                    {ideia.unidade && (
+                                                                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                                                            <Building2 className="h-3 w-3" /> {ideia.unidade}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
                                 {/* Gráficos linha 1: Sentimento + Por unidade */}
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
