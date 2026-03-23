@@ -417,8 +417,8 @@ async def campanhas_loop():
             for evento in (res_pontuais.data or []):
                 await processar_item_disparo(evento, "eventos_pontuais", delay_min, delay_max, daily_limit, error_threshold)
 
-            # 2. Ouvidoria (aprovada pelo Super Admin CUCA)
-            res_ouvidoria = await asyncio.to_thread(_query_db_sync, "ouvidoria_eventos", "aprovado")
+            # 2. Ouvidoria (ativada pelo Super Admin CUCA)
+            res_ouvidoria = await asyncio.to_thread(_query_db_sync, "ouvidoria_eventos", "ativo")
             for ouv in (res_ouvidoria.data or []):
                 await processar_item_disparo(ouv, "ouvidoria_eventos", delay_min, delay_max, daily_limit, error_threshold)
 
