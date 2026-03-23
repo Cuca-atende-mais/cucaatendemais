@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 7.2 | **Atualizado**: 19/03/2026
-> **STATUS ATUAL**: Sprints 1–22 + 24–35 Concluídos | Sprint 23 planejado (pendente) | Sprint 36 planejado
+> **Versão**: 7.7 | **Atualizado**: 23/03/2026
+> **STATUS ATUAL**: Sprints 1–22 + 24–35 + 40–43 Concluídos | Sprint 23 planejado (pendente) | Sprint 36 planejado
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -2834,6 +2834,114 @@ Exemplo: vaga "Caixa de Supermercado" tem 20 vagas, 1 candidato inscrito → col
 
 ---
 
+## Sprint 41 — Correção de Alucinação + Anti-Sycophancy + Carregamento Direto RAG ✅ CONCLUÍDO (23/03/2026)
+
+> **Status**: Concluído | **Data**: 23/03/2026 | **Versão final**: `motor-agente` v16
+
+### Contexto
+
+Após o Sprint 40, persistiam três problemas ao testar o `institucionalredecuca`:
+
+1. **Alucinação por seleção de menu numérico** — ao enviar `"2"` para selecionar "Cursos e Oficinas", o bot retornava cursos inventados ("Introdução ao Teatro", "Fotografia Digital") que não existiam em nenhum chunk do banco.
+2. **Respostas incompletas de esportes** — o bot respondia "só tem futsal" quando Barra tem futsal, natação, handebol, basquete e mais. A busca vetorial com `p_limite=5` retornava apenas os 5 chunks mais próximos — porém a programação da Barra tem 36 chunks e os esportes ficam nos chunks 20–35, fora do alcance.
+3. **Comportamento sycophantic** — quando o cidadão desafiava uma resposta correta ("não tem natação?"), o bot pedia desculpas e inventava natação, reforçando a alucinação em vez de manter a informação correta.
+
+### Causa raiz — análise iterativa
+
+A v13 tentou resolver o problema 1 expandindo a query do menu (ex: `"2"` → `"Cursos e Oficinas"`). Isso melhorou a qualidade do embedding, mas não resolveu o problema 2: a programação mensal da Barra tem 36 chunks e o `p_limite=5` da busca vetorial só devolvia os 5 mais similares — frequentemente os primeiros chunks (cabeçalho, cursos) nunca os últimos (esportes).
+
+### Solução final — v16: Carregamento Direto + Guardrail Anti-Sycophancy
+
+A v16 abandona completamente a busca vetorial para `monthly_program` em agentes institucionais com unidade definida. Em vez disso:
+
+**Carregamento direto da programação mensal:** a função `carregarProgramacaoMensal()` busca o documento `monthly_program` ativo para a unidade, depois carrega todos os chunks ordenados por `chunk_index` (até 40 chunks). Isso garante que o contexto entregue ao GPT-4o seja sempre a programação **completa** sem depender da proximidade semântica.
+
+**Busca vetorial complementar:** apenas para `eventos_pontuais` e `FAQ` (limit=3), mantendo o RAG semântico onde ele faz sentido.
+
+**Instrução de foco por área:** quando o usuário seleciona um número do menu, o texto da opção correspondente é extraído do histórico e adicionado como instrução de contexto ("O usuário selecionou a área: Cursos e Oficinas. Foque APENAS nessa área."), orientando o GPT sem substituir a query de embedding.
+
+**Guardrail anti-sycophancy (Regra 3):** instrução explícita no `INSTRUCAO_SEGURANCA` proibindo o bot de pedir desculpas por informações corretas. Se o usuário desafiar uma resposta, o bot deve verificar o contexto e manter a informação se ela estiver confirmada, usando a fórmula: "Verificando minha base, [informação do contexto]".
+
+### Limpeza de dados complementar
+
+Desativados eventos pontuais de março/2026 cujas datas já passaram (Hip Hop 11–16/03, Pet Saudável 14/03). Esses eventos permaneciam ativos porque a migração anterior de limpeza (`desativar_eventos_pontuais_passados`) verificava `metadados->>'data_fim'`, mas esses documentos não tinham esse campo — a data estava apenas no texto do chunk. Solução pontual via SQL direto por título. O evento "Conexão Futuro" (maio/2026) permanece ativo.
+
+### O que mudou
+
+| O que | Onde |
+|---|---|
+| Carregamento direto de todos os chunks `monthly_program` | Edge Function `motor-agente` v16 |
+| Busca vetorial limitada a `eventos_pontuais` + `FAQ` | Edge Function `motor-agente` v16 |
+| Instrução de foco por área ao selecionar menu | Edge Function `motor-agente` v16 |
+| Guardrail anti-sycophancy (Regra 3) | Edge Function `motor-agente` v16 |
+| Desativação de eventos passados sem campo `data_fim` | SQL direto em `documentos_rag` |
+
+### Pendente
+
+- **Mensagens duplicadas no banco**: o webhook do UAZAPI dispara duas vezes por mensagem recebida, causando duplicatas em `mensagens`. Problema identificado e registrado para Sprint futuro.
+
+---
+
+## Sprint 42 — Troca de Unidade Mid-Conversa na Instância Geral ✅ CONCLUÍDO (23/03/2026)
+
+> **Status**: Concluído | **Versão final**: `motor-agente` v17
+
+### Contexto
+
+Após os testes do Sprint 41, o bot da `institucionalredecuca` respondeu corretamente sobre todas as áreas da Barra (esportes, competições, atividades culturais, Hora Pintada, matrículas). Porém quando o cidadão perguntou sobre outra unidade no meio da conversa ("e no jangurussu tem o que?"), o bot respondeu que não encontrava a informação na Barra e sugeriu consultar o Jangurussu diretamente. Na mensagem seguinte, "queria consultar o cuca jangurussu", o bot disparou `[[HANDOVER]]` e encerrou para um humano.
+
+### Causa raiz
+
+O campo `unidade_selecionada` em `conversas.metadata` é gravado uma única vez na primeira seleção de unidade e nunca mais muda. Não existe lógica para detectar que o cidadão está pedindo para mudar de unidade. Quando o GPT não consegue responder sobre Jangurussu com contexto da Barra, o prompt de HANDOVER do agente Institucional é acionado erroneamente.
+
+### Solução planejada
+
+No bloco 5b do `motor-agente`, quando `unidade_selecionada` já estiver definida, adicionar verificação se a mensagem atual menciona uma unidade diferente via `UNIDADES_MAP`. Se sim: atualizar a sessão com a nova unidade, carregar a programação da nova unidade e responder com mensagem de transição. Adicionar também regra no `INSTRUCAO_SEGURANCA` proibindo `[[HANDOVER]]` quando o cidadão menciona o nome de uma unidade CUCA — isso é sempre uma solicitação de consulta, não de atendimento humano.
+
+### O que será modificado
+
+| O que | Onde |
+|---|---|
+| Detecção de troca de unidade mid-conversa | Edge Function `motor-agente` v17 |
+| Atualização de `unidade_selecionada` ao trocar | Edge Function `motor-agente` v17 |
+| Regra anti-HANDOVER para nomes de unidades | Edge Function `motor-agente` v17 |
+
+---
+
+## Sprint 43 — Análise e Correção do Módulo Ouvidoria ✅ CONCLUÍDO (23/03/2026)
+
+> **Status**: Concluído | **Data**: 23/03/2026
+
+### Contexto
+
+Realizada análise comparativa entre o PLANO_DESENVOLVIMENTO.md e o código real do módulo Ouvidoria. O objetivo era entender o estado atual, identificar divergências e corrigir o que estava impedindo o funcionamento pleno.
+
+### O que foi verificado e está correto
+
+O módulo Ouvidoria tem a espinha dorsal implementada: tabela `ouvidoria_registros` (manifestações com anonimato, sentimento, temas, protocolo), tabela `ouvidoria_eventos` (eventos de pesquisa com público-alvo segmentado), análise de sentimento via GPT-4o-mini no worker, páginas `/ouvidoria` e `/ouvidoria/eventos` no portal, ChatSidebar + ChatWindow em tempo real para Conversas Sofia, botão "Assumir Atendimento" no `chat-window.tsx` (já existe e funciona), e isolamento entre Ouvidoria e Atendimento (o painel `/atendimento` já filtra por `filterCanalTipo="Institucional"`, excluindo conversas de Sofia corretamente).
+
+### Bug corrigido — `campanhas_engine.py`
+
+O worker buscava eventos de ouvidoria com `status = 'aprovado'` mas a tabela `ouvidoria_eventos` usa `status = 'ativo'`. Isso impedia que qualquer evento criado e ativado no portal fosse processado e disparado automaticamente. Corrigido para `status = 'ativo'`. Commit `978de08`.
+
+### Divergência de nomenclatura identificada
+
+O PLANO_DESENVOLVIMENTO.md referia a tabela como `ouvidoria_manifestacoes`, mas o código real usa `ouvidoria_registros`. Apenas inconsistência de documentação — banco e código estavam consistentes. Registrado para controle.
+
+### Pendente para fases futuras
+
+- Dashboard de insights agregados (sentimentos ao longo do tempo, temas mais frequentes por unidade)
+- RLS explícita em `categorias_interesse` e `lead_interesses`
+- Tabelas `satisfaction_surveys` e `survey_responses` (pesquisas estruturadas com múltipla escolha)
+
+### O que mudou
+
+| O que | Onde |
+|---|---|
+| Correção: `status = 'aprovado'` → `status = 'ativo'` na consulta de ouvidoria_eventos | `worker/campanhas_engine.py` linha 421 |
+
+---
+
 ## Problemas identificados em 20/03/2026 — A resolver em sessão futura
 
 ### 1. Duplicatas no Banco de Talentos
@@ -2930,3 +3038,79 @@ const ocrComScore = {
 | 1 | Match score zerado no detalhe | Alto (UX confusa) | Baixo (só frontend) |
 | 2 | Match score zerado na candidatura | Alto (UX confusa) | Baixo (só frontend) |
 | 3 | Duplicatas no banco | Alto (desperdício IA + UX) | Médio (requer decisão de critério) |
+
+---
+
+## Sprint 40 — Correção RAG Institucional: Tipo, Mês Anterior e Canal Geral ✅ CONCLUÍDO (23/03/2026)
+
+> **Status**: Concluído | **Data**: 23/03/2026
+
+### Contexto
+
+Após os disparos da programação mensal de abril/2026, o número institucional da Rede CUCA (`institucionalredecuca`) respondia "Não tenho essa informação agora" para qualquer pergunta sobre programação — mesmo com o RAG corretamente indexado para todas as unidades. Três problemas distintos foram identificados e corrigidos neste sprint.
+
+---
+
+### Problema 1 — Tipo errado na busca RAG
+
+O motor-agente estava buscando documentos do tipo `campanhas_mensais` no RAG, mas todos os documentos de programação mensal são salvos com o tipo `monthly_program`. Essa discrepância de nomenclatura fazia a busca retornar zero chunks para o agente institucional, que então respondia que não tinha a informação. A correção alinha o nome usado na busca com o nome real do tipo armazenado na tabela `documentos_rag`.
+
+**Onde foi corrigido:** Edge Function `motor-agente` — objeto `RAG_FONTES_POR_AGENTE`, entradas `maria` e `Institucional`.
+
+---
+
+### Problema 2 — Mês anterior permanecia ativo no RAG
+
+O trigger `trigger_indexar_campanha_mensal` já sabia criar e atualizar o documento RAG quando uma campanha é aprovada, e o trigger `tr_campanha_mensal_delete_rag` já sabia limpar o RAG quando uma campanha é deletada (inclusive ao reimportar o mesmo mês com correções). O que não existia era a lógica de desativar o mês anterior quando um novo mês era aprovado.
+
+Resultado prático: após aprovar abril/Barra, o documento de março/Barra continuava com `ativo = true`, e a busca semântica podia retornar chunks do mês errado dependendo da pergunta.
+
+**Como funciona a substituição dentro do mesmo mês (exemplo do vôlei):** Ao reimportar a planilha com o horário corrigido, a API apaga a campanha anterior do mesmo mês/ano/unidade, o trigger de delete remove o documento RAG vinculado, e ao aprovar a nova versão o trigger cria um documento RAG atualizado. Não há nenhuma intervenção manual necessária do colaborador.
+
+**Onde foi corrigido:** Função `trigger_indexar_campanha_mensal` no banco — adicionada instrução de `UPDATE ativo = false` para todos os `monthly_program` da mesma unidade com `campanha_id` diferente, executada antes de criar/atualizar o documento do mês atual. Aplicado como migration `fix_trigger_desativar_mes_anterior_monthly_program`.
+
+O documento de março/Barra foi desativado manualmente para corrigir o estado atual do banco (já que o trigger novo só atuaria em aprovações futuras).
+
+---
+
+### Problema 3 — `institucionalredecuca` sem unidade definida para o RAG
+
+A instância `institucionalredecuca` tem `unidade_cuca = 'Geral'` pois atende qualquer cidadão da rede toda. Porém, todos os documentos `monthly_program` estão vinculados a unidades específicas (Barra, Jangurussu, etc.) — nenhum tem unidade `'Geral'`. A busca RAG passava `p_unidade_cuca = 'Geral'` e não encontrava nada.
+
+**Nova experiência do cidadão no número da Rede:**
+Ao entrar em contato, o agente pergunta sobre qual unidade CUCA ele quer saber, apresentando menu com as 5 opções (Barra, Jangurussu, Mondubim, Pici, José Walter — numeradas de 1 a 5). O cidadão pode responder com o número ou o nome da unidade. A escolha é registrada em `conversas.metadata.unidade_selecionada` e usada em toda a conversa sem repetir a pergunta. Se o cidadão responde algo que não identifica nenhuma unidade, o menu é reapresentado gentilmente.
+
+**Para os colaboradores e gestores:** nenhuma mudança. O portal, o import de planilhas e o fluxo de aprovação continuam idênticos.
+
+**Onde foi corrigido:** Edge Function `motor-agente` — bloco entre "Buscar prompt" e "RAG", com detecção de `unidade_cuca === 'Geral'` e gerenciamento de estado via `conversa.metadata`. Deploy como versão 12 da Edge Function.
+
+---
+
+### Problema 4 — Eventos pontuais passados ativos no RAG
+
+Eventos pontuais são indexados em `documentos_rag` com tipo `eventos_pontuais`, mas após a data de término do evento, o documento permanecia `ativo = true`. O agente podia mencionar um evento que já aconteceu como se fosse acontecer.
+
+**Onde foi corrigido:** Migration `desativar_eventos_pontuais_passados` — executa UPDATE imediato nos registros com `data_fim` no passado e cria função `desativar_eventos_pontuais_passados()` para execução futura via pg_cron ou chamada manual.
+
+---
+
+### Arquivos e objetos alterados
+
+| O que | Onde | Tipo de mudança |
+|---|---|---|
+| `RAG_FONTES_POR_AGENTE` | Edge Function `motor-agente` v12 | `"campanhas_mensais"` → `"monthly_program"` |
+| Lógica de unidade Geral | Edge Function `motor-agente` v12 | Novo bloco de seleção de unidade com estado em metadata |
+| `trigger_indexar_campanha_mensal` | Banco (migration) | Adicionado UPDATE ativo=false para meses anteriores |
+| `desativar_eventos_pontuais_passados` | Banco (migration) | Nova função + execução imediata nos eventos passados |
+
+---
+
+### Verificação
+
+```sql
+-- Apenas abril deve estar ativo por unidade
+SELECT titulo, unidade_cuca, ativo FROM documentos_rag WHERE tipo = 'monthly_program' ORDER BY unidade_cuca, titulo;
+
+-- Eventos pontuais passados devem estar inativos
+SELECT titulo, ativo, metadados->>'data_fim' as data_fim FROM documentos_rag WHERE tipo = 'eventos_pontuais' ORDER BY ativo DESC;
+```
