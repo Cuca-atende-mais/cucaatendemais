@@ -544,6 +544,18 @@ async def process_webhook_payload(payload: dict, token: str):
                                     media_url = match_tag.group(1).strip()
                                     resposta_ia = resposta_ia.replace(match_tag.group(0), '').strip()
                                 
+                                # Ouvidoria: salvar manifestação quando Sofia confirma protocolo
+                                if agente_tipo.lower() in ["ouvidoria", "sofia"] and (
+                                    "protocolo seguro" in resposta_ia.lower() or
+                                    "registrada em nossa ouvidoria" in resposta_ia.lower()
+                                ):
+                                    asyncio.create_task(salvar_manifestacao_ouvidoria(
+                                        conversa_id=conversation_id,
+                                        lead_id=lead_id,
+                                        unidade_cuca=unidade_cuca,
+                                        phone=phone,
+                                    ))
+
                                 # S11-06: Transbordo Humano Inteligente
                                 # Bug 4 corrigido: motor-agente emite [[HANDOVER]], alinhando a regex aqui
                                 handover_from_ia = data.get("handover", False)
@@ -670,6 +682,93 @@ async def process_webhook_payload(payload: dict, token: str):
         logger.error(f"Erro no processamento em background: {str(e)}")
 
 @app.get("/")
+async def salvar_manifestacao_ouvidoria(conversa_id: str, lead_id: str, unidade_cuca: str | None, phone: str):
+    """Extrai e salva manifestação da Ouvidoria quando Sofia confirma protocolo."""
+    try:
+        from openai import AsyncOpenAI
+        openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # Buscar histórico de mensagens da conversa
+        msgs_res = (
+            supabase.table("mensagens")
+            .select("remetente, conteudo")
+            .eq("conversa_id", conversa_id)
+            .order("created_at")
+            .execute()
+        )
+        historico = msgs_res.data or []
+
+        # Montar texto do histórico
+        hist_txt = "\n".join(
+            f"{'Usuário' if m['remetente'] == 'lead' else 'Sofia'}: {m['conteudo']}"
+            for m in historico
+        )
+
+        prompt_extracao = """Analise essa conversa de ouvidoria e extraia a manifestação mais recente que foi registrada (quando Sofia disse "protocolo seguro" ou "registrada em nossa Ouvidoria").
+
+Retorne um JSON com:
+- "tipo": "sugestao" ou "critica"
+- "texto_manifestacao": o texto completo da manifestação do usuário (a mensagem de crítica/sugestão em si)
+- "nome_solicitante": nome informado pelo usuário (null se não informou ou se for crítica anônima)
+- "unidade_cuca": unidade CUCA mencionada (null se não informada). Normalize para formato: "CUCA Barra", "CUCA Jangurussu", "CUCA Mondubim", "CUCA Pici", "CUCA José Walter" ou null
+- "anonimo": true se for crítica anônima, false caso contrário
+
+Retorne APENAS o JSON, sem markdown."""
+
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": prompt_extracao},
+                {"role": "user", "content": hist_txt}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0
+        )
+
+        result = json.loads(response.choices[0].message.content)
+        tipo = result.get("tipo")
+        texto = result.get("texto_manifestacao")
+
+        if not tipo or not texto:
+            logger.warning(f"[Ouvidoria] Extração incompleta: {result}")
+            return
+
+        # Gerar número de protocolo
+        ultimo_res = (
+            supabase.table("ouvidoria_registros")
+            .select("protocolo")
+            .ilike("protocolo", "OUV-%")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        ultimo_num = 0
+        if ultimo_res.data:
+            try:
+                ultimo_num = int(ultimo_res.data[0]["protocolo"].split("-")[1])
+            except Exception:
+                pass
+        novo_protocolo = f"OUV-{str(ultimo_num + 1).zfill(3)}"
+
+        unidade_final = result.get("unidade_cuca") or unidade_cuca
+
+        supabase.table("ouvidoria_registros").insert({
+            "tipo": tipo,
+            "texto_manifestacao": texto,
+            "nome_solicitante": result.get("nome_solicitante"),
+            "telefone_solicitante": phone,
+            "lead_id": lead_id,
+            "unidade_cuca": unidade_final,
+            "anonimo": result.get("anonimo", False),
+            "protocolo": novo_protocolo,
+        }).execute()
+
+        logger.info(f"[Ouvidoria] Manifestação salva: {novo_protocolo} | tipo={tipo} | unidade={unidade_final}")
+
+    except Exception as e:
+        logger.error(f"[Ouvidoria] Erro ao salvar manifestação: {e}", exc_info=True)
+
+
 async def root():
     return {"status": "ok", "service": "worker-cuca"}
 
