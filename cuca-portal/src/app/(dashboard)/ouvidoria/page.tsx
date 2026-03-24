@@ -673,7 +673,7 @@ export default function OuvidoriaPage() {
                                 <ChatSidebar
                                     activeConversationId={activeConversationId}
                                     onSelectConversation={setActiveConversationId}
-                                    filterAgenteTipo={["sofia_global", "sofia_unidade"]}
+                                    filterAgenteTipo={["sofia_global", "sofia_unidade", "Sofia", "Ouvidoria", "ouvidoria"]}
                                     title="Ouvidoria — Conversas Sofia"
                                 />
                             </div>
