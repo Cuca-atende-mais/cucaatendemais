@@ -5,17 +5,6 @@ import { Trash2, TriangleAlert, CheckCircle2, Loader2, ArrowLeft, RefreshCw } fr
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
 import Link from "next/link"
 
 type ResetResult = {
@@ -33,6 +22,8 @@ export default function ResetAutomacaoPage() {
     const [error, setError] = useState<string | null>(null)
 
     async function handleReset() {
+        if (!window.confirm("Tem certeza? Isso apagará permanentemente todas as mensagens, conversas, transbordo e logs de webhook. Esta ação não pode ser desfeita.")) return
+
         setLoading(true)
         setResult(null)
         setError(null)
@@ -126,35 +117,13 @@ export default function ResetAutomacaoPage() {
             </Card>
 
             {/* Botão de reset manual */}
-            <AlertDialog>
-                <AlertDialogTrigger asChild>
-                    <Button variant="destructive" size="lg" disabled={loading} className="w-full">
-                        {loading ? (
-                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Zerando...</>
-                        ) : (
-                            <><Trash2 className="mr-2 h-4 w-4" /> Zerar Mensagens e Memórias Agora</>
-                        )}
-                    </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Confirmar reset de automações?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            Isso irá apagar <strong>permanentemente</strong> todas as mensagens, conversas,
-                            transbordo e logs de webhook. Esta ação <strong>não pode ser desfeita</strong>.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction
-                            onClick={handleReset}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                        >
-                            Sim, zerar tudo
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
+            <Button variant="destructive" size="lg" disabled={loading} className="w-full" onClick={handleReset}>
+                {loading ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Zerando...</>
+                ) : (
+                    <><Trash2 className="mr-2 h-4 w-4" /> Zerar Mensagens e Memórias Agora</>
+                )}
+            </Button>
 
             {/* Resultado */}
             {result && (
