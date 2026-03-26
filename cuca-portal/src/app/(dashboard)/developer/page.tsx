@@ -11,6 +11,7 @@ import {
     DollarSign,
     Terminal,
     Wifi,
+    RefreshCw,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -88,6 +89,15 @@ const consoleModules = [
         badge: "Em breve",
         badgeVariant: "secondary" as const,
         status: "coming",
+    },
+    {
+        title: "Reset de Automações",
+        description: "Zerar mensagens, conversas, transbordo e logs de todas as automações. Cron automático às 00:00 BRT + reset manual para testes",
+        icon: RefreshCw,
+        href: "/developer/reset",
+        badge: "Cron ativo",
+        badgeVariant: "destructive" as const,
+        status: "active",
     },
 ]
 
