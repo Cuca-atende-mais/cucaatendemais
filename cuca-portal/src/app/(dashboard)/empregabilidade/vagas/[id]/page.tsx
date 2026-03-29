@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Vaga, Candidatura, EmpregabilidadeFollowup } from "@/lib/types/database"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -79,6 +79,7 @@ type TalentBankCandidate = {
 export default function VagaDetalhesPage() {
     const params = useParams()
     const router = useRouter()
+    const searchParams = useSearchParams()
     const id = params.id as string
     const supabase = createClient()
 
@@ -125,7 +126,8 @@ export default function VagaDetalhesPage() {
     const [inscricaoForm, setInscricaoForm] = useState({ nome: "", telefone: "", data_nascimento: "" })
     const [criandoInscricao, setCriandoInscricao] = useState(false)
 
-    useEffect(() => { if (id) fetchData() }, [id])
+    const refreshParam = searchParams.get("t")
+    useEffect(() => { if (id) fetchData() }, [id, refreshParam])
 
     const fetchData = async () => {
         setLoading(true)
@@ -264,7 +266,7 @@ export default function VagaDetalhesPage() {
     }
 
     const candidatosFiltrados = filtroStatus === "todos"
-        ? candidatos
+        ? candidatos.filter(c => c.status !== "rejeitado")
         : candidatos.filter(c => c.status === filtroStatus)
 
     const contadores = {

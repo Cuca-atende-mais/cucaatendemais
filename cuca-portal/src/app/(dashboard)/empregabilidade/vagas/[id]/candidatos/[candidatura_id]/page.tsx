@@ -153,8 +153,8 @@ export default function CandidatoDetalhesPage() {
             })
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || "Erro ao rejeitar candidato")
-            setCandidatura((prev: any) => ({ ...prev, status: "rejeitado" }))
             toast.success("Candidato rejeitado e adicionado ao Banco de Talentos!")
+            router.push(`/empregabilidade/vagas/${vagaId}?t=${Date.now()}`)
         } catch (err: any) {
             toast.error("Erro: " + err.message)
         } finally {

@@ -1128,7 +1128,9 @@ async def _processar_publico(
                     "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
                     "Assim que surgir uma oportunidade compatível com seu perfil e área de interesse, "
                     "nossa equipe entrará em contato diretamente por aqui. 🎯\n\n"
-                    "Obrigado por confiar na CUCA!"
+                    "Obrigado por confiar na CUCA!\n\n"
+                    "Deseja ver as *vagas abertas* ou encerrar por aqui?\n"
+                    "Responda *vagas* para ver oportunidades ou *encerrar*."
                 )
                 _set_fluxo(conversa_id, {
                     "etapa": "candidatura_confirmada",
@@ -1164,7 +1166,7 @@ async def _processar_publico(
 
     # --- ETAPA: candidatura_confirmada ---
     if etapa == "candidatura_confirmada":
-        if any(p in t_lower for p in ("outra", "mais", "ver vagas", "outras vagas")):
+        if any(p in t_lower for p in ("outra", "mais", "ver vagas", "outras vagas", "vagas", "vaga")):
             _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
             await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         else:
@@ -1633,7 +1635,9 @@ async def empregabilidade_notify_loop():
                             "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
                             "Assim que surgir uma oportunidade compatível com seu perfil e área de interesse, "
                             "nossa equipe entrará em contato diretamente por aqui. 🎯\n\n"
-                            "Obrigado por confiar na CUCA!"
+                            "Obrigado por confiar na CUCA!\n\n"
+                            "Deseja ver as *vagas abertas* ou encerrar por aqui?\n"
+                            "Responda *vagas* para ver oportunidades ou *encerrar*."
                         )
                         _set_fluxo(conversa_id, {
                             "etapa": "candidatura_confirmada",

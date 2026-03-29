@@ -47,6 +47,8 @@ export default function CandidaturaPublicaPage() {
     const cameraInputRef = useRef<HTMLInputElement>(null)
     const [arquivoPreview, setArquivoPreview] = useState<string | null>(null)
 
+    const showAreaInteresse = bancoTalentosParam
+
     const [areasInteresse, setAreasInteresse] = useState<string[]>([])
 
     const toggleArea = (a: string) => {
@@ -145,7 +147,7 @@ export default function CandidaturaPublicaPage() {
             toast.error("Anexe seu currículo ou tire uma foto do documento.")
             return
         }
-        if (areasInteresse.length === 0) {
+        if (showAreaInteresse && areasInteresse.length === 0) {
             toast.error("Selecione pelo menos uma área de interesse.")
             return
         }
@@ -485,22 +487,24 @@ export default function CandidaturaPublicaPage() {
                                 </p>
                             </div>
 
-                            {/* Área de interesse */}
-                            <div className="space-y-3 pt-1">
-                                <div className="flex items-center gap-2">
-                                    <Tag className="h-4 w-4 text-cuca-blue" />
-                                    <Label className="text-base font-semibold">Área de Interesse *</Label>
+                            {/* Área de interesse — apenas para banco de talentos */}
+                            {showAreaInteresse && (
+                                <div className="space-y-3 pt-1">
+                                    <div className="flex items-center gap-2">
+                                        <Tag className="h-4 w-4 text-cuca-blue" />
+                                        <Label className="text-base font-semibold">Área de Interesse *</Label>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground -mt-1">Em quais áreas você quer trabalhar? Selecione todas que se aplicam.</p>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {AREAS_INTERESSE.map(a => (
+                                            <label key={a} className={`flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer text-sm transition-colors ${areasInteresse.includes(a) ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium" : "border-border hover:border-cuca-blue/50"}`}>
+                                                <input type="checkbox" className="accent-cuca-blue" checked={areasInteresse.includes(a)} onChange={() => toggleArea(a)} />
+                                                {a}
+                                            </label>
+                                        ))}
+                                    </div>
                                 </div>
-                                <p className="text-xs text-muted-foreground -mt-1">Em quais áreas você quer trabalhar? Selecione todas que se aplicam.</p>
-                                <div className="grid grid-cols-1 gap-2">
-                                    {AREAS_INTERESSE.map(a => (
-                                        <label key={a} className={`flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer text-sm transition-colors ${areasInteresse.includes(a) ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium" : "border-border hover:border-cuca-blue/50"}`}>
-                                            <input type="checkbox" className="accent-cuca-blue" checked={areasInteresse.includes(a)} onChange={() => toggleArea(a)} />
-                                            {a}
-                                        </label>
-                                    ))}
-                                </div>
-                            </div>
+                            )}
 
                             <Button
                                 type="submit"

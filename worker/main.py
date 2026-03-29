@@ -486,6 +486,23 @@ async def process_webhook_payload(payload: dict, token: str):
                     logger.error(f"[Empregabilidade] Erro no motor: {emp_err}", exc_info=True)
                 return  # Não passa para o motor-agente genérico
 
+            # Roteamento para motor institucional (seleção de unidade + RAG)
+            if not from_me and canal_tipo == "Institucional":
+                try:
+                    from institucional_engine import processar_mensagem_institucional
+                    await processar_mensagem_institucional(
+                        texto=text_content or "",
+                        phone=phone,
+                        instance_name=instance_name,
+                        token=inst_token,
+                        lead_id=lead_id,
+                        conversa_id=conversation_id,
+                        unidade_cuca_instancia=unidade_cuca or "",
+                    )
+                except Exception as inst_err:
+                    logger.error(f"[Institucional] Erro no motor: {inst_err}", exc_info=True)
+                return  # Não passa para o motor-agente genérico
+
             # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa'
             if not from_me and conversation_status in ("ativa", "encerrada"):
                 try:

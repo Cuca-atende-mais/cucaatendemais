@@ -32,11 +32,10 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: "Empresa não encontrada ou inativa." }, { status: 404 })
         }
 
-        // Calcular número sequencial da vaga para esta empresa
+        // Calcular número sequencial global da vaga
         const { data: maxData } = await supabaseAdmin
             .from("vagas")
             .select("numero_vaga")
-            .eq("empresa_id", empresa_id)
             .order("numero_vaga", { ascending: false })
             .limit(1)
             .maybeSingle()
