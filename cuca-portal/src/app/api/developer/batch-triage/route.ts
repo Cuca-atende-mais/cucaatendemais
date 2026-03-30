@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import pdf from "pdf-parse/lib/pdf-parse.js";
 import OpenAI from "openai";
 import { createClient as createServerClient } from "@/lib/supabase/server";
+import { uploadToR2 } from "@/lib/r2";
 
 const DEVELOPER_EMAILS = ["valmir@cucateste.com", "dev.cucaatendemais@gmail.com"];
 
@@ -148,7 +149,16 @@ Regras rigorosas:
       filteredAreas.push("Serviços Gerais (limpeza, portaria, zeladoria)"); // fallback
     }
 
-    // 5. Salvar automaticamente no Supabase
+    // 5. Upload do PDF original para Cloudflare R2
+    const r2Key = `batch/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    let arquivoCvUrl: string | null = null;
+    try {
+      arquivoCvUrl = await uploadToR2(r2Key, buffer, "application/pdf");
+    } catch (r2Err) {
+      console.warn("[batch-triage] Upload R2 falhou, continuando sem arquivo:", r2Err);
+    }
+
+    // 6. Salvar automaticamente no Supabase
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -157,8 +167,9 @@ Regras rigorosas:
     const talentPayload = {
       nome: aiResult.nome || "Não encontrado",
       telefone: aiResult.telefone || null,
-      status: "disponivel", // Padrão
+      status: "disponivel",
       area_interesse: filteredAreas,
+      arquivo_cv_url: arquivoCvUrl,
       skills_jsonb: {
         resumo: aiResult.resumo_skills,
         justificativa_ia: aiResult.justificativa_ia,

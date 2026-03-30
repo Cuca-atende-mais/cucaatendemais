@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { uploadToR2 } from "@/lib/r2"
 
 export async function POST(request: NextRequest) {
     const supabase = createClient(
@@ -21,27 +22,12 @@ export async function POST(request: NextRequest) {
 
         let arquivo_cv_url: string | null = null
 
-        // Upload do currículo se enviado
+        // Upload do currículo para Cloudflare R2
         if (arquivo && arquivo.size > 0) {
             const ext = arquivo.name.split(".").pop() || "pdf"
-            const filename = `talent_bank/${Date.now()}_${nome.replace(/\s+/g, "_")}.${ext}`
-            const arrayBuffer = await arquivo.arrayBuffer()
-            const buffer = Buffer.from(arrayBuffer)
-
-            const { error: uploadErr } = await supabase.storage
-                .from("curriculos")
-                .upload(filename, buffer, {
-                    contentType: arquivo.type || "application/pdf",
-                    upsert: false,
-                })
-
-            if (uploadErr) throw uploadErr
-
-            const { data: urlData } = supabase.storage
-                .from("curriculos")
-                .getPublicUrl(filename)
-
-            arquivo_cv_url = urlData?.publicUrl || null
+            const key = `talent-bank/${Date.now()}_${nome.replace(/\s+/g, "_")}.${ext}`
+            const buffer = Buffer.from(await arquivo.arrayBuffer())
+            arquivo_cv_url = await uploadToR2(key, buffer, arquivo.type || "application/pdf")
         }
 
         // Upsert por telefone

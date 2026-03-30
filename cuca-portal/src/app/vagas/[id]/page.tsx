@@ -74,19 +74,13 @@ export default function VagaPublicaPage() {
         setLoadingSubmit(true)
 
         try {
-            // 1. Upload do Arquivo no Supabase Storage
-            const fileExt = arquivo.name.split('.').pop()
-            const fileName = `${Math.random()}.${fileExt}`
-            const filePath = `${vaga?.id}/${fileName}`
-
-            const { error: uploadError } = await supabase.storage
-                .from('curriculos')
-                .upload(filePath, arquivo, { upsert: false })
-
-            if (uploadError) throw uploadError
-
-            // Gerar URL publica
-            const { data: { publicUrl } } = supabase.storage.from('curriculos').getPublicUrl(filePath)
+            // 1. Upload do Arquivo para Cloudflare R2
+            const fd = new FormData()
+            fd.append("file", arquivo)
+            fd.append("folder", `candidaturas/${vaga?.id || "geral"}`)
+            const upRes = await fetch("/api/upload-cv", { method: "POST", body: fd })
+            if (!upRes.ok) throw new Error("Erro no upload do currículo.")
+            const { url: publicUrl } = await upRes.json()
 
             // 2. Salvar na Tabela 'candidaturas'
             const { data: candData, error: candError } = await supabase.from('candidaturas').insert({

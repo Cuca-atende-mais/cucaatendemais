@@ -176,15 +176,12 @@ export default function CandidaturaPublicaPage() {
                 }
             }
 
-            const fileExt = arquivo.name.split(".").pop()
-            const filePath = `${vagaId || "banco_talentos"}/${Math.random()}.${fileExt}`
-
-            const { error: uploadError } = await supabase.storage
-                .from("curriculos")
-                .upload(filePath, arquivo, { upsert: false })
-            if (uploadError) throw uploadError
-
-            const { data: { publicUrl } } = supabase.storage.from("curriculos").getPublicUrl(filePath)
+            const fd = new FormData()
+            fd.append("file", arquivo)
+            fd.append("folder", `candidaturas/${vagaId || "banco_talentos"}`)
+            const upRes = await fetch("/api/upload-cv", { method: "POST", body: fd })
+            if (!upRes.ok) throw new Error("Erro no upload do currículo.")
+            const { url: publicUrl } = await upRes.json()
 
             const obsArr: string[] = []
             if (destinoBancoTalentos) {

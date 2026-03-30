@@ -54,17 +54,15 @@ export default function CandidaturaEspontaneaPage() {
         try {
             let cvUrl: string | null = null
 
-            // 1. Upload do CV se fornecido
+            // 1. Upload do CV para Cloudflare R2
             if (arquivo) {
-                const ext = arquivo.name.split(".").pop()
-                const path = `espontanea/${Date.now()}_${nome.replace(/\s+/g, "_").toLowerCase()}.${ext}`
-                const { error: upErr } = await supabase.storage
-                    .from("curriculos")
-                    .upload(path, arquivo, { contentType: arquivo.type, upsert: false })
-
-                if (upErr) throw new Error("Erro no upload do currículo: " + upErr.message)
-                const { data: urlData } = supabase.storage.from("curriculos").getPublicUrl(path)
-                cvUrl = urlData?.publicUrl ?? null
+                const fd = new FormData()
+                fd.append("file", arquivo)
+                fd.append("folder", "espontanea")
+                const upRes = await fetch("/api/upload-cv", { method: "POST", body: fd })
+                if (!upRes.ok) throw new Error("Erro no upload do currículo.")
+                const { url } = await upRes.json()
+                cvUrl = url
             }
 
             // 2. Inserir diretamente no talent_bank
