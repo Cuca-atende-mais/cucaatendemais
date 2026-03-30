@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Loader2, Save, AlertCircle } from "lucide-react"
+import { Loader2, Save, AlertCircle, Trash2 } from "lucide-react"
 import { useUser } from "@/lib/auth/user-provider"
 
 interface VagaModalProps {

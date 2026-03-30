@@ -73,6 +73,7 @@ export default function CandidatoDetalhesPage() {
     const [enviandoEmail, setEnviandoEmail] = useState(false)
     const [rejeitando, setRejeitando] = useState(false)
     const [aprovando, setAprovando] = useState(false)
+    const [excluindo, setExcluindo] = useState(false)
 
     useEffect(() => { fetchData() }, [candidaturaId, vagaId])
 
@@ -95,6 +96,11 @@ export default function CandidatoDetalhesPage() {
     }
 
     const alterarStatus = async (novoStatus: string) => {
+        // Rejeição sempre passa pela API para popular o banco de talentos
+        if (novoStatus === 'rejeitado') {
+            await rejeitarParaBancoTalentos()
+            return
+        }
         setSalvandoStatus(true)
         try {
             const { error } = await supabase
@@ -108,6 +114,21 @@ export default function CandidatoDetalhesPage() {
             toast.error("Erro: " + err.message)
         } finally {
             setSalvandoStatus(false)
+        }
+    }
+
+    const excluirCandidatura = async () => {
+        if (!window.confirm(`Excluir permanentemente a candidatura de ${candidatura?.nome}? Esta ação não pode ser desfeita.`)) return
+        setExcluindo(true)
+        try {
+            const { error } = await supabase.from("candidaturas").delete().eq("id", candidaturaId)
+            if (error) throw error
+            toast.success("Candidatura excluída.")
+            router.push(`/empregabilidade/vagas/${vagaId}?t=${Date.now()}`)
+        } catch (err: any) {
+            toast.error("Erro: " + err.message)
+        } finally {
+            setExcluindo(false)
         }
     }
 
@@ -302,7 +323,7 @@ export default function CandidatoDetalhesPage() {
     const temCV = !!(ocr?.arquivo_cv_url || candidatura?.arquivo_cv_url)
     const temEmail = !!(vaga?.email_responsavel || vaga?.email_contato_empresa)
     const podeAprovar = candidatura.status === "pendente"
-    const podeRejeitar = candidatura.status === "pendente"
+    const podeRejeitar = !["rejeitado", "contratado"].includes(candidatura.status)
     const podeMarcarContratado = candidatura.status === "selecionado"
 
     const analise = ocr?.analise_aderencia || null
@@ -563,6 +584,19 @@ export default function CandidatoDetalhesPage() {
                                     Candidato rejeitado e adicionado ao banco de talentos.
                                 </div>
                             )}
+
+                            {/* Excluir permanentemente */}
+                            <Button
+                                variant="ghost"
+                                className="w-full text-xs text-muted-foreground hover:text-red-500 hover:bg-red-500/10 mt-2"
+                                onClick={excluirCandidatura}
+                                disabled={excluindo}
+                            >
+                                {excluindo
+                                    ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                    : <XCircle className="mr-2 h-3.5 w-3.5" />}
+                                Excluir Candidatura
+                            </Button>
                         </CardContent>
                     </Card>
 
