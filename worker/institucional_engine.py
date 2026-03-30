@@ -94,13 +94,24 @@ async def _enviar(instance_name: str, token: str, phone: str, texto: str):
 # Detecção de unidade no texto
 # ---------------------------------------------------------------------------
 
-def _detectar_unidade(texto: str) -> str | None:
+def _detectar_unidade(texto: str, ignorar_numeros: bool = False) -> str | None:
     """Retorna o nome canônico da unidade mencionada no texto, ou None."""
     t = texto.strip().lower()
-    # Verifica chaves do mapa em ordem de especificidade (mais longas primeiro)
+    
+    # Se a pessoa digitou apenas o número e não estamos ignorando
+    if not ignorar_numeros and t in ["1", "2", "3", "4", "5"]:
+        return UNIDADES_MAPA[t]
+
+    import re
+    # Verifica chaves de texto, ignorando as numéricas
     for chave in sorted(UNIDADES_MAPA.keys(), key=len, reverse=True):
-        if chave in t:
+        if chave.isdigit():
+            continue
+        # Usa word boundary para não dar match em "barranco" quando procurar "barra" (opcional, mas mais seguro)
+        # Como "barra" e "pici" são curtos, usar Regex é melhor para evitar falsos positivos
+        if re.search(r'\b' + re.escape(chave) + r'\b', t):
             return UNIDADES_MAPA[chave]
+            
     return None
 
 
@@ -269,7 +280,7 @@ async def processar_mensagem_institucional(
     # -----------------------------------------------------------------------
     if etapa == "respondendo":
         unidade_atual = fluxo.get("unidade_selecionada") or unidade_cuca_instancia
-        unidade_mencionada = _detectar_unidade(t)
+        unidade_mencionada = _detectar_unidade(t, ignorar_numeros=True)
 
         if unidade_mencionada and unidade_mencionada != unidade_atual:
             # Lead quer saber sobre outra unidade — pede confirmação antes de trocar
