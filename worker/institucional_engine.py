@@ -115,6 +115,7 @@ async def _chamar_motor_agente(
     unidade: str,
     conversa_id: str,
     lead_id: str,
+    token: str,
     midia_url: str | None = None,
     midia_tipo: str | None = None,
 ):
@@ -144,6 +145,48 @@ async def _chamar_motor_agente(
             resp = await client.post(edge_url, json=payload, headers=headers)
             if resp.status_code != 200:
                 logger.error(f"[inst-engine] motor-agente retornou {resp.status_code}: {resp.text[:200]}")
+            else:
+                data = resp.json()
+                logger.info(f"[inst-engine] resposta motor: success={data.get('success')}")
+                if data.get("success") and "resposta" in data:
+                    import re
+                    resposta_ia = data["resposta"]
+                    media_url_out = None
+                    
+                    # Checar se a IA quer enviar arte / flyer
+                    match_md = re.search(r'!\[.*?\]\((.*?)\)', resposta_ia)
+                    match_tag = re.search(r'\[(?:FLYER|MÍDIA):\s*(.*?)\]', resposta_ia)
+                    
+                    if match_md:
+                        media_url_out = match_md.group(1).strip()
+                        resposta_ia = resposta_ia.replace(match_md.group(0), '').strip()
+                    elif match_tag:
+                        media_url_out = match_tag.group(1).strip()
+                        resposta_ia = resposta_ia.replace(match_tag.group(0), '').strip()
+                    
+                    # Remover marcadores internos caso existam
+                    handover_match = re.search(r'\[\[HANDOVER\]\]|\[TRANSBORDO\]|\[HUMANO\]|\[TRANSBORDO_HUMANO\]', resposta_ia, re.IGNORECASE)
+                    if handover_match:
+                        resposta_ia = resposta_ia.replace(handover_match.group(0), '').strip()
+                        if not resposta_ia:
+                            resposta_ia = "Certo, estou te transferindo para um atendente humano. Aguarde um momento por favor!"
+
+                    if media_url_out:
+                         await client.post(
+                             f"{UAZAPI_URL}/message/sendMedia/{instance_name}",
+                             headers={"apikey": token, "Content-Type": "application/json"},
+                             json={
+                                 "number": phone,
+                                 "options": {"delay": 1500, "presence": "composing"},
+                                 "mediaMessage": {
+                                     "mediatype": "image",
+                                     "caption": resposta_ia,
+                                     "media": media_url_out
+                                 }
+                             }
+                         )
+                    else:
+                        await _enviar(instance_name, token, phone, resposta_ia)
     except Exception as e:
         logger.error(f"[inst-engine] Erro ao chamar motor-agente: {e}", exc_info=True)
 
@@ -183,7 +226,7 @@ async def processar_mensagem_institucional(
                 "etapa": "respondendo",
                 "unidade_selecionada": unidade,
             })
-            await _chamar_motor_agente(texto, phone, instance_name, unidade, conversa_id, lead_id)
+            await _chamar_motor_agente(texto, phone, instance_name, unidade, conversa_id, lead_id, token)
         else:
             await _enviar(
                 instance_name, token, phone,
@@ -218,7 +261,7 @@ async def processar_mensagem_institucional(
                 "etapa": "respondendo",
                 "unidade_selecionada": unidade_atual,
             })
-            await _chamar_motor_agente(texto, phone, instance_name, unidade_atual, conversa_id, lead_id)
+            await _chamar_motor_agente(texto, phone, instance_name, unidade_atual, conversa_id, lead_id, token)
         return
 
     # -----------------------------------------------------------------------
@@ -243,7 +286,7 @@ async def processar_mensagem_institucional(
             return
 
         # Mensagem normal — chama motor-agente com a unidade atual
-        await _chamar_motor_agente(texto, phone, instance_name, unidade_atual, conversa_id, lead_id)
+        await _chamar_motor_agente(texto, phone, instance_name, unidade_atual, conversa_id, lead_id, token)
         return
 
     # -----------------------------------------------------------------------
