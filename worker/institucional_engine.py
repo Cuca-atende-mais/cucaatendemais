@@ -267,12 +267,16 @@ async def processar_mensagem_institucional(
                 f"Ok! Agora estou buscando informações sobre *{unidade_nova}*. Pode perguntar! 😊"
             )
         else:
-            # Mantém unidade atual e processa a mensagem original que estava pendente
+            # Mantém unidade atual — NÃO repassa a mensagem anterior ao motor-agente
+            # (o histórico da conversa contém a menção à outra unidade e causaria confusão)
             _set_inst_fluxo(conversa_id, {
                 "etapa": "respondendo",
                 "unidade_selecionada": unidade_atual,
             })
-            await _chamar_motor_agente(texto, phone, instance_name, unidade_atual, conversa_id, lead_id, token)
+            await _enviar(
+                instance_name, token, phone,
+                f"Continuamos com *{unidade_atual}*! 😊 Como posso te ajudar?"
+            )
         return
 
     # -----------------------------------------------------------------------
