@@ -18,7 +18,7 @@ import {
     Search, FileText, BrainCircuit, User, Phone, Plus, X,
     ShoppingCart, Building2, Truck, Wrench, UtensilsCrossed,
     Palette, HardHat, Cpu, HelpCircle, Star, Clock, GraduationCap,
-    CheckCircle, AlertCircle, ExternalLink, MessageCircle,
+    CheckCircle, AlertCircle, ExternalLink, MessageCircle, Scissors, Heart,
 } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import {
@@ -112,6 +112,24 @@ const AREAS: AreaConfig[] = [
         bgClass: "bg-cyan-500/15",
         textClass: "text-cyan-400",
         borderClass: "border-cyan-500/30",
+    },
+    {
+        label: "Beleza e Estética",
+        key: "Beleza e Estética (barbeiro, manicure, cabeleireiro)",
+        icon: <Scissors className="h-5 w-5" />,
+        color: "rose",
+        bgClass: "bg-rose-500/15",
+        textClass: "text-rose-400",
+        borderClass: "border-rose-500/30",
+    },
+    {
+        label: "Cuidados Pessoais",
+        key: "Cuidados Pessoais (babá, cuidador de idosos)",
+        icon: <Heart className="h-5 w-5" />,
+        color: "emerald",
+        bgClass: "bg-emerald-500/15",
+        textClass: "text-emerald-400",
+        borderClass: "border-emerald-500/30",
     },
     {
         label: "Sem área definida",

@@ -8,16 +8,16 @@ import { createClient as createServerClient } from "@/lib/supabase/server";
 const DEVELOPER_EMAILS = ["valmir@cucateste.com", "dev.cucaatendemais@gmail.com"];
 
 const CATEGORIES = [
-  "Serviços Gerais",
-  "Construção Civil",
-  "Logística e Entregas",
-  "Comércio e Vendas",
-  "Alimentação",
-  "Tecnologia",
-  "Criativo / Digital",
-  "Beleza e Estética",
-  "Cuidados Pessoais",
-  "Administrativo / Escritório",
+  "Serviços Gerais (limpeza, portaria, zeladoria)",
+  "Construção Civil (pedreiro, ajudante, eletricista, encanador)",
+  "Logística e Entregas (estoque, separação, entregador, motorista)",
+  "Comércio e Vendas (vendedor, caixa, atendimento)",
+  "Alimentação (cozinha, garçom, lanchonete)",
+  "Tecnologia (suporte técnico, programação, dados)",
+  "Criativo / Digital (design, vídeo, redes sociais)",
+  "Beleza e Estética (barbeiro, manicure, cabeleireiro)",
+  "Cuidados Pessoais (babá, cuidador de idosos)",
+  "Administrativo / Escritório (recepção, auxiliar administrativo)",
 ];
 
 export async function POST(req: NextRequest) {
@@ -50,8 +50,15 @@ export async function POST(req: NextRequest) {
     
     let text = "";
     if (file.type === "application/pdf") {
-      const data = await pdf(buffer);
-      text = data.text;
+      try {
+        const data = await pdf(buffer);
+        text = data.text;
+      } catch (pdfErr: any) {
+        return NextResponse.json(
+          { error: `PDF inválido ou corrompido: ${pdfErr.message}` },
+          { status: 400 }
+        );
+      }
     } else {
       // Futuro suporte docx/txt, mas por enquanto assumimos texto extraído ou rejeita
       return NextResponse.json({ error: "Apenas PDFs suportados nesta versão inicial." }, { status: 400 });
@@ -130,7 +137,7 @@ Regras rigorosas:
     // Validação estrita contra a lista de categorias pra não sujar o banco
     const filteredAreas = aiResult.areas_interesse.filter((a: string) => CATEGORIES.includes(a));
     if (filteredAreas.length === 0) {
-      filteredAreas.push("Serviços Gerais"); // fallback
+      filteredAreas.push("Serviços Gerais (limpeza, portaria, zeladoria)"); // fallback
     }
 
     // 5. Salvar automaticamente no Supabase
