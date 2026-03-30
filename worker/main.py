@@ -350,7 +350,7 @@ async def process_webhook_payload(payload: dict, token: str):
                         "lead_id": lead_id,
                         "instancia_uazapi": instance_name,
                         "status": "ativa",
-                        "agente_tipo": "maria_institucional" # Default is overriden if needed
+                        "agente_tipo": "Institucional" # Default is overriden if needed
                     }).execute()
                     conversation_id = new_conv.data[0]["id"]
             except Exception as e:
