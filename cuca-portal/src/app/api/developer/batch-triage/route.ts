@@ -154,11 +154,26 @@ Regras rigorosas:
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
+    // 5a. Upload do PDF original para o bucket "curriculos"
+    const storageFileName = `batch/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from("curriculos")
+      .upload(storageFileName, buffer, { contentType: "application/pdf", upsert: false });
+
+    let arquivoCvUrl: string | null = null;
+    if (!uploadError) {
+      const { data: urlData } = supabaseAdmin.storage
+        .from("curriculos")
+        .getPublicUrl(storageFileName);
+      arquivoCvUrl = urlData.publicUrl;
+    }
+
     const talentPayload = {
       nome: aiResult.nome || "Não encontrado",
       telefone: aiResult.telefone || null,
       status: "disponivel", // Padrão
       area_interesse: filteredAreas,
+      arquivo_cv_url: arquivoCvUrl,
       skills_jsonb: {
         resumo: aiResult.resumo_skills,
         justificativa_ia: aiResult.justificativa_ia,
