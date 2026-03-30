@@ -12,6 +12,7 @@ import {
     Terminal,
     Wifi,
     RefreshCw,
+    ScanSearch,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -97,6 +98,15 @@ const consoleModules = [
         href: "/developer/reset",
         badge: "Cron ativo",
         badgeVariant: "destructive" as const,
+        status: "active",
+    },
+    {
+        title: "Triagem de Currículos (Batch IA)",
+        description: "Upload em lote de PDFs — extrai texto, classifica via GPT nas 10 macro-áreas e insere diretamente no Banco de Talentos",
+        icon: ScanSearch,
+        href: "/developer/triage",
+        badge: "Laboratório",
+        badgeVariant: "default" as const,
         status: "active",
     },
 ]
