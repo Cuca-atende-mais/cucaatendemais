@@ -78,16 +78,21 @@ Sua tarefa é extrair os dados pessoais e classificar o candidato em 1 a 3 área
 ${CATEGORIES.map(c => `- ${c}`).join('\n')}
 
 Regras rigorosas:
-1. NUNCA invente categorias. Use APENAS as disponíveis na lista cima.
+1. NUNCA invente categorias. Use APENAS os valores EXATOS da lista acima (incluindo os parênteses e descrições).
 2. A grande maioria dos candidatos NÃO descreve um "Objetivo" claro, ou colocam algo genérico ("quero contribuir para a empresa", "primeiro emprego"). Se o objetivo for genérico, IGNORE-O!
 3. Foque EXCLUSIVAMENTE nas EXPERIÊNCIAS PROFISSIONAIS passadas e nos CURSOS REALIZADOS para inferir a(s) melhor(es) área(s) de interesse.
-   Exemplos:
-   - Foi servente/pedreiro -> Construção Civil
-   - Foi caixa/atendimento/frentista -> Comércio e Vendas
-   - Tem curso de RH/Assistente Administrativo -> Administrativo / Escritório
-   - Foi Jovem Aprendiz Administrativo -> Administrativo / Escritório
-   - Tem curso de barbeiro/manicure -> Beleza e Estética
-   - Trabalhou em lanchonete/garçom/cozinheiro -> Alimentação
+   Exemplos com valores EXATOS a retornar:
+   - Foi servente/pedreiro -> "Construção Civil (pedreiro, ajudante, eletricista, encanador)"
+   - Foi caixa/atendimento/frentista -> "Comércio e Vendas (vendedor, caixa, atendimento)"
+   - Tem curso de RH/Assistente Administrativo -> "Administrativo / Escritório (recepção, auxiliar administrativo)"
+   - Foi Jovem Aprendiz Administrativo -> "Administrativo / Escritório (recepção, auxiliar administrativo)"
+   - Tem curso de barbeiro/manicure -> "Beleza e Estética (barbeiro, manicure, cabeleireiro)"
+   - Trabalhou em lanchonete/garçom/cozinheiro -> "Alimentação (cozinha, garçom, lanchonete)"
+   - Cuidador de idosos/babá/enfermagem -> "Cuidados Pessoais (babá, cuidador de idosos)"
+   - Motorista/entregador/estoque -> "Logística e Entregas (estoque, separação, entregador, motorista)"
+   - TI/programação/suporte -> "Tecnologia (suporte técnico, programação, dados)"
+   - Design/redes sociais/vídeo -> "Criativo / Digital (design, vídeo, redes sociais)"
+   - Porteiro/limpeza/zeladoria/serviços gerais -> "Serviços Gerais (limpeza, portaria, zeladoria)"
 4. Retorne APENAS um objeto JSON com a seguinte estrutura estrita.
 `;
 
@@ -113,8 +118,11 @@ Regras rigorosas:
               telefone: { type: "string", description: "O telefone ou celular (apenas números ou formatado)" },
               areas_interesse: {
                 type: "array",
-                items: { type: "string" },
-                description: "Array de string contendo de 1 a 3 áreas da lista permitida que o candidato se encaixa."
+                items: {
+                  type: "string",
+                  enum: CATEGORIES
+                },
+                description: "Array de 1 a 3 valores EXATOS da lista de categorias permitidas. Use APENAS os valores do enum — nunca invente variações."
               },
               resumo_skills: { type: "string", description: "Breve resumo com as principais habilidades hard/soft skills encontradas no currículo (max 150 palavras)." },
               justificativa_ia: { type: "string", description: "Sua justificativa de porque escolheu essas áreas de interesse." }
