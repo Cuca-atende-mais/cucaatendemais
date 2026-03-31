@@ -467,7 +467,7 @@ export default function BancoTalentosPage() {
                                         </div>
 
                                         {/* Resumo */}
-                                        <div className="hidden lg:block flex-1 text-xs text-muted-foreground truncate">
+                                        <div className="hidden lg:block flex-1 min-w-0 text-xs text-muted-foreground truncate">
                                             {ocr.experiencia_resumo || ocr.skills || ocr.resumo || "Sem resumo"}
                                         </div>
 
