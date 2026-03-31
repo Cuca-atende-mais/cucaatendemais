@@ -75,7 +75,9 @@ export async function POST(req: NextRequest) {
     // 4. OpenAI - Prompt Engenharia de RH
     const sysPrompt = promptOverride ? String(promptOverride) : `
 Você é um Analista de RH Sênior analisando um currículo para cadastro no Banco de Talentos.
-Sua tarefa é extrair os dados pessoais e classificar o candidato em 1 a 3 áreas de interesse da seguinte lista estrita:
+Sua tarefa é extrair os dados do candidato, classificá-lo em áreas de interesse e extrair informações profissionais estruturadas.
+
+ÁREAS DE INTERESSE (use APENAS os valores EXATOS desta lista):
 ${CATEGORIES.map(c => `- ${c}`).join('\n')}
 
 Regras rigorosas:
@@ -94,7 +96,10 @@ Regras rigorosas:
    - TI/programação/suporte -> "Tecnologia (suporte técnico, programação, dados)"
    - Design/redes sociais/vídeo -> "Criativo / Digital (design, vídeo, redes sociais)"
    - Porteiro/limpeza/zeladoria/serviços gerais -> "Serviços Gerais (limpeza, portaria, zeladoria)"
-4. Retorne APENAS um objeto JSON com a seguinte estrutura estrita.
+4. Para experiencia_meses: some todos os períodos de emprego encontrados no currículo e retorne o total estimado em meses. Se não houver experiência, retorne 0.
+5. Para habilidades: liste competências técnicas e ferramentas mencionadas (ex: "Excel", "Atendimento ao cliente", "Operador de caixa"). Máximo 10 itens.
+6. Para resumo_experiencias: liste cada cargo/empresa em frases curtas (ex: "Jovem Aprendiz na Empresa X — 2022/2023"). Máximo 5 itens.
+7. Retorne APENAS um objeto JSON com a seguinte estrutura estrita.
 `;
 
     const openai = new OpenAI({
@@ -117,18 +122,28 @@ Regras rigorosas:
             properties: {
               nome: { type: "string", description: "O nome completo do candidato" },
               telefone: { type: "string", description: "O telefone ou celular (apenas números ou formatado)" },
+              data_nascimento: { type: "string", description: "Data de nascimento no formato YYYY-MM-DD se encontrada no currículo, senão string vazia" },
               areas_interesse: {
                 type: "array",
-                items: {
-                  type: "string",
-                  enum: CATEGORIES
-                },
+                items: { type: "string", enum: CATEGORIES },
                 description: "Array de 1 a 3 valores EXATOS da lista de categorias permitidas. Use APENAS os valores do enum — nunca invente variações."
               },
-              resumo_skills: { type: "string", description: "Breve resumo com as principais habilidades hard/soft skills encontradas no currículo (max 150 palavras)." },
-              justificativa_ia: { type: "string", description: "Sua justificativa de porque escolheu essas áreas de interesse." }
+              escolaridade: { type: "string", description: "Nível de escolaridade mais alto concluído (ex: Ensino Médio Completo, Superior Incompleto, Técnico em Administração)" },
+              experiencia_meses: { type: "number", description: "Total estimado de meses de experiência profissional somando todos os empregos. 0 se sem experiência." },
+              habilidades: {
+                type: "array",
+                items: { type: "string" },
+                description: "Lista de habilidades técnicas e competências encontradas no currículo. Máximo 10 itens."
+              },
+              resumo_experiencias: {
+                type: "array",
+                items: { type: "string" },
+                description: "Lista de experiências anteriores em frases curtas (cargo + empresa + período). Máximo 5 itens."
+              },
+              resumo_skills: { type: "string", description: "Breve resumo com o perfil profissional do candidato (max 150 palavras)." },
+              justificativa_ia: { type: "string", description: "Justificativa de porque foram escolhidas essas áreas de interesse baseado no currículo." }
             },
-            required: ["nome", "telefone", "areas_interesse", "resumo_skills", "justificativa_ia"],
+            required: ["nome", "telefone", "data_nascimento", "areas_interesse", "escolaridade", "experiencia_meses", "habilidades", "resumo_experiencias", "resumo_skills", "justificativa_ia"],
             additionalProperties: false
           },
           strict: true
@@ -164,13 +179,22 @@ Regras rigorosas:
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
+    const dataNascimento = aiResult.data_nascimento && aiResult.data_nascimento.match(/^\d{4}-\d{2}-\d{2}$/)
+      ? aiResult.data_nascimento
+      : null
+
     const talentPayload = {
       nome: aiResult.nome || "Não encontrado",
       telefone: aiResult.telefone || null,
+      data_nascimento: dataNascimento,
       status: "disponivel",
       area_interesse: filteredAreas,
       arquivo_cv_url: arquivoCvUrl,
       skills_jsonb: {
+        escolaridade: aiResult.escolaridade || "",
+        experiencia_meses: aiResult.experiencia_meses || 0,
+        habilidades: aiResult.habilidades || [],
+        resumo_experiencias: aiResult.resumo_experiencias || [],
         resumo: aiResult.resumo_skills,
         justificativa_ia: aiResult.justificativa_ia,
         origem: "batch_developer_triage",

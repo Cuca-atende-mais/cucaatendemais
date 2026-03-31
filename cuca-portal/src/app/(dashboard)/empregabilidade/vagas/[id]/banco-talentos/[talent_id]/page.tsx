@@ -50,6 +50,7 @@ export default function BancoTalentosDetalhesPage() {
     const [aprovando, setAprovando] = useState(false)
     const [rejeitando, setRejeitando] = useState(false)
     const [acaoFeita, setAcaoFeita] = useState<"aprovado" | "rejeitado" | null>(null)
+    const [matchFromStorage, setMatchFromStorage] = useState<{ score: number | null; justificativa: string }>({ score: null, justificativa: "" })
 
     useEffect(() => { fetchData() }, [talentId, vagaId])
 
@@ -64,6 +65,21 @@ export default function BancoTalentosDetalhesPage() {
             if (vErr) throw vErr
             setTalent(t)
             setVaga(v)
+
+            // Recuperar match_score e justificativa do localStorage (calculados pelo GPT na triagem)
+            try {
+                const stored = localStorage.getItem(`talent_triagem_${vagaId}`)
+                if (stored) {
+                    const lista = JSON.parse(stored)
+                    const entry = lista.find((c: any) => c.id === talentId)
+                    if (entry) {
+                        setMatchFromStorage({
+                            score: entry.match_score ?? null,
+                            justificativa: entry.justificativa || ""
+                        })
+                    }
+                }
+            } catch {}
         } catch (err: any) {
             toast.error("Erro ao carregar dados")
         } finally {
@@ -155,13 +171,17 @@ export default function BancoTalentosDetalhesPage() {
     const idade = talent.data_nascimento
         ? differenceInYears(new Date(), new Date(talent.data_nascimento))
         : null
-    const score = (talent as any).match_score ?? skills?.match_score ?? null
+    // Score: prioriza localStorage (calculado pelo GPT na triagem), depois skills_jsonb, depois 0
+    const score = matchFromStorage.score ?? (talent as any).match_score ?? skills?.match_score ?? null
     const cvUrl = talent.arquivo_cv_url || skills?.arquivo_cv_url
     const habilidades: string[] = skills?.habilidades || []
     const resumoExperiencias: string[] = skills?.resumo_experiencias || []
     const pontosFortesArr: string[] = skills?.pontos_fortes || skills?.analise_aderencia?.pontos_fortes || []
     const pontosAtencaoArr: string[] = skills?.pontos_atencao || skills?.analise_aderencia?.pontos_atencao || []
-    const vereditoFinal: string = skills?.veredito_final || skills?.analise_aderencia?.veredito_final || ""
+    const vereditoFinal: string = skills?.veredito_final || skills?.analise_aderencia?.veredito_final || matchFromStorage.justificativa || ""
+    const isBatch = skills?.origem === "batch_developer_triage"
+    const resumoPerfil: string = skills?.resumo || ""
+    const justificativaArea: string = skills?.justificativa_ia || ""
 
     return (
         <div className="space-y-6 pb-10">
@@ -267,8 +287,38 @@ export default function BancoTalentosDetalhesPage() {
                         </Card>
                     )}
 
-                    {/* Análise IA */}
-                    {(pontosFortesArr.length > 0 || pontosAtencaoArr.length > 0 || vereditoFinal) && (
+                    {/* Perfil batch (quando não tem análise completa) */}
+                    {isBatch && (resumoPerfil || justificativaArea) && pontosFortesArr.length === 0 && (
+                        <Card className="border-none shadow-sm">
+                            <CardContent className="p-5 space-y-3">
+                                <h3 className="text-sm font-semibold flex items-center gap-2">
+                                    <TrendingUp className="h-4 w-4 text-cuca-blue" />
+                                    Perfil do Candidato
+                                </h3>
+                                {resumoPerfil && (
+                                    <div>
+                                        <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Resumo Profissional</p>
+                                        <p className="text-sm text-muted-foreground leading-relaxed">{resumoPerfil}</p>
+                                    </div>
+                                )}
+                                {justificativaArea && (
+                                    <div>
+                                        <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Classificação de Área pela IA</p>
+                                        <p className="text-sm text-muted-foreground">{justificativaArea}</p>
+                                    </div>
+                                )}
+                                {vereditoFinal && (
+                                    <div className="bg-muted/50 rounded-lg p-3">
+                                        <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Compatibilidade com a Vaga</p>
+                                        <p className="text-sm">{vereditoFinal}</p>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {/* Análise IA completa (candidatura com OCR detalhado) */}
+                    {(pontosFortesArr.length > 0 || pontosAtencaoArr.length > 0 || vereditoFinal) && !isBatch && (
                         <Card className="border-none shadow-sm">
                             <CardContent className="p-5 space-y-4">
                                 <h3 className="text-sm font-semibold flex items-center gap-2">

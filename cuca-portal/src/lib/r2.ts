@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 const r2Client = new S3Client({
   region: "auto",
@@ -26,4 +26,14 @@ export async function uploadToR2(
     })
   );
   return `${PUBLIC_URL}/${key}`;
+}
+
+export async function deleteFromR2(keyOrUrl: string): Promise<void> {
+  // Aceita tanto a chave direta quanto a URL pública completa
+  const key = keyOrUrl.startsWith("http")
+    ? keyOrUrl.replace(`${PUBLIC_URL}/`, "")
+    : keyOrUrl;
+  await r2Client.send(
+    new DeleteObjectCommand({ Bucket: BUCKET, Key: key })
+  );
 }

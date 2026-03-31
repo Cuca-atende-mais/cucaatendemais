@@ -18,8 +18,9 @@ import {
     Search, FileText, BrainCircuit, User, Phone, Plus, X,
     ShoppingCart, Building2, Truck, Wrench, UtensilsCrossed,
     Palette, HardHat, Cpu, HelpCircle, Star, Clock, GraduationCap,
-    CheckCircle, AlertCircle, ExternalLink, MessageCircle, Scissors, Heart,
+    CheckCircle, AlertCircle, ExternalLink, MessageCircle, Scissors, Heart, Trash2,
 } from "lucide-react"
+import { useUser } from "@/lib/auth/user-provider"
 import { Label } from "@/components/ui/label"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -166,10 +167,13 @@ export default function BancoTalentosPage() {
     const [formArea, setFormArea] = useState("")
     const [formArquivo, setFormArquivo] = useState<File | null>(null)
     const [savingCadastro, setSavingCadastro] = useState(false)
+    const [deletandoId, setDeletandoId] = useState<string | null>(null)
 
     const AREAS_INTERESSE = AREAS.filter(a => a.key !== null).map(a => a.key as string)
 
     const supabase = createClient()
+    const { isDeveloper, profile } = useUser()
+    const podeExcluir = isDeveloper || profile?.funcao?.nome === "Super Admin Cuca"
 
     useEffect(() => {
         fetchTalentos()
@@ -226,6 +230,24 @@ export default function BancoTalentosPage() {
             toast.error(err.message || "Erro ao cadastrar.")
         } finally {
             setSavingCadastro(false)
+        }
+    }
+
+    const handleDelete = async (id: string, nome: string) => {
+        if (!confirm(`Confirma a exclusão de ${nome}? O PDF também será removido do bucket.`)) return
+        setDeletandoId(id)
+        try {
+            const res = await fetch(`/api/empregabilidade/talent-bank/${id}`, { method: "DELETE" })
+            if (!res.ok) {
+                const err = await res.json()
+                throw new Error(err.error || "Erro ao deletar")
+            }
+            setTalentos(prev => prev.filter(t => t.id !== id))
+            toast.success(`${nome} removido do banco de talentos.`)
+        } catch (err: any) {
+            toast.error(err.message || "Erro ao deletar candidato.")
+        } finally {
+            setDeletandoId(null)
         }
     }
 
@@ -446,7 +468,7 @@ export default function BancoTalentosPage() {
 
                                         {/* Resumo */}
                                         <div className="hidden lg:block flex-1 text-xs text-muted-foreground truncate">
-                                            {ocr.experiencia_resumo || ocr.skills || "Sem resumo"}
+                                            {ocr.experiencia_resumo || ocr.skills || ocr.resumo || "Sem resumo"}
                                         </div>
 
                                         {/* Status */}
@@ -476,6 +498,15 @@ export default function BancoTalentosPage() {
                                                 <Button variant="ghost" size="icon" title="WhatsApp"
                                                     onClick={() => window.open(`https://wa.me/55${t.telefone!.replace(/\D/g, "")}`, "_blank")}>
                                                     <Phone className="h-4 w-4 text-green-500" />
+                                                </Button>
+                                            )}
+                                            {podeExcluir && (
+                                                <Button
+                                                    variant="ghost" size="icon" title="Excluir candidato e PDF"
+                                                    disabled={deletandoId === t.id}
+                                                    onClick={() => handleDelete(t.id, t.nome)}
+                                                >
+                                                    <Trash2 className="h-4 w-4 text-destructive" />
                                                 </Button>
                                             )}
                                         </div>
