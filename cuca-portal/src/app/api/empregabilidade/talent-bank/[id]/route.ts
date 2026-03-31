@@ -4,7 +4,7 @@ import { deleteFromR2 } from "@/lib/r2"
 
 export async function DELETE(
     request: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     const supabase = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,7 +12,7 @@ export async function DELETE(
     )
 
     try {
-        const { id } = params
+        const { id } = await params
 
         // Buscar o registro para obter a URL do arquivo
         const { data: talent, error: fetchErr } = await supabase
