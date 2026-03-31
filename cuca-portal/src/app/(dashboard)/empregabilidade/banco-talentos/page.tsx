@@ -466,11 +466,6 @@ export default function BancoTalentosPage() {
                                             {ocr.escolaridade || "—"}
                                         </div>
 
-                                        {/* Resumo */}
-                                        <div className="hidden lg:block flex-1 min-w-0 text-xs text-muted-foreground truncate">
-                                            {ocr.experiencia_resumo || ocr.skills || ocr.resumo || "Sem resumo"}
-                                        </div>
-
                                         {/* Status */}
                                         <div className="flex-shrink-0">
                                             <Badge
