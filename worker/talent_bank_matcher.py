@@ -98,14 +98,22 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     candidatos_texto = []
     for c in candidatos_com_skills:
         skills = c["skills_jsonb"]
-        candidatos_texto.append({
+        entrada = {
             "id": c["id"],
             "nome": c["nome"],
-            "escolaridade": skills.get("escolaridade", ""),
-            "experiencia_meses": skills.get("experiencia_meses", 0),
-            "habilidades": skills.get("habilidades", []),
-            "resumo_experiencias": skills.get("resumo_experiencias", []),
-        })
+        }
+        # Formato OCR detalhado (cv_processor / espontâneo)
+        if skills.get("escolaridade") or skills.get("habilidades") or skills.get("resumo_experiencias"):
+            entrada["escolaridade"] = skills.get("escolaridade", "")
+            entrada["experiencia_meses"] = skills.get("experiencia_meses", 0)
+            entrada["habilidades"] = skills.get("habilidades", [])
+            entrada["resumo_experiencias"] = skills.get("resumo_experiencias", [])
+        # Formato batch triage (resumo + justificativa_ia)
+        if skills.get("resumo"):
+            entrada["resumo_curriculo"] = skills["resumo"]
+        if skills.get("justificativa_ia"):
+            entrada["justificativa_area"] = skills["justificativa_ia"]
+        candidatos_texto.append(entrada)
 
     prompt = f"""Você é especialista em recrutamento e seleção.
 
@@ -134,7 +142,7 @@ Retorne SOMENTE JSON válido neste formato (sem markdown, sem texto extra):
 
 Regras:
 - Score de 0 a 100 representando compatibilidade com a vaga
-- Inclua apenas candidatos com score >= 40
+- Inclua apenas candidatos com score >= 30
 - Ordene do maior para o menor score
 - Seja objetivo na justificativa (máximo 80 caracteres)
 """
