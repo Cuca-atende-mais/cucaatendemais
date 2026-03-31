@@ -15,10 +15,11 @@ interface ChatSidebarProps {
     onSelectConversation: (id: string) => void;
     filterAgenteTipo?: string[];
     filterCanalTipo?: string;
+    filterUnidade?: string;
     title?: string;
 }
 
-export default function ChatSidebar({ activeConversationId, onSelectConversation, filterAgenteTipo, filterCanalTipo, title = "Atendimento" }: ChatSidebarProps) {
+export default function ChatSidebar({ activeConversationId, onSelectConversation, filterAgenteTipo, filterCanalTipo, filterUnidade, title = "Atendimento" }: ChatSidebarProps) {
     const [conversations, setConversations] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
@@ -74,7 +75,24 @@ export default function ChatSidebar({ activeConversationId, onSelectConversation
                 return;
             }
         } else if (filterAgenteTipo && filterAgenteTipo.length > 0) {
-            query = query.in('agente_tipo', filterAgenteTipo);
+            if (filterUnidade) {
+                // Filtrar por instâncias da unidade específica do usuário
+                const { data: instanciasUnidade } = await supabase
+                    .from('instancias_uazapi')
+                    .select('nome')
+                    .eq('unidade_cuca', filterUnidade)
+                    .eq('ativa', true);
+                const nomesUnidade = instanciasUnidade?.map(i => i.nome) ?? [];
+                if (nomesUnidade.length > 0) {
+                    query = query.in('agente_tipo', filterAgenteTipo).in('instancia_uazapi', nomesUnidade);
+                } else {
+                    setConversations([]);
+                    setLoading(false);
+                    return;
+                }
+            } else {
+                query = query.in('agente_tipo', filterAgenteTipo);
+            }
         }
 
         const { data, error } = await query;

@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
         const scoreBg = score !== null ? (score >= 70 ? "#f0fdf4" : score >= 50 ? "#fffbeb" : "#fef2f2") : "#f9f9f9"
 
         const { error: emailErr } = await resend.emails.send({
-            from: "CUCA Empregabilidade <noreply@cuca.ce.gov.br>",
+            from: "CUCA Empregabilidade <noreply@cucaatendemais.com.br>",
             to: vaga.email_contato_empresa,
             subject: `Currículo: ${candidatura.nome} — ${vagaLabel}`,
             html: `

@@ -4,9 +4,11 @@ import { useState } from "react";
 import ChatSidebar from "@/components/chat/chat-sidebar";
 import ChatWindow from "@/components/chat/chat-window";
 import { Badge } from "@/components/ui/badge";
+import { useUser } from "@/lib/auth/user-provider";
 
 export default function EmpregabilidadeMensagensPage() {
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+    const { profile } = useUser();
 
     return (
         <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-background">
@@ -27,6 +29,7 @@ export default function EmpregabilidadeMensagensPage() {
                         activeConversationId={activeConversationId}
                         onSelectConversation={setActiveConversationId}
                         filterAgenteTipo={["julia_geral", "julia_unidade"]}
+                        filterUnidade={profile?.unidade_cuca || undefined}
                     />
                 </div>
 

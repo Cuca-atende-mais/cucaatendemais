@@ -33,19 +33,18 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
 
     setores = setor_vaga or vaga.get("setor") or []
 
-    # 2. Buscar candidatos disponíveis sem OCR, filtrando por área
-    query = supabase.table("talent_bank").select(
+    # 2. Buscar TODOS os candidatos disponíveis (com e sem OCR já processado)
+    tb_res = supabase.table("talent_bank").select(
         "id, nome, data_nascimento, telefone, arquivo_cv_url, skills_jsonb, area_interesse"
-    ).eq("status", "disponivel").is_("skills_jsonb", "null")
+    ).eq("status", "disponivel").execute()
 
-    tb_res = query.execute()
-    candidatos_sem_ocr = tb_res.data or []
+    todos = tb_res.data or []
 
     # Filtrar por área de interesse compatível com o setor da vaga
     if setores:
         compatíveis = []
         sem_area = []
-        for c in candidatos_sem_ocr:
+        for c in todos:
             areas = c.get("area_interesse") or []
             if not areas:
                 sem_area.append(c)
@@ -54,24 +53,31 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
         # Inclui candidatos sem área no final (menor prioridade)
         pool = compatíveis + sem_area
     else:
-        pool = candidatos_sem_ocr
+        pool = todos
 
-    # Pegar apenas os primeiros N (quantidade solicitada)
-    lote = pool[:quantidade]
+    # Separar candidatos que já têm skills processados dos que ainda precisam de OCR
+    ja_com_skills = [c for c in pool if c.get("skills_jsonb")]
+    sem_skills = [c for c in pool if not c.get("skills_jsonb")]
+
+    # Preencher o lote: priorizar quem já tem skills, completar com candidatos sem OCR
+    lote_com_skills = ja_com_skills[:quantidade]
+    slots_restantes = quantidade - len(lote_com_skills)
+    lote_sem_skills = sem_skills[:slots_restantes] if slots_restantes > 0 else []
 
     logger.info(
-        f"[triar_banco_talentos] Vaga {vaga_id}: {len(pool)} sem OCR na área, "
-        f"processando {len(lote)} (solicitado: {quantidade})"
+        f"[triar_banco_talentos] Vaga {vaga_id}: {len(ja_com_skills)} já com OCR, "
+        f"{len(sem_skills)} sem OCR — usando {len(lote_com_skills)} prontos + "
+        f"processando {len(lote_sem_skills)} novos (solicitado: {quantidade})"
     )
 
-    if not lote:
+    if not lote_com_skills and not lote_sem_skills:
         return []
 
-    # 3. Rodar OCR nos candidatos do lote que têm arquivo
+    # 3. Rodar OCR apenas nos candidatos que ainda não têm skills
     from cv_processor import process_cv_talent_bank_id
     import asyncio
 
-    for c in lote:
+    for c in lote_sem_skills:
         if c.get("arquivo_cv_url"):
             try:
                 skills = await process_cv_talent_bank_id(c["id"], c["arquivo_cv_url"])
@@ -81,11 +87,11 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
             except Exception as ocr_err:
                 logger.warning(f"[triar_banco_talentos] OCR falhou para {c['id']}: {ocr_err}")
 
-    # 4. Manter apenas quem tem skills após OCR
-    candidatos_com_skills = [c for c in lote if c.get("skills_jsonb")]
+    # 4. Combinar candidatos com skills para o ranking
+    candidatos_com_skills = lote_com_skills + [c for c in lote_sem_skills if c.get("skills_jsonb")]
 
     if not candidatos_com_skills:
-        logger.info(f"[triar_banco_talentos] Nenhum candidato com skills após OCR para vaga {vaga_id}")
+        logger.info(f"[triar_banco_talentos] Nenhum candidato com skills para vaga {vaga_id}")
         return []
 
     # 5. Montar prompt para GPT ranquear
