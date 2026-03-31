@@ -180,5 +180,5 @@ Regras:
             "skills_jsonb": skills,
         })
 
-    logger.info(f"[triar_banco_talentos] Vaga {vaga_id}: {len(resultado_final)} compatíveis de {len(lote)} processados")
+    logger.info(f"[triar_banco_talentos] Vaga {vaga_id}: {len(resultado_final)} compatíveis de {len(candidatos_com_skills)} processados")
     return resultado_final
