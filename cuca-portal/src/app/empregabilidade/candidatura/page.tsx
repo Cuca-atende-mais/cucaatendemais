@@ -182,7 +182,7 @@ export default function CandidaturaPublicaPage() {
             const upRes = await fetch("/api/upload-cv", { method: "POST", body: fd })
             if (!upRes.ok) {
                 const errData = await upRes.json().catch(() => ({}))
-                throw new Error(errData.error || "Erro no upload do currículo.")
+                throw new Error(errData.error || `Erro no upload (HTTP ${upRes.status}).`)
             }
             const { url: publicUrl } = await upRes.json()
 
