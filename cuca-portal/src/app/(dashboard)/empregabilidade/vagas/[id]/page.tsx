@@ -168,10 +168,12 @@ export default function VagaDetalhesPage() {
         setDialogTalent(false)
         setLoadingTalent(true)
         try {
+            // Envia IDs já exibidos para o servidor excluir da próxima varredura
+            const excluirIds = talentResults.map((c: TalentBankCandidate) => c.id)
             const res = await fetch(`/api/empregabilidade/vagas/${id}/triar-banco-talentos`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ quantidade: qtd }),
+                body: JSON.stringify({ quantidade: qtd, excluir_ids: excluirIds }),
             })
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || "Erro ao triar banco de talentos")

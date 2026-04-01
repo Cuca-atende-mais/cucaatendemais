@@ -117,7 +117,7 @@ Retorne SOMENTE JSON válido, sem markdown:
         return []
 
 
-async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: list[str] | None = None) -> list[dict]:
+async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: list[str] | None = None, excluir_ids: list[str] | None = None) -> list[dict]:
     """Triagem com varredura completa da área + pré-filtragem semântica + batching.
 
     Fluxo:
@@ -148,6 +148,12 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     ).eq("status", "disponivel").order("data_curriculo", desc=True).execute()
 
     todos = tb_res.data or []
+
+    # Excluir candidatos já mostrados ou já inscritos nesta vaga
+    ids_excluir = set(excluir_ids or [])
+    if ids_excluir:
+        todos = [c for c in todos if c["id"] not in ids_excluir]
+        logger.info(f"[triar_banco_talentos] Excluindo {len(ids_excluir)} candidatos já processados")
 
     # Filtrar por área de interesse compatível com o setor da vaga
     if setores:

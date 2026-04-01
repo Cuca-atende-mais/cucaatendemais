@@ -16,6 +16,8 @@ export async function POST(
     const { id: vagaId } = await params
     const body = await request.json().catch(() => ({}))
     const quantidade: number = Math.max(1, Math.min(Number(body.quantidade) || 5, 50))
+    // IDs de candidatos TB já exibidos no frontend (enviados pelo cliente)
+    const excluirIdsCliente: string[] = Array.isArray(body.excluir_ids) ? body.excluir_ids : []
 
     try {
         const { data: vaga, error: vagaErr } = await supabase
@@ -28,9 +30,32 @@ export async function POST(
             return NextResponse.json({ error: "Vaga não encontrada." }, { status: 404 })
         }
 
+        // Buscar telefones de candidatos já inscritos nesta vaga (via candidaturas)
+        // e encontrar seus IDs no talent_bank para excluir da varredura
+        const { data: candidaturasExistentes } = await supabase
+            .from("candidaturas")
+            .select("telefone")
+            .eq("vaga_id", vagaId)
+            .not("telefone", "is", null)
+
+        const telefonesInscritos = (candidaturasExistentes || [])
+            .map((c: any) => c.telefone)
+            .filter(Boolean)
+
+        let excluirIdsTB: string[] = []
+        if (telefonesInscritos.length > 0) {
+            const { data: tbJaInscritos } = await supabase
+                .from("talent_bank")
+                .select("id")
+                .in("telefone", telefonesInscritos)
+            excluirIdsTB = (tbJaInscritos || []).map((r: any) => r.id)
+        }
+
+        // Consolidar IDs a excluir: já mostrados no frontend + já inscritos na vaga
+        const excluirIds = Array.from(new Set([...excluirIdsCliente, ...excluirIdsTB]))
+
         const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
-        console.log(`[triar-banco-talentos] workerUrl=${workerUrl} vagaId=${vagaId} quantidade=${quantidade} setor=${JSON.stringify((vaga as any).setor)}`)
-        // OCR por PDF demora ~15-30s cada — timeout de 5 min para cobrir até 10 currículos
+        console.log(`[triar-banco-talentos] vagaId=${vagaId} quantidade=${quantidade} excluindo=${excluirIds.length} candidatos`)
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000)
         const res = await fetch(`${workerUrl}/triar-banco-talentos`, {
@@ -40,6 +65,7 @@ export async function POST(
                 vaga_id: vagaId,
                 quantidade,
                 setor_vaga: (vaga as any).setor || [],
+                excluir_ids: excluirIds,
             }),
             signal: controller.signal,
         })
