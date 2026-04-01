@@ -924,6 +924,11 @@ function TalentBankCard({ candidato, onClick }: { candidato: TalentBankCandidate
                                 1º Emprego
                             </span>
                         )}
+                        {(candidato as any).tb_status === "selecionado" && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-green-500/10 text-green-400 border-green-500/30">
+                                ✓ Aprovado
+                            </span>
+                        )}
                     </div>
                 </div>
             </div>

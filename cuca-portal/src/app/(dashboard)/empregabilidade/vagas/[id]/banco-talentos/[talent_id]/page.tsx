@@ -99,8 +99,7 @@ export default function BancoTalentosDetalhesPage() {
                     telefone: talent.telefone || null,
                     data_nascimento: talent.data_nascimento || null,
                     dados_ocr_json: talent.skills_jsonb || null,
-                    matching_score: matchFromStorage.score ?? null,
-                    matching_justificativa: matchFromStorage.justificativa || null,
+                    match_score: matchFromStorage.score ?? null,
                     status: "selecionado",
                     requisitos_atendidos: "Aprovado via triagem do banco de talentos",
                 })
@@ -109,18 +108,20 @@ export default function BancoTalentosDetalhesPage() {
 
             if (insErr) throw insErr
 
-            // Marcar candidato no banco de talentos como arquivado
+            // Marcar candidato no banco de talentos como selecionado (permanece visível)
             await supabase
                 .from("talent_bank")
-                .update({ status: "arquivado", updated_at: new Date().toISOString() })
+                .update({ status: "selecionado", updated_at: new Date().toISOString() })
                 .eq("id", talentId)
 
-            // Remover da listagem de triagem no localStorage
+            // Atualizar status no localStorage para manter o card visível com badge "Aprovado"
             try {
                 const stored = localStorage.getItem(`talent_triagem_${vagaId}`)
                 if (stored) {
                     const lista = JSON.parse(stored)
-                    localStorage.setItem(`talent_triagem_${vagaId}`, JSON.stringify(lista.filter((c: any) => c.id !== talentId)))
+                    localStorage.setItem(`talent_triagem_${vagaId}`, JSON.stringify(
+                        lista.map((c: any) => c.id === talentId ? { ...c, tb_status: "selecionado" } : c)
+                    ))
                 }
             } catch {}
 
