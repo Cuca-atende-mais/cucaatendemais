@@ -968,8 +968,9 @@ async def triar_banco_talentos_endpoint(request: Request):
 
         setor_vaga = payload.get("setor_vaga") or []
         quantidade = max(1, min(int(payload.get("quantidade", 5)), 50))
+        excluir_ids = payload.get("excluir_ids") or []
         from talent_bank_matcher import triar_banco_talentos
-        candidatos = await triar_banco_talentos(vaga_id, quantidade=quantidade, setor_vaga=setor_vaga)
+        candidatos = await triar_banco_talentos(vaga_id, quantidade=quantidade, setor_vaga=setor_vaga, excluir_ids=excluir_ids)
 
         return {"candidatos": candidatos}
     except Exception as e:
