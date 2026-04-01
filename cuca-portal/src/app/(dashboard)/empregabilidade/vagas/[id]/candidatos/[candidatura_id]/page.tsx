@@ -109,6 +109,17 @@ export default function CandidatoDetalhesPage() {
                 .eq("id", candidaturaId)
             if (error) throw error
             setCandidatura((prev: any) => ({ ...prev, status: novoStatus }))
+
+            // Sincronizar status no talent_bank pelo telefone da candidatura
+            const telefone = candidatura?.telefone
+            if (telefone) {
+                const tbStatus = novoStatus === "contratado" ? "contratado" : "selecionado"
+                await supabase
+                    .from("talent_bank")
+                    .update({ status: tbStatus, updated_at: new Date().toISOString() })
+                    .eq("telefone", telefone)
+            }
+
             toast.success("Status atualizado")
         } catch (err: any) {
             toast.error("Erro: " + err.message)
@@ -141,6 +152,14 @@ export default function CandidatoDetalhesPage() {
                 .eq("id", candidaturaId)
             if (error) throw error
             setCandidatura((prev: any) => ({ ...prev, status: "selecionado" }))
+
+            // Sincronizar status no talent_bank
+            if (candidatura?.telefone) {
+                await supabase
+                    .from("talent_bank")
+                    .update({ status: "selecionado", updated_at: new Date().toISOString() })
+                    .eq("telefone", candidatura.telefone)
+            }
 
             // Notificar candidato via WhatsApp
             const res = await fetch("/api/empregabilidade/notificar-selecionado", {

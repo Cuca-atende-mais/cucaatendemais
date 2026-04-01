@@ -34,6 +34,7 @@ export async function POST(
 
         // 3. Upsert no talent_bank
         const ocr = candidatura.dados_ocr_json || {}
+        const expMeses = ocr?.experiencia_meses ?? null
         const talentPayload = {
             nome: candidatura.nome,
             telefone: candidatura.telefone || null,
@@ -45,6 +46,7 @@ export async function POST(
             area_interesse: candidatura.area_interesse || null,
             status: "disponivel",
             data_curriculo: candidatura.created_at || null,
+            primeiro_emprego: expMeses !== null ? expMeses === 0 : false,
             updated_at: new Date().toISOString(),
         }
 

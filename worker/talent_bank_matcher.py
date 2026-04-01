@@ -35,7 +35,7 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
 
     # 2. Buscar TODOS os candidatos disponíveis (com e sem OCR já processado)
     tb_res = supabase.table("talent_bank").select(
-        "id, nome, data_nascimento, telefone, arquivo_cv_url, skills_jsonb, area_interesse, data_curriculo"
+        "id, nome, data_nascimento, telefone, arquivo_cv_url, skills_jsonb, area_interesse, data_curriculo, primeiro_emprego"
     ).eq("status", "disponivel").order("data_curriculo", desc=True, nulls_last=True).execute()
 
     todos = tb_res.data or []
@@ -186,6 +186,7 @@ Regras:
             "match_score": match.get("score", 0),
             "justificativa": match.get("justificativa", ""),
             "skills_jsonb": skills,
+            "primeiro_emprego": c.get("primeiro_emprego", False),
         })
 
     logger.info(f"[triar_banco_talentos] Vaga {vaga_id}: {len(resultado_final)} compatíveis de {len(candidatos_com_skills)} processados")

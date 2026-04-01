@@ -74,6 +74,7 @@ type TalentBankCandidate = {
     arquivo_cv_url: string | null
     skills_jsonb: any
     match_score?: number
+    primeiro_emprego?: boolean
 }
 
 export default function VagaDetalhesPage() {
@@ -914,9 +915,16 @@ function TalentBankCard({ candidato, onClick }: { candidato: TalentBankCandidate
                 <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm leading-tight truncate">{candidato.nome}</p>
                     {idade !== null && <p className="text-xs text-muted-foreground">{idade} anos</p>}
-                    <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-xs border bg-purple-500/10 text-purple-400 border-purple-500/30">
-                        <Database className="h-3 w-3" /> Banco de Talentos
-                    </span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-purple-500/10 text-purple-400 border-purple-500/30">
+                            <Database className="h-3 w-3" /> Banco de Talentos
+                        </span>
+                        {candidato.primeiro_emprego && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-amber-500/10 text-amber-400 border-amber-500/30">
+                                1º Emprego
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
 
