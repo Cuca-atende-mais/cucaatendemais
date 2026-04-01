@@ -59,7 +59,7 @@ export default function CandidaturaEspontaneaPage() {
                 const fd = new FormData()
                 fd.append("file", arquivo)
                 fd.append("folder", "espontanea")
-                const upRes = await fetch("/api/upload-cv", { method: "POST", body: fd })
+                const upRes = await fetch("/api/empregabilidade/upload-cv", { method: "POST", body: fd })
                 if (!upRes.ok) throw new Error("Erro no upload do currículo.")
                 const { url } = await upRes.json()
                 cvUrl = url
