@@ -41,7 +41,10 @@ export async function updateSession(request: NextRequest) {
         pathname.startsWith('/auth') ||
         pathname.startsWith('/setup-senha') ||
         pathname === '/api/colaboradores/setup-password' ||
+        pathname === '/api/upload-cv' ||               // upload de currículo por candidatos externos
+        pathname === '/api/process-cv' ||              // OCR disparado pelo formulário público
         pathname.startsWith('/empregabilidade') ||     // páginas públicas para empresas/candidatos externos
+        pathname.startsWith('/vagas') ||               // páginas públicas de vagas
         pathname.startsWith('/api/empregabilidade')  // APIs públicas de empregabilidade
 
     // Usuário não autenticado tentando acessar rota protegida
