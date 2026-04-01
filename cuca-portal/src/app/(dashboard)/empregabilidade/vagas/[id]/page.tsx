@@ -179,9 +179,13 @@ export default function VagaDetalhesPage() {
             if (!res.ok) throw new Error(data.error || "Erro ao triar banco de talentos")
             const novos = data.candidatos || []
             // Acumula com resultados anteriores (para "Analisar mais")
+            // Deduplicar por ID e por telefone (candidato pode ter dois registros no TB)
             setTalentResults(prev => {
                 const existingIds = new Set(prev.map((c: TalentBankCandidate) => c.id))
-                const unique = novos.filter((c: TalentBankCandidate) => !existingIds.has(c.id))
+                const existingFones = new Set(prev.map((c: TalentBankCandidate) => c.telefone).filter(Boolean))
+                const unique = novos.filter((c: TalentBankCandidate) =>
+                    !existingIds.has(c.id) && (!c.telefone || !existingFones.has(c.telefone))
+                )
                 return [...prev, ...unique]
             })
             setTalentTriado(true)
@@ -638,17 +642,37 @@ export default function VagaDetalhesPage() {
                     </div>
                 )}
 
-                {talentTriado && talentResults.length > 0 && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {talentResults.map(tb => (
-                            <TalentBankCard
-                                key={tb.id}
-                                candidato={tb}
-                                onClick={() => router.push(`/empregabilidade/vagas/${id}/banco-talentos/${tb.id}`)}
-                            />
-                        ))}
-                    </div>
-                )}
+                {talentTriado && talentResults.length > 0 && (() => {
+                    // Filtrar TB: excluir quem já está inscrito na vaga (por telefone) ou duplicado
+                    const fonesCandidatos = new Set(
+                        candidatos.filter(c => c.status !== "rejeitado").map(c => c.telefone).filter(Boolean)
+                    )
+                    const seenFones = new Set<string>()
+                    const tbVisiveis = talentResults.filter(tb => {
+                        if (tb.telefone && fonesCandidatos.has(tb.telefone)) return false
+                        if (tb.telefone) {
+                            if (seenFones.has(tb.telefone)) return false
+                            seenFones.add(tb.telefone)
+                        }
+                        return true
+                    })
+                    if (tbVisiveis.length === 0) return (
+                        <p className="text-sm text-muted-foreground text-center py-6">
+                            Todos os candidatos encontrados já foram inscritos nesta vaga.
+                        </p>
+                    )
+                    return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {tbVisiveis.map(tb => (
+                                <TalentBankCard
+                                    key={tb.id}
+                                    candidato={tb}
+                                    onClick={() => router.push(`/empregabilidade/vagas/${id}/banco-talentos/${tb.id}`)}
+                                />
+                            ))}
+                        </div>
+                    )
+                })()}
             </div>
 
             {/* ── Dialog: Quantos currículos analisar ── */}
