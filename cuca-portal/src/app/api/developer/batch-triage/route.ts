@@ -90,9 +90,18 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
 
     let text = "";
+    let dataCurriculo: string | null = null;
     try {
       const data = await pdf(buffer);
       text = data.text || "";
+      // Extrair data de criação dos metadados do PDF (formato: D:YYYYMMDDHHmmSS)
+      const rawDate = data.info?.CreationDate || data.info?.ModDate || "";
+      if (rawDate) {
+        const match = rawDate.match(/D:(\d{4})(\d{2})(\d{2})/);
+        if (match) {
+          dataCurriculo = `${match[1]}-${match[2]}-${match[3]}T00:00:00Z`;
+        }
+      }
     } catch {
       // PDF de imagem — texto vazio, cai para Vision
     }
@@ -207,6 +216,7 @@ Regras rigorosas:
       status: "disponivel",
       area_interesse: filteredAreas,
       arquivo_cv_url: arquivoCvUrl,
+      data_curriculo: dataCurriculo,
       skills_jsonb: {
         escolaridade: aiResult.escolaridade || "",
         experiencia_meses: aiResult.experiencia_meses || 0,

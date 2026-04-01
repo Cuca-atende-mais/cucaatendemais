@@ -44,6 +44,7 @@ export async function POST(
             skills_jsonb: ocr && Object.keys(ocr).length > 0 ? ocr : null,
             area_interesse: candidatura.area_interesse || null,
             status: "disponivel",
+            data_curriculo: candidatura.created_at || null,
             updated_at: new Date().toISOString(),
         }
 

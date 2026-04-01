@@ -99,6 +99,8 @@ export default function BancoTalentosDetalhesPage() {
                     telefone: talent.telefone || null,
                     data_nascimento: talent.data_nascimento || null,
                     dados_ocr_json: talent.skills_jsonb || null,
+                    matching_score: matchFromStorage.score ?? null,
+                    matching_justificativa: matchFromStorage.justificativa || null,
                     status: "selecionado",
                     requisitos_atendidos: "Aprovado via triagem do banco de talentos",
                 })
@@ -112,6 +114,15 @@ export default function BancoTalentosDetalhesPage() {
                 .from("talent_bank")
                 .update({ status: "arquivado", updated_at: new Date().toISOString() })
                 .eq("id", talentId)
+
+            // Remover da listagem de triagem no localStorage
+            try {
+                const stored = localStorage.getItem(`talent_triagem_${vagaId}`)
+                if (stored) {
+                    const lista = JSON.parse(stored)
+                    localStorage.setItem(`talent_triagem_${vagaId}`, JSON.stringify(lista.filter((c: any) => c.id !== talentId)))
+                }
+            } catch {}
 
             // Notificar candidato via WhatsApp se tiver telefone
             if (talent.telefone && vaga?.titulo && vaga?.unidade_cuca) {
