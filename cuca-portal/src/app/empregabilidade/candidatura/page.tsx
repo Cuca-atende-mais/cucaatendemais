@@ -50,6 +50,8 @@ export default function CandidaturaPublicaPage() {
     const showAreaInteresse = bancoTalentosParam
 
     const [areasInteresse, setAreasInteresse] = useState<string[]>([])
+    const [pcdCandidato, setPcdCandidato] = useState(false)
+    const [pcdTipoCandidato, setPcdTipoCandidato] = useState("")
 
     const toggleArea = (a: string) => {
         setAreasInteresse(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a])
@@ -208,6 +210,8 @@ export default function CandidaturaPublicaPage() {
                     observacoes: obsArr.length > 0 ? obsArr[0] : null,
                     conversa_id: conversaId || null,
                     area_interesse: areasInteresse,
+                    pcd_candidato: pcdCandidato,
+                    pcd_tipo_candidato: pcdCandidato ? (pcdTipoCandidato || null) : null,
                 }),
             })
             const candData = await res.json()
@@ -485,6 +489,22 @@ export default function CandidaturaPublicaPage() {
                                 <p className="text-[10px] text-muted-foreground">
                                     Seu currículo será lido por nossa Inteligência Artificial para análise de compatibilidade.
                                 </p>
+                            </div>
+
+                            {/* PCD */}
+                            <div className="space-y-3 pt-1">
+                                <Label className="text-base font-semibold">Você é Pessoa com Deficiência (PCD)?</Label>
+                                <div className="flex gap-3">
+                                    <label className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 cursor-pointer text-sm transition-colors ${!pcdCandidato ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium" : "border-border"}`}>
+                                        <input type="radio" name="pcdCand" checked={!pcdCandidato} onChange={() => { setPcdCandidato(false); setPcdTipoCandidato("") }} className="accent-cuca-blue" /> Não
+                                    </label>
+                                    <label className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 cursor-pointer text-sm transition-colors ${pcdCandidato ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium" : "border-border"}`}>
+                                        <input type="radio" name="pcdCand" checked={pcdCandidato} onChange={() => setPcdCandidato(true)} className="accent-cuca-blue" /> Sim
+                                    </label>
+                                </div>
+                                {pcdCandidato && (
+                                    <Input value={pcdTipoCandidato} onChange={e => setPcdTipoCandidato(e.target.value)} placeholder="Tipo de deficiência (opcional)" />
+                                )}
                             </div>
 
                             {/* Área de interesse — apenas para banco de talentos */}

@@ -95,6 +95,11 @@ export default function NovaVagaEmpresaPage() {
     const [limiteCurriculos, setLimiteCurriculos] = useState("")
     const [tipoSelecao, setTipoSelecao] = useState("")
 
+    // PCD
+    const [pcdVaga, setPcdVaga] = useState(false)
+    const [pcdTipo, setPcdTipo] = useState("")
+    const [pcdHomologado, setPcdHomologado] = useState(false)
+
     const [loadingSubmit, setLoadingSubmit] = useState(false)
     const [success, setSuccess] = useState(false)
     const [numeroVaga, setNumeroVaga] = useState("")
@@ -178,6 +183,9 @@ export default function NovaVagaEmpresaPage() {
                     setor: setoresMarcados,
                     email_responsavel: emailResponsavel,
                     telefone_responsavel: telefoneResponsavel.replace(/\D/g, ""),
+                    pcd_vaga: pcdVaga,
+                    pcd_tipo: pcdVaga ? (pcdTipo || null) : null,
+                    pcd_homologado: pcdVaga ? pcdHomologado : false,
                 }),
             })
             const data = await res.json()
@@ -457,6 +465,31 @@ export default function NovaVagaEmpresaPage() {
                                         </label>
                                     ))}
                                 </div>
+                            </div>
+
+                            {/* PCD */}
+                            <div className="space-y-3 pt-1">
+                                <Label className="text-base font-semibold">Vaga para Pessoa com Deficiência (PCD)?</Label>
+                                <div className="flex gap-3">
+                                    <label className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 cursor-pointer text-sm transition-colors ${!pcdVaga ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium" : "border-border"}`}>
+                                        <input type="radio" name="pcdVaga" checked={!pcdVaga} onChange={() => { setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false) }} className="accent-cuca-blue" /> Não
+                                    </label>
+                                    <label className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 cursor-pointer text-sm transition-colors ${pcdVaga ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium" : "border-border"}`}>
+                                        <input type="radio" name="pcdVaga" checked={pcdVaga} onChange={() => setPcdVaga(true)} className="accent-cuca-blue" /> Sim
+                                    </label>
+                                </div>
+                                {pcdVaga && (
+                                    <div className="space-y-3 border rounded-xl p-4 bg-blue-500/5 border-blue-500/20">
+                                        <div className="space-y-1.5">
+                                            <Label htmlFor="pcdTipo">Tipo de deficiência aceita (opcional)</Label>
+                                            <Input id="pcdTipo" value={pcdTipo} onChange={e => setPcdTipo(e.target.value)} placeholder="Ex: Física, Visual, Auditiva, qualquer" />
+                                        </div>
+                                        <label className="flex items-center gap-2 cursor-pointer text-sm">
+                                            <input type="checkbox" className="accent-cuca-blue" checked={pcdHomologado} onChange={e => setPcdHomologado(e.target.checked)} />
+                                            Vaga homologada para PCD
+                                        </label>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Responsável pela seleção */}

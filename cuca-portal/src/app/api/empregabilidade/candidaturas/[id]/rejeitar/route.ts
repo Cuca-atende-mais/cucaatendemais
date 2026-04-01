@@ -47,6 +47,8 @@ export async function POST(
             status: "disponivel",
             data_curriculo: candidatura.created_at || null,
             primeiro_emprego: expMeses !== null ? expMeses === 0 : false,
+            pcd_candidato: candidatura.pcd_candidato ?? false,
+            pcd_tipo_candidato: candidatura.pcd_tipo_candidato || null,
             updated_at: new Date().toISOString(),
         }
 

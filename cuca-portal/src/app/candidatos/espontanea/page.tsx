@@ -29,6 +29,8 @@ export default function CandidaturaEspontaneaPage() {
     const [email, setEmail] = useState("")
     const [unidade, setUnidade] = useState("")
     const [arquivo, setArquivo] = useState<File | null>(null)
+    const [pcdCandidato, setPcdCandidato] = useState(false)
+    const [pcdTipoCandidato, setPcdTipoCandidato] = useState("")
 
     const [loading, setLoading] = useState(false)
     const [sucesso, setSucesso] = useState(false)
@@ -72,6 +74,9 @@ export default function CandidaturaEspontaneaPage() {
                 data_nascimento: dataNascimento || null,
                 arquivo_cv_url: cvUrl,
                 status: "disponivel",
+                data_curriculo: new Date().toISOString(),
+                pcd_candidato: pcdCandidato,
+                pcd_tipo_candidato: pcdCandidato ? (pcdTipoCandidato || null) : null,
                 skills_jsonb: {
                     email: email.trim() || null,
                     unidade_preferencia: unidade,
@@ -213,6 +218,27 @@ export default function CandidaturaEspontaneaPage() {
                                         ))}
                                     </SelectContent>
                                 </Select>
+                            </div>
+
+                            {/* PCD */}
+                            <div className="space-y-2">
+                                <Label>Você é Pessoa com Deficiência (PCD)?</Label>
+                                <div className="flex gap-3">
+                                    <label className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 cursor-pointer text-sm transition-colors ${!pcdCandidato ? "border-blue-400 bg-blue-50 text-blue-700 font-medium" : "border-gray-200"}`}>
+                                        <input type="radio" name="pcdEsp" checked={!pcdCandidato} onChange={() => { setPcdCandidato(false); setPcdTipoCandidato("") }} /> Não
+                                    </label>
+                                    <label className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 cursor-pointer text-sm transition-colors ${pcdCandidato ? "border-blue-400 bg-blue-50 text-blue-700 font-medium" : "border-gray-200"}`}>
+                                        <input type="radio" name="pcdEsp" checked={pcdCandidato} onChange={() => setPcdCandidato(true)} /> Sim
+                                    </label>
+                                </div>
+                                {pcdCandidato && (
+                                    <input
+                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                        value={pcdTipoCandidato}
+                                        onChange={e => setPcdTipoCandidato(e.target.value)}
+                                        placeholder="Tipo de deficiência (opcional)"
+                                    />
+                                )}
                             </div>
 
                             {/* Upload CV */}

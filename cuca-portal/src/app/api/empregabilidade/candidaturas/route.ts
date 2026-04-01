@@ -12,6 +12,7 @@ export async function POST(request: NextRequest) {
             vaga_id, nome, data_nascimento, telefone,
             arquivo_cv_url, status, requisitos_atendidos, observacoes,
             conversa_id, area_interesse, matching_score, dados_ocr_json,
+            pcd_candidato, pcd_tipo_candidato,
         } = body
 
         if (!nome || !telefone) {
@@ -32,6 +33,8 @@ export async function POST(request: NextRequest) {
                 area_interesse: area_interesse || [],
                 match_score: matching_score ?? null,
                 dados_ocr_json: dados_ocr_json || null,
+                pcd_candidato: pcd_candidato ?? false,
+                pcd_tipo_candidato: pcd_candidato ? (pcd_tipo_candidato || null) : null,
             })
             .select("id")
             .single()

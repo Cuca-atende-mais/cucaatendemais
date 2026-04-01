@@ -93,6 +93,11 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [cargaTrabSabado, setCargaTrabSabado] = useState(false)
     const [cargaSabadoAte, setCargaSabadoAte] = useState("12:00")
 
+    // PCD
+    const [pcdVaga, setPcdVaga] = useState(false)
+    const [pcdTipo, setPcdTipo] = useState("")
+    const [pcdHomologado, setPcdHomologado] = useState(false)
+
     const supabase = createClient()
 
     useEffect(() => {
@@ -132,6 +137,9 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setExpansiva(vaga.expansiva || false)
                 setEmailContatoEmpresa(vaga.email_contato_empresa || "")
                 setEscolaridadeMinima(vaga.escolaridade_minima || "")
+                setPcdVaga(vaga.pcd_vaga || false)
+                setPcdTipo(vaga.pcd_tipo || "")
+                setPcdHomologado(vaga.pcd_homologado || false)
                 const p = parseCargaHoraria(vaga.carga_horaria || "")
                 setCargaTipo(p.tipo)
                 setCargaHoras(p.horas)
@@ -156,7 +164,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setUnidadeCucaId(""); setTotalVagas("1"); setStatus("pre_cadastro")
         setFaixaEtaria("15 a 29 anos"); setLocalEntrevista("na_empresa")
         setTipoSelecao("presencial"); setExpansiva(false); setEmailContatoEmpresa("")
-        setEscolaridadeMinima("")
+        setEscolaridadeMinima(""); setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false)
         setCargaTipo("horario_comercial"); setCargaHoras(""); setCargaEscalaT("")
         setCargaEscalaF(""); setCargaDias("Seg à Sex"); setCargaTrabSabado(false); setCargaSabadoAte("12:00")
         setErro("")
@@ -188,7 +196,10 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 expansiva,
                 email_contato_empresa: emailContatoEmpresa || null,
                 escolaridade_minima: escolaridadeMinima || null,
-                data_abertura: status === 'aberta' ? new Date().toISOString() : null
+                data_abertura: status === 'aberta' ? new Date().toISOString() : null,
+                pcd_vaga: pcdVaga,
+                pcd_tipo: pcdVaga ? (pcdTipo || null) : null,
+                pcd_homologado: pcdVaga ? pcdHomologado : false,
             }
 
             if (vaga) {
@@ -354,7 +365,24 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                     </div>
                                 </div>
                             </div>
+                            {/* PCD */}
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-3">
+                                    <Checkbox id="pcdVaga" checked={pcdVaga} onCheckedChange={c => { setPcdVaga(c as boolean); if (!c) { setPcdTipo(""); setPcdHomologado(false) } }} />
+                                    <Label htmlFor="pcdVaga" className="cursor-pointer">Vaga para PCD</Label>
+                                </div>
+                                {pcdVaga && (
+                                    <div className="pl-7 space-y-2">
+                                        <Input value={pcdTipo} onChange={e => setPcdTipo(e.target.value)} placeholder="Tipo de deficiência (opcional)" className="text-sm" />
+                                        <div className="flex items-center gap-2">
+                                            <Checkbox id="pcdHomologado" checked={pcdHomologado} onCheckedChange={c => setPcdHomologado(c as boolean)} />
+                                            <Label htmlFor="pcdHomologado" className="text-sm cursor-pointer">Homologado para PCD</Label>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         </div>
+
 
                         {/* Erro */}
                         {erro && (

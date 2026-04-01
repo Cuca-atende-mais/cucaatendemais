@@ -14,6 +14,7 @@ export async function POST(request: NextRequest) {
             faixa_etaria, carga_horaria, local, local_entrevista,
             beneficios, limite_curriculos, tipo_selecao, unidade_cuca,
             setor, email_responsavel, telefone_responsavel,
+            pcd_vaga, pcd_tipo, pcd_homologado,
         } = body
 
         if (!empresa_id || !titulo || !descricao || !tipo_contrato) {
@@ -67,6 +68,9 @@ export async function POST(request: NextRequest) {
                 email_responsavel: email_responsavel || null,
                 email_contato_empresa: email_responsavel || null,
                 telefone_responsavel: telefone_responsavel || null,
+                pcd_vaga: pcd_vaga ?? false,
+                pcd_tipo: pcd_tipo || null,
+                pcd_homologado: pcd_homologado ?? false,
             })
             .select("id, titulo, numero_vaga")
             .single()
