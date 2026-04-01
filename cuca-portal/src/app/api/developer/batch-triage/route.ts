@@ -21,6 +21,43 @@ const CATEGORIES = [
   "Administrativo / Escritório (recepção, auxiliar administrativo)",
 ];
 
+const JSON_SCHEMA = {
+  type: "json_schema" as const,
+  json_schema: {
+    name: "curriculum_analysis",
+    schema: {
+      type: "object",
+      properties: {
+        nome: { type: "string", description: "O nome completo do candidato" },
+        telefone: { type: "string", description: "O telefone ou celular (apenas números ou formatado)" },
+        data_nascimento: { type: "string", description: "Data de nascimento no formato YYYY-MM-DD se encontrada no currículo, senão string vazia" },
+        areas_interesse: {
+          type: "array",
+          items: { type: "string", enum: CATEGORIES },
+          description: "Array de 1 a 3 valores EXATOS da lista de categorias permitidas. Use APENAS os valores do enum — nunca invente variações."
+        },
+        escolaridade: { type: "string", description: "Nível de escolaridade mais alto concluído (ex: Ensino Médio Completo, Superior Incompleto, Técnico em Administração)" },
+        experiencia_meses: { type: "number", description: "Total estimado de meses de experiência profissional somando todos os empregos. 0 se sem experiência." },
+        habilidades: {
+          type: "array",
+          items: { type: "string" },
+          description: "Lista de habilidades técnicas e competências encontradas no currículo. Máximo 10 itens."
+        },
+        resumo_experiencias: {
+          type: "array",
+          items: { type: "string" },
+          description: "Lista de experiências anteriores em frases curtas (cargo + empresa + período). Máximo 5 itens."
+        },
+        resumo_skills: { type: "string", description: "Breve resumo com o perfil profissional do candidato (max 150 palavras)." },
+        justificativa_ia: { type: "string", description: "Justificativa de porque foram escolhidas essas áreas de interesse baseado no currículo." }
+      },
+      required: ["nome", "telefone", "data_nascimento", "areas_interesse", "escolaridade", "experiencia_meses", "habilidades", "resumo_experiencias", "resumo_skills", "justificativa_ia"],
+      additionalProperties: false
+    },
+    strict: true
+  }
+};
+
 export async function POST(req: NextRequest) {
   try {
     // 1. Autenticação do Desenvolvedor
@@ -38,41 +75,30 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File;
     const model = (formData.get("model") as string) || "gpt-4o-mini";
     const temperature = parseFloat((formData.get("temperature") as string) || "0.1");
-    // Opcional override prompt
     const promptOverride = formData.get("prompt");
 
     if (!file) {
       return NextResponse.json({ error: "Nenhum arquivo enviado." }, { status: 400 });
     }
 
-    // 3. Extrair texto do PDF
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    
-    let text = "";
-    if (file.type === "application/pdf") {
-      try {
-        const data = await pdf(buffer);
-        text = data.text;
-      } catch (pdfErr: any) {
-        return NextResponse.json(
-          { error: `PDF inválido ou corrompido: ${pdfErr.message}` },
-          { status: 400 }
-        );
-      }
-    } else {
-      // Futuro suporte docx/txt, mas por enquanto assumimos texto extraído ou rejeita
+    if (file.type !== "application/pdf") {
       return NextResponse.json({ error: "Apenas PDFs suportados nesta versão inicial." }, { status: 400 });
     }
 
-    if (!text || text.trim().length === 0) {
-      return NextResponse.json({ error: "Não foi possível extrair texto legível do currículo." }, { status: 400 });
+    // 3. Tentar extrair texto do PDF
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    let text = "";
+    try {
+      const data = await pdf(buffer);
+      text = data.text || "";
+    } catch {
+      // PDF de imagem — texto vazio, cai para Vision
     }
 
-    // Limita tamanho do texto para não estourar tokens absurdos
-    text = text.substring(0, 15000);
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    // 4. OpenAI - Prompt Engenharia de RH
     const sysPrompt = promptOverride ? String(promptOverride) : `
 Você é um Analista de RH Sênior analisando um currículo para cadastro no Banco de Talentos.
 Sua tarefa é extrair os dados do candidato, classificá-lo em áreas de interesse e extrair informações profissionais estruturadas.
@@ -102,66 +128,57 @@ Regras rigorosas:
 7. Retorne APENAS um objeto JSON com a seguinte estrutura estrita.
 `;
 
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    // 4. Chamar OpenAI — texto (rápido) ou Vision (fallback para PDFs de imagem)
+    let aiResponse;
+    let visionMode = false;
 
-    const response = await openai.chat.completions.create({
-      model: model,
-      temperature: temperature,
-      messages: [
-        { role: "system", content: sysPrompt },
-        { role: "user", content: `Analise o seguinte currículo:\n\n${text}` }
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "curriculum_analysis",
-          schema: {
-            type: "object",
-            properties: {
-              nome: { type: "string", description: "O nome completo do candidato" },
-              telefone: { type: "string", description: "O telefone ou celular (apenas números ou formatado)" },
-              data_nascimento: { type: "string", description: "Data de nascimento no formato YYYY-MM-DD se encontrada no currículo, senão string vazia" },
-              areas_interesse: {
-                type: "array",
-                items: { type: "string", enum: CATEGORIES },
-                description: "Array de 1 a 3 valores EXATOS da lista de categorias permitidas. Use APENAS os valores do enum — nunca invente variações."
-              },
-              escolaridade: { type: "string", description: "Nível de escolaridade mais alto concluído (ex: Ensino Médio Completo, Superior Incompleto, Técnico em Administração)" },
-              experiencia_meses: { type: "number", description: "Total estimado de meses de experiência profissional somando todos os empregos. 0 se sem experiência." },
-              habilidades: {
-                type: "array",
-                items: { type: "string" },
-                description: "Lista de habilidades técnicas e competências encontradas no currículo. Máximo 10 itens."
-              },
-              resumo_experiencias: {
-                type: "array",
-                items: { type: "string" },
-                description: "Lista de experiências anteriores em frases curtas (cargo + empresa + período). Máximo 5 itens."
-              },
-              resumo_skills: { type: "string", description: "Breve resumo com o perfil profissional do candidato (max 150 palavras)." },
-              justificativa_ia: { type: "string", description: "Justificativa de porque foram escolhidas essas áreas de interesse baseado no currículo." }
-            },
-            required: ["nome", "telefone", "data_nascimento", "areas_interesse", "escolaridade", "experiencia_meses", "habilidades", "resumo_experiencias", "resumo_skills", "justificativa_ia"],
-            additionalProperties: false
+    if (text.trim().length >= 100) {
+      // PDF com texto extraível — modo texto normal
+      aiResponse = await openai.chat.completions.create({
+        model,
+        temperature,
+        messages: [
+          { role: "system", content: sysPrompt },
+          { role: "user", content: `Analise o seguinte currículo:\n\n${text.substring(0, 15000)}` }
+        ],
+        response_format: JSON_SCHEMA,
+      });
+    } else {
+      // PDF de imagem — GPT-4o Vision com PDF em base64
+      visionMode = true;
+      const base64Pdf = buffer.toString("base64");
+      aiResponse = await openai.chat.completions.create({
+        model: "gpt-4o", // Vision requer gpt-4o
+        temperature,
+        messages: [
+          { role: "system", content: sysPrompt },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Analise o currículo neste PDF:" },
+              {
+                type: "file",
+                file: {
+                  filename: file.name,
+                  file_data: `data:application/pdf;base64,${base64Pdf}`,
+                },
+              } as any,
+            ],
           },
-          strict: true
-        }
-      }
-    });
-
-    const parsedJson = response.choices[0].message.content;
-    if (!parsedJson) {
-      throw new Error("Resposta vazia da OpenAI.");
+        ],
+        response_format: JSON_SCHEMA,
+      });
     }
+
+    const parsedJson = aiResponse.choices[0].message.content;
+    if (!parsedJson) throw new Error("Resposta vazia da OpenAI.");
 
     const aiResult = JSON.parse(parsedJson);
 
-    // Validação estrita contra a lista de categorias pra não sujar o banco
+    // Validação estrita contra a lista de categorias
     const filteredAreas = aiResult.areas_interesse.filter((a: string) => CATEGORIES.includes(a));
     if (filteredAreas.length === 0) {
-      filteredAreas.push("Serviços Gerais (limpeza, portaria, zeladoria)"); // fallback
+      filteredAreas.push("Serviços Gerais (limpeza, portaria, zeladoria)");
     }
 
     // 5. Upload do PDF original para Cloudflare R2
@@ -173,15 +190,15 @@ Regras rigorosas:
       console.warn("[batch-triage] Upload R2 falhou, continuando sem arquivo:", r2Err);
     }
 
-    // 6. Salvar automaticamente no Supabase
+    // 6. Salvar no Supabase
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    const dataNascimento = aiResult.data_nascimento && aiResult.data_nascimento.match(/^\d{4}-\d{2}-\d{2}$/)
+    const dataNascimento = aiResult.data_nascimento?.match(/^\d{4}-\d{2}-\d{2}$/)
       ? aiResult.data_nascimento
-      : null
+      : null;
 
     const talentPayload = {
       nome: aiResult.nome || "Não encontrado",
@@ -198,7 +215,8 @@ Regras rigorosas:
         resumo: aiResult.resumo_skills,
         justificativa_ia: aiResult.justificativa_ia,
         origem: "batch_developer_triage",
-        nome_arquivo: file.name
+        nome_arquivo: file.name,
+        vision_mode: visionMode,
       },
       updated_at: new Date().toISOString()
     };
@@ -209,9 +227,7 @@ Regras rigorosas:
       .select("id")
       .single();
 
-    if (dbError) {
-      throw new Error(`Erro ao salvar no banco de dados: ${dbError.message}`);
-    }
+    if (dbError) throw new Error(`Erro ao salvar no banco de dados: ${dbError.message}`);
 
     return NextResponse.json({
       success: true,
@@ -219,7 +235,8 @@ Regras rigorosas:
         talent_id: inserted.id,
         nome: talentPayload.nome,
         areas: talentPayload.area_interesse,
-        justificativa: aiResult.justificativa_ia
+        justificativa: aiResult.justificativa_ia,
+        vision_mode: visionMode,
       }
     });
 

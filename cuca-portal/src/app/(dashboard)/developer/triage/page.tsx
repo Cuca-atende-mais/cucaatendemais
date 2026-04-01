@@ -190,7 +190,12 @@ export default function BatchTriagePage() {
                       <div className="w-full bg-muted/30 p-3 flex flex-col gap-2 rounded text-sm mt-2 border border-border/50">
                          <div className="flex justify-between items-center">
                             <span className="font-semibold text-primary">{entry.result.nome.toUpperCase()}</span>
-                            <span className="text-xs font-mono bg-background border px-2 rounded opacity-50">ID Inserido: {entry.result.talent_id?.split('-')[0]}...</span>
+                            <div className="flex items-center gap-2">
+                              {entry.result.vision_mode && (
+                                <span className="text-xs text-purple-500 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-full">👁 Modo Visual</span>
+                              )}
+                              <span className="text-xs font-mono bg-background border px-2 rounded opacity-50">ID: {entry.result.talent_id?.split('-')[0]}...</span>
+                            </div>
                          </div>
                          <div className="flex gap-2 flex-wrap">
                             {entry.result.areas.map((a: string, i: number) => (
