@@ -117,6 +117,9 @@ export type Vaga = {
     data_fechamento: string | null
     disparo_id: string | null
     numero_vaga: number | null
+    pcd_vaga: boolean | null
+    pcd_tipo: string | null
+    pcd_homologado: boolean | null
     created_by: string | null
     created_at: string
     updated_at: string
