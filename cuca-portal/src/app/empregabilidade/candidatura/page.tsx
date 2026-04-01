@@ -180,7 +180,10 @@ export default function CandidaturaPublicaPage() {
             fd.append("file", arquivo)
             fd.append("folder", `candidaturas/${vagaId || "banco_talentos"}`)
             const upRes = await fetch("/api/upload-cv", { method: "POST", body: fd })
-            if (!upRes.ok) throw new Error("Erro no upload do currículo.")
+            if (!upRes.ok) {
+                const errData = await upRes.json().catch(() => ({}))
+                throw new Error(errData.error || "Erro no upload do currículo.")
+            }
             const { url: publicUrl } = await upRes.json()
 
             const obsArr: string[] = []

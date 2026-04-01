@@ -79,7 +79,10 @@ export default function VagaPublicaPage() {
             fd.append("file", arquivo)
             fd.append("folder", `candidaturas/${vaga?.id || "geral"}`)
             const upRes = await fetch("/api/upload-cv", { method: "POST", body: fd })
-            if (!upRes.ok) throw new Error("Erro no upload do currículo.")
+            if (!upRes.ok) {
+                const errData = await upRes.json().catch(() => ({}))
+                throw new Error(errData.error || "Erro no upload do currículo.")
+            }
             const { url: publicUrl } = await upRes.json()
 
             // 2. Salvar na Tabela 'candidaturas'
