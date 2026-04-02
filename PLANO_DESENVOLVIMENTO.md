@@ -1,6 +1,6 @@
 # PLANO DE DESENVOLVIMENTO — Sistema CUCA (Guia Mestre)
-> **Versão**: 7.7 | **Atualizado**: 23/03/2026
-> **STATUS ATUAL**: Sprints 1–22 + 24–35 + 40–43 Concluídos | Sprint 23 planejado (pendente) | Sprint 36 planejado
+> **Versão**: 7.8 | **Atualizado**: 02/04/2026
+> **STATUS ATUAL**: Sprints 1–22 + 24–35 Concluídos | Sprint 23 planejado (pendente) | S16-03, S16-07, S16-08 pendentes | S9-07, S10-06 pendentes (baixa prioridade)
 > **REGRAS GERAIS**: Este arquivo é a **ÚNICA** fonte de verdade para planejamento. Não existem arquivos de tarefa (.tasks) ou planos externos.
 > **Lido e consolidado de**: DOCUMENTACAO_FUNCIONAL.md (1441 linhas) · SCHEMA_BANCO_DADOS.md (926 linhas) · GUIA_PROMPTS_AGENTES.md · PRODUTO_ESCOPO_ENTREGAS.md · personas_rede_cuca.md · brainstorm_cuca.md · DECISOES_RESOLVIDAS.md · IMPLEMENTATION_PLAN.md
 
@@ -64,8 +64,8 @@
 | **Auth** | Supabase Auth (email/senha + JWT) | Integrado ao RLS |
 | **Storage** | Supabase Storage | CVs, flyers, mídias |
 | **Secrets** | Supabase Vault (pgsodium) | Tokens UAZAPI, OpenAI Key |
-| **Worker** | Python (FastAPI) + Celery + Redis (VPS Hostinger) | **Credenciais Recebidas ✅** |
-| **WhatsApp** | UAZAPI v2 (14 instâncias) | REST + webhooks |
+| **Worker** | Python (FastAPI) + Gunicorn (VPS Hostinger) | **Em produção ✅** |
+| **WhatsApp** | UAZAPI v2 (13 instâncias ativas) | REST + webhooks |
 | **LLM** | OpenAI GPT-4o | Agentes, OCR de CV, sentimento |
 | **Embeddings** | OpenAI `text-embedding-3-small` (vector 1536) | RAG — custo-benefício |
 | **Transcrição** | OpenAI Whisper (`whisper-1`) | Áudio → texto (limite 40s) |
@@ -80,7 +80,7 @@
 ## 2. ARQUITETURA GERAL {#2-arquitetura}
 
 ```
-WhatsApp (14 instâncias)  ←→  UAZAPI v2 (webhooks: messages / messages_update / connection)
+WhatsApp (13 instâncias)  ←→  UAZAPI v2 (webhooks: messages / messages_update / connection)
                                          ↕
                                Worker Python FastAPI (VPS Hostinger)
                                ├── Webhook Handler → 200 OK imediato (OBRIGATÓRIO antes de processar)
@@ -89,7 +89,7 @@ WhatsApp (14 instâncias)  ←→  UAZAPI v2 (webhooks: messages / messages_upda
                                ├── Whisper (áudio ≤40s → texto)
                                ├── Motor de Agentes (3 camadas: persona + técnica + RAG)
                                ├── Motor Anti-Ban (presence: composing, delay aleatório, horário 8h-22h)
-                               └── Celery Queues (Redis)
+                               └── Background loops assíncronos (campanhas, empregabilidade, OCR, matching)
                                          ↕
                                Supabase (PostgreSQL 15 + pgvector)
                                ├── 26 tabelas (ver seção 6)
@@ -294,13 +294,12 @@ CAMADA 3 — RAG DINÂMICO (o que sei agora)
 
 | Canal | Persona | RAG — source_type | RAG — filtro cuca_unit_id |
 |-------|---------|-------------------|---------------------------|
-| #1-5 (Empregabilidade unidade) | Júlia | `job_posting` | Apenas a unidade do canal |
-| #6 (Empregabilidade Geral) | Júlia | `job_posting` | **Sem filtro** (todos os CUCAs) |
-| #7-11 (Pontual por unidade) | Maria | `scheduled_program` + `knowledge_base` | Apenas a unidade do canal |
-| #12 (Mensal) | Maria | `monthly_program` | Sem filtro (global) |
-| #13 (Ouvidoria) | Sofia | `ouvidoria_evento` (se ativo) | Conforme evento |
-| #14 (Geral — dúvidas) | Maria | `knowledge_base` + `monthly_program` | Sem filtro (global) |
-| #14 (Acesso CUCA — agendamento) | Ana | Query direta: `spaces` + `equipment` (status='ativo') | CUCA da solicitação |
+| #1-5 (Institucional por unidade) | Maria | `scheduled_program` + `knowledge_base` + `monthly_program` | Apenas a unidade do canal |
+| #6-10 (Empregabilidade por unidade) | Júlia | `job_posting` | Apenas a unidade do canal |
+| #6 Geral — Júlia Geral | Júlia | `job_posting` | **Sem filtro** (todos os CUCAs) |
+| #11 (Acesso CUCA) | Ana | Query direta: `spaces` + `equipment` (status='ativo') | CUCA da solicitação |
+| #12 (Ouvidoria) | Sofia | `ouvidoria_evento` (se ativo) | Conforme evento |
+| #13 (Divulgação) | Maria Geral | `knowledge_base` (global) | **Sem filtro** (toda a rede) |
 
 ### Personas (resumo de personas_rede_cuca.md)
 
@@ -453,7 +452,7 @@ Novo agente focado na saúde do ecossistema, medindo as duas fontes de verdade:
 - `categories` — categorias de interesse (Esporte, Cultura, Hip Hop, Tecnologia...)
 - `leads` — remote_jid, phone, name, cuca_unit_id, opt_in, opt_in_date, opt_out_date, lat/lng
 - `lead_categories` — N:N leads × categories
-- `whatsapp_instances` — 14 instâncias (instance_name, phone, category, cuca_unit_id, token_vault_key, status, messages_sent_today)
+- `whatsapp_instances` — 13 instâncias ativas (instance_name, phone, category, cuca_unit_id, token_vault_key, status, messages_sent_today)
 - `message_logs` — toda mensagem (instance_id, lead_id, direction, content_type, content, media_url, from_me, status) — **limpeza automática 60 dias**
 - `conversations` — estado da conversa (status: active/awaiting_human/human_responding/closed, assigned_to)
 
@@ -650,7 +649,7 @@ NÍVEL 5 — Depende de tudo
 #### Sprint 2 — Estrutura & Portal ✅
 > **Foco**: Shell do Portal e Fluxo de Autenticação Centralizado.
 
-- [x] **S2-01: Setup Next.js 14 + Shadcn UI** ✅
+- [x] **S2-01: Setup Next.js 15 + Shadcn UI** ✅
 - [x] **S2-02: Auth Supabase (Edge Middleware)** ✅
 - [x] **S2-03: Layout Shell (App Router)** ✅
 - [x] **S2-04: Sidebar Dinâmica (Role Based Access)** ✅
@@ -758,7 +757,7 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 > [!TIP]
 > Os números são extraídos do campo `collaborators.phone`. Se houver mais de um colaborador na mesma unidade/regra, todos recebem o alerta para garantir a velocidade de resposta.
 
-#### Sprint 8 — Campanhas + Motor Anti-Ban completo ⏳
+#### Sprint 8 — Campanhas + Motor Anti-Ban completo ✅ CONCLUÍDO
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
 | S8-01 | Módulo Campanhas: CRUD (título, template com {{nome}}, mídia, público, agendamento) | [x] |
@@ -772,7 +771,7 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 
 ### FASE 3 — EMPREGABILIDADE
 
-#### Sprints 9-11 — Empregabilidade Completa ⏳
+#### Sprints 9-11 — Empregabilidade Completa ✅ CONCLUÍDO (~95% — S9-07 e S10-06 pendentes por baixa prioridade)
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
 | S9-01 | Formulário público de cadastro de empresa (CNPJ lookup + access_token) | [x] |
@@ -801,13 +800,13 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 | S11-04 | UI: Interface de mensagens `/empregabilidade/mensagens` isolada do atendimento geral (RH independente) | [x] |
 | S11-05 | CRUD de Transbordo Humano: Tabela e Tela para configurar núm. de WhatsApp de responsáveis por módulo | [x] |
 | S11-06 | Worker Handover: IA detecta pedido de humano, busca número no banco, envia resumo e link pro gestor | [x] |
-| S11-07 | 🚨 **DEPLOY VPS HOSTINGER**: Subir o Worker FastAPI na VPS e autenticar instâncias UAZAPI para Go-Live operacional | ⏳ |
+| S11-07 | 🚨 **DEPLOY VPS HOSTINGER**: Subir o Worker FastAPI na VPS e autenticar instâncias UAZAPI para Go-Live operacional | [x] |
 
 ---
 
 ### FASE 4 — ACESSO CUCA + OUVIDORIA
 
-#### Sprint 12 — Acesso CUCA (Ana) ⏳
+#### Sprint 12 — Acesso CUCA (Ana) ✅ CONCLUÍDO
 | Ticket | Entregável | Status |
 |--------|-----------|--------|
 | S12-01 | CRUD de Espaços e Equipamentos (status: ativo/desativado/manutencao) | [x] |
@@ -882,12 +881,12 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 |--------|-----------|--------|--------|
 | S16-01 | **Candidatura Espontânea — Banco de Talentos**: `vaga_id` já era nullable; página pública `/candidatos/espontanea` criada (nome, nasc, telefone, email, unidade, CV PDF); OCR fire-and-forget via `/api/talent-bank/processar-cv-espontaneo` → worker `process_cv_espontaneo`; insert direto em `talent_bank` | Portal + Worker | [x] |
 | S16-02 | **Cadastro Manual pelo Colaborador**: botão "Cadastrar Manualmente" no banco-talentos com modal inline (nome, telefone, data nasc) sem CV obrigatório | Portal | [x] |
-| S16-03 | **Mensagem de Encerramento após Inscrição**: requer mudança no motor-agente (Edge Function) — **pendente Sprint 18** | Worker + Edge Function | [ ] |
+| S16-03 | **Mensagem de Encerramento após Inscrição**: requer mudança no motor-agente (Edge Function) — **pendente** | Worker + Edge Function | [ ] |
 | S16-04 | **Follow-up com a Empresa**: já implementado (Sheet com tipos interno/empresa/candidato) desde S12-07 | Portal | [x] |
 | S16-05 | **Follow-up com o Candidato Aprovado**: endpoint `/api/empregabilidade/notificar-selecionado` criado; disparo WhatsApp automático ao marcar status `selecionado` via instância Institucional da unidade | Portal + Worker | [x] |
 | S16-06 | **Visualização Cross-CUCA de Vagas**: já implementado (aba "Todas as Unidades") desde S12-09 | Portal | [x] |
-| S16-07 | **Buscador Multi-CUCA por Perfil de CV**: requer mudança no motor-agente — **pendente Sprint 18** | Worker + Edge Function | [ ] |
-| S16-08 | **Inscrição de Terceiros**: requer mudança no motor-agente — **pendente Sprint 18** | Worker + Edge Function | [ ] |
+| S16-07 | **Buscador Multi-CUCA por Perfil de CV**: requer mudança no motor-agente — **pendente** (base SQL criada em S18-02, falta integração ao motor) | Worker + Edge Function | [ ] |
+| S16-08 | **Inscrição de Terceiros**: requer mudança no motor-agente — **pendente** | Worker + Edge Function | [ ] |
 
 ---
 
@@ -931,9 +930,11 @@ O sistema "entenderá" para quem enviar cada alerta baseando-se na função e v�
 
 ---
 
-#### Sprint 23 — Programação Pontual: Autorização + Categorias + Contexto de Disparo ⏳ PLANEJADO
+#### Sprint 23 — Programação Pontual: Autorização + Categorias + Contexto de Disparo ⏳ PLANEJADO (PRÓXIMA PRIORIDADE)
 
 > **Objetivo**: Completar a feature de Programação Pontual com fluxo de autorização separado do disparo (usando RBAC existente), alinhar a UX de categorias com o perfil do lead, resolver o problema de contexto de disparo para 20k+ jovens com perguntas sem padrão, e garantir que a IA conheça eventos pontuais no RAG assim que são criados.
+>
+> **Prioridade**: Alta — único bloco grande de funcionalidade não implementado. Sem o breadcrumb (S23-05/06), jovens que respondem a disparos pontuais recebem respostas sem contexto do evento.
 
 #### Fluxo após Sprint 23
 ```
@@ -1406,7 +1407,7 @@ GPT-4o compara `talent_bank.skills_jsonb` com os requisitos da vaga e retorna li
 
 ---
 
-#### Sprint 19 — Taxonomia de Leads Data-Driven (Eixos e Modalidades) ⏳
+#### Sprint 19 — Taxonomia de Leads Data-Driven (Eixos e Modalidades) ✅ CONCLUÍDO
 > **Objetivo**: Padronizar a entrada de dados (Cursos/Esportes/Cultura) para evitar sujeira no banco, unificando a estrutura do cadastro manual com o consumo da Programação Mensal. A retroalimentação das categorias na tabela ocorrerá de forma automática via Worker durante o envio (upload) da planilha mensal.
 
 | Ticket | Entregável | Status |
@@ -1456,8 +1457,8 @@ GPT-4o compara `talent_bank.skills_jsonb` com os requisitos da vaga e retorna li
 - Alertas visuais: 🟡 se > limites, 🔴 se crítico
 
 **16.3.4 — Controle de Instâncias UAZAPI (Atualizado para Organograma Oficial)**:
-- **Organograma**: 20 canais totais (12 ativos e 8 reservas).
-  - **Ativos (12)**: 5 Institucionais, 5 Empregabilidade, 1 Acesso, 1 Ouvidoria.
+- **Organograma**: 13 canais ativos + chips reserva por unidade.
+  - **Ativos (13)**: 5 Institucionais, 5 Empregabilidade, 1 Acesso CUCA, 1 Ouvidoria, 1 Divulgação.
 - **Fluxo de Criação (CRUD real)**: Gerentes criam as suas 2 (Institucional e Empregabilidade). Super Admin cria Acesso e Ouvidoria.
 - Botões de **Editar/Excluir/Criar**, em vez de apenas ler.
 - **Transbordo Humano**: Interface para o Gerente/Admin amarrar "Números Pessoais/Operacionais" de transbordo da equipe, isolando essa configuração do fluxo global.
@@ -1532,9 +1533,9 @@ GPT-4o compara `talent_bank.skills_jsonb` com os requisitos da vaga e retorna li
 
 | Sistema | Tipo | A partir de | Status |
 |---------|------|-------------|--------|
-| **UAZAPI** | REST + Webhooks (14 instâncias) | Sprint 2 | 🔴 Crítica |
+| **UAZAPI** | REST + Webhooks (13 instâncias ativas) | Sprint 2 | 🔴 Crítica |
 | **OpenAI** (GPT-4o, Embeddings, Whisper) | REST | Sprint 4 | 🔴 Crítica |
-| **Supabase Vault** (OPENAI_API_KEY) | Supabase | Sprint 4 | ⚠️ **PENDENTE** |
+| **Supabase Vault** (OPENAI_API_KEY) | Supabase | Sprint 4 | ✅ **Implementado** (update via Developer Console — S28) |
 | **Portal da Juventude** (API REST GET) | pg_cron + pg_net | Sprint 7 | 🟡 Média — fallback planilha |
 | **WhatsApp Business** | Via UAZAPI | Sprint 2 | 🔴 Crítica |
 
@@ -1546,12 +1547,12 @@ GPT-4o compara `talent_bank.skills_jsonb` com os requisitos da vaga e retorna li
 |-------|:-----:|:-------:|-----------|
 | Ban de números WhatsApp | Alta | Alto | Warm-up 5 semanas, delay 5-45s, presence, Business, conteúdo personalizado |
 | Custos OpenAI imprevistos | Média | Alto | ai_usage_logs + budget alerts (80%/100%) no Developer Console |
-| OPENAI_API_KEY faltando | Alta | Crítico | **Bloqueador atual** — adicionar no Vault antes de continuar |
+| OPENAI_API_KEY faltando | Baixa | Crítico | ✅ **Resolvido (S28)** — chave no Vault, update via Developer Console em `/developer/configuracoes` |
 | API Portal da Juventude indisponível | Média | Médio | Fallback: import manual CSV/Excel já planejado (S7-01) |
-| Volume 20k leads simultâneos | Alta | Médio | Celery queue + disparo gradual + distribuição entre instâncias |
+| Volume 20k leads simultâneos | Alta | Médio | Background loops + disparo gradual + delays aleatórios + distribuição entre instâncias. **Teste de carga ainda pendente.** |
 | LGPD — críticas na ouvidoria | Baixa | Crítico | remote_jid=NULL em críticas, RLS, Vault, sem coleta de dados pessoais |
 | RBAC apenas no frontend | Média | Crítico | RLS no banco é a barreira real — configurar em TODAS as tabelas |
-| Numeração dos 14 canais confusa | Alta | Alto | **CORRIGIDA neste documento**: #1-5 Empregabilidade, #6 Geral, #7-11 Pontual, #12 Mensal, #13 Ouvidoria, #14 Info+Acesso |
+| Numeração dos canais confusa | Alta | Alto | ✅ **Resolvido (v5.15)**: arquitetura consolidada em **13 canais** — #1-5 Institucional, #6-10 Empregabilidade, #11 Acesso, #12 Ouvidoria, #13 Divulgação |
 | Worker não retorna 200 OK imediato | Alta | Alto | UAZAPI faz retry infinito — 200 OK deve ser a PRIMEIRA coisa que o worker faz |
 
 ---
