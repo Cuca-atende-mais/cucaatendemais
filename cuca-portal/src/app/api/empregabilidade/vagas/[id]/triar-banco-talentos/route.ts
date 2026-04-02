@@ -69,7 +69,13 @@ export async function POST(
 
         if (!res.ok) {
             const err = await res.text()
-            throw new Error(`Worker retornou erro: ${err}`)
+            throw new Error(`Worker retornou erro (${res.status}): ${err.slice(0, 200)}`)
+        }
+
+        const contentType = res.headers.get("content-type") || ""
+        if (!contentType.includes("application/json")) {
+            const txt = await res.text()
+            throw new Error(`Worker retornou resposta não-JSON (${contentType}): ${txt.slice(0, 200)}`)
         }
 
         const data = await res.json()

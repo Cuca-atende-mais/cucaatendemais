@@ -198,7 +198,13 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     if termos_vaga:
         com_skills.sort(key=lambda c: _pontuar_candidato(c, termos_vaga), reverse=True)
 
-    # 4. Varrer TODOS os candidatos com skills em batches
+    # Limitar varredura para evitar timeout (top semânticos primeiro)
+    MAX_VARRER = quantidade * 20  # ex: pedir 5 → varrer até 100
+    if len(com_skills) > MAX_VARRER:
+        logger.info(f"[triar_banco_talentos] Limitando varredura de {len(com_skills)} para {MAX_VARRER} candidatos (pré-score)")
+        com_skills = com_skills[:MAX_VARRER]
+
+    # 4. Varrer candidatos com skills em batches
     todos_scores: list[dict] = []  # {"id": ..., "score": ..., "justificativa": ...}
     candidatos_map = {c["id"]: c for c in com_skills}
 

@@ -193,7 +193,11 @@ export default function VagaDetalhesPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ quantidade: qtd, excluir_ids: excluirIds }),
             })
-            const data = await res.json()
+            const text = await res.text()
+            let data: any
+            try { data = JSON.parse(text) } catch {
+                throw new Error("Resposta inválida do servidor. Pode ser timeout — tente com menos currículos.")
+            }
             if (!res.ok) throw new Error(data.error || "Erro ao triar banco de talentos")
             const novos = data.candidatos || []
             // Acumula com resultados anteriores (para "Analisar mais")
