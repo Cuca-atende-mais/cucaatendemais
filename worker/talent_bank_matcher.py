@@ -117,7 +117,12 @@ Retorne SOMENTE JSON válido, sem markdown:
         return []
 
 
-async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: list[str] | None = None, excluir_ids: list[str] | None = None) -> list[dict]:
+def _norm_fone(f: str) -> str:
+    """Normaliza telefone para apenas dígitos, independente de formato."""
+    return re.sub(r'\D', '', f or '')
+
+
+async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: list[str] | None = None, excluir_ids: list[str] | None = None, telefones_inscritos: list[str] | None = None) -> list[dict]:
     """Triagem com varredura completa da área + pré-filtragem semântica + batching.
 
     Fluxo:
@@ -153,7 +158,14 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     ids_excluir = set(excluir_ids or [])
     if ids_excluir:
         todos = [c for c in todos if c["id"] not in ids_excluir]
-        logger.info(f"[triar_banco_talentos] Excluindo {len(ids_excluir)} candidatos já processados")
+        logger.info(f"[triar_banco_talentos] Excluindo {len(ids_excluir)} candidatos por ID")
+
+    # Excluir por telefone normalizado (resolve incompatibilidade de formatos)
+    fones_excluir = set(_norm_fone(f) for f in (telefones_inscritos or []) if f)
+    if fones_excluir:
+        antes = len(todos)
+        todos = [c for c in todos if _norm_fone(c.get("telefone") or "") not in fones_excluir]
+        logger.info(f"[triar_banco_talentos] Excluindo {antes - len(todos)} candidatos por telefone")
 
     # Filtrar por área de interesse compatível com o setor da vaga
     if setores:

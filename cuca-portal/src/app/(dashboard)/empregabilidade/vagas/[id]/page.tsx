@@ -115,6 +115,24 @@ export default function VagaDetalhesPage() {
         })
     }
 
+    // TB: lista filtrada — sem inscritos e sem duplicatas por telefone
+    const talentVisiveis = useMemo(() => {
+        const norm = (tel: string) => tel.replace(/\D/g, "")
+        const fonesCandidatos = new Set(
+            candidatos.filter(c => c.status !== "rejeitado").map(c => norm(c.telefone || "")).filter(Boolean)
+        )
+        const seenFones = new Set<string>()
+        return talentResults.filter(tb => {
+            const foneNorm = norm(tb.telefone || "")
+            if (foneNorm && fonesCandidatos.has(foneNorm)) return false
+            if (foneNorm) {
+                if (seenFones.has(foneNorm)) return false
+                seenFones.add(foneNorm)
+            }
+            return true
+        })
+    }, [talentResults, candidatos])
+
     // Follow-up Sheet
     const [followupSheet, setFollowupSheet] = useState<Candidatura | null>(null)
     const [followups, setFollowups] = useState<EmpregabilidadeFollowup[]>([])
@@ -600,7 +618,7 @@ export default function VagaDetalhesPage() {
                         <Database className="h-5 w-5 text-purple-400" />
                         <h2 className="text-lg font-semibold">Banco de Talentos</h2>
                         {talentTriado && (
-                            <Badge variant="outline" className="border-purple-500/30 text-purple-400">{talentResults.length} encontrado(s)</Badge>
+                            <Badge variant="outline" className="border-purple-500/30 text-purple-400">{talentVisiveis.length} encontrado(s)</Badge>
                         )}
                     </div>
                     {talentTriado && (
@@ -642,37 +660,22 @@ export default function VagaDetalhesPage() {
                     </div>
                 )}
 
-                {talentTriado && talentResults.length > 0 && (() => {
-                    // Filtrar TB: excluir quem já está inscrito na vaga (por telefone) ou duplicado
-                    const fonesCandidatos = new Set(
-                        candidatos.filter(c => c.status !== "rejeitado").map(c => c.telefone).filter(Boolean)
-                    )
-                    const seenFones = new Set<string>()
-                    const tbVisiveis = talentResults.filter(tb => {
-                        if (tb.telefone && fonesCandidatos.has(tb.telefone)) return false
-                        if (tb.telefone) {
-                            if (seenFones.has(tb.telefone)) return false
-                            seenFones.add(tb.telefone)
-                        }
-                        return true
-                    })
-                    if (tbVisiveis.length === 0) return (
-                        <p className="text-sm text-muted-foreground text-center py-6">
-                            Todos os candidatos encontrados já foram inscritos nesta vaga.
-                        </p>
-                    )
-                    return (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {tbVisiveis.map(tb => (
-                                <TalentBankCard
-                                    key={tb.id}
-                                    candidato={tb}
-                                    onClick={() => router.push(`/empregabilidade/vagas/${id}/banco-talentos/${tb.id}`)}
-                                />
-                            ))}
-                        </div>
-                    )
-                })()}
+                {talentTriado && talentVisiveis.length === 0 && talentResults.length > 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-6">
+                        Todos os candidatos encontrados já foram inscritos nesta vaga.
+                    </p>
+                )}
+                {talentTriado && talentVisiveis.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {talentVisiveis.map(tb => (
+                            <TalentBankCard
+                                key={tb.id}
+                                candidato={tb}
+                                onClick={() => router.push(`/empregabilidade/vagas/${id}/banco-talentos/${tb.id}`)}
+                            />
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* ── Dialog: Quantos currículos analisar ── */}

@@ -120,6 +120,8 @@ export default function CandidatoDetalhesPage() {
                     .eq("telefone", telefone)
             }
 
+            // Invalidar cache TB desta vaga para forçar reload na próxima visita
+            try { localStorage.removeItem(`talent_triagem_${vagaId}`) } catch {}
             toast.success("Status atualizado")
         } catch (err: any) {
             toast.error("Erro: " + err.message)
@@ -173,6 +175,8 @@ export default function CandidatoDetalhesPage() {
                 }),
             })
             const data = await res.json()
+            // Invalidar cache TB desta vaga para forçar reload na próxima visita
+            try { localStorage.removeItem(`talent_triagem_${vagaId}`) } catch {}
             if (data.ok) {
                 toast.success("Candidato aprovado e notificado por WhatsApp!")
             } else {

@@ -38,21 +38,16 @@ export async function POST(
             .eq("vaga_id", vagaId)
             .not("telefone", "is", null)
 
+        const normalizar = (tel: string) => tel.replace(/\D/g, "")
+
+        // Telefones normalizados (só dígitos) dos já inscritos — enviados ao worker para exclusão por fone
         const telefonesInscritos = (candidaturasExistentes || [])
-            .map((c: any) => c.telefone)
+            .map((c: any) => normalizar(c.telefone || ""))
             .filter(Boolean)
 
-        let excluirIdsTB: string[] = []
-        if (telefonesInscritos.length > 0) {
-            const { data: tbJaInscritos } = await supabase
-                .from("talent_bank")
-                .select("id")
-                .in("telefone", telefonesInscritos)
-            excluirIdsTB = (tbJaInscritos || []).map((r: any) => r.id)
-        }
-
-        // Consolidar IDs a excluir: já mostrados no frontend + já inscritos na vaga
-        const excluirIds = Array.from(new Set([...excluirIdsCliente, ...excluirIdsTB]))
+        // IDs a excluir: apenas os enviados pelo cliente (já exibidos)
+        // A exclusão por telefone é feita pelo worker via telefones_inscritos
+        const excluirIds = Array.from(new Set([...excluirIdsCliente]))
 
         const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
         console.log(`[triar-banco-talentos] vagaId=${vagaId} quantidade=${quantidade} excluindo=${excluirIds.length} candidatos`)
@@ -66,6 +61,7 @@ export async function POST(
                 quantidade,
                 setor_vaga: (vaga as any).setor || [],
                 excluir_ids: excluirIds,
+                telefones_inscritos: telefonesInscritos,
             }),
             signal: controller.signal,
         })
