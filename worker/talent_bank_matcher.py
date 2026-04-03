@@ -122,15 +122,16 @@ def _norm_fone(f: str) -> str:
     return re.sub(r'\D', '', f or '')
 
 
-async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: list[str] | None = None, excluir_ids: list[str] | None = None, telefones_inscritos: list[str] | None = None) -> list[dict]:
+async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: list[str] | None = None, excluir_ids: list[str] | None = None, telefones_inscritos: list[str] | None = None, filtros: dict | None = None) -> list[dict]:
     """Triagem com varredura completa da área + pré-filtragem semântica + batching.
 
     Fluxo:
     1. Busca dados da vaga e todos os candidatos disponíveis da área
-    2. Pré-filtra semanticamente por termos da vaga (sem chamada de IA)
-    3. Varre TODOS os candidatos com skills em batches de 20 pelo GPT-4o
-    4. Consolida scores, pega top N
-    5. Completa com OCR de candidatos sem skills se necessário
+    2. Aplica filtros demográficos diretamente no Supabase (economiza tokens GPT)
+    3. Pré-filtra semanticamente por termos da vaga (sem chamada de IA)
+    4. Varre candidatos com skills em batches de 20 pelo GPT-4o
+    5. Consolida scores, pega top N
+    6. Completa com OCR de candidatos sem skills se necessário
     """
 
     # 1. Buscar dados da vaga
@@ -147,10 +148,27 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     texto_vaga = f"{vaga.get('titulo', '')} {vaga.get('descricao', '')} {vaga.get('requisitos', '')}"
     termos_vaga = _extrair_termos(texto_vaga)
 
-    # 2. Buscar TODOS os candidatos disponíveis da área
-    tb_res = supabase.table("talent_bank").select(
+    # S37B-06: Aplicar filtros demográficos diretamente na query do Supabase
+    filtros = filtros or {}
+    tb_query = supabase.table("talent_bank").select(
         "id, nome, data_nascimento, telefone, arquivo_cv_url, skills_jsonb, area_interesse, data_curriculo, primeiro_emprego"
-    ).eq("status", "disponivel").order("data_curriculo", desc=True).execute()
+    ).eq("status", "disponivel")
+
+    if filtros.get("escolaridade"):
+        tb_query = tb_query.eq("escolaridade_normalizada", filtros["escolaridade"])
+    if filtros.get("genero"):
+        tb_query = tb_query.eq("genero", filtros["genero"])
+    if filtros.get("pcd") is not None:
+        tb_query = tb_query.eq("pcd", bool(filtros["pcd"]))
+    if filtros.get("primeiro_emprego") is not None:
+        tb_query = tb_query.eq("primeiro_emprego", bool(filtros["primeiro_emprego"]))
+
+    filtros_ativos = [k for k, v in filtros.items() if v is not None and v != ""]
+    if filtros_ativos:
+        logger.info(f"[triar_banco_talentos] Filtros demográficos aplicados: {filtros_ativos}")
+
+    # 2. Buscar candidatos disponíveis com filtros demográficos já aplicados no banco
+    tb_res = tb_query.order("data_curriculo", desc=True).execute()
 
     todos = tb_res.data or []
 

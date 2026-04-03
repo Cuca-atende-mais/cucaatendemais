@@ -971,7 +971,8 @@ async def triar_banco_talentos_endpoint(request: Request):
         quantidade = max(1, min(int(payload.get("quantidade", 5)), 50))
         excluir_ids = payload.get("excluir_ids") or []
         telefones_inscritos = payload.get("telefones_inscritos") or []
-        candidatos = await triar_banco_talentos(vaga_id, quantidade=quantidade, setor_vaga=setor_vaga, excluir_ids=excluir_ids, telefones_inscritos=telefones_inscritos)
+        filtros = payload.get("filtros") or {}
+        candidatos = await triar_banco_talentos(vaga_id, quantidade=quantidade, setor_vaga=setor_vaga, excluir_ids=excluir_ids, telefones_inscritos=telefones_inscritos, filtros=filtros)
 
         return {"candidatos": candidatos}
     except Exception as e:

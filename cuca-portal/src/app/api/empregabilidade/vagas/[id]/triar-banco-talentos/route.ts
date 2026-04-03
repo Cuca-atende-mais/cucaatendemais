@@ -18,6 +18,8 @@ export async function POST(
     const quantidade: number = Math.max(1, Math.min(Number(body.quantidade) || 5, 50))
     // IDs de candidatos TB já exibidos no frontend (enviados pelo cliente)
     const excluirIdsCliente: string[] = Array.isArray(body.excluir_ids) ? body.excluir_ids : []
+    // S37B-06: filtros demográficos enviados pelo frontend
+    const filtros: Record<string, unknown> = (body.filtros && typeof body.filtros === "object") ? body.filtros : {}
 
     try {
         const { data: vaga, error: vagaErr } = await supabase
@@ -62,6 +64,7 @@ export async function POST(
                 setor_vaga: (vaga as any).setor || [],
                 excluir_ids: excluirIds,
                 telefones_inscritos: telefonesInscritos,
+                filtros,
             }),
             signal: controller.signal,
         })
