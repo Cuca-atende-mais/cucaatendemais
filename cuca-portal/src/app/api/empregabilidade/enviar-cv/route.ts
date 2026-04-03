@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
         // Buscar candidatura
         const { data: candidatura, error: cErr } = await supabase
             .from("candidaturas")
-            .select("nome, telefone, data_nascimento, dados_ocr_json")
+            .select("nome, telefone, data_nascimento, dados_ocr_json, arquivo_cv_url")
             .eq("id", candidatura_id)
             .single()
 
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
         }
 
         const ocr = candidatura.dados_ocr_json as any || {}
-        const cvUrl = ocr?.arquivo_cv_url || null
+        const cvUrl = candidatura.arquivo_cv_url || null
 
         const escolaridade = ocr?.escolaridade || "Não informada"
         const expMeses = ocr?.experiencia_meses

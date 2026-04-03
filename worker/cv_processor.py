@@ -144,7 +144,6 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
         update_candidatura = {
             "matching_score": match_score,
             "matching_justificativa": f"{veredito} - {pontos_fortes}",
-            "status": "selecionado" if veredito == "✅" else ("rejeitado" if veredito == "❌" else "pendente"),
             "dados_ocr_json": {**json_data, "telefone_ocr": json_data.get("telefone")},
         }
         supabase.table("candidaturas").update(update_candidatura).eq("id", candidatura_id).execute()
