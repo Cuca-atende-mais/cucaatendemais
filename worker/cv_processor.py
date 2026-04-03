@@ -9,6 +9,22 @@ from supabase import create_client, Client
 
 logger = logging.getLogger("cv_processor")
 
+# S37B-02: Lista canônica de 11 níveis de escolaridade
+NIVEIS_ESCOLARIDADE = [
+    "Sem Escolaridade",
+    "Fundamental Incompleto",
+    "Fundamental Completo",
+    "Médio Incompleto",
+    "Médio Completo",
+    "Técnico",
+    "Superior Incompleto",
+    "Superior Completo",
+    "Pós-graduação Incompleta",
+    "Pós-graduação Completa",
+    "Mestrado ou superior",
+]
+_NIVEIS_STR = "\n".join(f"- {n}" for n in NIVEIS_ESCOLARIDADE)
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -66,8 +82,13 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
         
         SCHEMA JSON ESPERADO:
         {{
-            "escolaridade": "String",
-            "experiencia_meses": Integer,
+            "escolaridade_normalizada": "String — use EXATAMENTE um dos 11 níveis da lista abaixo, o mais alto detectado",
+            "genero": "masculino | feminino | outro | null",
+            "bairro": "String com o bairro de residência ou null",
+            "pcd": true ou false,
+            "pcd_tipo": "String descrevendo a deficiência ou null",
+            "primeiro_emprego": true se não há experiência anterior, senão false,
+            "experiencia_meses": Integer (total estimado de meses de experiência),
             "resumo_experiencias": ["String"],
             "habilidades": ["String"],
             "telefone": "String com apenas dígitos ou null",
@@ -78,6 +99,9 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
                 "veredito": "✅ ou ⚠️ ou ❌"
             }}
         }}
+
+        NÍVEIS DE ESCOLARIDADE PERMITIDOS para o campo "escolaridade_normalizada" (retorne EXATAMENTE um deles):
+        {_NIVEIS_STR}
 
         Se o currículo contiver número de telefone ou celular, extraia apenas os dígitos sem formatação.
         Se houver mais de um número, priorize o celular. Retorne null se não encontrar nenhum número.
@@ -145,6 +169,14 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
             "matching_score": match_score,
             "matching_justificativa": f"{veredito} - {pontos_fortes}",
             "dados_ocr_json": {**json_data, "telefone_ocr": json_data.get("telefone")},
+            # S37B-01: novos campos demográficos top-level
+            "escolaridade_normalizada": json_data.get("escolaridade_normalizada"),
+            "genero": json_data.get("genero"),
+            "bairro": json_data.get("bairro"),
+            "pcd": json_data.get("pcd"),
+            "pcd_tipo": json_data.get("pcd_tipo"),
+            "primeiro_emprego": json_data.get("primeiro_emprego"),
+            "experiencia_meses": json_data.get("experiencia_meses"),
         }
         supabase.table("candidaturas").update(update_candidatura).eq("id", candidatura_id).execute()
 
@@ -253,16 +285,26 @@ async def process_cv_talent_bank_id(talent_id: str, cv_url: str) -> dict | None:
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{file_b64}", "detail": "high"}},
             ]
 
-        prompt_sys = """Você é especialista em análise de currículos da Rede CUCA.
+        niveis_str = "\n".join(f"- {n}" for n in NIVEIS_ESCOLARIDADE)
+        prompt_sys = f"""Você é especialista em análise de currículos da Rede CUCA.
 Extraia as informações e retorne APENAS um JSON válido:
-{
-    "escolaridade": "String",
-    "experiencia_meses": Integer,
+{{
+    "escolaridade_normalizada": "String — use EXATAMENTE um dos 11 níveis abaixo, o mais alto detectado",
+    "genero": "masculino | feminino | outro | null",
+    "bairro": "String com bairro de residência ou null",
+    "pcd": true ou false,
+    "pcd_tipo": "String descrevendo a deficiência ou null",
+    "primeiro_emprego": true se sem experiência anterior, senão false,
+    "experiencia_meses": Integer (total estimado de meses),
     "experiencia_resumo": "String resumindo experiências",
     "habilidades": ["lista", "de", "habilidades"],
     "resumo_experiencias": ["frase por experiência"],
     "email": "String ou null"
-}"""
+}}
+
+NÍVEIS DE ESCOLARIDADE PERMITIDOS para "escolaridade_normalizada":
+{niveis_str}
+"""
 
         response = await client.chat.completions.create(
             model="gpt-4o",
@@ -286,6 +328,14 @@ Extraia as informações e retorne APENAS um JSON válido:
         supabase.table("talent_bank").update({
             "skills_jsonb": skills,
             "updated_at": __import__("datetime").datetime.utcnow().isoformat(),
+            # S37B-01: novos campos demográficos top-level
+            "escolaridade_normalizada": json_data.get("escolaridade_normalizada"),
+            "genero": json_data.get("genero"),
+            "bairro": json_data.get("bairro"),
+            "pcd": json_data.get("pcd"),
+            "pcd_tipo": json_data.get("pcd_tipo"),
+            "primeiro_emprego": json_data.get("primeiro_emprego"),
+            "experiencia_meses": json_data.get("experiencia_meses"),
         }).eq("id", talent_id).execute()
 
         logger.info(f"[OCR talent_bank] Concluído para talent_id={talent_id}")
