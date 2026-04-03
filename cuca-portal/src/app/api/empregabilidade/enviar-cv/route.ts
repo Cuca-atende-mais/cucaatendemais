@@ -45,6 +45,20 @@ export async function POST(request: NextRequest) {
         const ocr = candidatura.dados_ocr_json as any || {}
         const cvUrl = candidatura.arquivo_cv_url || null
 
+        // S37A-03: Fetch do PDF para anexar ao e-mail
+        let attachments: { filename: string; content: Buffer }[] = []
+        if (cvUrl) {
+            try {
+                const fileRes = await fetch(cvUrl)
+                if (!fileRes.ok) throw new Error(`HTTP ${fileRes.status}`)
+                const arrayBuffer = await fileRes.arrayBuffer()
+                const filename = cvUrl.split("/").pop() || "curriculo.pdf"
+                attachments = [{ filename, content: Buffer.from(arrayBuffer) }]
+            } catch (fetchErr: any) {
+                console.warn("[enviar-cv] Não foi possível baixar o anexo do CV:", fetchErr.message)
+            }
+        }
+
         const escolaridade = ocr?.escolaridade || "Não informada"
         const expMeses = ocr?.experiencia_meses
         let expFormatada = "Não informada"
@@ -72,6 +86,7 @@ export async function POST(request: NextRequest) {
             from: "CUCA Empregabilidade <noreply@cucaatendemais.com.br>",
             to: vaga.email_contato_empresa,
             subject: `Currículo: ${candidatura.nome} — ${vagaLabel}`,
+            attachments: attachments.length > 0 ? attachments : undefined,
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #333;">
                     <div style="background: #0066cc; padding: 24px; border-radius: 8px 8px 0 0;">
