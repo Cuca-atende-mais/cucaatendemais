@@ -455,25 +455,25 @@ export default function BancoTalentosPage() {
                         <div className="flex flex-wrap gap-2 items-center">
                             <Filter className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
 
-                            <Select value={filtroEscolaridade} onValueChange={setFiltroEscolaridade}>
+                            <Select value={filtroEscolaridade || "todos"} onValueChange={(v) => setFiltroEscolaridade(v === "todos" ? "" : v)}>
                                 <SelectTrigger className="h-8 w-auto min-w-[160px] text-xs">
                                     <GraduationCap className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                                     <SelectValue placeholder="Escolaridade" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="">Todas as escolaridades</SelectItem>
+                                    <SelectItem value="todos">Todas as escolaridades</SelectItem>
                                     {NIVEIS_ESCOLARIDADE.map(n => (
                                         <SelectItem key={n} value={n}>{n}</SelectItem>
                                     ))}
                                 </SelectContent>
                             </Select>
 
-                            <Select value={filtroGenero} onValueChange={setFiltroGenero}>
+                            <Select value={filtroGenero || "todos"} onValueChange={(v) => setFiltroGenero(v === "todos" ? "" : v)}>
                                 <SelectTrigger className="h-8 w-auto min-w-[120px] text-xs">
                                     <SelectValue placeholder="Gênero" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="">Todos os gêneros</SelectItem>
+                                    <SelectItem value="todos">Todos os gêneros</SelectItem>
                                     <SelectItem value="Masculino">Masculino</SelectItem>
                                     <SelectItem value="Feminino">Feminino</SelectItem>
                                     <SelectItem value="Não-binário">Não-binário</SelectItem>
@@ -481,23 +481,23 @@ export default function BancoTalentosPage() {
                                 </SelectContent>
                             </Select>
 
-                            <Select value={filtroPCD} onValueChange={(v) => setFiltroPCD(v as "" | "true" | "false")}>
+                            <Select value={filtroPCD || "todos"} onValueChange={(v) => setFiltroPCD(v === "todos" ? "" : v as "true" | "false")}>
                                 <SelectTrigger className="h-8 w-auto min-w-[100px] text-xs">
                                     <SelectValue placeholder="PCD" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="">PCD: todos</SelectItem>
+                                    <SelectItem value="todos">PCD: todos</SelectItem>
                                     <SelectItem value="true">Somente PCD</SelectItem>
                                     <SelectItem value="false">Não PCD</SelectItem>
                                 </SelectContent>
                             </Select>
 
-                            <Select value={filtroPrimeiroEmprego} onValueChange={(v) => setFiltroPrimeiroEmprego(v as "" | "true" | "false")}>
+                            <Select value={filtroPrimeiroEmprego || "todos"} onValueChange={(v) => setFiltroPrimeiroEmprego(v === "todos" ? "" : v as "true" | "false")}>
                                 <SelectTrigger className="h-8 w-auto min-w-[150px] text-xs">
                                     <SelectValue placeholder="Primeiro Emprego" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="">1º Emprego: todos</SelectItem>
+                                    <SelectItem value="todos">1º Emprego: todos</SelectItem>
                                     <SelectItem value="true">Primeiro Emprego</SelectItem>
                                     <SelectItem value="false">Com experiência</SelectItem>
                                 </SelectContent>
