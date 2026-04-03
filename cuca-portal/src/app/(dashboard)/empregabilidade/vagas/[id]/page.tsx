@@ -23,6 +23,7 @@ import toast from "react-hot-toast"
 import { differenceInYears, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { mascaraTelefone, limparTelefone } from "@/lib/utils"
+import { NIVEIS_ESCOLARIDADE } from "@/constants/empregabilidade"
 
 function formatarExperiencia(meses: number | null | undefined): string {
     if (!meses || meses === 0) return "Sem experiência informada"
@@ -106,6 +107,11 @@ export default function VagaDetalhesPage() {
     })
     const [dialogTalent, setDialogTalent] = useState(false)
     const [quantidadeAnalise, setQuantidadeAnalise] = useState("5")
+    // S37B-04: filtros demográficos para triagem de banco de talentos
+    const [filtroTriagemEscolaridade, setFiltroTriagemEscolaridade] = useState("")
+    const [filtroTriagemGenero, setFiltroTriagemGenero] = useState("")
+    const [filtroTriagemPCD, setFiltroTriagemPCD] = useState<"" | "true" | "false">("")
+    const [filtroTriagemPrimeiroEmprego, setFiltroTriagemPrimeiroEmprego] = useState<"" | "true" | "false">("")
 
     const setTalentResults = (updater: TalentBankCandidate[] | ((prev: TalentBankCandidate[]) => TalentBankCandidate[])) => {
         setTalentResultsRaw(prev => {
@@ -188,10 +194,16 @@ export default function VagaDetalhesPage() {
         try {
             // Envia IDs já exibidos para o servidor excluir da próxima varredura
             const excluirIds = talentResults.map((c: TalentBankCandidate) => c.id)
+            const filtrosDemograficos = {
+                escolaridade: filtroTriagemEscolaridade || undefined,
+                genero: filtroTriagemGenero || undefined,
+                pcd: filtroTriagemPCD !== "" ? filtroTriagemPCD === "true" : undefined,
+                primeiro_emprego: filtroTriagemPrimeiroEmprego !== "" ? filtroTriagemPrimeiroEmprego === "true" : undefined,
+            }
             const res = await fetch(`/api/empregabilidade/vagas/${id}/triar-banco-talentos`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ quantidade: qtd, excluir_ids: excluirIds }),
+                body: JSON.stringify({ quantidade: qtd, excluir_ids: excluirIds, filtros: filtrosDemograficos }),
             })
             const text = await res.text()
             let data: any
@@ -653,6 +665,56 @@ export default function VagaDetalhesPage() {
                             <><Sparkles className="mr-1.5 h-4 w-4" />{talentTriado ? "Analisar mais" : "Analisar Banco de Talentos"}</>
                         )}
                     </Button>
+                </div>
+
+                {/* S37B-04: Filtros demográficos para triagem */}
+                <div className="flex flex-wrap gap-2 items-center py-2">
+                    <Select value={filtroTriagemEscolaridade} onValueChange={setFiltroTriagemEscolaridade}>
+                        <SelectTrigger className="h-8 w-auto min-w-[160px] text-xs border-purple-500/20">
+                            <GraduationCap className="h-3.5 w-3.5 mr-1.5 text-purple-400" />
+                            <SelectValue placeholder="Escolaridade mínima" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="">Qualquer escolaridade</SelectItem>
+                            {NIVEIS_ESCOLARIDADE.map(n => (
+                                <SelectItem key={n} value={n}>{n}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+
+                    <Select value={filtroTriagemGenero} onValueChange={setFiltroTriagemGenero}>
+                        <SelectTrigger className="h-8 w-auto min-w-[120px] text-xs border-purple-500/20">
+                            <SelectValue placeholder="Gênero" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="">Qualquer gênero</SelectItem>
+                            <SelectItem value="Masculino">Masculino</SelectItem>
+                            <SelectItem value="Feminino">Feminino</SelectItem>
+                            <SelectItem value="Não-binário">Não-binário</SelectItem>
+                        </SelectContent>
+                    </Select>
+
+                    <Select value={filtroTriagemPCD} onValueChange={(v) => setFiltroTriagemPCD(v as "" | "true" | "false")}>
+                        <SelectTrigger className="h-8 w-auto min-w-[100px] text-xs border-purple-500/20">
+                            <SelectValue placeholder="PCD" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="">PCD: todos</SelectItem>
+                            <SelectItem value="true">Somente PCD</SelectItem>
+                            <SelectItem value="false">Não PCD</SelectItem>
+                        </SelectContent>
+                    </Select>
+
+                    <Select value={filtroTriagemPrimeiroEmprego} onValueChange={(v) => setFiltroTriagemPrimeiroEmprego(v as "" | "true" | "false")}>
+                        <SelectTrigger className="h-8 w-auto min-w-[150px] text-xs border-purple-500/20">
+                            <SelectValue placeholder="Primeiro Emprego" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="">1º Emprego: todos</SelectItem>
+                            <SelectItem value="true">Primeiro Emprego</SelectItem>
+                            <SelectItem value="false">Com experiência</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 {!talentTriado && !loadingTalent && (

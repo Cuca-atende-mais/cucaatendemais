@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { TalentBank } from "@/lib/types/database"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,6 +19,7 @@ import {
     ShoppingCart, Building2, Truck, Wrench, UtensilsCrossed,
     Palette, HardHat, Cpu, HelpCircle, Star, Clock, GraduationCap,
     CheckCircle, AlertCircle, ExternalLink, MessageCircle, Scissors, Heart, Trash2,
+    ChevronLeft, ChevronRight, Filter,
 } from "lucide-react"
 import { useUser } from "@/lib/auth/user-provider"
 import { Label } from "@/components/ui/label"
@@ -28,6 +29,7 @@ import {
 import { differenceInYears, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
+import { NIVEIS_ESCOLARIDADE } from "@/constants/empregabilidade"
 
 // ─── Configuração de áreas ────────────────────────────────────────────────────
 
@@ -153,12 +155,27 @@ function getAreaConfig(areaInteresse: string[] | null | undefined): AreaConfig {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
+const PAGE_SIZE = 25
+
 export default function BancoTalentosPage() {
     const [talentos, setTalentos] = useState<TalentBank[]>([])
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState("")
+    const [debouncedSearch, setDebouncedSearch] = useState("")
     const [filtroStatus, setFiltroStatus] = useState("todos")
-    const [filtroArea, setFiltroArea] = useState<string | null | undefined>(undefined) // undefined = todos
+    const [filtroArea, setFiltroArea] = useState<string | null | undefined>(undefined)
+    // S37B-04: novos filtros demográficos
+    const [filtroEscolaridade, setFiltroEscolaridade] = useState("")
+    const [filtroGenero, setFiltroGenero] = useState("")
+    const [filtroPCD, setFiltroPCD] = useState<"" | "true" | "false">("")
+    const [filtroPrimeiroEmprego, setFiltroPrimeiroEmprego] = useState<"" | "true" | "false">("")
+    const [filtroBairro, setFiltroBairro] = useState("")
+    // S37B-05: paginação server-side
+    const [page, setPage] = useState(0)
+    const [totalCount, setTotalCount] = useState(0)
+    const [totalGeral, setTotalGeral] = useState(0)
+    const [totalDisponiveis, setTotalDisponiveis] = useState(0)
+
     const [selectedTalento, setSelectedTalento] = useState<TalentBank | null>(null)
     const [cadastroOpen, setCadastroOpen] = useState(false)
     const [formNome, setFormNome] = useState("")
@@ -175,25 +192,64 @@ export default function BancoTalentosPage() {
     const { isDeveloper, profile } = useUser()
     const podeExcluir = isDeveloper || profile?.funcao?.nome === "Super Admin Cuca"
 
+    // Debounce de texto de busca
     useEffect(() => {
-        fetchTalentos()
+        const timer = setTimeout(() => setDebouncedSearch(searchTerm), 400)
+        return () => clearTimeout(timer)
+    }, [searchTerm])
+
+    // Reset de página ao mudar qualquer filtro
+    useEffect(() => { setPage(0) }, [debouncedSearch, filtroStatus, filtroArea, filtroEscolaridade, filtroGenero, filtroPCD, filtroPrimeiroEmprego, filtroBairro])
+
+    // Métricas gerais (carregadas uma vez)
+    useEffect(() => {
+        const fetchMetrics = async () => {
+            const { count: total } = await supabase.from("talent_bank").select("id", { count: "exact", head: true })
+            const { count: disp } = await supabase.from("talent_bank").select("id", { count: "exact", head: true }).eq("status", "disponivel")
+            setTotalGeral(total ?? 0)
+            setTotalDisponiveis(disp ?? 0)
+        }
+        fetchMetrics()
     }, [])
 
-    const fetchTalentos = async () => {
+    const fetchTalentos = useCallback(async () => {
         setLoading(true)
-        const { data, error } = await supabase
+        let query = supabase
             .from("talent_bank")
-            .select("*")
+            .select("*", { count: "exact" })
             .order("created_at", { ascending: false })
+
+        if (debouncedSearch) {
+            query = query.or(`nome.ilike.%${debouncedSearch}%,telefone.ilike.%${debouncedSearch}%`)
+        }
+        if (filtroStatus !== "todos") query = query.eq("status", filtroStatus)
+        if (filtroArea !== undefined) {
+            if (filtroArea === null) query = query.or("area_interesse.is.null,area_interesse.eq.{}")
+            else query = query.contains("area_interesse", [filtroArea])
+        }
+        if (filtroEscolaridade) query = query.eq("escolaridade_normalizada", filtroEscolaridade)
+        if (filtroGenero) query = query.eq("genero", filtroGenero)
+        if (filtroPCD !== "") query = query.eq("pcd", filtroPCD === "true")
+        if (filtroPrimeiroEmprego !== "") query = query.eq("primeiro_emprego", filtroPrimeiroEmprego === "true")
+        if (filtroBairro) query = query.ilike("bairro", `%${filtroBairro}%`)
+
+        const from = page * PAGE_SIZE
+        const to = from + PAGE_SIZE - 1
+        const { data, error, count } = await query.range(from, to)
 
         if (error) {
             console.error("Erro ao buscar talentos:", error)
             toast.error("Erro ao carregar banco de talentos")
         } else {
             setTalentos(data || [])
+            setTotalCount(count ?? 0)
         }
         setLoading(false)
-    }
+    }, [debouncedSearch, filtroStatus, filtroArea, filtroEscolaridade, filtroGenero, filtroPCD, filtroPrimeiroEmprego, filtroBairro, page])
+
+    useEffect(() => { fetchTalentos() }, [fetchTalentos])
+
+    const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
     const calcularIdade = (dataStr: string | null) => {
         if (!dataStr) return null
@@ -251,35 +307,11 @@ export default function BancoTalentosPage() {
         }
     }
 
-    // Contagens por área
-    const contagemPorArea = useMemo(() => {
-        const map = new Map<string | null, number>()
-        for (const t of talentos) {
-            const cfg = getAreaConfig(t.area_interesse as string[] | null)
-            map.set(cfg.key, (map.get(cfg.key) ?? 0) + 1)
-        }
-        return map
-    }, [talentos])
-
-    // Filtro
-    const filteredTalentos = useMemo(() => {
-        return talentos.filter((t) => {
-            const term = searchTerm.toLowerCase()
-            const skillsStr = JSON.stringify(t.skills_jsonb || {}).toLowerCase()
-            const matchBusca = !term || t.nome.toLowerCase().includes(term) || skillsStr.includes(term) || (t.telefone && t.telefone.includes(term))
-            const matchStatus = filtroStatus === "todos" || t.status === filtroStatus
-            let matchArea = true
-            if (filtroArea !== undefined) {
-                const cfg = getAreaConfig(t.area_interesse as string[] | null)
-                matchArea = cfg.key === filtroArea
-            }
-            return matchBusca && matchStatus && matchArea
-        })
-    }, [talentos, searchTerm, filtroStatus, filtroArea])
-
     const areaAtiva = filtroArea !== undefined
         ? AREAS.find(a => a.key === filtroArea)
         : null
+
+    const temFiltrosDemograficos = filtroEscolaridade || filtroGenero || filtroPCD || filtroPrimeiroEmprego || filtroBairro
 
     return (
         <div className="space-y-6">
@@ -307,8 +339,8 @@ export default function BancoTalentosPage() {
                         <User className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{talentos.length.toLocaleString("pt-BR")}</div>
-                        <p className="text-xs text-muted-foreground">{filteredTalentos.length} exibidos</p>
+                        <div className="text-2xl font-bold">{totalGeral.toLocaleString("pt-BR")}</div>
+                        <p className="text-xs text-muted-foreground">{totalCount.toLocaleString("pt-BR")} com filtros</p>
                     </CardContent>
                 </Card>
                 <Card>
@@ -317,9 +349,7 @@ export default function BancoTalentosPage() {
                         <BrainCircuit className="h-4 w-4 text-cuca-blue" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">
-                            {talentos.filter(c => c.status === "disponivel").length.toLocaleString("pt-BR")}
-                        </div>
+                        <div className="text-2xl font-bold">{totalDisponiveis.toLocaleString("pt-BR")}</div>
                         <p className="text-xs text-muted-foreground">Aguardando nova oportunidade</p>
                     </CardContent>
                 </Card>
@@ -330,7 +360,7 @@ export default function BancoTalentosPage() {
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">
-                            {talentos.filter(c => c.status !== "disponivel").length.toLocaleString("pt-BR")}
+                            {(totalGeral - totalDisponiveis).toLocaleString("pt-BR")}
                         </div>
                         <p className="text-xs text-muted-foreground">Não mais disponíveis</p>
                     </CardContent>
@@ -344,7 +374,6 @@ export default function BancoTalentosPage() {
                 </h2>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                     {AREAS.map((area) => {
-                        const total = contagemPorArea.get(area.key) ?? 0
                         const isActive = filtroArea !== undefined && filtroArea === area.key
                         return (
                             <button
@@ -359,7 +388,7 @@ export default function BancoTalentosPage() {
                             >
                                 <div className={["flex items-center justify-between w-full", area.textClass].join(" ")}>
                                     {area.icon}
-                                    <span className="text-2xl font-bold tabular-nums">{total}</span>
+                                    {isActive && <span className="text-xs font-bold tabular-nums">{totalCount}</span>}
                                 </div>
                                 <span className={["text-xs font-medium leading-tight", area.textClass].join(" ")}>
                                     {area.label}
@@ -378,7 +407,7 @@ export default function BancoTalentosPage() {
                     >
                         <div className="flex items-center justify-between w-full text-green-400">
                             <Star className="h-5 w-5" />
-                            <span className="text-2xl font-bold tabular-nums">{talentos.length}</span>
+                            <span className="text-2xl font-bold tabular-nums">{totalGeral}</span>
                         </div>
                         <span className="text-xs font-medium leading-tight text-green-400">Todos</span>
                     </button>
@@ -388,39 +417,117 @@ export default function BancoTalentosPage() {
             {/* ── Lista de candidatos ────────────────────────────────────────── */}
             <Card>
                 <CardHeader>
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div>
-                            <CardTitle>
-                                {areaAtiva ? areaAtiva.label : "Todos os Talentos"}
-                            </CardTitle>
-                            <CardDescription>
-                                {areaAtiva
-                                    ? `${filteredTalentos.length} candidatos nessa área — clique em qualquer linha para ver o currículo completo.`
-                                    : "Clique em qualquer candidato para abrir o currículo completo."
-                                }
-                            </CardDescription>
-                        </div>
-                        <div className="flex gap-2 flex-wrap">
-                            <div className="relative w-full md:w-72">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                    placeholder="Buscar nome, skill, telefone..."
-                                    className="pl-10 w-full"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
+                    <div className="flex flex-col gap-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div>
+                                <CardTitle>
+                                    {areaAtiva ? areaAtiva.label : "Todos os Talentos"}
+                                </CardTitle>
+                                <CardDescription>
+                                    {totalCount.toLocaleString("pt-BR")} candidato(s) encontrado(s) — página {page + 1} de {Math.max(1, totalPages)}
+                                </CardDescription>
                             </div>
-                            <Select value={filtroStatus} onValueChange={setFiltroStatus}>
-                                <SelectTrigger className="w-[150px]">
-                                    <SelectValue placeholder="Status" />
+                            <div className="flex gap-2 flex-wrap">
+                                <div className="relative w-full md:w-72">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                    <Input
+                                        placeholder="Buscar nome, telefone..."
+                                        className="pl-10 w-full"
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                    />
+                                </div>
+                                <Select value={filtroStatus} onValueChange={setFiltroStatus}>
+                                    <SelectTrigger className="w-[150px]">
+                                        <SelectValue placeholder="Status" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="todos">Todos</SelectItem>
+                                        <SelectItem value="disponivel">Disponíveis</SelectItem>
+                                        <SelectItem value="arquivado">Arquivados</SelectItem>
+                                        <SelectItem value="contratado">Contratados</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        {/* S37B-04: Filtros demográficos */}
+                        <div className="flex flex-wrap gap-2 items-center">
+                            <Filter className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+
+                            <Select value={filtroEscolaridade} onValueChange={setFiltroEscolaridade}>
+                                <SelectTrigger className="h-8 w-auto min-w-[160px] text-xs">
+                                    <GraduationCap className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
+                                    <SelectValue placeholder="Escolaridade" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="todos">Todos</SelectItem>
-                                    <SelectItem value="disponivel">Disponíveis</SelectItem>
-                                    <SelectItem value="arquivado">Arquivados</SelectItem>
-                                    <SelectItem value="contratado">Contratados</SelectItem>
+                                    <SelectItem value="">Todas as escolaridades</SelectItem>
+                                    {NIVEIS_ESCOLARIDADE.map(n => (
+                                        <SelectItem key={n} value={n}>{n}</SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
+
+                            <Select value={filtroGenero} onValueChange={setFiltroGenero}>
+                                <SelectTrigger className="h-8 w-auto min-w-[120px] text-xs">
+                                    <SelectValue placeholder="Gênero" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="">Todos os gêneros</SelectItem>
+                                    <SelectItem value="Masculino">Masculino</SelectItem>
+                                    <SelectItem value="Feminino">Feminino</SelectItem>
+                                    <SelectItem value="Não-binário">Não-binário</SelectItem>
+                                    <SelectItem value="Prefiro não informar">Prefiro não informar</SelectItem>
+                                </SelectContent>
+                            </Select>
+
+                            <Select value={filtroPCD} onValueChange={(v) => setFiltroPCD(v as "" | "true" | "false")}>
+                                <SelectTrigger className="h-8 w-auto min-w-[100px] text-xs">
+                                    <SelectValue placeholder="PCD" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="">PCD: todos</SelectItem>
+                                    <SelectItem value="true">Somente PCD</SelectItem>
+                                    <SelectItem value="false">Não PCD</SelectItem>
+                                </SelectContent>
+                            </Select>
+
+                            <Select value={filtroPrimeiroEmprego} onValueChange={(v) => setFiltroPrimeiroEmprego(v as "" | "true" | "false")}>
+                                <SelectTrigger className="h-8 w-auto min-w-[150px] text-xs">
+                                    <SelectValue placeholder="Primeiro Emprego" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="">1º Emprego: todos</SelectItem>
+                                    <SelectItem value="true">Primeiro Emprego</SelectItem>
+                                    <SelectItem value="false">Com experiência</SelectItem>
+                                </SelectContent>
+                            </Select>
+
+                            <div className="relative">
+                                <Input
+                                    placeholder="Bairro..."
+                                    className="h-8 w-32 text-xs"
+                                    value={filtroBairro}
+                                    onChange={(e) => setFiltroBairro(e.target.value)}
+                                />
+                            </div>
+
+                            {temFiltrosDemograficos && (
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                                    onClick={() => {
+                                        setFiltroEscolaridade("")
+                                        setFiltroGenero("")
+                                        setFiltroPCD("")
+                                        setFiltroPrimeiroEmprego("")
+                                        setFiltroBairro("")
+                                    }}
+                                >
+                                    <X className="h-3.5 w-3.5 mr-1" /> Limpar filtros
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </CardHeader>
@@ -429,13 +536,13 @@ export default function BancoTalentosPage() {
                         <div className="text-center py-12 text-muted-foreground">
                             Carregando talentos...
                         </div>
-                    ) : filteredTalentos.length === 0 ? (
+                    ) : talentos.length === 0 ? (
                         <div className="text-center py-12 text-muted-foreground">
                             Nenhum talento encontrado com os filtros aplicados.
                         </div>
                     ) : (
                         <div className="divide-y divide-border">
-                            {filteredTalentos.map((t) => {
+                            {talentos.map((t) => {
                                 const ocr = t.skills_jsonb || {}
                                 const area = getAreaConfig(t.area_interesse as string[] | null)
                                 const idade = calcularIdade(t.data_nascimento)
@@ -508,6 +615,36 @@ export default function BancoTalentosPage() {
                                     </div>
                                 )
                             })}
+                        </div>
+                    )}
+
+                    {/* S37B-05: Controles de paginação */}
+                    {totalPages > 1 && (
+                        <div className="flex items-center justify-between pt-4 border-t mt-4">
+                            <span className="text-xs text-muted-foreground">
+                                {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} de {totalCount.toLocaleString("pt-BR")}
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={page === 0}
+                                    onClick={() => setPage(p => p - 1)}
+                                >
+                                    <ChevronLeft className="h-4 w-4" />
+                                </Button>
+                                <span className="text-xs tabular-nums">
+                                    {page + 1} / {totalPages}
+                                </span>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={page >= totalPages - 1}
+                                    onClick={() => setPage(p => p + 1)}
+                                >
+                                    <ChevronRight className="h-4 w-4" />
+                                </Button>
+                            </div>
                         </div>
                     )}
                 </CardContent>
