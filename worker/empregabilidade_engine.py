@@ -1288,12 +1288,16 @@ async def _processar_publico(
 
     # HF37-06: Sincronizar com o banco — buscar vagas já candidatadas por este telefone
     # (captura candidaturas de sessões anteriores que não estão na memória da sessão atual)
-    STATUS_INATIVOS = ("rejeitado", "cancelado", "excluido", "inativo")
+    # Filtro de status feito em Python puro para evitar incompatibilidade com postgrest-py
+    STATUS_INATIVOS = {"rejeitado", "cancelado", "excluido", "inativo"}
     telefone_limpo = re.sub(r"\D", "", phone)
-    db_vagas_res = supabase.table("candidaturas").select("vaga_id").eq(
+    db_cands_res = supabase.table("candidaturas").select("vaga_id, status").eq(
         "telefone", telefone_limpo
-    ).not_("status", "in", f'({",".join(STATUS_INATIVOS)})').execute()
-    db_vagas_ids = {r["vaga_id"] for r in (db_vagas_res.data or []) if r.get("vaga_id")}
+    ).execute()
+    db_vagas_ids = {
+        c["vaga_id"] for c in (db_cands_res.data or [])
+        if c.get("vaga_id") and c.get("status") not in STATUS_INATIVOS
+    }
 
     # S37C-04: Combinar histórico da sessão com IDs do banco e filtrar vagas
     historico_aplicadas = list(fluxo.get("historico_vagas_aplicadas") or [])
