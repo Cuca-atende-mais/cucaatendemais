@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Users, Briefcase, FileText, TrendingUp, Star, GraduationCap } from "lucide-react"
+import { Users, Briefcase, FileText, TrendingUp, Star, GraduationCap, Clock, CheckCircle, XCircle, Trophy } from "lucide-react"
 import {
     BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, Legend
@@ -71,6 +71,7 @@ export default function EmpregabilidadeDashboard() {
     const tb = data.talent_bank
     const vagas = data.vagas
     const cands = data.candidaturas
+    const vagasMaisDisputadas: { titulo: string; empresa: string; total: number }[] = data.vagas_mais_disputadas ?? []
 
     const peStatusTB = Object.entries(tb.por_status as Record<string, number>).map(([name, value]) => ({
         name: name.charAt(0).toUpperCase() + name.slice(1), value
@@ -96,7 +97,7 @@ export default function EmpregabilidadeDashboard() {
                 <p className="text-muted-foreground text-sm mt-1">Visão geral do banco de talentos, vagas e candidaturas.</p>
             </div>
 
-            {/* Cards de resumo */}
+            {/* Cards de resumo — linha 1: visão geral */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatCard
                     title="Banco de Talentos"
@@ -113,19 +114,50 @@ export default function EmpregabilidadeDashboard() {
                     color="bg-amber-500"
                 />
                 <StatCard
-                    title="Vagas"
-                    value={vagas.total}
-                    sub={`${vagas.por_status?.aberta ?? 0} abertas`}
+                    title="Vagas Abertas"
+                    value={vagas.por_status?.aberta ?? 0}
+                    sub={`${vagas.total} vagas no total`}
                     icon={Briefcase}
                     color="bg-blue-500"
                 />
                 <StatCard
-                    title="Candidaturas"
+                    title="Total de Candidaturas"
                     value={cands.total}
                     sub={`${cands.por_status?.contratado ?? 0} contratados`}
                     icon={FileText}
                     color="bg-green-500"
                 />
+            </div>
+
+            {/* Cards de resumo — linha 2: candidaturas por status */}
+            <div>
+                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">Candidaturas por Status</h2>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <StatCard
+                        title="Pendentes"
+                        value={cands.por_status?.pendente ?? 0}
+                        icon={Clock}
+                        color="bg-amber-500"
+                    />
+                    <StatCard
+                        title="Selecionados"
+                        value={cands.por_status?.selecionado ?? 0}
+                        icon={CheckCircle}
+                        color="bg-blue-500"
+                    />
+                    <StatCard
+                        title="Contratados"
+                        value={cands.por_status?.contratado ?? 0}
+                        icon={Trophy}
+                        color="bg-green-500"
+                    />
+                    <StatCard
+                        title="Rejeitados"
+                        value={cands.por_status?.rejeitado ?? 0}
+                        icon={XCircle}
+                        color="bg-red-500"
+                    />
+                </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -234,6 +266,45 @@ export default function EmpregabilidadeDashboard() {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Vagas mais disputadas */}
+            {vagasMaisDisputadas.length > 0 && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <Trophy className="h-4 w-4 text-amber-400" /> Vagas Mais Disputadas (Top 5)
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="border-b">
+                                        <th className="text-left py-2 pr-4 font-medium text-muted-foreground">#</th>
+                                        <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Vaga</th>
+                                        <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Empresa</th>
+                                        <th className="text-right py-2 font-medium text-muted-foreground">Candidatos</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {vagasMaisDisputadas.map((v, i) => (
+                                        <tr key={i} className="border-b last:border-0 hover:bg-muted/40 transition-colors">
+                                            <td className="py-2 pr-4 text-muted-foreground font-mono">{i + 1}</td>
+                                            <td className="py-2 pr-4 font-medium">{v.titulo}</td>
+                                            <td className="py-2 pr-4 text-muted-foreground">{v.empresa}</td>
+                                            <td className="py-2 text-right">
+                                                <span className="inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 font-semibold text-xs">
+                                                    {v.total}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* Banco de talentos por status */}
             <Card>

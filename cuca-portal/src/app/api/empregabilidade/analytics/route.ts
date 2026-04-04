@@ -15,6 +15,7 @@ export async function GET() {
             { data: tbEscolaridade },
             { data: vagasStatus },
             { data: candidaturasStatus },
+            { data: vagasDisputadas },
         ] = await Promise.all([
             // Talent bank por status
             supabase.from("talent_bank").select("status"),
@@ -28,6 +29,10 @@ export async function GET() {
             supabase.from("vagas").select("status"),
             // Candidaturas por status
             supabase.from("candidaturas").select("status"),
+            // Vagas mais disputadas (top 5 com mais candidaturas)
+            supabase.from("candidaturas")
+                .select("vaga_id, vagas(titulo, empresa_nome)")
+                .not("vaga_id", "is", null),
         ])
 
         // Talent bank por status
@@ -80,6 +85,25 @@ export async function GET() {
             candMap[s] = (candMap[s] || 0) + 1
         }
 
+        // Vagas mais disputadas (top 5)
+        const vagasCountMap: Record<string, { titulo: string; empresa: string; total: number }> = {}
+        for (const r of vagasDisputadas ?? []) {
+            const id = r.vaga_id as string
+            if (!id) continue
+            const vaga = r.vagas as any
+            if (!vagasCountMap[id]) {
+                vagasCountMap[id] = {
+                    titulo: vaga?.titulo ?? "Vaga sem título",
+                    empresa: vaga?.empresa_nome ?? "Empresa não informada",
+                    total: 0,
+                }
+            }
+            vagasCountMap[id].total++
+        }
+        const vagasMaisDisputadas = Object.values(vagasCountMap)
+            .sort((a, b) => b.total - a.total)
+            .slice(0, 5)
+
         return NextResponse.json({
             talent_bank: {
                 total: tbStatus?.length ?? 0,
@@ -98,6 +122,7 @@ export async function GET() {
                 total: candidaturasStatus?.length ?? 0,
                 por_status: candMap,
             },
+            vagas_mais_disputadas: vagasMaisDisputadas,
         })
     } catch (err: any) {
         return NextResponse.json({ error: err.message }, { status: 500 })
