@@ -39,12 +39,15 @@ export async function POST(request: NextRequest) {
 
         let candidaturaId: string
         if (vaga_id && telefone) {
-            const { data: existing } = await supabaseAdmin
+            // Usa .limit(1) em vez de .maybeSingle() para tolerar ghost data (múltiplas linhas)
+            const { data: rows } = await supabaseAdmin
                 .from("candidaturas")
                 .select("id, status")
                 .eq("vaga_id", vaga_id)
                 .eq("telefone", telefone)
-                .maybeSingle()
+                .limit(1)
+
+            const existing = rows && rows.length > 0 ? rows[0] : null
 
             if (existing) {
                 // Candidatura ativa → bloquear (anti-spam)
