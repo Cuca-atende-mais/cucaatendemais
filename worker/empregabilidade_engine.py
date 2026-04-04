@@ -1286,10 +1286,20 @@ async def _processar_publico(
     ).eq("status", "aberta").eq("unidade_cuca", unidade_cuca).order("created_at", desc=True).limit(8).execute()
     vagas = vagas_res.data or []
 
-    # S37C-04: Excluir vagas já aplicadas neste ciclo de candidaturas
-    historico_aplicadas = fluxo.get("historico_vagas_aplicadas") or []
-    if historico_aplicadas:
-        vagas = [v for v in vagas if v["id"] not in historico_aplicadas]
+    # HF37-06: Sincronizar com o banco — buscar vagas já candidatadas por este telefone
+    # (captura candidaturas de sessões anteriores que não estão na memória da sessão atual)
+    STATUS_INATIVOS = ("rejeitado", "cancelado", "excluido", "inativo")
+    telefone_limpo = re.sub(r"\D", "", phone)
+    db_vagas_res = supabase.table("candidaturas").select("vaga_id").eq(
+        "telefone", telefone_limpo
+    ).not_("status", "in", f'({",".join(STATUS_INATIVOS)})').execute()
+    db_vagas_ids = {r["vaga_id"] for r in (db_vagas_res.data or []) if r.get("vaga_id")}
+
+    # S37C-04: Combinar histórico da sessão com IDs do banco e filtrar vagas
+    historico_aplicadas = list(fluxo.get("historico_vagas_aplicadas") or [])
+    ids_excluir = db_vagas_ids | set(historico_aplicadas)
+    if ids_excluir:
+        vagas = [v for v in vagas if v["id"] not in ids_excluir]
 
     # Intenção de banco de talentos
     if any(p in t_lower for p in _INTENCAO_BANCO_TALENTOS):
@@ -1359,16 +1369,25 @@ async def _processar_publico(
         return
 
     if not vagas:
-        await _enviar(
-            instance_name, token, phone,
-            "No momento não há vagas abertas nesta unidade.\n"
-            "Posso cadastrar seu currículo no banco de talentos para oportunidades futuras.\n\n"
-            "Deseja? Responda *sim* ou *não*."
-        )
+        # HF37-06: distingue "sem vagas no sistema" de "candidato já aplicou a todas"
+        if ids_excluir:
+            await _enviar(
+                instance_name, token, phone,
+                "Você já se candidatou a todas as nossas vagas abertas no momento! 🎉\n\n"
+                "Assim que novas oportunidades surgirem, entraremos em contato pelo WhatsApp.\n\n"
+                "Deseja deixar seu currículo no banco de talentos para futuras vagas?\n"
+                "Responda *sim* ou *não*."
+            )
+        else:
+            await _enviar(
+                instance_name, token, phone,
+                "No momento não há vagas abertas nesta unidade.\n"
+                "Posso cadastrar seu currículo no banco de talentos para oportunidades futuras.\n\n"
+                "Deseja? Responda *sim* ou *não*."
+            )
         _set_fluxo(conversa_id, {
             "perfil": "publico",
             "etapa": "oferta_banco_talentos",
-            # HF37-02: preserva histórico no caso de não haver vagas disponíveis
             "historico_vagas_aplicadas": historico_aplicadas,
             "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
         })

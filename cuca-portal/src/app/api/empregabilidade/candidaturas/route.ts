@@ -19,15 +19,16 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: "Campos obrigatórios ausentes." }, { status: 400 })
         }
 
-        // HF37-03: Anti-spam — bloquear duplicidade por telefone + vaga_id
-        // Ignora candidaturas inativas (rejeitado) para não gerar falso positivo em soft delete
+        // HF37-03/06: Anti-spam — bloquear duplicidade por telefone + vaga_id
+        // Ignora todos os status negativos/inativos para não gerar falso positivo em soft delete
         if (vaga_id && telefone) {
+            const STATUS_INATIVOS = ["rejeitado", "cancelado", "excluido", "inativo"]
             const { data: existing } = await supabaseAdmin
                 .from("candidaturas")
                 .select("id")
                 .eq("vaga_id", vaga_id)
                 .eq("telefone", telefone)
-                .neq("status", "rejeitado")
+                .not("status", "in", `(${STATUS_INATIVOS.join(",")})`)
                 .maybeSingle()
             if (existing) {
                 return NextResponse.json(
