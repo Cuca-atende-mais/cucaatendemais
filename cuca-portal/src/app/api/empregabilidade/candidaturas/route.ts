@@ -45,6 +45,7 @@ export async function POST(request: NextRequest) {
                 .select("id, status")
                 .eq("vaga_id", vaga_id)
                 .eq("telefone", telefone)
+                .order("created_at", { ascending: false })
                 .limit(1)
 
             const existing = rows && rows.length > 0 ? rows[0] : null
