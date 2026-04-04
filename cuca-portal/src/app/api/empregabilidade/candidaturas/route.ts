@@ -20,12 +20,14 @@ export async function POST(request: NextRequest) {
         }
 
         // HF37-03: Anti-spam — bloquear duplicidade por telefone + vaga_id
+        // Ignora candidaturas inativas (rejeitado) para não gerar falso positivo em soft delete
         if (vaga_id && telefone) {
             const { data: existing } = await supabaseAdmin
                 .from("candidaturas")
                 .select("id")
                 .eq("vaga_id", vaga_id)
                 .eq("telefone", telefone)
+                .neq("status", "rejeitado")
                 .maybeSingle()
             if (existing) {
                 return NextResponse.json(

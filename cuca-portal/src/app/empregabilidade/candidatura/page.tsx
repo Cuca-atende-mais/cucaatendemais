@@ -315,21 +315,15 @@ export default function CandidaturaPublicaPage() {
                             variant="outline"
                             className="w-full"
                             onClick={() => {
-                                setSuccess(false)
-                                setNome(nomeParam)
-                                setDataNascimento("")
-                                setTelefone(origemTel ? formatPhoneInit(origemTel) : "")
-                                setArquivo(null)
-                                setArquivoPreview(null)
-                                setAreasInteresse([])
-                                setPcdCandidato(false)
-                                setPcdTipoCandidato("")
-                                setNumeroCandidatura("")
-                                setDestinadoBancoTalentos(false)
+                                window.close()
+                                // Fallback para navegadores in-app (WhatsApp, Instagram) que bloqueiam window.close()
+                                setTimeout(() => {
+                                    window.location.href = "https://www.cucaatendemais.com.br"
+                                }, 300)
                             }}
                         >
                             <Home className="mr-2 h-4 w-4" />
-                            Concluir / Voltar ao Início
+                            Encerrar
                         </Button>
                     </CardContent>
                 </Card>
