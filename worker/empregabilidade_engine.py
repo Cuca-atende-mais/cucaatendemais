@@ -1588,7 +1588,8 @@ async def processar_mensagem_empregabilidade(
                 "📁 *Enviar Currículo (sem vaga)*\n\n"
                 "Vamos cadastrar seu currículo no banco de talentos da rede CUCA. "
                 "Quando surgir uma oportunidade compatível com seu perfil, a equipe entrará em contato.\n\n"
-                "Para começar, preciso do seu *nome completo*:"
+                "Para começar, preciso do seu *nome completo*:",
+                conversa_id=conversa_id, lead_id=lead_id,
             )
             return
         await _enviar(
@@ -1598,7 +1599,8 @@ async def processar_mensagem_empregabilidade(
             "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
             "3️⃣ *Vagas* — Quero ver vagas abertas\n"
             "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
-            "Digite *1*, *2*, *3* ou *4*."
+            "Digite *1*, *2*, *3* ou *4*.",
+            conversa_id=conversa_id, lead_id=lead_id,
         )
         return
 
@@ -1623,7 +1625,8 @@ async def processar_mensagem_empregabilidade(
             "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
             "3️⃣ *Vagas* — Quero ver vagas abertas\n"
             "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
-            "Responda com o número ou descreva o que precisa."
+            "Responda com o número ou descreva o que precisa.",
+            conversa_id=conversa_id, lead_id=lead_id,
         )
         _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
 
