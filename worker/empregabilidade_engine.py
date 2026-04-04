@@ -33,13 +33,25 @@ _PALAVRAS_ENCERRAR = {
 # Envio de mensagem de texto via UAZAPI
 # ---------------------------------------------------------------------------
 
-async def _enviar(instance_name: str, token: str, phone: str, texto: str):
+async def _enviar(instance_name: str, token: str, phone: str, texto: str, conversa_id: str = "", lead_id: str = ""):
     async with httpx.AsyncClient(timeout=15) as client:
         await client.post(
             f"{UAZAPI_URL}/send/text",
             headers={"token": token, "Content-Type": "application/json"},
             json={"number": phone, "delay": 1200, "text": texto},
         )
+    # Gravar mensagem de saída do bot na tabela mensagens para exibição no painel
+    if conversa_id:
+        try:
+            supabase.table("mensagens").insert({
+                "conversa_id": conversa_id,
+                "lead_id": lead_id or None,
+                "remetente": "bot",
+                "tipo": "text",
+                "conteudo": texto,
+            }).execute()
+        except Exception as _e:
+            logger.warning(f"[_enviar] Falha ao gravar mensagem bot no DB: {_e}")
 
 
 # ---------------------------------------------------------------------------
@@ -1107,6 +1119,10 @@ async def _processar_publico(
     etapa = fluxo.get("etapa", "inicio")
     t_lower = texto.strip().lower()
 
+    # Helper local: envia e grava automaticamente no DB para exibição no painel
+    async def e(msg: str):
+        await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
+
     # Encerramento
     # S37C-03: pos_candidatura é tolerante — "obrigado", "valeu" não encerram o fluxo
     if _quer_encerrar(texto) and etapa not in ("coletando_nome_candidato", "confirmando_terceiro", "pos_candidatura"):
@@ -1123,8 +1139,7 @@ async def _processar_publico(
         if candidatura_id:
             eh_banco_talentos = fluxo_atual.get("banco_talentos", False)
             if eh_banco_talentos:
-                await _enviar(
-                    instance_name, token, phone,
+                await e(
                     "✅ *Currículo salvo com sucesso!*\n\n"
                     "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
                     "Assim que surgir uma oportunidade compatível com seu perfil e área de interesse, "
@@ -1140,15 +1155,13 @@ async def _processar_publico(
             else:
                 codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
                 # S37C-02: Mensagem 1 — confirmação com o código de acompanhamento
-                await _enviar(
-                    instance_name, token, phone,
+                await e(
                     f"🎉 *Candidatura recebida com sucesso!*\n\n"
                     f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
                     "Guarde esse número! Com ele você pode verificar o status da sua candidatura a qualquer momento. ✅"
                 )
                 # S37C-02: Mensagem 2 — oferta de nova candidatura (separada para melhor UX)
-                await _enviar(
-                    instance_name, token, phone,
+                await e(
                     "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
                     "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
                 )
@@ -1167,8 +1180,7 @@ async def _processar_publico(
         else:
             # Ainda aguardando — link reenviado se necessário
             link_reenviado = fluxo_atual.get("link_candidatura", "")
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Ainda aguardando o envio do seu currículo. 🕐\n\n"
                 f"{'Acesse o link para preencher: 🔗 ' + link_reenviado if link_reenviado else ''}\n\n"
                 "Após o envio, você receberá aqui o número de acompanhamento."
@@ -1213,12 +1225,32 @@ async def _processar_publico(
             await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
         else:
             # S37C-03: mensagem ambígua (ex: "obrigado", "valeu") — reapresenta opções sem encerrar
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Fico feliz em ter ajudado! 😊\n\n"
                 "Ainda quer se candidatar a outra vaga?\n"
                 "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
             )
+        return
+
+    # --- ETAPA: oferta_banco_talentos ---
+    if etapa == "oferta_banco_talentos":
+        quer_banco = any(p in t_lower for p in ("sim", "quero", "ok", "claro", "pode", "banco", "talentos", "cadastrar"))
+        quer_recusar = any(p in t_lower for p in ("não", "nao", "não quero", "dispenso", "encerrar", "tchau", "até logo"))
+        if quer_banco:
+            await e("Para continuar, preciso do seu *nome completo*:")
+            _set_fluxo(conversa_id, {
+                "perfil": "publico",
+                "etapa": "coletando_nome_candidato",
+                "banco_talentos": True,
+                "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+                "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
+            })
+        else:
+            # Recusa ou mensagem ambígua → despedida e encerramento
+            await e(
+                "Tudo bem! Qualquer novidade, entraremos em contato. Até logo! 👋"
+            )
+            await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
         return
 
     # --- ETAPA: coletando_nome_candidato ---
@@ -1227,8 +1259,7 @@ async def _processar_publico(
         vaga_id_ref = fluxo.get("vaga_id_selecionada")
         eh_banco_talentos = fluxo.get("banco_talentos", False)
 
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             f"Obrigado, *{nome_coletado}*!\n\n"
             "Esse currículo é para *você mesmo(a)* ou para outra pessoa?\n\n"
             "Responda *eu* ou *outra pessoa*."
@@ -1249,10 +1280,7 @@ async def _processar_publico(
         eh_banco_talentos = fluxo.get("banco_talentos", False)
 
         if any(p in t_lower for p in ("outra", "outro", "outra pessoa", "amigo", "familiar", "parente", "não")):
-            await _enviar(
-                instance_name, token, phone,
-                "Tudo certo! Informe o *nome completo* da pessoa para quem você está enviando o currículo:"
-            )
+            await e("Tudo certo! Informe o *nome completo* da pessoa para quem você está enviando o currículo:")
             _set_fluxo(conversa_id, {
                 **fluxo,
                 "etapa": "coletando_nome_terceiro",
@@ -1307,8 +1335,7 @@ async def _processar_publico(
 
     # Intenção de banco de talentos
     if any(p in t_lower for p in _INTENCAO_BANCO_TALENTOS):
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             "📁 *Banco de Talentos CUCA*\n\n"
             "Podemos cadastrar seu currículo no banco de talentos. "
             "Quando surgir uma vaga compatível com seu perfil, a equipe entrará em contato.\n\n"
@@ -1359,10 +1386,7 @@ async def _processar_publico(
                 nome_prefill, phone, vaga_id_ref, False
             )
         else:
-            await _enviar(
-                instance_name, token, phone,
-                "Para finalizar sua candidatura, preciso do seu *nome completo*:"
-            )
+            await e("Para finalizar sua candidatura, preciso do seu *nome completo*:")
             _set_fluxo(conversa_id, {
                 "perfil": "publico",
                 "etapa": "coletando_nome_candidato",
@@ -1375,16 +1399,14 @@ async def _processar_publico(
     if not vagas:
         # HF37-06: distingue "sem vagas no sistema" de "candidato já aplicou a todas"
         if ids_excluir:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Você já se candidatou a todas as nossas vagas abertas no momento! 🎉\n\n"
                 "Assim que novas oportunidades surgirem, entraremos em contato pelo WhatsApp.\n\n"
                 "Deseja deixar seu currículo no banco de talentos para futuras vagas?\n"
                 "Responda *sim* ou *não*."
             )
         else:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "No momento não há vagas abertas nesta unidade.\n"
                 "Posso cadastrar seu currículo no banco de talentos para oportunidades futuras.\n\n"
                 "Deseja? Responda *sim* ou *não*."
@@ -1415,7 +1437,7 @@ async def _processar_publico(
         "ou diga o nome da vaga.\n"
         "Se preferir, diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
     )
-    await _enviar(instance_name, token, phone, "\n".join(linhas))
+    await e("\n".join(linhas))
     _set_fluxo(conversa_id, {
         "perfil": "publico",
         "etapa": "listou_vagas",
