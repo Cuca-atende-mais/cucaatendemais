@@ -19,48 +19,71 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: "Campos obrigatórios ausentes." }, { status: 400 })
         }
 
-        // HF37-03/06: Anti-spam — bloquear duplicidade por telefone + vaga_id
-        // Ignora todos os status negativos/inativos para não gerar falso positivo em soft delete
-        if (vaga_id && telefone) {
-            const STATUS_INATIVOS = ["rejeitado", "cancelado", "excluido", "inativo"]
-            const { data: existing } = await supabaseAdmin
-                .from("candidaturas")
-                .select("id")
-                .eq("vaga_id", vaga_id)
-                .eq("telefone", telefone)
-                .not("status", "in", `(${STATUS_INATIVOS.join(",")})`)
-                .maybeSingle()
-            if (existing) {
-                return NextResponse.json(
-                    { error: "Você já está inscrito nesta vaga." },
-                    { status: 409 }
-                )
-            }
+        // HF37-07: Lógica de upsert inteligente para candidaturas por telefone + vaga_id
+        const STATUS_ATIVOS = ["pendente", "selecionado", "contratado"]
+        const candidaturaPayload = {
+            vaga_id: vaga_id || null,
+            nome,
+            data_nascimento: data_nascimento || null,
+            telefone,
+            arquivo_cv_url: arquivo_cv_url || null,
+            status: "pendente",
+            requisitos_atendidos: "pendente",
+            observacoes: observacoes || null,
+            area_interesse: area_interesse || [],
+            match_score: matching_score ?? null,
+            dados_ocr_json: dados_ocr_json || null,
+            pcd_candidato: pcd_candidato ?? false,
+            pcd_tipo_candidato: pcd_candidato ? (pcd_tipo_candidato || null) : null,
         }
 
-        const { data, error } = await supabaseAdmin
-            .from("candidaturas")
-            .insert({
-                vaga_id: vaga_id || null,
-                nome,
-                data_nascimento: data_nascimento || null,
-                telefone,
-                arquivo_cv_url: arquivo_cv_url || null,
-                status: status || "pendente",
-                requisitos_atendidos: requisitos_atendidos || "pendente",
-                observacoes: observacoes || null,
-                area_interesse: area_interesse || [],
-                match_score: matching_score ?? null,
-                dados_ocr_json: dados_ocr_json || null,
-                pcd_candidato: pcd_candidato ?? false,
-                pcd_tipo_candidato: pcd_candidato ? (pcd_tipo_candidato || null) : null,
-            })
-            .select("id")
-            .single()
+        let candidaturaId: string
+        if (vaga_id && telefone) {
+            const { data: existing } = await supabaseAdmin
+                .from("candidaturas")
+                .select("id, status")
+                .eq("vaga_id", vaga_id)
+                .eq("telefone", telefone)
+                .maybeSingle()
 
-        if (error) throw error
+            if (existing) {
+                // Candidatura ativa → bloquear (anti-spam)
+                if (STATUS_ATIVOS.includes(existing.status)) {
+                    return NextResponse.json(
+                        { error: "Você já está inscrito nesta vaga." },
+                        { status: 409 }
+                    )
+                }
+                // Candidatura inativa → reciclar a linha existente com os novos dados
+                const { error: updateError } = await supabaseAdmin
+                    .from("candidaturas")
+                    .update({ ...candidaturaPayload, updated_at: new Date().toISOString() })
+                    .eq("id", existing.id)
+                if (updateError) throw updateError
+                candidaturaId = existing.id
+            } else {
+                // Sem registro anterior → insert normal
+                const { data: inserted, error: insertError } = await supabaseAdmin
+                    .from("candidaturas")
+                    .insert(candidaturaPayload)
+                    .select("id")
+                    .single()
+                if (insertError) throw insertError
+                candidaturaId = inserted.id
+            }
+        } else {
+            // Sem vaga_id (banco de talentos) → insert direto
+            const { data: inserted, error: insertError } = await supabaseAdmin
+                .from("candidaturas")
+                .insert(candidaturaPayload)
+                .select("id")
+                .single()
+            if (insertError) throw insertError
+            candidaturaId = inserted.id
+        }
 
-        const codigo = data.id.replace(/-/g, "").slice(-6).toUpperCase()
+        const codigo = candidaturaId.replace(/-/g, "").slice(-6).toUpperCase()
+        const data = { id: candidaturaId }
 
         // Notificar worker via metadata da conversa de origem
         if (conversa_id) {
