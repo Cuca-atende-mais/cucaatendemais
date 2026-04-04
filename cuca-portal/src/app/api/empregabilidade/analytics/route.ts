@@ -22,8 +22,8 @@ export async function GET() {
             supabase.from("talent_bank").select("primeiro_emprego").not("skills_jsonb", "is", null),
             // Área de interesse (top áreas)
             supabase.from("talent_bank").select("area_interesse").eq("status", "disponivel"),
-            // Escolaridade
-            supabase.from("talent_bank").select("skills_jsonb->escolaridade"),
+            // Escolaridade (HF37-04: usa coluna normalizada com 11 níveis canônicos)
+            supabase.from("talent_bank").select("escolaridade_normalizada"),
             // Vagas por status
             supabase.from("vagas").select("status"),
             // Candidaturas por status
@@ -55,16 +55,15 @@ export async function GET() {
             .slice(0, 8)
             .map(([name, value]) => ({ name: name.split("(")[0].trim(), value }))
 
-        // Distribuição por escolaridade
+        // Distribuição por escolaridade (HF37-04: agrupa pelos 11 níveis canônicos normalizados)
         const escMap: Record<string, number> = {}
         for (const r of tbEscolaridade ?? []) {
-            const esc = (r as any).escolaridade || "Não informado"
-            const key = esc.length > 30 ? esc.substring(0, 30) + "…" : esc
-            escMap[key] = (escMap[key] || 0) + 1
+            const esc = (r as any).escolaridade_normalizada || "Não informado"
+            escMap[esc] = (escMap[esc] || 0) + 1
         }
         const escolaridade = Object.entries(escMap)
             .sort((a, b) => b[1] - a[1])
-            .slice(0, 6)
+            .slice(0, 11)
             .map(([name, value]) => ({ name, value }))
 
         // Vagas por status

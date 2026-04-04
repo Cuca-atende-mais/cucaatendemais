@@ -1304,6 +1304,9 @@ async def _processar_publico(
             "perfil": "publico",
             "etapa": "coletando_nome_candidato",
             "banco_talentos": True,
+            # HF37-02: preserva histórico para não reoferecer vagas já aplicadas
+            "historico_vagas_aplicadas": historico_aplicadas,
+            "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
         })
         return
 
@@ -1362,7 +1365,13 @@ async def _processar_publico(
             "Posso cadastrar seu currículo no banco de talentos para oportunidades futuras.\n\n"
             "Deseja? Responda *sim* ou *não*."
         )
-        _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "oferta_banco_talentos"})
+        _set_fluxo(conversa_id, {
+            "perfil": "publico",
+            "etapa": "oferta_banco_talentos",
+            # HF37-02: preserva histórico no caso de não haver vagas disponíveis
+            "historico_vagas_aplicadas": historico_aplicadas,
+            "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
+        })
         return
 
     linhas = ["💼 *Vagas abertas no CUCA:*\n"]
@@ -1389,6 +1398,9 @@ async def _processar_publico(
         "etapa": "listou_vagas",
         "ultima_vaga_id": ultima_vaga_id,
         "mapa_vagas": mapa_vagas,
+        # HF37-02: propaga histórico para que ciclos seguintes não reofereçam vagas já aplicadas
+        "historico_vagas_aplicadas": historico_aplicadas,
+        "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
     })
 
 
