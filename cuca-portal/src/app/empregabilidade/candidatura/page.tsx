@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Gift, ShieldCheck, ChevronRight, Bookmark, Camera, Upload, X, Tag } from "lucide-react"
+import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Gift, ShieldCheck, ChevronRight, Bookmark, Camera, Upload, X, Tag, Home } from "lucide-react"
 
 const AREAS_INTERESSE = [
     "Serviços Gerais (limpeza, portaria, zeladoria)",
@@ -215,6 +215,10 @@ export default function CandidaturaPublicaPage() {
                 }),
             })
             const candData = await res.json()
+            if (res.status === 409) {
+                toast.error(candData.error || "Você já está inscrito nesta vaga.")
+                return
+            }
             if (!res.ok) throw new Error(candData.error || `Erro ${res.status}`)
 
             const codigo = candData.codigo
@@ -302,11 +306,31 @@ export default function CandidaturaPublicaPage() {
                                     <p className="text-xs text-muted-foreground mb-1">Número de acompanhamento</p>
                                     <p className="text-2xl font-bold tracking-widest text-cuca-blue">{numeroCandidatura}</p>
                                 </div>
-                                <p className="text-xs text-muted-foreground">
+                                <p className="text-xs text-muted-foreground mb-6">
                                     Use esse número para acompanhar pelo WhatsApp da unidade CUCA.
                                 </p>
                             </>
                         )}
+                        <Button
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => {
+                                setSuccess(false)
+                                setNome(nomeParam)
+                                setDataNascimento("")
+                                setTelefone(origemTel ? formatPhoneInit(origemTel) : "")
+                                setArquivo(null)
+                                setArquivoPreview(null)
+                                setAreasInteresse([])
+                                setPcdCandidato(false)
+                                setPcdTipoCandidato("")
+                                setNumeroCandidatura("")
+                                setDestinadoBancoTalentos(false)
+                            }}
+                        >
+                            <Home className="mr-2 h-4 w-4" />
+                            Concluir / Voltar ao Início
+                        </Button>
                     </CardContent>
                 </Card>
             </div>

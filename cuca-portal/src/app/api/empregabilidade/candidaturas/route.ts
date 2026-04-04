@@ -19,6 +19,22 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: "Campos obrigatórios ausentes." }, { status: 400 })
         }
 
+        // HF37-03: Anti-spam — bloquear duplicidade por telefone + vaga_id
+        if (vaga_id && telefone) {
+            const { data: existing } = await supabaseAdmin
+                .from("candidaturas")
+                .select("id")
+                .eq("vaga_id", vaga_id)
+                .eq("telefone", telefone)
+                .maybeSingle()
+            if (existing) {
+                return NextResponse.json(
+                    { error: "Você já está inscrito nesta vaga." },
+                    { status: 409 }
+                )
+            }
+        }
+
         const { data, error } = await supabaseAdmin
             .from("candidaturas")
             .insert({
