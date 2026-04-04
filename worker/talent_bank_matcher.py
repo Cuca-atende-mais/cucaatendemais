@@ -8,6 +8,40 @@ from supabase import create_client, Client
 
 logger = logging.getLogger("talent_bank_matcher")
 
+# ─── Mapeamento canônico: setor da vaga → categoria do Banco de Talentos ─────
+#
+# O campo `setor` da tabela `vagas` usa os textos longos definidos em SETORES_VAGA
+# (ex: "Comércio e Vendas (vendedor, caixa, atendimento)"), enquanto o campo
+# `area_interesse` do talent_bank pode conter tanto o texto longo (candidatos
+# importados via import_curriculos.py) quanto a categoria curta (candidatos
+# oriundos do bot WhatsApp ou formulários mais antigos).
+#
+# Este dicionário traduz o texto longo do setor para a categoria curta equivalente.
+# Na filtragem, ambas as formas são aceitas — garantindo cobertura completa
+# independente da origem do candidato.
+MAPEAMENTO_SETOR_CATEGORIA: dict[str, str] = {
+    "Comércio e Vendas (vendedor, caixa, atendimento)":
+        "Comércio e Vendas",
+    "Administrativo / Escritório (recepção, auxiliar administrativo)":
+        "Administrativo",
+    "Logística e Entregas (estoque, separação, entregador, motorista)":
+        "Logística e Entregas",
+    "Serviços Gerais (limpeza, portaria, zeladoria)":
+        "Serviços Gerais",
+    "Alimentação (cozinha, garçom, lanchonete)":
+        "Alimentação",
+    "Criativo / Digital (design, vídeo, redes sociais)":
+        "Criativo / Digital",
+    "Construção Civil (pedreiro, ajudante, eletricista, encanador)":
+        "Construção Civil",
+    "Tecnologia (suporte técnico, programação, dados)":
+        "Tecnologia",
+    "Beleza e Estética (barbeiro, manicure, cabeleireiro)":
+        "Beleza e Estética",
+    "Cuidados Pessoais (babá, cuidador de idosos)":
+        "Cuidados Pessoais",
+}
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -185,17 +219,32 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
         todos = [c for c in todos if _norm_fone(c.get("telefone") or "") not in fones_excluir]
         logger.info(f"[triar_banco_talentos] Excluindo {antes - len(todos)} candidatos por telefone")
 
-    # Filtrar por área de interesse compatível com o setor da vaga
+    # Filtrar por área de interesse compatível com o setor da vaga.
+    # Expande setores para incluir tanto o texto longo (vagas) quanto a categoria
+    # curta (candidatos do bot/formulários legados) via MAPEAMENTO_SETOR_CATEGORIA.
     if setores:
+        setores_expandidos: set[str] = set()
+        for s in setores:
+            setores_expandidos.add(s)  # forma longa original
+            if s in MAPEAMENTO_SETOR_CATEGORIA:
+                setores_expandidos.add(MAPEAMENTO_SETOR_CATEGORIA[s])  # forma curta
+            else:
+                # Fallback: adiciona versão sem parênteses para cobrir variações
+                setores_expandidos.add(s.split("(")[0].strip())
+
         compatíveis = []
         sem_area = []
         for c in todos:
             areas = c.get("area_interesse") or []
             if not areas:
                 sem_area.append(c)
-            elif any(a in setores for a in areas):
+            elif any(a in setores_expandidos for a in areas):
                 compatíveis.append(c)
         pool = compatíveis + sem_area
+        logger.info(
+            f"[triar_banco_talentos] Setores expandidos: {setores_expandidos} | "
+            f"compatíveis={len(compatíveis)} sem_area={len(sem_area)}"
+        )
     else:
         pool = todos
 

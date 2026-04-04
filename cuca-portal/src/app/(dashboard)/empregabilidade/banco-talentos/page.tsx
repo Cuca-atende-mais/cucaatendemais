@@ -224,8 +224,14 @@ export default function BancoTalentosPage() {
         }
         if (filtroStatus !== "todos") query = query.eq("status", filtroStatus)
         if (filtroArea !== undefined) {
-            if (filtroArea === null) query = query.or("area_interesse.is.null,area_interesse.eq.{}")
-            else query = query.contains("area_interesse", [filtroArea])
+            if (filtroArea === null) {
+                query = query.is("area_interesse", null)
+            } else {
+                // Usa filter() com valor entre aspas duplas para suportar vírgulas e
+                // caracteres especiais no valor (ex: "Comércio e Vendas (vendedor, caixa, ...)")
+                // .contains() com Array.join(",") quebra o PostgREST nesses casos
+                query = query.filter("area_interesse", "cs", `{"${filtroArea}"}`)
+            }
         }
         if (filtroEscolaridade) query = query.eq("escolaridade_normalizada", filtroEscolaridade)
         if (filtroGenero) query = query.eq("genero", filtroGenero)
