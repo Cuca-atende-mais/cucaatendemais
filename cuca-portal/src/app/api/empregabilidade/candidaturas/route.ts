@@ -50,8 +50,14 @@ export async function POST(request: NextRequest) {
 
             const existing = rows && rows.length > 0 ? rows[0] : null
 
+            // [DEBUG HF37-10] — remover após diagnóstico
+            console.log("[DEBUG candidaturas] telefone:", telefone, "| vaga_id:", vaga_id)
+            console.log("[DEBUG candidaturas] rows retornados pelo select:", JSON.stringify(rows))
+            console.log("[DEBUG candidaturas] existing (row[0]):", JSON.stringify(existing))
+
             if (existing) {
                 // Candidatura ativa → bloquear (anti-spam)
+                console.log("[DEBUG candidaturas] status encontrado:", existing.status, "| STATUS_ATIVOS:", STATUS_ATIVOS)
                 if (STATUS_ATIVOS.includes(existing.status)) {
                     return NextResponse.json(
                         { error: "Você já está inscrito nesta vaga." },
