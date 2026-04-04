@@ -176,6 +176,7 @@ export default function BancoTalentosPage() {
     const [totalGeral, setTotalGeral] = useState(0)
     const [totalDisponiveis, setTotalDisponiveis] = useState(0)
 
+    const [contagemPorArea, setContagemPorArea] = useState<Map<string | null, number>>(new Map())
     const [selectedTalento, setSelectedTalento] = useState<TalentBank | null>(null)
     const [cadastroOpen, setCadastroOpen] = useState(false)
     const [formNome, setFormNome] = useState("")
@@ -201,13 +202,26 @@ export default function BancoTalentosPage() {
     // Reset de página ao mudar qualquer filtro
     useEffect(() => { setPage(0) }, [debouncedSearch, filtroStatus, filtroArea, filtroEscolaridade, filtroGenero, filtroPCD, filtroPrimeiroEmprego, filtroBairro])
 
-    // Métricas gerais (carregadas uma vez)
+    // Métricas gerais + contagem por área (carregadas uma vez no mount)
     useEffect(() => {
         const fetchMetrics = async () => {
-            const { count: total } = await supabase.from("talent_bank").select("id", { count: "exact", head: true })
-            const { count: disp } = await supabase.from("talent_bank").select("id", { count: "exact", head: true }).eq("status", "disponivel")
+            const [{ count: total }, { count: disp }, { data: areaRows }] = await Promise.all([
+                supabase.from("talent_bank").select("id", { count: "exact", head: true }),
+                supabase.from("talent_bank").select("id", { count: "exact", head: true }).eq("status", "disponivel"),
+                // Busca apenas area_interesse para montar contagens por card
+                supabase.from("talent_bank").select("area_interesse"),
+            ])
             setTotalGeral(total ?? 0)
             setTotalDisponiveis(disp ?? 0)
+
+            // Computa contagem por área localmente a partir dos dados brutos
+            const map = new Map<string | null, number>()
+            for (const row of (areaRows || [])) {
+                const areas = row.area_interesse as string[] | null
+                const cfg = getAreaConfig(areas)
+                map.set(cfg.key, (map.get(cfg.key) ?? 0) + 1)
+            }
+            setContagemPorArea(map)
         }
         fetchMetrics()
     }, [])
@@ -227,10 +241,12 @@ export default function BancoTalentosPage() {
             if (filtroArea === null) {
                 query = query.is("area_interesse", null)
             } else {
-                // Usa filter() com valor entre aspas duplas para suportar vírgulas e
-                // caracteres especiais no valor (ex: "Comércio e Vendas (vendedor, caixa, ...)")
-                // .contains() com Array.join(",") quebra o PostgREST nesses casos
-                query = query.filter("area_interesse", "cs", `{"${filtroArea}"}`)
+                // Extrai o termo principal antes de " / " e "(" para suportar tanto
+                // o texto longo ("Administrativo / Escritório (...)") quanto o curto
+                // ("Administrativo") que podem estar salvos em registros de origens distintas.
+                // O cast ::text converte o array para string permitindo o ilike.
+                const termoPrincipal = filtroArea.split(" / ")[0].split("(")[0].trim()
+                query = query.filter("area_interesse::text", "ilike", `%${termoPrincipal}%`)
             }
         }
         if (filtroEscolaridade) query = query.eq("escolaridade_normalizada", filtroEscolaridade)
@@ -381,6 +397,7 @@ export default function BancoTalentosPage() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                     {AREAS.map((area) => {
                         const isActive = filtroArea !== undefined && filtroArea === area.key
+                        const contagem = isActive ? totalCount : (contagemPorArea.get(area.key) ?? 0)
                         return (
                             <button
                                 key={String(area.key)}
@@ -394,7 +411,7 @@ export default function BancoTalentosPage() {
                             >
                                 <div className={["flex items-center justify-between w-full", area.textClass].join(" ")}>
                                     {area.icon}
-                                    {isActive && <span className="text-xs font-bold tabular-nums">{totalCount}</span>}
+                                    <span className="text-2xl font-bold tabular-nums">{contagem}</span>
                                 </div>
                                 <span className={["text-xs font-medium leading-tight", area.textClass].join(" ")}>
                                     {area.label}
