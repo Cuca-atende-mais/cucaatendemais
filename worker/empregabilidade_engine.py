@@ -1108,7 +1108,8 @@ async def _processar_publico(
     t_lower = texto.strip().lower()
 
     # Encerramento
-    if _quer_encerrar(texto) and etapa not in ("coletando_nome_candidato", "confirmando_terceiro"):
+    # S37C-03: pos_candidatura é tolerante — "obrigado", "valeu" não encerram o fluxo
+    if _quer_encerrar(texto) and etapa not in ("coletando_nome_candidato", "confirmando_terceiro", "pos_candidatura"):
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
         return
 
@@ -1138,20 +1139,30 @@ async def _processar_publico(
                 })
             else:
                 codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
+                # S37C-02: Mensagem 1 — confirmação com o código de acompanhamento
                 await _enviar(
                     instance_name, token, phone,
                     f"🎉 *Candidatura recebida com sucesso!*\n\n"
                     f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
-                    "Guarde esse número! Com ele você pode retornar aqui a qualquer momento "
-                    "para verificar o status da sua candidatura.\n\n"
-                    "Nossa equipe fará a triagem e você será notificado pelo WhatsApp. ✅\n\n"
-                    "Deseja se candidatar a outra vaga ou encerrar?\n"
-                    "Responda *outra* para ver mais vagas ou *encerrar*."
+                    "Guarde esse número! Com ele você pode verificar o status da sua candidatura a qualquer momento. ✅"
                 )
+                # S37C-02: Mensagem 2 — oferta de nova candidatura (separada para melhor UX)
+                await _enviar(
+                    instance_name, token, phone,
+                    "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
+                    "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
+                )
+                # S37C-04/05: salva histórico de vagas e prefill do nome para o próximo ciclo
+                vaga_confirmada = fluxo_atual.get("vaga_id_selecionada")
+                historico = list(fluxo_atual.get("historico_vagas_aplicadas") or [])
+                if vaga_confirmada and vaga_confirmada not in historico:
+                    historico.append(vaga_confirmada)
                 _set_fluxo(conversa_id, {
-                    "etapa": "candidatura_confirmada",
+                    "etapa": "pos_candidatura",  # S37C-01
                     "perfil": "publico",
                     "ultima_candidatura_codigo": codigo,
+                    "historico_vagas_aplicadas": historico,
+                    "nome_candidato_prefill": fluxo_atual.get("nome_candidato", ""),
                 })
         else:
             # Ainda aguardando — link reenviado se necessário
@@ -1164,13 +1175,50 @@ async def _processar_publico(
             )
         return
 
-    # --- ETAPA: candidatura_confirmada ---
+    # --- ETAPA: candidatura_confirmada (S37C-06: alias de retrocompatibilidade) ---
+    # Mantido para não quebrar leads que estavam nesta etapa durante o deploy.
+    # Comportamento idêntico ao antigo — redireciona para pos_candidatura de forma transparente.
     if etapa == "candidatura_confirmada":
         if any(p in t_lower for p in ("outra", "mais", "ver vagas", "outras vagas", "vagas", "vaga")):
-            _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
-            await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+            _set_fluxo(conversa_id, {
+                "perfil": "publico",
+                "etapa": "pos_candidatura",
+                "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+                "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
+            })
+            await _processar_publico("vagas", phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         else:
             await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
+        return
+
+    # --- ETAPA: pos_candidatura (S37C-01) ---
+    if etapa == "pos_candidatura":
+        quer_mais_vagas = any(p in t_lower for p in (
+            "outra", "mais", "ver vagas", "outras vagas", "vagas", "vaga", "sim", "quero", "ok"
+        ))
+        quer_encerrar_claro = any(p in t_lower for p in (
+            "não", "nao", "encerrar", "tchau", "até mais", "até logo", "finalizar", "pode fechar"
+        ))
+
+        if quer_mais_vagas:
+            # S37C-04/05: preserva histórico e prefill, reinicia listagem de vagas
+            _set_fluxo(conversa_id, {
+                "perfil": "publico",
+                "etapa": "inicio",
+                "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+                "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
+            })
+            await _processar_publico("vagas", phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+        elif quer_encerrar_claro:
+            await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
+        else:
+            # S37C-03: mensagem ambígua (ex: "obrigado", "valeu") — reapresenta opções sem encerrar
+            await _enviar(
+                instance_name, token, phone,
+                "Fico feliz em ter ajudado! 😊\n\n"
+                "Ainda quer se candidatar a outra vaga?\n"
+                "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
+            )
         return
 
     # --- ETAPA: coletando_nome_candidato ---
@@ -1238,6 +1286,11 @@ async def _processar_publico(
     ).eq("status", "aberta").eq("unidade_cuca", unidade_cuca).order("created_at", desc=True).limit(8).execute()
     vagas = vagas_res.data or []
 
+    # S37C-04: Excluir vagas já aplicadas neste ciclo de candidaturas
+    historico_aplicadas = fluxo.get("historico_vagas_aplicadas") or []
+    if historico_aplicadas:
+        vagas = [v for v in vagas if v["id"] not in historico_aplicadas]
+
     # Intenção de banco de talentos
     if any(p in t_lower for p in _INTENCAO_BANCO_TALENTOS):
         await _enviar(
@@ -1281,16 +1334,25 @@ async def _processar_publico(
             vaga_id_ref = fluxo.get("ultima_vaga_id")
 
     if vaga_id_ref:
-        await _enviar(
-            instance_name, token, phone,
-            "Para finalizar sua candidatura, preciso do seu *nome completo*:"
-        )
-        _set_fluxo(conversa_id, {
-            "perfil": "publico",
-            "etapa": "coletando_nome_candidato",
-            "vaga_id_selecionada": vaga_id_ref,
-            "banco_talentos": False,
-        })
+        # S37C-05: se o nome já foi coletado em ciclo anterior, pula a etapa de coleta
+        nome_prefill = fluxo.get("nome_candidato_prefill", "")
+        if nome_prefill:
+            await _enviar_link_candidatura(
+                instance_name, token, phone, conversa_id, fluxo,
+                nome_prefill, phone, vaga_id_ref, False
+            )
+        else:
+            await _enviar(
+                instance_name, token, phone,
+                "Para finalizar sua candidatura, preciso do seu *nome completo*:"
+            )
+            _set_fluxo(conversa_id, {
+                "perfil": "publico",
+                "etapa": "coletando_nome_candidato",
+                "vaga_id_selecionada": vaga_id_ref,
+                "banco_talentos": False,
+                "historico_vagas_aplicadas": historico_aplicadas,
+            })
         return
 
     if not vagas:
@@ -1376,6 +1438,9 @@ async def _enviar_link_candidatura(
         "link_candidatura": link,
         "vaga_id_selecionada": vaga_id,
         "banco_talentos": banco_talentos,
+        # S37C-04/05: preserva histórico e atualiza prefill para o próximo ciclo
+        "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+        "nome_candidato_prefill": nome_candidato,
     })
 
 
@@ -1398,6 +1463,7 @@ _ETAPAS_PUBLICO = {
     "inicio", "listou_vagas", "candidatura_enviada",
     "coletando_nome_candidato", "confirmando_terceiro", "coletando_nome_terceiro",
     "aguardando_confirmacao_candidatura", "candidatura_confirmada",
+    "pos_candidatura",   # S37C-01: novo estado para fluxo cíclico
     "oferta_banco_talentos",
 }
 
@@ -1647,20 +1713,32 @@ async def empregabilidade_notify_loop():
                     else:
                         candidatura_codigo = fluxo.get("candidatura_codigo")
                         codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
+                        # S37C-02: Mensagem 1 — confirmação com o código
                         await _enviar(
                             instance_name, token, phone,
                             f"🎉 *Candidatura recebida com sucesso!*\n\n"
                             f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
-                            "Guarde esse número! Com ele você pode retornar aqui a qualquer momento "
-                            "para verificar o status da sua candidatura.\n\n"
-                            "Nossa equipe fará a triagem e você será notificado pelo WhatsApp. ✅"
+                            "Guarde esse número! Com ele você pode verificar o status da sua candidatura a qualquer momento. ✅"
                         )
+                        # S37C-02: Mensagem 2 — oferta de nova candidatura
+                        await _enviar(
+                            instance_name, token, phone,
+                            "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
+                            "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
+                        )
+                        # S37C-04/05: salva histórico e prefill
+                        vaga_confirmada = fluxo.get("vaga_id_selecionada")
+                        historico = list(fluxo.get("historico_vagas_aplicadas") or [])
+                        if vaga_confirmada and vaga_confirmada not in historico:
+                            historico.append(vaga_confirmada)
                         _set_fluxo(conversa_id, {
-                            "etapa": "candidatura_confirmada",
+                            "etapa": "pos_candidatura",  # S37C-01
                             "perfil": "publico",
                             "ultima_candidatura_codigo": codigo,
+                            "historico_vagas_aplicadas": historico,
+                            "nome_candidato_prefill": fluxo.get("nome_candidato", ""),
                         })
-                        logger.info(f"[empreg-notify] Confirmação de candidatura enviada para conversa {conversa_id} — código {codigo}")
+                        logger.info(f"[empreg-notify] Confirmação enviada → pos_candidatura para conversa {conversa_id} — código {codigo}")
 
         except Exception as e:
             logger.error(f"[empreg-notify] Erro no loop: {e}")
