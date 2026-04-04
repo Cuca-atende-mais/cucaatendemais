@@ -46,7 +46,7 @@ async def _enviar(instance_name: str, token: str, phone: str, texto: str, conver
             supabase.table("mensagens").insert({
                 "conversa_id": conversa_id,
                 "lead_id": lead_id or None,
-                "remetente": "bot",
+                "remetente": "agente",
                 "tipo": "text",
                 "conteudo": texto,
             }).execute()
@@ -150,7 +150,7 @@ async def _encerrar_fluxo(
             "Boa sorte! Fique de olho nas mensagens da equipe CUCA. 🤝\n\n"
             "Se precisar de mais alguma coisa, é só chamar. Até logo! 👋"
         )
-    await _enviar(instance_name, token, phone, msg)
+    await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id)
     _set_fluxo(conversa_id, {})
 
 
@@ -1292,7 +1292,7 @@ async def _processar_publico(
         # É para si mesmo — enviar link
         await _enviar_link_candidatura(
             instance_name, token, phone, conversa_id, fluxo,
-            nome_candidato, phone, vaga_id_ref, eh_banco_talentos
+            nome_candidato, phone, vaga_id_ref, eh_banco_talentos, lead_id=lead_id
         )
         return
 
@@ -1304,7 +1304,7 @@ async def _processar_publico(
 
         await _enviar_link_candidatura(
             instance_name, token, phone, conversa_id, fluxo,
-            nome_terceiro, phone, vaga_id_ref, eh_banco_talentos
+            nome_terceiro, phone, vaga_id_ref, eh_banco_talentos, lead_id=lead_id
         )
         return
 
@@ -1383,7 +1383,7 @@ async def _processar_publico(
         if nome_prefill:
             await _enviar_link_candidatura(
                 instance_name, token, phone, conversa_id, fluxo,
-                nome_prefill, phone, vaga_id_ref, False
+                nome_prefill, phone, vaga_id_ref, False, lead_id=lead_id
             )
         else:
             await e("Para finalizar sua candidatura, preciso do seu *nome completo*:")
@@ -1459,6 +1459,7 @@ async def _enviar_link_candidatura(
     telefone_origem: str,
     vaga_id: str | None,
     banco_talentos: bool,
+    lead_id: str = "",
 ):
     """Monta e envia o link de candidatura com nome e telefone pré-preenchidos."""
     import urllib.parse
@@ -1487,7 +1488,7 @@ async def _enviar_link_candidatura(
             f"🔗 {link}\n\n"
             "Após o envio, você receberá aqui o *número de acompanhamento* da candidatura. ✅"
         )
-    await _enviar(instance_name, token, phone, mensagem_link)
+    await _enviar(instance_name, token, phone, mensagem_link, conversa_id=conversa_id, lead_id=lead_id)
     _set_fluxo(conversa_id, {
         "perfil": "publico",
         "etapa": "aguardando_confirmacao_candidatura",
