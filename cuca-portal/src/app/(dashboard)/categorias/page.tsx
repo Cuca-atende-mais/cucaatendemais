@@ -26,7 +26,11 @@ import {
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
-import { Search, Plus, Pencil, Tag } from "lucide-react"
+import { Search, Plus, Pencil, Trash2, Tag } from "lucide-react"
+import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
@@ -50,6 +54,8 @@ export default function CategoriasPage() {
         descricao: "",
         ativo: true,
     })
+    const [deleteTarget, setDeleteTarget] = useState<Categoria | null>(null)
+    const [deleting, setDeleting] = useState(false)
     const supabase = createClient()
 
     useEffect(() => {
@@ -123,6 +129,23 @@ export default function CategoriasPage() {
             ativo: categoria.ativo,
         })
         setDialogOpen(true)
+    }
+
+    const handleDelete = async () => {
+        if (!deleteTarget) return
+        setDeleting(true)
+        const { error } = await supabase
+            .from("categorias_feedback")
+            .delete()
+            .eq("id", deleteTarget.id)
+        if (error) {
+            toast.error("Erro ao excluir categoria")
+        } else {
+            toast.success("Categoria excluída!")
+            fetchCategorias()
+            setDeleteTarget(null)
+        }
+        setDeleting(false)
     }
 
     const handleCloseDialog = () => {
@@ -325,6 +348,14 @@ export default function CategoriasPage() {
                                             >
                                                 <Pencil className="h-4 w-4" />
                                             </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="text-destructive hover:text-destructive"
+                                                onClick={() => setDeleteTarget(categoria)}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
                                         </TableCell>
                                     </TableRow>
                                 ))}
@@ -333,6 +364,26 @@ export default function CategoriasPage() {
                     )}
                 </CardContent>
             </Card>
+            <AlertDialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Deseja excluir a categoria <strong>{deleteTarget?.nome}</strong>? Esta ação não pode ser desfeita.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                            className="bg-destructive hover:bg-destructive/90"
+                            onClick={handleDelete}
+                            disabled={deleting}
+                        >
+                            {deleting ? "Excluindo…" : "Excluir"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }
