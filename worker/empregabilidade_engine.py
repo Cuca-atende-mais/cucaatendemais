@@ -209,6 +209,9 @@ async def _processar_empresa(
     fluxo = _get_fluxo(conversa_id)
     etapa = fluxo.get("etapa", "solicitar_cnpj")
 
+    async def e(msg: str):
+        await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
+
     # Encerramento em qualquer etapa pós-ação
     if _quer_encerrar(texto) and etapa not in ("aguardando_cnpj", "confirmando_cadastro", "confirmando_cadastro_com_correcao"):
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, "empresa")
@@ -219,8 +222,7 @@ async def _processar_empresa(
         empresa_id = fluxo.get("empresa_id")
         empresa_nome = fluxo.get("empresa_nome_exibicao") or fluxo.get("empresa_nome", "")
         if empresa_id and empresa_nome:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 f"Olá! 👋 Que bom ter você de volta.\n\n"
                 f"Vi que você já tem cadastro conosco como *{empresa_nome}*.\n\n"
                 "O que deseja fazer?\n\n"
@@ -238,8 +240,7 @@ async def _processar_empresa(
     if etapa == "menu_empresa_retomada":
         empresa_id = fluxo.get("empresa_id")
         empresa_nome = fluxo.get("empresa_nome_exibicao") or fluxo.get("empresa_nome", "")
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             f"Olá! 👋 Que bom ter você de volta, *{empresa_nome}*.\n\n"
             "O que deseja fazer?\n\n"
             "1️⃣ Cadastrar nova vaga\n"
@@ -260,8 +261,7 @@ async def _processar_empresa(
         if t in ("1", "nova vaga", "divulgar", "criar", "cadastrar"):
             unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
             link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 f"Ótimo! 🎯 Acesse o link abaixo para preencher os dados da nova vaga:\n\n"
                 f"🔗 {link_vaga}\n\n"
                 "Após o preenchimento, você receberá aqui o número da vaga e a confirmação."
@@ -292,8 +292,7 @@ async def _processar_empresa(
         empresa_id = fluxo.get("empresa_id")
         match_num = re.search(r"\b(\d{1,4})\b", texto)
         if not match_num:
-            await _enviar(instance_name, token, phone,
-                          "Por favor, informe o *número* da vaga que deseja editar (ex: 1, 2, 3...):")
+            await e("Por favor, informe o *número* da vaga que deseja editar (ex: 1, 2, 3...):")
             return
         num = match_num.group(1)
         vagas_res = supabase.table("vagas").select(
@@ -304,17 +303,14 @@ async def _processar_empresa(
             None
         )
         if not vaga_match:
-            await _enviar(instance_name, token, phone,
-                          "Vaga não encontrada ou não disponível para edição. Informe outro número:")
+            await e("Vaga não encontrada ou não disponível para edição. Informe outro número:")
             return
         if vaga_match["status"] == "preenchida":
-            await _enviar(instance_name, token, phone,
-                          f"A vaga *{vaga_match['titulo']}* já está preenchida e não pode ser editada.")
+            await e(f"A vaga *{vaga_match['titulo']}* já está preenchida e não pode ser editada.")
             return
         unidade_param = f"&empresa_id={empresa_id}"
         link_edicao = f"{PORTAL_URL}/empregabilidade/vagas/editar?vaga_id={vaga_match['id']}{unidade_param}"
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             f"🔗 Acesse o link abaixo para editar a vaga *{vaga_match['titulo']}*:\n\n"
             f"{link_edicao}\n\n"
             "Todos os dados já estarão preenchidos. Altere apenas o que deseja mudar e clique em *Salvar Alterações*.\n\n"
@@ -339,8 +335,7 @@ async def _processar_empresa(
         if vaga_editada_id:
             # Portal já confirmou a edição — mensagem enviada pelo loop proativo
             # Se chegar aqui por mensagem manual, mostrar menu
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "O que deseja fazer agora?\n\n"
                 "1️⃣ Cadastrar nova vaga\n"
                 "2️⃣ Consultar status de uma vaga\n"
@@ -361,8 +356,7 @@ async def _processar_empresa(
             vaga_id_ref = fluxo.get("vaga_edicao_id")
             unidade_param = f"&empresa_id={empresa_id_ref}"
             link_edicao = f"{PORTAL_URL}/empregabilidade/vagas/editar?vaga_id={vaga_id_ref}{unidade_param}"
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Ainda aguardando o preenchimento do formulário de edição. 🕐\n\n"
                 f"Caso precise do link novamente:\n🔗 {link_edicao}\n\n"
                 "Se precisar de ajuda, entre em contato com a equipe da unidade. 🤝"
@@ -374,8 +368,7 @@ async def _processar_empresa(
         empresa_id = fluxo.get("empresa_id")
         match_num = re.search(r"\b(\d{1,4})\b", texto)
         if not match_num:
-            await _enviar(instance_name, token, phone,
-                          "Por favor, informe o *número* da vaga que deseja cancelar (ex: 1, 2, 3...):")
+            await e("Por favor, informe o *número* da vaga que deseja cancelar (ex: 1, 2, 3...):")
             return
         num = match_num.group(1)
         vagas_res = supabase.table("vagas").select(
@@ -387,12 +380,10 @@ async def _processar_empresa(
             None
         )
         if not vaga_match:
-            await _enviar(instance_name, token, phone,
-                          "Vaga não encontrada ou já cancelada. Informe outro número ou diga *encerrar*.")
+            await e("Vaga não encontrada ou já cancelada. Informe outro número ou diga *encerrar*.")
             return
         data_criacao = vaga_match.get("created_at", "")[:10] if vaga_match.get("created_at") else ""
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             f"⚠️ Você está prestes a *cancelar* a vaga:\n\n"
             f"📋 *{vaga_match['titulo']}*\n"
             f"📅 Criada em: {data_criacao}\n\n"
@@ -438,8 +429,7 @@ async def _processar_empresa(
                 "updated_at": datetime.utcnow().isoformat(),
             }).eq("id", vaga_id_cancelar).execute()
 
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 f"✅ A vaga *{vaga_titulo_cancelar}* foi *cancelada*.\n\n"
                 "Se quiser publicar essa oportunidade novamente no futuro, basta criar uma nova vaga pelo mesmo processo.\n\n"
                 "O que deseja fazer agora?\n\n"
@@ -481,8 +471,7 @@ async def _processar_empresa(
                 "cnpj": fluxo.get("cnpj"),
             })
         else:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Cancelamento abortado. A vaga continua ativa.\n\n"
                 "O que deseja fazer?\n\n"
                 "1️⃣ Cadastrar nova vaga\n"
@@ -496,8 +485,7 @@ async def _processar_empresa(
 
     # --- ETAPA: solicitar_cnpj ---
     if etapa == "solicitar_cnpj":
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             "Olá! 👋 Sou o assistente de empregabilidade do CUCA.\n\n"
             "Para verificar seu cadastro, por favor informe o *CNPJ* da sua empresa (somente números):"
         )
@@ -508,8 +496,7 @@ async def _processar_empresa(
     if etapa == "aguardando_cnpj":
         cnpj_limpo = re.sub(r"\D", "", texto)
         if len(cnpj_limpo) != 14:
-            await _enviar(instance_name, token, phone,
-                          "CNPJ inválido. Por favor, informe os *14 dígitos* do CNPJ da sua empresa:")
+            await e("CNPJ inválido. Por favor, informe os *14 dígitos* do CNPJ da sua empresa:")
             return
 
         # Verificar no banco
@@ -517,8 +504,7 @@ async def _processar_empresa(
         if emp_res.data:
             empresa = emp_res.data[0]
             nome_exibicao = empresa.get("nome_fantasia") or empresa["nome"]
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 f"✅ Empresa *{nome_exibicao}* já está cadastrada!\n\n"
                 "Deseja divulgar uma vaga agora? Responda *sim* ou *não*."
             )
@@ -532,12 +518,11 @@ async def _processar_empresa(
             return
 
         # Empresa não cadastrada — consultar CNPJ Brasil
-        await _enviar(instance_name, token, phone, "🔍 Consultando dados na Receita Federal, aguarde...")
+        await e("🔍 Consultando dados na Receita Federal, aguarde...")
         dados_rf = await _consultar_cnpj(cnpj_limpo)
 
         if not dados_rf:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Não encontrei dados para esse CNPJ na Receita Federal. "
                 "Verifique se digitou corretamente e tente novamente:"
             )
@@ -545,8 +530,7 @@ async def _processar_empresa(
 
         situacao = (dados_rf.get("situacao_cadastral") or {}).get("descricao", "").upper()
         if "ATIVA" not in situacao and situacao:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 f"⚠️ O CNPJ informado está com situação *{situacao}* na Receita Federal.\n"
                 "Não é possível cadastrar empresas inativas. Se houver erro, entre em contato com a unidade."
             )
@@ -554,8 +538,7 @@ async def _processar_empresa(
             return
 
         msg_dados = _formatar_dados_cnpj(dados_rf)
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             f"{msg_dados}\n\n"
             "As informações estão corretas? Responda *sim* para confirmar o cadastro.\n"
             "Se algum dado estiver desatualizado, informe o que precisa ser corrigido."
@@ -607,8 +590,7 @@ async def _processar_empresa(
             empresa_nome = dados_rf.get("nome", "")
             nome_exibicao = nome_fantasia or empresa_nome
 
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 f"✅ *Cadastro realizado com sucesso!*\n\n"
                 f"🏢 *{nome_exibicao}* agora está na nossa base de parceiros.\n\n"
                 "Deseja divulgar uma vaga agora? Responda *sim* ou *não*."
@@ -622,8 +604,7 @@ async def _processar_empresa(
             })
         else:
             dados_rf["correcao"] = texto
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Obrigado pela correção! Guardamos essa informação.\n\n"
                 "Confirma o cadastro com a correção informada? Responda *sim* para confirmar:"
             )
@@ -655,8 +636,7 @@ async def _processar_empresa(
             empresa_nome = dados_rf.get("nome", "")
             nome_exibicao = nome_fantasia or empresa_nome
 
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 f"✅ *Cadastro realizado com sucesso!*\n\n"
                 f"🏢 *{nome_exibicao}* agora está na nossa base.\n\n"
                 "Deseja divulgar uma vaga agora? Responda *sim* ou *não*."
@@ -669,8 +649,7 @@ async def _processar_empresa(
                 "empresa_nome_exibicao": nome_exibicao,
             })
         else:
-            await _enviar(instance_name, token, phone,
-                          "Entendido. Se precisar de ajuda, pode entrar em contato novamente. 👋")
+            await e("Entendido. Se precisar de ajuda, pode entrar em contato novamente. 👋")
             _set_fluxo(conversa_id, {})
         return
 
@@ -682,8 +661,7 @@ async def _processar_empresa(
         nome_exibicao = fluxo.get("empresa_nome_exibicao") or empresa_nome
 
         if t in ("sim", "s", "quero", "vou", "yes", "ok", "1"):
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Ótimo! 🎯 Antes de gerar o link da vaga, preciso de algumas informações do *responsável pelo processo seletivo*.\n\n"
                 "Qual é o *e-mail* para receber os currículos?\n"
                 "(pode ser diferente do e-mail geral da empresa)"
@@ -696,8 +674,7 @@ async def _processar_empresa(
                 "cnpj": fluxo.get("cnpj"),
             })
         else:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Sem problema! O que deseja fazer?\n\n"
                 "1️⃣ Cadastrar nova vaga\n"
                 "2️⃣ Consultar status de uma vaga\n"
@@ -720,13 +697,11 @@ async def _processar_empresa(
         email_candidato = texto.strip()
         # Validação básica de e-mail
         if "@" not in email_candidato or "." not in email_candidato.split("@")[-1]:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "⚠️ Esse e-mail não parece válido. Por favor, informe um e-mail no formato correto (ex: rh@empresa.com.br):"
             )
             return
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             f"Perfeito! E-mail registrado: *{email_candidato}*\n\n"
             "Agora informe o *telefone/WhatsApp do responsável* pela seleção:\n"
             "(com DDD, ex: 85999990000)"
@@ -742,8 +717,7 @@ async def _processar_empresa(
     if etapa == "coletando_telefone_responsavel":
         tel_digits = re.sub(r"\D", "", texto.strip())
         if len(tel_digits) < 10:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "⚠️ Telefone inválido. Por favor, informe o número com DDD (ex: 85999990000):"
             )
             return
@@ -755,8 +729,7 @@ async def _processar_empresa(
         email_param = f"&email_responsavel={quote(email_responsavel)}" if email_responsavel else ""
         tel_param = f"&telefone_responsavel={quote(tel_digits)}"
         link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}{email_param}{tel_param}"
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             f"✅ Dados registrados!\n\n"
             f"📧 E-mail: {email_responsavel}\n"
             f"📱 Telefone: {tel_digits}\n\n"
@@ -788,8 +761,7 @@ async def _processar_empresa(
 
         if vaga_criada_id:
             numero_ref = f"#{vaga_numero}" if vaga_numero else f"...{vaga_criada_id[-6:].upper()}"
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 f"✅ *Vaga cadastrada com sucesso!*\n\n"
                 f"📋 *Título:* {vaga_titulo}\n"
                 f"🔢 *Número da vaga:* {numero_ref}\n\n"
@@ -813,8 +785,7 @@ async def _processar_empresa(
             empresa_id = fluxo.get("empresa_id")
             unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
             link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Ainda aguardando o preenchimento do formulário de vaga. 🕐\n\n"
                 f"Caso precise do link novamente:\n🔗 {link_vaga}\n\n"
                 "Se precisar de ajuda, entre em contato com a equipe da unidade. 🤝"
@@ -852,6 +823,10 @@ async def _listar_vagas_para_acao(
     fluxo: dict,
 ):
     """Lista vagas disponíveis para edição ou cancelamento e aguarda escolha."""
+
+    async def e(msg: str):
+        await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id)
+
     if acao == "edicao":
         status_excluidos = ["cancelada", "preenchida"]
         verbo = "editar"
@@ -872,7 +847,7 @@ async def _listar_vagas_para_acao(
             if acao == "edicao"
             else "Não há vagas ativas para cancelar."
         )
-        await _enviar(instance_name, token, phone, msg_vazia)
+        await e(msg_vazia)
         return
 
     linhas = [f"📋 *Vagas disponíveis para {verbo}:*\n"]
@@ -881,7 +856,7 @@ async def _listar_vagas_para_acao(
         linhas.append(f"• {numero_ref} *{v['titulo']}* — {v['status']}")
     linhas.append(f"\n{instrucao}")
 
-    await _enviar(instance_name, token, phone, "\n".join(linhas))
+    await e("\n".join(linhas))
 
 
 # ---------------------------------------------------------------------------
@@ -898,6 +873,9 @@ async def _processar_consulta_empresa(
 ):
     t = texto.strip().lower()
     empresa_id = fluxo.get("empresa_id")
+
+    async def e(msg: str):
+        await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id)
 
     # Encerrar se pedido
     if _quer_encerrar(texto):
@@ -922,16 +900,14 @@ async def _processar_consulta_empresa(
             cands = supabase.table("candidaturas").select("status", count="exact").eq("vaga_id", vaga_match["id"]).execute()
             total_cands = cands.count or 0
             numero_ref = f"#{vaga_match['numero_vaga']}" if vaga_match.get("numero_vaga") else f"...{vaga_match['id'][-6:].upper()}"
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 f"📋 *Vaga {numero_ref}:* {vaga_match['titulo']}\n"
                 f"📌 *Status:* {vaga_match['status']}\n"
                 f"👥 *Candidatos:* {total_cands}\n\n"
                 "Deseja ver outra vaga, criar uma nova ou encerrar?"
             )
         else:
-            await _enviar(instance_name, token, phone,
-                          "Não encontrei essa vaga. Informe o número da vaga ou *todas* para listar.")
+            await e("Não encontrei essa vaga. Informe o número da vaga ou *todas* para listar.")
         return
 
     # Listar todas as vagas da empresa
@@ -942,8 +918,7 @@ async def _processar_consulta_empresa(
         vagas = vagas_res.data or []
 
         if not vagas:
-            await _enviar(instance_name, token, phone,
-                          "Sua empresa ainda não tem vagas cadastradas. Deseja criar uma? Responda *sim*.")
+            await e("Sua empresa ainda não tem vagas cadastradas. Deseja criar uma? Responda *sim*.")
             _set_fluxo(conversa_id, {**fluxo, "etapa": "aguardando_criar_vaga"})
             return
 
@@ -955,10 +930,9 @@ async def _processar_consulta_empresa(
                 f"• {numero_ref} *{v['titulo']}* — {v['status']} ({cands.count or 0} candidatos)"
             )
         linhas.append("\nInforme o *número* da vaga para ver detalhes, ou diga *encerrar*.")
-        await _enviar(instance_name, token, phone, "\n".join(linhas))
+        await e("\n".join(linhas))
     else:
-        await _enviar(instance_name, token, phone,
-                      "Para consultar suas vagas, informe o *CNPJ* da empresa:")
+        await e("Para consultar suas vagas, informe o *CNPJ* da empresa:")
         _set_fluxo(conversa_id, {"etapa": "aguardando_cnpj"})
 
 
@@ -977,14 +951,16 @@ async def _processar_candidato(
     fluxo = _get_fluxo(conversa_id)
     etapa = fluxo.get("etapa", "solicitar_identificacao")
 
+    async def e(msg: str):
+        await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
+
     # Encerramento
     if _quer_encerrar(texto) and etapa != "aguardando_id_candidato":
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, "candidato")
         return
 
     if etapa == "solicitar_identificacao":
-        await _enviar(
-            instance_name, token, phone,
+        await e(
             "Para consultar sua candidatura, informe:\n\n"
             "• O *número da candidatura* recebido (6 caracteres, ex: AB12CD)\n"
             "• Seu *nome completo*\n"
@@ -1035,8 +1011,7 @@ async def _processar_candidato(
             candidaturas_encontradas = cand_res.data or []
 
         if not candidaturas_encontradas:
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Não encontrei candidatura com esse dado. 🔍\n\n"
                 "Você pode tentar com:\n"
                 "• *Número da candidatura* (6 caracteres, ex: AB12CD)\n"
@@ -1067,9 +1042,8 @@ async def _processar_candidato(
                 f"   Status: {status_label}\n"
                 f"   Ref: {c['id'].replace('-','')[-6:].upper()}"
             )
-        await _enviar(instance_name, token, phone, "\n".join(linhas))
-        await _enviar(
-            instance_name, token, phone,
+        await e("\n".join(linhas))
+        await e(
             "Deseja consultar outra candidatura ou encerrar?\n\n"
             "Responda com *outro* para nova consulta ou *encerrar* para finalizar."
         )
@@ -1080,8 +1054,7 @@ async def _processar_candidato(
     if etapa == "candidato_consultado":
         t = texto.strip().lower()
         if any(p in t for p in ("outro", "outra", "mais", "nova consulta", "consultar")):
-            await _enviar(
-                instance_name, token, phone,
+            await e(
                 "Informe o número da candidatura, nome completo ou telefone cadastrado:"
             )
             _set_fluxo(conversa_id, {"etapa": "aguardando_id_candidato", "perfil": "candidato"})

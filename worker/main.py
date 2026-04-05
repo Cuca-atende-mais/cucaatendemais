@@ -372,6 +372,19 @@ async def process_webhook_payload(payload: dict, token: str):
             except Exception as e:
                 logger.error(f"Erro ao salvar mensagem: {str(e)}")
             
+            # Epic 1 — Buffer de transbordo humano: operador enviou mensagem, pausar bot por 1 minuto
+            if from_me and conversation_id:
+                try:
+                    from datetime import datetime, timezone, timedelta
+                    pausa_ate = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+                    cm_res = supabase.table("conversas").select("metadata").eq("id", conversation_id).single().execute()
+                    cm = (cm_res.data or {}).get("metadata") or {}
+                    cm["bot_pausado_ate"] = pausa_ate
+                    supabase.table("conversas").update({"metadata": cm}).eq("id", conversation_id).execute()
+                    logger.info(f"[TRANSBORDO] fromMe=True — bot pausado até {pausa_ate} (conversa {conversation_id})")
+                except Exception as _pe:
+                    logger.warning(f"[TRANSBORDO] Erro ao registrar pausa do bot: {_pe}")
+
             # S14-01: Checar dados da instância
             inst_result = supabase.table("instancias_uazapi").select("unidade_cuca, agente_tipo, token, canal_tipo").eq("nome", instance_name).single().execute()
             agente_tipo = inst_result.data.get("agente_tipo", "maria") if inst_result.data else "maria"
@@ -468,6 +481,20 @@ async def process_webhook_payload(payload: dict, token: str):
                     except Exception as stop_err:
                         logger.error(f"[STOP] Erro ao processar opt_out: {stop_err}")
                     return  # Não processa IA após STOP explícito
+
+            # Epic 1 — Verificar buffer de transbordo humano antes de despachar para qualquer motor
+            if not from_me:
+                try:
+                    from datetime import datetime, timezone
+                    _cm_res = supabase.table("conversas").select("metadata").eq("id", conversation_id).single().execute()
+                    _bot_pausa = ((_cm_res.data or {}).get("metadata") or {}).get("bot_pausado_ate")
+                    if _bot_pausa:
+                        _pausa_ate = datetime.fromisoformat(_bot_pausa)
+                        if datetime.now(timezone.utc) < _pausa_ate:
+                            logger.info(f"[TRANSBORDO] Bot em pausa até {_bot_pausa} — mensagem do lead ignorada pelo motor (conversa {conversation_id})")
+                            return
+                except Exception as _pce:
+                    logger.warning(f"[TRANSBORDO] Erro ao verificar pausa do bot: {_pce}")
 
             # S29-03: Roteamento para motor de empregabilidade (instância tipo Empregabilidade)
             if not from_me and agente_tipo == "Empregabilidade":
