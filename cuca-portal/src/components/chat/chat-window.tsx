@@ -136,7 +136,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
             const token = process.env.NEXT_PUBLIC_INTERNAL_TOKEN;
             if (!workerUrl || !token) throw new Error("Worker URL não configurada");
 
-            await fetch(`${workerUrl}/send-message/${token}`, {
+            const sendResp = await fetch(`${workerUrl}/send-message/${token}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -145,6 +145,12 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                     instance: conversation.instancia_uazapi
                 })
             });
+
+            if (!sendResp.ok) {
+                const errBody = await sendResp.text().catch(() => `HTTP ${sendResp.status}`);
+                console.error("[send-message] Worker/UAZAPI retornou erro:", sendResp.status, errBody);
+                throw new Error(`Falha ao enviar via UAZAPI (${sendResp.status}): ${errBody}`);
+            }
 
             setNewMessage("");
             toast.success("Mensagem enviada!");

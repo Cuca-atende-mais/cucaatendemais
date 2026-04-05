@@ -853,9 +853,13 @@ async def send_manual_message(token: str, request: Request):
                     "text": text
                 }
             )
+            if response.status_code >= 400:
+                logger.error(f"[send-manual] UAZAPI retornou erro {response.status_code}: {response.text}")
+                return Response(status_code=response.status_code, content=response.text)
+            logger.info(f"[send-manual] Mensagem enviada com sucesso para {number} via {instance}")
             return response.json()
     except Exception as e:
-        logger.error(f"Erro ao enviar mensagem manual: {str(e)}")
+        logger.error(f"[send-manual] Erro ao enviar mensagem manual: {str(e)}", exc_info=True)
         return Response(status_code=500, content=str(e))
 
 @app.post("/read-message/{token}")

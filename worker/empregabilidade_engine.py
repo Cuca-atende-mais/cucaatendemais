@@ -51,7 +51,7 @@ async def _enviar(instance_name: str, token: str, phone: str, texto: str, conver
                 "conteudo": texto,
             }).execute()
         except Exception as _e:
-            logger.warning(f"[_enviar] Falha ao gravar mensagem bot no DB: {_e}")
+            logger.error(f"[_enviar] Falha ao gravar mensagem bot no DB: {_e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
