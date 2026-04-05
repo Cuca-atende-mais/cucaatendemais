@@ -8,6 +8,7 @@ Máquina de estados armazenada em conversas.metadata["empreg_fluxo"].
 import os
 import re
 import logging
+import asyncio
 import httpx
 from datetime import date
 from urllib.parse import quote
@@ -42,14 +43,16 @@ async def _enviar(instance_name: str, token: str, phone: str, texto: str, conver
         )
     # Gravar mensagem de saída do bot na tabela mensagens para exibição no painel
     if conversa_id:
-        try:
-            supabase.table("mensagens").insert({
+        def _inserir():
+            return supabase.table("mensagens").insert({
                 "conversa_id": conversa_id,
                 "lead_id": lead_id or None,
                 "remetente": "agente",
                 "tipo": "text",
                 "conteudo": texto,
             }).execute()
+        try:
+            await asyncio.to_thread(_inserir)
         except Exception as _e:
             logger.error(f"[_enviar] Falha ao gravar mensagem bot no DB: {_e}", exc_info=True)
 
