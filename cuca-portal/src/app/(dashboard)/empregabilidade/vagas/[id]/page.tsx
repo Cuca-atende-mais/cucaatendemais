@@ -171,6 +171,7 @@ export default function VagaDetalhesPage() {
         tipo: "presencial"
     })
     const [summoning, setSummoning] = useState(false)
+    const [solicitandoFeedback, setSolicitandoFeedback] = useState(false)
 
     const refreshParam = searchParams.get("t")
     useEffect(() => { if (id) fetchData() }, [id, refreshParam])
@@ -366,6 +367,24 @@ export default function VagaDetalhesPage() {
         }
     }
 
+    const solicitarFeedbackEmpresa = async () => {
+        if (!id) return
+        setSolicitandoFeedback(true)
+        try {
+            const res = await fetch(`/api/empregabilidade/vagas/${id}/solicitar-feedback`, {
+                method: "POST",
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro ao solicitar feedback")
+            
+            toast.success("Solicitação de feedback enviada para a empresa via WhatsApp!")
+        } catch (err: any) {
+            toast.error(err.message)
+        } finally {
+            setSolicitandoFeedback(false)
+        }
+    }
+
     const tipoFollowupLabel = (tipo: string) => {
         if (tipo === "empresa") return { label: "Empresa", color: "bg-blue-500/15 text-blue-400", icon: Building2 }
         if (tipo === "candidato") return { label: "Candidato", color: "bg-green-500/15 text-green-400", icon: User }
@@ -427,6 +446,16 @@ export default function VagaDetalhesPage() {
                                 {vaga?.expansiva && (
                                     <Badge variant="outline" className="text-xs">Global</Badge>
                                 )}
+                                <Button 
+                                    size="sm" 
+                                    variant="outline" 
+                                    className="ml-2 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 h-7 text-[10px]"
+                                    onClick={solicitarFeedbackEmpresa}
+                                    disabled={solicitandoFeedback}
+                                >
+                                    {solicitandoFeedback ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <MessageSquare className="h-3 w-3 mr-1" />}
+                                    Solicitar Feedback da Empresa
+                                </Button>
                             </div>
                             {empresaNome && (
                                 <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -659,10 +688,11 @@ export default function VagaDetalhesPage() {
                                                         {c.status === 'aprovado_empresa' && (
                                                             <button
                                                                 onClick={e => { e.stopPropagation(); abrirSummon(c) }}
-                                                                className="p-1 rounded bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 transition-colors"
+                                                                className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-500 text-[9px] text-white hover:bg-indigo-600 transition-colors"
                                                                 title="Convocar"
                                                             >
-                                                                <Send className="h-2.5 w-2.5" />
+                                                                <Send className="h-2 w-2" />
+                                                                Convocar
                                                             </button>
                                                         )}
                                                         <span className="text-[10px] text-muted-foreground">{format(new Date(c.created_at || Date.now()), "dd/MM/yy", { locale: ptBR })}</span>
@@ -1119,13 +1149,15 @@ function CandidatoCard({
                 </div>
                 <div className="flex items-center gap-1">
                     {candidato.status === 'aprovado_empresa' && (
-                        <button
+                        <Button
+                            size="sm"
+                            variant="default"
                             onClick={e => { e.stopPropagation(); onConvocar() }}
-                            className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 transition-colors mr-1"
-                            title="Convocar para Entrevista"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs gap-1.5"
                         >
                             <Send className="h-3.5 w-3.5" />
-                        </button>
+                            Convocar Candidato
+                        </Button>
                     )}
                     <button
                         onClick={e => { e.stopPropagation(); onAbrirFollowup() }}
