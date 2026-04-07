@@ -3155,3 +3155,252 @@ Criar uma ferramenta exclusiva para desenvolvedores no painel administrativo cap
 ## Etapa 4: Validação do Sistema Final
 - Submeter 5 currículos originais da pasta `KFC - ELAINE` pela interface.
 - Verificar no Supabase ou diretamente na página "Candidatos" / "Banco de Talentos" se a IA inseriu nas macro-áreas certas ignorando a falta da seção "Objetivos".
+
+---
+
+## Sprint 37 — OCR Enriquecido + Filtros Banco de Talentos + Correções Empregabilidade ⏳ PLANEJADO
+
+> **Status**: Planejado | **Data**: 02/04/2026
+
+### Contexto
+
+Com o módulo de Empregabilidade em produção e recebendo currículos reais, cinco problemas críticos foram identificados durante uso pelo time CUCA: o OCR estava decidindo automaticamente se um candidato era aprovado ou não (violando o fluxo onde o gestor é quem aprova); o email enviado à empresa chegava sem o PDF do currículo em anexo; candidatos aprovados vindos do banco de talentos perdiam o acesso ao currículo no portal; conversas de duas instâncias específicas não apareciam no chat espelhado; e o candidato que queria se candidatar a uma nova vaga após já ter enviado currículo precisava digitar nome e data de nascimento novamente do zero.
+
+Além das correções, o time identificou a necessidade de filtros avançados na triagem do banco de talentos — hoje só é possível filtrar por área de interesse, sem nenhuma dimensão demográfica ou de perfil. Para que esses filtros funcionem, o OCR precisa extrair e normalizar novos campos de cada currículo: escolaridade (hoje livre, com dezenas de variações para a mesma coisa), gênero, bairro, PCD, primeiro emprego e tempo real de experiência.
+
+---
+
+### Problemas encontrados e solução planejada
+
+---
+
+**Problema 1 — OCR altera status do candidato automaticamente**
+
+O `cv_processor.py` possui no bloco de atualização da candidatura a linha que define `"status": "selecionado"` quando o veredito da IA é positivo e `"rejeitado"` quando negativo. Na prática, isso significa que assim que o currículo é processado, o candidato já aparece como selecionado ou rejeitado no portal — sem que o gestor tenha avaliado nada. O status é domínio exclusivo do gestor humano; a IA deve apenas informar o score e a análise de aderência, nunca alterar o estado do processo seletivo.
+
+**Solução**: Remover completamente o campo `"status"` do dicionário `update_candidatura` dentro de `process_cv_ocr`. O status de entrada já é `"pendente"` no momento do INSERT (definido pelo formulário público ou pelo fluxo WhatsApp). Após o OCR, o registro permanece `"pendente"` até o gestor agir manualmente — aprovando, rejeitando ou movendo para banco de talentos.
+
+**Arquivo**: `worker/cv_processor.py` — função `process_cv_ocr`, bloco `update_candidatura`
+
+---
+
+**Problema 2 — Email enviado à empresa chega sem o PDF do currículo**
+
+A rota `/api/empregabilidade/enviar-cv/route.ts` busca os dados da candidatura com um `.select()` que inclui apenas `dados_ocr_json` e campos de texto. O campo `arquivo_cv_url` — que é coluna direta da tabela `candidaturas` — não está sendo selecionado. O código tenta ler a URL do CV a partir do JSON interno do OCR (`ocr?.arquivo_cv_url`), mas esse campo nem sempre está preenchido dentro do JSON, fazendo com que `cvUrl` fique `null`. Sem URL, o email é montado apenas com dados textuais extraídos pelo OCR, sem link e sem anexo.
+
+**Solução em duas partes**:
+
+Parte A — corrigir a leitura da URL: adicionar `arquivo_cv_url` ao `.select()` da query de candidatura. A variável `cvUrl` deve ser definida como `candidatura.arquivo_cv_url || ocr?.arquivo_cv_url || null`, usando o campo direto da tabela como fonte primária e o JSON do OCR como fallback para registros antigos.
+
+Parte B — anexar o PDF no email: quando `cvUrl` existir, fazer `fetch(cvUrl)` para baixar os bytes do arquivo armazenado no Supabase Storage e incluir no campo `attachments` da chamada ao Resend com `filename: "curriculo_<nome>.pdf"`. Se o download falhar (URL expirada, arquivo removido), registrar um `console.warn` e enviar o email sem o anexo — o envio não deve ser bloqueado por falha no download.
+
+**Arquivo**: `cuca-portal/src/app/api/empregabilidade/enviar-cv/route.ts`
+
+---
+
+**Problema 3 — CV de candidato aprovado do banco de talentos some no portal**
+
+Quando um gestor aprova um candidato do banco de talentos para uma vaga (criando um registro em `candidaturas`), o `arquivo_cv_url` é corretamente copiado do `talent_bank` para a nova candidatura no momento do INSERT. Porém, quando o gestor abre os detalhes desse candidato ou tenta enviar o CV por email, o campo `arquivo_cv_url` não está sendo lido — a query de candidatura não o inclui no `.select()`. O efeito visível é: currículo some, botão "Enviar CV" não funciona, PDF não chega para a empresa.
+
+**Solução**: Este problema é resolvido junto com o Problema 2 (Parte A). Ao corrigir o `.select()` da rota de email para incluir `arquivo_cv_url`, o campo passa a ser lido corretamente tanto para candidaturas vindas do formulário público quanto para as originadas do banco de talentos.
+
+**Arquivo**: `cuca-portal/src/app/api/empregabilidade/enviar-cv/route.ts`
+
+---
+
+**Problema 4 — Conversas das instâncias "institucionalredecuca" e "empregocucabarra" não aparecem no chat espelhado**
+
+O chat espelhado em `/atendimento` filtra conversas pela coluna `canal_tipo` da tabela `instancias_uazapi`. A sidebar carrega todas as instâncias com `canal_tipo = "Institucional"` e usa os nomes retornados para filtrar as conversas. Se os registros dessas instâncias no banco tiverem `canal_tipo` com valor diferente — seja por capitalização incorreta, valor null, ou categoria errada — a query não as encontra e as conversas ficam invisíveis no portal, mesmo que o worker esteja recebendo e processando as mensagens normalmente.
+
+**Solução**: Verificar no banco o valor atual de `canal_tipo` e `ativa` para as instâncias "institucionalredecuca" e "empregocucabarra". A correção mais provável é um UPDATE direto:
+```sql
+UPDATE instancias_uazapi
+SET canal_tipo = 'Institucional', ativa = true
+WHERE nome IN ('institucionalredecuca', 'empregocucabarra');
+```
+Se `canal_tipo` já estiver correto, investigar se a subscription do Supabase Realtime na sidebar está descartando o canal prematuramente por re-render do componente.
+
+**Arquivo**: Banco de dados (Supabase direto) + `cuca-portal/src/components/chat/chat-sidebar.tsx` (se o problema for no frontend)
+
+---
+
+**Problema 5 — Fluxo de candidatura não é cíclico: candidato não consegue se candidatar a mais de uma vaga**
+
+**O que acontece hoje (análise do código):**
+
+O candidato acessa a automação, escolhe uma vaga, recebe o link público, envia o currículo pelo formulário e recebe o código de acompanhamento — tudo correto. O bot envia a mensagem de confirmação com o código e pergunta: *"Deseja se candidatar a outra vaga ou encerrar? Responda outra para ver mais vagas ou encerrar."* A lógica para reapresentar as vagas existe no código (`empregabilidade_engine.py`, linhas 1167–1174), mas três falhas combinadas impedem o ciclo de funcionar na prática:
+
+**Falha 1 — O encerramento automático interfere antes da opção ser apresentada.**
+A função `_processar_publico` executa o check `_quer_encerrar(texto)` logo no início (linha 1110), antes de qualquer verificação de etapa. Isso significa que se o candidato responder naturalmente *"obrigado"*, *"ok"* ou *"valeu"* depois de receber o código — o que é o comportamento mais comum —, a conversa é encerrada imediatamente, sem nunca chegar ao handler de `candidatura_confirmada` que teria oferecido as vagas. A etapa `candidatura_confirmada` não está na lista de exceções dessa guarda, então qualquer palavra de agradecimento fecha tudo.
+
+**Falha 2 — As palavras-chave aceitas são muito restritas.**
+Mesmo que o candidato sobreviva ao check de encerramento, o handler de `candidatura_confirmada` só reconhece: *"outra", "mais", "ver vagas", "outras vagas", "vagas", "vaga"*. Qualquer coisa fora disso — *"sim"*, *"quero"*, *"pode mostrar"*, *"1"* — vai direto para `_encerrar_fluxo`. Não há mensagem de "não entendi, tente novamente".
+
+**Falha 3 — O fluxo é completamente apagado ao reiniciar.**
+Quando o candidato acerta as palavras-chave e o código chama `_set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})`, todo o histórico da sessão é destruído: nome do candidato, vagas já vistas, vagas já aplicadas. Na nova listagem de vagas, a mesma vaga que ele acabou de se candidatar aparece novamente na lista, sem nenhum indicativo de que ele já aplicou — o que pode confundir e gerar candidaturas duplicadas.
+
+---
+
+**Solução planejada — Fluxo cíclico com nova etapa `pos_candidatura`:**
+
+**Etapa 1 — Criar nova etapa intermediária `pos_candidatura`** entre receber o código e ver novas vagas.
+
+Ao invés de colocar `candidatura_confirmada` como etapa e depender do candidato responder palavras exatas, o bot envia **duas mensagens separadas** imediatamente após confirmar o código:
+- Mensagem 1: confirmação com o código (igual hoje)
+- Mensagem 2 (delay de 1.5s): *"📋 Há [N] vagas abertas no CUCA agora. Deseja ver mais oportunidades? Responda *1 — Ver vagas* ou *2 — Encerrar*."*
+
+O fluxo entra em `pos_candidatura` com o campo `historico_vagas_aplicadas` preenchido com o id da vaga recém confirmada.
+
+**Etapa 2 — Ampliar o reconhecimento de intenção em `pos_candidatura`.**
+
+Nessa etapa, o guard `_quer_encerrar` fica suspenso para palavras ambíguas como *"obrigado"*. O bot interpreta:
+- Qualquer "sim", "1", "quero", "ver", "vagas", "mostrar", "pode", "continua" → lista vagas
+- Apenas explicitamente "encerrar", "tchau", "não quero", "não obrigado", "2" → encerra
+
+**Etapa 3 — Listar vagas excluindo as já aplicadas.**
+
+Ao buscar as vagas para a nova listagem, o worker filtra as vagas cujo id está em `historico_vagas_aplicadas` do fluxo atual — essas não aparecem. Se todas as vagas abertas já foram aplicadas, o bot informa: *"Você já se candidatou a todas as vagas disponíveis no momento! Seu currículo está sendo analisado. Boa sorte! 🍀"*
+
+**Etapa 4 — Preservar nome do candidato entre ciclos.**
+
+Ao reiniciar para nova candidatura (etapa "inicio"), o campo `nome_candidato` do ciclo anterior é mantido em `nome_candidato_prefill`. Na coleta de nome do novo ciclo, o bot pergunta: *"Candidatura é para [nome anterior] novamente? Responda sim ou informe outro nome."* Isso evita que o candidato precise redigitar o nome a cada vaga.
+
+**O ciclo completo após a implementação:**
+
+```
+Candidato escolhe vaga → coleta nome → recebe link
+         ↓
+Envia currículo no formulário público
+         ↓
+Bot envia código de acompanhamento + oferta de novas vagas [etapa: pos_candidatura]
+         ↓
+Candidato responde qualquer coisa positiva
+         ↓
+Bot lista vagas (sem a já aplicada) [etapa: listou_vagas]
+         ↓
+Candidato escolhe nova vaga → nome pré-preenchido → novo link
+         ↓
+Repete até o candidato dizer encerrar ou não haver mais vagas
+```
+
+**Arquivo**: `worker/empregabilidade_engine.py`
+- Modificar: etapa `candidatura_confirmada` → substituir por nova etapa `pos_candidatura`
+- Modificar: etapa `coletando_nome_candidato` → verificar `nome_candidato_prefill`
+- Modificar: `_set_fluxo` ao reiniciar → preservar `historico_vagas_aplicadas` e `nome_candidato_prefill`
+- Modificar: query de vagas → adicionar filtro `.not_.in_("id", historico_vagas_aplicadas)` quando o histórico não estiver vazio
+- Modificar: loop proativo (`empregabilidade_notify_loop`) → replicar a mesma lógica de duas mensagens na confirmação via loop
+
+---
+
+**Feature 1 — Filtros avançados no Banco de Talentos**
+
+Hoje a tela de banco de talentos e a aba de triagem dentro de vagas só permitem filtrar por área de interesse e fazer busca por nome/telefone. Não é possível filtrar por escolaridade, por candidatos PCD, por primeiro emprego, por faixa etária, por bairro ou por gênero — dimensões essenciais para o processo seletivo do CUCA e para os relatórios de empregabilidade. Esses filtros também servem para os dashboards de análise e projeção que serão construídos futuramente.
+
+**Filtros planejados**:
+- **Escolaridade**: dropdown com valores normalizados (ver Feature 2)
+- **Primeiro emprego**: toggle Sim/Não
+- **Gênero**: select Masculino / Feminino / Não informado
+- **Tempo de experiência**: range em meses (ex: de 0 a 12 meses, de 1 a 3 anos)
+- **Idade**: range derivado de `data_nascimento`
+- **Bairro**: campo de texto com busca parcial
+- **PCD**: toggle Sim/Não
+
+Para que esses filtros funcionem no banco de dados, os campos precisam existir como colunas top-level nas tabelas `talent_bank` e `candidaturas` (não enterrados dentro do JSONB), permitindo queries com `.eq()`, `.gte()`, `.lte()` e índices para performance.
+
+Na aba de triagem dentro de vagas (`vagas/[id]`), os filtros têm papel duplo: reduzem o pool de candidatos enviado ao worker antes da triagem por IA (economizando tokens e aumentando precisão) e refinam visualmente os resultados já carregados.
+
+**Arquivos**: `banco-talentos/page.tsx`, `vagas/[id]/page.tsx`, `talent_bank_matcher.py`, migration Supabase
+
+---
+
+**Feature 2 — OCR enriquecido com normalização de escolaridade e novos campos**
+
+Hoje o OCR extrai `escolaridade` como texto livre, resultando em dezenas de variações para o mesmo nível: "Ensino Médio Completo", "2º grau completo", "Segundo Grau", "Colégio completo", "EM", "Médio completo", etc. Isso torna impossível qualquer filtro ou agrupamento por escolaridade. Além disso, pessoas que cursaram ou concluíram ensino superior aparecem frequentemente com "Ensino Médio Completo" como escolaridade — porque tecnicamente também têm —, quando o nível relevante é o superior.
+
+Também faltam os campos que alimentam os novos filtros: gênero, PCD, primeiro emprego, bairro e recálculo preciso do tempo de experiência.
+
+**Solução**: Expandir o schema JSON solicitado ao GPT-4o nas três funções de OCR (`process_cv_ocr`, `process_cv_espontaneo`, `process_cv_talent_bank_id`) com os seguintes campos adicionais:
+
+- `escolaridade_normalizada`: um dos 11 valores canônicos abaixo — regra: sempre retornar o nível mais alto detectado; quem tem Superior não deve ter Médio como escolaridade_normalizada
+- `pcd`: boolean — true se o currículo menciona qualquer deficiência física, visual, auditiva ou intelectual
+- `pcd_tipo`: texto livre descrevendo o tipo de deficiência, ou null
+- `primeiro_emprego`: boolean — true se o candidato não possui experiências anteriores, menciona explicitamente "primeiro emprego" ou o campo de experiências está vazio
+- `genero`: "Masculino" | "Feminino" | "Não informado" — inferido por pronomes, título (Sr./Sra.) ou nome quando inequívoco
+- `bairro`: bairro extraído do endereço no currículo, ou null
+- `data_nascimento_ocr`: data de nascimento extraída do currículo no formato YYYY-MM-DD, ou null — usada para preencher o campo `data_nascimento` da candidatura quando estiver vazio (especialmente para currículos importados em lote pela tela de triage)
+- `experiencia_meses_recalculado`: somatória precisa de todos os períodos de emprego listados no resumo de experiências, evitando a imprecisão do campo atual que pode contar sobreposições
+
+**Valores canônicos de escolaridade** (lista fechada no system prompt do GPT-4o):
+1. Ensino Fundamental Incompleto
+2. Ensino Fundamental Completo
+3. Ensino Médio Incompleto
+4. Ensino Médio Completo
+5. Ensino Técnico
+6. Ensino Superior Incompleto ← cobre "cursando", "graduando", "1º ao 7º período"
+7. Ensino Superior Completo ← cobre "graduado", "bacharel", "licenciado", "tecnólogo"
+8. Pós-graduação
+9. MBA
+10. Mestrado
+11. Doutorado
+
+Após parsear a resposta do GPT-4o, os novos campos devem ser gravados nas colunas top-level de `talent_bank` e `candidaturas` (criadas na migration S37-05/06) **e** também mantidos dentro de `skills_jsonb` para retrocompatibilidade com o código existente.
+
+**Arquivo**: `worker/cv_processor.py` — funções `process_cv_ocr`, `process_cv_espontaneo`, `process_cv_talent_bank_id`
+
+---
+
+### Tickets
+
+#### Fase 1 — Bugs críticos (sem dependências)
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S37-01 | Fix: remover campo `"status"` do `update_candidatura` em `cv_processor.py` — OCR nunca altera status | Worker | [ ] |
+| S37-02 | Fix: adicionar `arquivo_cv_url` ao `.select()` de candidatura em `enviar-cv/route.ts` | Portal API | [ ] |
+| S37-03 | Fix: baixar PDF via `fetch(cvUrl)` e incluir em `attachments` no Resend. Falha no download não bloqueia o envio | Portal API | [ ] |
+| S37-04 | Fix: verificar e corrigir `canal_tipo` / `ativa` das instâncias "institucionalredecuca" e "empregocucabarra" no banco | Banco | [ ] |
+
+#### Fase 2 — Migration de banco
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S37-05 | Migration: adicionar colunas `escolaridade_normalizada`, `genero`, `bairro`, `pcd`, `pcd_tipo`, `primeiro_emprego`, `experiencia_meses` em `talent_bank` + índices | Banco | [ ] |
+| S37-06 | Migration: adicionar colunas `escolaridade_normalizada`, `genero`, `bairro`, `pcd`, `primeiro_emprego` em `candidaturas`. Não adicionar NOT NULL em `data_nascimento` ainda | Banco | [ ] |
+
+#### Fase 3 — OCR enriquecido (depende de S37-05/06)
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S37-07 | Expandir schema JSON do GPT-4o nas 3 funções OCR com 8 novos campos + lista canônica de escolaridade + regra de nível mais alto | Worker | [ ] |
+| S37-08 | Criar `cuca-portal/src/lib/constants/empregabilidade.ts` com `ESCOLARIDADES_CANONICAS` (11 valores) e `GENEROS_OPCOES` | Portal | [ ] |
+
+#### Fase 4 — Frontend: filtros (depende de S37-05/07/08)
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S37-09 | Painel de filtros em `banco-talentos/page.tsx`: escolaridade, PCD, primeiro emprego, gênero, range experiência, range idade, bairro. Botão "Limpar filtros". Filtragem server-side via supabase-js | Portal | [ ] |
+| S37-10 | Filtros na aba Banco de Talentos em `vagas/[id]/page.tsx`: mesmos filtros + envio do objeto `filtros` ao worker antes da triagem IA | Portal | [ ] |
+| S37-11 | Filtros no matcher `talent_bank_matcher.py`: parâmetro `filtros: dict`, aplicado antes da separação `com_skills/sem_skills`. Adicionar novos campos ao `.select()` | Worker | [ ] |
+
+#### Fase 5 — Automação WhatsApp (independente)
+
+| Ticket | Entregável | Módulo | Status |
+|--------|-----------|--------|--------|
+| S37-12 | **Fluxo cíclico de candidaturas**: criar etapa `pos_candidatura`; enviar duas mensagens separadas após o código (confirmação + oferta de vagas); suspender guard de encerramento para palavras ambíguas; preservar `historico_vagas_aplicadas` e `nome_candidato_prefill` entre ciclos; filtrar vagas já aplicadas na nova listagem; replicar lógica no loop proativo | Worker | [ ] |
+
+### Ordem de execução
+
+```
+Imediato — bugs, sem dependências:
+  S37-01, S37-02+03 (mesmo arquivo), S37-04
+
+Após bugs:
+  S37-05 + S37-06 (migrations)
+         ↓
+  S37-07 + S37-08 (OCR + constante)
+         ↓
+  S37-09 + S37-10 + S37-11 (filtros frontend + matcher)
+
+Qualquer momento:
+  S37-12 (WhatsApp — sem dependência de banco ou frontend)
+```
