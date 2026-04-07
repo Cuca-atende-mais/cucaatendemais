@@ -53,12 +53,22 @@ function StatusBadge({ status }: { status: string }) {
         selecionado: "bg-blue-500/15 text-blue-400 border-blue-500/30",
         contratado: "bg-green-500/15 text-green-400 border-green-500/30",
         rejeitado: "bg-red-500/15 text-red-400 border-red-500/30",
+        aprovado_empresa: "bg-indigo-500/15 text-indigo-400 border-indigo-500/30",
+        convite_enviado: "bg-purple-500/15 text-purple-400 border-purple-500/30",
+        entrevista_confirmada: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+        entrevista_recusada: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+        duvida: "bg-orange-500/15 text-orange-400 border-orange-500/30",
     }
     const labels: Record<string, string> = {
         pendente: "Pendente",
         selecionado: "Selecionado",
         contratado: "Contratado",
         rejeitado: "Rejeitado",
+        aprovado_empresa: "Aprovado p/ Empresa",
+        convite_enviado: "Convite Enviado",
+        entrevista_confirmada: "Confirmada",
+        entrevista_recusada: "Recusada",
+        duvida: "Dúvida",
     }
     return (
         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${map[status] || "bg-muted text-muted-foreground border-border"}`}>
@@ -150,6 +160,17 @@ export default function VagaDetalhesPage() {
     const [modalInscricao, setModalInscricao] = useState(false)
     const [inscricaoForm, setInscricaoForm] = useState({ nome: "", telefone: "", data_nascimento: "" })
     const [criandoInscricao, setCriandoInscricao] = useState(false)
+
+    // Convocação SQS-40
+    const [summonModalOpen, setSummonModalOpen] = useState(false)
+    const [selectedCand, setSelectedCand] = useState<Candidatura | null>(null)
+    const [summonForm, setSummonForm] = useState({
+        data: "",
+        hora: "",
+        local: "",
+        tipo: "presencial"
+    })
+    const [summoning, setSummoning] = useState(false)
 
     const refreshParam = searchParams.get("t")
     useEffect(() => { if (id) fetchData() }, [id, refreshParam])
@@ -300,6 +321,51 @@ export default function VagaDetalhesPage() {
         }
     }
 
+    const abrirSummon = (cand: Candidatura) => {
+        setSelectedCand(cand)
+        setSummonForm({
+            data: cand.data_entrevista || "",
+            hora: cand.hora_entrevista || "",
+            local: cand.local_entrevista || (vaga as any)?.endereco_entrevista || "",
+            tipo: (vaga as any)?.tipo_local_entrevista || "presencial"
+        })
+        setSummonModalOpen(true)
+    }
+
+    const handleSummon = async () => {
+        if (!selectedCand) return
+        if (!summonForm.data || !summonForm.hora || !summonForm.local) {
+            toast.error("Preencha todos os campos da convocação")
+            return
+        }
+
+        setSummoning(true)
+        try {
+            const res = await fetch("/api/empregabilidade/vagas/convocar", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    candidatura_id: selectedCand.id,
+                    data_entrevista: summonForm.data,
+                    hora_entrevista: summonForm.hora,
+                    local_entrevista: summonForm.local,
+                    tipo_local: summonForm.tipo
+                })
+            })
+
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro ao convocar candidato")
+
+            toast.success(`Convite enviado para ${selectedCand.nome}!`)
+            setSummonModalOpen(false)
+            fetchData()
+        } catch (err: any) {
+            toast.error(err.message)
+        } finally {
+            setSummoning(false)
+        }
+    }
+
     const tipoFollowupLabel = (tipo: string) => {
         if (tipo === "empresa") return { label: "Empresa", color: "bg-blue-500/15 text-blue-400", icon: Building2 }
         if (tipo === "candidato") return { label: "Candidato", color: "bg-green-500/15 text-green-400", icon: User }
@@ -316,6 +382,9 @@ export default function VagaDetalhesPage() {
         selecionado: candidatos.filter(c => c.status === "selecionado").length,
         contratado: candidatos.filter(c => c.status === "contratado").length,
         rejeitado: candidatos.filter(c => c.status === "rejeitado").length,
+        aprovado_empresa: candidatos.filter(c => c.status === "aprovado_empresa").length,
+        convite_enviado: candidatos.filter(c => c.status === "convite_enviado").length,
+        entrevista_confirmada: candidatos.filter(c => c.status === "entrevista_confirmada").length,
     }
 
     const empresaNome = (vaga as any)?.empresas?.nome_fantasia || (vaga as any)?.empresas?.nome || null
@@ -525,7 +594,7 @@ export default function VagaDetalhesPage() {
                 {/* Filtros por status — só no modo grid */}
                 {viewMode === "grid" && (
                 <div className="flex flex-wrap gap-2">
-                    {(["todos", "pendente", "selecionado", "contratado", "rejeitado"] as const).map(s => (
+                    {(["todos", "pendente", "aprovado_empresa", "convite_enviado", "entrevista_confirmada", "selecionado", "contratado", "rejeitado"] as const).map(s => (
                         <button
                             key={s}
                             onClick={() => setFiltroStatus(s)}
@@ -533,7 +602,7 @@ export default function VagaDetalhesPage() {
                                 ? "bg-cuca-blue text-white border-cuca-blue"
                                 : "border-border text-muted-foreground hover:border-cuca-blue/50"}`}
                         >
-                            {s === "todos" ? "Todos" : s.charAt(0).toUpperCase() + s.slice(1)} ({contadores[s]})
+                            {s === "todos" ? "Todos" : s.split("_").join(" ").charAt(0).toUpperCase() + s.split("_").join(" ").slice(1)} ({ (contadores as any)[s] || 0 })
                         </button>
                     ))}
                 </div>
@@ -584,8 +653,21 @@ export default function VagaDetalhesPage() {
                                                         </span>
                                                     )}
                                                 </div>
-                                                <p className="text-[10px] text-muted-foreground">{idade ? `${idade} anos` : "—"}</p>
-                                                <p className="text-[10px] text-muted-foreground">{format(new Date(c.created_at || Date.now()), "dd/MM/yy", { locale: ptBR })}</p>
+                                                <div className="flex items-center justify-between gap-1">
+                                                    <span className="text-[10px] text-muted-foreground">{idade ? `${idade} anos` : "—"}</span>
+                                                    <div className="flex items-center gap-1">
+                                                        {c.status === 'aprovado_empresa' && (
+                                                            <button
+                                                                onClick={e => { e.stopPropagation(); abrirSummon(c) }}
+                                                                className="p-1 rounded bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 transition-colors"
+                                                                title="Convocar"
+                                                            >
+                                                                <Send className="h-2.5 w-2.5" />
+                                                            </button>
+                                                        )}
+                                                        <span className="text-[10px] text-muted-foreground">{format(new Date(c.created_at || Date.now()), "dd/MM/yy", { locale: ptBR })}</span>
+                                                    </div>
+                                                </div>
                                             </div>
                                         )
                                     })}
@@ -618,6 +700,7 @@ export default function VagaDetalhesPage() {
                                     idade={idade}
                                     score={score}
                                     onAbrirFollowup={() => abrirFollowup(c)}
+                                    onConvocar={() => abrirSummon(c)}
                                     onClick={() => router.push(`/empregabilidade/vagas/${id}/candidatos/${c.id}`)}
                                 />
                             )
@@ -903,19 +986,73 @@ export default function VagaDetalhesPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* ── Modal Convocação (Summon) SQS-40 ── */}
+            <Dialog open={summonModalOpen} onOpenChange={setSummonModalOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Send className="h-5 w-5 text-indigo-400" />
+                            Convocar Candidato
+                        </DialogTitle>
+                        <DialogDescription>
+                            Agende a entrevista para <strong>{selectedCand?.nome}</strong>. O candidato receberá o convite via WhatsApp.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                                <Label>Data da Entrevista</Label>
+                                <Input type="date" value={summonForm.data} onChange={e => setSummonForm(f => ({ ...f, data: e.target.value }))} />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label>Horário</Label>
+                                <Input type="time" value={summonForm.hora} onChange={e => setSummonForm(f => ({ ...f, hora: e.target.value }))} />
+                            </div>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>Tipo de Local</Label>
+                            <Select value={summonForm.tipo} onValueChange={v => setSummonForm(f => ({ ...f, tipo: v }))}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="presencial">Presencial (Empresa)</SelectItem>
+                                    <SelectItem value="cuca">No CUCA</SelectItem>
+                                    <SelectItem value="online">Online / Remoto</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>Endereço / Link da Entrevista</Label>
+                            <Textarea 
+                                placeholder="Endereço completo ou link da reunião"
+                                value={summonForm.local} 
+                                onChange={e => setSummonForm(f => ({ ...f, local: e.target.value }))} 
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setSummonModalOpen(false)}>Cancelar</Button>
+                        <Button className="bg-indigo-600 hover:bg-indigo-700 text-white" onClick={handleSummon} disabled={summoning}>
+                            {summoning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
+                            Enviar Convite
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }
 
 // ── Componente: Card de candidato inscrito ──
 function CandidatoCard({
-    candidato, ocr, idade, score, onAbrirFollowup, onClick
+    candidato, ocr, idade, score, onAbrirFollowup, onConvocar, onClick
 }: {
     candidato: Candidatura
     ocr: any
     idade: number | null
     score: number | null
     onAbrirFollowup: () => void
+    onConvocar: () => void
     onClick: () => void
 }) {
     const semOcr = !candidato.dados_ocr_json
@@ -981,6 +1118,15 @@ function CandidatoCard({
                     </div>
                 </div>
                 <div className="flex items-center gap-1">
+                    {candidato.status === 'aprovado_empresa' && (
+                        <button
+                            onClick={e => { e.stopPropagation(); onConvocar() }}
+                            className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 transition-colors mr-1"
+                            title="Convocar para Entrevista"
+                        >
+                            <Send className="h-3.5 w-3.5" />
+                        </button>
+                    )}
                     <button
                         onClick={e => { e.stopPropagation(); onAbrirFollowup() }}
                         className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-cuca-blue"
