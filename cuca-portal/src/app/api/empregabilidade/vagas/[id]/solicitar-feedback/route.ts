@@ -8,9 +8,9 @@ import crypto from "crypto"
  */
 export async function POST(
     request: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
-    const vagaId = params.id
+    const { id: vagaId } = await params
     const supabaseAdmin = createClient()
 
     try {
