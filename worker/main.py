@@ -260,6 +260,15 @@ async def process_webhook_payload(payload: dict, token: str):
             except Exception as conn_err:
                 logger.error(f"Erro em handle_connection_update: {conn_err}")
 
+        # SQS-40 Task 3.3.3: Monitorar status_code 1004 (Número não encontrado)
+        elif event_type in ("messages.update", "ack"):
+            status_code = data.get("status") or data.get("statusCode")
+            if str(status_code) == "1004":
+                message_id = data.get("key", {}).get("id") or data.get("id")
+                # remote_jid = data.get("key", {}).get("remoteJid") or data.get("remoteJid")
+                logger.warning(f"[SQS-40] Falha de envio (1004): Número não existe no WhatsApp. MsgID: {message_id}")
+                # Aqui poderíamos marcar a candidatura como 'telefone_invalido' se tivermos o vínculo
+
         elif event_type in ("messages.upsert", "messages"):
 
             logger.info(f"Nova mensagem recebida na instância {instance_name}")
@@ -384,6 +393,21 @@ async def process_webhook_payload(payload: dict, token: str):
                     logger.info(f"[TRANSBORDO] fromMe=True — bot pausado até {pausa_ate} (conversa {conversation_id})")
                 except Exception as _pe:
                     logger.warning(f"[TRANSBORDO] Erro ao registrar pausa do bot: {_pe}")
+            
+            # SQS-40 Task 3.3: Detectar intenção de "Dúvida" do lead
+            if not from_me and text_content:
+                keywords_duvida = ["ajuda", "duvida", "dúvida", "não entendi", "nao entendi", "como faço", "pode explicar", "atendente", "humano"]
+                texto_baixa = text_content.lower()
+                if any(k in texto_baixa for k in keywords_duvida):
+                    logger.info(f"[SQS-40] Intenção de Dúvida detectada no lead {phone}")
+                    # Notificar transbordo (será feito abaixo se não houver resposta automática do motor específico)
+                    # Adicionamos uma flag no metadata para o motor saber que houve dúvida
+                    try:
+                        cm_res = supabase.table("conversas").select("metadata").eq("id", conversation_id).single().execute()
+                        cm = (cm_res.data or {}).get("metadata") or {}
+                        cm["ultima_intencao"] = "duvida"
+                        supabase.table("conversas").update({"metadata": cm}).eq("id", conversation_id).execute()
+                    except Exception: pass
 
             # S14-01: Checar dados da instância
             inst_result = supabase.table("instancias_uazapi").select("unidade_cuca, agente_tipo, token, canal_tipo").eq("nome", instance_name).single().execute()
@@ -482,17 +506,21 @@ async def process_webhook_payload(payload: dict, token: str):
                         logger.error(f"[STOP] Erro ao processar opt_out: {stop_err}")
                     return  # Não processa IA após STOP explícito
 
-            # Epic 1 — Verificar buffer de transbordo humano antes de despachar para qualquer motor
+            # Epic 1 & SQS-40 — Verificar buffer de transbordo humano antes de qualquer processamento
             if not from_me:
                 try:
                     from datetime import datetime, timezone
                     _cm_res = supabase.table("conversas").select("metadata").eq("id", conversation_id).single().execute()
-                    _bot_pausa = ((_cm_res.data or {}).get("metadata") or {}).get("bot_pausado_ate")
+                    _cm_meta = (_cm_res.data or {}).get("metadata") or {}
+                    _bot_pausa = _cm_meta.get("bot_pausado_ate")
                     if _bot_pausa:
                         _pausa_ate = datetime.fromisoformat(_bot_pausa)
                         if datetime.now(timezone.utc) < _pausa_ate:
-                            logger.info(f"[TRANSBORDO] Bot em pausa até {_bot_pausa} — mensagem do lead ignorada pelo motor (conversa {conversation_id})")
+                            logger.info(f"[TRANSBORDO] Bot em pausa até {_bot_pausa} — mensagem do lead ignorada (conversa {conversation_id})")
                             return
+
+                    # Se detectamos dúvida acima, e não há motor específico tratando agora, podemos enviar para transbordo
+                    # Nota: os motores abaixo (empregabilidade/institucional) têm prioridade.
                 except Exception as _pce:
                     logger.warning(f"[TRANSBORDO] Erro ao verificar pausa do bot: {_pce}")
 
@@ -509,6 +537,7 @@ async def process_webhook_payload(payload: dict, token: str):
                         lead_id=lead_id,
                         conversa_id=conversation_id,
                         unidade_cuca=unidade_cuca or "",
+                        push_name=push_name or "Cidadão",
                     )
                 except Exception as emp_err:
                     logger.error(f"[Empregabilidade] Erro no motor: {emp_err}", exc_info=True)

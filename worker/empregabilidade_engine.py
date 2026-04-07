@@ -1510,6 +1510,7 @@ async def processar_mensagem_empregabilidade(
     lead_id: str,
     conversa_id: str,
     unidade_cuca: str,
+    push_name: str = "Cidadão",
 ):
     """
     Entry point chamado pelo main.py quando agente_tipo = 'Empregabilidade'.
@@ -1518,6 +1519,57 @@ async def processar_mensagem_empregabilidade(
     fluxo = _get_fluxo(conversa_id)
     perfil_atual = fluxo.get("perfil")
     etapa_atual = fluxo.get("etapa", "")
+
+    # SQS-40 Task 3.3: Handover por Dúvida
+    from datetime import datetime, timezone
+    cm_res = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
+    cm_meta = (cm_res.data or {}).get("metadata") or {}
+    
+    if cm_meta.get("ultima_intencao") == "duvida":
+        # Limpar flag para não repetir infinitamente nesta conversa se o humano não assumir
+        cm_meta["ultima_intencao"] = None
+        supabase.table("conversas").update({"metadata": cm_meta}).eq("id", conversa_id).execute()
+        
+        logger.info(f"[SQS-40] Disparando transbordo para dúvida do lead {phone}")
+        
+        # Notificar equipe de transbordo (Módulo Empregabilidade)
+        try:
+            modulo_alvo = "empregabilidade"
+            handover_res = supabase.table("transbordo_humano").select("*").eq("modulo", modulo_alvo).eq("unidade_cuca", unidade_cuca).eq("ativo", True).execute()
+            contato = (handover_res.data or [None])[0]
+            if not contato:
+                # Fallback global
+                handover_res = supabase.table("transbordo_humano").select("*").eq("modulo", modulo_alvo).is_("unidade_cuca", "null").eq("ativo", True).execute()
+                contato = (handover_res.data or [None])[0]
+            
+            if contato:
+                tel_destino = contato["telefone"]
+                setor_resp = contato.get("responsavel") or "Empregabilidade"
+                msg_handover = (
+                    f"🚨 *TRANSBORDO: DÚVIDA DETECTADA*\n\n"
+                    f"👤 *Lead:* {push_name}\n"
+                    f"📱 *Telefone:* {phone}\n"
+                    f"🏢 *Setor:* {setor_resp}\n\n"
+                    f"💬 *Dúvida do candidato:*\n\"{texto}\"\n\n"
+                    f"🔗 Chat: https://wa.me/{phone}"
+                )
+                async with httpx.AsyncClient() as hc:
+                    await hc.post(
+                        f"{UAZAPI_URL}/send/text",
+                        headers={"token": token, "Content-Type": "application/json"},
+                        json={"number": tel_destino, "text": msg_handover, "delay": 1200}
+                    )
+                
+                # Avisar o lead que um humano foi chamado
+                await _enviar(
+                    instance_name, token, phone,
+                    "Entendi que você tem uma dúvida. 🤝 Estarei encaminhando sua mensagem para nossa equipe humana de empregabilidade. "
+                    "Em breve um de nossos consultores falará com você por aqui!",
+                    conversa_id=conversa_id, lead_id=lead_id
+                )
+                return # Interrompe fluxo bot
+        except Exception as _he:
+            logger.error(f"[SQS-40] Erro ao disparar transbordo por dúvida: {_he}")
 
     # Rotear pelo perfil salvo OU pela etapa (evita loop quando _set_fluxo não preservou perfil)
     if perfil_atual == "empresa" or etapa_atual in _ETAPAS_EMPRESA:
