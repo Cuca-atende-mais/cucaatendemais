@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin, Globe } from "lucide-react"
+import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin, Globe, MessageSquare, Loader2 } from "lucide-react"
 import { VagaModal } from "@/components/empregabilidade/vaga-modal"
+import toast from "react-hot-toast"
 import { useUser } from "@/lib/auth/user-provider"
 
 export default function VagasPage() {
@@ -19,6 +20,7 @@ export default function VagasPage() {
     const [vagas, setVagas] = useState<Vaga[]>([])
     const [empresasMap, setEmpresasMap] = useState<Record<string, Empresa>>({})
     const [candidaturasCount, setCandidaturasCount] = useState<Record<string, number>>({})
+    const [feedbackLoadingId, setFeedbackLoadingId] = useState<string | null>(null)
 
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState("")
@@ -95,6 +97,20 @@ export default function VagasPage() {
     const openEditModal = (vaga: Vaga) => {
         setSelectedVaga(vaga)
         setIsModalOpen(true)
+    }
+
+    const solicitarFeedback = async (vagaId: string) => {
+        setFeedbackLoadingId(vagaId)
+        try {
+            const res = await fetch(`/api/empregabilidade/vagas/${vagaId}/solicitar-feedback`, { method: "POST" })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro ao solicitar feedback")
+            toast.success("Solicitação de feedback enviada via WhatsApp!")
+        } catch (err: any) {
+            toast.error(err.message || "Falha ao solicitar feedback")
+        } finally {
+            setFeedbackLoadingId(null)
+        }
     }
 
     const openNewModal = () => {
@@ -206,13 +222,14 @@ export default function VagasPage() {
                                 <TableHead>Detalhes</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead className="text-center">Candidatos</TableHead>
+                                <TableHead className="text-center">Feedback</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {loading ? (
-                                <TableRow><TableCell colSpan={7} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={8} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
                             ) : vagas.length === 0 ? (
-                                <TableRow><TableCell colSpan={7} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={8} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
                             ) : vagas.map(v => (
                                 <TableRow key={v.id} className={abaFiltro === "todas" ? "hover:bg-muted/30" : "cursor-pointer hover:bg-muted/30"} onClick={() => abaFiltro === "minhas" && openEditModal(v)}>
                                     <TableCell className="text-center">
@@ -258,6 +275,20 @@ export default function VagasPage() {
                                         >
                                             <Users className="h-3 w-3" />
                                             {candidaturasCount[v.id] ?? 0}
+                                        </Button>
+                                    </TableCell>
+                                    <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 text-xs gap-1 px-2 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
+                                            onClick={() => solicitarFeedback(v.id)}
+                                            disabled={feedbackLoadingId === v.id}
+                                            title="Solicitar feedback da empresa sobre os candidatos"
+                                        >
+                                            {feedbackLoadingId === v.id
+                                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                                : <MessageSquare className="h-3 w-3" />}
                                         </Button>
                                     </TableCell>
                                 </TableRow>

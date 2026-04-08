@@ -163,6 +163,7 @@ export default function VagaDetalhesPage() {
 
     // Convocação SQS-40
     const [summonModalOpen, setSummonModalOpen] = useState(false)
+    const [summonIsLote, setSummonIsLote] = useState(false)
     const [selectedCand, setSelectedCand] = useState<Candidatura | null>(null)
     const [summonForm, setSummonForm] = useState({
         data: "",
@@ -323,6 +324,7 @@ export default function VagaDetalhesPage() {
     }
 
     const abrirSummon = (cand: Candidatura) => {
+        setSummonIsLote(false)
         setSelectedCand(cand)
         setSummonForm({
             data: cand.data_entrevista || "",
@@ -333,8 +335,19 @@ export default function VagaDetalhesPage() {
         setSummonModalOpen(true)
     }
 
+    const abrirSummonLote = () => {
+        setSummonIsLote(true)
+        setSelectedCand(null)
+        setSummonForm({
+            data: "",
+            hora: "",
+            local: (vaga as any)?.endereco_entrevista || "",
+            tipo: (vaga as any)?.tipo_local_entrevista || "presencial"
+        })
+        setSummonModalOpen(true)
+    }
+
     const handleSummon = async () => {
-        if (!selectedCand) return
         if (!summonForm.data || !summonForm.hora || !summonForm.local) {
             toast.error("Preencha todos os campos da convocação")
             return
@@ -342,22 +355,41 @@ export default function VagaDetalhesPage() {
 
         setSummoning(true)
         try {
-            const res = await fetch("/api/empregabilidade/vagas/convocar", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    candidatura_id: selectedCand.id,
-                    data_entrevista: summonForm.data,
-                    hora_entrevista: summonForm.hora,
-                    local_entrevista: summonForm.local,
-                    tipo_local: summonForm.tipo
+            if (summonIsLote) {
+                const aprovados = candidatos.filter(c => c.status === "aprovado_empresa")
+                let ok = 0
+                for (const cand of aprovados) {
+                    const res = await fetch("/api/empregabilidade/vagas/convocar", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            candidatura_id: cand.id,
+                            data_entrevista: summonForm.data,
+                            hora_entrevista: summonForm.hora,
+                            local_entrevista: summonForm.local,
+                            tipo_local: summonForm.tipo
+                        })
+                    })
+                    if (res.ok) ok++
+                }
+                toast.success(`${ok} convite(s) enviado(s) em lote!`)
+            } else {
+                if (!selectedCand) return
+                const res = await fetch("/api/empregabilidade/vagas/convocar", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        candidatura_id: selectedCand.id,
+                        data_entrevista: summonForm.data,
+                        hora_entrevista: summonForm.hora,
+                        local_entrevista: summonForm.local,
+                        tipo_local: summonForm.tipo
+                    })
                 })
-            })
-
-            const data = await res.json()
-            if (!res.ok) throw new Error(data.error || "Erro ao convocar candidato")
-
-            toast.success(`Convite enviado para ${selectedCand.nome}!`)
+                const data = await res.json()
+                if (!res.ok) throw new Error(data.error || "Erro ao convocar candidato")
+                toast.success(`Convite enviado para ${selectedCand.nome}!`)
+            }
             setSummonModalOpen(false)
             fetchData()
         } catch (err: any) {
@@ -593,6 +625,16 @@ export default function VagaDetalhesPage() {
                         <Badge variant="outline">{candidatos.length}</Badge>
                     </div>
                     <div className="flex items-center gap-2">
+                        {contadores.aprovado_empresa > 0 && (
+                            <Button
+                                size="sm"
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+                                onClick={abrirSummonLote}
+                            >
+                                <Send className="h-3.5 w-3.5" />
+                                Convocar em Lote ({contadores.aprovado_empresa})
+                            </Button>
+                        )}
                         <Button size="sm" variant="outline" onClick={() => setModalInscricao(true)}>
                             <Plus className="mr-1.5 h-4 w-4" />
                             Inscrever Manualmente
@@ -639,26 +681,47 @@ export default function VagaDetalhesPage() {
 
                 {/* Kanban view */}
                 {viewMode === "kanban" ? (
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 overflow-x-auto">
-                        {(["pendente", "selecionado", "contratado", "rejeitado"] as const).map(colStatus => {
+                    <div className="flex gap-3 overflow-x-auto pb-2">
+                        {(["pendente", "aprovado_empresa", "convite_enviado", "entrevista_confirmada", "entrevista_recusada", "duvida", "selecionado", "contratado", "rejeitado"] as const).map(colStatus => {
                             const colCandidatos = candidatos.filter(c => c.status === colStatus)
                             const colColors: Record<string, string> = {
                                 pendente: "border-amber-500/30 bg-amber-500/5",
+                                aprovado_empresa: "border-indigo-500/30 bg-indigo-500/5",
+                                convite_enviado: "border-purple-500/30 bg-purple-500/5",
+                                entrevista_confirmada: "border-emerald-500/30 bg-emerald-500/5",
+                                entrevista_recusada: "border-rose-500/30 bg-rose-500/5",
+                                duvida: "border-orange-500/30 bg-orange-500/5",
                                 selecionado: "border-blue-500/30 bg-blue-500/5",
                                 contratado: "border-green-500/30 bg-green-500/5",
                                 rejeitado: "border-red-500/30 bg-red-500/5",
                             }
                             const colHeader: Record<string, string> = {
                                 pendente: "text-amber-400",
+                                aprovado_empresa: "text-indigo-400",
+                                convite_enviado: "text-purple-400",
+                                entrevista_confirmada: "text-emerald-400",
+                                entrevista_recusada: "text-rose-400",
+                                duvida: "text-orange-400",
                                 selecionado: "text-blue-400",
                                 contratado: "text-green-400",
                                 rejeitado: "text-red-400",
                             }
+                            const colLabel: Record<string, string> = {
+                                pendente: "Pendente",
+                                aprovado_empresa: "Aprovado p/ Empresa",
+                                convite_enviado: "Convite Enviado",
+                                entrevista_confirmada: "Confirmada",
+                                entrevista_recusada: "Recusada",
+                                duvida: "Dúvida",
+                                selecionado: "Selecionado",
+                                contratado: "Contratado",
+                                rejeitado: "Rejeitado",
+                            }
                             return (
-                                <div key={colStatus} className={`rounded-xl border p-3 space-y-2 min-h-[200px] ${colColors[colStatus]}`}>
+                                <div key={colStatus} className={`rounded-xl border p-3 space-y-2 min-h-[200px] min-w-[180px] flex-shrink-0 ${colColors[colStatus]}`}>
                                     <div className={`flex items-center justify-between mb-1 ${colHeader[colStatus]}`}>
                                         <span className="text-xs font-semibold uppercase tracking-wide">
-                                            {colStatus.charAt(0).toUpperCase() + colStatus.slice(1)}
+                                            {colLabel[colStatus]}
                                         </span>
                                         <span className="text-xs font-bold">{colCandidatos.length}</span>
                                     </div>
@@ -1023,10 +1086,13 @@ export default function VagaDetalhesPage() {
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Send className="h-5 w-5 text-indigo-400" />
-                            Convocar Candidato
+                            {summonIsLote ? `Convocar em Lote (${contadores.aprovado_empresa})` : "Convocar Candidato"}
                         </DialogTitle>
                         <DialogDescription>
-                            Agende a entrevista para <strong>{selectedCand?.nome}</strong>. O candidato receberá o convite via WhatsApp.
+                            {summonIsLote
+                                ? `Defina data, hora e local únicos para convocar todos os ${contadores.aprovado_empresa} candidato(s) aprovados. Cada um receberá o convite via WhatsApp.`
+                                : <>Agende a entrevista para <strong>{selectedCand?.nome}</strong>. O candidato receberá o convite via WhatsApp.</>
+                            }
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">

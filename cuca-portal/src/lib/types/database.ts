@@ -184,6 +184,9 @@ export type Candidatura = {
     email_enviado_em: string | null
     email_enviado_para: string | null
     unidade_cuca: string | null
+    data_entrevista: string | null
+    hora_entrevista: string | null
+    local_entrevista: string | null
     created_at: string
     updated_at: string
 }

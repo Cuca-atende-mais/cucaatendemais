@@ -79,6 +79,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [status, setStatus] = useState("pre_cadastro")
     const [faixaEtaria, setFaixaEtaria] = useState("15 a 29 anos")
     const [localEntrevista, setLocalEntrevista] = useState("na_empresa")
+    const [enderecoEntrevista, setEnderecoEntrevista] = useState("")
     const [tipoSelecao, setTipoSelecao] = useState("presencial")
     const [expansiva, setExpansiva] = useState(false)
     const [emailContatoEmpresa, setEmailContatoEmpresa] = useState("")
@@ -133,6 +134,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setStatus(vaga.status)
                 setFaixaEtaria(vaga.faixa_etaria || "15 a 29 anos")
                 setLocalEntrevista(vaga.local_entrevista || "na_empresa")
+                setEnderecoEntrevista((vaga as any).endereco_entrevista || "")
                 setTipoSelecao(vaga.tipo_selecao || "presencial")
                 setExpansiva(vaga.expansiva || false)
                 setEmailContatoEmpresa(vaga.email_contato_empresa || "")
@@ -162,7 +164,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setEmpresaId(""); setTitulo(""); setDescricao(""); setRequisitos("")
         setSalario(""); setBeneficios(""); setTipoContrato("clt"); setLocal("")
         setUnidadeCucaId(""); setTotalVagas("1"); setStatus("pre_cadastro")
-        setFaixaEtaria("15 a 29 anos"); setLocalEntrevista("na_empresa")
+        setFaixaEtaria("15 a 29 anos"); setLocalEntrevista("na_empresa"); setEnderecoEntrevista("")
         setTipoSelecao("presencial"); setExpansiva(false); setEmailContatoEmpresa("")
         setEscolaridadeMinima(""); setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false)
         setCargaTipo("horario_comercial"); setCargaHoras(""); setCargaEscalaT("")
@@ -192,6 +194,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 status,
                 faixa_etaria: faixaEtaria,
                 local_entrevista: localEntrevista,
+                endereco_entrevista: enderecoEntrevista || null,
                 tipo_selecao: tipoSelecao,
                 expansiva,
                 email_contato_empresa: emailContatoEmpresa || null,
@@ -365,6 +368,18 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                     </div>
                                 </div>
                             </div>
+                            {/* Endereço da entrevista (condicional: na_empresa) */}
+                            {localEntrevista === "na_empresa" && (
+                                <div className="space-y-2">
+                                    <Label>Endereço da Entrevista</Label>
+                                    <Input
+                                        value={enderecoEntrevista}
+                                        onChange={e => setEnderecoEntrevista(e.target.value)}
+                                        placeholder="Rua, número, bairro — endereço da empresa contratante"
+                                    />
+                                </div>
+                            )}
+
                             {/* PCD */}
                             <div className="space-y-2">
                                 <div className="flex items-center gap-3">
