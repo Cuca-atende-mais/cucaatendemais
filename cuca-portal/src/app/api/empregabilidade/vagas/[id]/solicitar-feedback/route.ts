@@ -92,10 +92,19 @@ export async function POST(
         const mensagem = `Olá, equipe de RH da *${empresa.nome}*! 👋\n\nGostaríamos de solicitar o seu feedback sobre os candidatos encaminhados para a vaga de *${vaga.titulo}*.\n\nPor favor, acesse o link seguro abaixo para avaliar os candidatos:\n🔗 ${feedbackLink}\n\nO link expira em 48h. Agradecemos a parceria! 🚀`
 
         const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
+        const internalToken = process.env.WEBHOOK_INTERNAL_TOKEN
+
+        if (!internalToken) {
+            console.error("[solicitar-feedback] WEBHOOK_INTERNAL_TOKEN não configurado nas variáveis de ambiente do portal")
+            return NextResponse.json({ error: "Configuração de integração ausente: WEBHOOK_INTERNAL_TOKEN não definido no portal." }, { status: 500 })
+        }
+
         const telLimpo = telefoneRH.replace(/\D/g, "")
         const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
 
-        const sendRes = await fetch(`${workerUrl}/send-message/${process.env.WEBHOOK_INTERNAL_TOKEN}`, {
+        console.info(`[solicitar-feedback] Enviando para ${number} via instância '${instancia.nome}' — worker: ${workerUrl}`)
+
+        const sendRes = await fetch(`${workerUrl}/send-message/${internalToken}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ number, text: mensagem, instance: instancia.nome }),
@@ -103,8 +112,8 @@ export async function POST(
 
         if (!sendRes.ok) {
             const errLog = await sendRes.text()
-            console.error("[solicitar-feedback] Erro no worker:", errLog)
-            throw new Error("Falha ao disparar mensagem via WhatsApp")
+            console.error(`[solicitar-feedback] Worker retornou ${sendRes.status}: ${errLog}`)
+            throw new Error(`Falha ao disparar mensagem via WhatsApp (worker ${sendRes.status}: ${errLog})`)
         }
 
         return NextResponse.json({ success: true, token, expires_at: expiresAt })
