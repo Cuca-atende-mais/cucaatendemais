@@ -886,7 +886,10 @@ async def send_manual_message(token: str, request: Request):
                 logger.error(f"[send-manual] UAZAPI retornou erro {response.status_code}: {response.text}")
                 return Response(status_code=response.status_code, content=response.text)
             logger.info(f"[send-manual] Mensagem enviada com sucesso para {number} via {instance}")
-            return response.json()
+            try:
+                return response.json()
+            except Exception:
+                return {"status": "sent", "raw": response.text[:200]}
     except Exception as e:
         logger.error(f"[send-manual] Erro ao enviar mensagem manual: {str(e)}", exc_info=True)
         return Response(status_code=500, content=str(e))

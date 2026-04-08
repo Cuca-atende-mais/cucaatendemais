@@ -69,6 +69,63 @@ export async function POST(request: NextRequest) {
 
         if (updateTokenErr) throw updateTokenErr
 
+        // 4. Enviar confirmação WhatsApp para a empresa
+        if (!isBypass) {
+            try {
+                const { data: vaga } = await supabaseAdmin
+                    .from("vagas")
+                    .select("titulo, unidade_cuca, empresas(telefone, nome)")
+                    .eq("id", tokenData.vaga_id)
+                    .single()
+
+                const empresa = (vaga as any)?.empresas
+                const telefoneRH = empresa?.telefone
+
+                if (vaga && telefoneRH) {
+                    const { data: instancias } = await supabaseAdmin
+                        .from("instancias_uazapi")
+                        .select("nome, token, canal_tipo")
+                        .eq("unidade_cuca", (vaga as any).unidade_cuca)
+                        .eq("ativa", true)
+                        .limit(10)
+
+                    let instancia = instancias?.find((i: any) => i.canal_tipo === "Empregabilidade")
+                        || instancias?.find((i: any) => i.canal_tipo === "Institucional")
+                        || instancias?.[0]
+
+                    if (!instancia) {
+                        const { data: ig } = await supabaseAdmin
+                            .from("instancias_uazapi")
+                            .select("nome, token, canal_tipo")
+                            .eq("canal_tipo", "Empregabilidade")
+                            .eq("ativa", true)
+                            .limit(1)
+                            .single()
+                        if (ig) instancia = ig
+                    }
+
+                    if (instancia) {
+                        const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
+                        const internalToken = process.env.WEBHOOK_INTERNAL_TOKEN
+                        if (internalToken) {
+                            const telLimpo = telefoneRH.replace(/\D/g, "")
+                            const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
+                            const aprovados = (evaluations || []).filter((e: any) => e.status === "aprovado_empresa").length
+                            const mensagem = `✅ Obrigado pelo feedback sobre a vaga de *${(vaga as any).titulo}*, *${empresa.nome}*!\n\n` +
+                                `Registramos suas avaliações (${aprovados} aprovado(s)). Nossa equipe acompanhará o processo. 🤝`
+                            await fetch(`${workerUrl}/send-message/${internalToken}`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ number, text: mensagem, instance: instancia.nome }),
+                            }).catch(e => console.error("[feedback-submit] Falha ao enviar confirmação WhatsApp:", e))
+                        }
+                    }
+                }
+            } catch (wErr) {
+                console.error("[feedback-submit] Erro ao enviar confirmação WhatsApp (não crítico):", wErr)
+            }
+        }
+
         return NextResponse.json({ success: true })
     } catch (err: any) {
         console.error("[feedback-submit] Erro:", err)

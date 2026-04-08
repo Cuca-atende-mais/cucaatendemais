@@ -40,6 +40,9 @@ export default function VagaFeedbackPage() {
   const [candidates, setCandidates] = useState<Candidato[]>([])
   const [isBypass, setIsBypass] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [globalData, setGlobalData] = useState("")
+  const [globalHora, setGlobalHora] = useState("")
+  const [globalLocal, setGlobalLocal] = useState("")
 
   useEffect(() => {
     fetchData()
@@ -110,13 +113,11 @@ export default function VagaFeedbackPage() {
   const handleSubmit = async () => {
     setSubmitting(true)
     try {
-      // Validação: Se não for bypass, validar aprovados
+      // Validação: Se não for bypass, validar campos globais
       if (!isBypass) {
-        const approvedWithoutDetails = candidates.filter(c => 
-          c.evaluation === 'aprovado_empresa' && (!c.data_entrevista || !c.hora_entrevista || !c.local_entrevista)
-        )
-        if (approvedWithoutDetails.length > 0) {
-          toast.error("Por favor, preencha Data, Hora e Local para todos os candidatos aprovados.")
+        const hasApproved = candidates.some(c => c.evaluation === 'aprovado_empresa')
+        if (hasApproved && (!globalData || !globalHora || !globalLocal)) {
+          toast.error("Por favor, preencha Data, Hora e Local da entrevista.")
           setSubmitting(false)
           return
         }
@@ -132,9 +133,9 @@ export default function VagaFeedbackPage() {
           evaluations: candidates.map(c => ({
             id: c.id,
             status: c.evaluation,
-            data_entrevista: c.data_entrevista,
-            hora_entrevista: c.hora_entrevista,
-            local_entrevista: c.local_entrevista
+            data_entrevista: c.evaluation === 'aprovado_empresa' ? globalData : undefined,
+            hora_entrevista: c.evaluation === 'aprovado_empresa' ? globalHora : undefined,
+            local_entrevista: c.evaluation === 'aprovado_empresa' ? globalLocal : undefined
           }))
         })
       })
@@ -229,6 +230,27 @@ export default function VagaFeedbackPage() {
 
           {!isBypass ? (
             <section className="space-y-6">
+              {/* Seção global de data/hora/local — preenchida uma vez para todos os aprovados */}
+              <div className="p-6 bg-green-50 dark:bg-green-950/20 rounded-xl border border-green-100 dark:border-green-900/30 space-y-4">
+                <h4 className="font-semibold text-green-800 dark:text-green-200 flex items-center gap-2">
+                  <Clock className="h-4 w-4" /> Detalhes da Entrevista (válidos para todos os aprovados)
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-green-700">Data</Label>
+                    <Input type="date" className="bg-white border-green-200 focus-visible:ring-green-500" value={globalData} onChange={(e) => setGlobalData(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-green-700">Hora</Label>
+                    <Input type="time" className="bg-white border-green-200 focus-visible:ring-green-500" value={globalHora} onChange={(e) => setGlobalHora(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-green-700">Local / Link</Label>
+                    <Input placeholder="Endereço ou link da reunião" className="bg-white border-green-200 focus-visible:ring-green-500" value={globalLocal} onChange={(e) => setGlobalLocal(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center gap-2 mb-4">
                 <h3 className="text-xl font-bold">Candidatos Encaminhados</h3>
                 <Badge variant="outline" className="rounded-full">{candidates.length}</Badge>
@@ -243,29 +265,29 @@ export default function VagaFeedbackPage() {
                   {candidates.map((cand) => (
                     <Card key={cand.id} className="overflow-hidden border-muted/60 hover:border-primary/30 transition-all shadow-sm">
                       <div className="p-5">
-                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div className="flex items-center gap-3">
                             <div className="bg-primary/10 p-2 rounded-full">
                               <CheckCircle2 className="h-5 w-5 text-primary" />
                             </div>
                             <span className="text-lg font-semibold">{cand.nome}</span>
                           </div>
-                          
+
                           <div className="flex gap-2">
-                            <Button 
+                            <Button
                               variant={cand.evaluation === 'aprovado_empresa' ? "default" : "outline"}
                               className={cand.evaluation === 'aprovado_empresa' ? "bg-green-600 hover:bg-green-700" : "hover:text-green-600 hover:border-green-600"}
                               onClick={() => updateEvaluation(cand.id, 'aprovado_empresa')}
                             >
                               Aprovar
                             </Button>
-                            <Button 
+                            <Button
                               variant={cand.evaluation === 'rejeitado' ? "destructive" : "outline"}
                               onClick={() => updateEvaluation(cand.id, 'rejeitado')}
                             >
                               Reprovar
                             </Button>
-                            <Button 
+                            <Button
                                 variant={cand.evaluation === 'pendente' ? "secondary" : "outline"}
                                 onClick={() => updateEvaluation(cand.id, 'pendente')}
                                 className="opacity-50"
@@ -274,43 +296,6 @@ export default function VagaFeedbackPage() {
                             </Button>
                           </div>
                         </div>
-
-                        {cand.evaluation === 'aprovado_empresa' && (
-                          <div className="mt-4 p-4 bg-green-50 dark:bg-green-950/20 rounded-lg space-y-4 border border-green-100 dark:border-green-900/30 animate-in fade-in slide-in-from-top-2 duration-300">
-                            <h4 className="font-semibold text-green-800 dark:text-green-200 text-sm flex items-center gap-2">
-                              <Clock className="h-4 w-4" /> Detalhes da Próxima Etapa (Entrevista)
-                            </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                              <div className="space-y-1">
-                                <Label className="text-xs text-green-700">Data</Label>
-                                <Input 
-                                  type="date" 
-                                  className="bg-white border-green-200 focus-visible:ring-green-500"
-                                  value={cand.data_entrevista || ''}
-                                  onChange={(e) => updateCandidateField(cand.id, 'data_entrevista', e.target.value)}
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label className="text-xs text-green-700">Hora</Label>
-                                <Input 
-                                  type="time" 
-                                  className="bg-white border-green-200 focus-visible:ring-green-500"
-                                  value={cand.hora_entrevista || ''}
-                                  onChange={(e) => updateCandidateField(cand.id, 'hora_entrevista', e.target.value)}
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label className="text-xs text-green-700">Local / Link</Label>
-                                <Input 
-                                  placeholder="Endereço ou link da reunião" 
-                                  className="bg-white border-green-200 focus-visible:ring-green-500"
-                                  value={cand.local_entrevista || ''}
-                                  onChange={(e) => updateCandidateField(cand.id, 'local_entrevista', e.target.value)}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        )}
 
                         {cand.evaluation === 'rejeitado' && (
                           <div className="mt-4 p-4 bg-red-50 dark:bg-red-950/20 rounded-lg border border-red-100 dark:border-red-900/30">

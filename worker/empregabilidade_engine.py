@@ -1571,6 +1571,62 @@ async def processar_mensagem_empregabilidade(
         except Exception as _he:
             logger.error(f"[SQS-40] Erro ao disparar transbordo por dúvida: {_he}")
 
+    # SQS-40 Task 3.4: Interceptar respostas ao convite de entrevista
+    texto_norm = texto.strip()
+    cands_convite = supabase.table("candidaturas") \
+        .select("id, nome") \
+        .eq("telefone", phone) \
+        .eq("status", "convite_enviado") \
+        .execute().data or []
+
+    if cands_convite:
+        cand = cands_convite[0]
+        cand_id = cand["id"]
+        cand_nome = cand.get("nome", "Candidato")
+
+        if texto_norm in ("1", "1.", "sim", "sim!", "confirmar", "confirmado"):
+            supabase.table("candidaturas").update({"status": "entrevista_confirmada"}).eq("id", cand_id).execute()
+            _set_fluxo(conversa_id, {})
+            await _enviar(
+                instance_name, token, phone,
+                f"✅ Ótimo, *{cand_nome}*! Sua presença na entrevista foi confirmada. "
+                f"Boa sorte! Em caso de dúvidas, pode chamar aqui. 🍀",
+                conversa_id=conversa_id, lead_id=lead_id
+            )
+            return
+        elif texto_norm in ("2", "2.", "não", "nao", "não posso", "nao posso", "recusar"):
+            supabase.table("candidaturas").update({"status": "entrevista_recusada"}).eq("id", cand_id).execute()
+            _set_fluxo(conversa_id, {})
+            await _enviar(
+                instance_name, token, phone,
+                f"Entendido, *{cand_nome}*. Registramos que você não poderá comparecer desta vez. "
+                f"Continue acompanhando novas oportunidades pelo CUCA! 💙",
+                conversa_id=conversa_id, lead_id=lead_id
+            )
+            return
+        elif texto_norm in ("3", "3.", "dúvida", "duvida", "?"):
+            # Marcar dúvida e deixar o fluxo normal de transbordo tratar
+            cm_res2 = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
+            cm_meta2 = (cm_res2.data or {}).get("metadata") or {}
+            cm_meta2["ultima_intencao"] = "duvida"
+            supabase.table("conversas").update({"metadata": cm_meta2}).eq("id", conversa_id).execute()
+            # Reprocessar com a flag de dúvida agora setada (vai cair no bloco acima)
+            await processar_mensagem_empregabilidade(
+                texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca, push_name
+            )
+            return
+        else:
+            # Resposta não reconhecida — re-exibir opções
+            await _enviar(
+                instance_name, token, phone,
+                f"Olá, *{cand_nome}*! 👋 Você possui um convite de entrevista pendente. Por favor, responda:\n\n"
+                f"*1* - ✅ Confirmar presença\n"
+                f"*2* - ❌ Não poderei comparecer\n"
+                f"*3* - ❓ Tenho uma dúvida",
+                conversa_id=conversa_id, lead_id=lead_id
+            )
+            return
+
     # Rotear pelo perfil salvo OU pela etapa (evita loop quando _set_fluxo não preservou perfil)
     if perfil_atual == "empresa" or etapa_atual in _ETAPAS_EMPRESA:
         await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)

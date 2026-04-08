@@ -1199,6 +1199,15 @@ function CandidatoCard({
                 </div>
             )}
 
+            {/* Resposta para entrevista */}
+            {(candidato.status === 'entrevista_confirmada' || candidato.status === 'entrevista_recusada') && (
+                <div className={`flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 mb-3 border ${candidato.status === 'entrevista_confirmada' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
+                    {candidato.status === 'entrevista_confirmada' ? '✅' : '❌'}
+                    <span className="font-medium">Resposta para entrevista:</span>
+                    <span>{candidato.status === 'entrevista_confirmada' ? 'Confirmada' : 'Recusada'}</span>
+                </div>
+            )}
+
             {/* Rodapé: telefone + data + ações */}
             <div className="flex items-center justify-between pt-2.5 border-t border-border">
                 <div className="space-y-0.5">
