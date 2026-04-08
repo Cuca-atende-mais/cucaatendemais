@@ -1573,11 +1573,15 @@ async def processar_mensagem_empregabilidade(
 
     # SQS-40 Task 3.4: Interceptar respostas ao convite de entrevista
     texto_norm = texto.strip()
-    cands_convite = supabase.table("candidaturas") \
-        .select("id, nome") \
-        .eq("telefone", phone) \
-        .eq("status", "convite_enviado") \
+    # candidaturas.telefone é salvo sem o código de país (55); phone do JID tem "55" prefixado
+    phone_local = phone[2:] if phone.startswith("55") and len(phone) > 11 else phone
+    cands_convite = (
+        supabase.table("candidaturas")
+        .select("id, nome")
+        .eq("telefone", phone_local)
+        .eq("status", "convite_enviado")
         .execute().data or []
+    )
 
     if cands_convite:
         cand = cands_convite[0]
@@ -1586,20 +1590,20 @@ async def processar_mensagem_empregabilidade(
 
         if texto_norm in ("1", "1.", "sim", "sim!", "confirmar", "confirmado"):
             supabase.table("candidaturas").update({"status": "entrevista_confirmada"}).eq("id", cand_id).execute()
-            _set_fluxo(conversa_id, {})
+            _set_fluxo(conversa_id, {"perfil": "encerrado"})
             await _enviar(
                 instance_name, token, phone,
-                f"✅ Ótimo, *{cand_nome}*! Sua presença na entrevista foi confirmada. "
+                f"✅ Recebemos sua confirmação, *{cand_nome}*! Sua presença na entrevista foi registrada com sucesso. "
                 f"Boa sorte! Em caso de dúvidas, pode chamar aqui. 🍀",
                 conversa_id=conversa_id, lead_id=lead_id
             )
             return
         elif texto_norm in ("2", "2.", "não", "nao", "não posso", "nao posso", "recusar"):
             supabase.table("candidaturas").update({"status": "entrevista_recusada"}).eq("id", cand_id).execute()
-            _set_fluxo(conversa_id, {})
+            _set_fluxo(conversa_id, {"perfil": "encerrado"})
             await _enviar(
                 instance_name, token, phone,
-                f"Entendido, *{cand_nome}*. Registramos que você não poderá comparecer desta vez. "
+                f"Entendido, *{cand_nome}*. Recebemos sua resposta e registramos que você não poderá comparecer desta vez. "
                 f"Continue acompanhando novas oportunidades pelo CUCA! 💙",
                 conversa_id=conversa_id, lead_id=lead_id
             )
