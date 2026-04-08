@@ -58,51 +58,53 @@ export async function POST(
 
         if (tokenErr) throw tokenErr
 
-        // 4. Buscar instância de WhatsApp da unidade (Preferencialmente 'Empregabilidade')
+        // 4. Buscar instância de WhatsApp da unidade (Empregabilidade > Institucional > qualquer ativa)
         const { data: instancias } = await supabaseAdmin
             .from("instancias_uazapi")
-            .select("token")
+            .select("nome, token, canal_tipo")
             .eq("unidade_cuca", vaga.unidade_cuca)
             .eq("ativa", true)
-            .order("canal_tipo", { ascending: true }) // Empregabilidade (E) vem antes de Institucional (I)? Não, melhor explicitamente
             .limit(10)
 
-        // Priorizar Empregabilidade
-        const instancia = instancias?.find(i => (i as any).canal_tipo === "Empregabilidade") || instancias?.[0]
+        let instancia = instancias?.find(i => i.canal_tipo === "Empregabilidade")
+            || instancias?.find(i => i.canal_tipo === "Institucional")
+            || instancias?.[0]
 
         if (!instancia) {
-            // Se não houver da unidade, tenta uma global do tipo Empregabilidade
+            // Fallback: qualquer instância Empregabilidade ativa na rede
             const { data: instGlobal } = await supabaseAdmin
                 .from("instancias_uazapi")
-                .select("token")
+                .select("nome, token, canal_tipo")
                 .eq("canal_tipo", "Empregabilidade")
                 .eq("ativa", true)
                 .limit(1)
                 .single()
-            
-            if (!instGlobal) {
-               // Silenciosamente falha ou avisa no log, mas não mata a requisição se o token foi gerado
-               console.error("Nenhuma instância WhatsApp encontrada para enviar o link.")
-            }
+            if (instGlobal) instancia = instGlobal
         }
 
-        const uazapiToken = instancia?.token || (instancias?.[0] as any)?.token
+        if (!instancia) {
+            return NextResponse.json({ error: "Nenhuma instância WhatsApp ativa encontrada para enviar o feedback." }, { status: 500 })
+        }
 
-        // 5. Enviar mensagem via UAZAPI (Worker)
+        // 5. Enviar mensagem via Worker -> UAZAPI (mesmo padrão de /vagas/convocar)
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL || "http://localhost:3000"
         const feedbackLink = `${appUrl}/feedback-empresa/${token}`
         const mensagem = `Olá, equipe de RH da *${empresa.nome}*! 👋\n\nGostaríamos de solicitar o seu feedback sobre os candidatos encaminhados para a vaga de *${vaga.titulo}*.\n\nPor favor, acesse o link seguro abaixo para avaliar os candidatos:\n🔗 ${feedbackLink}\n\nO link expira em 48h. Agradecemos a parceria! 🚀`
 
-        if (uazapiToken) {
-            const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
-            const telLimpo = telefoneRH.replace(/\D/g, "")
-            const phone = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
+        const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
+        const telLimpo = telefoneRH.replace(/\D/g, "")
+        const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
 
-            await fetch(`${workerUrl}/send-message/${uazapiToken}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ phone, message: mensagem }),
-            })
+        const sendRes = await fetch(`${workerUrl}/send-message/${process.env.WEBHOOK_INTERNAL_TOKEN}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ number, text: mensagem, instance: instancia.nome }),
+        })
+
+        if (!sendRes.ok) {
+            const errLog = await sendRes.text()
+            console.error("[solicitar-feedback] Erro no worker:", errLog)
+            throw new Error("Falha ao disparar mensagem via WhatsApp")
         }
 
         return NextResponse.json({ success: true, token, expires_at: expiresAt })

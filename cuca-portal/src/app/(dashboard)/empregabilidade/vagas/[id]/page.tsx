@@ -356,7 +356,7 @@ export default function VagaDetalhesPage() {
         setSummoning(true)
         try {
             if (summonIsLote) {
-                const aprovados = candidatos.filter(c => c.status === "aprovado_empresa")
+                const aprovados = candidatos.filter(c => c.status === "aprovado_empresa" || c.status === "selecionado")
                 let ok = 0
                 for (const cand of aprovados) {
                     const res = await fetch("/api/empregabilidade/vagas/convocar", {
@@ -625,14 +625,14 @@ export default function VagaDetalhesPage() {
                         <Badge variant="outline">{candidatos.length}</Badge>
                     </div>
                     <div className="flex items-center gap-2">
-                        {contadores.aprovado_empresa > 0 && (
+                        {(contadores.aprovado_empresa + contadores.selecionado) > 0 && (
                             <Button
                                 size="sm"
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
                                 onClick={abrirSummonLote}
                             >
                                 <Send className="h-3.5 w-3.5" />
-                                Convocar em Lote ({contadores.aprovado_empresa})
+                                Convocar em Lote ({contadores.aprovado_empresa + contadores.selecionado})
                             </Button>
                         )}
                         <Button size="sm" variant="outline" onClick={() => setModalInscricao(true)}>
@@ -748,7 +748,7 @@ export default function VagaDetalhesPage() {
                                                 <div className="flex items-center justify-between gap-1">
                                                     <span className="text-[10px] text-muted-foreground">{idade ? `${idade} anos` : "—"}</span>
                                                     <div className="flex items-center gap-1">
-                                                        {c.status === 'aprovado_empresa' && (
+                                                        {(c.status === 'aprovado_empresa' || c.status === 'selecionado') && (
                                                             <button
                                                                 onClick={e => { e.stopPropagation(); abrirSummon(c) }}
                                                                 className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-500 text-[9px] text-white hover:bg-indigo-600 transition-colors"
@@ -1086,11 +1086,11 @@ export default function VagaDetalhesPage() {
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Send className="h-5 w-5 text-indigo-400" />
-                            {summonIsLote ? `Convocar em Lote (${contadores.aprovado_empresa})` : "Convocar Candidato"}
+                            {summonIsLote ? `Convocar em Lote (${contadores.aprovado_empresa + contadores.selecionado})` : "Convocar Candidato"}
                         </DialogTitle>
                         <DialogDescription>
                             {summonIsLote
-                                ? `Defina data, hora e local únicos para convocar todos os ${contadores.aprovado_empresa} candidato(s) aprovados. Cada um receberá o convite via WhatsApp.`
+                                ? `Defina data, hora e local únicos para convocar todos os ${contadores.aprovado_empresa + contadores.selecionado} candidato(s) selecionados/aprovados. Cada um receberá o convite via WhatsApp.`
                                 : <>Agende a entrevista para <strong>{selectedCand?.nome}</strong>. O candidato receberá o convite via WhatsApp.</>
                             }
                         </DialogDescription>
@@ -1214,7 +1214,7 @@ function CandidatoCard({
                     </div>
                 </div>
                 <div className="flex items-center gap-1">
-                    {candidato.status === 'aprovado_empresa' && (
+                    {(candidato.status === 'aprovado_empresa' || candidato.status === 'selecionado') && (
                         <Button
                             size="sm"
                             variant="default"
@@ -1222,7 +1222,7 @@ function CandidatoCard({
                             className="bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs gap-1.5"
                         >
                             <Send className="h-3.5 w-3.5" />
-                            Convocar Candidato
+                            Convocar
                         </Button>
                     )}
                     <button
