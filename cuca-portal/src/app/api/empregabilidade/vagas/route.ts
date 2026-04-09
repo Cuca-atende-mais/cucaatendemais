@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
             tipo_contrato, salario, total_vagas, escolaridade_minima,
             faixa_etaria, carga_horaria, local, local_entrevista,
             beneficios, limite_curriculos, tipo_selecao, unidade_cuca,
+            unidade_destino,
             setor, email_responsavel, telefone_responsavel,
             pcd_vaga, pcd_tipo, pcd_homologado,
         } = body
@@ -62,6 +63,7 @@ export async function POST(request: NextRequest) {
                 limite_curriculos: limite_curriculos ? parseInt(limite_curriculos) : null,
                 tipo_selecao: tipo_selecao || null,
                 unidade_cuca: unidade_cuca || null,
+                unidade_destino: unidade_destino || 'global',
                 numero_vaga,
                 status: "pre_cadastro",
                 setor: setor || [],

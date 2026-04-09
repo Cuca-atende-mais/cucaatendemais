@@ -432,6 +432,7 @@ CREATE TABLE job_postings (
   salary VARCHAR(100), -- \"R$ 2.500\" ou \"A combinar\"
   vacancies INT,
   status VARCHAR(30) DEFAULT 'pre_cadastro', -- \"pre_cadastro\", \"aberta\", \"preenchida\", \"cancelada\"
+  unidade_destino VARCHAR(100) DEFAULT 'global', -- UUID da unidade CUCA ou 'global' (Toda a Rede) — SQS-41 Multi-Tenant
   opened_at TIMESTAMPTZ,
   closed_at TIMESTAMPTZ,
   created_by UUID REFERENCES collaborators(id),
@@ -442,6 +443,7 @@ CREATE TABLE job_postings (
 CREATE INDEX idx_job_postings_company ON job_postings(company_id);
 CREATE INDEX idx_job_postings_unit ON job_postings(cuca_unit_id);
 CREATE INDEX idx_job_postings_status ON job_postings(status);
+CREATE INDEX idx_job_postings_unidade_destino ON job_postings(unidade_destino); -- SQS-41
 ```
 
 ### 5.3 `candidates` — Candidatos às vagas
@@ -456,6 +458,7 @@ CREATE TABLE candidates (
   cv_url TEXT NOT NULL, -- URL do Storage (PDF ou foto)
   ocr_data JSONB, -- Dados extraídos via OCR: {\"nome\": \"...\", \"idade\": 25, ...}
   status VARCHAR(30) DEFAULT 'pendente', -- \"pendente\", \"selecionado\", \"contratado\", \"rejeitado\", \"banco_talentos\"
+  unidade_atendimento_id VARCHAR(100), -- UUID da unidade CUCA que atende este candidato — SQS-41 Multi-Tenant
   notes TEXT, -- Observações do gestor
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -464,6 +467,7 @@ CREATE TABLE candidates (
 CREATE INDEX idx_candidates_job ON candidates(job_posting_id);
 CREATE INDEX idx_candidates_lead ON candidates(lead_id);
 CREATE INDEX idx_candidates_status ON candidates(status);
+CREATE INDEX idx_candidates_unidade_atendimento ON candidates(unidade_atendimento_id); -- SQS-41
 ```
 
 ### 5.4 `talent_bank` — Banco de Talentos (últimos 3 meses)

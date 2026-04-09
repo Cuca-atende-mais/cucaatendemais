@@ -94,6 +94,9 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [cargaTrabSabado, setCargaTrabSabado] = useState(false)
     const [cargaSabadoAte, setCargaSabadoAte] = useState("12:00")
 
+    // Roteamento Multi-Tenant (SQS-41)
+    const [unidadeDestino, setUnidadeDestino] = useState("global")
+
     // PCD
     const [pcdVaga, setPcdVaga] = useState(false)
     const [pcdTipo, setPcdTipo] = useState("")
@@ -139,6 +142,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setExpansiva(vaga.expansiva || false)
                 setEmailContatoEmpresa(vaga.email_contato_empresa || "")
                 setEscolaridadeMinima(vaga.escolaridade_minima || "")
+                setUnidadeDestino((vaga as any).unidade_destino || "global")
                 setPcdVaga(vaga.pcd_vaga || false)
                 setPcdTipo(vaga.pcd_tipo || "")
                 setPcdHomologado(vaga.pcd_homologado || false)
@@ -166,7 +170,8 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setUnidadeCucaId(""); setTotalVagas("1"); setStatus("pre_cadastro")
         setFaixaEtaria("15 a 29 anos"); setLocalEntrevista("na_empresa"); setEnderecoEntrevista("")
         setTipoSelecao("presencial"); setExpansiva(false); setEmailContatoEmpresa("")
-        setEscolaridadeMinima(""); setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false)
+        setEscolaridadeMinima(""); setUnidadeDestino("global")
+        setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false)
         setCargaTipo("horario_comercial"); setCargaHoras(""); setCargaEscalaT("")
         setCargaEscalaF(""); setCargaDias("Seg à Sex"); setCargaTrabSabado(false); setCargaSabadoAte("12:00")
         setErro("")
@@ -190,6 +195,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 carga_horaria: cargaHoraria || null,
                 local: local || null,
                 unidade_cuca: unidadesMap[unidadeCucaId] || unidadeCucaId,
+                unidade_destino: unidadeDestino,
                 total_vagas: parseInt(totalVagas) || 1,
                 status,
                 faixa_etaria: faixaEtaria,
@@ -239,6 +245,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
             const { error } = await supabase.from('vagas').update({
                 status,
                 unidade_cuca: unidadeNome,
+                unidade_destino: unidadeDestino,
                 expansiva,
                 data_abertura: status === 'aberta' ? new Date().toISOString() : undefined,
             }).eq('id', vaga.id)
@@ -344,9 +351,26 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                             </div>
                         </div>
 
-                        {/* Status + Unidade + Expansiva — editável pela CUCA */}
+                        {/* Status + Unidade Destino + Expansiva — editável pela CUCA */}
                         <div className="space-y-4 bg-muted/40 p-4 rounded-xl border">
                             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Controles da Rede CUCA</p>
+                            <div className="space-y-2">
+                                <Label>Unidade de Destino *</Label>
+                                <Select value={unidadeDestino} onValueChange={setUnidadeDestino}>
+                                    <SelectTrigger><SelectValue placeholder="Selecione a unidade" /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="global">🌐 Toda a Rede CUCA</SelectItem>
+                                        {Object.keys(unidadesMap).map(id => (
+                                            <SelectItem key={id} value={id}>{unidadesMap[id]}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">
+                                    {unidadeDestino === "global"
+                                        ? "Candidatos serão questionados sobre a unidade mais próxima pelo bot."
+                                        : "Candidatos serão encaminhados diretamente para esta unidade."}
+                                </p>
+                            </div>
                             <div className="grid grid-cols-2 gap-4 items-center">
                                 <div className="space-y-2">
                                     <Label>Status da Vaga</Label>
