@@ -1284,10 +1284,82 @@ async def _processar_publico(
         )
         return
 
-    # Buscar vagas abertas da unidade
+    # --- ETAPA: listou_categorias (SQS-41 Ação 2.1) ---
+    if etapa == "listou_categorias":
+        mapa_cat = fluxo.get("mapa_categorias", {})
+        match_cat = re.search(r"\b(\d{1,2})\b", texto)
+        if match_cat and match_cat.group(1) in mapa_cat:
+            cat_data = mapa_cat[match_cat.group(1)]
+            cat_vagas = cat_data["vagas"]  # list of {"id", "titulo", "unidade_destino"}
+            linhas_cat = [f"💼 *{cat_data['categoria']} — Vagas disponíveis:*\n"]
+            mapa_vagas_cat: dict = {}
+            ultima_vaga_id_cat = None
+            for ic, vc in enumerate(cat_vagas, start=1):
+                linhas_cat.append(f"*{ic}.* {vc['titulo']}")
+                mapa_vagas_cat[str(ic)] = vc["id"]
+                ultima_vaga_id_cat = vc["id"]
+            linhas_cat.append("\nDigite o *número* da vaga para se candidatar.")
+            await e("\n".join(linhas_cat))
+            _set_fluxo(conversa_id, {
+                **fluxo,
+                "etapa": "listou_vagas",
+                "mapa_vagas": mapa_vagas_cat,
+                "ultima_vaga_id": ultima_vaga_id_cat,
+                "_vagas_meta": {vc["id"]: vc for vc in cat_vagas},
+            })
+        else:
+            # Re-exibe o menu de categorias
+            linhas_re = ["💼 *Vagas abertas na Rede CUCA — Escolha uma categoria:*\n"]
+            for k, v in mapa_cat.items():
+                subcats_re = ", ".join(vg["titulo"].lower() for vg in v["vagas"][:3])
+                total_re = len(v["vagas"])
+                linhas_re.append(
+                    f"*{k}.* {v['categoria']} ({subcats_re}) - ({total_re} vaga{'s' if total_re > 1 else ''})"
+                )
+            linhas_re.append("\nDigite o número da categoria.")
+            await e("\n".join(linhas_re))
+        return
+
+    # --- ETAPA: aguardando_escolha_unidade (SQS-41 Ação 2.3) ---
+    if etapa == "aguardando_escolha_unidade":
+        unidades_opcoes: list = fluxo.get("unidades_opcoes", [])
+        vaga_id_global = fluxo.get("vaga_id_selecionada")
+        match_unid = re.search(r"\b([1-5])\b", t_lower)
+        if match_unid and unidades_opcoes:
+            idx_escolha = int(match_unid.group(1)) - 1
+            if 0 <= idx_escolha < len(unidades_opcoes):
+                unidade_escolhida = unidades_opcoes[idx_escolha]
+                unidade_id_escolhida: str = unidade_escolhida["id"]
+                nome_prefill = fluxo.get("nome_candidato_prefill", "")
+                novo_fluxo = {**fluxo, "unidade_id_escolhida": unidade_id_escolhida}
+                if nome_prefill:
+                    await _enviar_link_candidatura(
+                        instance_name, token, phone, conversa_id, novo_fluxo,
+                        nome_prefill, phone, vaga_id_global, False, lead_id=lead_id
+                    )
+                else:
+                    await e("Para finalizar sua candidatura, preciso do seu *nome completo*:")
+                    _set_fluxo(conversa_id, {
+                        **novo_fluxo,
+                        "etapa": "coletando_nome_candidato",
+                        "banco_talentos": False,
+                    })
+                return
+        # Resposta inválida — re-exibe as opções
+        linhas_re_unid = [
+            "Não entendi. Por favor, escolha a unidade CUCA mais próxima de você:\n"
+        ]
+        for idx_ru, u in enumerate(unidades_opcoes, start=1):
+            linhas_re_unid.append(f"*{idx_ru}.* {u['nome']}")
+        await e("\n".join(linhas_re_unid))
+        return
+
+    # SQS-41: Buscar vagas abertas da unidade E vagas globais (unidade_destino='global')
     vagas_res = supabase.table("vagas").select(
-        "id, titulo, tipo_contrato, salario, escolaridade_minima, total_vagas, faixa_etaria"
-    ).eq("status", "aberta").eq("unidade_cuca", unidade_cuca).order("created_at", desc=True).limit(8).execute()
+        "id, titulo, tipo_contrato, salario, escolaridade_minima, total_vagas, faixa_etaria, setor, unidade_destino"
+    ).eq("status", "aberta").or_(
+        f"unidade_cuca.eq.{unidade_cuca},unidade_destino.eq.global"
+    ).order("created_at", desc=True).limit(50).execute()
     vagas = vagas_res.data or []
 
     # HF37-06: Sincronizar com o banco — buscar vagas já candidatadas por este telefone
@@ -1354,7 +1426,35 @@ async def _processar_publico(
             vaga_id_ref = fluxo.get("ultima_vaga_id")
 
     if vaga_id_ref:
-        # S37C-05: se o nome já foi coletado em ciclo anterior, pula a etapa de coleta
+        # SQS-41 Ação 2.3: verificar se vaga é global antes de coletar nome/enviar link
+        vaga_meta = next((v for v in vagas if v["id"] == vaga_id_ref), None)
+        if not vaga_meta:
+            _vr = supabase.table("vagas").select("id, unidade_destino").eq("id", vaga_id_ref).maybe_single().execute()
+            vaga_meta = _vr.data or {}
+        unidade_destino_vaga = (vaga_meta or {}).get("unidade_destino", "")
+
+        if unidade_destino_vaga == "global":
+            # Perguntar ao candidato qual unidade fica mais próxima
+            _unid_res = supabase.table("unidades_cuca").select("id, nome").eq("ativa", True).order("nome").execute()
+            unidades_disponiveis = _unid_res.data or []
+            linhas_unid = [
+                "🌐 *Esta vaga é para toda a Rede CUCA!*\n\n"
+                "Qual unidade fica mais próxima da sua residência?\n"
+            ]
+            for idx_u, u in enumerate(unidades_disponiveis, start=1):
+                linhas_unid.append(f"*{idx_u}.* {u['nome']}")
+            await e("\n".join(linhas_unid))
+            _set_fluxo(conversa_id, {
+                **fluxo,
+                "etapa": "aguardando_escolha_unidade",
+                "vaga_id_selecionada": vaga_id_ref,
+                "banco_talentos": False,
+                "historico_vagas_aplicadas": historico_aplicadas,
+                "unidades_opcoes": unidades_disponiveis,
+            })
+            return
+
+        # S37C-05: vaga com unidade definida — fluxo normal
         nome_prefill = fluxo.get("nome_candidato_prefill", "")
         if nome_prefill:
             await _enviar_link_candidatura(
@@ -1395,30 +1495,39 @@ async def _processar_publico(
         })
         return
 
-    linhas = ["💼 *Vagas abertas no CUCA:*\n"]
-    ultima_vaga_id = None
-    mapa_vagas = {}
-    for i, v in enumerate(vagas, start=1):
-        salario = f"\n   💰 {v['salario']}" if v.get("salario") else ""
-        contrato = f" · {v['tipo_contrato']}" if v.get("tipo_contrato") else ""
-        escolaridade = f"\n   🎓 {v['escolaridade_minima']}" if v.get("escolaridade_minima") else ""
+    # SQS-41 Ação 2.1: Menu dinâmico agrupado por categoria
+    from collections import defaultdict
+    categorias_map: dict = defaultdict(list)
+    for v in vagas:
+        setores = v.get("setor") or []
+        cat = setores[0] if setores else "Geral"
+        categorias_map[cat].append(v)
+
+    linhas = ["💼 *Vagas abertas na Rede CUCA — Escolha uma categoria:*\n"]
+    mapa_categorias: dict = {}
+    for i, (cat, cat_vagas) in enumerate(categorias_map.items(), start=1):
+        subcats = ", ".join(v["titulo"].lower() for v in cat_vagas[:3])
+        total = len(cat_vagas)
         linhas.append(
-            f"*{i}.* {v['titulo']}{contrato}{salario}{escolaridade}"
+            f"*{i}.* {cat} ({subcats}) - ({total} vaga{'s' if total > 1 else ''})"
         )
-        ultima_vaga_id = v["id"]
-        mapa_vagas[str(i)] = v["id"]
+        mapa_categorias[str(i)] = {
+            "categoria": cat,
+            "vagas": [
+                {"id": v["id"], "titulo": v["titulo"], "unidade_destino": v.get("unidade_destino", "global")}
+                for v in cat_vagas
+            ],
+        }
 
     linhas.append(
-        "\nDigite o *número* da vaga para se candidatar (ex: *1*, *2*...), "
-        "ou diga o nome da vaga.\n"
-        "Se preferir, diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
+        "\nDigite o *número* da categoria para ver as vagas disponíveis.\n"
+        "Ou diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
     )
     await e("\n".join(linhas))
     _set_fluxo(conversa_id, {
         "perfil": "publico",
-        "etapa": "listou_vagas",
-        "ultima_vaga_id": ultima_vaga_id,
-        "mapa_vagas": mapa_vagas,
+        "etapa": "listou_categorias",
+        "mapa_categorias": mapa_categorias,
         # HF37-02: propaga histórico para que ciclos seguintes não reofereçam vagas já aplicadas
         "historico_vagas_aplicadas": historico_aplicadas,
         "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
@@ -1448,6 +1557,10 @@ async def _enviar_link_candidatura(
         params["vaga_id"] = vaga_id
     if banco_talentos:
         params["banco_talentos"] = "1"
+    # SQS-41 Ação 2.3: unidade escolhida pelo candidato em vagas globais
+    unidade_id_link = fluxo.get("unidade_id_escolhida", "")
+    if unidade_id_link:
+        params["unidade_id"] = unidade_id_link
 
     query = urllib.parse.urlencode(params)
     link = f"{PORTAL_URL}/empregabilidade/candidatura?{query}"
@@ -1497,8 +1610,10 @@ _ETAPAS_PUBLICO = {
     "inicio", "listou_vagas", "candidatura_enviada",
     "coletando_nome_candidato", "confirmando_terceiro", "coletando_nome_terceiro",
     "aguardando_confirmacao_candidatura", "candidatura_confirmada",
-    "pos_candidatura",   # S37C-01: novo estado para fluxo cíclico
+    "pos_candidatura",            # S37C-01: novo estado para fluxo cíclico
     "oferta_banco_talentos",
+    "listou_categorias",          # SQS-41: menu dinâmico por categoria
+    "aguardando_escolha_unidade", # SQS-41: roteamento de vaga global
 }
 
 
@@ -1630,6 +1745,17 @@ async def processar_mensagem_empregabilidade(
                 conversa_id=conversa_id, lead_id=lead_id
             )
             return
+
+    # SQS-41 Ação 2.2: Bypass global — "menu" retorna ao menu de categorias a qualquer momento
+    if texto.strip().lower() == "menu":
+        _set_fluxo(conversa_id, {
+            "perfil": "publico",
+            "etapa": "inicio",
+            "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+            "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
+        })
+        await _processar_publico("vagas", phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+        return
 
     # Rotear pelo perfil salvo OU pela etapa (evita loop quando _set_fluxo não preservou perfil)
     if perfil_atual == "empresa" or etapa_atual in _ETAPAS_EMPRESA:
