@@ -33,11 +33,13 @@ export async function POST(
         }
 
         // Buscar telefones de candidatos já inscritos nesta vaga (via candidaturas)
-        // e encontrar seus IDs no talent_bank para excluir da varredura
+        // Regra: lock é por vaga — exclui apenas status != 'rejeitado'.
+        // Candidatos rejeitados voltam a aparecer para a mesma vaga.
         const { data: candidaturasExistentes } = await supabase
             .from("candidaturas")
             .select("telefone")
             .eq("vaga_id", vagaId)
+            .neq("status", "rejeitado")
             .not("telefone", "is", null)
 
         const normalizar = (tel: string) => tel.replace(/\D/g, "")
