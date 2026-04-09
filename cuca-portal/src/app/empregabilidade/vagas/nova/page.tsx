@@ -55,6 +55,7 @@ export default function NovaVagaEmpresaPage() {
     const searchParams = useSearchParams()
     const empresaId = searchParams.get("empresa_id")
     const unidadeCuca = searchParams.get("unidade_cuca") || ""
+    const unidadeDestinoParam = searchParams.get("unidade_destino") || "global"
     const emailParam = searchParams.get("email_responsavel") || ""
     const telefoneParam = searchParams.get("telefone_responsavel") || ""
 
@@ -180,6 +181,7 @@ export default function NovaVagaEmpresaPage() {
                     limite_curriculos: limiteCurriculos ? parseInt(limiteCurriculos) : null,
                     tipo_selecao: tipoSelecao || null,
                     unidade_cuca: unidadeCuca || null,
+                    unidade_destino: unidadeDestinoParam,
                     setor: setoresMarcados,
                     email_responsavel: emailResponsavel,
                     telefone_responsavel: telefoneResponsavel.replace(/\D/g, ""),

@@ -262,16 +262,20 @@ async def _processar_empresa(
         empresa_id = fluxo.get("empresa_id")
         empresa_nome = fluxo.get("empresa_nome_exibicao") or fluxo.get("empresa_nome", "")
         if t in ("1", "nova vaga", "divulgar", "criar", "cadastrar"):
-            unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
-            link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
+            # SQS-41: perguntar unidade antes de enviar o link do formulário
             await e(
-                f"Ótimo! 🎯 Acesse o link abaixo para preencher os dados da nova vaga:\n\n"
-                f"🔗 {link_vaga}\n\n"
-                "Após o preenchimento, você receberá aqui o número da vaga e a confirmação."
+                "Ótimo! 🎯 Para qual unidade da Rede CUCA é esta vaga?\n\n"
+                "1️⃣ CUCA Barra\n"
+                "2️⃣ CUCA Mondubim\n"
+                "3️⃣ CUCA Pici\n"
+                "4️⃣ CUCA Jangurussu\n"
+                "5️⃣ CUCA José Walter\n"
+                "6️⃣ Toda a Rede (Global)\n\n"
+                "Responda com o *número* da opção."
             )
             _set_fluxo(conversa_id, {
                 "perfil": "empresa",
-                "etapa": "aguardando_retorno_vaga",
+                "etapa": "perguntando_unidade_vaga",
                 "empresa_id": empresa_id,
                 "empresa_nome": fluxo.get("empresa_nome", ""),
                 "empresa_nome_exibicao": empresa_nome,
@@ -288,6 +292,47 @@ async def _processar_empresa(
             await _listar_vagas_para_acao(empresa_id, instance_name, token, phone, "cancelamento", conversa_id, fluxo)
         else:
             await _encerrar_fluxo(conversa_id, instance_name, token, phone, "empresa")
+        return
+
+    # --- ETAPA: perguntando_unidade_vaga (SQS-41) ---
+    if etapa == "perguntando_unidade_vaga":
+        _UNIDADES_OPCOES = {
+            "1": ("ecbc8153-a94f-4d9b-9e61-7b0e0cd68740", "CUCA Barra"),
+            "2": ("bdc783d9-c572-434a-8e65-5d4bf6d5d1e2", "CUCA Mondubim"),
+            "3": ("2a1f2bee-f89a-4d2b-b1bd-175c7c9e18d4", "CUCA Pici"),
+            "4": ("e325a27a-c25b-4627-8ce4-b0eb5ae21d65", "CUCA Jangurussu"),
+            "5": ("5f8724d7-0e2b-4992-86ab-e58e9a3990e4", "CUCA José Walter"),
+            "6": ("global", "Toda a Rede"),
+        }
+        escolha = texto.strip()
+        opcao = _UNIDADES_OPCOES.get(escolha)
+        if not opcao:
+            await e(
+                "Por favor, responda com o *número* da opção (1 a 6):\n\n"
+                "1️⃣ CUCA Barra | 2️⃣ CUCA Mondubim | 3️⃣ CUCA Pici\n"
+                "4️⃣ CUCA Jangurussu | 5️⃣ CUCA José Walter | 6️⃣ Toda a Rede"
+            )
+            return
+        unidade_destino_id, unidade_destino_nome = opcao
+        empresa_id = fluxo.get("empresa_id")
+        empresa_nome = fluxo.get("empresa_nome_exibicao") or fluxo.get("empresa_nome", "")
+        unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
+        destino_param = f"&unidade_destino={quote(unidade_destino_id)}"
+        link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}{destino_param}"
+        await e(
+            f"Perfeito! Vaga para *{unidade_destino_nome}*. 📋\n\n"
+            f"Acesse o link abaixo para preencher os dados:\n\n"
+            f"🔗 {link_vaga}\n\n"
+            "Após o preenchimento, você receberá aqui o número da vaga e a confirmação."
+        )
+        _set_fluxo(conversa_id, {
+            "perfil": "empresa",
+            "etapa": "aguardando_retorno_vaga",
+            "empresa_id": empresa_id,
+            "empresa_nome": fluxo.get("empresa_nome", ""),
+            "empresa_nome_exibicao": empresa_nome,
+            "cnpj": fluxo.get("cnpj"),
+        })
         return
 
     # --- ETAPA: selecionando_vaga_edicao ---
@@ -1603,7 +1648,7 @@ _ETAPAS_EMPRESA = {
     "solicitar_cnpj", "aguardando_cnpj", "confirmando_cadastro",
     "confirmando_cadastro_com_correcao", "aguardando_criar_vaga",
     "aguardando_retorno_vaga", "consulta_empresa", "empresa_ativa",
-    "menu_empresa_retomada", "menu_pos_vaga", "menu_empresa_acoes",
+    "menu_empresa_retomada", "menu_pos_vaga", "menu_empresa_acoes", "perguntando_unidade_vaga",
     "selecionando_vaga_edicao", "aguardando_retorno_edicao",
     "selecionando_vaga_cancelamento", "confirmando_cancelamento",
 }
