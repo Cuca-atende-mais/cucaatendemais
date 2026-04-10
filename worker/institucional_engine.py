@@ -49,16 +49,65 @@ UNIDADES_MAPA: dict[str, str] = {
     "cuca pici": "Cuca Pici",
 }
 
-MENU_UNIDADES = (
-    "Olá! 👋 Bem-vindo à *CUCA — Centro Urbano de Cultura, Arte, Ciência e Esporte*.\n\n"
-    "Sobre qual unidade você quer informações?\n\n"
-    "1️⃣ Cuca Barra\n"
-    "2️⃣ Cuca Mondubim\n"
-    "3️⃣ Cuca Jangurussu\n"
-    "4️⃣ Cuca José Walter\n"
-    "5️⃣ Cuca Pici\n\n"
-    "Envie o *número* da unidade ou o nome dela."
-)
+# ---------------------------------------------------------------------------
+# Helpers de instância — números dinâmicos (nunca hardcode)
+# ---------------------------------------------------------------------------
+
+def _buscar_telefone_instancia(nome_fragment: str, canal_tipo: str | None = None) -> str | None:
+    """Busca o telefone de uma instância pelo fragmento do nome ou canal_tipo."""
+    try:
+        res = (
+            supabase.table("instancias_uazapi")
+            .select("telefone")
+            .ilike("nome", f"%{nome_fragment}%")
+            .eq("ativa", True)
+            .limit(1)
+            .execute()
+        )
+        if res.data and res.data[0].get("telefone"):
+            return res.data[0]["telefone"]
+        if canal_tipo:
+            # Fallback: buscar por canal_tipo sem unidade_cuca
+            res2 = (
+                supabase.table("instancias_uazapi")
+                .select("telefone")
+                .eq("canal_tipo", canal_tipo)
+                .eq("ativa", True)
+                .is_("unidade_cuca", None)
+                .limit(1)
+                .execute()
+            )
+            if res2.data and res2.data[0].get("telefone"):
+                return res2.data[0]["telefone"]
+    except Exception as e:
+        logger.warning(f"[inst-engine] Falha ao buscar telefone instância '{nome_fragment}': {e}")
+    return None
+
+
+def _montar_menu_unidades() -> str:
+    """
+    Ação 5.2 SQS-41: Monta o menu institucional com o número da empregabilidade
+    buscado dinamicamente da tabela instancias_uazapi. Nunca usa número fixo.
+    """
+    telefone_empreg = _buscar_telefone_instancia("empregoredecuca", canal_tipo="Empregabilidade")
+
+    link_empregabilidade = (
+        f"wa.me/{telefone_empreg}" if telefone_empreg
+        else "[número de empregabilidade não configurado]"
+    )
+
+    return (
+        "Olá! 👋 Bem-vindo à *CUCA — Centro Urbano de Cultura, Arte, Ciência e Esporte*.\n\n"
+        "Sobre qual unidade você quer informações?\n\n"
+        "1️⃣ Cuca Barra\n"
+        "2️⃣ Cuca Mondubim\n"
+        "3️⃣ Cuca Jangurussu\n"
+        "4️⃣ Cuca José Walter\n"
+        "5️⃣ Cuca Pici\n\n"
+        "Envie o *número* da unidade ou o nome dela.\n\n"
+        f"Caso queira saber sobre *VAGAS DE EMPREGOS ABERTAS NA REDE CUCA*, acesse nosso numero da empregabilidade:\n"
+        f"📍 *Empregabilidade Rede Cuca:* {link_empregabilidade}"
+    )
 
 # ---------------------------------------------------------------------------
 # Helpers de estado
@@ -139,6 +188,22 @@ async def _chamar_motor_agente(
     _tz_fortaleza = timezone(timedelta(hours=-3))
     _agora = datetime.now(_tz_fortaleza)
 
+    # Ação 5.3 SQS-41: busca número da empregabilidade para injetar no prompt do LLM
+    telefone_empreg = _buscar_telefone_instancia("empregoredecuca", canal_tipo="Empregabilidade")
+    link_empreg = f"wa.me/{telefone_empreg}" if telefone_empreg else None
+
+    instrucao_empregabilidade = (
+        f"REGRA INQUEBRÁVEL: Se o usuário demonstrar qualquer intenção de buscar emprego, vagas de trabalho, "
+        f"enviar currículo ou trabalhar no CUCA, NÃO tente responder ou dar informações. "
+        f"Responda APENAS com esta mensagem exata: "
+        f"'Para vagas de emprego e oportunidades na Rede CUCA, acesse nossa central de Empregabilidade: "
+        f"{link_empreg or '[número não configurado]'}' — sem adicionar nenhuma outra informação."
+    ) if link_empreg else (
+        "REGRA INQUEBRÁVEL: Se o usuário demonstrar qualquer intenção de buscar emprego, vagas de trabalho, "
+        "enviar currículo ou trabalhar no CUCA, informe que o canal correto é a Central de Empregabilidade da Rede CUCA "
+        "e que ele deve buscar a unidade mais próxima para mais informações."
+    )
+
     payload = {
         "telefone": phone,
         "instancia_uazapi": instance_name,
@@ -149,6 +214,8 @@ async def _chamar_motor_agente(
         "midia_url": midia_url,
         "midia_tipo": midia_tipo,
         "data_atual": _agora.strftime("%A, %d de %B de %Y, %H:%M"),
+        "numero_empregabilidade": telefone_empreg,
+        "instrucoes_adicionais": instrucao_empregabilidade,
     }
 
     try:
@@ -223,7 +290,7 @@ async def processar_mensagem_institucional(
     # Primeira mensagem ou fluxo vazio → exibir menu de unidades
     # -----------------------------------------------------------------------
     if not etapa:
-        await _enviar(instance_name, token, phone, MENU_UNIDADES)
+        await _enviar(instance_name, token, phone, _montar_menu_unidades())
         _set_inst_fluxo(conversa_id, {"etapa": "aguardando_unidade"})
         return
 
@@ -284,6 +351,30 @@ async def processar_mensagem_institucional(
     # -----------------------------------------------------------------------
     if etapa == "respondendo":
         unidade_atual = fluxo.get("unidade_selecionada") or unidade_cuca_instancia
+
+        # Ação 5.3 SQS-41: Interceptação de intenção de emprego — resposta direta, sem chamar LLM
+        _KEYWORDS_EMPREGO = {
+            "emprego", "vaga", "vagas", "trabalho", "trabalhar", "currículo", "curriculo",
+            "curriculum", "empregabilidade", "contrato", "contratado", "clt", "estágio",
+            "estagio", "trainee", "job", "oportunidade", "oportunidades", "rh", "seleção",
+            "processo seletivo", "me candidatar", "quero trabalhar", "busco emprego",
+            "procuro emprego", "procurando emprego", "enviar currículo", "enviar curriculo",
+        }
+        if any(kw in t for kw in _KEYWORDS_EMPREGO):
+            telefone_empreg = _buscar_telefone_instancia("empregoredecuca", canal_tipo="Empregabilidade")
+            if telefone_empreg:
+                msg_redirect = (
+                    f"Para vagas de emprego e oportunidades na Rede CUCA, acesse nossa central de Empregabilidade: "
+                    f"📍 *Empregabilidade Rede Cuca:* wa.me/{telefone_empreg}"
+                )
+            else:
+                msg_redirect = (
+                    "Para vagas de emprego e oportunidades na Rede CUCA, procure a unidade CUCA mais próxima "
+                    "e solicite atendimento na Empregabilidade. 💼"
+                )
+            await _enviar(instance_name, token, phone, msg_redirect)
+            return
+
         unidade_mencionada = _detectar_unidade(t, ignorar_numeros=True)
 
         if unidade_mencionada and unidade_mencionada != unidade_atual:
@@ -308,5 +399,5 @@ async def processar_mensagem_institucional(
     # Fallback — estado desconhecido, reinicia com o menu
     # -----------------------------------------------------------------------
     _set_inst_fluxo(conversa_id, {})
-    await _enviar(instance_name, token, phone, MENU_UNIDADES)
+    await _enviar(instance_name, token, phone, _montar_menu_unidades())
     _set_inst_fluxo(conversa_id, {"etapa": "aguardando_unidade"})

@@ -112,7 +112,7 @@ export default function DivulgacaoPage() {
     const [template, setTemplate] = useState("")
     const [instanciaDisp, setInstanciaDisp] = useState<string | null>(null)
     const [instanciasInstitucionais, setInstanciasInstitucionais] = useState<any[]>([])
-    const [telefoneInstGlobal, setTelefoneInstGlobal] = useState<string>("5585921907649")
+    const [telefoneInstGlobal, setTelefoneInstGlobal] = useState<string>("")
     const [disparando, setDisparando] = useState(false)
 
     const fetchData = useCallback(async () => {
@@ -165,17 +165,29 @@ export default function DivulgacaoPage() {
 
             setInstanciasInstitucionais(instsInst ?? [])
 
-            // 3.6 Buscar instância Institucional global (sem unidade) para o link RAG no template
-            const { data: instGlobal } = await supabase
+            // 3.6 Buscar instância institucionalredecuca (número dinâmico — nunca hardcode)
+            // Prioridade: nome exato → canal_tipo Institucional sem unidade → qualquer Institucional ativa
+            const { data: instNomeExato } = await supabase
                 .from("instancias_uazapi")
                 .select("telefone")
-                .eq("canal_tipo", "Institucional")
+                .ilike("nome", "%institucionalredecuca%")
                 .eq("ativa", true)
-                .is("unidade_cuca", null)
                 .limit(1)
                 .maybeSingle()
 
-            if (instGlobal?.telefone) setTelefoneInstGlobal(instGlobal.telefone)
+            if (instNomeExato?.telefone) {
+                setTelefoneInstGlobal(instNomeExato.telefone)
+            } else {
+                const { data: instGlobal } = await supabase
+                    .from("instancias_uazapi")
+                    .select("telefone")
+                    .eq("canal_tipo", "Institucional")
+                    .eq("ativa", true)
+                    .is("unidade_cuca", null)
+                    .limit(1)
+                    .maybeSingle()
+                if (instGlobal?.telefone) setTelefoneInstGlobal(instGlobal.telefone)
+            }
 
             // 4. Histórico de disparos
             const { data: hist } = await supabase
@@ -209,6 +221,14 @@ export default function DivulgacaoPage() {
     const abrirModal = () => {
         const nomeMes = MESES[mesAtual - 1]
 
+        if (!telefoneInstGlobal) {
+            toast.warning("Instância institucionalredecuca não encontrada ou sem telefone cadastrado. Configure a instância antes de disparar.")
+        }
+
+        const linkRedeCuca = telefoneInstGlobal
+            ? `wa.me/${telefoneInstGlobal}`
+            : "[NÚMERO NÃO ENCONTRADO — configure a instância institucionalredecuca]"
+
         const tpl = `Bom dia, {nome}!
 A programação de ${nomeMes}/${anoAtual} já está disponível!
 
@@ -216,7 +236,7 @@ Se quiser se matricular nas nossas atividades e conferir a programação complet
 🔗 https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/
 
 Caso queira mais informações sobre a programação de qualquer unidade, fale diretamente conosco no WhatsApp:
-📍 Rede Cuca: wa.me/${telefoneInstGlobal}`
+📍 Rede Cuca: ${linkRedeCuca}`
 
         setTemplate(tpl)
         setModalAberto(true)
