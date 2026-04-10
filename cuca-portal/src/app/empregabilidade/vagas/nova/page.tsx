@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift, Copy, X, Clock } from "lucide-react"
+import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift, Copy, X, Clock, MapPin } from "lucide-react"
 import toast from "react-hot-toast"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 const TIPOS_CONTRATO = ["CLT", "PJ", "Estágio", "Temporário", "Aprendiz", "Freelancer"]
 const ESCOLARIDADES = ["Fundamental Incompleto", "Fundamental Completo", "Médio Incompleto", "Médio Completo", "Superior Incompleto", "Superior Completo"]
@@ -36,6 +37,15 @@ const BENEFICIOS_OPCOES = [
     "Cartão Alimentação/Refeição",
 ]
 
+const UNIDADES_DESTINO = [
+    { value: "global", label: "🌐 Toda a Rede CUCA" },
+    { value: "Cuca Barra", label: "📍 CUCA Barra" },
+    { value: "Cuca Mondubim", label: "📍 CUCA Mondubim" },
+    { value: "Cuca Pici", label: "📍 CUCA Pici" },
+    { value: "Cuca Jangurussu", label: "📍 CUCA Jangurussu" },
+    { value: "Cuca José Walter", label: "📍 CUCA José Walter" },
+]
+
 const TIPOS_SELECAO = [
     { value: "coleta_curriculo", label: "Coleta de Currículo", desc: "A empresa conduz o processo seletivo de forma independente. O CUCA apenas coleta e encaminha os currículos." },
     { value: "entrevista_unidade", label: "Entrevista na Unidade", desc: "O processo inclui entrevistas presenciais na unidade CUCA. A equipe agenda e organiza as entrevistas." },
@@ -59,6 +69,7 @@ export default function NovaVagaEmpresaPage() {
     const emailParam = searchParams.get("email_responsavel") || ""
     const telefoneParam = searchParams.get("telefone_responsavel") || ""
 
+    const [unidadeDestino, setUnidadeDestino] = useState<string>(unidadeDestinoParam)
     const [empresa, setEmpresa] = useState<{ id: string; nome: string } | null>(null)
     const [loadingEmpresa, setLoadingEmpresa] = useState(true)
     const [empresaInvalida, setEmpresaInvalida] = useState(false)
@@ -150,6 +161,10 @@ export default function NovaVagaEmpresaPage() {
             toast.error("Preencha pelo menos título, descrição e tipo de contrato.")
             return
         }
+        if (!unidadeDestino) {
+            toast.error("Selecione a unidade de destino da vaga.")
+            return
+        }
         if (setoresMarcados.length === 0) {
             toast.error("Selecione pelo menos uma área da vaga.")
             return
@@ -181,7 +196,7 @@ export default function NovaVagaEmpresaPage() {
                     limite_curriculos: limiteCurriculos ? parseInt(limiteCurriculos) : null,
                     tipo_selecao: tipoSelecao || null,
                     unidade_cuca: unidadeCuca || null,
-                    unidade_destino: unidadeDestinoParam,
+                    unidade_destino: unidadeDestino || "global",
                     setor: setoresMarcados,
                     email_responsavel: emailResponsavel,
                     telefone_responsavel: telefoneResponsavel.replace(/\D/g, ""),
@@ -296,6 +311,27 @@ export default function NovaVagaEmpresaPage() {
                             <div className="space-y-2">
                                 <Label htmlFor="titulo">Título / Cargo *</Label>
                                 <Input id="titulo" value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Ex: Atendente de Loja, Auxiliar Administrativo" required />
+                            </div>
+
+                            {/* Unidade de Destino — OBRIGATÓRIO */}
+                            <div className="space-y-2">
+                                <Label htmlFor="unidadeDestino" className="flex items-center gap-1.5">
+                                    <MapPin className="h-4 w-4 text-cuca-blue" />
+                                    Unidade de Destino da Vaga *
+                                </Label>
+                                <Select value={unidadeDestino} onValueChange={setUnidadeDestino} required>
+                                    <SelectTrigger id="unidadeDestino" className={`w-full ${!unidadeDestino ? "border-amber-500/60 focus:ring-amber-500" : ""}`}>
+                                        <SelectValue placeholder="Selecione para qual unidade é esta vaga..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {UNIDADES_DESTINO.map(u => (
+                                            <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">
+                                    Escolha <strong>Toda a Rede CUCA</strong> se qualquer unidade pode atender esta vaga, ou selecione a unidade específica responsável pelo processo seletivo.
+                                </p>
                             </div>
 
                             {/* Descrição */}
