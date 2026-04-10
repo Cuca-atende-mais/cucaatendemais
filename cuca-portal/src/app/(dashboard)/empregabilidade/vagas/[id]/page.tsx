@@ -24,6 +24,7 @@ import { differenceInYears, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { mascaraTelefone, limparTelefone } from "@/lib/utils"
 import { NIVEIS_ESCOLARIDADE } from "@/constants/empregabilidade"
+import { useUser } from "@/lib/auth/user-provider"
 
 function formatarExperiencia(meses: number | null | undefined): string {
     if (!meses || meses === 0) return "Sem experiência informada"
@@ -95,6 +96,7 @@ export default function VagaDetalhesPage() {
     const id = params.id as string
     const supabase = createClient()
 
+    const { profile } = useUser()
     const [vaga, setVaga] = useState<Vaga | null>(null)
     const [candidatos, setCandidatos] = useState<Candidatura[]>([])
     const [loading, setLoading] = useState(true)
@@ -405,6 +407,8 @@ export default function VagaDetalhesPage() {
         try {
             const res = await fetch(`/api/empregabilidade/vagas/${id}/solicitar-feedback`, {
                 method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cuca_unit_id: profile?.unidade_cuca || null }),
             })
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || "Erro ao solicitar feedback")

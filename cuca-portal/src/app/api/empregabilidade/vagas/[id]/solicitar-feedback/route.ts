@@ -13,6 +13,15 @@ export async function POST(
     const { id: vagaId } = await params
     const supabaseAdmin = createClient()
 
+    // Ler unidade do operador logado enviada pelo cliente
+    let cuca_unit_id: string | null = null
+    try {
+        const body = await request.json()
+        cuca_unit_id = body?.cuca_unit_id || null
+    } catch {
+        // body vazio é aceitável — token sem filtro de unidade
+    }
+
     try {
         // 1. Validar existência da vaga e obter dados da empresa
         const { data: vaga, error: vagaErr } = await supabaseAdmin
@@ -53,7 +62,8 @@ export async function POST(
                 vaga_id: vagaId,
                 token,
                 expires_at: expiresAt.toISOString(),
-                used: false
+                used: false,
+                ...(cuca_unit_id ? { cuca_unit_id } : {})
             })
 
         if (tokenErr) throw tokenErr

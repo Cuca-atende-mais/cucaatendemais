@@ -43,6 +43,7 @@ export default function VagaFeedbackPage() {
   const [globalData, setGlobalData] = useState("")
   const [globalHora, setGlobalHora] = useState("")
   const [globalLocal, setGlobalLocal] = useState("")
+  const [cucaUnitId, setCucaUnitId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchData()
@@ -57,6 +58,7 @@ export default function VagaFeedbackPage() {
           vaga_id,
           expires_at,
           used,
+          cuca_unit_id,
           vagas (
             id,
             titulo,
@@ -82,14 +84,22 @@ export default function VagaFeedbackPage() {
       }
 
       const vacancy = tokenData.vagas as any
+      const unitId = tokenData.cuca_unit_id || null
       setVaga(vacancy)
+      setCucaUnitId(unitId)
 
-      // 2. Buscar Candidatos Pendentes/Selecionados para a vaga
-      const { data: candData, error: candErr } = await supabase
+      // 2. Buscar Candidatos Pendentes/Selecionados para a vaga filtrados pela unidade do token
+      let candQuery = supabase
         .from('candidaturas')
         .select('id, nome, status')
         .eq('vaga_id', vacancy.id)
         .in('status', ['pendente', 'selecionado'])
+
+      if (unitId) {
+        candQuery = candQuery.eq('unidade_atendimento_id', unitId)
+      }
+
+      const { data: candData, error: candErr } = await candQuery
 
       if (candErr) throw candErr
 
@@ -199,6 +209,11 @@ export default function VagaFeedbackPage() {
               <p className="text-sm opacity-80 uppercase tracking-widest font-semibold">Feedback de Seleção</p>
               <CardTitle className="text-2xl md:text-3xl mt-1">{vaga?.titulo}</CardTitle>
               <p className="mt-2 text-primary-foreground/90 font-medium">{vaga?.empresas?.nome}</p>
+              {cucaUnitId && (
+                <p className="mt-1 text-primary-foreground/70 text-sm font-medium">
+                  Avaliando candidatos da unidade: <strong>CUCA {cucaUnitId}</strong>
+                </p>
+              )}
             </div>
             <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30 border-none">
               Token Ativo
