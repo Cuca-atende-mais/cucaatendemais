@@ -26,6 +26,7 @@ const SETORES_VAGA = [
     "Beleza e Estética (barbeiro, manicure, cabeleireiro)",
     "Cuidados Pessoais (babá, cuidador de idosos)",
     "Administrativo / Escritório (recepção, auxiliar administrativo)",
+    "Produção (auxiliar, analista e tecnico)",
 ]
 
 const BENEFICIOS_OPCOES = [
@@ -69,7 +70,7 @@ export default function NovaVagaEmpresaPage() {
     const emailParam = searchParams.get("email_responsavel") || ""
     const telefoneParam = searchParams.get("telefone_responsavel") || ""
 
-    const [unidadeDestino, setUnidadeDestino] = useState<string>(unidadeDestinoParam)
+    const [unidadeDestino, setUnidadeDestino] = useState<string>("")
     const [empresa, setEmpresa] = useState<{ id: string; nome: string } | null>(null)
     const [loadingEmpresa, setLoadingEmpresa] = useState(true)
     const [empresaInvalida, setEmpresaInvalida] = useState(false)
@@ -162,11 +163,11 @@ export default function NovaVagaEmpresaPage() {
             return
         }
         if (!unidadeDestino) {
-            toast.error("Selecione a unidade de destino da vaga.")
+            toast.error("Selecione a unidade de destino da vaga. Este campo é obrigatório.")
             return
         }
         if (setoresMarcados.length === 0) {
-            toast.error("Selecione pelo menos uma área da vaga.")
+            toast.error("Selecione pelo menos uma área da vaga. Este campo é obrigatório.")
             return
         }
         if (!emailResponsavel || !telefoneResponsavel) {
@@ -196,7 +197,7 @@ export default function NovaVagaEmpresaPage() {
                     limite_curriculos: limiteCurriculos ? parseInt(limiteCurriculos) : null,
                     tipo_selecao: tipoSelecao || null,
                     unidade_cuca: unidadeCuca || null,
-                    unidade_destino: unidadeDestino || "global",
+                    unidade_destino: unidadeDestino,
                     setor: setoresMarcados,
                     email_responsavel: emailResponsavel,
                     telefone_responsavel: telefoneResponsavel.replace(/\D/g, ""),

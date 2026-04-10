@@ -19,7 +19,13 @@ export async function POST(request: NextRequest) {
         } = body
 
         if (!empresa_id || !titulo || !descricao || !tipo_contrato) {
-            return NextResponse.json({ error: "Campos obrigatórios ausentes." }, { status: 400 })
+            return NextResponse.json({ error: "Campos obrigatórios ausentes: empresa_id, titulo, descricao e tipo_contrato são obrigatórios." }, { status: 400 })
+        }
+        if (!unidade_destino) {
+            return NextResponse.json({ error: "Campo obrigatório ausente: unidade_destino não pode ser nulo ou vazio." }, { status: 400 })
+        }
+        if (!Array.isArray(setor) || setor.length === 0) {
+            return NextResponse.json({ error: "Campo obrigatório ausente: setor deve ser um array com pelo menos uma categoria." }, { status: 400 })
         }
 
         // Verificar se empresa existe e está ativa
@@ -63,10 +69,10 @@ export async function POST(request: NextRequest) {
                 limite_curriculos: limite_curriculos ? parseInt(limite_curriculos) : null,
                 tipo_selecao: tipo_selecao || null,
                 unidade_cuca: unidade_cuca || null,
-                unidade_destino: unidade_destino || 'global',
+                unidade_destino: unidade_destino,
                 numero_vaga,
                 status: "pre_cadastro",
-                setor: setor || [],
+                setor: setor,
                 email_responsavel: email_responsavel || null,
                 email_contato_empresa: email_responsavel || null,
                 telefone_responsavel: telefone_responsavel || null,

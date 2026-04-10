@@ -95,7 +95,10 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [cargaSabadoAte, setCargaSabadoAte] = useState("12:00")
 
     // Roteamento Multi-Tenant (SQS-41)
-    const [unidadeDestino, setUnidadeDestino] = useState("global")
+    const [unidadeDestino, setUnidadeDestino] = useState("")
+
+    // Setor / Área da vaga
+    const [setoresMarcados, setSetoresMarcados] = useState<string[]>([])
 
     // PCD
     const [pcdVaga, setPcdVaga] = useState(false)
@@ -142,7 +145,8 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setExpansiva(vaga.expansiva || false)
                 setEmailContatoEmpresa(vaga.email_contato_empresa || "")
                 setEscolaridadeMinima(vaga.escolaridade_minima || "")
-                setUnidadeDestino((vaga as any).unidade_destino || "global")
+                setUnidadeDestino((vaga as any).unidade_destino || "")
+                setSetoresMarcados((vaga as any).setor || [])
                 setPcdVaga(vaga.pcd_vaga || false)
                 setPcdTipo(vaga.pcd_tipo || "")
                 setPcdHomologado(vaga.pcd_homologado || false)
@@ -170,7 +174,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setUnidadeCucaId(""); setTotalVagas("1"); setStatus("pre_cadastro")
         setFaixaEtaria("15 a 29 anos"); setLocalEntrevista("na_empresa"); setEnderecoEntrevista("")
         setTipoSelecao("presencial"); setExpansiva(false); setEmailContatoEmpresa("")
-        setEscolaridadeMinima(""); setUnidadeDestino("global")
+        setEscolaridadeMinima(""); setUnidadeDestino(""); setSetoresMarcados([])
         setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false)
         setCargaTipo("horario_comercial"); setCargaHoras(""); setCargaEscalaT("")
         setCargaEscalaF(""); setCargaDias("Seg à Sex"); setCargaTrabSabado(false); setCargaSabadoAte("12:00")
@@ -179,6 +183,14 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
 
     const handleSave = async () => {
         if (!empresaId || !titulo || !descricao || !unidadeCucaId) return
+        if (!unidadeDestino) {
+            setErro("Selecione a unidade de destino da vaga. Este campo é obrigatório.")
+            return
+        }
+        if (setoresMarcados.length === 0) {
+            setErro("Selecione pelo menos uma área da vaga. Este campo é obrigatório.")
+            return
+        }
         setErro("")
         setLoading(true)
         try {
@@ -196,6 +208,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 local: local || null,
                 unidade_cuca: unidadesMap[unidadeCucaId] || unidadeCucaId,
                 unidade_destino: unidadeDestino,
+                setor: setoresMarcados,
                 total_vagas: parseInt(totalVagas) || 1,
                 status,
                 faixa_etaria: faixaEtaria,
@@ -245,7 +258,8 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
             const { error } = await supabase.from('vagas').update({
                 status,
                 unidade_cuca: unidadeNome,
-                unidade_destino: unidadeDestino,
+                unidade_destino: unidadeDestino || undefined,
+                setor: setoresMarcados.length > 0 ? setoresMarcados : undefined,
                 expansiva,
                 data_abertura: status === 'aberta' ? new Date().toISOString() : undefined,
             }).eq('id', vaga.id)
@@ -354,10 +368,41 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                         {/* Status + Unidade Destino + Expansiva — editável pela CUCA */}
                         <div className="space-y-4 bg-muted/40 p-4 rounded-xl border">
                             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Controles da Rede CUCA</p>
+
+                            {/* Área / Setor — obrigatório */}
+                            <div className="space-y-2">
+                                <Label className="font-medium">Área da Vaga *</Label>
+                                <div className="grid grid-cols-1 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                                    {[
+                                        "Serviços Gerais (limpeza, portaria, zeladoria)",
+                                        "Construção Civil (pedreiro, ajudante, eletricista, encanador)",
+                                        "Logística e Entregas (estoque, separação, entregador, motorista)",
+                                        "Comércio e Vendas (vendedor, caixa, atendimento)",
+                                        "Alimentação (cozinha, garçom, lanchonete)",
+                                        "Tecnologia (suporte técnico, programação, dados)",
+                                        "Criativo / Digital (design, vídeo, redes sociais)",
+                                        "Beleza e Estética (barbeiro, manicure, cabeleireiro)",
+                                        "Cuidados Pessoais (babá, cuidador de idosos)",
+                                        "Administrativo / Escritório (recepção, auxiliar administrativo)",
+                                        "Produção (auxiliar, analista e tecnico)",
+                                    ].map(s => (
+                                        <label key={s} className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 cursor-pointer text-sm transition-colors ${setoresMarcados.includes(s) ? "border-cuca-blue bg-cuca-blue/10 text-cuca-blue font-medium" : "border-border hover:border-cuca-blue/40"}`}>
+                                            <input
+                                                type="checkbox"
+                                                className="accent-blue-600"
+                                                checked={setoresMarcados.includes(s)}
+                                                onChange={() => setSetoresMarcados(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])}
+                                            />
+                                            {s}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
                             <div className="space-y-2">
                                 <Label>Unidade de Destino *</Label>
                                 <Select value={unidadeDestino} onValueChange={setUnidadeDestino}>
-                                    <SelectTrigger><SelectValue placeholder="Selecione a unidade" /></SelectTrigger>
+                                    <SelectTrigger className={!unidadeDestino ? "border-amber-500/60" : ""}><SelectValue placeholder="Selecione a unidade de destino..." /></SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="global">🌐 Toda a Rede CUCA</SelectItem>
                                         {Object.keys(unidadesMap).map(id => (
@@ -440,7 +485,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                 <Button
                                     className="bg-cuca-blue hover:bg-sky-800 text-white"
                                     onClick={camposEmpresaReadOnly ? handleSaveStatus : handleSave}
-                                    disabled={loading || (!camposEmpresaReadOnly && (!empresaId || !titulo || !descricao || !unidadeCucaId))}
+                                    disabled={loading || (!camposEmpresaReadOnly && (!empresaId || !titulo || !descricao || !unidadeCucaId)) || !unidadeDestino || setoresMarcados.length === 0}
                                 >
                                     {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
                                     {camposEmpresaReadOnly ? "Salvar Alterações" : "Salvar Vaga"}
