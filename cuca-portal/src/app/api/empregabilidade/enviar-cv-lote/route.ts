@@ -77,6 +77,9 @@ export async function POST(request: NextRequest) {
 
                 const habilidades: string[] = ocr?.habilidades || []
                 const vereditoFinal: string = ocr?.veredito_final || ocr?.analise_aderencia?.veredito_final || ""
+                const habilidadesStr: string = ocr?.habilidades_identificadas || (habilidades.length > 0 ? habilidades.join(", ") : "")
+                const experienciasStr: string = ocr?.experiencias_anteriores || ""
+                const analiseStr: string = typeof ocr?.analise_aderencia === "string" ? ocr.analise_aderencia : vereditoFinal
                 const score: number | null = ocr?.match_score ?? null
 
                 const scoreColor = score !== null ? (score >= 70 ? "#16a34a" : score >= 50 ? "#d97706" : "#dc2626") : "#666"
@@ -94,8 +97,9 @@ export async function POST(request: NextRequest) {
                         </div>` : ""}
                     </div>
                     <p style="margin:0 0 6px;font-size:13px;color:#555;">Telefone: <strong>${c.telefone || "Não informado"}</strong></p>
-                    ${habilidades.length > 0 ? `<p style="margin:0 0 6px;font-size:13px;color:#555;">Habilidades: ${habilidades.join(" · ")}</p>` : ""}
-                    ${vereditoFinal ? `<p style="margin:0;font-size:13px;color:#0066cc;font-style:italic;">${vereditoFinal}</p>` : ""}
+                    ${habilidadesStr ? `<p style="margin:0 0 6px;font-size:13px;color:#555;">Habilidades: ${habilidadesStr}</p>` : ""}
+                    ${experienciasStr ? `<p style="margin:0 0 6px;font-size:13px;color:#555;">Experiências: ${experienciasStr}</p>` : ""}
+                    ${analiseStr ? `<p style="margin:0;font-size:13px;color:#0066cc;font-style:italic;">${analiseStr}</p>` : ""}
                     ${cvUrl ? `<div style="margin-top:10px;"><a href="${cvUrl}" style="background:#0066cc;color:white;padding:8px 16px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:bold;">📄 Ver Currículo</a></div>` : ""}
                 </div>`
             }))

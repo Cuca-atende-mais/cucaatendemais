@@ -100,8 +100,8 @@ export default function BancoTalentosDetalhesPage() {
                     data_nascimento: talent.data_nascimento || null,
                     dados_ocr_json: talent.skills_jsonb || null,
                     match_score: matchFromStorage.score ?? null,
-                    status: "selecionado",
-                    requisitos_atendidos: "Aprovado via triagem do banco de talentos",
+                    status: "pendente",
+                    requisitos_atendidos: "Importado via triagem do banco de talentos",
                 })
                 .select("id")
                 .single()
@@ -140,7 +140,9 @@ export default function BancoTalentosDetalhesPage() {
             }
 
             setAcaoFeita("aprovado")
-            toast.success("Candidato aprovado! Nova candidatura criada.")
+            toast.success("Candidato importado! Redirecionando...")
+            // Redireciona com timestamp para forçar fetchData() na página da vaga
+            setTimeout(() => router.push(`/empregabilidade/vagas/${vagaId}?t=${Date.now()}`), 1200)
         } catch (err: any) {
             toast.error("Erro: " + err.message)
         } finally {

@@ -75,6 +75,9 @@ export async function POST(request: NextRequest) {
         const pontosFortesArr: string[] = ocr?.pontos_fortes || ocr?.analise_aderencia?.pontos_fortes || []
         const pontosAtencaoArr: string[] = ocr?.pontos_atencao || ocr?.analise_aderencia?.pontos_atencao || []
         const vereditoFinal: string = ocr?.veredito_final || ocr?.analise_aderencia?.veredito_final || ""
+        // Campos padronizados SQS-41 Task 4 — string corrido para uniformidade no e-mail
+        const habilidadesIdentificadas: string = ocr?.habilidades_identificadas || (habilidades.length > 0 ? habilidades.join(", ") : "")
+        const experienciasAnteriores: string = ocr?.experiencias_anteriores || (resumoExp.length > 0 ? resumoExp.join("; ") : "")
         const score: number | null = ocr?.match_score ?? null
 
         const vagaLabel = vaga.numero_vaga ? `Vaga #${vaga.numero_vaga} — ${vaga.titulo}` : vaga.titulo
@@ -112,10 +115,10 @@ export async function POST(request: NextRequest) {
                         <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 16px;">
                             <tr style="background: #eef4ff;"><td style="padding: 8px 12px; font-weight: bold; width: 40%;">Escolaridade</td><td style="padding: 8px 12px;">${escolaridade}</td></tr>
                             <tr><td style="padding: 8px 12px; font-weight: bold;">Experiência</td><td style="padding: 8px 12px;">${expFormatada}</td></tr>
-                            ${habilidades.length > 0 ? `<tr style="background: #eef4ff;"><td style="padding: 8px 12px; font-weight: bold;">Habilidades</td><td style="padding: 8px 12px;">${habilidades.join(" · ")}</td></tr>` : ""}
+                            ${habilidadesIdentificadas ? `<tr style="background: #eef4ff;"><td style="padding: 8px 12px; font-weight: bold;">Habilidades</td><td style="padding: 8px 12px;">${habilidadesIdentificadas}</td></tr>` : ""}
                         </table>
 
-                        ${resumoExp.length > 0 ? `<div style="margin-bottom:16px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#0066cc;margin-bottom:6px;">Experiências Anteriores</p><ul style="margin:0;padding-left:18px;">${resumoExp.map(e => `<li style="font-size:13px;color:#333;margin-bottom:4px;">${e}</li>`).join("")}</ul></div>` : ""}
+                        ${experienciasAnteriores ? `<div style="margin-bottom:16px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#0066cc;margin-bottom:6px;">Experiências Anteriores</p><p style="font-size:13px;color:#333;margin:0;">${experienciasAnteriores}</p></div>` : ""}
 
                         ${pontosFortesArr.length > 0 ? `<div style="margin-bottom:16px;"><p style="font-weight:bold;font-size:13px;text-transform:uppercase;color:#16a34a;margin-bottom:6px;">✅ Pontos Fortes</p><ul style="margin:0;padding-left:18px;">${pontosFortesArr.map(p => `<li style="font-size:13px;color:#333;margin-bottom:4px;">${p}</li>`).join("")}</ul></div>` : ""}
 

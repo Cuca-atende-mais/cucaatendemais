@@ -97,7 +97,10 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
                 "pontos_fortes": ["Por que ele combina"],
                 "pontos_atencao": ["O que falta ou diverge"],
                 "veredito": "✅ ou ⚠️ ou ❌"
-            }}
+            }},
+            "habilidades_identificadas": "String — lista as habilidades principais separadas por vírgula",
+            "experiencias_anteriores": "String — resumo corrido das experiências profissionais anteriores",
+            "veredito_final": "String — avaliação final de compatibilidade do candidato com a vaga"
         }}
 
         NÍVEIS DE ESCOLARIDADE PERMITIDOS para o campo "escolaridade_normalizada" (retorne EXATAMENTE um deles):
@@ -105,6 +108,7 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
 
         Se o currículo contiver número de telefone ou celular, extraia apenas os dígitos sem formatação.
         Se houver mais de um número, priorize o celular. Retorne null se não encontrar nenhum número.
+        IMPORTANTE: habilidades_identificadas, experiencias_anteriores e veredito_final são OBRIGATÓRIOS e devem ser strings de texto corrido.
         """
 
         # Montar mensagem: PDF → extração de texto; imagem → vision (base64)
@@ -287,7 +291,7 @@ async def process_cv_talent_bank_id(talent_id: str, cv_url: str) -> dict | None:
 
         niveis_str = "\n".join(f"- {n}" for n in NIVEIS_ESCOLARIDADE)
         prompt_sys = f"""Você é especialista em análise de currículos da Rede CUCA.
-Extraia as informações e retorne APENAS um JSON válido:
+Extraia as informações e retorne APENAS um JSON válido com EXATAMENTE este schema:
 {{
     "escolaridade_normalizada": "String — use EXATAMENTE um dos 11 níveis abaixo, o mais alto detectado",
     "genero": "masculino | feminino | outro | null",
@@ -299,11 +303,16 @@ Extraia as informações e retorne APENAS um JSON válido:
     "experiencia_resumo": "String resumindo experiências",
     "habilidades": ["lista", "de", "habilidades"],
     "resumo_experiencias": ["frase por experiência"],
-    "email": "String ou null"
+    "email": "String ou null",
+    "habilidades_identificadas": "String — lista as habilidades principais separadas por vírgula",
+    "experiencias_anteriores": "String — resumo corrido das experiências profissionais anteriores",
+    "analise_aderencia": "String — avaliação geral do perfil do candidato: pontos fortes, lacunas e veredito de compatibilidade"
 }}
 
 NÍVEIS DE ESCOLARIDADE PERMITIDOS para "escolaridade_normalizada":
 {niveis_str}
+
+IMPORTANTE: as três últimas chaves (habilidades_identificadas, experiencias_anteriores, analise_aderencia) são OBRIGATÓRIAS e devem ser strings de texto corrido, não arrays nem objetos.
 """
 
         response = await client.chat.completions.create(
