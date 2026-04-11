@@ -19,6 +19,7 @@ export default function VagasPage() {
     const router = useRouter()
     const [vagas, setVagas] = useState<Vaga[]>([])
     const [empresasMap, setEmpresasMap] = useState<Record<string, Empresa>>({})
+    const [unidadesMap, setUnidadesMap] = useState<Record<string, string>>({})
     const [candidaturasCount, setCandidaturasCount] = useState<Record<string, number>>({})
     const [feedbackLoadingId, setFeedbackLoadingId] = useState<string | null>(null)
 
@@ -49,15 +50,32 @@ export default function VagasPage() {
                 }
             }
 
+            // Load unidades map if missing (id → nome)
+            let currentUnidadesMap = unidadesMap
+            if (Object.keys(unidadesMap).length === 0) {
+                const { data: uds } = await supabase.from('unidades_cuca').select('id, nome')
+                if (uds) {
+                    const map: Record<string, string> = {}
+                    uds.forEach(u => map[u.id] = u.nome)
+                    setUnidadesMap(map)
+                    currentUnidadesMap = map
+                }
+            }
+
             // Fetch Vagas
             const { data, error } = await supabase.from("vagas").select("*").order("created_at", { ascending: false })
             if (error) throw error
 
             let filtered = data || []
 
-            // Filtrar por unidade na aba "Minha Unidade" (exceto developer)
+            // Filtrar por unidade_destino na aba "Minha Unidade" (exceto developer)
             if (abaFiltro === "minhas" && profile?.unidade_cuca && profile?.unidade_cuca !== 'Geral') {
-                filtered = filtered.filter(v => v.unidade_cuca === profile.unidade_cuca)
+                // Resolve o UUID da unidade do colaborador logado a partir do nome armazenado no perfil
+                const profileUnitId = Object.entries(currentUnidadesMap).find(([, nome]) => nome === profile.unidade_cuca)?.[0]
+                filtered = filtered.filter(v =>
+                    v.unidade_destino === 'global' ||
+                    (profileUnitId && v.unidade_destino === profileUnitId)
+                )
             }
 
             if (statusFilter && statusFilter !== "all") {
@@ -251,13 +269,25 @@ export default function VagasPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        <div className="flex flex-col">
+                                        <div className="flex flex-col gap-0.5">
                                             <span className="font-medium text-sm">{empresasMap[v.empresa_id]?.nome || 'Desconhecida'}</span>
-                                            <span className="text-xs text-muted-foreground">{empresasMap[v.empresa_id]?.setor || 'Sem setor'}</span>
+                                            {v.setor && v.setor.length > 0 ? (
+                                                <span className="text-xs text-muted-foreground">{v.setor.join(' · ')}</span>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground/50">Sem área</span>
+                                            )}
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        <Badge variant="outline" className="bg-muted/50">{v.unidade_cuca || 'Não definida'}</Badge>
+                                        {v.unidade_destino === 'global' ? (
+                                            <Badge className="bg-cuca-blue/10 text-cuca-blue border-cuca-blue/30 gap-1">
+                                                <Globe className="h-3 w-3" /> Toda a Rede
+                                            </Badge>
+                                        ) : v.unidade_destino && unidadesMap[v.unidade_destino] ? (
+                                            <Badge variant="outline" className="bg-muted/50">{unidadesMap[v.unidade_destino]}</Badge>
+                                        ) : (
+                                            <Badge variant="outline" className="text-amber-600 border-amber-500/40 bg-amber-50/50">Não definida</Badge>
+                                        )}
                                     </TableCell>
                                     <TableCell>
                                         <div className="flex flex-col space-y-1 text-xs text-muted-foreground">

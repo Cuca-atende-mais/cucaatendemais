@@ -104,6 +104,8 @@ export type Vaga = {
     carga_horaria: string | null
     local: string | null
     unidade_cuca: string | null
+    unidade_destino: string | null
+    setor: string[] | null
     total_vagas: number
     limite_curriculos: number | null
     escolaridade_minima: string | null

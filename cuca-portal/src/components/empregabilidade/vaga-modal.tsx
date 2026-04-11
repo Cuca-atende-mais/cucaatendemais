@@ -250,6 +250,14 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
 
     const handleSaveStatus = async () => {
         if (!vaga) return
+        if (!unidadeDestino) {
+            setErro("Selecione a unidade de destino da vaga. Este campo é obrigatório.")
+            return
+        }
+        if (setoresMarcados.length === 0) {
+            setErro("Selecione pelo menos uma área da vaga. Este campo é obrigatório.")
+            return
+        }
         setErro("")
         setLoading(true)
         try {
@@ -258,8 +266,8 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
             const { error } = await supabase.from('vagas').update({
                 status,
                 unidade_cuca: unidadeNome,
-                unidade_destino: unidadeDestino || undefined,
-                setor: setoresMarcados.length > 0 ? setoresMarcados : undefined,
+                unidade_destino: unidadeDestino,
+                setor: setoresMarcados,
                 expansiva,
                 data_abertura: status === 'aberta' ? new Date().toISOString() : undefined,
             }).eq('id', vaga.id)
