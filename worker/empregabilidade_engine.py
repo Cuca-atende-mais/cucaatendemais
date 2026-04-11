@@ -1457,7 +1457,7 @@ async def _processar_publico(
 
         if unidade_destino_vaga == "global":
             # Perguntar ao candidato qual unidade fica mais próxima
-            _unid_res = supabase.table("unidades_cuca").select("id, nome").eq("ativa", True).order("nome").execute()
+            _unid_res = supabase.table("unidades_cuca").select("id, nome").eq("ativo", True).order("nome").execute()
             unidades_disponiveis = _unid_res.data or []
             linhas_unid = [
                 "🌐 *Esta vaga é para toda a Rede CUCA!*\n\n"
