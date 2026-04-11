@@ -77,7 +77,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [unidadeCucaId, setUnidadeCucaId] = useState("")
     const [totalVagas, setTotalVagas] = useState("1")
     const [status, setStatus] = useState("pre_cadastro")
-    const [faixaEtaria, setFaixaEtaria] = useState("15 a 29 anos")
+    const [faixaEtaria, setFaixaEtaria] = useState("")
     const [localEntrevista, setLocalEntrevista] = useState("na_empresa")
     const [enderecoEntrevista, setEnderecoEntrevista] = useState("")
     const [tipoSelecao, setTipoSelecao] = useState("presencial")
@@ -138,7 +138,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setUnidadeCucaId(vaga.unidade_cuca || "")
                 setTotalVagas(vaga.total_vagas.toString())
                 setStatus(vaga.status)
-                setFaixaEtaria(vaga.faixa_etaria || "15 a 29 anos")
+                setFaixaEtaria(vaga.faixa_etaria || "")
                 setLocalEntrevista(vaga.local_entrevista || "na_empresa")
                 setEnderecoEntrevista((vaga as any).endereco_entrevista || "")
                 setTipoSelecao(vaga.tipo_selecao || "presencial")
@@ -172,7 +172,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setEmpresaId(""); setTitulo(""); setDescricao(""); setRequisitos("")
         setSalario(""); setBeneficios(""); setTipoContrato("clt"); setLocal("")
         setUnidadeCucaId(""); setTotalVagas("1"); setStatus("pre_cadastro")
-        setFaixaEtaria("15 a 29 anos"); setLocalEntrevista("na_empresa"); setEnderecoEntrevista("")
+        setFaixaEtaria(""); setLocalEntrevista("na_empresa"); setEnderecoEntrevista("")
         setTipoSelecao("presencial"); setExpansiva(false); setEmailContatoEmpresa("")
         setEscolaridadeMinima(""); setUnidadeDestino(""); setSetoresMarcados([])
         setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false)
@@ -360,6 +360,16 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                     <Label>Total de Vagas</Label>
                                     <Input type="number" value={totalVagas} readOnly={camposEmpresaReadOnly} onChange={e => setTotalVagas(e.target.value)} className={camposEmpresaReadOnly ? "bg-muted" : ""} />
                                 </div>
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Faixa Etária *</Label>
+                                <Select value={faixaEtaria} onValueChange={setFaixaEtaria}>
+                                    <SelectTrigger className={!faixaEtaria ? "border-amber-500/60" : ""}><SelectValue placeholder="Selecione a faixa etária..." /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="A partir de 14 anos">A partir de 14 anos</SelectItem>
+                                        <SelectItem value="Maior de 18 anos">Maior de 18 anos</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">

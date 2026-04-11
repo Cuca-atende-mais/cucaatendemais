@@ -31,6 +31,7 @@ export async function POST(
                 titulo,
                 unidade_cuca,
                 empresa_id,
+                telefone_responsavel,
                 empresas (
                     telefone,
                     nome
@@ -44,7 +45,8 @@ export async function POST(
         }
 
         const empresa = (vaga.empresas as any)
-        const telefoneRH = empresa?.telefone
+        // Prioriza telefone do responsável da vaga; fallback para telefone geral da empresa
+        const telefoneRH = (vaga as any).telefone_responsavel || empresa?.telefone
 
         if (!telefoneRH) {
             return NextResponse.json({ error: "Empresa não possui telefone de contato cadastrado." }, { status: 400 })

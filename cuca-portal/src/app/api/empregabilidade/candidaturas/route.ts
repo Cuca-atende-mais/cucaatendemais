@@ -19,6 +19,28 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: "Campos obrigatórios ausentes." }, { status: 400 })
         }
 
+        // Trava etária: se vaga exige "Maior de 18 anos", bloquear candidatos < 18
+        if (vaga_id && data_nascimento) {
+            const { data: vagaData } = await supabaseAdmin
+                .from("vagas")
+                .select("faixa_etaria")
+                .eq("id", vaga_id)
+                .single()
+            if (vagaData?.faixa_etaria === "Maior de 18 anos") {
+                const nasc = new Date(data_nascimento)
+                const hoje = new Date()
+                let idade = hoje.getFullYear() - nasc.getFullYear()
+                const m = hoje.getMonth() - nasc.getMonth()
+                if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade--
+                if (idade < 18) {
+                    return NextResponse.json(
+                        { error: "Esta vaga exige idade mínima de 18 anos." },
+                        { status: 400 }
+                    )
+                }
+            }
+        }
+
         // HF37-07: Lógica de upsert inteligente para candidaturas por telefone + vaga_id
         const STATUS_ATIVOS = ["pendente", "selecionado", "contratado"]
         const candidaturaPayload = {

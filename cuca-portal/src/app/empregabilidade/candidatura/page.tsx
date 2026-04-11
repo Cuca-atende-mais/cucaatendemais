@@ -158,12 +158,11 @@ export default function CandidaturaPublicaPage() {
         try {
             let destinoBancoTalentos = bancoTalentosParam
 
-            // Validação etária
-            if (!destinoBancoTalentos && vaga?.faixa_etaria) {
-                const exige18 = /18\+|maior.*18|adulto/i.test(vaga.faixa_etaria)
-                if (exige18 && calcularIdade(dataNascimento) < 18) {
-                    destinoBancoTalentos = true
-                }
+            // Validação etária — bloqueio rígido para vagas "Maior de 18 anos"
+            if (vaga?.faixa_etaria === "Maior de 18 anos" && calcularIdade(dataNascimento) < 18) {
+                toast.error("⚠️ Esta vaga exige idade mínima de 18 anos. Sua candidatura não pode ser concluída.")
+                setLoadingSubmit(false)
+                return
             }
 
             // Verificar limite de currículos (conta apenas candidaturas reais, não banco de talentos)
