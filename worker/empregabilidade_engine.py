@@ -1357,12 +1357,13 @@ async def _processar_publico(
                         nome_prefill, phone, vaga_id_global, False, lead_id=lead_id
                     )
                 else:
-                    await e("Para finalizar sua candidatura, preciso do seu *nome completo*:")
+                    # Salva estado antes de enviar para não ficar preso se envio falhar
                     _set_fluxo(conversa_id, {
                         **novo_fluxo,
                         "etapa": "coletando_nome_candidato",
                         "banco_talentos": False,
                     })
+                    await e("Para finalizar sua candidatura, preciso do seu *nome completo*:")
                 return
         # Resposta inválida — re-exibe as opções
         linhas_re_unid = [
@@ -1384,7 +1385,10 @@ async def _processar_publico(
     # (captura candidaturas de sessões anteriores que não estão na memória da sessão atual)
     # Filtro de status feito em Python puro para evitar incompatibilidade com postgrest-py
     STATUS_INATIVOS = {"rejeitado", "cancelado", "excluido", "inativo"}
+    # Remove todos os não-dígitos e normaliza: candidaturas são salvas sem o "55" do Brasil
     telefone_limpo = re.sub(r"\D", "", phone)
+    if telefone_limpo.startswith("55") and len(telefone_limpo) > 11:
+        telefone_limpo = telefone_limpo[2:]
     db_cands_res = supabase.table("candidaturas").select("vaga_id, status").eq(
         "telefone", telefone_limpo
     ).execute()
@@ -1461,7 +1465,8 @@ async def _processar_publico(
             ]
             for idx_u, u in enumerate(unidades_disponiveis, start=1):
                 linhas_unid.append(f"*{idx_u}.* {u['nome']}")
-            await e("\n".join(linhas_unid))
+            # Salva o estado ANTES de enviar a mensagem — evita ficar preso em listou_vagas
+            # se o envio falhar de forma intermitente
             _set_fluxo(conversa_id, {
                 **fluxo,
                 "etapa": "aguardando_escolha_unidade",
@@ -1470,6 +1475,7 @@ async def _processar_publico(
                 "historico_vagas_aplicadas": historico_aplicadas,
                 "unidades_opcoes": unidades_disponiveis,
             })
+            await e("\n".join(linhas_unid))
             return
 
         # S37C-05: vaga com unidade definida — fluxo normal
