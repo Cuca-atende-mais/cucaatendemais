@@ -1373,16 +1373,11 @@ async def _processar_publico(
         await e("\n".join(linhas_re_unid))
         return
 
-    # SQS-41: Buscar vagas abertas da unidade E vagas globais (unidade_destino='global')
-    # Hotfix: se unidade_cuca vier nulo/vazio, não gera cláusula malformada no PostgREST
-    _q = supabase.table("vagas").select(
+    # Candidatos veem TODAS as vagas abertas de qualquer unidade.
+    # unidade_destino controla apenas qual equipe CUCA gerencia a candidatura — não a visibilidade pública.
+    vagas_res = supabase.table("vagas").select(
         "id, titulo, tipo_contrato, salario, escolaridade_minima, total_vagas, faixa_etaria, setor, unidade_destino"
-    ).eq("status", "aberta")
-    if unidade_cuca:
-        _q = _q.or_(f"unidade_cuca.eq.{unidade_cuca},unidade_destino.eq.global")
-    else:
-        _q = _q.eq("unidade_destino", "global")
-    vagas_res = _q.order("created_at", desc=True).limit(50).execute()
+    ).eq("status", "aberta").order("created_at", desc=True).limit(50).execute()
     vagas = vagas_res.data or []
 
     # HF37-06: Sincronizar com o banco — buscar vagas já candidatadas por este telefone
