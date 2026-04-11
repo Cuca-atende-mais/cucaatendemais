@@ -80,7 +80,7 @@ export default function NovaVagaEmpresaPage() {
     const [telefoneResponsavel, setTelefoneResponsavel] = useState(telefoneParam)
     const [totalVagas, setTotalVagas] = useState("1")
     const [escolaridadeMinima, setEscolaridadeMinima] = useState("")
-    const [faixaEtaria, setFaixaEtaria] = useState("15 a 29 anos")
+    const [faixaEtaria, setFaixaEtaria] = useState("")
     const [local, setLocal] = useState("")
     const [localEntrevista, setLocalEntrevista] = useState("na_empresa")
 
@@ -178,6 +178,10 @@ export default function NovaVagaEmpresaPage() {
         }
         if (setoresMarcados.length === 0) {
             toast.error("Selecione pelo menos uma área da vaga. Este campo é obrigatório.")
+            return
+        }
+        if (!faixaEtaria) {
+            toast.error("Selecione a idade mínima da vaga. Este campo é obrigatório.")
             return
         }
         if (!emailResponsavel || !telefoneResponsavel) {
@@ -389,8 +393,16 @@ export default function NovaVagaEmpresaPage() {
                             {/* Faixa etária + Localização */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                    <Label htmlFor="faixaEtaria">Faixa Etária</Label>
-                                    <Input id="faixaEtaria" value={faixaEtaria} onChange={e => setFaixaEtaria(e.target.value)} placeholder="Ex: 15 a 29 anos" />
+                                    <Label htmlFor="faixaEtaria">Idade Mínima *</Label>
+                                    <Select value={faixaEtaria} onValueChange={setFaixaEtaria} required>
+                                        <SelectTrigger id="faixaEtaria" className={!faixaEtaria ? "border-amber-500/60" : ""}>
+                                            <SelectValue placeholder="Selecione a idade mínima..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="A partir de 14 anos">A partir de 14 anos</SelectItem>
+                                            <SelectItem value="Maior de 18 anos">Maior de 18 anos</SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="local">Localização da Vaga</Label>
