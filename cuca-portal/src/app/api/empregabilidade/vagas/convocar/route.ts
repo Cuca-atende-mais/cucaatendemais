@@ -58,18 +58,32 @@ export async function POST(req: NextRequest) {
 
         if (updateErr) throw updateErr
 
-        // 3. Buscar instância institucional para envio
-        const { data: inst, error: instErr } = await supabase
+        // 3. Buscar instância para envio (prioridade: Empregabilidade > Institucional > qualquer ativa)
+        const { data: instancias } = await supabase
             .from("instancias_uazapi")
-            .select("nome, token")
+            .select("nome, token, canal_tipo")
             .eq("unidade_cuca", unidade)
-            .eq("canal_tipo", "Institucional")
             .eq("ativa", true)
-            .limit(1)
-            .single()
+            .limit(10)
 
-        if (instErr || !inst) {
-            return NextResponse.json({ error: "Nenhuma instância institucional ativa para esta unidade" }, { status: 500 })
+        let inst = instancias?.find(i => i.canal_tipo === "Empregabilidade")
+            || instancias?.find(i => i.canal_tipo === "Institucional")
+            || instancias?.[0]
+
+        if (!inst) {
+            // Fallback global: qualquer instância Empregabilidade ativa na rede
+            const { data: instGlobal } = await supabase
+                .from("instancias_uazapi")
+                .select("nome, token, canal_tipo")
+                .eq("canal_tipo", "Empregabilidade")
+                .eq("ativa", true)
+                .limit(1)
+                .single()
+            if (instGlobal) inst = instGlobal
+        }
+
+        if (!inst) {
+            return NextResponse.json({ error: "Nenhuma instância WhatsApp ativa encontrada para esta unidade" }, { status: 500 })
         }
 
         // 4. Preparar mensagem
