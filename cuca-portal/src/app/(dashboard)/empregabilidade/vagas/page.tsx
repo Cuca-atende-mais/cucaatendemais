@@ -70,12 +70,20 @@ export default function VagasPage() {
 
             // Filtrar por unidade_destino na aba "Minha Unidade" (exceto developer)
             if (abaFiltro === "minhas" && profile?.unidade_cuca && profile?.unidade_cuca !== 'Geral') {
-                // Resolve o UUID da unidade do colaborador logado a partir do nome armazenado no perfil
-                const profileUnitId = Object.entries(currentUnidadesMap).find(([, nome]) => nome === profile.unidade_cuca)?.[0]
-                filtered = filtered.filter(v =>
-                    v.unidade_destino === 'global' ||
-                    (profileUnitId && v.unidade_destino === profileUnitId)
-                )
+                const profileUnitName = profile.unidade_cuca.toLowerCase()
+                // Resolve UUID da unidade do perfil (case-insensitive)
+                const profileUnitId = Object.entries(currentUnidadesMap).find(
+                    ([, nome]) => nome.toLowerCase() === profileUnitName
+                )?.[0]
+                filtered = filtered.filter(v => {
+                    if (!v.unidade_destino) return false
+                    if (v.unidade_destino === 'global') return true
+                    // UUID match (dados novos)
+                    if (profileUnitId && v.unidade_destino === profileUnitId) return true
+                    // Fallback name match (dados legados salvos antes da correção)
+                    if (v.unidade_destino.toLowerCase() === profileUnitName) return true
+                    return false
+                })
             }
 
             if (statusFilter && statusFilter !== "all") {

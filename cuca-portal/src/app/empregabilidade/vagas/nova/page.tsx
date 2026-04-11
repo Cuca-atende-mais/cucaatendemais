@@ -38,14 +38,6 @@ const BENEFICIOS_OPCOES = [
     "Cartão Alimentação/Refeição",
 ]
 
-const UNIDADES_DESTINO = [
-    { value: "global", label: "🌐 Toda a Rede CUCA" },
-    { value: "Cuca Barra", label: "📍 CUCA Barra" },
-    { value: "Cuca Mondubim", label: "📍 CUCA Mondubim" },
-    { value: "Cuca Pici", label: "📍 CUCA Pici" },
-    { value: "Cuca Jangurussu", label: "📍 CUCA Jangurussu" },
-    { value: "Cuca José Walter", label: "📍 CUCA José Walter" },
-]
 
 const TIPOS_SELECAO = [
     { value: "coleta_curriculo", label: "Coleta de Currículo", desc: "A empresa conduz o processo seletivo de forma independente. O CUCA apenas coleta e encaminha os currículos." },
@@ -71,6 +63,7 @@ export default function NovaVagaEmpresaPage() {
     const telefoneParam = searchParams.get("telefone_responsavel") || ""
 
     const [unidadeDestino, setUnidadeDestino] = useState<string>("")
+    const [unidadesOpcoes, setUnidadesOpcoes] = useState<{ value: string; label: string }[]>([])
     const [empresa, setEmpresa] = useState<{ id: string; nome: string } | null>(null)
     const [loadingEmpresa, setLoadingEmpresa] = useState(true)
     const [empresaInvalida, setEmpresaInvalida] = useState(false)
@@ -130,6 +123,23 @@ export default function NovaVagaEmpresaPage() {
             })
             .catch(() => { setEmpresaInvalida(true); setLoadingEmpresa(false) })
     }, [empresaId])
+
+    useEffect(() => {
+        fetch("/api/empregabilidade/unidades")
+            .then(r => r.json())
+            .then((data: { id: string; nome: string }[]) => {
+                if (Array.isArray(data)) {
+                    const opcoes = [
+                        { value: "global", label: "🌐 Toda a Rede CUCA" },
+                        ...data.map(u => ({ value: u.id, label: `📍 ${u.nome}` })),
+                    ]
+                    setUnidadesOpcoes(opcoes)
+                }
+            })
+            .catch(() => {
+                // fallback: deixa lista vazia, usuário não consegue submeter sem selecionar
+            })
+    }, [])
 
     const toggleSetor = (s: string) => {
         setSetoresMarcados(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
@@ -325,7 +335,7 @@ export default function NovaVagaEmpresaPage() {
                                         <SelectValue placeholder="Selecione para qual unidade é esta vaga..." />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {UNIDADES_DESTINO.map(u => (
+                                        {unidadesOpcoes.map(u => (
                                             <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
                                         ))}
                                     </SelectContent>
