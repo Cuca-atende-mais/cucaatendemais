@@ -116,19 +116,24 @@ export async function POST(
 
         console.info(`[solicitar-feedback] Enviando para ${number} via instância '${instancia.nome}' — worker: ${workerUrl}`)
 
-        const sendRes = await fetch(`${workerUrl}/send-message/${internalToken}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ number, text: mensagem, instance: instancia.nome }),
-        })
-
-        if (!sendRes.ok) {
-            const errLog = await sendRes.text()
-            console.error(`[solicitar-feedback] Worker retornou ${sendRes.status}: ${errLog}`)
-            throw new Error(`Falha ao disparar mensagem via WhatsApp (worker ${sendRes.status}: ${errLog})`)
+        let sendWarning: string | null = null
+        try {
+            const sendRes = await fetch(`${workerUrl}/send-message/${internalToken}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ number, text: mensagem, instance: instancia.nome }),
+            })
+            if (!sendRes.ok) {
+                const errLog = await sendRes.text()
+                console.error(`[solicitar-feedback] Worker retornou ${sendRes.status}: ${errLog}`)
+                sendWarning = `Mensagem pode não ter sido enviada (worker ${sendRes.status}). Token criado.`
+            }
+        } catch (sendErr: any) {
+            console.error(`[solicitar-feedback] Erro ao chamar worker:`, sendErr)
+            sendWarning = "Erro ao contatar worker. Token criado, mas mensagem pode não ter sido enviada."
         }
 
-        return NextResponse.json({ success: true, token, expires_at: expiresAt })
+        return NextResponse.json({ success: true, token, expires_at: expiresAt, warning: sendWarning })
     } catch (err: any) {
         console.error("[solicitar-feedback] Erro:", err)
         return NextResponse.json({ error: err.message || "Erro interno" }, { status: 500 })

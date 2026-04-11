@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
                         .from("instancias_uazapi")
                         .select("nome, token, canal_tipo")
                         .eq("unidade_cuca", (vaga as any).unidade_cuca)
-                        .eq("ativa", true)
+                        .eq("ativo", true)
                         .limit(10)
 
                     let instancia = instancias?.find((i: any) => i.canal_tipo === "Empregabilidade")
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
                             .from("instancias_uazapi")
                             .select("nome, token, canal_tipo")
                             .eq("canal_tipo", "Empregabilidade")
-                            .eq("ativa", true)
+                            .eq("ativo", true)
                             .limit(1)
                             .single()
                         if (ig) instancia = ig

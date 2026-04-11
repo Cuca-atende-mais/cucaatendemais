@@ -6,7 +6,6 @@
  */
 import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { createClient } from "@/lib/supabase/client"
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -32,7 +31,6 @@ type Candidato = {
 export default function VagaFeedbackPage() {
   const { token } = useParams()
   const router = useRouter()
-  const supabase = createClient()
 
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -51,59 +49,17 @@ export default function VagaFeedbackPage() {
 
   async function fetchData() {
     try {
-      // 1. Validar Token
-      const { data: tokenData, error: tokenErr } = await supabase
-        .from('vagas_feedback_tokens')
-        .select(`
-          vaga_id,
-          expires_at,
-          used,
-          cuca_unit_id,
-          vagas (
-            id,
-            titulo,
-            empresas (nome)
-          )
-        `)
-        .eq('token', token)
-        .single()
+      const res = await fetch(`/api/empregabilidade/vagas/feedback-token/${token}`)
+      const data = await res.json()
 
-      if (tokenErr || !tokenData) {
-        setError("Link inválido ou expirado.")
+      if (!res.ok) {
+        setError(data.error || "Link inválido ou expirado.")
         return
       }
 
-      if (tokenData.used) {
-        setError("Este link já foi utilizado.")
-        return
-      }
-
-      if (new Date(tokenData.expires_at) < new Date()) {
-        setError("Este link expirou. Por favor, solicite um novo.")
-        return
-      }
-
-      const vacancy = tokenData.vagas as any
-      const unitId = tokenData.cuca_unit_id || null
-      setVaga(vacancy)
-      setCucaUnitId(unitId)
-
-      // 2. Buscar Candidatos Pendentes/Selecionados para a vaga filtrados pela unidade do token
-      let candQuery = supabase
-        .from('candidaturas')
-        .select('id, nome, status')
-        .eq('vaga_id', vacancy.id)
-        .in('status', ['pendente', 'selecionado'])
-
-      if (unitId) {
-        candQuery = candQuery.eq('unidade_atendimento_id', unitId)
-      }
-
-      const { data: candData, error: candErr } = await candQuery
-
-      if (candErr) throw candErr
-
-      setCandidates(candData.map(c => ({ ...c, evaluation: 'pendente' })))
+      setVaga(data.vaga)
+      setCucaUnitId(data.cuca_unit_id)
+      setCandidates((data.candidates || []).map((c: any) => ({ ...c, evaluation: 'pendente' })))
     } catch (err: any) {
       setError("Erro ao carregar dados.")
       console.error(err)
