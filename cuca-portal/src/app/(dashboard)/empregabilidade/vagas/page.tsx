@@ -15,7 +15,7 @@ import toast from "react-hot-toast"
 import { useUser } from "@/lib/auth/user-provider"
 
 export default function VagasPage() {
-    const { hasPermission, profile, isDeveloper } = useUser()
+    const { hasPermission, profile, isDeveloper, loading: authLoading } = useUser()
     const router = useRouter()
     const [vagas, setVagas] = useState<Vaga[]>([])
     const [empresasMap, setEmpresasMap] = useState<Record<string, Empresa>>({})
@@ -34,8 +34,8 @@ export default function VagasPage() {
     const supabase = createClient()
 
     useEffect(() => {
-        fetchData()
-    }, [statusFilter, searchTerm, abaFiltro])
+        if (!authLoading) fetchData()
+    }, [statusFilter, searchTerm, abaFiltro, authLoading, profile])
 
     const fetchData = async () => {
         setLoading(true)
