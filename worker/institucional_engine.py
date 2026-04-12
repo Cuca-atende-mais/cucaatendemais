@@ -9,6 +9,7 @@ Estado armazenado em conversas.metadata["inst_fluxo"].
 """
 
 import os
+import re
 import logging
 import httpx
 from supabase import create_client, Client
@@ -53,6 +54,24 @@ UNIDADES_MAPA: dict[str, str] = {
 # Helpers de instância — números dinâmicos (nunca hardcode)
 # ---------------------------------------------------------------------------
 
+def _normalizar_tel_br(telefone: str | None) -> str | None:
+    """
+    Normaliza telefone brasileiro para formato wa.me (13 dígitos: 55 + DDD + 9 dígitos).
+    Remove dígito extra quando o número veio do JID do WhatsApp já com o nono dígito
+    incorporado, resultando em 14 dígitos ao ser armazenado com o prefixo 55.
+    """
+    if not telefone:
+        return None
+    digits = re.sub(r"\D", "", telefone)
+    # Brasil: 55 + DDD (2) + número (9 dígitos) = 13 dígitos
+    if digits.startswith("55") and len(digits) == 14:
+        ddd = digits[2:4]
+        numero = digits[4:]  # 10 dígitos — 1 a mais
+        if numero[0] == "9":
+            numero = numero[1:]  # remove o '9' extra no início do número
+        digits = f"55{ddd}{numero}"
+    return digits or None
+
 def _buscar_telefone_instancia(nome_fragment: str, canal_tipo: str | None = None) -> str | None:
     """Busca o telefone de uma instância pelo fragmento do nome ou canal_tipo."""
     try:
@@ -65,7 +84,7 @@ def _buscar_telefone_instancia(nome_fragment: str, canal_tipo: str | None = None
             .execute()
         )
         if res.data and res.data[0].get("telefone"):
-            return res.data[0]["telefone"]
+            return _normalizar_tel_br(res.data[0]["telefone"])
         if canal_tipo:
             # Fallback: buscar por canal_tipo sem unidade_cuca
             res2 = (
@@ -78,7 +97,7 @@ def _buscar_telefone_instancia(nome_fragment: str, canal_tipo: str | None = None
                 .execute()
             )
             if res2.data and res2.data[0].get("telefone"):
-                return res2.data[0]["telefone"]
+                return _normalizar_tel_br(res2.data[0]["telefone"])
     except Exception as e:
         logger.warning(f"[inst-engine] Falha ao buscar telefone instância '{nome_fragment}': {e}")
     return None
