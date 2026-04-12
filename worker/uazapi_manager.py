@@ -449,8 +449,9 @@ async def logout_instancia(nome: str):
     if token:
         await _desconectar_na_uazapi(token)
 
+    # Marca ativa=False mas PRESERVA o telefone — o número do chip não muda com logout.
+    # Apagar o telefone causava null persistente caso o polling de reconexão perdesse o jid.
     await asyncio.to_thread(_atualizar_status_banco, nome, False)
-    supabase.table("instancias_uazapi").update({"telefone": None}).eq("nome", nome).execute()
     return {"success": True, "nome": nome, "mensagem": "Instância desconectada com segurança."}
 
 

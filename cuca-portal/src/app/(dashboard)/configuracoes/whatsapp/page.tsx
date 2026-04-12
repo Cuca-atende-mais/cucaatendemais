@@ -173,6 +173,28 @@ export default function WhatsAppUnidadePage() {
         }
         const { data } = await query
         setInstancias(data || [])
+
+        // Auto-heal: instâncias ativas sem telefone são sincronizadas com o Worker.
+        // O Worker já contém a lógica de extrair o phone do UAZAPI e persistir no banco.
+        const semTelefone = (data || []).filter((i: Instancia) => i.ativa && !i.telefone)
+        if (semTelefone.length > 0 && WORKER_URL) {
+            Promise.all(
+                semTelefone.map((i: Instancia) =>
+                    fetch(`${WORKER_URL}/api/instancias/${encodeURIComponent(i.nome)}/status`, { cache: "no-store" })
+                        .catch(() => null) // não bloqueia a UI em caso de falha
+                )
+            ).then(() => {
+                // Re-fetch após sync para atualizar telefones na UI
+                setTimeout(async () => {
+                    const { data: updated } = await supabase
+                        .from("instancias_uazapi")
+                        .select("*")
+                        .order("canal_tipo")
+                        .order("nome")
+                    if (updated) setInstancias(updated)
+                }, 3500)
+            })
+        }
     }
 
     const fetchTransbordos = async (prof: UserProfile) => {
