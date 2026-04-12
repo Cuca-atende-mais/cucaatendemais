@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient as createClient } from "@/lib/supabase/admin"
+import { createClient as createServerClient } from "@/lib/supabase/server"
 import crypto from "crypto"
 
 /**
@@ -10,6 +11,13 @@ export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    // SEC-09: exige usuário autenticado para disparar link de feedback
+    const supabaseAuth = await createServerClient()
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+    if (authError || !user) {
+        return NextResponse.json({ error: "Não autorizado" }, { status: 401 })
+    }
+
     const { id: vagaId } = await params
     const supabaseAdmin = createClient()
 

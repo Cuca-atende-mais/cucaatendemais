@@ -9,13 +9,10 @@ export async function POST(request: Request) {
     try {
         const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy')
 
-        // 1. Check if user is authenticated (Basic protection)
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        // 1. Validação real no servidor — getUser() verifica o JWT com o Supabase Auth server-side
         const supabase = await createClient()
-
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!session) {
+        const { data: { user }, error: authError } = await supabase.auth.getUser()
+        if (authError || !user) {
             return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
         }
 

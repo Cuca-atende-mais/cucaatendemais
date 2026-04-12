@@ -1,8 +1,16 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { createClient as createServerClient } from "@/lib/supabase/server"
 
 export async function POST(req: Request) {
     try {
+        // SOL-03: exige usuário autenticado antes de disparar mensagens em massa
+        const supabaseAuth = await createServerClient()
+        const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+        if (authError || !user) {
+            return NextResponse.json({ error: "Não autorizado" }, { status: 401 })
+        }
+
         const body = await req.json()
         const { campanhaId } = body
 

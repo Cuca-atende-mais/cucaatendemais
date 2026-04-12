@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { createClient as createServerClient } from "@/lib/supabase/server"
 
 // OCR pode demorar até 5 min para lotes maiores
 export const maxDuration = 300
@@ -8,6 +9,20 @@ export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    // SOL-06: aceita x-internal-token (Worker Python) OU sessão de usuário autenticado (Portal)
+    const internalTokenHeader = request.headers.get("x-internal-token")
+    const expectedToken = process.env.WEBHOOK_INTERNAL_TOKEN
+
+    const isWorkerRequest = expectedToken && internalTokenHeader === expectedToken
+
+    if (!isWorkerRequest) {
+        const supabaseAuth = await createServerClient()
+        const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+        if (authError || !user) {
+            return NextResponse.json({ error: "Não autorizado" }, { status: 401 })
+        }
+    }
+
     const supabase = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
