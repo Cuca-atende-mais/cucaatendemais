@@ -90,7 +90,7 @@ export default function BancoTalentosDetalhesPage() {
     const aprovarParaVaga = async () => {
         setAprovando(true)
         try {
-            // Criar nova candidatura para esta vaga
+            // Criar nova candidatura para esta vaga (copia CV e dados do talent)
             const { data: novaCandidatura, error: insErr } = await supabase
                 .from("candidaturas")
                 .insert({
@@ -98,15 +98,30 @@ export default function BancoTalentosDetalhesPage() {
                     nome: talent.nome,
                     telefone: talent.telefone || null,
                     data_nascimento: talent.data_nascimento || null,
+                    arquivo_cv_url: talent.arquivo_cv_url || null,
                     dados_ocr_json: talent.skills_jsonb || null,
                     match_score: matchFromStorage.score ?? null,
                     status: "pendente",
-                    requisitos_atendidos: "Importado via triagem do banco de talentos",
+                    area_interesse: talent.area_interesse || null,
+                    observacoes: `banco_talentos:${talentId}`,
                 })
                 .select("id")
                 .single()
 
             if (insErr) throw insErr
+
+            // Disparar análise de IA em background se houver CV
+            if (talent.arquivo_cv_url && novaCandidatura?.id) {
+                fetch("/api/empregabilidade/talent-bank/disparar-ia", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        candidatura_id: novaCandidatura.id,
+                        cv_url: talent.arquivo_cv_url,
+                        vaga_id: vagaId,
+                    }),
+                }).catch(() => null)
+            }
 
             // Marcar candidato no banco de talentos como selecionado (permanece visível)
             await supabase

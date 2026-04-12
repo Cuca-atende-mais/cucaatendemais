@@ -76,6 +76,22 @@ export async function POST(request: NextRequest) {
             .update({ status: "arquivado", updated_at: new Date().toISOString() })
             .eq("id", talent_id)
 
+        // 6. Disparar análise de IA em background se houver CV
+        if (talent.arquivo_cv_url && nova.id) {
+            const workerUrl = process.env.WORKER_URL
+            if (workerUrl) {
+                fetch(`${workerUrl}/process-cv`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        candidatura_id: nova.id,
+                        cv_url: talent.arquivo_cv_url,
+                        vaga_id,
+                    }),
+                }).catch(err => console.error("[talent-bank/convocar] Erro ao disparar análise IA:", err))
+            }
+        }
+
         return NextResponse.json({ ok: true, candidatura_id: nova.id })
     } catch (err: any) {
         console.error("[talent-bank/convocar] Erro:", err)
