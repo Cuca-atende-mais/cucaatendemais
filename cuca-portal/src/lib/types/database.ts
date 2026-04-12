@@ -224,6 +224,15 @@ export type TalentBank = {
     updated_at: string
 }
 
+export type Curriculo = {
+    id: string
+    talent_id: string
+    dados: Record<string, any>
+    deleted_at: string | null
+    created_at: string
+    updated_at: string
+}
+
 export type HumanHandoverContact = {
     id: string
     modulo: string

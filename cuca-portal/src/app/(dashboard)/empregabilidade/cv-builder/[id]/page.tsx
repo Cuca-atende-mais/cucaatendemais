@@ -1,0 +1,532 @@
+"use client"
+
+import { useEffect, useState, useCallback } from "react"
+import { useParams, useRouter } from "next/navigation"
+import { createClient } from "@/lib/supabase/client"
+import { useForm, useFieldArray, Controller } from "react-hook-form"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+    ChevronDown, ChevronUp, Plus, Trash2, Save, Printer,
+    ArrowLeft, Loader2, User, Briefcase, GraduationCap,
+    BookOpen, Wrench, Link2,
+} from "lucide-react"
+import toast from "react-hot-toast"
+import { differenceInMonths, parse } from "date-fns"
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Atividade { descricao: string }
+interface Experiencia {
+    empresa: string
+    cargo: string
+    data_inicio: string
+    data_fim: string
+    atual: boolean
+    atividades: Atividade[]
+}
+interface Formacao {
+    escolaridade: string
+    instituicao: string
+    status: "concluido" | "cursando"
+    ano: string
+}
+interface Curso {
+    instituicao: string
+    titulo: string
+    ano: string
+    descricao: string
+}
+interface Habilidade {
+    titulo: string
+    descricao: string
+}
+interface CvForm {
+    nome: string
+    endereco: string
+    telefone: string
+    email: string
+    linkedin: string
+    portfolio: string
+    objetivo: string
+    experiencias: Experiencia[]
+    formacoes: Formacao[]
+    cursos: Curso[]
+    habilidades: Habilidade[]
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function calcPermanencia(inicio: string, fim: string, atual: boolean): string {
+    if (!inicio) return ""
+    try {
+        const start = parse(`01/${inicio}`, "dd/MM/yyyy", new Date())
+        const end = atual ? new Date() : (fim ? parse(`01/${fim}`, "dd/MM/yyyy", new Date()) : new Date())
+        const meses = differenceInMonths(end, start)
+        if (meses <= 0) return ""
+        const anos = Math.floor(meses / 12)
+        const resto = meses % 12
+        if (anos > 0 && resto > 0) return `${anos} ano${anos > 1 ? "s" : ""} e ${resto} mês${resto > 1 ? "es" : ""}`
+        if (anos > 0) return `${anos} ano${anos > 1 ? "s" : ""}`
+        return `${resto} mês${resto > 1 ? "es" : ""}`
+    } catch { return "" }
+}
+
+const ESCOLARIDADES = [
+    "Ensino Fundamental Incompleto",
+    "Ensino Fundamental Completo",
+    "Ensino Médio Incompleto",
+    "Ensino Médio Completo",
+    "Ensino Técnico / Profissionalizante",
+    "Ensino Superior Incompleto",
+    "Ensino Superior Completo",
+    "Pós-Graduação / MBA",
+    "Mestrado",
+    "Doutorado",
+]
+
+// ─── Section wrapper ──────────────────────────────────────────────────────────
+
+function Section({ icon, title, children, defaultOpen = true }: {
+    icon: React.ReactNode
+    title: string
+    children: React.ReactNode
+    defaultOpen?: boolean
+}) {
+    const [open, setOpen] = useState(defaultOpen)
+    return (
+        <Card>
+            <CardHeader
+                className="cursor-pointer select-none py-4"
+                onClick={() => setOpen(o => !o)}
+            >
+                <CardTitle className="flex items-center justify-between text-base">
+                    <span className="flex items-center gap-2">{icon} {title}</span>
+                    {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                </CardTitle>
+            </CardHeader>
+            {open && <CardContent className="pt-0 space-y-4">{children}</CardContent>}
+        </Card>
+    )
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export default function CvBuilderPage() {
+    const params = useParams()
+    const router = useRouter()
+    const talentId = params.id as string
+    const supabase = createClient()
+
+    const [talentNome, setTalentNome] = useState("")
+    const [curriculoId, setCurriculoId] = useState<string | null>(null)
+    const [loadingInit, setLoadingInit] = useState(true)
+    const [saving, setSaving] = useState(false)
+
+    const { register, control, handleSubmit, reset, watch } = useForm<CvForm>({
+        defaultValues: {
+            nome: "", endereco: "", telefone: "", email: "", linkedin: "", portfolio: "",
+            objetivo: "",
+            experiencias: [],
+            formacoes: [],
+            cursos: [],
+            habilidades: [],
+        },
+    })
+
+    const expFields = useFieldArray({ control, name: "experiencias" })
+    const formFields = useFieldArray({ control, name: "formacoes" })
+    const cursoFields = useFieldArray({ control, name: "cursos" })
+    const habFields = useFieldArray({ control, name: "habilidades" })
+
+    // Carregar dados existentes
+    useEffect(() => {
+        const init = async () => {
+            // Buscar talento
+            const { data: talent } = await supabase
+                .from("talent_bank")
+                .select("nome, telefone, curriculo_estruturado")
+                .eq("id", talentId)
+                .single()
+
+            if (!talent) { toast.error("Candidato não encontrado."); router.push("/empregabilidade/cv-builder"); return }
+            setTalentNome(talent.nome)
+
+            // Buscar currículo ativo na nova tabela
+            const { data: cur } = await supabase
+                .from("curriculos")
+                .select("*")
+                .eq("talent_id", talentId)
+                .is("deleted_at", null)
+                .order("updated_at", { ascending: false })
+                .limit(1)
+                .maybeSingle()
+
+            if (cur) {
+                setCurriculoId(cur.id)
+                reset({ nome: talent.nome, ...cur.dados } as CvForm)
+            } else if (talent.curriculo_estruturado && Object.keys(talent.curriculo_estruturado).length > 0) {
+                // Migrar do campo legado
+                reset({ nome: talent.nome, ...talent.curriculo_estruturado } as CvForm)
+            } else {
+                reset({ nome: talent.nome, telefone: talent.telefone || "" } as unknown as CvForm)
+            }
+            setLoadingInit(false)
+        }
+        init()
+    }, [talentId])
+
+    const onSubmit = async (values: CvForm) => {
+        setSaving(true)
+        try {
+            if (curriculoId) {
+                const { error } = await supabase
+                    .from("curriculos")
+                    .update({ dados: values })
+                    .eq("id", curriculoId)
+                if (error) throw error
+            } else {
+                const { data, error } = await supabase
+                    .from("curriculos")
+                    .insert({ talent_id: talentId, dados: values })
+                    .select("id")
+                    .single()
+                if (error) throw error
+                setCurriculoId(data.id)
+            }
+            toast.success("Currículo salvo com sucesso!")
+        } catch (err: any) {
+            toast.error(err.message || "Erro ao salvar.")
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    const handlePrint = async () => {
+        // Salvar antes de imprimir
+        await handleSubmit(async (values) => {
+            await onSubmit(values)
+            if (curriculoId) {
+                router.push(`/empregabilidade/print/${curriculoId}`)
+            } else {
+                // Buscar o id recém-criado
+                const { data } = await supabase
+                    .from("curriculos")
+                    .select("id")
+                    .eq("talent_id", talentId)
+                    .is("deleted_at", null)
+                    .order("created_at", { ascending: false })
+                    .limit(1)
+                    .maybeSingle()
+                if (data?.id) router.push(`/empregabilidade/print/${data.id}`)
+            }
+        })()
+    }
+
+    if (loadingInit) return (
+        <div className="flex items-center justify-center min-h-[60vh]">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+    )
+
+    return (
+        <div className="space-y-6 pb-20">
+            {/* Cabeçalho */}
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <Button variant="ghost" size="icon" onClick={() => router.back()}>
+                        <ArrowLeft className="h-5 w-5" />
+                    </Button>
+                    <div>
+                        <h1 className="text-2xl font-bold tracking-tight">CV Builder</h1>
+                        <p className="text-muted-foreground text-sm">{talentNome}</p>
+                    </div>
+                </div>
+                <div className="flex gap-2">
+                    <Button variant="outline" onClick={handlePrint}>
+                        <Printer className="h-4 w-4 mr-2" /> Salvar e Imprimir
+                    </Button>
+                    <Button
+                        className="bg-cuca-blue hover:bg-sky-800 text-white"
+                        onClick={handleSubmit(onSubmit)}
+                        disabled={saving}
+                    >
+                        {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                        Salvar
+                    </Button>
+                </div>
+            </div>
+
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+
+                {/* ── Dados Pessoais ──────────────────────────────────────────── */}
+                <Section icon={<User className="h-4 w-4" />} title="Dados Pessoais">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1.5 md:col-span-2">
+                            <Label>Nome Completo</Label>
+                            <Input {...register("nome")} placeholder="Nome completo" />
+                        </div>
+                        <div className="space-y-1.5 md:col-span-2">
+                            <Label>Endereço</Label>
+                            <Input {...register("endereco")} placeholder="Rua, bairro, cidade — CE" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>Telefone</Label>
+                            <Input {...register("telefone")} placeholder="(85) 99999-9999" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>E-mail</Label>
+                            <Input {...register("email")} type="email" placeholder="email@exemplo.com" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>LinkedIn</Label>
+                            <Input {...register("linkedin")} placeholder="linkedin.com/in/nome" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>Portfólio / Site</Label>
+                            <Input {...register("portfolio")} placeholder="behance.net/nome" />
+                        </div>
+                    </div>
+                </Section>
+
+                {/* ── Objetivo ────────────────────────────────────────────────── */}
+                <Section icon={<Briefcase className="h-4 w-4" />} title="Objetivo Profissional">
+                    <div className="space-y-1.5">
+                        <Label>Objetivo</Label>
+                        <Textarea
+                            {...register("objetivo")}
+                            placeholder="Descreva o objetivo profissional do candidato em 1-3 frases..."
+                            rows={3}
+                        />
+                    </div>
+                </Section>
+
+                {/* ── Experiências ─────────────────────────────────────────────── */}
+                <Section icon={<Briefcase className="h-4 w-4" />} title="Experiência Profissional">
+                    {expFields.fields.map((field, i) => {
+                        const inicio = watch(`experiencias.${i}.data_inicio`)
+                        const fim = watch(`experiencias.${i}.data_fim`)
+                        const atual = watch(`experiencias.${i}.atual`)
+                        const permanencia = calcPermanencia(inicio, fim, atual)
+
+                        return (
+                            <div key={field.id} className="border rounded-lg p-4 space-y-3 relative">
+                                <Button
+                                    type="button" variant="ghost" size="icon"
+                                    className="absolute top-2 right-2 text-destructive"
+                                    onClick={() => expFields.remove(i)}
+                                >
+                                    <Trash2 className="h-4 w-4" />
+                                </Button>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div className="space-y-1">
+                                        <Label>Cargo</Label>
+                                        <Input {...register(`experiencias.${i}.cargo`)} placeholder="Ex: Auxiliar de Estoque" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label>Empresa</Label>
+                                        <Input {...register(`experiencias.${i}.empresa`)} placeholder="Nome da empresa" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label>Início (MM/AAAA)</Label>
+                                        <Input {...register(`experiencias.${i}.data_inicio`)} placeholder="01/2023" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label>Fim (MM/AAAA){atual ? " — Emprego atual" : ""}</Label>
+                                        <Input {...register(`experiencias.${i}.data_fim`)} placeholder="01/2024" disabled={atual} />
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Controller
+                                        control={control}
+                                        name={`experiencias.${i}.atual`}
+                                        render={({ field: f }) => (
+                                            <Checkbox
+                                                checked={f.value}
+                                                onCheckedChange={f.onChange}
+                                                id={`atual-${i}`}
+                                            />
+                                        )}
+                                    />
+                                    <Label htmlFor={`atual-${i}`} className="cursor-pointer text-sm">Emprego atual</Label>
+                                    {permanencia && <span className="text-xs text-muted-foreground ml-2">({permanencia})</span>}
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Atividades realizadas</Label>
+                                    <Controller
+                                        control={control}
+                                        name={`experiencias.${i}.atividades`}
+                                        render={({ field: f }) => (
+                                            <div className="space-y-2">
+                                                {(f.value || []).map((at: Atividade, j: number) => (
+                                                    <div key={j} className="flex gap-2">
+                                                        <Input
+                                                            value={at.descricao}
+                                                            onChange={e => {
+                                                                const updated = [...f.value]
+                                                                updated[j] = { descricao: e.target.value }
+                                                                f.onChange(updated)
+                                                            }}
+                                                            placeholder={`Atividade ${j + 1}`}
+                                                        />
+                                                        <Button
+                                                            type="button" variant="ghost" size="icon"
+                                                            onClick={() => f.onChange(f.value.filter((_: any, k: number) => k !== j))}
+                                                        >
+                                                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                                        </Button>
+                                                    </div>
+                                                ))}
+                                                <Button
+                                                    type="button" variant="outline" size="sm"
+                                                    onClick={() => f.onChange([...(f.value || []), { descricao: "" }])}
+                                                >
+                                                    <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar atividade
+                                                </Button>
+                                            </div>
+                                        )}
+                                    />
+                                </div>
+                            </div>
+                        )
+                    })}
+                    <Button
+                        type="button" variant="outline"
+                        onClick={() => expFields.append({ empresa: "", cargo: "", data_inicio: "", data_fim: "", atual: false, atividades: [] })}
+                    >
+                        <Plus className="h-4 w-4 mr-2" /> Adicionar Experiência
+                    </Button>
+                </Section>
+
+                {/* ── Formação ─────────────────────────────────────────────────── */}
+                <Section icon={<GraduationCap className="h-4 w-4" />} title="Formação Acadêmica">
+                    {formFields.fields.map((field, i) => (
+                        <div key={field.id} className="border rounded-lg p-4 space-y-3 relative">
+                            <Button
+                                type="button" variant="ghost" size="icon"
+                                className="absolute top-2 right-2 text-destructive"
+                                onClick={() => formFields.remove(i)}
+                            >
+                                <Trash2 className="h-4 w-4" />
+                            </Button>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <Label>Nível de Escolaridade</Label>
+                                    <Controller
+                                        control={control}
+                                        name={`formacoes.${i}.escolaridade`}
+                                        render={({ field: f }) => (
+                                            <Select value={f.value} onValueChange={f.onChange}>
+                                                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                                                <SelectContent>
+                                                    {ESCOLARIDADES.map(e => <SelectItem key={e} value={e}>{e}</SelectItem>)}
+                                                </SelectContent>
+                                            </Select>
+                                        )}
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Instituição</Label>
+                                    <Input {...register(`formacoes.${i}.instituicao`)} placeholder="Nome da escola/faculdade" />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Status</Label>
+                                    <Controller
+                                        control={control}
+                                        name={`formacoes.${i}.status`}
+                                        render={({ field: f }) => (
+                                            <Select value={f.value} onValueChange={f.onChange}>
+                                                <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="concluido">Concluído</SelectItem>
+                                                    <SelectItem value="cursando">Cursando</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        )}
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Ano {watch(`formacoes.${i}.status`) === "cursando" ? "de Conclusão Previsto" : "de Conclusão"}</Label>
+                                    <Input {...register(`formacoes.${i}.ano`)} placeholder="2024" maxLength={4} />
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                    <Button
+                        type="button" variant="outline"
+                        onClick={() => formFields.append({ escolaridade: "", instituicao: "", status: "concluido", ano: "" })}
+                    >
+                        <Plus className="h-4 w-4 mr-2" /> Adicionar Formação
+                    </Button>
+                </Section>
+
+                {/* ── Cursos ───────────────────────────────────────────────────── */}
+                <Section icon={<BookOpen className="h-4 w-4" />} title="Cursos e Certificações" defaultOpen={false}>
+                    {cursoFields.fields.map((field, i) => (
+                        <div key={field.id} className="border rounded-lg p-4 space-y-3 relative">
+                            <Button
+                                type="button" variant="ghost" size="icon"
+                                className="absolute top-2 right-2 text-destructive"
+                                onClick={() => cursoFields.remove(i)}
+                            >
+                                <Trash2 className="h-4 w-4" />
+                            </Button>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <Label>Título do Curso</Label>
+                                    <Input {...register(`cursos.${i}.titulo`)} placeholder="Ex: Pacote Office" />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Instituição</Label>
+                                    <Input {...register(`cursos.${i}.instituicao`)} placeholder="Ex: SENAC" />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Ano</Label>
+                                    <Input {...register(`cursos.${i}.ano`)} placeholder="2023" maxLength={4} />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Descrição (opcional)</Label>
+                                    <Input {...register(`cursos.${i}.descricao`)} placeholder="Breve descrição" />
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                    <Button
+                        type="button" variant="outline"
+                        onClick={() => cursoFields.append({ titulo: "", instituicao: "", ano: "", descricao: "" })}
+                    >
+                        <Plus className="h-4 w-4 mr-2" /> Adicionar Curso
+                    </Button>
+                </Section>
+
+                {/* ── Habilidades ──────────────────────────────────────────────── */}
+                <Section icon={<Wrench className="h-4 w-4" />} title="Habilidades Técnicas" defaultOpen={false}>
+                    {habFields.fields.map((field, i) => (
+                        <div key={field.id} className="flex gap-2 items-start">
+                            <Input {...register(`habilidades.${i}.titulo`)} placeholder="Ex: Excel" className="w-40 flex-shrink-0" />
+                            <Input {...register(`habilidades.${i}.descricao`)} placeholder="Nível ou detalhe (opcional)" className="flex-1" />
+                            <Button
+                                type="button" variant="ghost" size="icon"
+                                onClick={() => habFields.remove(i)}
+                            >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                        </div>
+                    ))}
+                    <Button
+                        type="button" variant="outline"
+                        onClick={() => habFields.append({ titulo: "", descricao: "" })}
+                    >
+                        <Plus className="h-4 w-4 mr-2" /> Adicionar Habilidade
+                    </Button>
+                </Section>
+
+            </form>
+        </div>
+    )
+}
