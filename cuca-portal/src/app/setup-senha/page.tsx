@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,6 +10,18 @@ import { AlertCircle, CheckCircle2, Loader2, Lock } from 'lucide-react'
 import Image from 'next/image'
 
 export default function SetupSenhaPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center">
+                <Loader2 className="h-10 w-10 animate-spin" />
+            </div>
+        }>
+            <SetupSenhaContent />
+        </Suspense>
+    )
+}
+
+function SetupSenhaContent() {
     const router = useRouter()
     const searchParams = useSearchParams()
     const token = searchParams.get('token')

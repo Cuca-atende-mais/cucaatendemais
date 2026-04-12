@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -55,6 +55,18 @@ function buildCargaHoraria(tipo: string, horas: string, escalaT: string, escalaF
 }
 
 export default function NovaVagaEmpresaPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center bg-muted/30">
+                <Loader2 className="h-10 w-10 animate-spin text-cuca-blue" />
+            </div>
+        }>
+            <NovaVagaEmpresaContent />
+        </Suspense>
+    )
+}
+
+function NovaVagaEmpresaContent() {
     const searchParams = useSearchParams()
     const empresaId = searchParams.get("empresa_id")
     const unidadeCuca = searchParams.get("unidade_cuca") || ""

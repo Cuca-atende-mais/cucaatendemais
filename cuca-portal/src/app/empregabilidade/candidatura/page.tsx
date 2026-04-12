@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -25,6 +25,18 @@ const AREAS_INTERESSE = [
 import toast from "react-hot-toast"
 
 export default function CandidaturaPublicaPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center bg-muted/30">
+                <Loader2 className="h-10 w-10 animate-spin text-cuca-blue" />
+            </div>
+        }>
+            <CandidaturaContent />
+        </Suspense>
+    )
+}
+
+function CandidaturaContent() {
     const searchParams = useSearchParams()
     const vagaId = searchParams.get("vaga_id")
     const nomeParam = searchParams.get("nome") || ""

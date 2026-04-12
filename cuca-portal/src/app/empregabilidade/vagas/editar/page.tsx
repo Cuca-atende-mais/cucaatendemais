@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -65,6 +65,18 @@ type VagaData = {
 }
 
 export default function EditarVagaEmpresaPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center bg-muted/30">
+                <Loader2 className="h-10 w-10 animate-spin text-cuca-blue" />
+            </div>
+        }>
+            <EditarVagaEmpresaContent />
+        </Suspense>
+    )
+}
+
+function EditarVagaEmpresaContent() {
     const searchParams = useSearchParams()
     const vagaId = searchParams.get("vaga_id")
     const empresaId = searchParams.get("empresa_id")
