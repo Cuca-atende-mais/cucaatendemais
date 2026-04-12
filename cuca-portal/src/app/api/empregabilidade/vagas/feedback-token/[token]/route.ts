@@ -46,18 +46,12 @@ export async function GET(
         const vacancy = tokenData.vagas as any
         const unitId = tokenData.cuca_unit_id || null
 
-        // 2. Buscar candidatos da vaga (filtrados por unidade se houver)
-        let candQuery = supabase
+        // 2. Buscar candidatos da vaga (todos pendentes/selecionados — unidade é exibida no header apenas)
+        const { data: candData, error: candErr } = await supabase
             .from("candidaturas")
             .select("id, nome, status")
             .eq("vaga_id", vacancy.id)
             .in("status", ["pendente", "selecionado"])
-
-        if (unitId) {
-            candQuery = candQuery.eq("unidade_atendimento_id", unitId)
-        }
-
-        const { data: candData, error: candErr } = await candQuery
         if (candErr) throw candErr
 
         return NextResponse.json({
