@@ -115,6 +115,7 @@ export type Vaga = {
     tipo_selecao: string | null
     expansiva: boolean
     email_contato_empresa: string | null
+    telefone_responsavel: string | null
     data_abertura: string
     data_fechamento: string | null
     disparo_id: string | null

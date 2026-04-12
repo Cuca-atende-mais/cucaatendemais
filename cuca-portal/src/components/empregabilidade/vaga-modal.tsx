@@ -83,6 +83,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [tipoSelecao, setTipoSelecao] = useState("presencial")
     const [expansiva, setExpansiva] = useState(false)
     const [emailContatoEmpresa, setEmailContatoEmpresa] = useState("")
+    const [telefoneResponsavel, setTelefoneResponsavel] = useState("")
     const [escolaridadeMinima, setEscolaridadeMinima] = useState("")
 
     // Carga horária estruturada
@@ -144,6 +145,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setTipoSelecao(vaga.tipo_selecao || "presencial")
                 setExpansiva(vaga.expansiva || false)
                 setEmailContatoEmpresa(vaga.email_contato_empresa || "")
+                setTelefoneResponsavel(vaga.telefone_responsavel || "")
                 setEscolaridadeMinima(vaga.escolaridade_minima || "")
                 setUnidadeDestino((vaga as any).unidade_destino || "")
                 setSetoresMarcados((vaga as any).setor || [])
@@ -174,7 +176,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setUnidadeCucaId(""); setTotalVagas("1"); setStatus("pre_cadastro")
         setFaixaEtaria(""); setLocalEntrevista("na_empresa"); setEnderecoEntrevista("")
         setTipoSelecao("presencial"); setExpansiva(false); setEmailContatoEmpresa("")
-        setEscolaridadeMinima(""); setUnidadeDestino(""); setSetoresMarcados([])
+        setTelefoneResponsavel(""); setEscolaridadeMinima(""); setUnidadeDestino(""); setSetoresMarcados([])
         setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false)
         setCargaTipo("horario_comercial"); setCargaHoras(""); setCargaEscalaT("")
         setCargaEscalaF(""); setCargaDias("Seg à Sex"); setCargaTrabSabado(false); setCargaSabadoAte("12:00")
@@ -217,6 +219,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 tipo_selecao: tipoSelecao,
                 expansiva,
                 email_contato_empresa: emailContatoEmpresa || null,
+                telefone_responsavel: telefoneResponsavel || null,
                 escolaridade_minima: escolaridadeMinima || null,
                 data_abertura: status === 'aberta' ? new Date().toISOString() : null,
                 pcd_vaga: pcdVaga,
@@ -269,6 +272,8 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 unidade_destino: unidadeDestino,
                 setor: setoresMarcados,
                 expansiva,
+                email_contato_empresa: emailContatoEmpresa || null,
+                telefone_responsavel: telefoneResponsavel || null,
                 data_abertura: status === 'aberta' ? new Date().toISOString() : undefined,
             }).eq('id', vaga.id)
             if (error) throw error
@@ -466,6 +471,30 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                     />
                                 </div>
                             )}
+
+                            {/* Contato da empresa — editável pelo CUCA para correções */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label>E-mail para envio de CVs</Label>
+                                    <Input
+                                        value={emailContatoEmpresa}
+                                        onChange={e => setEmailContatoEmpresa(e.target.value)}
+                                        placeholder="rh@empresa.com.br"
+                                        type="email"
+                                    />
+                                    <p className="text-xs text-muted-foreground">Usado para enviar currículos por e-mail.</p>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label>Telefone do Responsável (RH)</Label>
+                                    <Input
+                                        value={telefoneResponsavel}
+                                        onChange={e => setTelefoneResponsavel(e.target.value)}
+                                        placeholder="(85) 99999-9999"
+                                        type="tel"
+                                    />
+                                    <p className="text-xs text-muted-foreground">Usado para envio de feedback via WhatsApp.</p>
+                                </div>
+                            </div>
 
                             {/* PCD */}
                             <div className="space-y-2">
