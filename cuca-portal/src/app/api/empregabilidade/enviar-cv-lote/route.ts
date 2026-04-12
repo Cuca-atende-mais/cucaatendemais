@@ -71,6 +71,27 @@ export async function POST(request: NextRequest) {
                     ? "Candidatos sem unidade definida"
                     : `CUCA ${unidadeId}`
 
+            // Baixar CVs para anexar (máx 5 por grupo para não ultrapassar limite do Resend ~40MB)
+            const attachments: { filename: string; content: Buffer }[] = []
+            for (const c of grupo.slice(0, 5)) {
+                const cvUrl = c.arquivo_cv_url || null
+                if (cvUrl) {
+                    try {
+                        const fileRes = await fetch(cvUrl)
+                        if (fileRes.ok) {
+                            const ext = cvUrl.split(".").pop()?.split("?")[0] || "pdf"
+                            const nomeSanitizado = (c.nome || "candidato").replace(/[^a-zA-Z0-9]/g, "_").slice(0, 30)
+                            attachments.push({
+                                filename: `curriculo_${nomeSanitizado}.${ext}`,
+                                content: Buffer.from(await fileRes.arrayBuffer()),
+                            })
+                        }
+                    } catch {
+                        // ignora falha de download individual — e-mail segue sem aquele anexo
+                    }
+                }
+            }
+
             const candidatosHtml = await Promise.all(grupo.map(async (c) => {
                 const ocr = (c.dados_ocr_json as any) || {}
                 const cvUrl = c.arquivo_cv_url || null
@@ -135,6 +156,7 @@ export async function POST(request: NextRequest) {
                 to: vaga.email_contato_empresa,
                 subject: assunto,
                 html,
+                ...(attachments.length > 0 && { attachments }),
             })
 
             if (emailErr) {

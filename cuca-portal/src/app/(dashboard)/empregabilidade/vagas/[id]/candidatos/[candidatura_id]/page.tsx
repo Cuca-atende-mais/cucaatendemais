@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent } from "@/components/ui/card"
@@ -74,8 +74,40 @@ export default function CandidatoDetalhesPage() {
     const [rejeitando, setRejeitando] = useState(false)
     const [aprovando, setAprovando] = useState(false)
     const [excluindo, setExcluindo] = useState(false)
+    const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
     useEffect(() => { fetchData() }, [candidaturaId, vagaId])
+
+    // Polling: re-faz fetch a cada 6s enquanto dados_ocr_json estiver null e houver CV
+    useEffect(() => {
+        if (!candidatura) return
+        const semOcr = !candidatura.dados_ocr_json && candidatura.arquivo_cv_url
+        if (semOcr) {
+            let tentativas = 0
+            pollingRef.current = setInterval(async () => {
+                tentativas++
+                if (tentativas > 20) {
+                    clearInterval(pollingRef.current!)
+                    return
+                }
+                const { data } = await supabase
+                    .from("candidaturas")
+                    .select("dados_ocr_json, matching_score, match_score")
+                    .eq("id", candidaturaId)
+                    .single()
+                if (data?.dados_ocr_json) {
+                    setCandidatura((prev: any) => ({
+                        ...prev,
+                        dados_ocr_json: data.dados_ocr_json,
+                        matching_score: data.matching_score,
+                        match_score: data.match_score,
+                    }))
+                    clearInterval(pollingRef.current!)
+                }
+            }, 6000)
+        }
+        return () => { if (pollingRef.current) clearInterval(pollingRef.current) }
+    }, [candidatura?.id, candidatura?.dados_ocr_json])
 
     const fetchData = async () => {
         setLoading(true)
@@ -516,7 +548,11 @@ export default function CandidatoDetalhesPage() {
                                 <Loader2 className="h-5 w-5 animate-spin flex-shrink-0" />
                                 <div>
                                     <p className="font-medium text-sm">Análise de IA em andamento</p>
-                                    <p className="text-xs text-muted-foreground mt-0.5">O currículo está sendo processado. Recarregue em instantes.</p>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                        {candidatura.arquivo_cv_url
+                                            ? "O currículo está sendo processado. Esta página será atualizada automaticamente."
+                                            : "Currículo sem arquivo. Faça upload para habilitar a análise de IA."}
+                                    </p>
                                 </div>
                             </CardContent>
                         </Card>
