@@ -198,6 +198,18 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         try {
             const cargaHoraria = buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte)
 
+            // Calcular número sequencial da vaga (somente ao criar)
+            let numero_vaga: number | undefined
+            if (!vaga) {
+                const { data: maxData } = await supabase
+                    .from("vagas")
+                    .select("numero_vaga")
+                    .order("numero_vaga", { ascending: false })
+                    .limit(1)
+                    .maybeSingle()
+                numero_vaga = ((maxData?.numero_vaga ?? 0) as number) + 1
+            }
+
             const payload = {
                 empresa_id: empresaId,
                 titulo,
@@ -225,6 +237,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 pcd_vaga: pcdVaga,
                 pcd_tipo: pcdVaga ? (pcdTipo || null) : null,
                 pcd_homologado: pcdVaga ? pcdHomologado : false,
+                ...(numero_vaga !== undefined && { numero_vaga }),
             }
 
             if (vaga) {
@@ -355,11 +368,25 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                             <div className="grid grid-cols-3 gap-4">
                                 <div className="space-y-2">
                                     <Label>Tipo de Contrato</Label>
-                                    <Input value={tipoContrato} readOnly className="bg-muted" />
+                                    {camposEmpresaReadOnly ? (
+                                        <p className="text-sm font-medium px-3 py-2 bg-muted rounded-md">{tipoContrato}</p>
+                                    ) : (
+                                        <Select value={tipoContrato} onValueChange={setTipoContrato}>
+                                            <SelectTrigger><SelectValue placeholder="Tipo de contrato" /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="clt">CLT</SelectItem>
+                                                <SelectItem value="estagio">Estágio</SelectItem>
+                                                <SelectItem value="aprendiz">Jovem Aprendiz</SelectItem>
+                                                <SelectItem value="pj">PJ / Freelancer</SelectItem>
+                                                <SelectItem value="temporario">Temporário</SelectItem>
+                                                <SelectItem value="autonomo">Autônomo</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    )}
                                 </div>
                                 <div className="space-y-2">
                                     <Label>Salário / Bolsa</Label>
-                                    <Input value={salario} readOnly={camposEmpresaReadOnly} onChange={e => setSalario(e.target.value)} className={camposEmpresaReadOnly ? "bg-muted" : ""} />
+                                    <Input value={salario} readOnly={camposEmpresaReadOnly} onChange={e => setSalario(e.target.value)} placeholder="R$ 0,00" className={camposEmpresaReadOnly ? "bg-muted" : ""} />
                                 </div>
                                 <div className="space-y-2">
                                     <Label>Total de Vagas</Label>
@@ -379,7 +406,36 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <Label>Carga Horária</Label>
-                                    <Input value={buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte) || vaga?.carga_horaria || ""} readOnly className="bg-muted" />
+                                    {camposEmpresaReadOnly ? (
+                                        <p className="text-sm font-medium px-3 py-2 bg-muted rounded-md">{vaga?.carga_horaria || "—"}</p>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            <div className="flex gap-2">
+                                                {(["horario_comercial", "escala", "jornada_corrida"] as const).map(t => (
+                                                    <button key={t} type="button" onClick={() => setCargaTipo(t)}
+                                                        className={`text-xs px-2 py-1.5 rounded-lg border transition-colors ${cargaTipo === t ? "bg-cuca-blue text-white border-cuca-blue" : "border-border text-muted-foreground hover:border-cuca-blue/50"}`}>
+                                                        {t === "horario_comercial" ? "Comercial" : t === "escala" ? "Escala" : "Corrida"}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            {cargaTipo === "escala" && (
+                                                <div className="flex items-center gap-2">
+                                                    <Input className="w-16 text-center text-sm" value={cargaEscalaT} onChange={e => setCargaEscalaT(e.target.value)} placeholder="6" />
+                                                    <span className="text-muted-foreground">x</span>
+                                                    <Input className="w-16 text-center text-sm" value={cargaEscalaF} onChange={e => setCargaEscalaF(e.target.value)} placeholder="2" />
+                                                </div>
+                                            )}
+                                            {(cargaTipo === "horario_comercial" || cargaTipo === "jornada_corrida") && (
+                                                <div className="flex items-center gap-2">
+                                                    <Input className="w-16 text-center text-sm" value={cargaHoras} onChange={e => setCargaHoras(e.target.value)} placeholder="8" />
+                                                    <span className="text-xs text-muted-foreground">h/dia</span>
+                                                </div>
+                                            )}
+                                            {buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte) && (
+                                                <p className="text-xs text-muted-foreground">{buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte)}</p>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="space-y-2">
                                     <Label>Localização da Vaga</Label>
