@@ -116,17 +116,23 @@ def check_rate_limit(ip: str) -> bool:
 
 app = FastAPI(title="Worker Sistema CUCA", docs_url=None, redoc_url=None)
 
+# ─── Ambiente ─────────────────────────────────────────────────────────────────
+_IS_DEV = os.getenv("ENVIRONMENT", "production") == "development"
+
 # ─── CORS: Apenas origens conhecidas ─────────────────────────────────────────
+# Localhost removido em produção — presente apenas em modo development.
+_CORS_ORIGINS = [
+    "https://cucaatendemais.com.br",
+    "https://www.cucaatendemais.com.br",
+    "https://portal.cuca.ce.gov.br",
+    "https://cuca-portal.vercel.app",
+]
+if _IS_DEV:
+    _CORS_ORIGINS += ["http://localhost:3000", "http://localhost:3001"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://cucaatendemais.com.br",
-        "https://www.cucaatendemais.com.br",
-        "https://portal.cuca.ce.gov.br",
-        "https://cuca-portal.vercel.app",
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
@@ -203,10 +209,11 @@ async def startup_event():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"[500] Exceção não tratada em {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={"error": "Erro interno do servidor", "detail": str(exc)},
-    )
+    # SEC-12: stack trace exposto apenas em desenvolvimento — nunca em produção
+    content: dict = {"error": "Erro interno do servidor"}
+    if _IS_DEV:
+        content["detail"] = str(exc)
+    return JSONResponse(status_code=500, content=content)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -755,9 +762,9 @@ async def process_webhook_payload(payload: dict, token: str):
     except Exception as e:
         logger.error(f"Erro no processamento em background: {str(e)}")
 
-@app.get("/")
 async def salvar_manifestacao_ouvidoria(conversa_id: str, lead_id: str, unidade_cuca: str | None, phone: str):
-    """Extrai e salva manifestação da Ouvidoria quando Sofia confirma protocolo."""
+    """Extrai e salva manifestação da Ouvidoria quando Sofia confirma protocolo.
+    ATENÇÃO: função interna — NÃO exposta como rota HTTP. Chamada apenas via asyncio.create_task."""
     try:
         from openai import AsyncOpenAI
         openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -843,12 +850,14 @@ Retorne APENAS o JSON, sem markdown."""
         logger.error(f"[Ouvidoria] Erro ao salvar manifestação: {e}", exc_info=True)
 
 
+@app.get("/")
 async def root():
+    """Health check raiz — substitui a rota que estava incorretamente ligada a salvar_manifestacao_ouvidoria."""
     return {"status": "ok", "service": "worker-cuca"}
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "worker-cuca"}
+    return {"status": "ok", "service": "worker-cuca"}
 
 @app.post("/send-message/{token}")
 async def send_manual_message(token: str, request: Request):
