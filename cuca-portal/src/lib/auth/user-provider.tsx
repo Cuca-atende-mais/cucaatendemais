@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useEffect, useState } from "react"
+import { createContext, useContext, useEffect, useMemo, useCallback, useState, useRef } from "react"
 import { User } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
 
@@ -36,13 +36,21 @@ const UserContext = createContext<UserContextType>({
     isDeveloper: false,
 })
 
+// Emails autorizados como Developer real — APENAS estes dois
+const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
+
+// Módulos exclusivos dos 2 Developers — ninguém mais acessa nem via RBAC
+const DEVELOPER_ONLY_MODULES = ['developer']
+
 export function UserProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null)
     const [profile, setProfile] = useState<UserProfile | null>(null)
     const [loading, setLoading] = useState(true)
-    const supabase = createClient()
 
-    const fetchProfile = async (userId: string) => {
+    // Estabiliza a instância do Supabase client — não recriada a cada render
+    const supabase = useMemo(() => createClient(), [])
+
+    const fetchProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
         const { data, error } = await supabase
             .from("colaboradores")
             .select(`
@@ -70,7 +78,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         }
 
         try {
-            // Transformar estrutura aninhada em algo mais limpo
             const mappedProfile: UserProfile = {
                 id: data.id,
                 nome_completo: data.nome_completo,
@@ -86,24 +93,68 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             console.error("Erro ao mapear o perfil do colaborador:", mappingError, "Dados crus:", data)
             return null
         }
-    }
+    }, [supabase])
 
-    // Emails autorizados como Developer real — APENAS estes dois
-    const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
+    useEffect(() => {
+        let isMounted = true
 
-    // Módulos exclusivos dos 2 Developers — ninguém mais acessa nem via RBAC
-    const DEVELOPER_ONLY_MODULES = ['developer']
+        const initializeUser = async () => {
+            try {
+                setLoading(true)
+                const { data: { user: currentUser } } = await supabase.auth.getUser()
 
-    const hasPermission = (recurso: string, acao: string) => {
+                if (!isMounted) return
+
+                setUser(currentUser)
+
+                if (currentUser) {
+                    const userProfile = await fetchProfile(currentUser.id)
+                    if (isMounted) setProfile(userProfile)
+                } else {
+                    setProfile(null)
+                }
+            } catch (err) {
+                console.error("Erro fatal na inicialização do usuário:", err)
+            } finally {
+                if (isMounted) setLoading(false)
+            }
+        }
+
+        initializeUser()
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+            if (!isMounted) return
+
+            try {
+                const currentUser = session?.user ?? null
+                setUser(currentUser)
+
+                if (currentUser) {
+                    const userProfile = await fetchProfile(currentUser.id)
+                    if (isMounted) setProfile(userProfile)
+                } else {
+                    setProfile(null)
+                }
+            } catch (err) {
+                console.error("Erro ao lidar com mudança de auth:", err)
+            } finally {
+                if (isMounted) setLoading(false)
+            }
+        })
+
+        return () => {
+            isMounted = false
+            subscription.unsubscribe()
+        }
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    // Intencionalmente vazio: supabase e fetchProfile são estáveis via useMemo/useCallback.
+    // O listener onAuthStateChange deve registrar-se apenas uma vez.
+
+    const hasPermission = useCallback((recurso: string, acao: string): boolean => {
         if (!profile) return false
 
-        // Developers reais (2 emails): acesso total a TUDO, inclusive módulos exclusivos
         if (DEVELOPER_EMAILS.includes(profile.email || '')) return true
-
-        // Módulos exclusive dos devs: bloquear qualquer outro usuário
         if (DEVELOPER_ONLY_MODULES.includes(recurso)) return false
-
-        // Super Admin: acesso a todos os módulos operacionais (developer já foi bloqueado acima)
         if (profile.funcao.nome === 'Super Admin Cuca') return true
 
         const resourcePerm = profile.funcao.permissoes.find((p: any) => p.module === recurso)
@@ -116,53 +167,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             case 'delete': return resourcePerm.can_delete
             default: return false
         }
-    }
+    }, [profile])
 
     // S27-03: isDeveloper baseado exclusivamente no email (não no nome do role)
     const isDeveloper = DEVELOPER_EMAILS.includes(profile?.email || '')
-
-    useEffect(() => {
-        const initializeUser = async () => {
-            try {
-                setLoading(true)
-                const { data: { user } } = await supabase.auth.getUser()
-                setUser(user)
-
-                if (user) {
-                    const userProfile = await fetchProfile(user.id)
-                    setProfile(userProfile)
-                } else {
-                    setProfile(null)
-                }
-            } catch (err) {
-                console.error("Erro fatal na inicialização do usuário:", err)
-            } finally {
-                setLoading(false)
-            }
-        }
-
-        initializeUser()
-
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-            try {
-                const currentUser = session?.user ?? null
-                setUser(currentUser)
-
-                if (currentUser) {
-                    const userProfile = await fetchProfile(currentUser.id)
-                    setProfile(userProfile)
-                } else {
-                    setProfile(null)
-                }
-            } catch (err) {
-                console.error("Erro ao lidar com mudança de auth:", err)
-            } finally {
-                setLoading(false)
-            }
-        })
-
-        return () => subscription.unsubscribe()
-    }, [supabase.auth])
 
     return (
         <UserContext.Provider value={{ user, profile, loading, hasPermission, isDeveloper }}>
