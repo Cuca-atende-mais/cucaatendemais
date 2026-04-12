@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { useForm, useFieldArray, Controller } from "react-hook-form"
@@ -12,9 +12,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
+    Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog"
+import {
     ChevronDown, ChevronUp, Plus, Trash2, Save, Printer,
     ArrowLeft, Loader2, User, Briefcase, GraduationCap,
-    BookOpen, Wrench, Link2,
+    BookOpen, Wrench, Link2, Search, FileText,
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { differenceInMonths, parse } from "date-fns"
@@ -53,11 +56,19 @@ interface CvForm {
     email: string
     linkedin: string
     portfolio: string
+    apresentacao: string
     objetivo: string
     experiencias: Experiencia[]
     formacoes: Formacao[]
     cursos: Curso[]
     habilidades: Habilidade[]
+}
+
+interface VagaRow {
+    id: string
+    titulo: string
+    unidade_cuca: string | null
+    empresas: { nome: string } | null
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -101,10 +112,7 @@ function Section({ icon, title, children, defaultOpen = true }: {
     const [open, setOpen] = useState(defaultOpen)
     return (
         <Card>
-            <CardHeader
-                className="cursor-pointer select-none py-4"
-                onClick={() => setOpen(o => !o)}
-            >
+            <CardHeader className="cursor-pointer select-none py-4" onClick={() => setOpen(o => !o)}>
                 <CardTitle className="flex items-center justify-between text-base">
                     <span className="flex items-center gap-2">{icon} {title}</span>
                     {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
@@ -117,7 +125,7 @@ function Section({ icon, title, children, defaultOpen = true }: {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function CvBuilderPage() {
+export default function CriarCurriculoEditorPage() {
     const params = useParams()
     const router = useRouter()
     const talentId = params.id as string
@@ -128,14 +136,18 @@ export default function CvBuilderPage() {
     const [loadingInit, setLoadingInit] = useState(true)
     const [saving, setSaving] = useState(false)
 
+    // Dialog: Verificar Vagas
+    const [vagasOpen, setVagasOpen] = useState(false)
+    const [vagas, setVagas] = useState<VagaRow[]>([])
+    const [vagaSearch, setVagaSearch] = useState("")
+    const [vagaLoading, setVagaLoading] = useState(false)
+    const [vinculando, setVinculando] = useState<string | null>(null)
+
     const { register, control, handleSubmit, reset, watch } = useForm<CvForm>({
         defaultValues: {
             nome: "", endereco: "", telefone: "", email: "", linkedin: "", portfolio: "",
-            objetivo: "",
-            experiencias: [],
-            formacoes: [],
-            cursos: [],
-            habilidades: [],
+            apresentacao: "", objetivo: "",
+            experiencias: [], formacoes: [], cursos: [], habilidades: [],
         },
     })
 
@@ -144,20 +156,23 @@ export default function CvBuilderPage() {
     const cursoFields = useFieldArray({ control, name: "cursos" })
     const habFields = useFieldArray({ control, name: "habilidades" })
 
-    // Carregar dados existentes
+    // ── Carregar dados ────────────────────────────────────────────────────────
+
     useEffect(() => {
         const init = async () => {
-            // Buscar talento
             const { data: talent } = await supabase
                 .from("talent_bank")
                 .select("nome, telefone, curriculo_estruturado")
                 .eq("id", talentId)
                 .single()
 
-            if (!talent) { toast.error("Candidato não encontrado."); router.push("/empregabilidade/cv-builder"); return }
+            if (!talent) {
+                toast.error("Candidato não encontrado.")
+                router.push("/empregabilidade/criar-curriculo")
+                return
+            }
             setTalentNome(talent.nome)
 
-            // Buscar currículo ativo na nova tabela
             const { data: cur } = await supabase
                 .from("curriculos")
                 .select("*")
@@ -169,10 +184,10 @@ export default function CvBuilderPage() {
 
             if (cur) {
                 setCurriculoId(cur.id)
-                reset({ nome: talent.nome, ...cur.dados } as CvForm)
+                reset({ nome: talent.nome, telefone: talent.telefone || "", ...cur.dados } as CvForm)
             } else if (talent.curriculo_estruturado && Object.keys(talent.curriculo_estruturado).length > 0) {
                 // Migrar do campo legado
-                reset({ nome: talent.nome, ...talent.curriculo_estruturado } as CvForm)
+                reset({ nome: talent.nome, telefone: talent.telefone || "", ...talent.curriculo_estruturado } as CvForm)
             } else {
                 reset({ nome: talent.nome, telefone: talent.telefone || "" } as unknown as CvForm)
             }
@@ -180,6 +195,8 @@ export default function CvBuilderPage() {
         }
         init()
     }, [talentId])
+
+    // ── Salvar currículo + upsert talent_bank (RN1) ──────────────────────────
 
     const onSubmit = async (values: CvForm) => {
         setSaving(true)
@@ -199,7 +216,19 @@ export default function CvBuilderPage() {
                 if (error) throw error
                 setCurriculoId(data.id)
             }
-            toast.success("Currículo salvo com sucesso!")
+
+            // RN1: Atualizar nome e telefone no Banco de Talentos
+            if (values.nome || values.telefone) {
+                await supabase
+                    .from("talent_bank")
+                    .update({
+                        ...(values.nome && { nome: values.nome }),
+                        ...(values.telefone && { telefone: values.telefone }),
+                    })
+                    .eq("id", talentId)
+            }
+
+            toast.success("Currículo salvo e Banco de Talentos atualizado!")
         } catch (err: any) {
             toast.error(err.message || "Erro ao salvar.")
         } finally {
@@ -207,14 +236,13 @@ export default function CvBuilderPage() {
         }
     }
 
-    const handlePrint = async () => {
-        // Salvar antes de imprimir
-        await handleSubmit(async (values) => {
+    // ── Imprimir (salva antes) ────────────────────────────────────────────────
+
+    const handlePrint = () => {
+        handleSubmit(async (values) => {
             await onSubmit(values)
-            if (curriculoId) {
-                router.push(`/empregabilidade/print/${curriculoId}`)
-            } else {
-                // Buscar o id recém-criado
+            // Buscar id do currículo recém-salvo
+            const id = curriculoId || await (async () => {
                 const { data } = await supabase
                     .from("curriculos")
                     .select("id")
@@ -223,10 +251,83 @@ export default function CvBuilderPage() {
                     .order("created_at", { ascending: false })
                     .limit(1)
                     .maybeSingle()
-                if (data?.id) router.push(`/empregabilidade/print/${data.id}`)
-            }
+                return data?.id
+            })()
+            if (id) router.push(`/empregabilidade/print/${id}`)
         })()
     }
+
+    // ── Vincular a vaga (RN2) ─────────────────────────────────────────────────
+
+    const openVagasDialog = async () => {
+        setVagasOpen(true)
+        setVagaSearch("")
+        setVagaLoading(true)
+        const { data } = await supabase
+            .from("vagas")
+            .select("id, titulo, unidade_cuca, empresas(nome)")
+            .eq("status", "aberta")
+            .order("created_at", { ascending: false })
+            .limit(200)
+        setVagas((data || []) as unknown as VagaRow[])
+        setVagaLoading(false)
+    }
+
+    const handleVincular = async (vaga: VagaRow) => {
+        setVinculando(vaga.id)
+
+        // Salvar currículo primeiro se ainda não foi salvo
+        const values = watch()
+        await onSubmit(values)
+
+        const { data: existing } = await supabase
+            .from("candidaturas")
+            .select("id")
+            .eq("vaga_id", vaga.id)
+            .ilike("observacoes", `%banco_talentos:${talentId}%`)
+            .maybeSingle()
+
+        if (existing) {
+            toast.error("Este candidato já está encaminhado para esta vaga.")
+            setVinculando(null)
+            return
+        }
+
+        const { data: talent } = await supabase
+            .from("talent_bank")
+            .select("nome, data_nascimento, telefone, arquivo_cv_url, area_interesse")
+            .eq("id", talentId)
+            .single()
+
+        if (!talent) { toast.error("Candidato não encontrado."); setVinculando(null); return }
+
+        const { error } = await supabase.from("candidaturas").insert({
+            vaga_id: vaga.id,
+            nome: talent.nome,
+            data_nascimento: talent.data_nascimento || "2000-01-01",
+            telefone: talent.telefone || "",
+            arquivo_cv_url: talent.arquivo_cv_url || null,
+            area_interesse: talent.area_interesse || null,
+            observacoes: `banco_talentos:${talentId}`,
+            status: "novo",
+            requisitos_atendidos: "Encaminhado via Criar Currículo",
+            unidade_cuca: vaga.unidade_cuca || null,
+        })
+
+        if (error) { toast.error("Erro ao encaminhar candidato."); console.error(error) }
+        else {
+            toast.success(`Candidato encaminhado para "${vaga.titulo}"!`)
+            setVagasOpen(false)
+        }
+        setVinculando(null)
+    }
+
+    const vagasFiltradas = vagas.filter(v =>
+        !vagaSearch ||
+        v.titulo.toLowerCase().includes(vagaSearch.toLowerCase()) ||
+        (v.empresas?.nome || "").toLowerCase().includes(vagaSearch.toLowerCase()) ||
+        (v.unidade_cuca || "").toLowerCase().includes(vagaSearch.toLowerCase())
+    )
 
     if (loadingInit) return (
         <div className="flex items-center justify-center min-h-[60vh]">
@@ -236,18 +337,22 @@ export default function CvBuilderPage() {
 
     return (
         <div className="space-y-6 pb-20">
-            {/* Cabeçalho */}
-            <div className="flex items-center justify-between">
+
+            {/* ── Barra superior ────────────────────────────────────────────── */}
+            <div className="flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-3">
                     <Button variant="ghost" size="icon" onClick={() => router.back()}>
                         <ArrowLeft className="h-5 w-5" />
                     </Button>
                     <div>
-                        <h1 className="text-2xl font-bold tracking-tight">CV Builder</h1>
+                        <h1 className="text-2xl font-bold tracking-tight">Criar Currículo</h1>
                         <p className="text-muted-foreground text-sm">{talentNome}</p>
                     </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
+                    <Button variant="outline" onClick={openVagasDialog}>
+                        <Link2 className="h-4 w-4 mr-2 text-cuca-blue" /> Verificar Vagas em Aberto
+                    </Button>
                     <Button variant="outline" onClick={handlePrint}>
                         <Printer className="h-4 w-4 mr-2" /> Salvar e Imprimir
                     </Button>
@@ -264,16 +369,16 @@ export default function CvBuilderPage() {
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
 
-                {/* ── Dados Pessoais ──────────────────────────────────────────── */}
+                {/* ── Dados Pessoais ─────────────────────────────────────────── */}
                 <Section icon={<User className="h-4 w-4" />} title="Dados Pessoais">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1.5 md:col-span-2">
                             <Label>Nome Completo</Label>
-                            <Input {...register("nome")} placeholder="Nome completo" />
+                            <Input {...register("nome")} placeholder="Nome completo do candidato" />
                         </div>
                         <div className="space-y-1.5 md:col-span-2">
                             <Label>Endereço</Label>
-                            <Input {...register("endereco")} placeholder="Rua, bairro, cidade — CE" />
+                            <Input {...register("endereco")} placeholder="Rua, nº, bairro — Cidade, CE" />
                         </div>
                         <div className="space-y-1.5">
                             <Label>Telefone</Label>
@@ -288,32 +393,48 @@ export default function CvBuilderPage() {
                             <Input {...register("linkedin")} placeholder="linkedin.com/in/nome" />
                         </div>
                         <div className="space-y-1.5">
-                            <Label>Portfólio / Site</Label>
-                            <Input {...register("portfolio")} placeholder="behance.net/nome" />
+                            <Label>GitHub / Portfólio</Label>
+                            <Input {...register("portfolio")} placeholder="github.com/nome ou behance.net/nome" />
                         </div>
                     </div>
                 </Section>
 
-                {/* ── Objetivo ────────────────────────────────────────────────── */}
-                <Section icon={<Briefcase className="h-4 w-4" />} title="Objetivo Profissional">
+                {/* ── Apresentação Profissional ──────────────────────────────── */}
+                <Section icon={<FileText className="h-4 w-4" />} title="Apresentação Profissional">
                     <div className="space-y-1.5">
-                        <Label>Objetivo</Label>
+                        <Label>Texto de Apresentação</Label>
                         <Textarea
-                            {...register("objetivo")}
-                            placeholder="Descreva o objetivo profissional do candidato em 1-3 frases..."
-                            rows={3}
+                            {...register("apresentacao")}
+                            placeholder="Descreva o perfil do candidato: experiência, diferenciais e características pessoais relevantes para o mercado de trabalho..."
+                            rows={5}
                         />
+                        <p className="text-xs text-muted-foreground">
+                            Este texto aparece no topo do currículo, antes do objetivo. Seja específico e objetivo.
+                        </p>
                     </div>
                 </Section>
 
-                {/* ── Experiências ─────────────────────────────────────────────── */}
+                {/* ── Objetivo Profissional ──────────────────────────────────── */}
+                <Section icon={<Briefcase className="h-4 w-4" />} title="Objetivo Profissional">
+                    <div className="space-y-1.5">
+                        <Label>Cargo / Área desejada</Label>
+                        <Input
+                            {...register("objetivo")}
+                            placeholder="Ex: Auxiliar Administrativo | Atendente de Loja | Estoquista"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            Aparece como destaque no currículo. Use cargo(s) separados por " | ".
+                        </p>
+                    </div>
+                </Section>
+
+                {/* ── Experiências ──────────────────────────────────────────── */}
                 <Section icon={<Briefcase className="h-4 w-4" />} title="Experiência Profissional">
                     {expFields.fields.map((field, i) => {
                         const inicio = watch(`experiencias.${i}.data_inicio`)
                         const fim = watch(`experiencias.${i}.data_fim`)
                         const atual = watch(`experiencias.${i}.atual`)
                         const permanencia = calcPermanencia(inicio, fim, atual)
-
                         return (
                             <div key={field.id} className="border rounded-lg p-4 space-y-3 relative">
                                 <Button
@@ -337,7 +458,7 @@ export default function CvBuilderPage() {
                                         <Input {...register(`experiencias.${i}.data_inicio`)} placeholder="01/2023" />
                                     </div>
                                     <div className="space-y-1">
-                                        <Label>Fim (MM/AAAA){atual ? " — Emprego atual" : ""}</Label>
+                                        <Label>Fim (MM/AAAA)</Label>
                                         <Input {...register(`experiencias.${i}.data_fim`)} placeholder="01/2024" disabled={atual} />
                                     </div>
                                 </div>
@@ -346,11 +467,7 @@ export default function CvBuilderPage() {
                                         control={control}
                                         name={`experiencias.${i}.atual`}
                                         render={({ field: f }) => (
-                                            <Checkbox
-                                                checked={f.value}
-                                                onCheckedChange={f.onChange}
-                                                id={`atual-${i}`}
-                                            />
+                                            <Checkbox checked={f.value} onCheckedChange={f.onChange} id={`atual-${i}`} />
                                         )}
                                     />
                                     <Label htmlFor={`atual-${i}`} className="cursor-pointer text-sm">Emprego atual</Label>
@@ -403,7 +520,7 @@ export default function CvBuilderPage() {
                     </Button>
                 </Section>
 
-                {/* ── Formação ─────────────────────────────────────────────────── */}
+                {/* ── Formação ──────────────────────────────────────────────── */}
                 <Section icon={<GraduationCap className="h-4 w-4" />} title="Formação Acadêmica">
                     {formFields.fields.map((field, i) => (
                         <div key={field.id} className="border rounded-lg p-4 space-y-3 relative">
@@ -432,7 +549,7 @@ export default function CvBuilderPage() {
                                 </div>
                                 <div className="space-y-1">
                                     <Label>Instituição</Label>
-                                    <Input {...register(`formacoes.${i}.instituicao`)} placeholder="Nome da escola/faculdade" />
+                                    <Input {...register(`formacoes.${i}.instituicao`)} placeholder="Nome da escola / faculdade" />
                                 </div>
                                 <div className="space-y-1">
                                     <Label>Status</Label>
@@ -451,7 +568,11 @@ export default function CvBuilderPage() {
                                     />
                                 </div>
                                 <div className="space-y-1">
-                                    <Label>Ano {watch(`formacoes.${i}.status`) === "cursando" ? "de Conclusão Previsto" : "de Conclusão"}</Label>
+                                    <Label>
+                                        {watch(`formacoes.${i}.status`) === "cursando"
+                                            ? "Previsão de Conclusão"
+                                            : "Ano de Conclusão"}
+                                    </Label>
                                     <Input {...register(`formacoes.${i}.ano`)} placeholder="2024" maxLength={4} />
                                 </div>
                             </div>
@@ -465,7 +586,7 @@ export default function CvBuilderPage() {
                     </Button>
                 </Section>
 
-                {/* ── Cursos ───────────────────────────────────────────────────── */}
+                {/* ── Cursos ────────────────────────────────────────────────── */}
                 <Section icon={<BookOpen className="h-4 w-4" />} title="Cursos e Certificações" defaultOpen={false}>
                     {cursoFields.fields.map((field, i) => (
                         <div key={field.id} className="border rounded-lg p-4 space-y-3 relative">
@@ -479,11 +600,11 @@ export default function CvBuilderPage() {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <div className="space-y-1">
                                     <Label>Título do Curso</Label>
-                                    <Input {...register(`cursos.${i}.titulo`)} placeholder="Ex: Pacote Office" />
+                                    <Input {...register(`cursos.${i}.titulo`)} placeholder="Ex: Pacote Office Completo" />
                                 </div>
                                 <div className="space-y-1">
                                     <Label>Instituição</Label>
-                                    <Input {...register(`cursos.${i}.instituicao`)} placeholder="Ex: SENAC" />
+                                    <Input {...register(`cursos.${i}.instituicao`)} placeholder="Ex: SENAC, SEBRAE" />
                                 </div>
                                 <div className="space-y-1">
                                     <Label>Ano</Label>
@@ -491,7 +612,7 @@ export default function CvBuilderPage() {
                                 </div>
                                 <div className="space-y-1">
                                     <Label>Descrição (opcional)</Label>
-                                    <Input {...register(`cursos.${i}.descricao`)} placeholder="Breve descrição" />
+                                    <Input {...register(`cursos.${i}.descricao`)} placeholder="Breve descrição ou carga horária" />
                                 </div>
                             </div>
                         </div>
@@ -504,16 +625,13 @@ export default function CvBuilderPage() {
                     </Button>
                 </Section>
 
-                {/* ── Habilidades ──────────────────────────────────────────────── */}
+                {/* ── Habilidades ───────────────────────────────────────────── */}
                 <Section icon={<Wrench className="h-4 w-4" />} title="Habilidades Técnicas" defaultOpen={false}>
                     {habFields.fields.map((field, i) => (
                         <div key={field.id} className="flex gap-2 items-start">
                             <Input {...register(`habilidades.${i}.titulo`)} placeholder="Ex: Excel" className="w-40 flex-shrink-0" />
                             <Input {...register(`habilidades.${i}.descricao`)} placeholder="Nível ou detalhe (opcional)" className="flex-1" />
-                            <Button
-                                type="button" variant="ghost" size="icon"
-                                onClick={() => habFields.remove(i)}
-                            >
+                            <Button type="button" variant="ghost" size="icon" onClick={() => habFields.remove(i)}>
                                 <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
                         </div>
@@ -527,6 +645,54 @@ export default function CvBuilderPage() {
                 </Section>
 
             </form>
+
+            {/* ── Dialog: Verificar Vagas em Aberto (RN2) ─────────────────── */}
+            <Dialog open={vagasOpen} onOpenChange={o => { if (!o) setVagasOpen(false) }}>
+                <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle>Vagas em Aberto</DialogTitle>
+                        <DialogDescription>
+                            Candidato: <strong>{talentNome}</strong> — selecione uma vaga para encaminhar.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="relative mb-3">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Buscar por título, empresa ou unidade..."
+                            className="pl-10"
+                            value={vagaSearch}
+                            onChange={e => setVagaSearch(e.target.value)}
+                        />
+                    </div>
+                    <div className="overflow-y-auto flex-1 divide-y divide-border border rounded-lg">
+                        {vagaLoading ? (
+                            <div className="flex items-center justify-center py-8">
+                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                            </div>
+                        ) : vagasFiltradas.length === 0 ? (
+                            <p className="text-center py-8 text-muted-foreground text-sm">
+                                Nenhuma vaga em aberto encontrada.
+                            </p>
+                        ) : vagasFiltradas.map(v => (
+                            <div key={v.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/40">
+                                <div className="flex-1 min-w-0">
+                                    <p className="font-medium text-sm truncate">{v.titulo}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {v.empresas?.nome || "Empresa"} · {v.unidade_cuca || "Todas as unidades"}
+                                    </p>
+                                </div>
+                                <Button
+                                    size="sm"
+                                    disabled={vinculando === v.id}
+                                    onClick={() => handleVincular(v)}
+                                >
+                                    {vinculando === v.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Encaminhar"}
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

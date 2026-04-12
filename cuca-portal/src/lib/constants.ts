@@ -40,6 +40,7 @@ export const menuItems = [
             { title: "Vagas", url: "/empregabilidade/vagas", permission: { recurso: "empreg_vagas", acao: "read" } },
             { title: "Candidatos", url: "/empregabilidade/candidatos", permission: { recurso: "empreg_banco_cv", acao: "read" } },
             { title: "Banco de Talentos", url: "/empregabilidade/banco-talentos", permission: { recurso: "empreg_banco_cv", acao: "read" } },
+            { title: "Criar Currículo", url: "/empregabilidade/criar-curriculo", permission: { recurso: "empreg_banco_cv", acao: "read" } },
         ],
     },
     {

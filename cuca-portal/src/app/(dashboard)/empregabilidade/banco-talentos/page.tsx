@@ -940,9 +940,9 @@ function CurriculoModal({ talento, onRefresh }: { talento: TalentBank; onRefresh
                         variant="outline"
                         size="sm"
                         className="border-cuca-blue/40 text-cuca-blue hover:bg-cuca-blue/10"
-                        onClick={() => router.push(`/empregabilidade/cv-builder/${talento.id}`)}
+                        onClick={() => router.push(`/empregabilidade/criar-curriculo/${talento.id}`)}
                     >
-                        <PenLine className="h-4 w-4 mr-1.5" /> Abrir CV Builder
+                        <PenLine className="h-4 w-4 mr-1.5" /> Criar Currículo
                     </Button>
                     {talento.telefone && (
                         <Button
