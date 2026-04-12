@@ -165,28 +165,61 @@ export default function DivulgacaoPage() {
 
             setInstanciasInstitucionais(instsInst ?? [])
 
-            // 3.6 Buscar instância institucionalredecuca (número dinâmico — nunca hardcode)
-            // Prioridade: nome exato → canal_tipo Institucional sem unidade → qualquer Institucional ativa
+            // 3.6 Buscar número de contato global da Rede CUCA (número dinâmico — nunca hardcode)
+            // Prioridade: 1) institucionalredecuca com telefone preenchido
+            //             2) qualquer Institucional sem unidade com telefone
+            //             3) divulgacaoredecuca (chip de broadcast — tem telefone garantido)
+            //             4) qualquer instância ativa com telefone
             const { data: instNomeExato } = await supabase
                 .from("instancias_uazapi")
                 .select("telefone")
                 .ilike("nome", "%institucionalredecuca%")
                 .eq("ativa", true)
+                .not("telefone", "is", null)
                 .limit(1)
                 .maybeSingle()
 
             if (instNomeExato?.telefone) {
                 setTelefoneInstGlobal(instNomeExato.telefone)
             } else {
-                const { data: instGlobal } = await supabase
+                // Fallback 2: Institucional global (sem unidade) com telefone
+                const { data: instInstitucional } = await supabase
                     .from("instancias_uazapi")
                     .select("telefone")
                     .eq("canal_tipo", "Institucional")
                     .eq("ativa", true)
                     .is("unidade_cuca", null)
+                    .not("telefone", "is", null)
                     .limit(1)
                     .maybeSingle()
-                if (instGlobal?.telefone) setTelefoneInstGlobal(instGlobal.telefone)
+
+                if (instInstitucional?.telefone) {
+                    setTelefoneInstGlobal(instInstitucional.telefone)
+                } else {
+                    // Fallback 3: chip Divulgação da Rede (divulgacaoredecuca)
+                    const { data: instDivulgacao } = await supabase
+                        .from("instancias_uazapi")
+                        .select("telefone")
+                        .eq("nome", "divulgacaoredecuca")
+                        .eq("ativa", true)
+                        .not("telefone", "is", null)
+                        .limit(1)
+                        .maybeSingle()
+
+                    if (instDivulgacao?.telefone) {
+                        setTelefoneInstGlobal(instDivulgacao.telefone)
+                    } else {
+                        // Fallback 4: qualquer instância ativa com telefone preenchido
+                        const { data: instAny } = await supabase
+                            .from("instancias_uazapi")
+                            .select("telefone")
+                            .eq("ativa", true)
+                            .not("telefone", "is", null)
+                            .limit(1)
+                            .maybeSingle()
+                        if (instAny?.telefone) setTelefoneInstGlobal(instAny.telefone)
+                    }
+                }
             }
 
             // 4. Histórico de disparos
