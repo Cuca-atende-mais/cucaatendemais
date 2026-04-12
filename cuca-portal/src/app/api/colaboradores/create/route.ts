@@ -29,7 +29,7 @@ export async function POST(request: Request) {
         // 2. Criar o usuário no Supabase Auth "Silenciosamente"
         const tempPassword = crypto.randomBytes(16).toString('hex') + 'A1!'
 
-        const { data: authData, error: authError } = await adminAuth.admin.createUser({
+        const { data: authData, error: createUserError } = await adminAuth.admin.createUser({
             email,
             password: tempPassword,
             email_confirm: true, // Isso desliga o envio de email automático do Supabase
@@ -38,9 +38,9 @@ export async function POST(request: Request) {
             }
         })
 
-        if (authError) {
-            console.error("Erro Auth Supabase:", authError)
-            return NextResponse.json({ error: authError.message }, { status: 400 })
+        if (createUserError) {
+            console.error("Erro Auth Supabase:", createUserError)
+            return NextResponse.json({ error: createUserError.message }, { status: 400 })
         }
 
         const userId = authData.user.id
