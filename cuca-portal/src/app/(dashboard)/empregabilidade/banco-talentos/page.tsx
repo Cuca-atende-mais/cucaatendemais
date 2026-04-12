@@ -19,7 +19,7 @@ import {
     ShoppingCart, Building2, Truck, Wrench, UtensilsCrossed,
     Palette, HardHat, Cpu, HelpCircle, Star, Clock, GraduationCap,
     CheckCircle, AlertCircle, ExternalLink, MessageCircle, Scissors, Heart, Trash2,
-    ChevronLeft, ChevronRight, Filter,
+    ChevronLeft, ChevronRight, Filter, PenLine, Printer,
 } from "lucide-react"
 import { useUser } from "@/lib/auth/user-provider"
 import { Label } from "@/components/ui/label"
@@ -30,6 +30,8 @@ import { differenceInYears, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 import { NIVEIS_ESCOLARIDADE } from "@/constants/empregabilidade"
+import { ConstrutorCurriculoModal } from "@/components/empregabilidade/ConstrutorCurriculoModal"
+import { useRouter } from "next/navigation"
 
 // ─── Configuração de áreas ────────────────────────────────────────────────────
 
@@ -676,7 +678,7 @@ export default function BancoTalentosPage() {
             {/* ── Modal currículo completo ───────────────────────────────────── */}
             <Dialog open={!!selectedTalento} onOpenChange={(o) => !o && setSelectedTalento(null)}>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                    {selectedTalento && <CurriculoModal talento={selectedTalento} />}
+                    {selectedTalento && <CurriculoModal talento={selectedTalento} onRefresh={fetchTalentos} />}
                 </DialogContent>
             </Dialog>
 
@@ -743,7 +745,11 @@ export default function BancoTalentosPage() {
 
 // ─── Modal de currículo completo ──────────────────────────────────────────────
 
-function CurriculoModal({ talento }: { talento: TalentBank }) {
+function CurriculoModal({ talento, onRefresh }: { talento: TalentBank; onRefresh?: () => void }) {
+    const router = useRouter()
+    const [construtorOpen, setConstrutorOpen] = useState(false)
+    // Ler dados existentes do curriculo_estruturado se houver
+    const curricEstruturado = talento.curriculo_estruturado || {}
     const ocr = talento.skills_jsonb || {}
     const area = getAreaConfig(talento.area_interesse as string[] | null)
     const idade = talento.data_nascimento
@@ -934,6 +940,25 @@ function CurriculoModal({ talento }: { talento: TalentBank }) {
                             <ExternalLink className="h-3 w-3 ml-1.5 text-muted-foreground" />
                         </Button>
                     )}
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-cuca-blue/40 text-cuca-blue hover:bg-cuca-blue/10"
+                        onClick={() => setConstrutorOpen(true)}
+                    >
+                        <PenLine className="h-4 w-4 mr-1.5" />
+                        {Object.keys(curricEstruturado).length > 0 ? "Editar Currículo Guiado" : "Criar Currículo Guiado"}
+                    </Button>
+                    {Object.keys(curricEstruturado).length > 0 && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-zinc-500/40 text-zinc-300 hover:bg-zinc-500/10"
+                            onClick={() => router.push(`/empregabilidade/banco-talentos/${talento.id}/curriculo-print`)}
+                        >
+                            <Printer className="h-4 w-4 mr-1.5" /> Ver / Imprimir Currículo
+                        </Button>
+                    )}
                     {talento.telefone && (
                         <Button
                             variant="outline"
@@ -946,6 +971,16 @@ function CurriculoModal({ talento }: { talento: TalentBank }) {
                     )}
                 </div>
             </div>
+
+            {/* Construtor de Currículo */}
+            <ConstrutorCurriculoModal
+                open={construtorOpen}
+                onOpenChange={setConstrutorOpen}
+                talentId={talento.id}
+                talentNome={talento.nome}
+                initialData={Object.keys(curricEstruturado).length > 0 ? curricEstruturado : { nome: talento.nome, telefone: talento.telefone || "" }}
+                onSaved={onRefresh}
+            />
         </>
     )
 }

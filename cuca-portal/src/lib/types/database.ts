@@ -216,6 +216,7 @@ export type TalentBank = {
     candidatura_origem_id: string | null
     vaga_origem_id: string | null
     skills_jsonb: any
+    curriculo_estruturado: Record<string, any> | null
     status: string
     arquivo_cv_url: string | null
     area_interesse: string[] | null
