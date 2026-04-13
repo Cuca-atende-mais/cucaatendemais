@@ -751,6 +751,20 @@ async def process_webhook_payload(payload: dict, token: str):
                                             "text": resposta_ia
                                         }
                                     )
+                                # Persistir resposta da IA na tabela mensagens para exibição no painel
+                                try:
+                                    def _salvar_resposta_ia():
+                                        supabase.table("mensagens").insert({
+                                            "conversa_id": conversation_id,
+                                            "lead_id": lead_id,
+                                            "remetente": "agente",
+                                            "tipo": "text",
+                                            "conteudo": resposta_ia,
+                                        }).execute()
+                                    await asyncio.to_thread(_salvar_resposta_ia)
+                                    logger.info(f"[motor-agente] Resposta IA persistida em mensagens. ConvID: {conversation_id}")
+                                except Exception as _se:
+                                    logger.error(f"[motor-agente] Falha ao persistir resposta IA: {_se}")
                         else:
                             logger.error(f"Erro no motor-agente HTTP {resp.status_code}: {resp.text}")
                 except httpx.ReadTimeout:

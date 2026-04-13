@@ -8,6 +8,7 @@ Se o lead demonstrar interesse em outra unidade durante a conversa, o sistema co
 Estado armazenado em conversas.metadata["inst_fluxo"].
 """
 
+import asyncio
 import os
 import re
 import logging
@@ -149,13 +150,27 @@ def _set_inst_fluxo(conversa_id: str, dados: dict):
 # Envio de texto via UAZAPI
 # ---------------------------------------------------------------------------
 
-async def _enviar(instance_name: str, token: str, phone: str, texto: str):
+async def _enviar(instance_name: str, token: str, phone: str, texto: str, conversa_id: str = "", lead_id: str = ""):
     async with httpx.AsyncClient(timeout=15) as client:
         await client.post(
             f"{UAZAPI_URL}/send/text",
             headers={"token": token, "Content-Type": "application/json"},
             json={"number": phone, "delay": 1200, "text": texto},
         )
+    # Gravar mensagem de saída do bot na tabela mensagens para exibição no painel
+    if conversa_id:
+        def _inserir():
+            return supabase.table("mensagens").insert({
+                "conversa_id": conversa_id,
+                "lead_id": lead_id or None,
+                "remetente": "agente",
+                "tipo": "text",
+                "conteudo": texto,
+            }).execute()
+        try:
+            await asyncio.to_thread(_inserir)
+        except Exception as _e:
+            logger.error(f"[_enviar_institucional] Falha ao gravar mensagem no DB: {_e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +324,7 @@ async def processar_mensagem_institucional(
     # Primeira mensagem ou fluxo vazio → exibir menu de unidades
     # -----------------------------------------------------------------------
     if not etapa:
-        await _enviar(instance_name, token, phone, _montar_menu_unidades())
+        await _enviar(instance_name, token, phone, _montar_menu_unidades(), conversa_id=conversa_id, lead_id=lead_id)
         _set_inst_fluxo(conversa_id, {"etapa": "aguardando_unidade"})
         return
 
@@ -332,7 +347,8 @@ async def processar_mensagem_institucional(
                 "2️⃣ Cuca Mondubim\n"
                 "3️⃣ Cuca Jangurussu\n"
                 "4️⃣ Cuca José Walter\n"
-                "5️⃣ Cuca Pici"
+                "5️⃣ Cuca Pici",
+                conversa_id=conversa_id, lead_id=lead_id,
             )
         return
 
@@ -350,7 +366,8 @@ async def processar_mensagem_institucional(
             })
             await _enviar(
                 instance_name, token, phone,
-                f"Ok! Agora estou buscando informações sobre *{unidade_nova}*. Pode perguntar! 😊"
+                f"Ok! Agora estou buscando informações sobre *{unidade_nova}*. Pode perguntar! 😊",
+                conversa_id=conversa_id, lead_id=lead_id,
             )
         else:
             # Mantém unidade atual — NÃO repassa a mensagem anterior ao motor-agente
@@ -361,7 +378,8 @@ async def processar_mensagem_institucional(
             })
             await _enviar(
                 instance_name, token, phone,
-                f"Continuamos com *{unidade_atual}*! 😊 Como posso te ajudar?"
+                f"Continuamos com *{unidade_atual}*! 😊 Como posso te ajudar?",
+                conversa_id=conversa_id, lead_id=lead_id,
             )
         return
 
@@ -391,7 +409,7 @@ async def processar_mensagem_institucional(
                     "Para vagas de emprego e oportunidades na Rede CUCA, procure a unidade CUCA mais próxima "
                     "e solicite atendimento na Empregabilidade. 💼"
                 )
-            await _enviar(instance_name, token, phone, msg_redirect)
+            await _enviar(instance_name, token, phone, msg_redirect, conversa_id=conversa_id, lead_id=lead_id)
             return
 
         unidade_mencionada = _detectar_unidade(t, ignorar_numeros=True)
@@ -406,7 +424,8 @@ async def processar_mensagem_institucional(
             await _enviar(
                 instance_name, token, phone,
                 f"Você quer informações sobre *{unidade_mencionada}*?\n\n"
-                f"Responda *1* para sim ou *2* para continuar com *{unidade_atual}*."
+                f"Responda *1* para sim ou *2* para continuar com *{unidade_atual}*.",
+                conversa_id=conversa_id, lead_id=lead_id,
             )
             return
 
@@ -418,5 +437,5 @@ async def processar_mensagem_institucional(
     # Fallback — estado desconhecido, reinicia com o menu
     # -----------------------------------------------------------------------
     _set_inst_fluxo(conversa_id, {})
-    await _enviar(instance_name, token, phone, _montar_menu_unidades())
+    await _enviar(instance_name, token, phone, _montar_menu_unidades(), conversa_id=conversa_id, lead_id=lead_id)
     _set_inst_fluxo(conversa_id, {"etapa": "aguardando_unidade"})
