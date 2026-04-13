@@ -1,15 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
-import { createClient as createServerClient } from "@/lib/supabase/server"
 
 export async function POST(request: NextRequest) {
-    // SEC-03: exige usuário autenticado para criar vagas via service role
-    const supabaseAuth = await createServerClient()
-    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
-    if (authError || !user) {
-        return NextResponse.json({ error: "Não autorizado" }, { status: 401 })
-    }
-
+    // Rota pública: acesso via link gerado pelo worker (empresa_id validado abaixo)
     const supabaseAdmin = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
