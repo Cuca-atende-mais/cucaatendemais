@@ -45,7 +45,8 @@ export async function updateSession(request: NextRequest) {
         pathname === '/api/process-cv' ||              // OCR disparado pelo formulário público
         pathname.startsWith('/empregabilidade') ||     // páginas públicas para empresas/candidatos externos
         pathname.startsWith('/vagas') ||               // páginas públicas de vagas
-        pathname.startsWith('/api/empregabilidade')  // APIs públicas de empregabilidade
+        pathname.startsWith('/api/empregabilidade') || // APIs públicas de empregabilidade
+        pathname.startsWith('/feedback-empresa')        // formulário público de feedback para empresas
 
     // Usuário não autenticado tentando acessar rota protegida
     if (!user && !isPublicPath) {
