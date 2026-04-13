@@ -224,7 +224,7 @@ export default function CriarCurriculoListPage() {
             arquivo_cv_url: talent.arquivo_cv_url || null,
             area_interesse: talent.area_interesse || null,
             observacoes: `banco_talentos:${talentId}`,
-            status: "novo",
+            status: "pendente",
             requisitos_atendidos: "Encaminhado via Criar Currículo",
             unidade_cuca: vaga.unidade_cuca || null,
         })
