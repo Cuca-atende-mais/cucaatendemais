@@ -45,8 +45,8 @@ const MODULE_GROUPS = [
     {
         category: 'Atendimentos & Ouvidoria',
         modules: [
-            { id: 'atendimentos', label: 'Painel de Atendimentos (Omnichannel)' },
-            { id: 'ouvidoria', label: 'Manifestações e Ouvidoria' },
+            { id: 'atendimentos', label: 'Atendimento WhatsApp (Institucional + Empregabilidade + Programação)' },
+            { id: 'ouvidoria', label: 'Ouvidoria — Manifestações + Conversa Sofia' },
         ]
     },
     {

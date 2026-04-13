@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -10,10 +10,12 @@ import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Search } from "lucide-react";
 
+const PAGE_SIZE = 50; // Máximo de conversas carregadas por vez (escala 20K+)
+
 interface ChatSidebarProps {
     activeConversationId: string | null;
     onSelectConversation: (id: string) => void;
-    filterAgenteTipo?: string[];
+    filterAgenteTipo?: readonly string[];
     filterCanalTipo?: string;
     filterUnidade?: string;
     title?: string;
@@ -24,38 +26,49 @@ export default function ChatSidebar({ activeConversationId, onSelectConversation
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const supabase = createClient();
+    const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+    // Channel name único por contexto — evita colisão entre múltiplos ChatSidebar
+    const channelName = useMemo(() => {
+        const key = filterCanalTipo ?? filterAgenteTipo?.join("-") ?? "global";
+        return `conversas-changes-${key}`;
+    }, [filterCanalTipo, filterAgenteTipo]);
+
+    // Debounce de 300ms para rafagas de eventos Realtime (burst de mensagens)
+    function scheduleFetch() {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(fetchConversations, 300);
+    }
 
     useEffect(() => {
         fetchConversations();
 
         const channel = supabase
-            .channel('conversas-changes')
+            .channel(channelName)
             .on('postgres_changes', {
                 event: '*',
                 schema: 'public',
                 table: 'conversas'
-            }, () => {
-                fetchConversations();
-            })
+            }, () => scheduleFetch())
             .on('postgres_changes', {
                 event: 'INSERT',
                 schema: 'public',
                 table: 'mensagens'
-            }, () => {
-                fetchConversations(); // Update list when new message arrives
-            })
+            }, () => scheduleFetch())
             .subscribe();
 
         return () => {
+            clearTimeout(debounceRef.current);
             supabase.removeChannel(channel);
         };
-    }, []);
+    }, [channelName]);
 
     async function fetchConversations() {
         let query = supabase
             .from('conversas')
             .select(`*, leads (nome, telefone)`)
-            .order('updated_at', { ascending: false });
+            .order('updated_at', { ascending: false })
+            .limit(PAGE_SIZE);
 
         if (filterCanalTipo) {
             // Whitelist: busca instâncias do canal_tipo especificado e filtra conversas por elas

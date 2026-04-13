@@ -26,6 +26,11 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts"
 
+// Constante estável — evita recriar canal Realtime a cada render do componente pai
+// TODO: quando instância "ouvidoriaredecuca" (canal_tipo: "Ouvidoria") existir no banco,
+//       substituir por filterCanalTipo="Ouvidoria" no ChatSidebar abaixo.
+const SOFIA_AGENTE_TIPOS = ["sofia_global", "sofia_unidade", "Sofia", "Ouvidoria", "ouvidoria"] as const
+
 type OuvidoriaRegistro = {
     id: string
     evento_id: string
@@ -667,14 +672,17 @@ export default function OuvidoriaPage() {
                     </TabsContent>
 
                     {/* ── CONVERSAS SOFIA ── */}
+                    {/* NOTA: Quando a instância "ouvidoriaredecuca" for criada no banco,
+                        substituir filterAgenteTipo por: filterCanalTipo="Ouvidoria"
+                        Constante estável declarada fora do componente para não recriar canal Realtime */}
                     <TabsContent value="conversas" className="mt-0">
                         <div className="flex h-[calc(100vh-14rem)] overflow-hidden border rounded-xl bg-background">
                             <div className="w-80 flex-shrink-0 h-full border-r">
                                 <ChatSidebar
                                     activeConversationId={activeConversationId}
                                     onSelectConversation={setActiveConversationId}
-                                    filterAgenteTipo={["sofia_global", "sofia_unidade", "Sofia", "Ouvidoria", "ouvidoria"]}
-                                    title="Ouvidoria — Conversas Sofia"
+                                    filterAgenteTipo={SOFIA_AGENTE_TIPOS}
+                                    title="Ouvidoria — Sofia"
                                 />
                             </div>
                             <div className="flex-1 h-full relative">

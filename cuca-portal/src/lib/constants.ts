@@ -25,7 +25,7 @@ export const menuItems = [
         // Fallback for parent menu logic if needed, usually handles visibleChildren
         items: [
             { title: "Mensal", url: "/programacao", permission: { recurso: "programacao_mensal", acao: "read" } },
-            // If there's a specific route for pontual, it would be here.
+            { title: "Atendimento", url: "/programacao/mensagens", permission: { recurso: "atendimentos", acao: "read" } },
         ],
     },
     {
@@ -35,7 +35,7 @@ export const menuItems = [
         permission: { recurso: "empreg_banco_cv", acao: "read" },
         items: [
             { title: "Painel Geral", url: "/empregabilidade", permission: { recurso: "empreg_banco_cv", acao: "read" } },
-            { title: "Mensagens do RH", url: "/empregabilidade/mensagens", permission: { recurso: "atendimentos", acao: "read" } },
+            { title: "Atendimento", url: "/empregabilidade/mensagens", permission: { recurso: "atendimentos", acao: "read" } },
             { title: "Empresas", url: "/empregabilidade/empresas", permission: { recurso: "empreg_vagas", acao: "read" } },
             { title: "Vagas", url: "/empregabilidade/vagas", permission: { recurso: "empreg_vagas", acao: "read" } },
             { title: "Candidatos", url: "/empregabilidade/candidatos", permission: { recurso: "empreg_banco_cv", acao: "read" } },
