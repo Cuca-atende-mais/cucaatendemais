@@ -36,6 +36,7 @@ interface Experiencia {
 interface Formacao {
     escolaridade: string
     instituicao: string
+    curso: string
     status: "concluido" | "cursando"
     ano: string
 }
@@ -551,6 +552,10 @@ export default function CriarCurriculoEditorPage() {
                                     <Label>Instituição</Label>
                                     <Input {...register(`formacoes.${i}.instituicao`)} placeholder="Nome da escola / faculdade" />
                                 </div>
+                                <div className="space-y-1 md:col-span-2">
+                                    <Label>Curso / Graduação <span className="text-muted-foreground text-xs">(opcional)</span></Label>
+                                    <Input {...register(`formacoes.${i}.curso`)} placeholder="Ex: Administração, Engenharia de Software..." />
+                                </div>
                                 <div className="space-y-1">
                                     <Label>Status</Label>
                                     <Controller
@@ -580,7 +585,7 @@ export default function CriarCurriculoEditorPage() {
                     ))}
                     <Button
                         type="button" variant="outline"
-                        onClick={() => formFields.append({ escolaridade: "", instituicao: "", status: "concluido", ano: "" })}
+                        onClick={() => formFields.append({ escolaridade: "", instituicao: "", curso: "", status: "concluido", ano: "" })}
                     >
                         <Plus className="h-4 w-4 mr-2" /> Adicionar Formação
                     </Button>

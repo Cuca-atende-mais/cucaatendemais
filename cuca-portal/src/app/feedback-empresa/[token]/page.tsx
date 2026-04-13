@@ -5,7 +5,7 @@
  * Link: /feedback-empresa/[token]
  */
 import { useEffect, useState } from "react"
-import { useParams, useRouter } from "next/navigation"
+import { useParams } from "next/navigation"
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -30,10 +30,10 @@ type Candidato = {
 
 export default function VagaFeedbackPage() {
   const { token } = useParams()
-  const router = useRouter()
 
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
   const [vaga, setVaga] = useState<any>(null)
   const [candidates, setCandidates] = useState<Candidato[]>([])
   const [isBypass, setIsBypass] = useState(false)
@@ -111,12 +111,30 @@ export default function VagaFeedbackPage() {
       }
 
       toast.success("Feedback enviado com sucesso! Obrigado.")
-      router.push('/feedback-sucesso')
+      setSubmitted(true)
     } catch (err: any) {
       toast.error(err.message || "Erro ao enviar formulário.")
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (submitted) {
+    return (
+      <div className="flex items-center justify-center min-h-screen p-4 bg-muted/30">
+        <Card className="w-full max-w-md text-center border-none shadow-xl">
+          <CardContent className="pt-10 pb-8 flex flex-col items-center">
+            <div className="h-20 w-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
+              <CheckCircle2 className="h-10 w-10 text-green-600" />
+            </div>
+            <h2 className="text-2xl font-bold text-cuca-dark mb-2">Feedback Enviado!</h2>
+            <p className="text-muted-foreground text-sm">
+              Obrigado pelo retorno. O CUCA já foi notificado e os candidatos serão informados em breve.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   if (loading) {
