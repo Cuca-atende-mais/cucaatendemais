@@ -26,7 +26,7 @@ export default function ChatSidebar({ activeConversationId, onSelectConversation
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const supabase = createClient();
-    const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
     // Channel name único por contexto — evita colisão entre múltiplos ChatSidebar
     const channelName = useMemo(() => {
