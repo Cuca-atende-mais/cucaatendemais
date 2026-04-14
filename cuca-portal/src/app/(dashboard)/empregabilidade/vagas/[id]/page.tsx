@@ -1155,9 +1155,11 @@ function CandidatoCard({
     onConvocar: () => void
     onClick: () => void
 }) {
-    const semOcr = !candidato.dados_ocr_json && !!candidato.arquivo_cv_url
-    const semCv = !candidato.dados_ocr_json && !candidato.arquivo_cv_url
     const ehBancoTalentos = candidato.observacoes?.toLowerCase().includes("banco_talentos")
+    // semOcr: tem CV em arquivo aguardando análise, OU é banco de talentos (análise textual disparada)
+    const semOcr = !candidato.dados_ocr_json && (!!candidato.arquivo_cv_url || ehBancoTalentos)
+    // semCv: candidatura sem arquivo e sem currículo estruturado (ex: cadastro manual/WhatsApp sem CV)
+    const semCv = !candidato.dados_ocr_json && !candidato.arquivo_cv_url && !ehBancoTalentos
 
     return (
         <div
@@ -1192,7 +1194,7 @@ function CandidatoCard({
             ) : semCv ? (
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 border border-border rounded-lg px-2.5 py-1.5 mb-3">
                     <FileText className="h-3 w-3 flex-shrink-0" />
-                    Currículo estruturado (sem análise IA)
+                    Sem currículo em arquivo
                 </div>
             ) : (
                 <div className="space-y-1.5 mb-3">
