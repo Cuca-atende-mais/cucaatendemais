@@ -74,6 +74,7 @@ export default function CandidatoDetalhesPage() {
     const [rejeitando, setRejeitando] = useState(false)
     const [aprovando, setAprovando] = useState(false)
     const [excluindo, setExcluindo] = useState(false)
+    const [analiseTimeout, setAnaliseTimeout] = useState(false)
     const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
     useEffect(() => { fetchData() }, [candidaturaId, vagaId])
@@ -81,6 +82,7 @@ export default function CandidatoDetalhesPage() {
     // Polling: re-faz fetch a cada 6s enquanto dados_ocr_json estiver null e houver CV
     useEffect(() => {
         if (!candidatura) return
+        setAnaliseTimeout(false)
         const semOcr = !candidatura.dados_ocr_json && candidatura.arquivo_cv_url
         if (semOcr) {
             let tentativas = 0
@@ -88,6 +90,7 @@ export default function CandidatoDetalhesPage() {
                 tentativas++
                 if (tentativas > 20) {
                     clearInterval(pollingRef.current!)
+                    setAnaliseTimeout(true)
                     return
                 }
                 const { data } = await supabase
@@ -545,13 +548,20 @@ export default function CandidatoDetalhesPage() {
                     {!candidatura.dados_ocr_json && (
                         <Card className="border-none shadow-sm border-amber-500/20">
                             <CardContent className="p-5 flex items-center gap-3 text-amber-400">
-                                <Loader2 className="h-5 w-5 animate-spin flex-shrink-0" />
+                                {analiseTimeout
+                                    ? <span className="h-5 w-5 flex-shrink-0 text-lg">⚠️</span>
+                                    : <Loader2 className="h-5 w-5 animate-spin flex-shrink-0" />
+                                }
                                 <div>
-                                    <p className="font-medium text-sm">Análise de IA em andamento</p>
+                                    <p className="font-medium text-sm">
+                                        {analiseTimeout ? "Análise de IA indisponível" : "Análise de IA em andamento"}
+                                    </p>
                                     <p className="text-xs text-muted-foreground mt-0.5">
-                                        {candidatura.arquivo_cv_url
-                                            ? "O currículo está sendo processado. Esta página será atualizada automaticamente."
-                                            : "Currículo sem arquivo. Faça upload para habilitar a análise de IA."}
+                                        {analiseTimeout
+                                            ? "A análise demorou mais que o esperado. Verifique se o worker está ativo ou tente recarregar a página."
+                                            : candidatura.arquivo_cv_url
+                                                ? "O currículo está sendo processado. Esta página será atualizada automaticamente."
+                                                : "Currículo sem arquivo. Faça upload para habilitar a análise de IA."}
                                     </p>
                                 </div>
                             </CardContent>

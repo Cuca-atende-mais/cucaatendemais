@@ -302,7 +302,7 @@ export default function CriarCurriculoEditorPage() {
 
         if (!talent) { toast.error("Candidato não encontrado."); setVinculando(null); return }
 
-        const { error } = await supabase.from("candidaturas").insert({
+        const { data: novaCandidatura, error } = await supabase.from("candidaturas").insert({
             vaga_id: vaga.id,
             nome: talent.nome,
             data_nascimento: talent.data_nascimento || "2000-01-01",
@@ -313,12 +313,25 @@ export default function CriarCurriculoEditorPage() {
             status: "pendente",
             requisitos_atendidos: "Encaminhado via Criar Currículo",
             unidade_cuca: vaga.unidade_cuca || null,
-        })
+        }).select("id").single()
 
         if (error) { toast.error("Erro ao encaminhar candidato."); console.error(error) }
         else {
             toast.success(`Candidato encaminhado para "${vaga.titulo}"!`)
             setVagasOpen(false)
+
+            // Disparar análise de IA se houver CV
+            if (novaCandidatura?.id && talent.arquivo_cv_url) {
+                fetch("/api/process-cv", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        candidatura_id: novaCandidatura.id,
+                        cv_url: talent.arquivo_cv_url,
+                        vaga_id: vaga.id,
+                    }),
+                }).catch(err => console.warn("[handleVincular] Erro ao disparar análise IA:", err))
+            }
         }
         setVinculando(null)
     }
