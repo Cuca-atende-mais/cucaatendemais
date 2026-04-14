@@ -53,6 +53,96 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     extract_text_to_fp(io.BytesIO(pdf_bytes), output, laparams=LAParams())
     return output.getvalue().strip()
 
+async def process_cv_from_text(candidatura_id: str, cv_text: str, vaga_id: str):
+    """Analisa currículo a partir de texto estruturado (sem arquivo). Usado para currículos criados via formulário."""
+    logger.info(f"[process_cv_from_text] Iniciando análise textual para candidatura {candidatura_id}")
+    try:
+        vaga_res = supabase.table("vagas").select("titulo, requisitos, escolaridade_minima").eq("id", vaga_id).single().execute()
+        vaga = vaga_res.data
+
+        prompt_sys = f"""
+        Você é um assistente especialista em Recrutamento e Seleção da Rede CUCA (equipamento público de Fortaleza).
+        Sua missão é analisar os dados de um currículo e compará-los com os requisitos de uma vaga.
+
+        DADOS DA VAGA:
+        Título: {vaga.get('titulo', '')}
+        Requisitos principais: {vaga.get('requisitos', '')}
+        Escolaridade Mínima: {vaga.get('escolaridade_minima', 'Não especificado')}
+
+        SCHEMA JSON ESPERADO:
+        {{
+            "escolaridade": "String (nível de escolaridade)",
+            "escolaridade_normalizada": "String — use EXATAMENTE um dos 11 níveis da lista abaixo, o mais alto detectado",
+            "genero": "masculino | feminino | outro | null",
+            "bairro": "String com o bairro de residência ou null",
+            "pcd": true ou false,
+            "pcd_tipo": "String descrevendo a deficiência ou null",
+            "primeiro_emprego": true se não há experiência anterior, senão false,
+            "experiencia_meses": Integer (total estimado de meses de experiência),
+            "resumo_experiencias": ["String"],
+            "habilidades": ["String"],
+            "match_score": Integer (0 a 100),
+            "analise_aderencia": {{
+                "pontos_fortes": ["Por que ele combina"],
+                "pontos_atencao": ["O que falta ou diverge"],
+                "veredito": "✅ ou ⚠️ ou ❌"
+            }},
+            "habilidades_identificadas": "String — lista as habilidades principais separadas por vírgula",
+            "experiencias_anteriores": "String — resumo corrido das experiências profissionais anteriores",
+            "veredito_final": "String — avaliação final de compatibilidade do candidato com a vaga"
+        }}
+
+        NÍVEIS DE ESCOLARIDADE PERMITIDOS para o campo "escolaridade_normalizada":
+        {_NIVEIS_STR}
+        """
+
+        messages = [
+            {"role": "system", "content": prompt_sys},
+            {"role": "user", "content": f"Analise este currículo e retorne APENAS o JSON válido:\n\n{cv_text}"}
+        ]
+
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            max_tokens=1000,
+            temperature=0.0
+        )
+
+        raw_output = response.choices[0].message.content.strip()
+        if raw_output.startswith("```json"):
+            raw_output = raw_output[7:-3]
+        elif raw_output.startswith("```"):
+            raw_output = raw_output[3:-3]
+
+        json_data = json.loads(raw_output)
+
+        analise = json_data.get("analise_aderencia", {})
+        veredito = analise.get("veredito", "⚠️")
+        match_score = json_data.get("match_score", 0)
+        pontos_fortes = " ".join(analise.get("pontos_fortes", []))
+
+        supabase.table("candidaturas").update({
+            "matching_score": match_score,
+            "matching_justificativa": f"{veredito} - {pontos_fortes}",
+            "dados_ocr_json": json_data,
+            "escolaridade_normalizada": json_data.get("escolaridade_normalizada"),
+            "genero": json_data.get("genero"),
+            "bairro": json_data.get("bairro"),
+            "pcd": json_data.get("pcd"),
+            "pcd_tipo": json_data.get("pcd_tipo"),
+            "primeiro_emprego": json_data.get("primeiro_emprego"),
+            "experiencia_meses": json_data.get("experiencia_meses"),
+        }).eq("id", candidatura_id).execute()
+
+        logger.info(f"[process_cv_from_text] Concluído para {candidatura_id}. Score: {match_score}")
+
+    except Exception as e:
+        logger.error(f"[process_cv_from_text] Erro para candidatura {candidatura_id}: {str(e)}")
+        supabase.table("candidaturas").update({
+            "matching_justificativa": f"Erro OCR: {str(e)[:50]}"
+        }).eq("id", candidatura_id).execute()
+
+
 async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
     """Lê o currículo com GPT-4o Vision / Document, e salva os dados OCR na candidatura."""
     logger.info(f"Iniciando OCR para candidatura {candidatura_id} ({cv_url})")

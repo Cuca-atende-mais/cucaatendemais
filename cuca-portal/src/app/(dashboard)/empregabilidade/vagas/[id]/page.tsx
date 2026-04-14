@@ -1155,7 +1155,8 @@ function CandidatoCard({
     onConvocar: () => void
     onClick: () => void
 }) {
-    const semOcr = !candidato.dados_ocr_json
+    const semOcr = !candidato.dados_ocr_json && !!candidato.arquivo_cv_url
+    const semCv = !candidato.dados_ocr_json && !candidato.arquivo_cv_url
     const ehBancoTalentos = candidato.observacoes?.toLowerCase().includes("banco_talentos")
 
     return (
@@ -1187,6 +1188,11 @@ function CandidatoCard({
                 <div className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 mb-3">
                     <RefreshCw className="h-3 w-3 animate-spin" />
                     Análise em andamento...
+                </div>
+            ) : semCv ? (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 border border-border rounded-lg px-2.5 py-1.5 mb-3">
+                    <FileText className="h-3 w-3 flex-shrink-0" />
+                    Currículo estruturado (sem análise IA)
                 </div>
             ) : (
                 <div className="space-y-1.5 mb-3">

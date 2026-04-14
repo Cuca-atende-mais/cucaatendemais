@@ -964,6 +964,27 @@ async def process_cv_endpoint(request: Request, background_tasks: BackgroundTask
         logger.error(f"Erro ao startar OCR: {str(e)}")
         return Response(status_code=500, content=str(e))
 
+@app.post("/process-cv-text")
+async def process_cv_text_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """Analisa currículo a partir de texto estruturado (sem arquivo PDF). Usado para currículos criados via formulário."""
+    try:
+        payload = await request.json()
+        candidatura_id = payload.get("candidatura_id")
+        cv_text = payload.get("cv_text")
+        vaga_id = payload.get("vaga_id")
+
+        if not candidatura_id or not cv_text or not vaga_id:
+            return Response(status_code=400, content="Faltando parâmetros obrigatórios")
+
+        from cv_processor import process_cv_from_text
+        background_tasks.add_task(process_cv_from_text, candidatura_id, cv_text, vaga_id)
+
+        return {"status": "processing_started"}
+    except Exception as e:
+        logger.error(f"[process-cv-text] Erro: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
+
 @app.post("/process-cv-espontaneo")
 async def process_cv_espontaneo_endpoint(request: Request, background_tasks: BackgroundTasks):
     """S16-01: OCR de currículo de candidatura espontânea (sem vaga). Atualiza talent_bank.skills_jsonb."""

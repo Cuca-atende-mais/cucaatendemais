@@ -320,17 +320,77 @@ export default function CriarCurriculoEditorPage() {
             toast.success(`Candidato encaminhado para "${vaga.titulo}"!`)
             setVagasOpen(false)
 
-            // Disparar análise de IA se houver CV
-            if (novaCandidatura?.id && talent.arquivo_cv_url) {
-                fetch("/api/process-cv", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        candidatura_id: novaCandidatura.id,
-                        cv_url: talent.arquivo_cv_url,
-                        vaga_id: vaga.id,
-                    }),
-                }).catch(err => console.warn("[handleVincular] Erro ao disparar análise IA:", err))
+            // Disparar análise de IA
+            if (novaCandidatura?.id) {
+                if (talent.arquivo_cv_url) {
+                    // Candidato tem PDF — usa OCR normal
+                    fetch("/api/process-cv", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            candidatura_id: novaCandidatura.id,
+                            cv_url: talent.arquivo_cv_url,
+                            vaga_id: vaga.id,
+                        }),
+                    }).catch(err => console.warn("[handleVincular] Erro ao disparar OCR:", err))
+                } else {
+                    // Sem arquivo — usa currículo estruturado do formulário
+                    ;(async () => {
+                        try {
+                            const { data: cur } = await supabase
+                                .from("curriculos")
+                                .select("dados")
+                                .eq("talent_id", talentId)
+                                .is("deleted_at", null)
+                                .order("updated_at", { ascending: false })
+                                .limit(1)
+                                .maybeSingle()
+                            if (!cur?.dados) return
+                            const d = cur.dados as any
+                            const linhas: string[] = []
+                            if (d.nome) linhas.push(`Nome: ${d.nome}`)
+                            if (d.telefone) linhas.push(`Telefone: ${d.telefone}`)
+                            if (d.email) linhas.push(`Email: ${d.email}`)
+                            if (d.endereco) linhas.push(`Endereço: ${d.endereco}`)
+                            if (d.apresentacao) linhas.push(`\nApresentação:\n${d.apresentacao}`)
+                            if (d.objetivo) linhas.push(`\nObjetivo:\n${d.objetivo}`)
+                            if (d.formacoes?.length) {
+                                linhas.push("\nFormação:")
+                                d.formacoes.forEach((f: any) => {
+                                    linhas.push(`- ${f.escolaridade} em ${f.curso || ''} (${f.instituicao || ''}, ${f.status || ''}, ${f.ano || ''})`)
+                                })
+                            }
+                            if (d.experiencias?.length) {
+                                linhas.push("\nExperiências:")
+                                d.experiencias.forEach((e: any) => {
+                                    const periodo = `${e.data_inicio || ''}${e.atual ? ' - atual' : e.data_fim ? ` - ${e.data_fim}` : ''}`
+                                    linhas.push(`- ${e.cargo || ''} em ${e.empresa || ''} (${periodo})`)
+                                    e.atividades?.forEach((a: any) => linhas.push(`  • ${a.descricao}`))
+                                })
+                            }
+                            if (d.cursos?.length) {
+                                linhas.push("\nCursos:")
+                                d.cursos.forEach((c: any) => linhas.push(`- ${c.titulo} (${c.instituicao || ''}, ${c.ano || ''})`))
+                            }
+                            if (d.habilidades?.length) {
+                                linhas.push("\nHabilidades:")
+                                d.habilidades.forEach((h: any) => linhas.push(`- ${h.titulo}: ${h.descricao}`))
+                            }
+                            const cvText = linhas.join("\n")
+                            await fetch("/api/process-cv-text", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    candidatura_id: novaCandidatura.id,
+                                    cv_text: cvText,
+                                    vaga_id: vaga.id,
+                                }),
+                            })
+                        } catch (err) {
+                            console.warn("[handleVincular] Erro ao disparar análise textual:", err)
+                        }
+                    })()
+                }
             }
         }
         setVinculando(null)

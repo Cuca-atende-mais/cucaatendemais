@@ -79,11 +79,80 @@ export default function CandidatoDetalhesPage() {
 
     useEffect(() => { fetchData() }, [candidaturaId, vagaId])
 
+    // Se não tem arquivo nem OCR, disparar análise textual a partir do currículo estruturado
+    useEffect(() => {
+        if (!candidatura) return
+        if (candidatura.dados_ocr_json || candidatura.arquivo_cv_url) return
+        // Buscar observacoes para extrair talent_id
+        const obs: string = candidatura.observacoes || ""
+        const match = obs.match(/banco_talentos:([a-f0-9-]+)/i)
+        if (!match) return
+        const talentId = match[1]
+        ;(async () => {
+            try {
+                const { data: cur } = await supabase
+                    .from("curriculos")
+                    .select("dados")
+                    .eq("talent_id", talentId)
+                    .is("deleted_at", null)
+                    .order("updated_at", { ascending: false })
+                    .limit(1)
+                    .maybeSingle()
+                if (!cur?.dados) return
+                const d = cur.dados as any
+                const linhas: string[] = []
+                if (d.nome) linhas.push(`Nome: ${d.nome}`)
+                if (d.telefone) linhas.push(`Telefone: ${d.telefone}`)
+                if (d.email) linhas.push(`Email: ${d.email}`)
+                if (d.apresentacao) linhas.push(`\nApresentação:\n${d.apresentacao}`)
+                if (d.objetivo) linhas.push(`\nObjetivo:\n${d.objetivo}`)
+                if (d.formacoes?.length) {
+                    linhas.push("\nFormação:")
+                    d.formacoes.forEach((f: any) => {
+                        linhas.push(`- ${f.escolaridade} em ${f.curso || ''} (${f.instituicao || ''}, ${f.ano || ''})`)
+                    })
+                }
+                if (d.experiencias?.length) {
+                    linhas.push("\nExperiências:")
+                    d.experiencias.forEach((e: any) => {
+                        const periodo = `${e.data_inicio || ''}${e.atual ? ' - atual' : e.data_fim ? ` - ${e.data_fim}` : ''}`
+                        linhas.push(`- ${e.cargo || ''} em ${e.empresa || ''} (${periodo})`)
+                        e.atividades?.forEach((a: any) => linhas.push(`  • ${a.descricao}`))
+                    })
+                }
+                if (d.cursos?.length) {
+                    linhas.push("\nCursos:")
+                    d.cursos.forEach((c: any) => linhas.push(`- ${c.titulo} (${c.instituicao || ''}, ${c.ano || ''})`))
+                }
+                if (d.habilidades?.length) {
+                    linhas.push("\nHabilidades:")
+                    d.habilidades.forEach((h: any) => linhas.push(`- ${h.titulo}: ${h.descricao}`))
+                }
+                const cvText = linhas.join("\n")
+                if (!cvText.trim()) return
+                await fetch("/api/process-cv-text", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        candidatura_id: candidaturaId,
+                        cv_text: cvText,
+                        vaga_id: vagaId,
+                    }),
+                })
+            } catch (err) {
+                console.warn("[candidatura-detail] Erro ao disparar análise textual:", err)
+            }
+        })()
+    }, [candidatura?.id])
+
     // Polling: re-faz fetch a cada 6s enquanto dados_ocr_json estiver null e houver CV
     useEffect(() => {
         if (!candidatura) return
         setAnaliseTimeout(false)
-        const semOcr = !candidatura.dados_ocr_json && candidatura.arquivo_cv_url
+        // Polling para qualquer candidatura sem OCR (com arquivo ou com currículo estruturado)
+        const obs: string = candidatura.observacoes || ""
+        const temCurriculoEstruturado = /banco_talentos:[a-f0-9-]+/i.test(obs)
+        const semOcr = !candidatura.dados_ocr_json && (candidatura.arquivo_cv_url || temCurriculoEstruturado)
         if (semOcr) {
             let tentativas = 0
             pollingRef.current = setInterval(async () => {
@@ -559,9 +628,7 @@ export default function CandidatoDetalhesPage() {
                                     <p className="text-xs text-muted-foreground mt-0.5">
                                         {analiseTimeout
                                             ? "A análise demorou mais que o esperado. Verifique se o worker está ativo ou tente recarregar a página."
-                                            : candidatura.arquivo_cv_url
-                                                ? "O currículo está sendo processado. Esta página será atualizada automaticamente."
-                                                : "Currículo sem arquivo. Faça upload para habilitar a análise de IA."}
+                                            : "O currículo está sendo processado. Esta página será atualizada automaticamente."}
                                     </p>
                                 </div>
                             </CardContent>
