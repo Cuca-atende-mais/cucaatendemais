@@ -341,10 +341,14 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
             return `${d}/${m}/${y}`
         }
         const diasStr = (meta.dias_raw || []).map((d: string) => DIAS_SEMANA_ABREV[d]).join(" e ")
+        const periodoStr = `${fmtDate(meta.data_inicio_raw)} ${fmtDate(meta.data_fim_raw)} ${diasStr}`
+        const horarioStr = `${hi} às ${hf}`
+        // Descricao no mesmo formato que o trigger trigger_indexar_campanha_mensal usa para montar o RAG
+        const descricao = `Curso: ${a.titulo}. Educador: ${meta.educador}. Vagas: ${meta.vagas}. Carga Horária: ${meta.carga_horaria}h. Período: ${periodoStr}. Horário: ${horarioStr}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}`
         return {
             titulo: a.titulo,
             categoria: "CURSOS",
-            descricao: meta.ementa || null,
+            descricao: descricao.substring(0, 1500),
             local: null,
             data_atividade: meta.data_inicio_raw || null,
             hora_inicio: hi,
@@ -356,8 +360,8 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
                 vagas: String(meta.vagas),
                 carga_horaria: String(meta.carga_horaria),
                 requisitos: meta.requisitos,
-                periodo: `${fmtDate(meta.data_inicio_raw)} ${fmtDate(meta.data_fim_raw)} ${diasStr}`,
-                horario: `${hi} às ${hf}`,
+                periodo: periodoStr,
+                horario: horarioStr,
                 dias_semana: diasStr,
             },
         }
@@ -365,10 +369,15 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
 
     if (a.categoria === "ESPORTES") {
         const diasStr = (meta.dias_raw || []).map((d: string) => DIAS_SEMANA_ABREV[d]).join(" e ")
+        const turmaStr = meta.turma?.startsWith("Turma") ? meta.turma : `Turma ${meta.turma}`
+        const faixaStr = `${meta.faixa_de} a ${meta.faixa_ate} anos`
+        const horarioStr = `${hi} às ${hf}`
+        // Descricao no mesmo formato que o trigger usa para montar o RAG
+        const descricao = `Esporte Modalidade: ${a.titulo} - ${turmaStr}. Professor: ${meta.professor}. Vagas: ${meta.vagas}. Público: ${meta.sexo} (Idade: ${faixaStr}). Dias: ${diasStr}. Horário: ${horarioStr}.`
         return {
             titulo: a.titulo,
             categoria: "ESPORTES",
-            descricao: null,
+            descricao: descricao.substring(0, 1500),
             local: null,
             data_atividade: null,
             hora_inicio: hi,
@@ -376,21 +385,24 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
             unidade_cuca: unidade,
             metadata: {
                 professor: meta.professor,
-                turma: meta.turma?.startsWith("Turma") ? meta.turma : `Turma ${meta.turma}`,
-                faixa_etaria: `${meta.faixa_de} a ${meta.faixa_ate} anos`,
+                turma: turmaStr,
+                faixa_etaria: faixaStr,
                 sexo: meta.sexo,
                 vagas: String(meta.vagas),
                 dias_semana: diasStr,
-                horario: `${hi} às ${hf}`,
+                horario: horarioStr,
             },
         }
     }
 
     // DIA A DIA / ESPECIAIS
+    const categoriaLabel = a.categoria as string
+    // Descricao no mesmo formato que o trigger usa para montar o RAG
+    const descricaoDiaDia = `Programa (${categoriaLabel}): ${a.titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${hi} às ${hf}. Local: ${a.local}. Informações: ${meta.informacoes || ""}. Sessão: ${meta.sessao}.`
     return {
         titulo: a.titulo,
         categoria: a.categoria,
-        descricao: meta.atividade || null,
+        descricao: descricaoDiaDia.substring(0, 1500),
         local: a.local || null,
         data_atividade: a.data_atividade || null,
         hora_inicio: hi,
