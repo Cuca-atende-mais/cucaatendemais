@@ -8,11 +8,12 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeft, Calendar, CheckCircle2, Clock, MapPin, Search, FileText, Loader2, ThumbsUp } from "lucide-react"
+import { ArrowLeft, Calendar, CheckCircle2, Clock, MapPin, Search, FileText, Loader2, ThumbsUp, Download, Pencil, Send } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
+import * as XLSX from "xlsx"
 
 export default function CampanhaMensalPage() {
     const params = useParams()
@@ -23,6 +24,7 @@ export default function CampanhaMensalPage() {
     const [atividades, setAtividades] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
     const [isAprovando, setIsAprovando] = useState(false)
+    const [isAlterandoStatus, setIsAlterandoStatus] = useState(false)
     const [searchTerm, setSearchTerm] = useState("")
     const [categoriaFilter, setCategoriaFilter] = useState("all")
     const [categoriasUnicas, setCategoriasUnicas] = useState<string[]>([])
@@ -84,6 +86,121 @@ export default function CampanhaMensalPage() {
         }
     }
 
+    // SQS-44: T3.1 — Finalizar Programação (rascunho → pendente)
+    const handleFinalizarProgramacao = async () => {
+        if (!campanha || campanha.status !== "rascunho") return
+        if (!confirm("Finalizar a programação e enviá-la para aprovação?")) return
+        setIsAlterandoStatus(true)
+        try {
+            const res = await fetch("/api/programacao/status", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ campanha_id: campanha.id, status: "pendente" }),
+            })
+            if (!res.ok) {
+                const err = await res.json()
+                throw new Error(err.error || "Erro ao finalizar")
+            }
+            setCampanha({ ...campanha, status: "pendente" })
+            toast.success("Programação enviada para aprovação!")
+        } catch (e: any) {
+            toast.error(e.message || "Erro ao finalizar programação")
+        } finally {
+            setIsAlterandoStatus(false)
+        }
+    }
+
+    // SQS-44: T3.2 — Reabrir para Edição (pendente → rascunho)
+    const handleReabrirEdicao = async () => {
+        if (!campanha || campanha.status !== "pendente") return
+        if (!confirm("Reabrir esta programação para edição? O status voltará para rascunho.")) return
+        setIsAlterandoStatus(true)
+        try {
+            const res = await fetch("/api/programacao/status", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ campanha_id: campanha.id, status: "rascunho" }),
+            })
+            if (!res.ok) {
+                const err = await res.json()
+                throw new Error(err.error || "Erro ao reabrir")
+            }
+            setCampanha({ ...campanha, status: "rascunho" })
+            toast.success("Programação reaberta para edição.")
+        } catch (e: any) {
+            toast.error(e.message || "Erro ao reabrir programação")
+        } finally {
+            setIsAlterandoStatus(false)
+        }
+    }
+
+    // SQS-44: T3.3/T3.4 — Exportar para Gráfica (.xlsx)
+    const handleExportarXLSX = () => {
+        if (!campanha || atividades.length === 0) return
+        const MESES_NOME = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        const nomeMes = MESES_NOME[campanha.mes] || String(campanha.mes)
+        const unidade = campanha.unidade_cuca || ""
+        const wb = XLSX.utils.book_new()
+
+        const categorias: { key: string; headers: string[]; extrator: (a: any) => any[] }[] = [
+            {
+                key: "CURSOS",
+                headers: ["#", "Curso", "Carga Horária", "Vagas", "Ementa", "Requisitos", "Período", "Horário", "Educador"],
+                extrator: (a) => {
+                    const m = a.metadata || {}
+                    return [a.titulo, m.carga_horaria ? `${m.carga_horaria}h` : "—", m.vagas || "—", m.ementa || "—", m.requisitos || "—", m.periodo || "—", m.horario || "—", m.educador || "—"]
+                },
+            },
+            {
+                key: "ESPORTES",
+                headers: ["#", "Modalidade", "Professor", "Turma", "Faixa Etária", "Sexo", "Vagas", "Dias", "Horário"],
+                extrator: (a) => {
+                    const m = a.metadata || {}
+                    return [a.titulo, m.professor || "—", m.turma || "—", m.faixa_etaria || "—", m.sexo || "—", m.vagas || "—", m.dias_semana || "—", m.horario || "—"]
+                },
+            },
+            {
+                key: "DIA A DIA",
+                headers: ["#", "Sessão", "Data", "Dia da Semana", "Atividade", "Horário Início", "Horário Fim", "Local", "Informações"],
+                extrator: (a) => {
+                    const m = a.metadata || {}
+                    return [m.sessao || "—", m.data_real || "—", m.dia_semana || "—", m.atividade || a.titulo, a.hora_inicio?.substring(0, 5) || "—", a.hora_fim?.substring(0, 5) || "—", a.local || m.local || "—", m.informacoes || "—"]
+                },
+            },
+            {
+                key: "ESPECIAIS",
+                headers: ["#", "Sessão", "Data", "Dia da Semana", "Atividade", "Horário Início", "Horário Fim", "Local", "Informações"],
+                extrator: (a) => {
+                    const m = a.metadata || {}
+                    return [m.sessao || "—", m.data_real || "—", m.dia_semana || "—", m.atividade || a.titulo, a.hora_inicio?.substring(0, 5) || "—", a.hora_fim?.substring(0, 5) || "—", a.local || m.local || "—", m.informacoes || "—"]
+                },
+            },
+        ]
+
+        let abas = 0
+        for (const cat of categorias) {
+            const itens = atividades.filter(a => a.categoria === cat.key)
+            if (itens.length === 0) continue
+            const tituloAba = `${cat.key} - ${nomeMes.toUpperCase()}`
+            const tituloVisual = `${cat.key} ${unidade.toUpperCase()} — ${nomeMes.toUpperCase()} ${campanha.ano}`
+            const rows: any[][] = [
+                [tituloVisual],
+                cat.headers,
+                ...itens.map((a, i) => [i + 1, ...cat.extrator(a)]),
+            ]
+            const ws = XLSX.utils.aoa_to_sheet(rows)
+            XLSX.utils.book_append_sheet(wb, ws, tituloAba)
+            abas++
+        }
+
+        if (abas === 0) { toast.error("Nenhuma atividade para exportar."); return }
+
+        const nomeArq = `Programacao_${unidade.replace(/\s+/g, "_")}_${nomeMes}_${campanha.ano}.xlsx`
+        XLSX.writeFile(wb, nomeArq)
+        toast.success(`Arquivo ${nomeArq} gerado!`)
+    }
+
     const filteredAtividades = atividades.filter(act => {
         const matchesSearch = String(act.titulo).toLowerCase().includes(searchTerm.toLowerCase()) ||
             String(act.descricao || "").toLowerCase().includes(searchTerm.toLowerCase())
@@ -134,20 +251,58 @@ export default function CampanhaMensalPage() {
                     </div>
                 </div>
 
-                {campanha.status === "aprovado" ? (
-                    <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 px-4 py-2 text-sm font-semibold shrink-0">
-                        <CheckCircle2 className="h-4 w-4 mr-2" /> Programação Aprovada
-                    </Badge>
-                ) : (
-                    <Button
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shrink-0"
-                        onClick={handleAprovarProgramacao}
-                        disabled={isAprovando}
-                    >
-                        {isAprovando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ThumbsUp className="mr-2 h-4 w-4" />}
-                        Aprovar Programação
-                    </Button>
-                )}
+                <div className="flex items-center gap-2 flex-wrap shrink-0">
+                    {/* SQS-44: T3.1 — Finalizar (rascunho → pendente) */}
+                    {campanha.status === "rascunho" && (
+                        <Button
+                            variant="outline"
+                            className="border-amber-500/60 text-amber-600 hover:bg-amber-500/10 font-semibold"
+                            onClick={handleFinalizarProgramacao}
+                            disabled={isAlterandoStatus}
+                        >
+                            {isAlterandoStatus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                            Finalizar Programação
+                        </Button>
+                    )}
+                    {/* SQS-44: T3.2 — Reabrir para Edição (pendente → rascunho) */}
+                    {campanha.status === "pendente" && (
+                        <Button
+                            variant="outline"
+                            className="font-semibold"
+                            onClick={handleReabrirEdicao}
+                            disabled={isAlterandoStatus}
+                        >
+                            {isAlterandoStatus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Pencil className="mr-2 h-4 w-4" />}
+                            Reabrir para Edição
+                        </Button>
+                    )}
+                    {/* Aprovação existente — mantida intacta */}
+                    {campanha.status === "aprovado" ? (
+                        <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 px-4 py-2 text-sm font-semibold">
+                            <CheckCircle2 className="h-4 w-4 mr-2" /> Programação Aprovada
+                        </Badge>
+                    ) : campanha.status === "pendente" ? (
+                        <Button
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                            onClick={handleAprovarProgramacao}
+                            disabled={isAprovando}
+                        >
+                            {isAprovando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ThumbsUp className="mr-2 h-4 w-4" />}
+                            Aprovar Programação
+                        </Button>
+                    ) : null}
+                    {/* SQS-44: T3.3 — Exportar para Gráfica */}
+                    {(campanha.status === "aprovado" || campanha.status === "pendente") && (
+                        <Button
+                            variant="outline"
+                            className="font-semibold gap-2"
+                            onClick={handleExportarXLSX}
+                        >
+                            <Download className="h-4 w-4" />
+                            <span className="hidden sm:inline">Exportar Gráfica</span>
+                        </Button>
+                    )}
+                </div>
             </div>
 
             {/* ── Filtros + Grid ── */}

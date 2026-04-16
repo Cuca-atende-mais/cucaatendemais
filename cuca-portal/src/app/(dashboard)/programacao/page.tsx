@@ -33,6 +33,7 @@ import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 import { UnifiedProgramModal } from "@/components/programacao/unified-program-modal"
 import { ImportPlanilhaModal } from "@/components/programacao/import-planilha-modal"
+import { CriarProgramacaoModal } from "@/components/programacao/criar-programacao-modal"
 import * as XLSX from 'xlsx'
 import { useRouter } from "next/navigation"
 import { useUser } from "@/lib/auth/user-provider"
@@ -46,6 +47,7 @@ export default function ProgramacaoPage() {
     const [unidadeFilter, setUnidadeFilter] = useState<string>("all")
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [isImportModalOpen, setIsImportModalOpen] = useState(false)
+    const [isCriarModalOpen, setIsCriarModalOpen] = useState(false)
 
     // S17-01: Prévia de disparo pontual
     const [previewEvento, setPreviewEvento] = useState<EventoPontual | null>(null)
@@ -314,20 +316,36 @@ export default function ProgramacaoPage() {
 
                         <div className="flex items-center gap-2 shrink-0">
                             {hasPermission("programacao_mensal", "create") && (
-                                <Button
-                                    variant="outline"
-                                    className="gap-2 text-xs"
-                                    onClick={() => {
-                                        if (unidadeFilter === "all") {
-                                            toast.error("Por favor, selecione uma unidade específica primeiro para a importação.")
-                                            return
-                                        }
-                                        setIsImportModalOpen(true)
-                                    }}
-                                >
-                                    <Upload className="h-4 w-4" />
-                                    <span className="hidden sm:inline">Atualizar Programação</span>
-                                </Button>
+                                <>
+                                    <Button
+                                        variant="outline"
+                                        className="gap-2 text-xs"
+                                        onClick={() => {
+                                            if (unidadeFilter === "all") {
+                                                toast.error("Por favor, selecione uma unidade específica primeiro para a importação.")
+                                                return
+                                            }
+                                            setIsImportModalOpen(true)
+                                        }}
+                                    >
+                                        <Upload className="h-4 w-4" />
+                                        <span className="hidden sm:inline">Atualizar Programação</span>
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        className="gap-2 text-xs border-primary/40 text-primary hover:bg-primary/5"
+                                        onClick={() => {
+                                            if (unidadeFilter === "all") {
+                                                toast.error("Selecione uma unidade específica antes de criar a programação.")
+                                                return
+                                            }
+                                            setIsCriarModalOpen(true)
+                                        }}
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        <span className="hidden sm:inline">Criar Programação</span>
+                                    </Button>
+                                </>
                             )}
 
                             {(hasPermission("programacao_mensal", "create") || hasPermission("programacao_pontual", "create")) && (
@@ -506,6 +524,13 @@ export default function ProgramacaoPage() {
                     onSuccess={fetchData}
                 />
             )}
+
+            <CriarProgramacaoModal
+                open={isCriarModalOpen}
+                onOpenChange={setIsCriarModalOpen}
+                unidadeInicial={unidadeFilter !== "all" ? unidadeFilter : ""}
+                onSuccess={fetchData}
+            />
 
             {/* S25-02: Sheet Visualizar Evento Pontual */}
             <Sheet open={!!visualizarEvento} onOpenChange={open => !open && setVisualizarEvento(null)}>

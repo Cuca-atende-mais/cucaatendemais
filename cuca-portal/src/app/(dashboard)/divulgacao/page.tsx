@@ -304,7 +304,8 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
     }
 
     const aprovadas = unidades.filter(u => u.status === "aprovado").length
-    const podeDiparar = aprovadas > 0 && !!instanciaDisp
+    // SQS-44 AC-10: disparo somente quando TODAS as unidades estiverem aprovadas
+    const podeDiparar = aprovadas === unidadesCuca.length && !!instanciaDisp
 
     if (carregando) {
         return (
@@ -355,14 +356,25 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
                     <Button variant="outline" size="sm" onClick={fetchData}>
                         <RefreshCw className="h-4 w-4 mr-1.5" /> Atualizar
                     </Button>
-                    <Button
-                        className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold gap-2"
-                        onClick={abrirModal}
-                        disabled={!podeDiparar}
-                    >
-                        <Megaphone className="h-4 w-4" />
-                        Disparar Aviso Global
-                    </Button>
+                    <div className="flex flex-col items-end gap-0.5">
+                        <Button
+                            className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold gap-2 disabled:opacity-50"
+                            onClick={abrirModal}
+                            disabled={!podeDiparar}
+                            title={!podeDiparar
+                                ? `Aguardando aprovação: ${unidades.filter(u => u.status !== "aprovado").map(u => u.unidade.replace("Cuca ", "")).join(", ")}`
+                                : "Todas as unidades aprovadas — pronto para disparar"
+                            }
+                        >
+                            <Megaphone className="h-4 w-4" />
+                            Disparar Aviso Global
+                        </Button>
+                        {!podeDiparar && aprovadas < unidadesCuca.length && (
+                            <p className="text-[10px] text-muted-foreground text-right">
+                                Aguardando: {unidades.filter(u => u.status !== "aprovado").map(u => u.unidade.replace("Cuca ", "")).join(", ")}
+                            </p>
+                        )}
+                    </div>
                 </div>
             </div>
 
