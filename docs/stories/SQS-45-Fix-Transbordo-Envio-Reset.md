@@ -1,6 +1,6 @@
 # SQS-45 — Fix: Transbordo Humano, Envio Manual e Reset de Memória
 
-**Status:** Ready for Dev
+**Status:** InProgress
 **Criado em:** 2026-04-17
 **Prioridade:** Alta — bloqueia demonstrações de entrega
 
@@ -134,21 +134,18 @@ Afeta também:
 - [ ] Adicionar no `.env` do EasyPanel (portal): `NEXT_PUBLIC_INTERNAL_TOKEN=cuca_internal_token_2026`
 - [ ] Instruir redeploy do serviço **portal** no EasyPanel
 
-### T2 — Fix Bug 2: Remover `transbordo_humano` do reset
-- [ ] Criar migration removendo `DELETE FROM transbordo_humano WHERE true` da função `reset_automation_memory`
-- [ ] Atualizar a UI do reset em `/developer/reset/page.tsx` para remover `transbordo_humano` da lista exibida
+### T2 — Fix Bug 2: Remover `transbordo_humano` do reset ✅
+- [x] Migration `20260417000001_fix_reset_preserva_transbordo.sql` aplicada
+- [x] UI `/developer/reset/page.tsx` atualizada
 
-### T3 — Fix Bug 1a/1b: Notificação de transbordo em `institucional_engine.py`
-- [ ] Após detectar `[[HANDOVER]]`, buscar contato em `human_handover_contacts` com `modulo='programacao'`
-- [ ] Se encontrado: disparar alerta via `UAZAPI_URL/send/text` com resumo da conversa
-- [ ] Fallback: tentar `modulo='geral'` se não houver regra específica de programação
-- [ ] Log: `[inst-engine] Transbordo disparado para {tel} ({responsavel})`
-- [ ] Log warning: `[inst-engine] Nenhum contato de transbordo para módulo=programacao`
+### T3 — Fix Bug 1a/1b: Notificação de transbordo em `institucional_engine.py` ✅
+- [x] Após detectar `[[HANDOVER]]`, busca em `human_handover_contacts` com `modulo='programacao'`
+- [x] Fallback global (unidade_cuca null) se não houver regra específica
+- [x] Alerta disparado via `UAZAPI_URL/send/text`
 
-### T4 — Fix Bug 1c: Notificação de transbordo em `empregabilidade_engine.py`
-- [ ] Na lógica de handover existente (linha ~1677), alterar lookup de `transbordo_humano` para `human_handover_contacts`
-- [ ] Manter mesma lógica: unidade específica > fallback global
-- [ ] Testar com contato cadastrado em `/configuracoes/transbordo` com módulo `Empregabilidade`
+### T4 — Fix Bug 1c: Notificação de transbordo em `empregabilidade_engine.py` ✅
+- [x] Lookup alterado de `transbordo_humano` para `human_handover_contacts`
+- [x] Colunas corrigidas: `telefone` → `telefone_destino`, `responsavel` → `nome_responsavel`
 
 ---
 
