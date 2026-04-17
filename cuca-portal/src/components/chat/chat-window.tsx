@@ -60,11 +60,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
     async function markAsRead() {
         if (!conversationId || !conversation) return;
         try {
-            const workerUrl = process.env.NEXT_PUBLIC_WORKER_URL || "";
-            const token = process.env.NEXT_PUBLIC_INTERNAL_TOKEN;
-            if (!workerUrl || !token) return;
-
-            await fetch(`${workerUrl}/read-message/${token}`, {
+            await fetch('/api/chat/read-message', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -131,12 +127,8 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
 
             if (error) throw error;
 
-            // 2. Disparar via Worker -> UAZAPI
-            const workerUrl = process.env.NEXT_PUBLIC_WORKER_URL || "";
-            const token = process.env.NEXT_PUBLIC_INTERNAL_TOKEN;
-            if (!workerUrl || !token) throw new Error("Worker URL não configurada");
-
-            const sendResp = await fetch(`${workerUrl}/send-message/${token}`, {
+            // 2. Disparar via API route (token mantido server-side)
+            const sendResp = await fetch('/api/chat/send-message', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

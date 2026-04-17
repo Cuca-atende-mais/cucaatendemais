@@ -34,6 +34,30 @@ _PALAVRAS_ENCERRAR = {
 # Envio de mensagem de texto via UAZAPI
 # ---------------------------------------------------------------------------
 
+def _montar_historico(conversa_id: str, limite: int = 6) -> str:
+    """Busca últimas mensagens da conversa e formata como histórico legível."""
+    try:
+        res = (
+            supabase.table("mensagens")
+            .select("remetente, conteudo, created_at")
+            .eq("conversa_id", conversa_id)
+            .order("created_at", desc=True)
+            .limit(limite)
+            .execute()
+        )
+        msgs = list(reversed(res.data or []))
+        if not msgs:
+            return "(sem histórico disponível)"
+        linhas = []
+        for m in msgs:
+            quem = "👤 Lead" if m["remetente"] == "lead" else "🤖 IA"
+            conteudo = (m["conteudo"] or "")[:120]
+            linhas.append(f"{quem}: {conteudo}")
+        return "\n".join(linhas)
+    except Exception:
+        return "(erro ao carregar histórico)"
+
+
 async def _enviar(instance_name: str, token: str, phone: str, texto: str, conversa_id: str = "", lead_id: str = ""):
     async with httpx.AsyncClient(timeout=15) as client:
         await client.post(
@@ -1684,13 +1708,14 @@ async def processar_mensagem_empregabilidade(
             if contato:
                 tel_destino = contato["telefone_destino"]
                 setor_resp = contato.get("nome_responsavel") or "Empregabilidade"
+                historico = _montar_historico(conversa_id)
                 msg_handover = (
-                    f"🚨 *TRANSBORDO: DÚVIDA DETECTADA*\n\n"
+                    f"🚨 *TRANSBORDO — EMPREGABILIDADE*\n\n"
                     f"👤 *Lead:* {push_name}\n"
                     f"📱 *Telefone:* {phone}\n"
                     f"🏢 *Setor:* {setor_resp}\n\n"
-                    f"💬 *Dúvida do candidato:*\n\"{texto}\"\n\n"
-                    f"🔗 Chat: https://wa.me/{phone}"
+                    f"📋 *Histórico da conversa:*\n{historico}\n\n"
+                    f"🔗 Iniciar chat: https://wa.me/{phone}"
                 )
                 async with httpx.AsyncClient() as hc:
                     await hc.post(

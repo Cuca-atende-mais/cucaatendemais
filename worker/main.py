@@ -691,17 +691,26 @@ async def process_webhook_payload(payload: dict, token: str):
                                                 contato_handover = fallback_res.data[0]
                                                 
                                         if contato_handover:
-                                            # Bug 3 corrigido: colunas reais são 'telefone' e 'responsavel'
                                             tel_destino = contato_handover["telefone"]
                                             setor_resp = contato_handover.get("responsavel") or "Atendimento"
-                                            
                                             lead_nome = push_name or "Cidadão"
+                                            # Montar histórico das últimas mensagens
+                                            try:
+                                                hist_res = supabase.table("mensagens").select("remetente, conteudo").eq("conversa_id", conversation_id).order("created_at", desc=True).limit(6).execute()
+                                                hist_msgs = list(reversed(hist_res.data or []))
+                                                hist_linhas = []
+                                                for hm in hist_msgs:
+                                                    quem = "👤 Lead" if hm["remetente"] == "lead" else "🤖 IA"
+                                                    hist_linhas.append(f"{quem}: {(hm['conteudo'] or '')[:120]}")
+                                                historico_fmt = "\n".join(hist_linhas) if hist_linhas else "(sem histórico)"
+                                            except Exception:
+                                                historico_fmt = "(erro ao carregar histórico)"
                                             msg_handover = (
-                                                f"🚨 *ATENÇÃO: NOVO TRANSBORDO HUMANIZADO*\n\n"
+                                                f"🚨 *TRANSBORDO — {modulo_alvo.upper()}*\n\n"
                                                 f"👤 *Lead:* {lead_nome}\n"
                                                 f"📱 *Telefone:* {phone}\n"
-                                                f"🏢 *Módulo/Setor:* {modulo_alvo.capitalize()} / {setor_resp}\n\n"
-                                                f"💬 *Última mensagem:*\n\"{text_content}\"\n\n"
+                                                f"🏢 *Setor:* {setor_resp}\n\n"
+                                                f"📋 *Histórico da conversa:*\n{historico_fmt}\n\n"
                                                 f"🔗 Iniciar chat: https://wa.me/{phone}"
                                             )
                                             
