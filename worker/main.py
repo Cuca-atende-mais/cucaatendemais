@@ -533,6 +533,9 @@ async def process_webhook_payload(payload: dict, token: str):
 
             # S29-03: Roteamento para motor de empregabilidade (instância tipo Empregabilidade)
             if not from_me and agente_tipo == "Empregabilidade":
+                if conversation_status == "awaiting_human":
+                    logger.info(f"[Empregabilidade] Conversa {conversation_id} em awaiting_human — IA silenciada.")
+                    return
                 try:
                     from empregabilidade_engine import processar_mensagem_empregabilidade
                     inst_token_emp = inst_result.data.get("token", "") if inst_result.data else ""
@@ -552,6 +555,9 @@ async def process_webhook_payload(payload: dict, token: str):
 
             # Roteamento para motor institucional (seleção de unidade + RAG)
             if not from_me and canal_tipo == "Institucional":
+                if conversation_status == "awaiting_human":
+                    logger.info(f"[Institucional] Conversa {conversation_id} em awaiting_human — IA silenciada.")
+                    return
                 try:
                     from institucional_engine import processar_mensagem_institucional
                     await processar_mensagem_institucional(
