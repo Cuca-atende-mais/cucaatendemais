@@ -283,26 +283,28 @@ async def _chamar_motor_agente(
                 logger.error(f"[inst-engine] motor-agente retornou {resp.status_code}: {resp.text[:200]}")
             else:
                 data = resp.json()
-                logger.info(f"[inst-engine] resposta motor: success={data.get('success')}")
+                handover_from_motor = data.get("handover", False)
+                logger.info(f"[inst-engine] resposta motor: success={data.get('success')} handover={handover_from_motor}")
                 if data.get("success") and "resposta" in data:
                     import re
                     resposta_ia = data["resposta"]
                     media_url_out = None
-                    
+
                     # Checar se a IA quer enviar arte / flyer
                     match_md = re.search(r'!\[.*?\]\((.*?)\)', resposta_ia)
                     match_tag = re.search(r'\[(?:FLYER|MÍDIA):\s*(.*?)\]', resposta_ia)
-                    
+
                     if match_md:
                         media_url_out = match_md.group(1).strip()
                         resposta_ia = resposta_ia.replace(match_md.group(0), '').strip()
                     elif match_tag:
                         media_url_out = match_tag.group(1).strip()
                         resposta_ia = resposta_ia.replace(match_tag.group(0), '').strip()
-                    
-                    # Remover marcadores internos caso existam + notificar atendente
+
+                    # Motor-agente já remove [[HANDOVER]] do texto e retorna handover=True no JSON
+                    # Verificar ambos: campo JSON (fonte principal) e regex como fallback
                     handover_match = re.search(r'\[\[HANDOVER\]\]|\[TRANSBORDO\]|\[HUMANO\]|\[TRANSBORDO_HUMANO\]', resposta_ia, re.IGNORECASE)
-                    if handover_match:
+                    if handover_from_motor or handover_match:
                         resposta_ia = resposta_ia.replace(handover_match.group(0), '').strip()
                         if not resposta_ia:
                             resposta_ia = "Certo, estou te transferindo para um atendente humano. Aguarde um momento por favor!"
