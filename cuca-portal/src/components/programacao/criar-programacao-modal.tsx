@@ -19,7 +19,6 @@ import { Badge } from "@/components/ui/badge"
 import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Plus, Trash2, Pencil } from "lucide-react"
 import toast from "react-hot-toast"
 import { unidadesCuca } from "@/lib/constants"
-import { useRouter } from "next/navigation"
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -437,7 +436,6 @@ export function CriarProgramacaoModal({
     onSuccess,
 }: CriarProgramacaoModalProps) {
     const supabase = createClient()
-    const router = useRouter()
 
     // Step: 1 = Cabeçalho, 2 = Atividades, 3 = Revisão
     const [step, setStep] = useState(1)
@@ -578,12 +576,13 @@ export function CriarProgramacaoModal({
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || "Erro ao salvar")
 
-            toast.success("Programação salva como rascunho!")
-            onSuccess()
-            handleClose()
-            if (data.campanha_id) {
-                router.push(`/programacao/mensal/${data.campanha_id}`)
-            }
+            // Aguarda 1.5s para a replicação do Supabase antes de fechar e atualizar
+            // (mesmo padrão do import-planilha-modal que usa 3s de delay pelo mesmo motivo)
+            setTimeout(() => {
+                toast.success("Programação salva como rascunho! Clique em 'Ver Atividades' para abrir.")
+                onSuccess()
+                handleClose()
+            }, 1500)
         } catch (e: any) {
             toast.error(e.message || "Erro ao salvar")
         } finally {
