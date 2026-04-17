@@ -276,12 +276,42 @@ async def _chamar_motor_agente(
                         media_url_out = match_tag.group(1).strip()
                         resposta_ia = resposta_ia.replace(match_tag.group(0), '').strip()
                     
-                    # Remover marcadores internos caso existam
+                    # Remover marcadores internos caso existam + notificar atendente
                     handover_match = re.search(r'\[\[HANDOVER\]\]|\[TRANSBORDO\]|\[HUMANO\]|\[TRANSBORDO_HUMANO\]', resposta_ia, re.IGNORECASE)
                     if handover_match:
                         resposta_ia = resposta_ia.replace(handover_match.group(0), '').strip()
                         if not resposta_ia:
                             resposta_ia = "Certo, estou te transferindo para um atendente humano. Aguarde um momento por favor!"
+                        # Notificar contato de transbordo de Programação
+                        try:
+                            contato_tb = None
+                            if unidade:
+                                res_tb = supabase.table("human_handover_contacts").select("*").eq("modulo", "programacao").eq("unidade_cuca", unidade).eq("ativo", True).execute()
+                                contato_tb = (res_tb.data or [None])[0]
+                            if not contato_tb:
+                                res_tb = supabase.table("human_handover_contacts").select("*").eq("modulo", "programacao").is_("unidade_cuca", "null").eq("ativo", True).execute()
+                                contato_tb = (res_tb.data or [None])[0]
+                            if contato_tb:
+                                tel_tb = contato_tb["telefone_destino"]
+                                resp_tb = contato_tb.get("nome_responsavel") or "Programação"
+                                msg_tb = (
+                                    f"🚨 *TRANSBORDO — PROGRAMAÇÃO*\n\n"
+                                    f"📱 *Telefone:* {phone}\n"
+                                    f"🏢 *Setor:* {resp_tb}\n\n"
+                                    f"💬 *Última mensagem:*\n\"{texto}\"\n\n"
+                                    f"🔗 Iniciar chat: https://wa.me/{phone}"
+                                )
+                                async with httpx.AsyncClient() as hc_tb:
+                                    await hc_tb.post(
+                                        f"{UAZAPI_URL}/send/text",
+                                        headers={"token": token, "Content-Type": "application/json"},
+                                        json={"number": tel_tb, "text": msg_tb, "delay": 1200}
+                                    )
+                                logger.info(f"[inst-engine] Transbordo disparado para {tel_tb} ({resp_tb})")
+                            else:
+                                logger.warning(f"[inst-engine] Nenhum contato de transbordo para módulo=programacao unidade='{unidade}'")
+                        except Exception as _et:
+                            logger.error(f"[inst-engine] Erro ao processar transbordo: {_et}")
 
                     if media_url_out:
                          await client.post(

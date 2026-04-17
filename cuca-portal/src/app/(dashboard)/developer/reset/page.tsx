@@ -12,7 +12,6 @@ type ResetResult = {
     executed_at: string
     mensagens: number
     conversas: number
-    transbordo: number
     logs_webhook: number
 }
 
@@ -22,7 +21,7 @@ export default function ResetAutomacaoPage() {
     const [error, setError] = useState<string | null>(null)
 
     async function handleReset() {
-        if (!window.confirm("Tem certeza? Isso apagará permanentemente todas as mensagens, conversas, transbordo e logs de webhook. Esta ação não pode ser desfeita.")) return
+        if (!window.confirm("Tem certeza? Isso apagará permanentemente todas as mensagens, conversas e logs de webhook. Esta ação não pode ser desfeita.")) return
 
         setLoading(true)
         setResult(null)
@@ -70,9 +69,9 @@ export default function ResetAutomacaoPage() {
                 <div className="text-sm">
                     <p className="font-medium text-amber-500">Ação irreversível — dados de produção serão apagados</p>
                     <p className="text-muted-foreground mt-1">
-                        Esta ação remove <strong>todas as mensagens</strong>, <strong>conversas</strong>,{" "}
-                        <strong>fila de transbordo</strong> e <strong>logs de webhook</strong>.
-                        Dados de leads, vagas, empresas e campanhas <strong>não são afetados</strong>.
+                        Esta ação remove <strong>todas as mensagens</strong>, <strong>conversas</strong>{" "}
+                        e <strong>logs de webhook</strong>.
+                        Configurações de transbordo, leads, vagas, empresas e campanhas <strong>não são afetados</strong>.
                     </p>
                 </div>
             </div>
@@ -87,7 +86,6 @@ export default function ResetAutomacaoPage() {
                     {[
                         { label: "mensagens", desc: "Histórico de todas as conversas" },
                         { label: "conversas", desc: "Estado e memória de workflow" },
-                        { label: "transbordo_humano", desc: "Fila de atendimento humano" },
                         { label: "logs_webhook", desc: "Logs de eventos UAZAPI" },
                     ].map((t) => (
                         <div key={t.label} className="flex flex-col gap-0.5 rounded-md border border-destructive/20 bg-destructive/5 p-2">
@@ -136,7 +134,6 @@ export default function ResetAutomacaoPage() {
                         {[
                             { label: "Mensagens removidas", value: result.mensagens },
                             { label: "Conversas removidas", value: result.conversas },
-                            { label: "Transbordo limpo", value: result.transbordo },
                             { label: "Logs webhook limpos", value: result.logs_webhook },
                         ].map((r) => (
                             <div key={r.label} className="rounded-md bg-green-500/10 border border-green-500/20 p-2">

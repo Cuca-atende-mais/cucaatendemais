@@ -1674,16 +1674,16 @@ async def processar_mensagem_empregabilidade(
         # Notificar equipe de transbordo (Módulo Empregabilidade)
         try:
             modulo_alvo = "empregabilidade"
-            handover_res = supabase.table("transbordo_humano").select("*").eq("modulo", modulo_alvo).eq("unidade_cuca", unidade_cuca).eq("ativo", True).execute()
+            handover_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).eq("unidade_cuca", unidade_cuca).eq("ativo", True).execute()
             contato = (handover_res.data or [None])[0]
             if not contato:
                 # Fallback global
-                handover_res = supabase.table("transbordo_humano").select("*").eq("modulo", modulo_alvo).is_("unidade_cuca", "null").eq("ativo", True).execute()
+                handover_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).is_("unidade_cuca", "null").eq("ativo", True).execute()
                 contato = (handover_res.data or [None])[0]
-            
+
             if contato:
-                tel_destino = contato["telefone"]
-                setor_resp = contato.get("responsavel") or "Empregabilidade"
+                tel_destino = contato["telefone_destino"]
+                setor_resp = contato.get("nome_responsavel") or "Empregabilidade"
                 msg_handover = (
                     f"🚨 *TRANSBORDO: DÚVIDA DETECTADA*\n\n"
                     f"👤 *Lead:* {push_name}\n"
