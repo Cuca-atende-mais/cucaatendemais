@@ -78,8 +78,7 @@ function FormCursos({ value, onChange }: FormCursosProps) {
     const diasSel: string[] = meta.dias_raw || []
     const toggleDia = (d: string) => {
         const next = diasSel.includes(d) ? diasSel.filter(x => x !== d) : [...diasSel, d]
-        set("dias_raw", next)
-        set("dias_semana", next.map(x => DIAS_SEMANA_ABREV[x]).join(" e "))
+        onChange({ ...value, metadata: { ...meta, dias_raw: next, dias_semana: next.map(x => DIAS_SEMANA_ABREV[x]).join(" e ") } })
     }
 
     return (
@@ -154,8 +153,7 @@ function FormEsportes({ value, onChange }: FormEsportesProps) {
     const diasSel: string[] = meta.dias_raw || []
     const toggleDia = (d: string) => {
         const next = diasSel.includes(d) ? diasSel.filter(x => x !== d) : [...diasSel, d]
-        set("dias_raw", next)
-        set("dias_semana", next.map(x => DIAS_SEMANA_ABREV[x]).join(" e "))
+        onChange({ ...value, metadata: { ...meta, dias_raw: next, dias_semana: next.map(x => DIAS_SEMANA_ABREV[x]).join(" e ") } })
     }
 
     return (
