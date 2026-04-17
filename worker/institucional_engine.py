@@ -305,7 +305,8 @@ async def _chamar_motor_agente(
                     # Verificar ambos: campo JSON (fonte principal) e regex como fallback
                     handover_match = re.search(r'\[\[HANDOVER\]\]|\[TRANSBORDO\]|\[HUMANO\]|\[TRANSBORDO_HUMANO\]', resposta_ia, re.IGNORECASE)
                     if handover_from_motor or handover_match:
-                        resposta_ia = resposta_ia.replace(handover_match.group(0), '').strip()
+                        if handover_match:
+                            resposta_ia = resposta_ia.replace(handover_match.group(0), '').strip()
                         if not resposta_ia:
                             resposta_ia = "Certo, estou te transferindo para um atendente humano. Aguarde um momento por favor!"
                         # Notificar contato de transbordo de Programação
