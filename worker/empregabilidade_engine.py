@@ -1735,15 +1735,16 @@ async def processar_mensagem_empregabilidade(
         except Exception as _he:
             logger.error(f"[SQS-40] Erro ao disparar transbordo por dúvida: {_he}")
 
-    # Bypass global: usuário digita "0" ou qualquer variação para atendimento humano
+    # Detecção por expressão natural: usuário pede explicitamente atendimento humano
     _texto_lower = texto.strip().lower()
-    _EXACT_HANDOVER = {"0", "atendente", "humano"}
     _CONTAINS_HANDOVER = {
         "falar com humano", "atendente humano", "falar com atendente",
-        "quero humano", "humano por favor", "pessoa real", "falar com pessoa",
-        "atendimento humano", "preciso de ajuda humana",
+        "quero atendente", "quero humano", "humano por favor", "pessoa real",
+        "falar com pessoa", "atendimento humano", "preciso de ajuda humana",
+        "falar com alguem", "falar com alguém", "quero falar com alguem",
+        "quero falar com alguém", "me passa para humano", "me passa para atendente",
     }
-    if _texto_lower in _EXACT_HANDOVER or any(kw in _texto_lower for kw in _CONTAINS_HANDOVER):
+    if any(kw in _texto_lower for kw in _CONTAINS_HANDOVER):
         logger.info(f"[HANDOVER-KW] Transbordo por palavra-chave para {phone}")
         try:
             modulo_alvo = "empregabilidade"
@@ -1905,9 +1906,8 @@ async def processar_mensagem_empregabilidade(
             "1️⃣ *Empresa* — Quero divulgar uma vaga\n"
             "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
             "3️⃣ *Vagas* — Quero ver vagas abertas\n"
-            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n"
-            "0️⃣ *Atendente* — Falar com um humano\n\n"
-            "Digite *1*, *2*, *3*, *4* ou *0*.",
+            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
+            "Digite *1*, *2*, *3* ou *4*.",
             conversa_id=conversa_id, lead_id=lead_id,
         )
         return
@@ -1932,8 +1932,7 @@ async def processar_mensagem_empregabilidade(
             "1️⃣ *Empresa* — Quero divulgar uma vaga\n"
             "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
             "3️⃣ *Vagas* — Quero ver vagas abertas\n"
-            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n"
-            "0️⃣ *Atendente* — Falar com um humano\n\n"
+            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
             "Responda com o número ou descreva o que precisa.",
             conversa_id=conversa_id, lead_id=lead_id,
         )
