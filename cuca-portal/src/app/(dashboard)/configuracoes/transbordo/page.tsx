@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Search, Plus, Pencil, PhoneForwarded } from "lucide-react"
+import { Search, Plus, Pencil, PhoneForwarded, Trash2 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
@@ -145,6 +145,19 @@ export default function TransbordoPage() {
             nome_responsavel: "",
             ativo: true,
         })
+    }
+
+    const handleDelete = async (contato: HumanHandoverContact) => {
+        const label = getModuloLabel(contato.modulo)
+        if (!confirm(`Remover regra "${label}" — ${contato.nome_responsavel || contato.telefone_destino}? Esta ação não pode ser desfeita.`)) return
+        const { error } = await supabase.from("human_handover_contacts").delete().eq("id", contato.id)
+        if (error) {
+            console.error("Erro ao remover regra:", error)
+            toast.error("Erro ao remover regra de transbordo")
+        } else {
+            toast.success("Regra removida com sucesso!")
+            fetchContatos()
+        }
     }
 
     const getModuloLabel = (val: string) => MÓDULOS_PERMITIDOS.find(m => m.value === val)?.label || val
@@ -332,14 +345,24 @@ export default function TransbordoPage() {
                                             )}
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="text-cuca-blue hover:text-sky-800"
-                                                onClick={() => handleEdit(contato)}
-                                            >
-                                                <Pencil className="h-4 w-4 mr-1" /> Editar
-                                            </Button>
+                                            <div className="flex items-center justify-end gap-1">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="text-cuca-blue hover:text-sky-800"
+                                                    onClick={() => handleEdit(contato)}
+                                                >
+                                                    <Pencil className="h-4 w-4 mr-1" /> Editar
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="text-destructive hover:text-destructive/80"
+                                                    onClick={() => handleDelete(contato)}
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))}
