@@ -194,12 +194,25 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 .update({ status: "awaiting_human", updated_at: new Date().toISOString() })
                 .eq("id", conversationId);
             if (error) throw error;
-            // Realtime UPDATE em 'conversas' irá atualizar setConversation automaticamente (T1)
             toast.success("IA pausada. Você assumiu o atendimento.");
         } catch (err: any) {
             toast.error("Erro ao assumir atendimento: " + err.message);
         } finally {
             setAssumindo(false);
+        }
+    }
+
+    async function handleRetornarIA() {
+        if (!conversationId || !conversation) return;
+        try {
+            const { error } = await supabase
+                .from("conversas")
+                .update({ status: "ativa", updated_at: new Date().toISOString() })
+                .eq("id", conversationId);
+            if (error) throw error;
+            toast.success("IA reativada. Bot voltará a responder.");
+        } catch (err: any) {
+            toast.error("Erro ao retornar IA: " + err.message);
         }
     }
 
@@ -358,6 +371,17 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                         >
                             <HandshakeIcon className="h-3 w-3" />
                             {assumindo ? "Assumindo..." : "Assumir Atendimento"}
+                        </Button>
+                    )}
+                    {conversation?.status === 'awaiting_human' && hasPermission(moduloAtendimento, "update") && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[10px] gap-1 border-amber-500/30 text-amber-600 hover:bg-amber-500/10 shrink-0"
+                            onClick={handleRetornarIA}
+                        >
+                            <Zap className="h-3 w-3" />
+                            Retornar para IA
                         </Button>
                     )}
                 </div>

@@ -1723,7 +1723,8 @@ async def processar_mensagem_empregabilidade(
                         headers={"token": token, "Content-Type": "application/json"},
                         json={"number": tel_destino, "text": msg_handover, "delay": 1200}
                     )
-                
+                # Pausar IA — portal fica disponível para o humano responder
+                supabase.table("conversas").update({"status": "awaiting_human"}).eq("id", conversa_id).execute()
                 # Avisar o lead que um humano foi chamado
                 await _enviar(
                     instance_name, token, phone,
@@ -1738,11 +1739,12 @@ async def processar_mensagem_empregabilidade(
     # Detecção por expressão natural: usuário pede explicitamente atendimento humano
     _texto_lower = texto.strip().lower()
     _CONTAINS_HANDOVER = {
-        "falar com humano", "atendente humano", "falar com atendente",
+        "falar com humano", "falar com um humano", "atendente humano", "falar com atendente",
         "quero atendente", "quero humano", "humano por favor", "pessoa real",
         "falar com pessoa", "atendimento humano", "preciso de ajuda humana",
-        "falar com alguem", "falar com alguém", "quero falar com alguem",
-        "quero falar com alguém", "me passa para humano", "me passa para atendente",
+        "falar com alguem", "falar com alguém", "falar com um alguem", "falar com um alguém",
+        "quero falar com alguem", "quero falar com alguém", "quero falar com um humano",
+        "me passa para humano", "me passa para atendente", "falar com uma pessoa",
     }
     if any(kw in _texto_lower for kw in _CONTAINS_HANDOVER):
         logger.info(f"[HANDOVER-KW] Transbordo por palavra-chave para {phone}")
@@ -1771,6 +1773,8 @@ async def processar_mensagem_empregabilidade(
                         headers={"token": token, "Content-Type": "application/json"},
                         json={"number": tel_destino, "text": msg_hw, "delay": 1200}
                     )
+                # Pausar IA — portal fica disponível para o humano responder
+                supabase.table("conversas").update({"status": "awaiting_human"}).eq("id", conversa_id).execute()
                 await _enviar(
                     instance_name, token, phone,
                     "Entendido! 🤝 Estou encaminhando você para nossa equipe humana de empregabilidade. Em breve um consultor falará com você por aqui!",
