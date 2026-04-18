@@ -198,16 +198,12 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         try {
             const cargaHoraria = buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte)
 
-            // Calcular número sequencial da vaga (somente ao criar)
+            // Número sequencial atômico via RPC (evita race condition)
             let numero_vaga: number | undefined
             if (!vaga) {
-                const { data: maxData } = await supabase
-                    .from("vagas")
-                    .select("numero_vaga")
-                    .order("numero_vaga", { ascending: false })
-                    .limit(1)
-                    .maybeSingle()
-                numero_vaga = ((maxData?.numero_vaga ?? 0) as number) + 1
+                const { data: seqData, error: seqError } = await supabase.rpc("next_numero_vaga")
+                if (seqError) throw new Error("Erro ao gerar número de vaga: " + seqError.message)
+                numero_vaga = seqData as number
             }
 
             const payload = {

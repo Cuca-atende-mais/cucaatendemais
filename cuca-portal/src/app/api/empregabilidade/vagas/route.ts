@@ -41,15 +41,10 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: "Empresa não encontrada ou inativa." }, { status: 404 })
         }
 
-        // Calcular número sequencial global da vaga
-        const { data: maxData } = await supabaseAdmin
-            .from("vagas")
-            .select("numero_vaga")
-            .order("numero_vaga", { ascending: false })
-            .limit(1)
-            .maybeSingle()
-
-        const numero_vaga = ((maxData?.numero_vaga ?? 0) as number) + 1
+        // Número sequencial atômico — evita race condition com múltiplos requests simultâneos
+        const { data: seqData, error: seqError } = await supabaseAdmin.rpc("next_numero_vaga")
+        if (seqError) throw new Error("Erro ao gerar número de vaga: " + seqError.message)
+        const numero_vaga = seqData as number
 
         const { data, error } = await supabaseAdmin
             .from("vagas")

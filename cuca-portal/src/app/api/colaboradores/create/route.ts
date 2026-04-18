@@ -37,29 +37,41 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Já existe um colaborador cadastrado com este e-mail.' }, { status: 409 })
         }
 
-        // 3. Criar ou reutilizar usuário no Supabase Auth
-        let userId: string
+        // 3. Criar usuário no Supabase Auth
+        // Se e-mail já existe no Auth (mas não em colaboradores), buscamos por paginação filtrada
+        let userId = ""
         let createdNewAuthUser = false
 
-        // Verificar se já existe no Auth pelo e-mail
-        const { data: listData } = await adminAuth.admin.listUsers({ page: 1, perPage: 1000 })
-        const existingAuthUser = listData?.users?.find(u => u.email === email)
+        const tempPassword = crypto.randomBytes(20).toString('hex')
+        const { data: authData, error: createUserError } = await adminAuth.admin.createUser({
+            email,
+            password: tempPassword,
+            email_confirm: true,
+            user_metadata: { name: nome }
+        })
 
-        if (existingAuthUser) {
-            userId = existingAuthUser.id
-        } else {
-            const tempPassword = crypto.randomBytes(16).toString('hex') + 'A1!'
-            const { data: authData, error: createUserError } = await adminAuth.admin.createUser({
-                email,
-                password: tempPassword,
-                email_confirm: true,
-                user_metadata: { name: nome }
-            })
-
-            if (createUserError) {
+        if (createUserError) {
+            // Se o erro é de e-mail duplicado no Auth, buscar o user_id existente
+            const isAlreadyRegistered = createUserError.message.toLowerCase().includes('already registered')
+                || createUserError.message.toLowerCase().includes('already been registered')
+            if (!isAlreadyRegistered) {
                 console.error("Erro Auth Supabase:", createUserError)
                 return NextResponse.json({ error: createUserError.message }, { status: 400 })
             }
+            // Buscar usuário existente no Auth por e-mail (paginação — aceitável pois sabemos que existe)
+            let found = false
+            let page = 1
+            while (!found) {
+                const { data: listData } = await adminAuth.admin.listUsers({ page, perPage: 50 })
+                const match = listData?.users?.find(u => u.email === email)
+                if (match) { userId = match.id; found = true; break }
+                if (!listData?.users?.length || listData.users.length < 50) break
+                page++
+            }
+            if (!found) {
+                return NextResponse.json({ error: 'Usuário existe no Auth mas não foi localizado.' }, { status: 500 })
+            }
+        } else {
             userId = authData.user.id
             createdNewAuthUser = true
         }

@@ -146,12 +146,15 @@ export default function WhatsAppUnidadePage() {
                 .maybeSingle()
 
             const roleName = roleData?.name || ""
-            const isSuperAdmin = ["Super Admin", "Desenvolvedor"].includes(roleName)
-            const isGerente = ["Gerente", "Admin"].includes(roleName)
+            const unidadeColab = colab?.unidade_cuca || null
+            // Usuários com unidade 'Geral' ou nula têm visão global (equivalente a Super Admin nesta página)
+            const isGlobal = !unidadeColab || unidadeColab === "Geral"
+            const isSuperAdmin = isGlobal || ["Super Admin Cuca", "Developer"].includes(roleName)
+            const isGerente = ["Gerente", "Admin Empregabilidade", "Institucional"].includes(roleName)
 
             const prof: UserProfile = {
                 email: user.email || null,
-                unidade_cuca: colab?.unidade_cuca || null,
+                unidade_cuca: unidadeColab,
                 isSuperAdmin,
                 isGerente,
             }
