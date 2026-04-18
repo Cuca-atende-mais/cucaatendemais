@@ -24,26 +24,45 @@ export async function POST(request: Request) {
         }
 
         const adminAuth = createAdminClient().auth
-        const adminDb = createAdminClient() // Usamos o adminClient para contornar RLS na inserção se necessário
+        const adminDb = createAdminClient()
 
-        // 2. Criar o usuário no Supabase Auth "Silenciosamente"
-        const tempPassword = crypto.randomBytes(16).toString('hex') + 'A1!'
+        // 2. Verificar se e-mail já existe na tabela colaboradores
+        const { data: existingColab } = await adminDb
+            .from('colaboradores')
+            .select('id')
+            .eq('email', email)
+            .maybeSingle()
 
-        const { data: authData, error: createUserError } = await adminAuth.admin.createUser({
-            email,
-            password: tempPassword,
-            email_confirm: true, // Isso desliga o envio de email automático do Supabase
-            user_metadata: {
-                name: nome
-            }
-        })
-
-        if (createUserError) {
-            console.error("Erro Auth Supabase:", createUserError)
-            return NextResponse.json({ error: createUserError.message }, { status: 400 })
+        if (existingColab) {
+            return NextResponse.json({ error: 'Já existe um colaborador cadastrado com este e-mail.' }, { status: 409 })
         }
 
-        const userId = authData.user.id
+        // 3. Criar ou reutilizar usuário no Supabase Auth
+        let userId: string
+        let createdNewAuthUser = false
+
+        // Verificar se já existe no Auth pelo e-mail
+        const { data: listData } = await adminAuth.admin.listUsers({ page: 1, perPage: 1000 })
+        const existingAuthUser = listData?.users?.find(u => u.email === email)
+
+        if (existingAuthUser) {
+            userId = existingAuthUser.id
+        } else {
+            const tempPassword = crypto.randomBytes(16).toString('hex') + 'A1!'
+            const { data: authData, error: createUserError } = await adminAuth.admin.createUser({
+                email,
+                password: tempPassword,
+                email_confirm: true,
+                user_metadata: { name: nome }
+            })
+
+            if (createUserError) {
+                console.error("Erro Auth Supabase:", createUserError)
+                return NextResponse.json({ error: createUserError.message }, { status: 400 })
+            }
+            userId = authData.user.id
+            createdNewAuthUser = true
+        }
 
         // 3. Cadastrar na tabela de colaboradores com Tenant e Permissão
         const setupToken = crypto.randomUUID()
@@ -62,8 +81,7 @@ export async function POST(request: Request) {
             })
 
         if (colabError) {
-            // Rollback em caso de falha
-            await adminAuth.admin.deleteUser(userId)
+            if (createdNewAuthUser) await adminAuth.admin.deleteUser(userId)
             console.error("Erro Tabela Colaboradores:", colabError)
             return NextResponse.json({ error: colabError.message }, { status: 500 })
         }
