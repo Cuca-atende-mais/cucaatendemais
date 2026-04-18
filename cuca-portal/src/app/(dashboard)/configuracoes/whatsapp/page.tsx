@@ -114,7 +114,7 @@ export default function WhatsAppUnidadePage() {
     const [loadingWebhook, setLoadingWebhook] = useState<string | null>(null)
 
     // Hook de integração real com UAZAPI
-    const { qrStatus, qrCode, criarInstancia, refreshQrCode, logoutInstancia, excluirInstancia, resetQr } = useUazapi()
+    const { qrStatus, qrCode, qrErrorMessage, criarInstancia, refreshQrCode, logoutInstancia, excluirInstancia, resetQr } = useUazapi()
     const [modalQrReal, setModalQrReal] = useState(false)
     const [nomeQrReal, setNomeQrReal] = useState("")
     const WORKER_URL = process.env.NEXT_PUBLIC_WORKER_URL || ""
@@ -666,7 +666,7 @@ export default function WhatsAppUnidadePage() {
                                 <TriangleAlert className="h-10 w-10" />
                                 <p className="font-medium">Falha ao gerar QR Code</p>
                                 <p className="text-xs text-muted-foreground text-center">
-                                    Verifique se o Worker está online (UAZAPI_MASTER_TOKEN configurado) e tente novamente.
+                                    {qrErrorMessage || "Verifique se o Worker está online e tente novamente."}
                                 </p>
                                 <Button variant="outline" onClick={() => { resetQr(); setModalQrReal(false) }}>
                                     Fechar

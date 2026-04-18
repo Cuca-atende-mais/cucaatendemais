@@ -33,6 +33,7 @@ export function useUazapi() {
     const [qrStatus, setQrStatus] = useState<QRStatus>("idle")
     const [qrCode, setQrCode] = useState<string | null>(null)
     const [qrNome, setQrNome] = useState<string | null>(null)
+    const [qrErrorMessage, setQrErrorMessage] = useState<string | null>(null)
     const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
     /** Para o polling de status */
@@ -93,6 +94,7 @@ export function useUazapi() {
         setQrStatus("loading")
         setQrCode(null)
         setQrNome(null)
+        setQrErrorMessage(null)
 
         try {
             const res = await fetch(`${WORKER_URL}/api/instancias/criar`, {
@@ -123,6 +125,7 @@ export function useUazapi() {
             return data
         } catch (err: any) {
             setQrStatus("error")
+            setQrErrorMessage(err.message)
             toast.error(`Falha ao criar instância: ${err.message}`)
             return null
         }
@@ -133,11 +136,15 @@ export function useUazapi() {
      */
     const refreshQrCode = useCallback(async (nome: string, onConnected: () => void) => {
         setQrStatus("loading")
+        setQrErrorMessage(null)
         try {
             const res = await fetch(`${WORKER_URL}/api/instancias/${encodeURIComponent(nome)}/qrcode`, {
                 cache: "no-store",
             })
-            if (!res.ok) throw new Error(`Erro ${res.status}`)
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: `Erro HTTP ${res.status}` }))
+                throw new Error(err.detail || `Erro ${res.status}`)
+            }
             const data = await res.json()
 
             if (data.ja_conectado) {
@@ -149,10 +156,13 @@ export function useUazapi() {
                 setQrCode(data.qr_code)
                 setQrStatus("qr_ready")
                 startPolling(nome, onConnected)
+            } else {
+                throw new Error("UAZAPI não retornou QR Code. Tente novamente.")
             }
         } catch (err: any) {
-            toast.error(`Erro ao atualizar QR Code: ${err.message}`)
+            toast.error(`Erro ao gerar QR Code: ${err.message}`)
             setQrStatus("error")
+            setQrErrorMessage(err.message)
         }
     }, [startPolling])
 
@@ -210,12 +220,14 @@ export function useUazapi() {
         setQrStatus("idle")
         setQrCode(null)
         setQrNome(null)
+        setQrErrorMessage(null)
     }, [stopPolling])
 
     return {
         qrStatus,
         qrCode,
         qrNome,
+        qrErrorMessage,
         criarInstancia,
         refreshQrCode,
         logoutInstancia,

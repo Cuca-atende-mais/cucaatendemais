@@ -435,13 +435,38 @@ async def obter_qrcode(nome: str):
         logger.warning(f"[QRCode] Falha ao reconfigurar webhook para '{nome}': {wh_err}")
 
     # Busca QR via /instance/status (não precisa reconectar se ainda está connecting)
-    status = await _verificar_status(token)
+    try:
+        status = await _verificar_status(token)
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        detail = e.response.text[:300]
+        if status_code in (401, 403, 404):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Token da instância '{nome}' inválido ou instância não existe na UAZAPI (HTTP {status_code}). "
+                       f"A instância pode ter sido deletada do painel UAZAPI. Exclua e recrie a instância.",
+            )
+        raise HTTPException(status_code=502, detail=f"UAZAPI retornou erro ao verificar status: HTTP {status_code} — {detail}")
+
     qr_code = status.get("qr_code")
+
+    # Se já conectou enquanto aguardávamos (race condition)
+    if status.get("is_connected"):
+        await asyncio.to_thread(_atualizar_status_banco, nome, True)
+        return {"nome": nome, "qr_code": None, "ja_conectado": True}
 
     # Se não houver QR no status, dispara novo connect
     if not qr_code:
-        qr_data = await _obter_qr_code(token)
-        qr_code = qr_data.get("qr_code")
+        try:
+            qr_data = await _obter_qr_code(token)
+            qr_code = qr_data.get("qr_code")
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            detail = e.response.text[:300]
+            raise HTTPException(
+                status_code=502,
+                detail=f"UAZAPI não gerou QR Code para '{nome}' (HTTP {status_code}): {detail}",
+            )
 
     return {"nome": nome, "qr_code": qr_code, "ja_conectado": False}
 
