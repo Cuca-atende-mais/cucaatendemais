@@ -344,7 +344,7 @@ export default function OuvidoriaPage() {
                         </div>
 
                         {/* Botão análise em lote */}
-                        {pendentesAnalise > 0 && hasPermission("ouvidoria", "update") && (
+                        {pendentesAnalise > 0 && hasPermission("ouvidoria_painel", "update") && (
                             <div className="border rounded-xl p-4 bg-indigo-500/5 border-indigo-500/20 flex items-center justify-between gap-4">
                                 <div>
                                     <p className="text-sm font-medium">{pendentesAnalise} manifestaç{pendentesAnalise === 1 ? "ão" : "ões"} aguardando análise de IA</p>
@@ -786,7 +786,7 @@ export default function OuvidoriaPage() {
                                 </div>
                             )}
 
-                            {!detalhamento.resumo_ia && hasPermission("ouvidoria", "update") && (
+                            {!detalhamento.resumo_ia && hasPermission("ouvidoria_painel", "update") && (
                                 <div className="mt-4 flex justify-center">
                                     <Button
                                         onClick={() => handleAnalyseSentiment(detalhamento)}

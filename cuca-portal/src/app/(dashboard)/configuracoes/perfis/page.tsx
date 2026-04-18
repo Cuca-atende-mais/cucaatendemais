@@ -43,10 +43,18 @@ const MODULE_GROUPS = [
         ]
     },
     {
-        category: 'Atendimentos & Ouvidoria',
+        category: 'Atendimentos WhatsApp',
         modules: [
-            { id: 'atendimentos', label: 'Atendimento WhatsApp (Institucional + Empregabilidade + Programação)' },
-            { id: 'ouvidoria', label: 'Ouvidoria — Manifestações + Conversa Sofia' },
+            { id: 'atendimentos_institucional', label: 'Atendimento — Institucional' },
+            { id: 'atendimentos_empregabilidade', label: 'Atendimento — Empregabilidade' },
+            { id: 'atendimentos_programacao', label: 'Atendimento — Programação' },
+        ]
+    },
+    {
+        category: 'Ouvidoria',
+        modules: [
+            { id: 'ouvidoria_painel', label: 'Ouvidoria — Painel de Manifestações' },
+            { id: 'ouvidoria_eventos', label: 'Ouvidoria — Eventos de Escuta' },
         ]
     },
     {

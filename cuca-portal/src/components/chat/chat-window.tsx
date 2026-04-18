@@ -14,9 +14,10 @@ import { useUser } from "@/lib/auth/user-provider";
 
 interface ChatWindowProps {
     conversationId: string | null;
+    moduloAtendimento?: string;
 }
 
-export default function ChatWindow({ conversationId }: ChatWindowProps) {
+export default function ChatWindow({ conversationId, moduloAtendimento = 'atendimentos_institucional' }: ChatWindowProps) {
     const { hasPermission } = useUser();
     const [messages, setMessages] = useState<any[]>([]);
     const [conversation, setConversation] = useState<any>(null);
@@ -243,7 +244,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                 )}>
                     <Input
                         placeholder={
-                            !hasPermission("atendimentos", "create")
+                            !hasPermission(moduloAtendimento, "create")
                                 ? "Você não tem permissão para responder..."
                                 : conversation?.status === 'ativa'
                                     ? "IA Maria está respondendo..."
@@ -253,15 +254,15 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                        disabled={conversation?.status === 'ativa' || sending || !hasPermission("atendimentos", "create")}
+                        disabled={conversation?.status === 'ativa' || sending || !hasPermission(moduloAtendimento, "create")}
                     />
                     <Button
                         size="icon"
                         onClick={handleSendMessage}
-                        disabled={!newMessage.trim() || conversation?.status === 'ativa' || sending || !hasPermission("atendimentos", "create")}
+                        disabled={!newMessage.trim() || conversation?.status === 'ativa' || sending || !hasPermission(moduloAtendimento, "create")}
                         className={cn(
                             "rounded-xl shadow-lg transition-all active:scale-90",
-                            conversation?.status === 'ativa' || !hasPermission("atendimentos", "create") ? "bg-muted" : "bg-primary hover:bg-primary/90"
+                            conversation?.status === 'ativa' || !hasPermission(moduloAtendimento, "create") ? "bg-muted" : "bg-primary hover:bg-primary/90"
                         )}
                     >
                         {sending ? <div className="animate-spin h-4 w-4 border-2 border-white/30 border-t-white rounded-full" /> : <Send className="h-4 w-4" />}
@@ -280,7 +281,7 @@ export default function ChatWindow({ conversationId }: ChatWindowProps) {
                                 : "Modo de Intervenção Humana (IA Pausada)"}
                         </p>
                     </div>
-                    {conversation?.status === 'ativa' && hasPermission("atendimentos", "update") && (
+                    {conversation?.status === 'ativa' && hasPermission(moduloAtendimento, "update") && (
                         <Button
                             variant="outline"
                             size="sm"

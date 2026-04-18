@@ -15,7 +15,7 @@ export const menuItems = [
         title: "Atendimento",
         url: "/atendimento",
         icon: "MessageSquare",
-        permission: { recurso: "atendimentos", acao: "read" }
+        permission: { recurso: "atendimentos_institucional", acao: "read" }
     },
     {
         title: "Programação",
@@ -25,7 +25,7 @@ export const menuItems = [
         // Fallback for parent menu logic if needed, usually handles visibleChildren
         items: [
             { title: "Mensal", url: "/programacao", permission: { recurso: "programacao_mensal", acao: "read" } },
-            { title: "Atendimento", url: "/programacao/mensagens", permission: { recurso: "atendimentos", acao: "read" } },
+            { title: "Atendimento", url: "/programacao/mensagens", permission: { recurso: "atendimentos_programacao", acao: "read" } },
         ],
     },
     {
@@ -35,7 +35,7 @@ export const menuItems = [
         permission: { recurso: "empreg_banco_cv", acao: "read" },
         items: [
             { title: "Painel Geral", url: "/empregabilidade", permission: { recurso: "empreg_banco_cv", acao: "read" } },
-            { title: "Atendimento", url: "/empregabilidade/mensagens", permission: { recurso: "atendimentos", acao: "read" } },
+            { title: "Atendimento", url: "/empregabilidade/mensagens", permission: { recurso: "atendimentos_empregabilidade", acao: "read" } },
             { title: "Empresas", url: "/empregabilidade/empresas", permission: { recurso: "empreg_vagas", acao: "read" } },
             { title: "Vagas", url: "/empregabilidade/vagas", permission: { recurso: "empreg_vagas", acao: "read" } },
             { title: "Candidatos", url: "/empregabilidade/candidatos", permission: { recurso: "empreg_banco_cv", acao: "read" } },
@@ -56,10 +56,10 @@ export const menuItems = [
         title: "Ouvidoria",
         url: "/ouvidoria",
         icon: "Megaphone",
-        permission: { recurso: "ouvidoria", acao: "read" },
+        permission: { recurso: "ouvidoria_painel", acao: "read" },
         items: [
-            { title: "Painel de Manifestações", url: "/ouvidoria", permission: { recurso: "ouvidoria", acao: "read" } },
-            { title: "Eventos de Escuta", url: "/ouvidoria/eventos", permission: { recurso: "ouvidoria", acao: "read" } },
+            { title: "Painel de Manifestações", url: "/ouvidoria", permission: { recurso: "ouvidoria_painel", acao: "read" } },
+            { title: "Eventos de Escuta", url: "/ouvidoria/eventos", permission: { recurso: "ouvidoria_eventos", acao: "read" } },
         ],
     },
     {

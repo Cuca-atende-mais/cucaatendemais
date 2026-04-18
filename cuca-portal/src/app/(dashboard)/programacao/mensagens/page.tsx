@@ -34,7 +34,7 @@ export default function ProgramacaoMensagensPage() {
                     />
                 </div>
                 <div className="flex-1 h-full relative">
-                    <ChatWindow conversationId={activeConversationId} />
+                    <ChatWindow conversationId={activeConversationId} moduloAtendimento="atendimentos_programacao" />
                 </div>
             </div>
         </div>
