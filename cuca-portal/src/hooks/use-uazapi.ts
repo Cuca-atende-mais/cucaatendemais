@@ -158,13 +158,25 @@ export function useUazapi() {
 
     /**
      * Faz logout seguro de uma instância (antes de trocar chip).
+     * Retorna true se a UAZAPI confirmou desconexão, false se houve falha.
      */
     const logoutInstancia = useCallback(async (nome: string): Promise<boolean> => {
         try {
             const res = await fetch(`${WORKER_URL}/api/instancias/${encodeURIComponent(nome)}/logout`, {
                 method: "DELETE",
             })
-            if (!res.ok) throw new Error(`Erro ${res.status}`)
+
+            if (res.status === 502) {
+                const err = await res.json().catch(() => ({ detail: "Falha na UAZAPI" }))
+                toast.error(`⚠️ ${err.detail}`, { duration: 8000 })
+                return false
+            }
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: `Erro ${res.status}` }))
+                throw new Error(err.detail || `Erro ${res.status}`)
+            }
+
             return true
         } catch (err: any) {
             toast.error(`Erro ao desconectar: ${err.message}`)

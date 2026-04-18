@@ -152,14 +152,50 @@ async def _verificar_status(instance_token: str) -> dict:
     }
 
 
-async def _desconectar_na_uazapi(instance_token: str) -> bool:
-    """POST /instance/disconnect com token da instância."""
+async def _desconectar_na_uazapi(instance_token: str, instance_nome: str = "") -> bool:
+    """
+    Desconecta instância na UAZAPI com dois níveis de tentativa:
+      1) POST /instance/disconnect com token da instância (padrão)
+      2) POST /instance/disconnect com admintoken + nome (fallback se token recusado)
+    Verifica o status após desconexão para confirmar o resultado real.
+    """
     try:
-        logger.info("[UAZAPI] Desconectando instância")
-        await _post("/instance/disconnect", {}, _instance_headers(instance_token))
-        return True
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Tentativa 1: token da instância
+            logger.info(f"[UAZAPI] Desconectando '{instance_nome}' via instance token")
+            resp1 = await client.post(
+                f"{UAZAPI_BASE_URL}/instance/disconnect",
+                headers=_instance_headers(instance_token),
+                json={},
+            )
+            logger.info(f"[UAZAPI] Disconnect v1: {resp1.status_code} — {resp1.text[:200]}")
+
+            if resp1.status_code not in (200, 204):
+                # Fallback: admintoken + nome
+                if instance_nome:
+                    logger.warning(f"[UAZAPI] Token recusado ({resp1.status_code}). Tentando admintoken para '{instance_nome}'")
+                    resp2 = await client.post(
+                        f"{UAZAPI_BASE_URL}/instance/disconnect",
+                        headers=_admin_headers(),
+                        json={"name": instance_nome},
+                    )
+                    logger.info(f"[UAZAPI] Disconnect v2 (admin): {resp2.status_code} — {resp2.text[:200]}")
+                    if resp2.status_code not in (200, 204):
+                        logger.error(f"[UAZAPI] Falha em ambas tentativas de desconexão para '{instance_nome}'")
+                        return False
+
+            # Verifica status real após desconexão (aguarda 1s para propagar)
+            await asyncio.sleep(1)
+            status = await _verificar_status(instance_token)
+            if status["is_connected"]:
+                logger.warning(f"[UAZAPI] '{instance_nome}' ainda conectado após disconnect. UAZAPI não desconectou.")
+                return False
+
+            logger.info(f"[UAZAPI] '{instance_nome}' confirmado como desconectado.")
+            return True
+
     except Exception as e:
-        logger.error(f"[UAZAPI] Erro ao desconectar: {e}")
+        logger.error(f"[UAZAPI] Erro ao desconectar '{instance_nome}': {e}")
         return False
 
 
@@ -440,19 +476,37 @@ async def reconfigurar_webhook(nome: str):
 
 @router.delete("/{nome}/logout")
 async def logout_instancia(nome: str):
-    """Desconecta instância com segurança."""
-    res = supabase.table("instancias_uazapi").select("id, token").eq("nome", nome).limit(1).execute()
+    """
+    Desconecta instância com segurança.
+    Só atualiza o banco para ativa=False após confirmar que a UAZAPI desconectou.
+    Se a UAZAPI falhar, retorna erro 502 com detalhes para diagnóstico.
+    """
+    res = supabase.table("instancias_uazapi").select("id, token, ativa").eq("nome", nome).limit(1).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail=f"Instância '{nome}' não encontrada.")
 
-    token = res.data[0].get("token")
-    if token:
-        await _desconectar_na_uazapi(token)
+    inst = res.data[0]
+    token = inst.get("token")
 
-    # Marca ativa=False mas PRESERVA o telefone — o número do chip não muda com logout.
-    # Apagar o telefone causava null persistente caso o polling de reconexão perdesse o jid.
+    if not token:
+        # Sem token: só atualiza banco (instância nunca foi conectada)
+        await asyncio.to_thread(_atualizar_status_banco, nome, False)
+        return {"success": True, "nome": nome, "mensagem": "Instância marcada como inativa (sem token registrado)."}
+
+    ok = await _desconectar_na_uazapi(token, instance_nome=nome)
+
+    if not ok:
+        # UAZAPI não confirmou desconexão — atualiza banco mesmo assim mas avisa o cliente
+        logger.warning(f"[Logout] UAZAPI não confirmou desconexão de '{nome}'. Banco atualizado com aviso.")
+        await asyncio.to_thread(_atualizar_status_banco, nome, False)
+        raise HTTPException(
+            status_code=502,
+            detail=f"A sessão WhatsApp de '{nome}' pode ainda estar ativa na UAZAPI. "
+                   f"Banco atualizado para inativo. Verifique manualmente no painel UAZAPI."
+        )
+
     await asyncio.to_thread(_atualizar_status_banco, nome, False)
-    return {"success": True, "nome": nome, "mensagem": "Instância desconectada com segurança."}
+    return {"success": True, "nome": nome, "mensagem": "Instância desconectada com segurança e confirmada."}
 
 
 @router.delete("/{nome}/excluir")
@@ -468,7 +522,7 @@ async def excluir_instancia(nome: str):
 
         # Desconectar no UAZAPI (falha ignorada — instância pode já estar fora)
         if token:
-            await _desconectar_na_uazapi(token)
+            await _desconectar_na_uazapi(token, instance_nome=nome)
 
         # Deletar da UAZAPI definitivamente (limpa do painel deles)
         await _deletar_na_uazapi(nome)
