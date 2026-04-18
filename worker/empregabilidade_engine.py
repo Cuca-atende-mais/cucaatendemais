@@ -1735,6 +1735,49 @@ async def processar_mensagem_empregabilidade(
         except Exception as _he:
             logger.error(f"[SQS-40] Erro ao disparar transbordo por dúvida: {_he}")
 
+    # Handover por palavra-chave: usuário pede explicitamente atendimento humano
+    _texto_lower = texto.strip().lower()
+    _KEYWORDS_HANDOVER = {
+        "falar com humano", "atendente humano", "falar com atendente",
+        "quero humano", "humano por favor", "pessoa real", "falar com pessoa",
+        "atendimento humano", "preciso de ajuda humana",
+    }
+    if any(kw in _texto_lower for kw in _KEYWORDS_HANDOVER):
+        logger.info(f"[HANDOVER-KW] Transbordo por palavra-chave para {phone}")
+        try:
+            modulo_alvo = "empregabilidade"
+            hw_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).eq("unidade_cuca", unidade_cuca).eq("ativo", True).execute()
+            contato_hw = (hw_res.data or [None])[0]
+            if not contato_hw:
+                hw_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).is_("unidade_cuca", "null").eq("ativo", True).execute()
+                contato_hw = (hw_res.data or [None])[0]
+            if contato_hw:
+                tel_destino = contato_hw["telefone_destino"]
+                setor_resp = contato_hw.get("nome_responsavel") or "Empregabilidade"
+                historico = _montar_historico(conversa_id)
+                msg_hw = (
+                    f"🚨 *TRANSBORDO — EMPREGABILIDADE*\n\n"
+                    f"👤 *Lead:* {push_name}\n"
+                    f"📱 *Telefone:* {phone}\n"
+                    f"🏢 *Setor:* {setor_resp}\n\n"
+                    f"📋 *Histórico da conversa:*\n{historico}\n\n"
+                    f"🔗 Iniciar chat: https://wa.me/{phone}"
+                )
+                async with httpx.AsyncClient() as hc:
+                    await hc.post(
+                        f"{UAZAPI_URL}/send/text",
+                        headers={"token": token, "Content-Type": "application/json"},
+                        json={"number": tel_destino, "text": msg_hw, "delay": 1200}
+                    )
+                await _enviar(
+                    instance_name, token, phone,
+                    "Entendido! 🤝 Estou encaminhando você para nossa equipe humana de empregabilidade. Em breve um consultor falará com você por aqui!",
+                    conversa_id=conversa_id, lead_id=lead_id
+                )
+                return
+        except Exception as _hwe:
+            logger.error(f"[HANDOVER-KW] Erro ao disparar transbordo por palavra-chave: {_hwe}")
+
     # SQS-40 Task 3.4: Interceptar respostas ao convite de entrevista
     texto_norm = texto.strip()
     # candidaturas.telefone é salvo sem o código de país (55); phone do JID tem "55" prefixado
