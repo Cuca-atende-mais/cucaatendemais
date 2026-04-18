@@ -1,7 +1,9 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { createClient } from "@/lib/supabase/client"
+import { PROGRAMACAO_KEY } from "@/hooks/queries/use-programacao"
 import { EventoPontual, CampanhaMensal } from "@/lib/types/database"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -40,9 +42,7 @@ import { useUser } from "@/lib/auth/user-provider"
 
 export default function ProgramacaoPage() {
     const fileInputRef = useRef<HTMLInputElement>(null)
-    const [pontuais, setPontuais] = useState<EventoPontual[]>([])
-    const [mensais, setMensais] = useState<CampanhaMensal[]>([])
-    const [loading, setLoading] = useState(true)
+    // pontuais, mensais e loading agora vêm do useQuery abaixo
     const [searchTerm, setSearchTerm] = useState("")
     const [unidadeFilter, setUnidadeFilter] = useState<string>("all")
     const [isModalOpen, setIsModalOpen] = useState(false)
@@ -61,6 +61,7 @@ export default function ProgramacaoPage() {
 
     const supabase = createClient()
     const router = useRouter()
+    const qc = useQueryClient()
 
     const { profile, isDeveloper, hasPermission } = useUser()
 
@@ -79,7 +80,7 @@ export default function ProgramacaoPage() {
             if (!res.ok) throw new Error(data.error || "Erro ao excluir")
 
             toast.success(data.message)
-            fetchData()
+            invalidateProg()
         } catch (error: any) {
             console.error(error)
             toast.error(error.message)
@@ -93,26 +94,18 @@ export default function ProgramacaoPage() {
         }
     }, [profile, canSeeAllUnits])
 
-    // S27-07: cleanup para cancelar fetchData em andamento ao sair da página
-    useEffect(() => {
-        let cancelled = false
-        const run = async () => {
-            await fetchData(cancelled)
-        }
-        if (profile) run()
-        return () => { cancelled = true }
-    }, [unidadeFilter, searchTerm, profile?.id])
-
-    const fetchData = async (cancelled = false) => {
-        setLoading(true)
-        try {
+    // TanStack Query — substitui useEffect + fetchData manual
+    const { data: progData, isLoading: loading } = useQuery({
+        queryKey: [...PROGRAMACAO_KEY, unidadeFilter, searchTerm, profile?.id],
+        enabled: !!profile,
+        staleTime: 20_000,
+        queryFn: async () => {
             // S14-02: Filtros aplicados diretamente na query (server-side)
             let pQuery = supabase.from("eventos_pontuais").select("*").order("created_at", { ascending: false })
             let mQuery = supabase.from("campanhas_mensais").select("*").order("created_at", { ascending: false })
 
             if (unidadeFilter && unidadeFilter !== "all") {
                 // S27-01: incluir eventos expansivos (toda a rede) na visão do gerente
-                // Aspas duplas necessárias para valores com espaço no filtro PostgREST
                 pQuery = pQuery.or(`unidade_cuca.eq."${unidadeFilter}",expansiva.eq.true`)
                 mQuery = mQuery.eq("unidade_cuca", unidadeFilter)
             }
@@ -123,17 +116,15 @@ export default function ProgramacaoPage() {
             }
 
             const [{ data: pData, error: pError }, { data: mData, error: mError }] = await Promise.all([pQuery, mQuery])
-
-            if (cancelled) return
             if (pError) console.error("Erro eventos pontuais:", pError)
             if (mError) console.error("Erro campanhas mensais:", mError)
+            return { pontuais: pData ?? [], mensais: mData ?? [] }
+        },
+    })
 
-            setPontuais(pData || [])
-            setMensais(mData || [])
-        } finally {
-            if (!cancelled) setLoading(false)
-        }
-    }
+    const pontuais = progData?.pontuais ?? []
+    const mensais = progData?.mensais ?? []
+    const invalidateProg = () => qc.invalidateQueries({ queryKey: PROGRAMACAO_KEY })
 
     const openCampanhaDetails = (campanha: CampanhaMensal) => {
         router.push(`/programacao/mensal/${campanha.id}`)
@@ -165,7 +156,7 @@ export default function ProgramacaoPage() {
                 .eq("id", id)
             if (error) throw error
             toast.success("Evento autorizado! Agora pode ser disparado.")
-            fetchData()
+            invalidateProg()
         } catch (err: any) {
             toast.error(err.message || "Erro ao autorizar o evento.")
         }
@@ -222,7 +213,7 @@ export default function ProgramacaoPage() {
             if (error) throw error
             toast.success("Evento aprovado! O worker irá disparar as mensagens em breve.")
             setPreviewEvento(null)
-            fetchData()
+            invalidateProg()
         } catch (err: any) {
             toast.error(err.message || "Erro ao aprovar o evento.")
         } finally {
@@ -258,7 +249,7 @@ export default function ProgramacaoPage() {
             <UnifiedProgramModal
                 open={isModalOpen}
                 onOpenChange={(open) => { setIsModalOpen(open); if (!open) setEditEvento(null) }}
-                onSuccess={fetchData}
+                onSuccess={invalidateProg}
                 editEvento={editEvento}
             />
 
@@ -521,7 +512,7 @@ export default function ProgramacaoPage() {
                     open={isImportModalOpen}
                     onOpenChange={setIsImportModalOpen}
                     unidadeCuca={unidadeFilter !== "all" ? unidadeFilter : ""}
-                    onSuccess={fetchData}
+                    onSuccess={invalidateProg}
                 />
             )}
 
@@ -529,7 +520,7 @@ export default function ProgramacaoPage() {
                 open={isCriarModalOpen}
                 onOpenChange={setIsCriarModalOpen}
                 unidadeInicial={unidadeFilter !== "all" ? unidadeFilter : ""}
-                onSuccess={fetchData}
+                onSuccess={invalidateProg}
             />
 
             {/* S25-02: Sheet Visualizar Evento Pontual */}

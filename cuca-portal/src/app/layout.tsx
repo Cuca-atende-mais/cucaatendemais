@@ -5,6 +5,7 @@ import { UserProvider } from "@/lib/auth/user-provider";
 import { Toaster } from "react-hot-toast";
 import { SentryInitializer } from "@/components/sentry-initializer";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ReactQueryProvider } from "./providers";
 
 const jakartaSans = Plus_Jakarta_Sans({
   variable: "--font-jakarta",
@@ -32,11 +33,13 @@ export default function RootLayout({
     <html lang="pt-BR" suppressHydrationWarning>
       <body className={`${jakartaSans.variable} font-sans antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
-          <UserProvider>
-            <SentryInitializer />
-            {children}
-            <Toaster position="top-right" />
-          </UserProvider>
+          <ReactQueryProvider>
+            <UserProvider>
+              <SentryInitializer />
+              {children}
+              <Toaster position="top-right" />
+            </UserProvider>
+          </ReactQueryProvider>
         </ThemeProvider>
       </body>
     </html>

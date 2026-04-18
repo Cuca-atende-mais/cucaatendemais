@@ -385,6 +385,9 @@ async def process_webhook_payload(payload: dict, token: str):
                     "created_at": "now()"
                 }).execute()
                 logger.info(f"Mensagem salva com sucesso. ConvID: {conversation_id}")
+                # Incrementar contador de não lidas quando mensagem vem do lead
+                if not from_me:
+                    supabase.rpc("increment_nao_lidas", {"conv_id": conversation_id}).execute()
             except Exception as e:
                 logger.error(f"Erro ao salvar mensagem: {str(e)}")
             

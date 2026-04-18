@@ -1,7 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { createClient } from "@/lib/supabase/client"
+import { INSTANCIAS_KEY } from "@/hooks/queries/use-instancias"
 import {
     Wifi, WifiOff, RefreshCw, QrCode, Building2, Calendar,
     Smartphone, TriangleAlert, Info, Loader2, Plus, Pencil,
@@ -83,6 +85,7 @@ const CANAL_DESC: Record<string, string> = {
 /* ─── Componente Principal ───────────────────────────────── */
 export default function WhatsAppUnidadePage() {
     const supabase = createClient()
+    const qc = useQueryClient()
 
     const [instancias, setInstancias] = useState<Instancia[]>([])
     const [transbordos, setTransbordos] = useState<Transbordo[]>([])
@@ -258,7 +261,7 @@ export default function WhatsAppUnidadePage() {
                 if (error) throw error
                 toast.success("Instância atualizada com sucesso!")
                 setModalInst(false)
-                await fetchInstancias(profile!)
+                await fetchInstancias(profile!); qc.invalidateQueries({ queryKey: INSTANCIAS_KEY })
             } else {
                 // CRIAR: chama o Worker que executa o fluxo real da UAZAPI
                 // A→ POST /instance/create | B→ POST /webhook/set | C→ GET /instance/connect
@@ -277,7 +280,7 @@ export default function WhatsAppUnidadePage() {
                     async () => {
                         // Aguarda 1.5s para o Worker processar o webhook de conexão antes de buscar
                         await new Promise(r => setTimeout(r, 1500))
-                        await fetchInstancias(profile!)
+                        await fetchInstancias(profile!); qc.invalidateQueries({ queryKey: INSTANCIAS_KEY })
                     }
                 )
             }
@@ -294,7 +297,7 @@ export default function WhatsAppUnidadePage() {
             const ok = await logoutInstancia(inst.nome)
             if (ok) {
                 toast.success("Instância desconectada com segurança.")
-                await fetchInstancias(profile!)
+                await fetchInstancias(profile!); qc.invalidateQueries({ queryKey: INSTANCIAS_KEY })
             }
         } catch {
             toast.error("Erro ao desconectar.")
@@ -402,7 +405,7 @@ export default function WhatsAppUnidadePage() {
             const result = await excluirInstancia(inst.nome)
             if (result) {
                 toast.success("Instância permanentemente removida!")
-                await fetchInstancias(profile!)
+                await fetchInstancias(profile!); qc.invalidateQueries({ queryKey: INSTANCIAS_KEY })
             }
         } catch (err: any) {
             toast.error(`Falha ao excluir: ${err.message}`)

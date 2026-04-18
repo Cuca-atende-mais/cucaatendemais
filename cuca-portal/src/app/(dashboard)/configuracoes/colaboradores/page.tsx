@@ -1,7 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { createClient } from "@/lib/supabase/client"
+import { COLABORADORES_KEY } from "@/hooks/queries/use-colaboradores"
 import { useUser } from "@/lib/auth/user-provider"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -54,9 +56,6 @@ function RoleBadge({ name }: { name?: string }) {
 }
 
 export default function ColaboradoresPage() {
-    const [colaboradores, setColaboradores] = useState<any[]>([])
-    const [roles, setRoles] = useState<any[]>([])
-    const [loading, setLoading] = useState(true)
     const [isSaving, setIsSaving] = useState(false)
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingColaborador, setEditingColaborador] = useState<any>(null)
@@ -66,6 +65,34 @@ export default function ColaboradoresPage() {
     const canManageStatus = hasPermission('config_colaboradores', 'update')
 
     const supabase = createClient()
+    const qc = useQueryClient()
+    const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
+
+    const { data: colabData, isLoading: loading } = useQuery({
+        queryKey: [...COLABORADORES_KEY, profile?.id],
+        enabled: !!profile,
+        staleTime: 60_000,
+        queryFn: async () => {
+            const [cRes, rRes] = await Promise.all([
+                supabase.from("colaboradores").select("*, sys_roles(name)").order("nome_completo"),
+                supabase.from("sys_roles").select("*").order("name"),
+            ])
+            let filteredColabs = cRes.data ?? []
+            if (!isDeveloper) filteredColabs = filteredColabs.filter((c: any) => c.sys_roles?.name !== "Developer")
+            if (!canSeeAllUnits) {
+                filteredColabs = filteredColabs.filter((c: any) => c.unidade_cuca === profile?.unidade_cuca)
+                filteredColabs = filteredColabs.filter((c: any) => c.sys_roles?.name !== "Super Admin Cuca")
+            }
+            let disponiveis = rRes.data ?? []
+            if (!isDeveloper) disponiveis = disponiveis.filter((r: any) => r.name !== "Developer")
+            if (!canSeeAllUnits) disponiveis = disponiveis.filter((r: any) => r.name !== "Super Admin Cuca")
+            return { colaboradores: filteredColabs, roles: disponiveis }
+        },
+    })
+
+    const colaboradores: any[] = colabData?.colaboradores ?? []
+    const roles: any[] = colabData?.roles ?? []
+    const invalidateColabs = () => qc.invalidateQueries({ queryKey: COLABORADORES_KEY })
 
     const formDataInit = {
         nome_completo: "",
@@ -77,52 +104,6 @@ export default function ColaboradoresPage() {
     }
     const [formData, setFormData] = useState(formDataInit)
 
-    useEffect(() => {
-        fetchData()
-    }, [])
-
-    const fetchData = async () => {
-        setLoading(true)
-        const [cRes, rRes] = await Promise.all([
-            supabase.from("colaboradores").select("*, sys_roles(name)").order("nome_completo"),
-            supabase.from("sys_roles").select("*").order("name")
-        ])
-
-        if (cRes.data) {
-            const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
-
-            let filteredColabs = cRes.data
-
-            // Remover os Masters (Developer) para todo mundo que não é Master
-            if (!isDeveloper) {
-                filteredColabs = filteredColabs.filter(c => c.sys_roles?.name !== 'Developer')
-            }
-
-            // Aplicar as regras rigorosas caso não seja Developer e nem Super Admin
-            if (!canSeeAllUnits) {
-                // Filtra apenas a unidade dele
-                filteredColabs = filteredColabs.filter(c => c.unidade_cuca === profile?.unidade_cuca)
-                // Remove Super Admins da visão dos inferiores
-                filteredColabs = filteredColabs.filter(c => c.sys_roles?.name !== 'Super Admin Cuca')
-            }
-
-            setColaboradores(filteredColabs)
-        }
-        if (rRes.data) {
-            // Filtro simples de Hierarquia para criação de Cargos
-            let disponiveis = rRes.data
-            const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
-
-            if (!isDeveloper) {
-                disponiveis = rRes.data.filter(r => r.name !== 'Developer')
-            }
-            if (!canSeeAllUnits) {
-                disponiveis = disponiveis.filter(r => r.name !== 'Super Admin Cuca')
-            }
-            setRoles(disponiveis)
-        }
-        setLoading(false)
-    }
 
     const handleSave = async () => {
         setIsSaving(true)
@@ -163,7 +144,7 @@ export default function ColaboradoresPage() {
             setIsModalOpen(false)
             setEditingColaborador(null)
             setFormData(formDataInit)
-            fetchData()
+            invalidateColabs()
         } catch (error: any) {
             toast.error(error.message)
         } finally {

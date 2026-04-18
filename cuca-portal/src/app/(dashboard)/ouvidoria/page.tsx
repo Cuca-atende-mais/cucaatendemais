@@ -1,7 +1,9 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useMemo } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { createClient } from "@/lib/supabase/client"
+import { OUVIDORIA_KEY } from "@/hooks/queries/use-ouvidoria"
 import {
     MessageSquareWarning, Lightbulb, Activity, UserX, User, Building2,
     Calendar, CheckCircle2, AlertCircle, HelpCircle, Loader2, Sparkles, Phone, MessagesSquare,
@@ -95,8 +97,7 @@ const ALERTA_ICON: Record<string, typeof ShieldAlert> = {
 
 export default function OuvidoriaPage() {
     const supabase = createClient()
-    const [registros, setRegistros] = useState<OuvidoriaRegistro[]>([])
-    const [loading, setLoading] = useState(true)
+    const qc = useQueryClient()
     const [analysingBatch, setAnalysingBatch] = useState(false)
     const [detalhamento, setDetalhamento] = useState<OuvidoriaRegistro | null>(null)
     const [analysing, setAnalysing] = useState(false)
@@ -107,7 +108,19 @@ export default function OuvidoriaPage() {
     const { hasPermission, profile, isDeveloper } = useUser()
     const isSuperAdmin = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
 
-    useEffect(() => { fetchRegistros() }, [])
+    const { data: registros = [], isLoading: loading } = useQuery({
+        queryKey: OUVIDORIA_KEY,
+        staleTime: 30_000,
+        queryFn: async () => {
+            const { data } = await supabase
+                .from("ouvidoria_registros")
+                .select("*, ouvidoria_eventos(titulo)")
+                .order("created_at", { ascending: false })
+            return (data ?? []) as OuvidoriaRegistro[]
+        },
+    })
+
+    const invalidateOuvidoria = () => qc.invalidateQueries({ queryKey: OUVIDORIA_KEY })
 
     const handleGerarInsights = async () => {
         setLoadingInsights(true)
@@ -128,16 +141,6 @@ export default function OuvidoriaPage() {
         }
     }
 
-    const fetchRegistros = async () => {
-        setLoading(true)
-        const { data } = await supabase
-            .from("ouvidoria_registros")
-            .select("*, ouvidoria_eventos(titulo)")
-            .order("created_at", { ascending: false })
-        setRegistros(data || [])
-        setLoading(false)
-    }
-
     const handleAnalyseSentiment = async (registro: OuvidoriaRegistro) => {
         setAnalysing(true)
         try {
@@ -150,7 +153,7 @@ export default function OuvidoriaPage() {
             const result = await res.json()
             toast.success("Análise concluída!")
             setDetalhamento({ ...registro, sentimento: result.sentimento, resumo_ia: result.resumo_ia, temas_identificados: result.temas })
-            fetchRegistros()
+            invalidateOuvidoria()
         } catch {
             toast.error("Falha ao analisar sentimento")
         } finally {
@@ -175,7 +178,7 @@ export default function OuvidoriaPage() {
             } catch { /* continua */ }
         }
         toast.success(`${ok} de ${pendentes.length} manifestações analisadas!`)
-        fetchRegistros()
+        invalidateOuvidoria()
         setAnalysingBatch(false)
     }
 
