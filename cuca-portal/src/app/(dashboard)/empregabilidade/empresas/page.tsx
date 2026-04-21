@@ -242,6 +242,7 @@ export default function EmpresasPage() {
     )
 
     return (
+        <>
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
@@ -521,7 +522,7 @@ export default function EmpresasPage() {
             </Card>
         </div>
 
-        <AlertDialog open={deletingEmpresa !== null} onOpenChange={(open) => { if (!open) setDeletingEmpresa(null) }}>
+        <AlertDialog open={deletingEmpresa !== null} onOpenChange={(isOpen) => { if (!isOpen) setDeletingEmpresa(null) }}>
             <AlertDialogContent>
                 <AlertDialogHeader>
                     <AlertDialogTitle>Excluir empresa?</AlertDialogTitle>
@@ -546,5 +547,6 @@ export default function EmpresasPage() {
                 </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
+        </>
     )
 }
