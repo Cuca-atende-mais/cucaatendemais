@@ -521,7 +521,7 @@ export default function EmpresasPage() {
             </Card>
         </div>
 
-        <AlertDialog open={!!deletingEmpresa} onOpenChange={(open) => !open && setDeletingEmpresa(null)}>
+        <AlertDialog open={deletingEmpresa !== null} onOpenChange={(open) => { if (!open) setDeletingEmpresa(null) }}>
             <AlertDialogContent>
                 <AlertDialogHeader>
                     <AlertDialogTitle>Excluir empresa?</AlertDialogTitle>
