@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { deleteFromR2 } from "@/lib/r2"
 
 // GET — busca dados da vaga validando posse da empresa (usado pela página de edição pública)
 export async function GET(
@@ -185,5 +186,65 @@ export async function PATCH(
     } catch (err: any) {
         console.error("[vagas/[id] PATCH] Erro:", err)
         return NextResponse.json({ error: err.message || "Erro interno" }, { status: 500 })
+    }
+}
+
+// DELETE — exclui vaga, candidaturas e entradas do talent_bank vinculadas
+export async function DELETE(
+    _request: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+
+    try {
+        const { id } = await params
+
+        const { data: vaga, error: vagaErr } = await supabase
+            .from("vagas")
+            .select("id, titulo")
+            .eq("id", id)
+            .single()
+
+        if (vagaErr || !vaga) {
+            return NextResponse.json({ error: "Vaga não encontrada." }, { status: 404 })
+        }
+
+        // Limpar CVs das candidaturas no R2
+        const { data: candidaturas } = await supabase
+            .from("candidaturas")
+            .select("id, arquivo_cv_url")
+            .eq("vaga_id", id)
+
+        for (const c of candidaturas || []) {
+            if (c.arquivo_cv_url) {
+                try {
+                    await deleteFromR2(c.arquivo_cv_url)
+                } catch {
+                    console.warn("[vagas/delete] Falha ao deletar CV do R2:", c.id)
+                }
+            }
+        }
+
+        // Deletar candidaturas
+        const { error: candErr } = await supabase
+            .from("candidaturas")
+            .delete()
+            .eq("vaga_id", id)
+        if (candErr) throw candErr
+
+        // Deletar entradas do talent_bank vinculadas à vaga
+        await supabase.from("talent_bank").delete().eq("vaga_origem_id", id)
+
+        // Deletar a vaga
+        const { error: deleteErr } = await supabase.from("vagas").delete().eq("id", id)
+        if (deleteErr) throw deleteErr
+
+        return NextResponse.json({ ok: true, candidaturasRemovidas: (candidaturas || []).length })
+    } catch (err: any) {
+        console.error("[vagas/delete] Erro:", err)
+        return NextResponse.json({ error: err.message || "Erro ao excluir vaga." }, { status: 500 })
     }
 }

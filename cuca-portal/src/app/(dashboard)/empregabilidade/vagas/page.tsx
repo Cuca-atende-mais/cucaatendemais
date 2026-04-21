@@ -10,7 +10,17 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin, Globe, MessageSquare, Loader2 } from "lucide-react"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin, Globe, MessageSquare, Loader2, Trash2 } from "lucide-react"
 import { VagaModal } from "@/components/empregabilidade/vaga-modal"
 import toast from "react-hot-toast"
 import { useUser } from "@/lib/auth/user-provider"
@@ -23,6 +33,8 @@ export default function VagasPage() {
     const qc = useQueryClient()
 
     const [feedbackLoadingId, setFeedbackLoadingId] = useState<string | null>(null)
+    const [deletingVaga, setDeletingVaga] = useState<Vaga | null>(null)
+    const [deleteLoading, setDeleteLoading] = useState(false)
     const [searchTerm, setSearchTerm] = useState("")
     const [statusFilter, setStatusFilter] = useState<string>("all")
     const [abaFiltro, setAbaFiltro] = useState<"minhas" | "todas">("minhas")
@@ -118,6 +130,23 @@ export default function VagasPage() {
         }
     }
 
+    const handleDeleteVaga = async () => {
+        if (!deletingVaga) return
+        setDeleteLoading(true)
+        try {
+            const res = await fetch(`/api/empregabilidade/vagas/${deletingVaga.id}`, { method: "DELETE" })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error || "Erro desconhecido")
+            toast.success(`Vaga excluída. ${json.candidaturasRemovidas} candidato(s) removido(s).`)
+            invalidate()
+        } catch (err: any) {
+            toast.error(err.message || "Erro ao excluir vaga.")
+        } finally {
+            setDeleteLoading(false)
+            setDeletingVaga(null)
+        }
+    }
+
     const openEditModal = (vaga: Vaga) => { setSelectedVaga(vaga); setIsModalOpen(true) }
     const openNewModal = () => { setSelectedVaga(null); setIsModalOpen(true) }
 
@@ -132,6 +161,7 @@ export default function VagasPage() {
     }
 
     return (
+        <>
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
@@ -201,6 +231,7 @@ export default function VagasPage() {
                                 <TableHead>Status</TableHead>
                                 <TableHead className="text-center">Candidatos</TableHead>
                                 <TableHead className="text-center">Feedback</TableHead>
+                                <TableHead className="text-center w-12"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -273,6 +304,18 @@ export default function VagasPage() {
                                                 : <MessageSquare className="h-3 w-3" />}
                                         </Button>
                                     </TableCell>
+                                    {abaFiltro === "minhas" && hasPermission("empreg_vagas", "delete") && (
+                                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                                            <Button
+                                                variant="ghost" size="sm"
+                                                className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
+                                                title="Excluir vaga e candidatos"
+                                                onClick={() => setDeletingVaga(v)}
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </TableCell>
+                                    )}
                                 </TableRow>
                             ))}
                         </TableBody>
@@ -280,5 +323,31 @@ export default function VagasPage() {
                 </CardContent>
             </Card>
         </div>
+
+        <AlertDialog open={deletingVaga !== null} onOpenChange={(isOpen) => { if (!isOpen) setDeletingVaga(null) }}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Excluir vaga?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        Esta ação é <strong>irreversível</strong>. Serão excluídos permanentemente:
+                        <ul className="mt-2 ml-4 list-disc text-sm">
+                            <li>A vaga <strong>{deletingVaga?.titulo}</strong></li>
+                            <li>Todos os candidatos inscritos nessa vaga</li>
+                        </ul>
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel disabled={deleteLoading}>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction
+                        onClick={handleDeleteVaga}
+                        disabled={deleteLoading}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                        {deleteLoading ? "Excluindo..." : "Sim, excluir"}
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+        </>
     )
 }
