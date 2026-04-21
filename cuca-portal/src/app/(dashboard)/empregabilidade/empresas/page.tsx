@@ -27,7 +27,17 @@ import {
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
-import { Search, Plus, Pencil, Building2, Download, Upload } from "lucide-react"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Search, Plus, Pencil, Trash2, Building2, Download, Upload } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
@@ -38,6 +48,8 @@ export default function EmpresasPage() {
     const [searchTerm, setSearchTerm] = useState("")
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editingEmpresa, setEditingEmpresa] = useState<Empresa | null>(null)
+    const [deletingEmpresa, setDeletingEmpresa] = useState<Empresa | null>(null)
+    const [deleteLoading, setDeleteLoading] = useState(false)
     const [formData, setFormData] = useState({
         nome: "",
         cnpj: "",
@@ -140,6 +152,27 @@ export default function EmpresasPage() {
             contato_responsavel: "",
             ativa: true,
         })
+    }
+
+    const handleDelete = async () => {
+        if (!deletingEmpresa) return
+        setDeleteLoading(true)
+        try {
+            const res = await fetch(`/api/empregabilidade/empresa/${deletingEmpresa.id}`, {
+                method: "DELETE",
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error || "Erro desconhecido")
+            toast.success(
+                `Empresa excluída. ${json.vagasRemovidas} vaga(s) e candidatos removidos.`
+            )
+            fetchEmpresas()
+        } catch (err: any) {
+            toast.error(err.message || "Erro ao excluir empresa.")
+        } finally {
+            setDeleteLoading(false)
+            setDeletingEmpresa(null)
+        }
     }
 
     const exportarCSV = () => {
@@ -458,15 +491,26 @@ export default function EmpresasPage() {
                                             )}
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="gap-2"
-                                                onClick={() => handleEdit(emp)}
-                                            >
-                                                <Pencil className="h-4 w-4 text-cuca-blue" />
-                                                <span className="hidden sm:inline">Editar</span>
-                                            </Button>
+                                            <div className="flex items-center justify-end gap-2">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-2"
+                                                    onClick={() => handleEdit(emp)}
+                                                >
+                                                    <Pencil className="h-4 w-4 text-cuca-blue" />
+                                                    <span className="hidden sm:inline">Editar</span>
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-2 text-destructive hover:text-destructive"
+                                                    onClick={() => setDeletingEmpresa(emp)}
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                    <span className="hidden sm:inline">Excluir</span>
+                                                </Button>
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))}
@@ -476,5 +520,31 @@ export default function EmpresasPage() {
                 </CardContent>
             </Card>
         </div>
+
+        <AlertDialog open={!!deletingEmpresa} onOpenChange={(open) => !open && setDeletingEmpresa(null)}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Excluir empresa?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        Esta ação é <strong>irreversível</strong>. Serão excluídos permanentemente:
+                        <ul className="mt-2 ml-4 list-disc text-sm">
+                            <li>A empresa <strong>{deletingEmpresa?.nome}</strong></li>
+                            <li>Todas as vagas vinculadas a ela</li>
+                            <li>Todos os candidatos inscritos nessas vagas</li>
+                        </ul>
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel disabled={deleteLoading}>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction
+                        onClick={handleDelete}
+                        disabled={deleteLoading}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                        {deleteLoading ? "Excluindo..." : "Sim, excluir tudo"}
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
     )
 }
