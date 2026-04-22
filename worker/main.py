@@ -7,8 +7,10 @@ import json
 import logging
 import asyncio
 import time
+import random
 from typing import Optional
 from collections import defaultdict
+from datetime import date
 from fastapi import FastAPI, Request, Response, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -113,6 +115,21 @@ def check_rate_limit(ip: str) -> bool:
         return True  # bloqueado
     _rate_limit_store[ip].append(now)
     return False
+
+
+# ─── Anti-ban: contador diário passivo por instância ────────────────────────
+# Estrutura: {(instance_name, date): count}
+_passive_daily_count: dict = defaultdict(int)
+
+def _passive_limit_exceeded(instance_name: str, daily_limit: int) -> bool:
+    """Retorna True se a instância já atingiu o limite diário de msgs passivas."""
+    key = (instance_name, date.today())
+    return _passive_daily_count[key] >= daily_limit
+
+def _passive_count_increment(instance_name: str):
+    key = (instance_name, date.today())
+    _passive_daily_count[key] += 1
+
 
 app = FastAPI(title="Worker Sistema CUCA", docs_url=None, redoc_url=None)
 
@@ -587,6 +604,42 @@ async def process_webhook_payload(payload: dict, token: str):
 
             # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa'
             if not from_me and conversation_status in ("ativa", "encerrada"):
+                # ── Anti-ban passivo: checar limite diário e aplicar delay humano ──
+                try:
+                    _passive_limit = int(
+                        supabase.table("configuracoes").select("valor")
+                        .eq("chave", "anti_ban_daily_limit").execute()
+                        .data[0]["valor"]
+                    )
+                except Exception:
+                    _passive_limit = 80
+
+                if _passive_limit_exceeded(instance_name, _passive_limit):
+                    logger.warning(
+                        f"[Anti-Ban Passivo] Instância '{instance_name}' atingiu limite diário "
+                        f"de {_passive_limit} msgs passivas. Resposta suprimida."
+                    )
+                    return
+
+                try:
+                    _delay_min = int(
+                        supabase.table("configuracoes").select("valor")
+                        .eq("chave", "anti_ban_delay_min").execute()
+                        .data[0]["valor"]
+                    )
+                    _delay_max = int(
+                        supabase.table("configuracoes").select("valor")
+                        .eq("chave", "anti_ban_delay_max").execute()
+                        .data[0]["valor"]
+                    )
+                except Exception:
+                    _delay_min, _delay_max = 5000, 15000
+
+                _delay_s = random.uniform(_delay_min / 1000, _delay_max / 1000)
+                logger.info(f"[Anti-Ban Passivo] Aguardando {_delay_s:.1f}s antes de responder ({instance_name})")
+                await asyncio.sleep(_delay_s)
+                _passive_count_increment(instance_name)
+
                 try:
                     # Chamar Edge Function motor-agente
                     # Nota: O token interno garante que a requisição partiu do nosso worker
