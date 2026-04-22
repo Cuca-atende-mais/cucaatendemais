@@ -72,6 +72,7 @@ export function CanalWhatsappTab({ modulo }: Props) {
     const [modalInst, setModalInst] = useState(false)
     const [editingInst, setEditingInst] = useState<Instancia | null>(null)
     const [iNome, setINome] = useState("")
+    const [iTelefone, setITelefone] = useState("")
     const [iObs, setIObs] = useState("")
     const [savingInst, setSavingInst] = useState(false)
 
@@ -135,6 +136,7 @@ export function CanalWhatsappTab({ modulo }: Props) {
     const openEdit = (inst: Instancia) => {
         setEditingInst(inst)
         setINome(inst.nome)
+        setITelefone(inst.telefone || "")
         setIObs(inst.observacoes || "")
         setModalInst(true)
     }
@@ -150,6 +152,7 @@ export function CanalWhatsappTab({ modulo }: Props) {
                 // Editar: só banco
                 const { error } = await supabase.from("instancias_uazapi").update({
                     nome: iNome.trim(),
+                    telefone: iTelefone.trim() || null,
                     observacoes: iObs.trim() || null,
                     updated_at: new Date().toISOString(),
                 }).eq("id", editingInst.id)
@@ -302,6 +305,9 @@ export function CanalWhatsappTab({ modulo }: Props) {
                                 </CardHeader>
 
                                 <CardFooter className="flex flex-col gap-1.5 pt-2 border-t bg-secondary/10">
+                                    <Button variant="outline" size="sm" className="w-full h-7 text-[10px]" onClick={() => openEdit(inst)}>
+                                        <Pencil className="mr-1 h-3 w-3" /> Editar
+                                    </Button>
                                     {inst.ativa ? (
                                         <Button variant="ghost" size="sm"
                                             className="w-full h-7 text-[10px] text-amber-600 hover:bg-amber-500/10"
@@ -448,6 +454,14 @@ export function CanalWhatsappTab({ modulo }: Props) {
                             <p className="text-[10px] text-muted-foreground">
                                 Tipo: <strong>{modulo}</strong> · Unidade: <strong>Global</strong>
                             </p>
+                        </div>
+                        <div className="grid gap-1.5">
+                            <Label>Telefone (com DDI)</Label>
+                            <Input
+                                placeholder="+5585999998888"
+                                value={iTelefone}
+                                onChange={(e) => setITelefone(e.target.value)}
+                            />
                         </div>
                         <div className="grid gap-1.5">
                             <Label>Observações (opcional)</Label>
