@@ -217,7 +217,7 @@ export default function WhatsAppUnidadePage() {
         setEditingInst(null)
         setINome("")
         setICanalTipo("Institucional")
-        setIUnidade(profile?.unidade_cuca || "")
+        setIUnidade(profile?.unidade_cuca || "global")
         setITelefone("")
         setIReserva(false)
         setIObs("")
@@ -228,7 +228,7 @@ export default function WhatsAppUnidadePage() {
         setEditingInst(inst)
         setINome(inst.nome)
         setICanalTipo(inst.canal_tipo)
-        setIUnidade(inst.unidade_cuca || "")
+        setIUnidade(inst.unidade_cuca || "global")
         setITelefone(inst.telefone || "")
         setIReserva(inst.reserva)
         setIObs(inst.observacoes || "")
@@ -253,7 +253,7 @@ export default function WhatsAppUnidadePage() {
                 const payload = {
                     nome: iNome.trim(),
                     canal_tipo: iCanalTipo,
-                    unidade_cuca: profile?.isSuperAdmin ? (iUnidade || null) : profile?.unidade_cuca,
+                    unidade_cuca: profile?.isSuperAdmin ? (iUnidade === "global" || !iUnidade ? null : iUnidade) : profile?.unidade_cuca,
                     agente_tipo: iCanalTipo,
                     telefone: iTelefone.trim() || null, // S27-05: incluir telefone no payload de update
                     reserva: iReserva,
@@ -276,7 +276,7 @@ export default function WhatsAppUnidadePage() {
                     {
                         nome: iNome.trim(),
                         canal_tipo: iCanalTipo,
-                        unidade_cuca: profile?.isSuperAdmin ? (iUnidade || null) : profile?.unidade_cuca,
+                        unidade_cuca: profile?.isSuperAdmin ? (iUnidade === "global" || !iUnidade ? null : iUnidade) : profile?.unidade_cuca,
                         telefone: iTelefone.trim() || null,
                         observacoes: iObs.trim() || null,
                     },
@@ -777,7 +777,7 @@ export default function WhatsAppUnidadePage() {
                                     <Select value={iUnidade} onValueChange={setIUnidade}>
                                         <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="">Global (Todos)</SelectItem>
+                                            <SelectItem value="global">Global (Todos)</SelectItem>
                                             {unidadesCuca.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
                                         </SelectContent>
                                     </Select>
