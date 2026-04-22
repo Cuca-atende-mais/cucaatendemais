@@ -370,9 +370,14 @@ async def process_webhook_payload(payload: dict, token: str):
                 }, on_conflict="telefone").execute()
                 lead_id = lead_result.data[0]["id"]
                 opt_in = lead_result.data[0].get("opt_in", False)
+                bloqueado = lead_result.data[0].get("bloqueado", False)
             except Exception as e:
                 logger.error(f"Erro ao gerenciar Lead: {str(e)}")
                 return # Se não tiver lead, não salvamos mensagem
+
+            if bloqueado and not from_me:
+                logger.info(f"[Bloqueado] Lead {phone} está bloqueado — mensagem ignorada.")
+                return
 
             # B. Garantir que a Conversa existe
             try:

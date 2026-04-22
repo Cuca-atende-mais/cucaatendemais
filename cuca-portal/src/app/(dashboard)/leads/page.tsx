@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea"
 import {
     Search, UserPlus, Phone, MoreHorizontal, BellOff, Bell,
     ShieldBan, ShieldCheck, Eraser, Plus, Trash2, Save, ChevronLeft, ChevronRight,
+    LockKeyhole, Unlock,
 } from "lucide-react"
 import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
@@ -94,6 +95,12 @@ export default function LeadsPage() {
     // --- Modal Bloquear ---
     const [modalBloquear, setModalBloquear] = useState<Lead | null>(null)
     const [motivoBloqueio, setMotivoBloqueio] = useState("")
+
+    // --- Seleção múltipla e ações em massa ---
+    const [selecionados, setSelecionados] = useState<Set<string>>(new Set())
+    const [modalBloquearTodos, setModalBloquearTodos] = useState(false)
+    const [bloqueandoTodos, setBloqueandoTodos] = useState(false)
+    const [desbloqueandoSelecionados, setDesbloqueandoSelecionados] = useState(false)
 
     // --- Interesses ---
     const [categoriasInteresse, setCategoriasInteresse] = useState<{ id: string; nome: string; pai_id: string | null }[]>([])
@@ -378,6 +385,68 @@ export default function LeadsPage() {
     }
 
     // -------------------------
+    // Ações em massa
+    // -------------------------
+    const toggleSelecionado = (id: string) => {
+        setSelecionados(prev => {
+            const next = new Set(prev)
+            next.has(id) ? next.delete(id) : next.add(id)
+            return next
+        })
+    }
+
+    const toggleSelecionarPagina = () => {
+        const idsPagina = leads.map(l => l.id)
+        const todosSelecionados = idsPagina.every(id => selecionados.has(id))
+        setSelecionados(prev => {
+            const next = new Set(prev)
+            todosSelecionados
+                ? idsPagina.forEach(id => next.delete(id))
+                : idsPagina.forEach(id => next.add(id))
+            return next
+        })
+    }
+
+    const bloquearTodos = async () => {
+        setBloqueandoTodos(true)
+        try {
+            const { error } = await supabase
+                .from("leads")
+                .update({ bloqueado: true, motivo_bloqueio: "Bloqueio em massa" })
+                .neq("id", "00000000-0000-0000-0000-000000000000") // força update em todos
+            if (error) throw error
+            toast.success(`Todos os leads bloqueados`)
+            setSelecionados(new Set())
+            setModalBloquearTodos(false)
+            buscarLeads()
+        } catch (err: any) {
+            toast.error("Erro: " + err.message)
+        } finally {
+            setBloqueandoTodos(false)
+        }
+    }
+
+    const desbloquearSelecionados = async () => {
+        if (selecionados.size === 0) return
+        setDesbloqueandoSelecionados(true)
+        try {
+            const ids = Array.from(selecionados)
+            const { error } = await supabase
+                .from("leads")
+                .update({ bloqueado: false, motivo_bloqueio: null })
+                .in("id", ids)
+            if (error) throw error
+            toast.success(`${ids.length} lead(s) desbloqueado(s)`)
+            setSelecionados(new Set())
+            buscarLeads()
+        } catch (err: any) {
+            toast.error("Erro: " + err.message)
+        } finally {
+            setDesbloqueandoSelecionados(false)
+        }
+    }
+
+    // -------------------------
     // Helpers
     // -------------------------
     const totalPaginas = Math.ceil(totalLeads / PAGE_SIZE)
@@ -407,10 +476,16 @@ export default function LeadsPage() {
                         {totalLeads.toLocaleString("pt-BR")} leads cadastrados
                     </p>
                 </div>
-                <Button onClick={() => setModalNovoLead(true)}>
-                    <UserPlus className="mr-2 h-4 w-4" />
-                    Novo Lead
-                </Button>
+                <div className="flex gap-2">
+                    <Button variant="destructive" onClick={() => setModalBloquearTodos(true)}>
+                        <LockKeyhole className="mr-2 h-4 w-4" />
+                        Bloquear Todos
+                    </Button>
+                    <Button onClick={() => setModalNovoLead(true)}>
+                        <UserPlus className="mr-2 h-4 w-4" />
+                        Novo Lead
+                    </Button>
+                </div>
             </div>
 
             {/* Filtros */}
@@ -452,12 +527,42 @@ export default function LeadsPage() {
                 </CardContent>
             </Card>
 
+            {/* Barra de ação quando há selecionados */}
+            {selecionados.size > 0 && (
+                <div className="flex items-center justify-between rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+                    <span className="text-sm font-medium">
+                        {selecionados.size} lead(s) selecionado(s)
+                    </span>
+                    <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setSelecionados(new Set())}>
+                            Limpar seleção
+                        </Button>
+                        <Button
+                            size="sm"
+                            onClick={desbloquearSelecionados}
+                            disabled={desbloqueandoSelecionados}
+                        >
+                            <Unlock className="mr-2 h-4 w-4" />
+                            {desbloqueandoSelecionados
+                                ? "Desbloqueando..."
+                                : `Desbloquear ${selecionados.size}`}
+                        </Button>
+                    </div>
+                </div>
+            )}
+
             {/* Tabela */}
             <Card>
                 <CardContent className="p-0">
                     <Table>
                         <TableHeader>
                             <TableRow>
+                                <TableHead className="w-10">
+                                    <Checkbox
+                                        checked={leads.length > 0 && leads.every(l => selecionados.has(l.id))}
+                                        onCheckedChange={toggleSelecionarPagina}
+                                    />
+                                </TableHead>
                                 <TableHead>Nome</TableHead>
                                 <TableHead>Telefone</TableHead>
                                 <TableHead>Unidade</TableHead>
@@ -481,7 +586,16 @@ export default function LeadsPage() {
                                     </TableCell>
                                 </TableRow>
                             ) : leads.map(lead => (
-                                <TableRow key={lead.id} className="hover:bg-muted/50">
+                                <TableRow
+                                    key={lead.id}
+                                    className={cn("hover:bg-muted/50", selecionados.has(lead.id) && "bg-primary/5")}
+                                >
+                                    <TableCell>
+                                        <Checkbox
+                                            checked={selecionados.has(lead.id)}
+                                            onCheckedChange={() => toggleSelecionado(lead.id)}
+                                        />
+                                    </TableCell>
                                     <TableCell className="font-medium">
                                         {lead.nome ?? <span className="text-muted-foreground italic">Sem nome</span>}
                                     </TableCell>
@@ -931,6 +1045,31 @@ export default function LeadsPage() {
                         </Button>
                         <Button onClick={criarLead} disabled={criandoLead}>
                             {criandoLead ? "Criando..." : "Criar Lead"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* ============================
+                Modal — Bloquear Todos
+            ============================ */}
+            <Dialog open={modalBloquearTodos} onOpenChange={setModalBloquearTodos}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Bloquear todos os leads</DialogTitle>
+                        <DialogDescription>
+                            Esta ação bloqueará <strong>todos os {totalLeads.toLocaleString("pt-BR")} leads</strong> do banco.
+                            Nenhum deles receberá mensagens até que sejam desbloqueados individualmente.
+                            Use os checkboxes para selecionar e desbloquear apenas os que desejar.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setModalBloquearTodos(false)}>
+                            Cancelar
+                        </Button>
+                        <Button variant="destructive" onClick={bloquearTodos} disabled={bloqueandoTodos}>
+                            <LockKeyhole className="mr-2 h-4 w-4" />
+                            {bloqueandoTodos ? "Bloqueando..." : `Bloquear todos os ${totalLeads.toLocaleString("pt-BR")} leads`}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
