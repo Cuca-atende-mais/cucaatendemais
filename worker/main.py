@@ -254,7 +254,12 @@ async def process_webhook_payload(payload: dict, token: str):
         if event_type in ("connection", "connection.update"):
             # instance_data: objeto interno com status string (connected/disconnected)
             instance_data = data.get("instance", {})
-            state = instance_data.get("status") or data.get("state") or ""
+            if isinstance(instance_data, dict):
+                state = instance_data.get("status") or data.get("state") or ""
+                disconnect_reason = instance_data.get("lastDisconnectReason") or instance_data.get("lastDisconnect") or ""
+            else:
+                state = data.get("state") or ""
+                disconnect_reason = data.get("lastDisconnectReason") or ""
             # status_info: objeto {connected: bool, loggedIn: bool, jid: {...}}
             status_info = data.get("status", {})
             bool_connected = status_info.get("connected", False) if isinstance(status_info, dict) else False
@@ -267,7 +272,7 @@ async def process_webhook_payload(payload: dict, token: str):
                 phone = phone_jid.split("@")[0].split(":")[0]
             try:
                 from uazapi_manager import handle_connection_update
-                await handle_connection_update(instance_name, state, token, phone, bool_connected)
+                await handle_connection_update(instance_name, state, token, phone, bool_connected, disconnect_reason)
             except Exception as conn_err:
                 logger.error(f"Erro em handle_connection_update: {conn_err}")
 

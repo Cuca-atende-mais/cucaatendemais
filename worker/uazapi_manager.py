@@ -565,17 +565,49 @@ async def excluir_instancia(nome: str):
 
 
 
+# Razões que indicam ban/expulsão forçada pelo WhatsApp
+_BAN_REASONS = ("401", "logged out", "banned", "forbidden", "replaced")
+
+def _is_ban_reason(reason: str) -> bool:
+    r = reason.lower()
+    return any(k in r for k in _BAN_REASONS)
+
+def _marcar_ban_banco(nome: str, motivo: str):
+    """Persiste detecção de ban sem alterar warmup ou telefone."""
+    supabase.table("instancias_uazapi").update({
+        "ativa": False,
+        "ban_detectado_em": datetime.now(timezone.utc).isoformat(),
+        "ban_motivo": motivo,
+    }).eq("nome", nome).execute()
+    logger.critical(
+        f"[BAN DETECTADO] Instância '{nome}' banida/expulsa pelo WhatsApp. "
+        f"Motivo: '{motivo}'. Instância marcada como inativa. "
+        f"Não reconecte sem investigar — aguarde ao menos 48h."
+    )
+
+
 # ─── Handler interno: connection.update ────────────────────────────────────────
 async def handle_connection_update(
     instance_name: str, status: str, token: str,
-    phone: Optional[str] = None, bool_connected: bool = False
+    phone: Optional[str] = None, bool_connected: bool = False,
+    disconnect_reason: Optional[str] = None,
 ):
     """
     Chamado por main.py quando o Worker recebe evento connection do webhook da UAZAPI.
     Atualiza o banco automaticamente.
     Aceita tanto string status quanto bool_connected para maior robustez.
+    Se disconnect_reason indicar ban, marca ban_detectado_em e loga em CRITICAL.
     """
     is_connected = bool_connected or status in ("open", "CONNECTED", "connected")
+
+    # Detectar ban antes de qualquer outra lógica
+    if not is_connected and disconnect_reason and _is_ban_reason(disconnect_reason):
+        try:
+            await asyncio.to_thread(_marcar_ban_banco, instance_name, disconnect_reason)
+        except Exception as e:
+            logger.error(f"[connection.update] Erro ao marcar ban no banco: {e}")
+        return  # _marcar_ban_banco já define ativa=False; não sobrescrever
+
     try:
         await asyncio.to_thread(_atualizar_status_banco, instance_name, is_connected, phone if is_connected else None)
         logger.info(f"[connection.update] '{instance_name}' → status='{status}' | bool={bool_connected} | ativa={is_connected}")
