@@ -231,7 +231,11 @@ async def process_webhook_payload(payload: dict, token: str):
     try:
         # 1. Salvar o log bruto do webhook para auditoria
         event_type = payload.get("event") or payload.get("EventType", "unknown")
-        instance_name = payload.get("instance") or payload.get("instanceName", "unknown")
+        instance_raw = payload.get("instance") or payload.get("instanceName", "unknown")
+        if isinstance(instance_raw, dict):
+            instance_name = instance_raw.get("name", "unknown")
+        else:
+            instance_name = instance_raw
         data = payload.get("data", payload)
         
         # Tenta salvar em logs_webhook
