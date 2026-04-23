@@ -394,11 +394,18 @@ async def process_webhook_payload(payload: dict, token: str):
                     # Atualizar timestamp
                     supabase.table("conversas").update({"updated_at": "now()"}).eq("id", conversation_id).execute()
                 else:
+                    # Buscar agente_tipo real da instância para criar a conversa já corretamente classificada
+                    _inst_pre = supabase.table("instancias_uazapi").select("agente_tipo, canal_tipo").eq("nome", instance_name).single().execute()
+                    _agente_inicial = "Institucional"
+                    if _inst_pre.data:
+                        _ct = _inst_pre.data.get("canal_tipo", "")
+                        _at = _inst_pre.data.get("agente_tipo", "Institucional")
+                        _agente_inicial = "maria_divulgacao" if _ct == "Divulgação" else _at
                     new_conv = supabase.table("conversas").insert({
                         "lead_id": lead_id,
                         "instancia_uazapi": instance_name,
                         "status": "ativa",
-                        "agente_tipo": "Institucional" # Default is overriden if needed
+                        "agente_tipo": _agente_inicial,
                     }).execute()
                     conversation_id = new_conv.data[0]["id"]
             except Exception as e:
