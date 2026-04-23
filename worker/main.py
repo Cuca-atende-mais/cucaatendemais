@@ -370,7 +370,9 @@ async def process_webhook_payload(payload: dict, token: str):
                 }, on_conflict="telefone").execute()
                 lead_id = lead_result.data[0]["id"]
                 opt_in = lead_result.data[0].get("opt_in", False)
-                bloqueado = lead_result.data[0].get("bloqueado", False)
+                # Fresh SELECT para evitar valor stale do upsert (ex: desbloqueio pelo portal)
+                _lead_fresh = supabase.table("leads").select("bloqueado").eq("id", lead_id).single().execute()
+                bloqueado = (_lead_fresh.data or {}).get("bloqueado", False)
             except Exception as e:
                 logger.error(f"Erro ao gerenciar Lead: {str(e)}")
                 return # Se não tiver lead, não salvamos mensagem
