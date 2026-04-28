@@ -53,21 +53,31 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     extract_text_to_fp(io.BytesIO(pdf_bytes), output, laparams=LAParams())
     return output.getvalue().strip()
 
-async def process_cv_from_text(candidatura_id: str, cv_text: str, vaga_id: str):
+async def process_cv_from_text(candidatura_id: str, cv_text: str, vaga_id: str, cargo_escolhido: str = ""):
     """Analisa currículo a partir de texto estruturado (sem arquivo). Usado para currículos criados via formulário."""
     logger.info(f"[process_cv_from_text] Iniciando análise textual para candidatura {candidatura_id}")
     try:
-        vaga_res = supabase.table("vagas").select("titulo, requisitos, escolaridade_minima").eq("id", vaga_id).single().execute()
+        vaga_res = supabase.table("vagas").select("titulo, requisitos, escolaridade_minima, tipo").eq("id", vaga_id).single().execute()
         vaga = vaga_res.data
+
+        # SQS-49: contexto diferenciado para selecao_evento — usa cargo escolhido + conhecimento de mercado
+        if vaga.get("tipo") == "selecao_evento":
+            cargo_ref = cargo_escolhido or vaga.get("titulo", "cargo não especificado")
+            contexto_vaga = f"""ATENÇÃO: Esta é uma vaga de processo seletivo por evento.
+        Cargo de interesse do candidato: {cargo_ref}
+        Utilize seu conhecimento de mercado sobre este cargo no setor varejista/comercial para avaliar a aderência.
+        Considere perfil, experiências relevantes e habilidades esperadas para '{cargo_ref}'."""
+        else:
+            contexto_vaga = f"""Título: {vaga.get('titulo', '')}
+        Requisitos principais: {vaga.get('requisitos', '')}
+        Escolaridade Mínima: {vaga.get('escolaridade_minima', 'Não especificado')}"""
 
         prompt_sys = f"""
         Você é um assistente especialista em Recrutamento e Seleção da Rede CUCA (equipamento público de Fortaleza).
         Sua missão é analisar os dados de um currículo e compará-los com os requisitos de uma vaga.
 
         DADOS DA VAGA:
-        Título: {vaga.get('titulo', '')}
-        Requisitos principais: {vaga.get('requisitos', '')}
-        Escolaridade Mínima: {vaga.get('escolaridade_minima', 'Não especificado')}
+        {contexto_vaga}
 
         SCHEMA JSON ESPERADO:
         {{
@@ -143,29 +153,39 @@ async def process_cv_from_text(candidatura_id: str, cv_text: str, vaga_id: str):
         }).eq("id", candidatura_id).execute()
 
 
-async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str):
+async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str, cargo_escolhido: str = ""):
     """Lê o currículo com GPT-4o Vision / Document, e salva os dados OCR na candidatura."""
     logger.info(f"Iniciando OCR para candidatura {candidatura_id} ({cv_url})")
-    
+
     try:
         is_pdf = cv_url.lower().endswith(".pdf")
-        
+
         # 1.5 Buscar relacionamento
         cand_res = supabase.table("candidaturas").select("candidato_id").eq("id", candidatura_id).single().execute()
         candidato_id = cand_res.data["candidato_id"]
-        
-        # 2. Buscar requisitos da vaga para o "Matching"
-        vaga_res = supabase.table("vagas").select("titulo, requisitos, escolaridade_minima").eq("id", vaga_id).single().execute()
+
+        # 2. Buscar dados da vaga para o "Matching"
+        vaga_res = supabase.table("vagas").select("titulo, requisitos, escolaridade_minima, tipo").eq("id", vaga_id).single().execute()
         vaga = vaga_res.data
-        
-        prompt_sys = f"""
-        Você é um assistente especialista em Recrutamento e Seleção da Rede CUCA (equipamento público de Fortaleza). 
-        Sua missão é extrair dados de um currículo e compará-los com os requisitos de uma vaga de estágio ou primeiro emprego.
-        
-        DADOS DA VAGA:
-        Título: {vaga.get('titulo', '')}
+
+        # SQS-49: contexto diferenciado para selecao_evento — usa cargo escolhido + conhecimento de mercado
+        if vaga.get("tipo") == "selecao_evento":
+            cargo_ref = cargo_escolhido or vaga.get("titulo", "cargo não especificado")
+            contexto_vaga = f"""ATENÇÃO: Esta é uma vaga de processo seletivo por evento.
+        Cargo de interesse do candidato: {cargo_ref}
+        Utilize seu conhecimento de mercado sobre este cargo no setor varejista/comercial para avaliar a aderência.
+        Considere perfil, experiências relevantes e habilidades esperadas para '{cargo_ref}'."""
+        else:
+            contexto_vaga = f"""Título: {vaga.get('titulo', '')}
         Requisitos principais: {vaga.get('requisitos', '')}
-        Escolaridade Mínima: {vaga.get('escolaridade_minima', 'Não especificado')}
+        Escolaridade Mínima: {vaga.get('escolaridade_minima', 'Não especificado')}"""
+
+        prompt_sys = f"""
+        Você é um assistente especialista em Recrutamento e Seleção da Rede CUCA (equipamento público de Fortaleza).
+        Sua missão é extrair dados de um currículo e compará-los com os requisitos de uma vaga de estágio ou primeiro emprego.
+
+        DADOS DA VAGA:
+        {contexto_vaga}
         
         INSTRUÇÕES:
         Extraia as informações em formato JSON rigoroso. Compare o perfil do candidato com a vaga e forneça uma análise qualitativa.

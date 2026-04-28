@@ -38,6 +38,7 @@ export const menuItems = [
             { title: "Atendimento", url: "/empregabilidade/mensagens", permission: { recurso: "atendimentos_empregabilidade", acao: "read" } },
             { title: "Empresas", url: "/empregabilidade/empresas", permission: { recurso: "empreg_vagas", acao: "read" } },
             { title: "Vagas", url: "/empregabilidade/vagas", permission: { recurso: "empreg_vagas", acao: "read" } },
+            { title: "Marcar Seleção", url: "/empregabilidade/selecao/nova", permission: { recurso: "empreg_vagas", acao: "write" } },
             { title: "Candidatos", url: "/empregabilidade/candidatos", permission: { recurso: "empreg_banco_cv", acao: "read" } },
             { title: "Banco de Talentos", url: "/empregabilidade/banco-talentos", permission: { recurso: "empreg_banco_cv", acao: "read" } },
             { title: "Criar Currículo", url: "/empregabilidade/criar-curriculo", permission: { recurso: "empreg_banco_cv", acao: "read" } },

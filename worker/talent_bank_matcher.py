@@ -170,7 +170,7 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
 
     # 1. Buscar dados da vaga
     vaga_res = supabase.table("vagas").select(
-        "titulo, descricao, requisitos, escolaridade_minima, tipo_contrato, setor"
+        "titulo, descricao, requisitos, escolaridade_minima, tipo_contrato, setor, tipo, cargos_lista"
     ).eq("id", vaga_id).single().execute()
     vaga = vaga_res.data
     if not vaga:
@@ -178,8 +178,16 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
 
     setores = setor_vaga or vaga.get("setor") or []
 
-    # Extrair termos-chave da vaga para pré-filtragem semântica
-    texto_vaga = f"{vaga.get('titulo', '')} {vaga.get('descricao', '')} {vaga.get('requisitos', '')}"
+    # SQS-49: para selecao_evento expande texto com todos os cargos — sem descrição/requisitos disponíveis
+    if vaga.get("tipo") == "selecao_evento":
+        cargos_lista = vaga.get("cargos_lista") or []
+        titulos_cargos = " ".join(c.get("titulo", "") for c in cargos_lista)
+        texto_vaga = f"{vaga.get('titulo', '')} {titulos_cargos}"
+        # Enriquecer o dict vaga para o prompt do _ranquear_batch ter contexto dos cargos
+        vaga = {**vaga, "descricao": f"Processo seletivo com os cargos: {titulos_cargos}", "requisitos": ""}
+    else:
+        texto_vaga = f"{vaga.get('titulo', '')} {vaga.get('descricao', '')} {vaga.get('requisitos', '')}"
+
     termos_vaga = _extrair_termos(texto_vaga)
 
     # S37B-06: Aplicar filtros demográficos diretamente na query do Supabase

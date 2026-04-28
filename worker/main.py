@@ -193,7 +193,7 @@ async def ocr_pending_loop():
     while True:
         try:
             res = supabase.table("candidaturas").select(
-                "id, vaga_id, arquivo_cv_url, matching_justificativa"
+                "id, vaga_id, arquivo_cv_url, matching_justificativa, cargo_escolhido"
             ).not_.is_("arquivo_cv_url", "null").is_("matching_score", "null").is_("dados_ocr_json", "null").not_.is_("vaga_id", "null").limit(5).execute()
             pendentes = res.data or []
             for p in pendentes:
@@ -203,7 +203,9 @@ async def ocr_pending_loop():
                     continue
                 if p.get("arquivo_cv_url") and p.get("vaga_id"):
                     logger.info(f"[ocr-loop] Disparando OCR para candidatura {p['id']}")
-                    await process_cv_ocr(p["id"], p["arquivo_cv_url"], p["vaga_id"])
+                    # SQS-49: passa cargo_escolhido para análise contextualizada em selecao_evento
+                    await process_cv_ocr(p["id"], p["arquivo_cv_url"], p["vaga_id"],
+                                         cargo_escolhido=p.get("cargo_escolhido") or "")
         except Exception as e:
             logger.error(f"[ocr-loop] Erro: {e}")
         await asyncio.sleep(60)

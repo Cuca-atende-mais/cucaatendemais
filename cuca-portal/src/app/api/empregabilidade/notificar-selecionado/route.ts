@@ -12,10 +12,10 @@ export async function POST(request: Request) {
 
         const supabase = await createClient()
 
-        // S29-08: busca telefone e nome diretamente do banco para garantir dado mais atualizado (pode ter sido preenchido pelo OCR)
+        // S29-08: busca telefone, nome e cargo diretamente do banco (pode ter sido preenchido pelo OCR)
         const { data: cand } = await supabase
             .from("candidaturas")
-            .select("telefone, nome")
+            .select("telefone, nome, cargo_escolhido, vaga_id")
             .eq("id", candidatura_id)
             .single()
 
@@ -41,7 +41,32 @@ export async function POST(request: Request) {
 
         const { nome: instNome, token } = instancias[0]
         const primeiroNome = nomeAtual?.split(" ")?.[0] || "Candidato"
-        const mensagem = `Olá ${primeiroNome}! 🎉\n\nSua candidatura para a vaga de *${titulo_vaga}* foi aprovada pela equipe do CUCA Atende Mais.\n\nSeu currículo foi encaminhado para a empresa parceira. Fique atento ao seu WhatsApp — em breve você receberá o contato para a próxima etapa. Boa sorte! 💪`
+
+        // SQS-49: buscar tipo da vaga para diferenciar mensagem de seleção por evento
+        let vagaTipo = "vaga_normal"
+        let vagaDatasSelecao: any[] = []
+        if (cand?.vaga_id) {
+            const { data: vagaData } = await supabase
+                .from("vagas")
+                .select("tipo, datas_selecao")
+                .eq("id", cand.vaga_id)
+                .single()
+            vagaTipo = vagaData?.tipo || "vaga_normal"
+            vagaDatasSelecao = vagaData?.datas_selecao || []
+        }
+
+        let mensagem: string
+        if (vagaTipo === "selecao_evento") {
+            // Mensagem simplificada para processo seletivo por evento
+            const cargoTxt = cand?.cargo_escolhido ? ` para o cargo de *${cand.cargo_escolhido}*` : ""
+            const datasTxt = vagaDatasSelecao.length > 0
+                ? vagaDatasSelecao.map((d: any) => `📅 ${d.data} às ${d.hora}`).join("\n")
+                : "📅 Data a confirmar com a equipe CUCA"
+            mensagem = `Olá ${primeiroNome}! 🎉\n\nSeu currículo foi *selecionado*${cargoTxt} para entrevista no processo seletivo da *${titulo_vaga || unidade_cuca}*!\n\n${datasTxt}\n\nPor favor, *confirme sua presença* respondendo:\n✅ *SIM* — Vou comparecer\n❌ *NÃO* — Não poderei ir\n\nAguardamos sua confirmação! 💪`
+        } else {
+            // Mensagem padrão para vaga normal (comportamento anterior intacto)
+            mensagem = `Olá ${primeiroNome}! 🎉\n\nSua candidatura para a vaga de *${titulo_vaga}* foi aprovada pela equipe do CUCA Atende Mais.\n\nSeu currículo foi encaminhado para a empresa parceira. Fique atento ao seu WhatsApp — em breve você receberá o contato para a próxima etapa. Boa sorte! 💪`
+        }
 
         const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
         const telLimpo = telefone.replace(/\D/g, "")

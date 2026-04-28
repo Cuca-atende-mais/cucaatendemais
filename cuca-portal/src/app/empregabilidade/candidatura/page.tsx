@@ -43,6 +43,7 @@ function CandidaturaContent() {
     const origemTel = searchParams.get("origem_tel") || ""
     const conversaId = searchParams.get("conversa_id") || ""
     const bancoTalentosParam = searchParams.get("banco_talentos") === "1"
+    const cargoEscolhidoParam = searchParams.get("cargo_escolhido") || "" // SQS-49
 
     const [vaga, setVaga] = useState<any>(null)
     const [empresa, setEmpresa] = useState<any>(null)
@@ -223,6 +224,7 @@ function CandidaturaContent() {
                     area_interesse: areasInteresse,
                     pcd_candidato: pcdCandidato,
                     pcd_tipo_candidato: pcdCandidato ? (pcdTipoCandidato || null) : null,
+                    cargo_escolhido: cargoEscolhidoParam || null, // SQS-49
                 }),
             })
             const candData = await res.json()
