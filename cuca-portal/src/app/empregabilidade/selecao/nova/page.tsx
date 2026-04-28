@@ -182,12 +182,7 @@ function SelecaoNovaContent() {
                     {/* Datas e horários */}
                     <Card>
                         <CardHeader className="pb-3">
-                            <div className="flex items-center justify-between">
-                                <CardTitle className="text-base">Datas e Horários da Seleção</CardTitle>
-                                <Button type="button" variant="outline" size="sm" onClick={addData}>
-                                    <Plus className="h-4 w-4 mr-1" /> Adicionar data
-                                </Button>
-                            </div>
+                            <CardTitle className="text-base">Datas e Horários da Seleção</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-3">
                             {datasSelecao.map((d, i) => (
@@ -197,7 +192,13 @@ function SelecaoNovaContent() {
                                         <Input
                                             type="date"
                                             value={d.data}
-                                            onChange={e => updateData(i, "data", e.target.value)}
+                                            onChange={e => {
+                                                updateData(i, "data", e.target.value)
+                                                // auto-adiciona linha se for a última e data preenchida
+                                                if (e.target.value && i === datasSelecao.length - 1) {
+                                                    setDatasSelecao(prev => [...prev, { data: "", hora: "08:00" }])
+                                                }
+                                            }}
                                             required
                                         />
                                     </div>
@@ -216,18 +217,16 @@ function SelecaoNovaContent() {
                                     )}
                                 </div>
                             ))}
+                            <p className="text-xs text-muted-foreground">
+                                Uma nova linha é adicionada automaticamente ao preencher cada data.
+                            </p>
                         </CardContent>
                     </Card>
 
                     {/* Cargos */}
                     <Card>
                         <CardHeader className="pb-3">
-                            <div className="flex items-center justify-between">
-                                <CardTitle className="text-base">Vagas Disponíveis</CardTitle>
-                                <Button type="button" variant="outline" size="sm" onClick={addCargo}>
-                                    <Plus className="h-4 w-4 mr-1" /> Adicionar cargo
-                                </Button>
-                            </div>
+                            <CardTitle className="text-base">Vagas Disponíveis</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-4">
                             {cargos.map((c, i) => (
@@ -284,6 +283,9 @@ function SelecaoNovaContent() {
                                     </div>
                                 </div>
                             ))}
+                            <Button type="button" variant="outline" size="sm" className="w-full mt-1" onClick={addCargo}>
+                                <Plus className="h-4 w-4 mr-1" /> Adicionar cargo
+                            </Button>
                         </CardContent>
                     </Card>
 
