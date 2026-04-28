@@ -66,7 +66,7 @@ function SelecaoNovaContent() {
         load()
         fetch("/api/empregabilidade/unidades")
             .then(r => r.json())
-            .then(d => setUnidades(d.unidades || []))
+            .then(d => setUnidades(Array.isArray(d) ? d : (d.unidades || [])))
     }, [empresaId])
 
     function parsear() {
