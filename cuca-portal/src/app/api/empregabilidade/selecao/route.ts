@@ -13,12 +13,9 @@ export async function POST(request: NextRequest) {
         const body = await request.json()
         const {
             empresa_id,
-            unidade_cuca,
-            unidade_destino,
-            cargos_texto,       // texto livre digitado pela empresa
-            cargos_lista,       // array já parseado: [{titulo, quantidade}]
+            unidade_cuca,       // null quando "todas as unidades"
+            cargos_lista,       // array: [{titulo, quantidade, faixa_etaria}]
             datas_selecao,      // array: [{data, hora}]
-            faixa_etaria,
             email_responsavel,
             telefone_responsavel,
         } = body
@@ -59,13 +56,13 @@ export async function POST(request: NextRequest) {
             .insert({
                 empresa_id,
                 titulo,
-                descricao: cargos_texto || cargos_lista.map((c: any) => `${c.titulo}${c.quantidade ? ` (${c.quantidade})` : ""}`).join(", "),
+                descricao: cargos_lista.map((c: any) => `${c.titulo}${c.quantidade ? ` (${c.quantidade})` : ""}`).join(", "),
                 requisitos: null,
                 tipo_contrato: "a_definir",
                 tipo: "selecao_evento",
                 cargos_lista,
                 datas_selecao,
-                faixa_etaria: faixa_etaria || "15 a 29 anos",
+                faixa_etaria: cargos_lista[0]?.faixa_etaria || "A partir de 14 anos",
                 unidade_cuca: unidade_cuca || null,
                 // Seleções por evento são sempre visíveis para toda a rede
                 unidade_destino: "global",

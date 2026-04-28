@@ -1,6 +1,6 @@
 "use client"
 
-// SQS-49: Formulário simplificado para Processo Seletivo por Evento (selecao_evento)
+// SQS-49: Formulário de Processo Seletivo por Evento (selecao_evento)
 // Rota exclusiva — não afeta /empregabilidade/vagas/nova nem qualquer lógica existente
 
 import { useState, useEffect, Suspense } from "react"
@@ -9,31 +9,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Building2, Calendar, CheckCircle2, Loader2, Plus, Trash2 } from "lucide-react"
 import toast from "react-hot-toast"
 
 const FAIXAS_ETARIAS = [
-    "15 a 29 anos",
-    "15 a 17 anos (Jovem Aprendiz)",
-    "18 a 29 anos",
+    "A partir de 14 anos",
     "Maior de 18 anos",
-    "Sem restrição de idade",
 ]
 
 interface DataHora { data: string; hora: string }
-interface CargoLinha { titulo: string; quantidade: string }
+interface CargoLinha { titulo: string; quantidade: string; faixa_etaria: string }
 
-function parseCargosTxt(texto: string): CargoLinha[] {
-    if (!texto.trim()) return []
-    // Suporta "Operador de Caixa (3), Repositor (2)" ou uma linha por cargo
-    const linhas = texto.split(/[,\n]/).map(l => l.trim()).filter(Boolean)
-    return linhas.map(l => {
-        const match = l.match(/^(.+?)\s*\((\d+)\)\s*$/)
-        if (match) return { titulo: match[1].trim(), quantidade: match[2] }
-        return { titulo: l, quantidade: "1" }
-    })
+function cargoVazio(): CargoLinha {
+    return { titulo: "", quantidade: "1", faixa_etaria: "A partir de 14 anos" }
 }
 
 function SelecaoNovaContent() {
@@ -49,37 +38,33 @@ function SelecaoNovaContent() {
     const [loading, setLoading] = useState(false)
     const [erro, setErro] = useState("")
 
-    const [cargosTexto, setCargosTexto] = useState("")
-    const [cargosLista, setCargosLista] = useState<CargoLinha[]>([])
+    const [cargos, setCargos] = useState<CargoLinha[]>([cargoVazio()])
     const [datasSelecao, setDatasSelecao] = useState<DataHora[]>([{ data: "", hora: "08:00" }])
-    const [faixaEtaria, setFaixaEtaria] = useState("15 a 29 anos")
     const [unidades, setUnidades] = useState<any[]>([])
     const [unidadeSelecionada, setUnidadeSelecionada] = useState(unidadeCucaParam)
 
     useEffect(() => {
-        async function load() {
-            if (!empresaId) { setLoadingEmpresa(false); return }
-            const res = await fetch(`/api/empregabilidade/empresa/${empresaId}`)
-            if (res.ok) { const d = await res.json(); setEmpresa(d) }
-            setLoadingEmpresa(false)
-        }
-        load()
+        if (!empresaId) { setLoadingEmpresa(false); return }
+        fetch(`/api/empregabilidade/empresa/${empresaId}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setEmpresa(d) })
+            .finally(() => setLoadingEmpresa(false))
+
         fetch("/api/empregabilidade/unidades")
             .then(r => r.json())
             .then(d => setUnidades(Array.isArray(d) ? d : (d.unidades || [])))
     }, [empresaId])
 
-    function parsear() {
-        const lista = parseCargosTxt(cargosTexto)
-        setCargosLista(lista)
+    // ── Cargos ─────────────────────────────────────────────────────────────────
+    function addCargo() { setCargos(prev => [...prev, cargoVazio()]) }
+    function removeCargo(i: number) { setCargos(prev => prev.filter((_, idx) => idx !== i)) }
+    function updateCargo(i: number, field: keyof CargoLinha, val: string) {
+        setCargos(prev => prev.map((c, idx) => idx === i ? { ...c, [field]: val } : c))
     }
 
-    function addData() {
-        setDatasSelecao(prev => [...prev, { data: "", hora: "08:00" }])
-    }
-    function removeData(i: number) {
-        setDatasSelecao(prev => prev.filter((_, idx) => idx !== i))
-    }
+    // ── Datas ──────────────────────────────────────────────────────────────────
+    function addData() { setDatasSelecao(prev => [...prev, { data: "", hora: "08:00" }]) }
+    function removeData(i: number) { setDatasSelecao(prev => prev.filter((_, idx) => idx !== i)) }
     function updateData(i: number, field: keyof DataHora, val: string) {
         setDatasSelecao(prev => prev.map((d, idx) => idx === i ? { ...d, [field]: val } : d))
     }
@@ -88,10 +73,10 @@ function SelecaoNovaContent() {
         e.preventDefault()
         setErro("")
 
-        const lista = cargosLista.length > 0 ? cargosLista : parseCargosTxt(cargosTexto)
-        if (lista.length === 0) { setErro("Informe ao menos um cargo."); return }
-        const datas = datasSelecao.filter(d => d.data)
-        if (datas.length === 0) { setErro("Informe ao menos uma data de seleção."); return }
+        const cargosValidos = cargos.filter(c => c.titulo.trim())
+        if (cargosValidos.length === 0) { setErro("Informe ao menos um cargo."); return }
+        const datasValidas = datasSelecao.filter(d => d.data)
+        if (datasValidas.length === 0) { setErro("Informe ao menos uma data de seleção."); return }
         if (!empresaId) { setErro("empresa_id ausente na URL."); return }
 
         setLoading(true)
@@ -101,11 +86,14 @@ function SelecaoNovaContent() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     empresa_id: empresaId,
-                    unidade_cuca: unidadeSelecionada || null,
-                    cargos_texto: cargosTexto,
-                    cargos_lista: lista.map(c => ({ titulo: c.titulo, quantidade: parseInt(c.quantidade) || 1 })),
-                    datas_selecao: datas,
-                    faixa_etaria: faixaEtaria,
+                    unidade_cuca: unidadeSelecionada === "todas" ? null : (unidadeSelecionada || null),
+                    unidade_destino: "global",
+                    cargos_lista: cargosValidos.map(c => ({
+                        titulo: c.titulo.trim(),
+                        quantidade: parseInt(c.quantidade) || 1,
+                        faixa_etaria: c.faixa_etaria,
+                    })),
+                    datas_selecao: datasValidas,
                     email_responsavel: emailParam,
                     telefone_responsavel: telParam,
                 }),
@@ -170,20 +158,23 @@ function SelecaoNovaContent() {
 
                     {/* Unidade CUCA */}
                     <Card>
-                        <CardHeader className="pb-3"><CardTitle className="text-base">Unidade CUCA da Seleção</CardTitle></CardHeader>
+                        <CardHeader className="pb-3">
+                            <CardTitle className="text-base">Unidade CUCA da Seleção</CardTitle>
+                        </CardHeader>
                         <CardContent>
                             <Select value={unidadeSelecionada} onValueChange={setUnidadeSelecionada}>
                                 <SelectTrigger>
                                     <SelectValue placeholder="Selecione a unidade onde ocorrerá a seleção" />
                                 </SelectTrigger>
                                 <SelectContent>
+                                    <SelectItem value="todas">Todas as unidades</SelectItem>
                                     {unidades.map((u: any) => (
                                         <SelectItem key={u.id} value={u.nome}>{u.nome}</SelectItem>
                                     ))}
                                 </SelectContent>
                             </Select>
                             <p className="text-xs text-muted-foreground mt-2">
-                                As vagas ficam visíveis para toda a rede CUCA, mas a seleção ocorre nesta unidade.
+                                As vagas ficam visíveis para toda a rede CUCA. Selecione "Todas as unidades" se a seleção puder ocorrer em qualquer unidade.
                             </p>
                         </CardContent>
                     </Card>
@@ -230,60 +221,69 @@ function SelecaoNovaContent() {
 
                     {/* Cargos */}
                     <Card>
-                        <CardHeader className="pb-3"><CardTitle className="text-base">Cargos Disponíveis</CardTitle></CardHeader>
-                        <CardContent className="space-y-3">
-                            <div>
-                                <Label className="text-sm">
-                                    Liste os cargos e quantidades (ex: Operador de Caixa (3), Repositor (2))
-                                </Label>
-                                <Textarea
-                                    placeholder={"Operador de Caixa (3)\nRepositor (2)\nJovem Aprendiz (5)\nAçougueiro (1)"}
-                                    value={cargosTexto}
-                                    onChange={e => { setCargosTexto(e.target.value); setCargosLista([]) }}
-                                    rows={5}
-                                    className="mt-1 font-mono text-sm"
-                                />
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="mt-2"
-                                    onClick={parsear}
-                                >
-                                    Verificar lista de cargos
+                        <CardHeader className="pb-3">
+                            <div className="flex items-center justify-between">
+                                <CardTitle className="text-base">Vagas Disponíveis</CardTitle>
+                                <Button type="button" variant="outline" size="sm" onClick={addCargo}>
+                                    <Plus className="h-4 w-4 mr-1" /> Adicionar cargo
                                 </Button>
                             </div>
-                            {cargosLista.length > 0 && (
-                                <div className="bg-muted rounded-md p-3 space-y-1">
-                                    <p className="text-xs font-medium text-muted-foreground mb-2">
-                                        {cargosLista.length} cargo(s) identificado(s):
-                                    </p>
-                                    {cargosLista.map((c, i) => (
-                                        <div key={i} className="flex items-center gap-2 text-sm">
-                                            <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
-                                            <span className="font-medium">{c.titulo}</span>
-                                            <span className="text-muted-foreground">— {c.quantidade} vaga(s)</span>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            {cargos.map((c, i) => (
+                                <div key={i} className="border rounded-lg p-3 space-y-3 bg-background">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                            Cargo {i + 1}
+                                        </span>
+                                        {cargos.length > 1 && (
+                                            <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeCargo(i)}>
+                                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                            </Button>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <Label className="text-xs">Título do Cargo *</Label>
+                                        <Input
+                                            placeholder="Ex: Operador de Caixa"
+                                            value={c.titulo}
+                                            onChange={e => updateCargo(i, "titulo", e.target.value)}
+                                            required
+                                            className="mt-1"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <Label className="text-xs">Quantidade de Vagas *</Label>
+                                            <Input
+                                                type="number"
+                                                min="1"
+                                                max="999"
+                                                value={c.quantidade}
+                                                onChange={e => updateCargo(i, "quantidade", e.target.value)}
+                                                required
+                                                className="mt-1"
+                                            />
                                         </div>
-                                    ))}
+                                        <div>
+                                            <Label className="text-xs">Idade Mínima *</Label>
+                                            <Select
+                                                value={c.faixa_etaria}
+                                                onValueChange={val => updateCargo(i, "faixa_etaria", val)}
+                                            >
+                                                <SelectTrigger className="mt-1">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {FAIXAS_ETARIAS.map(f => (
+                                                        <SelectItem key={f} value={f}>{f}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
                                 </div>
-                            )}
-                        </CardContent>
-                    </Card>
-
-                    {/* Faixa etária */}
-                    <Card>
-                        <CardHeader className="pb-3"><CardTitle className="text-base">Faixa Etária</CardTitle></CardHeader>
-                        <CardContent>
-                            <Select value={faixaEtaria} onValueChange={setFaixaEtaria}>
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {FAIXAS_ETARIAS.map(f => (
-                                        <SelectItem key={f} value={f}>{f}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                            ))}
                         </CardContent>
                     </Card>
 
@@ -292,7 +292,10 @@ function SelecaoNovaContent() {
                     )}
 
                     <Button type="submit" className="w-full" size="lg" disabled={loading}>
-                        {loading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Cadastrando...</> : "Cadastrar Processo Seletivo"}
+                        {loading
+                            ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Cadastrando...</>
+                            : "Cadastrar Processo Seletivo"
+                        }
                     </Button>
                 </form>
             </div>
