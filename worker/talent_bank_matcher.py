@@ -170,15 +170,19 @@ Retorne SOMENTE JSON válido, sem markdown:
             max_tokens=max_tokens,
         )
         raw = response.choices[0].message.content.strip()
+        logger.warning(f"[_ranquear_batch] GPT raw (200): {raw[:200]!r} finish={response.choices[0].finish_reason}")
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
         raw = raw.strip()
         resultado = json.loads(raw)
-        return resultado.get("candidatos", [])
+        parsed = resultado.get("candidatos", [])
+        logger.warning(f"[_ranquear_batch] {len(parsed)} aprovados neste batch")
+        return parsed
     except Exception as e:
-        logger.warning(f"[_ranquear_batch] Erro ao ranquear batch: {e}")
+        import traceback
+        logger.error(f"[_ranquear_batch] ERRO: {e}\n{traceback.format_exc()}")
         return []
 
 
@@ -206,6 +210,8 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     vaga = vaga_res.data
     if not vaga:
         raise ValueError(f"Vaga {vaga_id} não encontrada.")
+
+    logger.warning(f"[triar_banco_talentos] vaga tipo={vaga.get('tipo')!r} cargos_lista={bool(vaga.get('cargos_lista'))} qtd_cargos={len(vaga.get('cargos_lista') or [])}")
 
     setores = setor_vaga or vaga.get("setor") or []
 
