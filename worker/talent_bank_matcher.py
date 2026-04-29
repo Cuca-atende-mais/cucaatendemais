@@ -310,15 +310,15 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     if termos_vaga:
         com_skills.sort(key=lambda c: _pontuar_candidato(c, termos_vaga), reverse=True)
 
-    # SQS-49: selecao_evento tem múltiplos cargos distintos — varrer pool ligeiramente maior para cobrir perfis variados,
-    # mas limitado para não causar timeout (max 5 batches de 20 = 100 para normal, max 8 batches = 160 para selecao_evento)
+    # SQS-49: selecao_evento tem múltiplos cargos — varrer teto fixo para garantir resposta dentro do timeout do proxy (60s)
+    # Cada batch de 20 leva ~4-6s → 6 batches = 120 candidatos → ~30-40s total (margem segura)
     is_selecao_evento = vaga.get("tipo") == "selecao_evento"
     if is_selecao_evento:
-        MAX_VARRER = quantidade * 32  # ex: pedir 5 → varrer até 160 (8 batches de 20)
+        MAX_VARRER = min(len(com_skills), 120)  # teto fixo: 6 batches × 20 = ~35s
     else:
-        MAX_VARRER = quantidade * 20  # ex: pedir 5 → varrer até 100 (5 batches de 20)
+        MAX_VARRER = min(len(com_skills), quantidade * 20)
     if len(com_skills) > MAX_VARRER:
-        logger.info(f"[triar_banco_talentos] Limitando varredura de {len(com_skills)} para {MAX_VARRER} candidatos (pré-score)")
+        logger.warning(f"[triar_banco_talentos] Limitando varredura de {len(com_skills)} para {MAX_VARRER} candidatos")
         com_skills = com_skills[:MAX_VARRER]
 
     # max_tokens maior para selecao_evento: prompt mais inclusivo tende a aprovar mais candidatos por batch
