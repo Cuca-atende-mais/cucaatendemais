@@ -254,7 +254,7 @@ export default function CriarCurriculoEditorPage() {
                     .maybeSingle()
                 return data?.id
             })()
-            if (id) router.push(`/empregabilidade/print/${id}`)
+            if (id) window.open(`/empregabilidade/print/${id}`, "_blank")
         })()
     }
 
