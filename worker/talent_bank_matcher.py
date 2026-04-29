@@ -96,7 +96,38 @@ async def _ranquear_batch(batch: list[dict], vaga: dict) -> list[dict]:
             entrada["justificativa_area"] = skills["justificativa_ia"]
         candidatos_texto.append(entrada)
 
-    prompt = f"""Você é especialista em recrutamento e seleção. Analise a compatibilidade de cada candidato com a vaga abaixo.
+    # SQS-49: prompt diferenciado para selecao_evento — múltiplos cargos, regra de compatibilidade ampliada
+    if vaga.get("tipo") == "selecao_evento":
+        cargos_lista = vaga.get("cargos_lista") or []
+        cargos_str = ", ".join(c.get("titulo", "") for c in cargos_lista) if cargos_lista else vaga.get("descricao", "")
+        prompt = f"""Você é especialista em recrutamento e seleção. Analise a compatibilidade de cada candidato com o processo seletivo abaixo.
+
+PROCESSO SELETIVO: {vaga.get('titulo', '')}
+CARGOS DISPONÍVEIS: {cargos_str}
+
+CANDIDATOS:
+{json.dumps(candidatos_texto, ensure_ascii=False, indent=2)}
+
+REGRAS OBRIGATÓRIAS:
+1. O candidato é COMPATÍVEL se o perfil se encaixa em QUALQUER UM dos cargos listados — não exija que encaixe em todos.
+   Exemplo: candidato com experiência em caixa → compatível para "Operador de Caixa" ou "Balconista".
+2. Candidatos sem experiência formal mas com perfil jovem aprendiz → compatíveis para "Jovem Aprendiz".
+3. Score de 0 a 100: 0 = incompatível com todos os cargos, 100 = perfeito para um ou mais cargos.
+4. Retorne APENAS candidatos com score >= 30. Mencione na justificativa o cargo específico para o qual é compatível.
+5. Ordene do maior para o menor score.
+
+Retorne SOMENTE JSON válido, sem markdown:
+{{
+  "candidatos": [
+    {{
+      "id": "uuid",
+      "score": 85,
+      "justificativa": "Compatível para [cargo]: [razão] (máx 90 caracteres)"
+    }}
+  ]
+}}"""
+    else:
+        prompt = f"""Você é especialista em recrutamento e seleção. Analise a compatibilidade de cada candidato com a vaga abaixo.
 
 VAGA:
 - Título: {vaga.get('titulo', '')}
@@ -273,8 +304,12 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     if termos_vaga:
         com_skills.sort(key=lambda c: _pontuar_candidato(c, termos_vaga), reverse=True)
 
-    # Limitar varredura para evitar timeout (top semânticos primeiro)
-    MAX_VARRER = quantidade * 20  # ex: pedir 5 → varrer até 100
+    # SQS-49: selecao_evento tem múltiplos cargos distintos — varrer pool maior para cobrir todos os perfis
+    # Sem esse ajuste, candidatos de cargos menos comuns (ex: açougueiro) nunca chegam ao GPT
+    if vaga.get("tipo") == "selecao_evento":
+        MAX_VARRER = min(len(com_skills), quantidade * 60)  # ex: pedir 5 → varrer até 300
+    else:
+        MAX_VARRER = quantidade * 20  # ex: pedir 5 → varrer até 100
     if len(com_skills) > MAX_VARRER:
         logger.info(f"[triar_banco_talentos] Limitando varredura de {len(com_skills)} para {MAX_VARRER} candidatos (pré-score)")
         com_skills = com_skills[:MAX_VARRER]

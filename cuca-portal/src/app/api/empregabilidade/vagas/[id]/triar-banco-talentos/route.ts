@@ -39,7 +39,7 @@ export async function POST(
     try {
         const { data: vaga, error: vagaErr } = await supabase
             .from("vagas")
-            .select("titulo, descricao, requisitos, escolaridade_minima, tipo_contrato, setor")
+            .select("titulo, descricao, requisitos, escolaridade_minima, tipo_contrato, setor, tipo, cargos_lista")
             .eq("id", vagaId)
             .single()
 
