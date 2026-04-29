@@ -1544,12 +1544,17 @@ async def _processar_publico(
         if vaga_tipo_res.data and vaga_tipo_res.data.get("tipo") == "selecao_evento":
             cargos = vaga_tipo_res.data.get("cargos_lista") or []
             if cargos:
-                linhas_cargos = ["📋 *Vagas disponíveis neste processo seletivo:*\n"]
+                linhas_cargos = [
+                    "🎯 *Escolha o cargo para o qual deseja se candidatar:*\n",
+                    "_(Você pode se candidatar mesmo sem experiência — a escolha é sua!)_\n",
+                ]
                 for idx_c, cargo in enumerate(cargos, start=1):
                     qtd = cargo.get("quantidade", "")
-                    qtd_txt = f" ({qtd} vagas)" if qtd else ""
-                    linhas_cargos.append(f"{idx_c}️⃣ {cargo.get('titulo', '')}{qtd_txt}")
-                linhas_cargos.append("\nDigite o número do cargo que deseja. Para mais de um, separe por vírgula (ex: *1,3*).")
+                    faixa = cargo.get("faixa_etaria", "")
+                    qtd_txt = f" · {qtd} vagas" if qtd else ""
+                    faixa_txt = f" · {faixa}" if faixa else ""
+                    linhas_cargos.append(f"*{idx_c}.* {cargo.get('titulo', '')}{qtd_txt}{faixa_txt}")
+                linhas_cargos.append("\nDigite o *número* do cargo. Para mais de um, separe por vírgula (ex: *1,3*).")
                 _set_fluxo(conversa_id, {
                     **fluxo,
                     "etapa": "listando_cargos_selecao",

@@ -60,13 +60,17 @@ async def process_cv_from_text(candidatura_id: str, cv_text: str, vaga_id: str, 
         vaga_res = supabase.table("vagas").select("titulo, requisitos, escolaridade_minima, tipo").eq("id", vaga_id).single().execute()
         vaga = vaga_res.data
 
-        # SQS-49: contexto diferenciado para selecao_evento — usa cargo escolhido + conhecimento de mercado
+        # SQS-49: contexto diferenciado para selecao_evento — candidatura livre
         if vaga.get("tipo") == "selecao_evento":
             cargo_ref = cargo_escolhido or vaga.get("titulo", "cargo não especificado")
-            contexto_vaga = f"""ATENÇÃO: Esta é uma vaga de processo seletivo por evento.
-        Cargo de interesse do candidato: {cargo_ref}
-        Utilize seu conhecimento de mercado sobre este cargo no setor varejista/comercial para avaliar a aderência.
-        Considere perfil, experiências relevantes e habilidades esperadas para '{cargo_ref}'."""
+            contexto_vaga = f"""ATENÇÃO: Esta é uma vaga de processo seletivo por evento (Rede CUCA).
+        Cargo escolhido pelo candidato: {cargo_ref}
+        REGRA OBRIGATÓRIA: O candidato tem LIBERDADE TOTAL de escolha — a candidatura DEVE ser aceita independente do nível de experiência.
+        - Use veredito "✅" se o candidato tem perfil ou experiência compatível com '{cargo_ref}'.
+        - Use veredito "⚠️" se há gap de experiência, mas NUNCA use "❌" para selecao_evento.
+        - Em pontos_atencao, documente os gaps honestamente (ex: "Sem experiência formal em {cargo_ref}").
+        - match_score reflete potencial e aderência real ao cargo — seja honesto, não inflacione.
+        - Utilize seu conhecimento do mercado varejista/comercial para avaliar o perfil."""
         else:
             contexto_vaga = f"""Título: {vaga.get('titulo', '')}
         Requisitos principais: {vaga.get('requisitos', '')}
@@ -168,13 +172,17 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str, cargo_e
         vaga_res = supabase.table("vagas").select("titulo, requisitos, escolaridade_minima, tipo").eq("id", vaga_id).single().execute()
         vaga = vaga_res.data
 
-        # SQS-49: contexto diferenciado para selecao_evento — usa cargo escolhido + conhecimento de mercado
+        # SQS-49: contexto diferenciado para selecao_evento — candidatura livre
         if vaga.get("tipo") == "selecao_evento":
             cargo_ref = cargo_escolhido or vaga.get("titulo", "cargo não especificado")
-            contexto_vaga = f"""ATENÇÃO: Esta é uma vaga de processo seletivo por evento.
-        Cargo de interesse do candidato: {cargo_ref}
-        Utilize seu conhecimento de mercado sobre este cargo no setor varejista/comercial para avaliar a aderência.
-        Considere perfil, experiências relevantes e habilidades esperadas para '{cargo_ref}'."""
+            contexto_vaga = f"""ATENÇÃO: Esta é uma vaga de processo seletivo por evento (Rede CUCA).
+        Cargo escolhido pelo candidato: {cargo_ref}
+        REGRA OBRIGATÓRIA: O candidato tem LIBERDADE TOTAL de escolha — a candidatura DEVE ser aceita independente do nível de experiência.
+        - Use veredito "✅" se o candidato tem perfil ou experiência compatível com '{cargo_ref}'.
+        - Use veredito "⚠️" se há gap de experiência, mas NUNCA use "❌" para selecao_evento.
+        - Em pontos_atencao, documente os gaps honestamente (ex: "Sem experiência formal em {cargo_ref}").
+        - match_score reflete potencial e aderência real ao cargo — seja honesto, não inflacione.
+        - Utilize seu conhecimento do mercado varejista/comercial para avaliar o perfil."""
         else:
             contexto_vaga = f"""Título: {vaga.get('titulo', '')}
         Requisitos principais: {vaga.get('requisitos', '')}
