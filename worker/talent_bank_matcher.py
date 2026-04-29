@@ -79,7 +79,7 @@ def _pontuar_candidato(candidato: dict, termos_vaga: set[str]) -> int:
     return len(termos_vaga & termos_candidato)
 
 
-async def _ranquear_batch(batch: list[dict], vaga: dict) -> list[dict]:
+async def _ranquear_batch(batch: list[dict], vaga: dict, max_tokens: int = 1500) -> list[dict]:
     """Envia um batch de candidatos ao GPT-4o e retorna lista com scores."""
     candidatos_texto = []
     for c in batch:
@@ -167,7 +167,7 @@ Retorne SOMENTE JSON válido, sem markdown:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.2,
-            max_tokens=1500,
+            max_tokens=max_tokens,
         )
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
@@ -304,15 +304,19 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     if termos_vaga:
         com_skills.sort(key=lambda c: _pontuar_candidato(c, termos_vaga), reverse=True)
 
-    # SQS-49: selecao_evento tem múltiplos cargos distintos — varrer pool maior para cobrir todos os perfis
-    # Sem esse ajuste, candidatos de cargos menos comuns (ex: açougueiro) nunca chegam ao GPT
-    if vaga.get("tipo") == "selecao_evento":
-        MAX_VARRER = min(len(com_skills), quantidade * 60)  # ex: pedir 5 → varrer até 300
+    # SQS-49: selecao_evento tem múltiplos cargos distintos — varrer pool ligeiramente maior para cobrir perfis variados,
+    # mas limitado para não causar timeout (max 5 batches de 20 = 100 para normal, max 8 batches = 160 para selecao_evento)
+    is_selecao_evento = vaga.get("tipo") == "selecao_evento"
+    if is_selecao_evento:
+        MAX_VARRER = quantidade * 32  # ex: pedir 5 → varrer até 160 (8 batches de 20)
     else:
-        MAX_VARRER = quantidade * 20  # ex: pedir 5 → varrer até 100
+        MAX_VARRER = quantidade * 20  # ex: pedir 5 → varrer até 100 (5 batches de 20)
     if len(com_skills) > MAX_VARRER:
         logger.info(f"[triar_banco_talentos] Limitando varredura de {len(com_skills)} para {MAX_VARRER} candidatos (pré-score)")
         com_skills = com_skills[:MAX_VARRER]
+
+    # max_tokens maior para selecao_evento: prompt mais inclusivo tende a aprovar mais candidatos por batch
+    batch_max_tokens = 2500 if is_selecao_evento else 1500
 
     # 4. Varrer candidatos com skills em batches
     todos_scores: list[dict] = []  # {"id": ..., "score": ..., "justificativa": ...}
@@ -321,7 +325,7 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     for i in range(0, len(com_skills), BATCH_SIZE):
         batch = com_skills[i:i + BATCH_SIZE]
         logger.info(f"[triar_banco_talentos] Ranqueando batch {i//BATCH_SIZE + 1} ({len(batch)} candidatos)...")
-        resultados_batch = await _ranquear_batch(batch, vaga)
+        resultados_batch = await _ranquear_batch(batch, vaga, max_tokens=batch_max_tokens)
         todos_scores.extend(resultados_batch)
         if i + BATCH_SIZE < len(com_skills):
             await asyncio.sleep(0.5)  # anti-rate-limit entre batches
