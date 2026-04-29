@@ -57,11 +57,18 @@ function formatPeriodo(inicio: string, fim: string, atual: boolean): string {
     return fimStr ? `${inicio} – ${fimStr}` : inicio
 }
 
+function normalizarData(s: string): string {
+    const digits = s.replace(/\D/g, "")
+    if (digits.length === 6) return `${digits.slice(0, 2)}/${digits.slice(2)}`
+    return s
+}
+
 function calcPermanencia(inicio: string, fim: string, atual: boolean): string {
     if (!inicio) return ""
     try {
-        const start = parse(`01/${inicio}`, "dd/MM/yyyy", new Date())
-        const end = atual ? new Date() : (fim ? parse(`01/${fim}`, "dd/MM/yyyy", new Date()) : new Date())
+        const start = parse(`01/${normalizarData(inicio)}`, "dd/MM/yyyy", new Date())
+        const end = atual ? new Date() : (fim ? parse(`01/${normalizarData(fim)}`, "dd/MM/yyyy", new Date()) : new Date())
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) return ""
         const meses = differenceInMonths(end, start)
         if (meses <= 0) return ""
         const anos = Math.floor(meses / 12)
@@ -163,7 +170,7 @@ export default function PrintPage() {
             {/* ── Currículo ─────────────────────────────────────────────── */}
             <div className="print:mt-0 mt-16 min-h-screen bg-white text-black">
                 <div
-                    className="max-w-[800px] mx-auto px-10 py-10"
+                    className="cv-print-wrapper max-w-[800px] mx-auto px-10 py-10"
                     style={{ fontFamily: "'Arial', 'Helvetica', sans-serif", fontSize: "11px", lineHeight: "1.5", color: "#111" }}
                 >
 
@@ -285,15 +292,17 @@ export default function PrintPage() {
             {/* CSS de impressão */}
             <style>{`
                 @media print {
-                    @page { margin: 12mm 15mm; size: A4 portrait; }
+                    /* margin:0 elimina o espaço onde o browser imprime URL/data/título */
+                    @page { margin: 0; size: A4 portrait; }
                     body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                    /* compensa a margem zerada adicionando padding no conteúdo */
+                    .cv-print-wrapper { padding: 12mm 15mm !important; }
                     .print\\:hidden { display: none !important; }
                     .print\\:mt-0 { margin-top: 0 !important; }
                     nav, header, aside, footer { display: none !important; }
                     [data-sidebar], [data-radix-popper-content-wrapper],
                     div[class*="sidebar"], div[class*="Sidebar"],
                     div[id*="sidebar"], button[class*="trigger"] { display: none !important; }
-                    #__next > div > div:first-child { display: none !important; }
                 }
             `}</style>
         </>
