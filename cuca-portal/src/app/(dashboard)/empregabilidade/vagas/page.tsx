@@ -20,8 +20,9 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin, Globe, MessageSquare, Loader2, Trash2 } from "lucide-react"
+import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin, Globe, MessageSquare, Loader2, Trash2, CalendarDays } from "lucide-react"
 import { VagaModal } from "@/components/empregabilidade/vaga-modal"
+import { SelecaoModal } from "@/components/empregabilidade/selecao-modal"
 import toast from "react-hot-toast"
 import { useUser } from "@/lib/auth/user-provider"
 import { VAGAS_KEY } from "@/hooks/queries/use-vagas"
@@ -40,6 +41,8 @@ export default function VagasPage() {
     const [abaFiltro, setAbaFiltro] = useState<"minhas" | "todas">("minhas")
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [selectedVaga, setSelectedVaga] = useState<Vaga | null>(null)
+    const [isSelecaoModalOpen, setIsSelecaoModalOpen] = useState(false)
+    const [selectedSelecao, setSelectedSelecao] = useState<Vaga | null>(null)
 
     // ─── Query principal — TanStack Query gerencia cache + invalidação ───────
     const { data, isLoading } = useQuery({
@@ -147,8 +150,17 @@ export default function VagasPage() {
         }
     }
 
-    const openEditModal = (vaga: Vaga) => { setSelectedVaga(vaga); setIsModalOpen(true) }
+    const openEditModal = (vaga: Vaga) => {
+        if (vaga.tipo === "selecao_evento") {
+            setSelectedSelecao(vaga)
+            setIsSelecaoModalOpen(true)
+        } else {
+            setSelectedVaga(vaga)
+            setIsModalOpen(true)
+        }
+    }
     const openNewModal = () => { setSelectedVaga(null); setIsModalOpen(true) }
+    const openNewSelecaoModal = () => { setSelectedSelecao(null); setIsSelecaoModalOpen(true) }
 
     const getStatusBadge = (status: string) => {
         switch (status) {
@@ -172,9 +184,14 @@ export default function VagasPage() {
                     <p className="text-muted-foreground">Gerencie o portfólio de oportunidades para juventude.</p>
                 </div>
                 {hasPermission("empreg_vagas", "create") && (
-                    <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold" onClick={openNewModal}>
-                        <Plus className="mr-2 h-4 w-4" /> Cadastrar Vaga
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        <Button variant="outline" className="font-bold border-cuca-blue text-cuca-blue hover:bg-cuca-blue/10" onClick={openNewSelecaoModal}>
+                            <CalendarDays className="mr-2 h-4 w-4" /> Marcar Seleção
+                        </Button>
+                        <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold" onClick={openNewModal}>
+                            <Plus className="mr-2 h-4 w-4" /> Cadastrar Vaga
+                        </Button>
+                    </div>
                 )}
             </div>
 
@@ -183,6 +200,13 @@ export default function VagasPage() {
                 onOpenChange={setIsModalOpen}
                 onSuccess={invalidate}
                 vaga={selectedVaga}
+            />
+
+            <SelecaoModal
+                open={isSelecaoModalOpen}
+                onOpenChange={setIsSelecaoModalOpen}
+                onSuccess={invalidate}
+                selecao={selectedSelecao}
             />
 
             <div className="flex items-center justify-between gap-4 flex-wrap mt-6">

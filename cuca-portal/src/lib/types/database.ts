@@ -126,6 +126,11 @@ export type Vaga = {
     created_by: string | null
     created_at: string
     updated_at: string
+    // SQS-49: campos de processo seletivo por evento
+    tipo: 'vaga_normal' | 'selecao_evento' | null
+    cargos_lista: Array<{ titulo: string; quantidade: string; faixa_etaria: string }> | null
+    datas_selecao: Array<{ data: string; hora: string }> | null
+    email_responsavel: string | null
 }
 
 export type EmpregabilidadeFollowup = {
