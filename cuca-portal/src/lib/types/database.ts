@@ -195,6 +195,7 @@ export type Candidatura = {
     data_entrevista: string | null
     hora_entrevista: string | null
     local_entrevista: string | null
+    cargo_escolhido: string | null
     created_at: string
     updated_at: string
 }

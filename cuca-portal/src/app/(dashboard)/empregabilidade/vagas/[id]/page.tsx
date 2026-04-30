@@ -1181,6 +1181,11 @@ function CandidatoCard({
                                 <Database className="h-3 w-3" /> Banco de Talentos
                             </span>
                         )}
+                        {candidato.cargo_escolhido && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-blue-500/10 text-blue-400 border-blue-500/30">
+                                🎯 {candidato.cargo_escolhido}
+                            </span>
+                        )}
                     </div>
                 </div>
             </div>

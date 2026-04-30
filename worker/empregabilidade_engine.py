@@ -1558,7 +1558,6 @@ async def _processar_publico(
             if cargos_disponiveis:
                 linhas_cargos = [
                     "🎯 *Escolha o cargo para o qual deseja se candidatar:*\n",
-                    "_(Você pode se candidatar mesmo sem experiência — a escolha é sua!)_\n",
                 ]
                 if cargos_ja_inscritos:
                     inscritos_txt = ", ".join(cargos_ja_inscritos)
