@@ -1384,10 +1384,8 @@ async def _processar_publico(
                 linhas_re.append(f"{idx_c}️⃣ {c.get('titulo', '')}")
             await e("\n".join(linhas_re))
             return
-        display_str = ", ".join(cargos_escolhidos)
-        # AC10 SQS-49: pipe-separated para criação de candidatura por cargo no portal
-        cargo_str = "|".join(cargos_escolhidos)
-        await e(f"Ótimo! Você escolheu: *{display_str}* ✅\n\nPara finalizar, preciso do seu *nome completo*:")
+        cargo_str = ", ".join(cargos_escolhidos)
+        await e(f"Ótimo! Você escolheu: *{cargo_str}* ✅\n\nPara finalizar, preciso do seu *nome completo*:")
         _set_fluxo(conversa_id, {
             **fluxo,
             "etapa": "coletando_nome_candidato",
@@ -1542,12 +1540,9 @@ async def _processar_publico(
 
     if vaga_id_ref:
         # SQS-49: verificar se vaga é selecao_evento antes de qualquer outra coisa
-        logger.warning(f"[selecao_check] etapa={etapa!r} vaga_id_ref={vaga_id_ref!r}")
         vaga_tipo_res = supabase.table("vagas").select("tipo, cargos_lista").eq("id", vaga_id_ref).maybe_single().execute()
-        vaga_tipo_data = vaga_tipo_res.data or {}
-        logger.warning(f"[selecao_check] tipo={vaga_tipo_data.get('tipo')!r} cargos={bool(vaga_tipo_data.get('cargos_lista'))}")
-        if vaga_tipo_data.get("tipo") == "selecao_evento":
-            cargos = vaga_tipo_data.get("cargos_lista") or []
+        if vaga_tipo_res.data and vaga_tipo_res.data.get("tipo") == "selecao_evento":
+            cargos = vaga_tipo_res.data.get("cargos_lista") or []
             if cargos:
                 linhas_cargos = [
                     "🎯 *Escolha o cargo para o qual deseja se candidatar:*\n",
