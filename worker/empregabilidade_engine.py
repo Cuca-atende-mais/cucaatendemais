@@ -1480,13 +1480,22 @@ async def _processar_publico(
     telefone_limpo = re.sub(r"\D", "", phone)
     if telefone_limpo.startswith("55") and len(telefone_limpo) > 11:
         telefone_limpo = telefone_limpo[2:]
-    db_cands_res = supabase.table("candidaturas").select("vaga_id, status").eq(
+    db_cands_res = supabase.table("candidaturas").select("vaga_id, status, cargo_escolhido").eq(
         "telefone", telefone_limpo
     ).execute()
-    db_vagas_ids = {
-        c["vaga_id"] for c in (db_cands_res.data or [])
-        if c.get("vaga_id") and c.get("status") not in STATUS_INATIVOS
-    }
+    db_vagas_ids = set()
+    # SQS-49: selecao_evento — rastrear cargos já inscritos por vaga (não ocultar a vaga inteira)
+    db_cargos_por_vaga: dict[str, set] = {}
+    for c in (db_cands_res.data or []):
+        if not c.get("vaga_id") or c.get("status") in STATUS_INATIVOS:
+            continue
+        cargo = c.get("cargo_escolhido")
+        if cargo:
+            # candidatura com cargo: registra o cargo, não bloqueia a vaga inteira
+            db_cargos_por_vaga.setdefault(c["vaga_id"], set()).add(cargo)
+        else:
+            # candidatura sem cargo (vaga_normal): bloqueia a vaga normalmente
+            db_vagas_ids.add(c["vaga_id"])
 
     # S37C-04: Combinar histórico da sessão com IDs do banco e filtrar vagas
     historico_aplicadas = list(fluxo.get("historico_vagas_aplicadas") or [])
@@ -1543,12 +1552,18 @@ async def _processar_publico(
         vaga_tipo_res = supabase.table("vagas").select("tipo, cargos_lista").eq("id", vaga_id_ref).maybe_single().execute()
         if vaga_tipo_res.data and vaga_tipo_res.data.get("tipo") == "selecao_evento":
             cargos = vaga_tipo_res.data.get("cargos_lista") or []
-            if cargos:
+            # SQS-49: excluir cargos que o candidato já se inscreveu
+            cargos_ja_inscritos = db_cargos_por_vaga.get(vaga_id_ref, set())
+            cargos_disponiveis = [c for c in cargos if c.get("titulo") not in cargos_ja_inscritos]
+            if cargos_disponiveis:
                 linhas_cargos = [
                     "🎯 *Escolha o cargo para o qual deseja se candidatar:*\n",
                     "_(Você pode se candidatar mesmo sem experiência — a escolha é sua!)_\n",
                 ]
-                for idx_c, cargo in enumerate(cargos, start=1):
+                if cargos_ja_inscritos:
+                    inscritos_txt = ", ".join(cargos_ja_inscritos)
+                    linhas_cargos.append(f"_(Já inscrito: {inscritos_txt})_\n")
+                for idx_c, cargo in enumerate(cargos_disponiveis, start=1):
                     qtd = cargo.get("quantidade", "")
                     faixa = cargo.get("faixa_etaria", "")
                     qtd_txt = f" · {qtd} vagas" if qtd else ""
@@ -1559,7 +1574,7 @@ async def _processar_publico(
                     **fluxo,
                     "etapa": "listando_cargos_selecao",
                     "vaga_id_selecionada": vaga_id_ref,
-                    "cargos_disponiveis": cargos,
+                    "cargos_disponiveis": cargos_disponiveis,
                     "historico_vagas_aplicadas": historico_aplicadas,
                 })
                 await e("\n".join(linhas_cargos))
