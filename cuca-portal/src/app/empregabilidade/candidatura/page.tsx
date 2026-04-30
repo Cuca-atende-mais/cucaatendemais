@@ -44,6 +44,8 @@ function CandidaturaContent() {
     const conversaId = searchParams.get("conversa_id") || ""
     const bancoTalentosParam = searchParams.get("banco_talentos") === "1"
     const cargoEscolhidoParam = searchParams.get("cargo_escolhido") || "" // SQS-49
+    // AC10 SQS-49: pipe-separated → lista de cargos
+    const cargosEscolhidos = cargoEscolhidoParam ? cargoEscolhidoParam.split("|").filter(Boolean) : []
 
     const [vaga, setVaga] = useState<any>(null)
     const [empresa, setEmpresa] = useState<any>(null)
@@ -208,45 +210,55 @@ function CandidaturaContent() {
                 obsArr[0] = "banco_talentos: menor de idade"
             }
 
-            const res = await fetch("/api/empregabilidade/candidaturas", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    vaga_id: vagaId || null,
-                    nome,
-                    data_nascimento: dataNascimento,
-                    telefone: telefone.replace(/\D/g, ""),
-                    arquivo_cv_url: publicUrl,
-                    status: "pendente",
-                    requisitos_atendidos: "pendente",
-                    observacoes: obsArr.length > 0 ? obsArr[0] : null,
-                    conversa_id: conversaId || null,
-                    area_interesse: areasInteresse,
-                    pcd_candidato: pcdCandidato,
-                    pcd_tipo_candidato: pcdCandidato ? (pcdTipoCandidato || null) : null,
-                    cargo_escolhido: cargoEscolhidoParam || null, // SQS-49
-                }),
-            })
-            const candData = await res.json()
-            if (res.status === 409) {
-                toast.error(candData.error || "Você já está inscrito nesta vaga.")
-                return
-            }
-            if (!res.ok) throw new Error(candData.error || `Erro ${res.status}`)
-
-            const codigo = candData.codigo
-
-            // Disparar OCR assíncrono (apenas para candidaturas não-banco de talentos)
-            if (!destinoBancoTalentos) {
-                fetch("/api/process-cv", {
+            // AC10 SQS-49: criar uma candidatura por cargo em selecao_evento
+            const targetsCargoList = cargosEscolhidos.length > 0 ? cargosEscolhidos : [cargoEscolhidoParam || null]
+            let codigo = ""
+            let algumaNovaCandidatura = false
+            for (const cargo of targetsCargoList) {
+                const res = await fetch("/api/empregabilidade/candidaturas", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        candidatura_id: candData.id,
-                        vaga_id: vagaId,
-                        cv_url: publicUrl,
+                        vaga_id: vagaId || null,
+                        nome,
+                        data_nascimento: dataNascimento,
+                        telefone: telefone.replace(/\D/g, ""),
+                        arquivo_cv_url: publicUrl,
+                        status: "pendente",
+                        requisitos_atendidos: "pendente",
+                        observacoes: obsArr.length > 0 ? obsArr[0] : null,
+                        conversa_id: conversaId || null,
+                        area_interesse: areasInteresse,
+                        pcd_candidato: pcdCandidato,
+                        pcd_tipo_candidato: pcdCandidato ? (pcdTipoCandidato || null) : null,
+                        cargo_escolhido: cargo || null,
                     }),
-                }).catch((err) => console.error("OCR warning:", err))
+                })
+                const candData = await res.json()
+                if (res.status === 409) {
+                    // Já inscrito neste cargo — ignorar e continuar para o próximo
+                    continue
+                }
+                if (!res.ok) throw new Error(candData.error || `Erro ${res.status}`)
+                algumaNovaCandidatura = true
+                if (!codigo) codigo = candData.codigo
+
+                if (!destinoBancoTalentos) {
+                    fetch("/api/process-cv", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            candidatura_id: candData.id,
+                            vaga_id: vagaId,
+                            cv_url: publicUrl,
+                        }),
+                    }).catch((err) => console.error("OCR warning:", err))
+                }
+            }
+
+            if (!algumaNovaCandidatura) {
+                toast.error("Você já está inscrito em todos os cargos selecionados.")
+                return
             }
 
 

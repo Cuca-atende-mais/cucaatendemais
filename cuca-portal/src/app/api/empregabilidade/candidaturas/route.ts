@@ -63,12 +63,16 @@ export async function POST(request: NextRequest) {
 
         let candidaturaId: string
         if (vaga_id && telefone) {
-            // Usa .limit(1) em vez de .maybeSingle() para tolerar ghost data (múltiplas linhas)
-            const { data: rows } = await supabaseAdmin
+            // AC10 SQS-49: selecao_evento cria uma candidatura por cargo — chave inclui cargo_escolhido
+            let query = supabaseAdmin
                 .from("candidaturas")
                 .select("id, status")
                 .eq("vaga_id", vaga_id)
                 .eq("telefone", telefone)
+            if (cargo_escolhido) {
+                query = query.eq("cargo_escolhido", cargo_escolhido)
+            }
+            const { data: rows } = await query
                 .order("created_at", { ascending: false })
                 .limit(1)
 
