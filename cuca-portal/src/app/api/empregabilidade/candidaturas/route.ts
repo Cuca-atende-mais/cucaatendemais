@@ -13,7 +13,8 @@ export async function POST(request: NextRequest) {
             arquivo_cv_url, status, requisitos_atendidos, observacoes,
             conversa_id, area_interesse, matching_score, dados_ocr_json,
             pcd_candidato, pcd_tipo_candidato,
-            cargo_escolhido, // SQS-49: cargo específico em selecao_evento
+            cargo_escolhido, // vaga_normal: cargo único (legado)
+            cargos_escolhidos, // selecao_evento AC10 SQS-49: array de cargos
         } = body
 
         if (!nome || !telefone) {
@@ -44,7 +45,8 @@ export async function POST(request: NextRequest) {
 
         // HF37-07: Lógica de upsert inteligente para candidaturas por telefone + vaga_id
         const STATUS_ATIVOS = ["pendente", "selecionado", "contratado"]
-        const candidaturaPayload = {
+
+        const basePayload = {
             vaga_id: vaga_id || null,
             nome,
             data_nascimento: data_nascimento || null,
@@ -58,60 +60,60 @@ export async function POST(request: NextRequest) {
             dados_ocr_json: dados_ocr_json || null,
             pcd_candidato: pcd_candidato ?? false,
             pcd_tipo_candidato: pcd_candidato ? (pcd_tipo_candidato || null) : null,
-            cargo_escolhido: cargo_escolhido || null, // SQS-49
         }
 
-        let candidaturaId: string
-        if (vaga_id && telefone) {
-            // Usa .limit(1) em vez de .maybeSingle() para tolerar ghost data (múltiplas linhas)
-            const { data: rows } = await supabaseAdmin
-                .from("candidaturas")
-                .select("id, status")
-                .eq("vaga_id", vaga_id)
-                .eq("telefone", telefone)
-                .order("created_at", { ascending: false })
-                .limit(1)
+        // AC10 SQS-49: selecao_evento envia array de cargos → criar uma candidatura por cargo
+        const listaCargos: (string | null)[] = Array.isArray(cargos_escolhidos) && cargos_escolhidos.length > 0
+            ? cargos_escolhidos
+            : [cargo_escolhido || null]
 
-            const existing = rows && rows.length > 0 ? rows[0] : null
-
-            if (existing) {
-                // Candidatura ativa → bloquear (anti-spam)
-                if (STATUS_ATIVOS.includes(existing.status)) {
-                    return NextResponse.json(
-                        { error: "Você já está inscrito nesta vaga." },
-                        { status: 409 }
-                    )
+        const upsertCandidatura = async (cargoItem: string | null): Promise<string | null> => {
+            const payload = { ...basePayload, cargo_escolhido: cargoItem }
+            if (vaga_id && telefone) {
+                // Anti-spam: chave (vaga_id, telefone, cargo_escolhido)
+                let q = supabaseAdmin
+                    .from("candidaturas")
+                    .select("id, status")
+                    .eq("vaga_id", vaga_id)
+                    .eq("telefone", telefone)
+                if (cargoItem) q = q.eq("cargo_escolhido", cargoItem)
+                else q = q.is("cargo_escolhido", null)
+                const { data: rows } = await q.order("created_at", { ascending: false }).limit(1)
+                const existing = rows && rows.length > 0 ? rows[0] : null
+                if (existing) {
+                    if (STATUS_ATIVOS.includes(existing.status)) return null // já inscrito neste cargo
+                    const { error: updateError } = await supabaseAdmin
+                        .from("candidaturas")
+                        .update({ ...payload, updated_at: new Date().toISOString() })
+                        .eq("id", existing.id)
+                    if (updateError) throw updateError
+                    return existing.id
                 }
-                // Candidatura inativa → reciclar a linha existente com os novos dados
-                const { error: updateError } = await supabaseAdmin
-                    .from("candidaturas")
-                    .update({ ...candidaturaPayload, updated_at: new Date().toISOString() })
-                    .eq("id", existing.id)
-                if (updateError) throw updateError
-                candidaturaId = existing.id
-            } else {
-                // Sem registro anterior → insert normal
                 const { data: inserted, error: insertError } = await supabaseAdmin
-                    .from("candidaturas")
-                    .insert(candidaturaPayload)
-                    .select("id")
-                    .single()
+                    .from("candidaturas").insert(payload).select("id").single()
                 if (insertError) throw insertError
-                candidaturaId = inserted.id
+                return inserted.id
+            } else {
+                const { data: inserted, error: insertError } = await supabaseAdmin
+                    .from("candidaturas").insert(payload).select("id").single()
+                if (insertError) throw insertError
+                return inserted.id
             }
-        } else {
-            // Sem vaga_id (banco de talentos) → insert direto
-            const { data: inserted, error: insertError } = await supabaseAdmin
-                .from("candidaturas")
-                .insert(candidaturaPayload)
-                .select("id")
-                .single()
-            if (insertError) throw insertError
-            candidaturaId = inserted.id
         }
 
+        const ids: string[] = []
+        for (const cargo of listaCargos) {
+            const id = await upsertCandidatura(cargo)
+            if (id) ids.push(id)
+        }
+
+        if (ids.length === 0) {
+            return NextResponse.json({ error: "Você já está inscrito nesta vaga." }, { status: 409 })
+        }
+
+        const candidaturaId = ids[0]
         const codigo = candidaturaId.replace(/-/g, "").slice(-6).toUpperCase()
-        const data = { id: candidaturaId }
+        const data = { id: candidaturaId, ids }
 
         // Notificar worker via metadata da conversa de origem
         if (conversa_id) {

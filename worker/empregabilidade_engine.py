@@ -1384,12 +1384,12 @@ async def _processar_publico(
                 linhas_re.append(f"{idx_c}️⃣ {c.get('titulo', '')}")
             await e("\n".join(linhas_re))
             return
-        cargo_str = ", ".join(cargos_escolhidos)
-        await e(f"Ótimo! Você escolheu: *{cargo_str}* ✅\n\nPara finalizar, preciso do seu *nome completo*:")
+        display_str = ", ".join(cargos_escolhidos)
+        await e(f"Ótimo! Você escolheu: *{display_str}* ✅\n\nPara finalizar, preciso do seu *nome completo*:")
         _set_fluxo(conversa_id, {
             **fluxo,
             "etapa": "coletando_nome_candidato",
-            "cargo_escolhido": cargo_str,
+            "cargos_escolhidos": cargos_escolhidos,  # lista — AC10 SQS-49
             "banco_talentos": False,
         })
         return
@@ -1703,10 +1703,10 @@ async def _enviar_link_candidatura(
     unidade_id_link = fluxo.get("unidade_id_escolhida", "")
     if unidade_id_link:
         params["unidade_id"] = unidade_id_link
-    # SQS-49: cargo escolhido dentro de um selecao_evento
-    cargo_escolhido_link = fluxo.get("cargo_escolhido", "")
-    if cargo_escolhido_link:
-        params["cargo_escolhido"] = cargo_escolhido_link
+    # SQS-49 AC10: lista de cargos escolhidos em selecao_evento
+    cargos_escolhidos_link = fluxo.get("cargos_escolhidos") or []
+    if cargos_escolhidos_link:
+        params["cargos_escolhidos"] = ",".join(cargos_escolhidos_link)
 
     query = urllib.parse.urlencode(params)
     link = f"{PORTAL_URL}/empregabilidade/candidatura?{query}"

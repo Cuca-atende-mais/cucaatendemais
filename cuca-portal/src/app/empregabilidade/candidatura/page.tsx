@@ -43,7 +43,12 @@ function CandidaturaContent() {
     const origemTel = searchParams.get("origem_tel") || ""
     const conversaId = searchParams.get("conversa_id") || ""
     const bancoTalentosParam = searchParams.get("banco_talentos") === "1"
-    const cargoEscolhidoParam = searchParams.get("cargo_escolhido") || "" // SQS-49
+    const cargoEscolhidoParam = searchParams.get("cargo_escolhido") || "" // legado vaga_normal
+    // AC10 SQS-49: selecao_evento envia lista de cargos separada por vírgula
+    const cargosEscolhidosParam = searchParams.get("cargos_escolhidos") || ""
+    const cargosEscolhidos = cargosEscolhidosParam
+        ? cargosEscolhidosParam.split(",").map(c => c.trim()).filter(Boolean)
+        : []
 
     const [vaga, setVaga] = useState<any>(null)
     const [empresa, setEmpresa] = useState<any>(null)
@@ -224,7 +229,9 @@ function CandidaturaContent() {
                     area_interesse: areasInteresse,
                     pcd_candidato: pcdCandidato,
                     pcd_tipo_candidato: pcdCandidato ? (pcdTipoCandidato || null) : null,
-                    cargo_escolhido: cargoEscolhidoParam || null, // SQS-49
+                    // AC10 SQS-49: array de cargos (selecao_evento) ou cargo único (vaga_normal)
+                    cargos_escolhidos: cargosEscolhidos.length > 0 ? cargosEscolhidos : undefined,
+                    cargo_escolhido: cargosEscolhidos.length === 0 ? (cargoEscolhidoParam || null) : undefined,
                 }),
             })
             const candData = await res.json()
@@ -236,17 +243,16 @@ function CandidaturaContent() {
 
             const codigo = candData.codigo
 
-            // Disparar OCR assíncrono (apenas para candidaturas não-banco de talentos)
+            // Disparar OCR para cada candidatura criada (selecao_evento pode ter N ids)
             if (!destinoBancoTalentos) {
-                fetch("/api/process-cv", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        candidatura_id: candData.id,
-                        vaga_id: vagaId,
-                        cv_url: publicUrl,
-                    }),
-                }).catch((err) => console.error("OCR warning:", err))
+                const idsOcr: string[] = candData.ids || [candData.id]
+                for (const cid of idsOcr) {
+                    fetch("/api/process-cv", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ candidatura_id: cid, vaga_id: vagaId, cv_url: publicUrl }),
+                    }).catch((err) => console.error("OCR warning:", err))
+                }
             }
 
 
