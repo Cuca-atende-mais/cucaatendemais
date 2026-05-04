@@ -1850,16 +1850,21 @@ async def processar_mensagem_empregabilidade(
                 return # Interrompe fluxo bot
         except Exception as _he:
             logger.error(f"[SQS-40] Erro ao disparar transbordo por dúvida: {_he}")
+        return  # Sempre encerra após tentativa de transbordo por dúvida
 
     # Detecção por expressão natural: usuário pede explicitamente atendimento humano
     _texto_lower = texto.strip().lower()
     _CONTAINS_HANDOVER = {
         "falar com humano", "falar com um humano", "atendente humano", "falar com atendente",
+        "falar com o atendente", "falar com um atendente", "falar com a atendente",
         "quero atendente", "quero humano", "humano por favor", "pessoa real",
+        "quero falar com atendente", "quero falar com o atendente",
+        "preciso de atendente", "chamar atendente", "atendente por favor",
         "falar com pessoa", "atendimento humano", "preciso de ajuda humana",
         "falar com alguem", "falar com alguém", "falar com um alguem", "falar com um alguém",
         "quero falar com alguem", "quero falar com alguém", "quero falar com um humano",
         "me passa para humano", "me passa para atendente", "falar com uma pessoa",
+        "quero atendimento", "preciso de atendimento", "falar com suporte",
     }
     if any(kw in _texto_lower for kw in _CONTAINS_HANDOVER):
         logger.info(f"[HANDOVER-KW] Transbordo por palavra-chave para {phone}")
@@ -1898,6 +1903,7 @@ async def processar_mensagem_empregabilidade(
                 return
         except Exception as _hwe:
             logger.error(f"[HANDOVER-KW] Erro ao disparar transbordo por palavra-chave: {_hwe}")
+        return  # Sempre encerra após tentativa de transbordo por palavra-chave
 
     # SQS-40 Task 3.4: Interceptar respostas ao convite de entrevista
     texto_norm = texto.strip()
