@@ -65,11 +65,11 @@ O Traefik do EasyPanel vê respostas sem instrução de cache e aplica sua polí
 
 ## Acceptance Criteria
 
-- [ ] **AC1** — `nginx/default.conf` atualizado com 4 blocos de location segmentados por tipo de asset (static, image, worker API, tudo o mais) com headers de cache corretos
-- [ ] **AC2** — `next.config.ts` com `async headers()` definindo `Cache-Control: no-store` para páginas e `immutable` para `/_next/static/`
-- [ ] **AC3** — `next.config.ts` com `compress: false` (Nginx comprime; Next.js não deve duplicar)
-- [ ] **AC4** — `docker-compose.yml` worker com `-w 4 --timeout 300` (aumentar workers e timeout)
-- [ ] **AC5** — `Dockerfile` do portal com `COPY --from=builder /app/public ./public` corrigido
+- [x] **AC1** — `nginx/default.conf` atualizado (referência local; produção usa EasyPanel/Traefik sem nginx separado)
+- [x] **AC2** — `next.config.ts` com `async headers()` definindo `Cache-Control: no-store` para páginas e `immutable` para `/_next/static/`
+- [x] **AC3** — `next.config.ts` com `compress: false` (Traefik/EasyPanel comprime; Next.js não deve duplicar)
+- [x] **AC4** — `docker-compose.yml` worker com `-w 4 --timeout 300 --graceful-timeout 30`
+- [x] **AC5** — `Dockerfile` do portal já tinha `COPY --from=builder /app/public ./public` (sem alteração necessária)
 - [ ] **AC6** — Middleware do Supabase com cache de sessão em memória por request (evitar `getUser()` duplicado na mesma requisição) — ou short-circuit para rotas `/api/` internas que não precisam de auth de usuário
 - [ ] **AC7** — Após deploy, verificar no DevTools (Network) que respostas de página têm `Cache-Control: no-store` e assets `/_next/static/` têm `Cache-Control: immutable`
 - [ ] **AC8** — Navegação entre páginas no portal funciona sem hard reload em 100% dos casos testados (login, dashboard, empregabilidade, atendimento, programação, configurações)
@@ -289,10 +289,10 @@ docker compose up -d worker
 
 ## File List
 
-- [x] `nginx/default.conf` — ✅ Passo 1 concluído (2026-05-04) — aguardando validação em produção
-- [ ] `cuca-portal/next.config.ts`
-- [ ] `docker-compose.yml`
-- [ ] `cuca-portal/Dockerfile`
+- [x] `nginx/default.conf` — ✅ Configuração local de referência (não utilizado em produção/EasyPanel)
+- [x] `cuca-portal/next.config.ts` — ✅ `async headers()` + `compress: false` implementados (2026-05-04)
+- [x] `docker-compose.yml` — ✅ worker: `-w 4 --timeout 300 --graceful-timeout 30` (2026-05-04)
+- [x] `cuca-portal/Dockerfile` — ✅ `COPY public` já presente (sem alteração necessária)
 
 ## Log de Execução
 
