@@ -1,6 +1,6 @@
 # SQS-50 — Fix: Performance — Cache Headers, Nginx e Camada de Proxy
 
-**Status:** InProgress
+**Status:** Ready for Review
 **Criado em:** 2026-05-04
 **Prioridade:** 🔴 Crítica — afeta todos os usuários, todas as páginas, toda ação no sistema
 
