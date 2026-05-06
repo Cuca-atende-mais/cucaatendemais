@@ -40,6 +40,10 @@ export default withSentryConfig(nextConfig, {
   project: "cuca-portal",
   authToken: process.env.SENTRY_AUTH_TOKEN,
   silent: true,
+  // SQS-51: hideSourceMaps foi removido em @sentry/nextjs recente; usar
+  // sourcemaps.disable. disableLogger é deprecated mas ainda aceito.
   disableLogger: true,
-  hideSourceMaps: true,
+  sourcemaps: {
+    disable: true,
+  },
 });
