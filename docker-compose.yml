@@ -2,7 +2,17 @@ version: "3.8"
 
 services:
   portal:
-    build: ./cuca-portal
+    # SQS-51 (A4): NEXT_PUBLIC_* precisa ir como build args — Next.js inlina
+    # essas variáveis em build time. Antes só estavam em `environment` (runtime),
+    # o que deixava o bundle do browser sem URL/anon key Supabase.
+    build:
+      context: ./cuca-portal
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_WORKER_URL: ${NEXT_PUBLIC_WORKER_URL}
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN}
+        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION}
     container_name: cuca-portal
     restart: always
     ports:
@@ -10,6 +20,7 @@ services:
     environment:
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - WORKER_URL=http://worker:8000
     depends_on:
       - worker

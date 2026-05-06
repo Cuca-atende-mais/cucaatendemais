@@ -160,41 +160,52 @@ export default function CriarCurriculoEditorPage() {
     // ── Carregar dados ────────────────────────────────────────────────────────
 
     useEffect(() => {
+        // SQS-51 (A2): try/catch/finally garante que setLoadingInit(false)
+        // sempre execute — antes, falhas de rede/RLS deixavam spinner infinito.
         const init = async () => {
-            const { data: talent } = await supabase
-                .from("talent_bank")
-                .select("nome, telefone, curriculo_estruturado")
-                .eq("id", talentId)
-                .single()
+            try {
+                const { data: talent, error: talentErr } = await supabase
+                    .from("talent_bank")
+                    .select("nome, telefone, curriculo_estruturado")
+                    .eq("id", talentId)
+                    .single()
 
-            if (!talent) {
-                toast.error("Candidato não encontrado.")
-                router.push("/empregabilidade/criar-curriculo")
-                return
+                if (talentErr) throw talentErr
+                if (!talent) {
+                    toast.error("Candidato não encontrado.")
+                    router.push("/empregabilidade/criar-curriculo")
+                    return
+                }
+                setTalentNome(talent.nome)
+
+                const { data: cur, error: curErr } = await supabase
+                    .from("curriculos")
+                    .select("*")
+                    .eq("talent_id", talentId)
+                    .is("deleted_at", null)
+                    .order("updated_at", { ascending: false })
+                    .limit(1)
+                    .maybeSingle()
+
+                if (curErr) throw curErr
+
+                if (cur) {
+                    setCurriculoId(cur.id)
+                    reset({ nome: talent.nome, telefone: talent.telefone || "", ...cur.dados } as CvForm)
+                } else if (talent.curriculo_estruturado && Object.keys(talent.curriculo_estruturado).length > 0) {
+                    reset({ nome: talent.nome, telefone: talent.telefone || "", ...talent.curriculo_estruturado } as CvForm)
+                } else {
+                    reset({ nome: talent.nome, telefone: talent.telefone || "" } as unknown as CvForm)
+                }
+            } catch (err: any) {
+                console.error("[criar-curriculo/init]", err)
+                toast.error(err?.message || "Falha ao carregar candidato.")
+            } finally {
+                setLoadingInit(false)
             }
-            setTalentNome(talent.nome)
-
-            const { data: cur } = await supabase
-                .from("curriculos")
-                .select("*")
-                .eq("talent_id", talentId)
-                .is("deleted_at", null)
-                .order("updated_at", { ascending: false })
-                .limit(1)
-                .maybeSingle()
-
-            if (cur) {
-                setCurriculoId(cur.id)
-                reset({ nome: talent.nome, telefone: talent.telefone || "", ...cur.dados } as CvForm)
-            } else if (talent.curriculo_estruturado && Object.keys(talent.curriculo_estruturado).length > 0) {
-                // Migrar do campo legado
-                reset({ nome: talent.nome, telefone: talent.telefone || "", ...talent.curriculo_estruturado } as CvForm)
-            } else {
-                reset({ nome: talent.nome, telefone: talent.telefone || "" } as unknown as CvForm)
-            }
-            setLoadingInit(false)
         }
         init()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [talentId])
 
     // ── Salvar currículo + upsert talent_bank (RN1) ──────────────────────────

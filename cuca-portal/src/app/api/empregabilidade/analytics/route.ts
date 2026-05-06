@@ -16,32 +16,39 @@ export async function GET() {
     )
 
     try {
-        const [
-            { data: tbStatus },
-            { data: tbPrimeiroEmprego },
-            { data: tbAreas },
-            { data: tbEscolaridade },
-            { data: vagasStatus },
-            { data: candidaturasStatus },
-            { data: vagasDisputadas },
-        ] = await Promise.all([
-            // Talent bank por status
+        // SQS-51 (A3): Promise.allSettled para uma falha pontual não derrubar
+        // o painel inteiro; vagas.empresa_nome não existe — usar join via empresas(nome).
+        const settled = await Promise.allSettled([
             supabase.from("talent_bank").select("status"),
-            // Primeiro emprego
             supabase.from("talent_bank").select("primeiro_emprego").not("skills_jsonb", "is", null),
-            // Área de interesse (top áreas)
             supabase.from("talent_bank").select("area_interesse").eq("status", "disponivel"),
-            // Escolaridade (HF37-04: usa coluna normalizada com 11 níveis canônicos)
             supabase.from("talent_bank").select("escolaridade_normalizada"),
-            // Vagas por status
             supabase.from("vagas").select("status"),
-            // Candidaturas por status
             supabase.from("candidaturas").select("status"),
-            // Vagas mais disputadas (top 5 com mais candidaturas)
             supabase.from("candidaturas")
-                .select("vaga_id, vagas(titulo, empresa_nome)")
+                .select("vaga_id, vagas(titulo, empresa_id, empresas(nome))")
                 .not("vaga_id", "is", null),
         ])
+        const dataOf = <T = any[]>(idx: number): T | null => {
+            const r = settled[idx]
+            if (r.status !== "fulfilled") {
+                console.error(`[analytics] query ${idx} falhou:`, r.reason)
+                return null
+            }
+            const { data, error } = r.value as { data: T | null; error: any }
+            if (error) {
+                console.error(`[analytics] query ${idx} erro Supabase:`, error)
+                return null
+            }
+            return data
+        }
+        const tbStatus = dataOf<any[]>(0)
+        const tbPrimeiroEmprego = dataOf<any[]>(1)
+        const tbAreas = dataOf<any[]>(2)
+        const tbEscolaridade = dataOf<any[]>(3)
+        const vagasStatus = dataOf<any[]>(4)
+        const candidaturasStatus = dataOf<any[]>(5)
+        const vagasDisputadas = dataOf<any[]>(6)
 
         // Talent bank por status
         const tbStatusMap: Record<string, number> = {}
@@ -100,9 +107,11 @@ export async function GET() {
             if (!id) continue
             const vaga = r.vagas as any
             if (!vagasCountMap[id]) {
+                // SQS-51 (A3): empresa vem do join vagas → empresas(nome)
+                const empresaNome = vaga?.empresas?.nome ?? "Empresa não informada"
                 vagasCountMap[id] = {
                     titulo: vaga?.titulo ?? "Vaga sem título",
-                    empresa: vaga?.empresa_nome ?? "Empresa não informada",
+                    empresa: empresaNome,
                     total: 0,
                 }
             }

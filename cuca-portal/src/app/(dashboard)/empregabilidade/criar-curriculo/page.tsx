@@ -124,35 +124,28 @@ export default function CriarCurriculoListPage() {
         }
         setCriando(true)
         try {
-            // 1. Criar entrada no Banco de Talentos
-            const { data: talent, error: tErr } = await supabase
-                .from("talent_bank")
-                .insert({
-                    nome: novoNome.trim(),
-                    telefone: novoTel.trim(),
-                    data_nascimento: novoNasc || null,
-                    area_interesse: novoArea ? [novoArea] : null,
-                    status: "disponivel",
-                })
-                .select("id")
-                .single()
+            // SQS-51 (A1): RPC SECURITY DEFINER cria talent_bank + currículo
+            // atomicamente e valida auth.uid() em colaboradores. Substitui dois
+            // INSERTs separados que disparavam violação de RLS quando a sessão
+            // estava expirada ou o build do Next saiu sem NEXT_PUBLIC_*.
+            const { data: talentId, error: rpcErr } = await supabase.rpc(
+                "criar_candidato_curriculo",
+                {
+                    p_nome: novoNome.trim(),
+                    p_telefone: novoTel.trim(),
+                    p_data_nascimento: novoNasc || null,
+                    p_area: novoArea || null,
+                }
+            )
 
-            if (tErr || !talent) throw tErr || new Error("Erro ao criar candidato")
-
-            // 2. Criar currículo vinculado com dados iniciais
-            const { error: cErr } = await supabase
-                .from("curriculos")
-                .insert({
-                    talent_id: talent.id,
-                    dados: { nome: novoNome.trim(), telefone: novoTel.trim() },
-                })
-
-            if (cErr) throw cErr
+            if (rpcErr || !talentId) {
+                throw rpcErr || new Error("Erro ao criar candidato")
+            }
 
             toast.success("Candidato criado! Abrindo editor de currículo...")
             setNovoOpen(false)
             setNovoNome(""); setNovoTel(""); setNovoNasc(""); setNovoArea("")
-            router.push(`/empregabilidade/criar-curriculo/${talent.id}`)
+            router.push(`/empregabilidade/criar-curriculo/${talentId}`)
         } catch (err: any) {
             toast.error(err.message || "Erro ao criar candidato.")
         } finally {

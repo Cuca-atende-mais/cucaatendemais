@@ -3,6 +3,10 @@
 !PLANO_DESENVOLVIMENTO.md
 *.xlsx
 
+# SQS-51 (A7): MCP config contém token Supabase — nunca versionar
+.mcp.json
+.mcp.local.json
+
 # Dependências
 node_modules/
 __pycache__/
@@ -40,3 +44,15 @@ logs/
 # Temporary files
 tmp/
 temp/
+
+# Environment & Secrets (AIOX)
+*.key
+*.pem
+
+# Dependencies (AIOX)
+node_modules
+
+# AIOX Local (AIOX)
+.aiox-core/local/
+.claude/settings.local.json
+.aiox/install-log.txt

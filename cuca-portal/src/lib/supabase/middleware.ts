@@ -36,6 +36,21 @@ export async function updateSession(request: NextRequest) {
     } = await supabase.auth.getUser()
 
     const { pathname } = request.nextUrl
+
+    // SQS-51 (A6): rotas públicas explícitas em /empregabilidade/*.
+    // Antes: pathname.startsWith('/empregabilidade') liberava também o dashboard
+    // interno (Route Group `(dashboard)`), expondo banco-talentos, candidatos,
+    // criar-curriculo etc. sem auth e disparando RLS no talent_bank.
+    const publicEmpregabilidadePrefixes = [
+        '/empregabilidade/vagas',         // página pública de listagem/visualização externa
+        '/empregabilidade/candidatura',   // formulário público de candidatura
+        '/empregabilidade/print',         // impressão pública de currículo
+        '/empregabilidade/selecao',       // página pública de seleção/evento
+    ]
+    const isPublicEmpregabilidade = publicEmpregabilidadePrefixes.some(p =>
+        pathname === p || pathname.startsWith(p + '/')
+    )
+
     const isPublicPath =
         pathname === '/login' ||
         pathname.startsWith('/auth') ||
@@ -43,7 +58,7 @@ export async function updateSession(request: NextRequest) {
         pathname === '/api/colaboradores/setup-password' ||
         pathname === '/api/upload-cv' ||               // upload de currículo por candidatos externos
         pathname === '/api/process-cv' ||              // OCR disparado pelo formulário público
-        pathname.startsWith('/empregabilidade') ||     // páginas públicas para empresas/candidatos externos
+        isPublicEmpregabilidade ||                     // páginas públicas específicas (whitelist)
         pathname.startsWith('/vagas') ||               // páginas públicas de vagas
         pathname.startsWith('/api/empregabilidade') || // APIs públicas de empregabilidade
         pathname.startsWith('/feedback-empresa')        // formulário público de feedback para empresas

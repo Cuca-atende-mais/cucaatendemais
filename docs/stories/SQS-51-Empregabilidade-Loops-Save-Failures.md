@@ -1,6 +1,6 @@
 # SQS-51 — Empregabilidade: Loops Infinitos, Falhas ao Salvar e Perda de Dados
 
-**Status:** Draft
+**Status:** InProgress
 **Tipo:** Bugfix crítico (P0)
 **Epic:** Sprint 37 (estabilização produção)
 **Owner sugerido:** @dev (com gate de @qa antes de push)
@@ -63,17 +63,19 @@ Sem sinal de saturação, sem timeouts de checkpoint anormais, sem deadlocks. Ap
 - Verificado em `information_schema.columns`: tabela `vagas` tem **`empresa_id` (uuid)**, não `empresa_nome`. Confere com migrations: nenhuma cria `empresa_nome` em `vagas`.
 - Resultado: `Promise.all` no analytics derruba **todo** o painel (uma rejeição mata todas as métricas paralelas), gerando o erro do log e dashboard vazio.
 
-### A4. Build do Next.js não recebe NEXT_PUBLIC_* — **CRÍTICO**
+### A4. Build do Next.js não recebe NEXT_PUBLIC_* — **CRÍTICO (suspeito principal)**
 
 - Arquivo: `cuca-portal/Dockerfile:17-26` declara `ARG` e `ENV` para `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SENTRY_DSN`, `NEXT_PUBLIC_APP_VERSION`, `NEXT_PUBLIC_WORKER_URL`.
 - Arquivo: `docker-compose.yml:4-15` (root) só passa as vars em `environment:` — **não em `build.args:`**.
-- Next.js inlina `NEXT_PUBLIC_*` em **build time**. Sem build-args, o bundle do browser sai com strings vazias / undefined → cliente Supabase do browser não consegue autenticar → todas as chamadas client-side falham silenciosamente ou caem em RLS (A1) e/ou no loop (A2).
-- **No EasyPanel:** confirmar que as variáveis estão configuradas em **Build Variables**, não só em **Environment**, ou ajustar o build para receber via `build.args` no manifest do EasyPanel.
+- Screenshot do EasyPanel mostra todas as `NEXT_PUBLIC_*` em **"Variáveis de Ambiente" (runtime)**. Para Next.js, essas variáveis precisam estar disponíveis em **build time** (`--build-arg`).
+- Next.js inlina `NEXT_PUBLIC_*` durante `npm run build`. Sem build-args, o bundle do browser sai com strings vazias / undefined → cliente Supabase do browser não consegue autenticar → todas as chamadas client-side falham silenciosamente ou caem em RLS (A1) e/ou no loop (A2).
+- **Sintomas no console batem:** o erro do Chrome ("message channel closed") é noise de extensão; o **silêncio** sobre Supabase no console (sem 401/CORS/fetch error) é assinatura de cliente instanciado com URL vazia.
+- **Próxima ação do usuário:** ir no EasyPanel → cuca/portal → Build/Configurações de Source → adicionar as `NEXT_PUBLIC_*` em **Build Arguments** (não só Environment) → redeploy. Validar abrindo F12 → Sources → buscar `svzkrkfzpiqcesloukgb` no bundle.
 
-### A5. Portal sem `SUPABASE_SERVICE_ROLE_KEY` no compose — **ALTO**
+### ~~A5. Portal sem `SUPABASE_SERVICE_ROLE_KEY`~~ — **REJEITADO após screenshots EasyPanel**
 
-- 25 referências a `SUPABASE_SERVICE_ROLE_KEY` em `cuca-portal/src/app/api/` (rotas server-side privilegiadas: `vagas`, `candidaturas`, `talent-bank`, `enviar-cv-lote`, `triar-banco-talentos`, `selecao`, etc.).
-- `docker-compose.yml` do portal não injeta a variável. Se o EasyPanel não estiver injetando manualmente, **todas essas APIs retornam 500** e o frontend acaba ou em loading infinito (A2) ou em toasts genéricos. Validar configuração no EasyPanel.
+- Confirmado via screenshot do EasyPanel (cuca / portal, linha 11 das Variáveis de Ambiente): `SUPABASE_SERVICE_ROLE_KEY` **está configurado** em runtime.
+- Rotas server-side do portal funcionam. Não é causa dos sintomas.
 
 ### A6. Middleware libera todo `/empregabilidade` como público — **ALTO (segurança + funcional)**
 
