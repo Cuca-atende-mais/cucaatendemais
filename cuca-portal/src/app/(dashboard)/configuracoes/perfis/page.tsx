@@ -66,12 +66,23 @@ const MODULE_GROUPS = [
         ]
     },
     {
-        category: 'Programação & Empregabilidade',
+        category: 'Programação',
         modules: [
             { id: 'programacao_mensal', label: 'Programação de Eventos: Mensal' },
             { id: 'programacao_pontual', label: 'Programação de Eventos: Pontual' },
-            { id: 'empreg_banco_cv', label: 'Empregabilidade: Banco de Currículos (Candidatos)' },
+        ]
+    },
+    {
+        category: 'Empregabilidade',
+        modules: [
+            { id: 'empreg_painel', label: 'Empregabilidade: Painel Geral (Dashboard)' },
+            { id: 'atendimentos_empregabilidade', label: 'Empregabilidade: Atendimento (Chat WhatsApp)' },
+            { id: 'empreg_empresas', label: 'Empregabilidade: Empresas Parceiras' },
             { id: 'empreg_vagas', label: 'Empregabilidade: Gestão de Vagas' },
+            { id: 'empreg_selecao', label: 'Empregabilidade: Marcar Seleção / Evento' },
+            { id: 'empreg_candidatos', label: 'Empregabilidade: Candidatos' },
+            { id: 'empreg_banco_cv', label: 'Empregabilidade: Banco de Talentos' },
+            { id: 'empreg_curriculos', label: 'Empregabilidade: Criar / Editar Currículo' },
         ]
     },
     {
