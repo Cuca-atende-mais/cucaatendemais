@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/lib/auth/user-provider"
 import { Button } from "@/components/ui/button"
@@ -46,7 +46,6 @@ const MODULE_GROUPS = [
         category: 'Atendimentos WhatsApp',
         modules: [
             { id: 'atendimentos_institucional', label: 'Atendimento — Institucional' },
-            { id: 'atendimentos_empregabilidade', label: 'Atendimento — Empregabilidade' },
             { id: 'atendimentos_programacao', label: 'Atendimento — Programação' },
         ]
     },
@@ -110,16 +109,58 @@ const MODULE_GROUPS = [
     }
 ]
 
-const FLAT_MODULES = MODULE_GROUPS.flatMap(g => g.modules)
+type Role = {
+    id: string
+    name: string
+    description: string | null
+    unidade_cuca?: string | null
+}
+
+type PermissionField = 'can_read' | 'can_create' | 'can_update' | 'can_delete'
+
+type Permission = {
+    id: string | null
+    role_id: string
+    module: string
+    label: string
+    can_read: boolean
+    can_create: boolean
+    can_update: boolean
+    can_delete: boolean
+}
+
+const uniqueModulesById = (modules: Array<{ id: string; label: string }>) => {
+    const seen = new Set<string>()
+    return modules.filter(module => {
+        if (seen.has(module.id)) return false
+        seen.add(module.id)
+        return true
+    })
+}
+
+const getErrorMessage = (error: unknown) => {
+    if (error instanceof Error) return error.message
+    if (typeof error === 'object' && error !== null && 'message' in error) {
+        const message = (error as { message?: unknown }).message
+        if (typeof message === 'string') return message
+    }
+    return "Erro inesperado"
+}
 
 export default function GestaoPerfisPage() {
     const { isDeveloper, profile } = useUser()
-    const groupsToRender = isDeveloper ? MODULE_GROUPS : MODULE_GROUPS.filter(g => g.category !== 'Módulo Técnico')
-    const validFlatModules = groupsToRender.flatMap(g => g.modules)
+    const groupsToRender = useMemo(
+        () => isDeveloper ? MODULE_GROUPS : MODULE_GROUPS.filter(g => g.category !== 'Módulo Técnico'),
+        [isDeveloper]
+    )
+    const validFlatModules = useMemo(
+        () => uniqueModulesById(groupsToRender.flatMap(g => g.modules)),
+        [groupsToRender]
+    )
 
-    const [roles, setRoles] = useState<any[]>([])
-    const [selectedRole, setSelectedRole] = useState<any>(null)
-    const [permissions, setPermissions] = useState<any[]>([])
+    const [roles, setRoles] = useState<Role[]>([])
+    const [selectedRole, setSelectedRole] = useState<Role | null>(null)
+    const [permissions, setPermissions] = useState<Permission[]>([])
 
     const [isCreating, setIsCreating] = useState(false)
     const [isEditingRoleInfo, setIsEditingRoleInfo] = useState(false)
@@ -129,11 +170,10 @@ export default function GestaoPerfisPage() {
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
 
-    const supabase = createClient()
+    const supabase = useMemo(() => createClient(), [])
+    const selectedRoleId = selectedRole?.id
 
-    useEffect(() => { fetchRoles() }, [])
-
-    const fetchRoles = async () => {
+    const fetchRoles = useCallback(async () => {
         setLoading(true)
         const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
         let query = supabase.from('sys_roles').select('*').order('name')
@@ -145,16 +185,18 @@ export default function GestaoPerfisPage() {
         const { data, error } = await query
         if (data) {
             setRoles(data)
-            if (selectedRole) {
-                const refreshed = data.find(r => r.id === selectedRole.id)
+            if (selectedRoleId) {
+                const refreshed = data.find(r => r.id === selectedRoleId)
                 if (refreshed) setSelectedRole(refreshed)
             }
         }
         if (error) toast.error("Falha ao carregar perfis")
         setLoading(false)
-    }
+    }, [isDeveloper, profile?.unidade_cuca, selectedRoleId, supabase])
 
-    const loadRolePermissions = async (role: any) => {
+    useEffect(() => { fetchRoles() }, [fetchRoles])
+
+    const loadRolePermissions = async (role: Role) => {
         setSelectedRole(role)
         setIsCreating(false)
         setIsEditingRoleInfo(false)
@@ -167,7 +209,7 @@ export default function GestaoPerfisPage() {
                 ? { ...existing, label: mod.label }
                 : { id: null, role_id: role.id, module: mod.id, label: mod.label, can_read: false, can_create: false, can_update: false, can_delete: false }
         })
-        setPermissions(perms)
+        setPermissions(perms as Permission[])
     }
 
     const handleSaveRoleInfo = async () => {
@@ -184,7 +226,7 @@ export default function GestaoPerfisPage() {
                 setIsCreating(false)
                 fetchRoles()
                 loadRolePermissions(data)
-            } else {
+            } else if (selectedRole) {
                 const { error } = await supabase
                     .from('sys_roles').update({ name: roleForm.name, description: roleForm.description }).eq('id', selectedRole.id)
                 if (error) throw error
@@ -192,7 +234,7 @@ export default function GestaoPerfisPage() {
                 setIsEditingRoleInfo(false)
                 fetchRoles()
             }
-        } catch (err: any) { toast.error(err.message) }
+        } catch (err: unknown) { toast.error(getErrorMessage(err)) }
     }
 
     const deleteRole = async (id: string, name: string) => {
@@ -204,7 +246,7 @@ export default function GestaoPerfisPage() {
         fetchRoles()
     }
 
-    const handleCheckboxChange = (moduleId: string, field: string, checked: boolean) => {
+    const handleCheckboxChange = (moduleId: string, field: PermissionField, checked: boolean) => {
         setPermissions(prev => prev.map(p => {
             if (p.module !== moduleId) return p
             const updated = { ...p, [field]: checked }
@@ -222,7 +264,7 @@ export default function GestaoPerfisPage() {
         ))
     }
 
-    const handleColumnSelectAll = (field: string, check: boolean) => {
+    const handleColumnSelectAll = (field: PermissionField, check: boolean) => {
         setPermissions(prev => prev.map(p => {
             const updated = { ...p, [field]: check }
             if (check && field !== 'can_read') updated.can_read = true
@@ -232,22 +274,29 @@ export default function GestaoPerfisPage() {
     }
 
     const savePermissionsMatrix = async () => {
+        if (!selectedRole) return
         setSaving(true)
         try {
-            await supabase.from('sys_permissions').delete().eq('role_id', selectedRole.id)
-            const toInsert = permissions.map(p => ({
+            const { error: deleteError } = await supabase.from('sys_permissions').delete().eq('role_id', selectedRole.id)
+            if (deleteError) throw deleteError
+
+            const uniquePermissions = Array.from(new Map(permissions.map(p => [p.module, p])).values())
+            const toInsert = uniquePermissions.map(p => ({
                 role_id: selectedRole.id, module: p.module,
                 can_read: p.can_read, can_create: p.can_create, can_update: p.can_update, can_delete: p.can_delete
             }))
-            const { error } = await supabase.from('sys_permissions').insert(toInsert)
-            if (error) throw error
+            if (toInsert.length > 0) {
+                const { error } = await supabase.from('sys_permissions').insert(toInsert)
+                if (error) throw error
+            }
+            setPermissions(uniquePermissions)
             toast.success("Matriz de permissões salva!")
-        } catch (error: any) {
-            toast.error(error.message)
+        } catch (error: unknown) {
+            toast.error(getErrorMessage(error))
         } finally { setSaving(false) }
     }
 
-    const COLS = [
+    const COLS: Array<{ field: PermissionField; label: string; checkClass: string }> = [
         { field: 'can_read', label: 'Ver Menu', checkClass: 'data-[state=checked]:bg-primary data-[state=checked]:border-primary' },
         { field: 'can_create', label: 'Criar', checkClass: 'data-[state=checked]:bg-emerald-600 data-[state=checked]:border-emerald-600' },
         { field: 'can_update', label: 'Editar', checkClass: 'data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500' },
@@ -431,8 +480,8 @@ export default function GestaoPerfisPage() {
                                                         </TableCell>
                                                     </TableRow>
                                                     {group.modules.map(mod => {
-                                                        const perm = permissions.find(p => p.module === mod.id) || {}
-                                                        const isRowFull = perm.can_read && perm.can_create && perm.can_update && perm.can_delete
+                                                        const perm = permissions.find(p => p.module === mod.id)
+                                                        const isRowFull = Boolean(perm?.can_read && perm.can_create && perm.can_update && perm.can_delete)
                                                         return (
                                                             <TableRow key={mod.id} className="hover:bg-muted/20 transition-colors group/row border-b border-border/40">
                                                                 <TableCell className="py-3 pl-5 bg-card group-hover/row:bg-muted/20">
@@ -442,7 +491,7 @@ export default function GestaoPerfisPage() {
                                                                 {COLS.map(col => (
                                                                     <TableCell key={col.field} className="text-center border-l border-border/40 bg-card group-hover/row:bg-muted/20">
                                                                         <Checkbox
-                                                                            checked={perm[col.field] || false}
+                                                                            checked={perm?.[col.field] ?? false}
                                                                             onCheckedChange={c => handleCheckboxChange(mod.id, col.field, !!c)}
                                                                             className={`w-5 h-5 rounded border-border ${col.checkClass}`}
                                                                         />

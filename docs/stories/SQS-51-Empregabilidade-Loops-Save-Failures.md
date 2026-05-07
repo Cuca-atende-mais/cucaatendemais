@@ -64,6 +64,7 @@ EasyPanel repassa **todas** as Variáveis de Ambiente como build-args por padrã
 | A8 | Outros useEffect sem finally (auditoria geral) | MÉDIO | 🔲 Pendente |
 | A11 | Permissões de Empregabilidade sem granularidade no frontend | ALTO | ✅ Resolvido — novo (ver seção 4) |
 | A12 | Sentry não recebia erros de browser (consequência de A-NOVO) | MÉDIO | ✅ Resolvido com o fix do build |
+| A13 | `409 Conflict` ao salvar perfil por módulo duplicado em `sys_permissions` | ALTO | ✅ Resolvido — dedupe + erro explícito no save |
 
 ---
 
@@ -111,6 +112,29 @@ O sistema de permissões usa `colaboradores.role_id → sys_roles → sys_permis
 
 > ⚠️ **Ação necessária pós-deploy:** entrar em `/configuracoes/perfis` e configurar as novas permissões de Empregabilidade para cada perfil existente. Os perfis existentes ainda não têm as novas features marcadas — estão zeradas até o responsável configurar.
 
+### Correção pós-review: erro 409 ao salvar matriz de permissões
+
+Após a granularidade, o console do navegador mostrou:
+
+```text
+POST /rest/v1/sys_permissions?columns=...
+Failed to load resource: the server responded with a status of 409
+```
+
+**Causa real:** a tabela `sys_permissions` possui constraint única `UNIQUE (role_id, module)`. O módulo `atendimentos_empregabilidade` estava declarado duas vezes na matriz de perfis:
+
+- categoria `Atendimentos WhatsApp`;
+- categoria `Empregabilidade`.
+
+Ao salvar, o frontend fazia `delete` de permissões do perfil e em seguida `insert` de toda a matriz. Com o módulo duplicado no payload, o Supabase rejeitava o insert por conflito no par `role_id + module`.
+
+**Correções aplicadas:**
+
+- `atendimentos_empregabilidade` ficou em uma única categoria da matriz: `Empregabilidade`.
+- `validFlatModules` agora remove duplicatas por `module id` antes de montar o estado.
+- `savePermissionsMatrix()` agora valida o erro do `delete`; se RLS bloquear a exclusão, o erro real aparece no toast em vez de virar um `409` enganoso no insert.
+- `savePermissionsMatrix()` deduplica `permissions` antes do insert, protegendo contra futuras duplicidades acidentais.
+
 ---
 
 ## 5. Acceptance Criteria — status final
@@ -146,6 +170,13 @@ O sistema de permissões usa `colaboradores.role_id → sys_roles → sys_permis
 - [x] `/configuracoes/perfis` expandido com 8 módulos granulares de Empregabilidade
 - [x] `constants.ts` com recurso correto por item do menu
 - [ ] Responsável deve configurar permissões por perfil após deploy ← **ação do usuário**
+
+### AC8 — Salvamento da matriz de perfis sem 409 ✅
+- [x] Removido `module id` duplicado `atendimentos_empregabilidade` da matriz renderizada
+- [x] `validFlatModules` deduplica por `module id`
+- [x] `savePermissionsMatrix()` checa erro do `delete` antes do `insert`
+- [x] `savePermissionsMatrix()` deduplica payload antes de inserir em `sys_permissions`
+- [ ] Smoke test em produção: `/configuracoes/perfis` → alterar Empregabilidade → salvar sem `409`
 
 ### AC7 — Observabilidade
 - [x] Build passando → Sentry volta a receber erros do browser
@@ -199,7 +230,17 @@ O sistema de permissões usa `colaboradores.role_id → sys_roles → sys_permis
 - [ ] Criar candidato → editor abre → salvar funciona → sem spinner infinito
 - [ ] Abrir `/empregabilidade/criar-curriculo` sem login → redireciona para `/login`
 - [ ] `/configuracoes/perfis` → selecionar perfil → configurar Empregabilidade → salvar → colaborador com perfil atualizado vê/não vê os itens corretos
+- [ ] Console F12 ao salvar perfil: nenhuma resposta `409` em `sys_permissions`
 - [ ] Logs Postgres 24h: zero ocorrências de `empresa_nome does not exist` e `violates row-level security`
+
+**Validação local @dev (2026-05-07):**
+
+- [x] `npx eslint 'src/app/(dashboard)/configuracoes/perfis/page.tsx'`
+- [ ] `npm run lint` — falhou localmente por OOM do Node após vários minutos (`JavaScript heap out of memory`)
+- [ ] `npm run typecheck` — script ausente em `cuca-portal/package.json`
+- [ ] `npm test` — script ausente em `cuca-portal/package.json`
+- [ ] `npx tsc --noEmit` — inconclusivo localmente: após regeneração parcial do Next, não emitiu erros mas atingiu timeout de 120s
+- [ ] `npm run build` — inconclusivo localmente: não emitiu erro, mas atingiu timeout de 180s em `Creating an optimized production build`
 
 ---
 
@@ -212,3 +253,4 @@ O sistema de permissões usa `colaboradores.role_id → sys_roles → sys_permis
 | 2026-05-06 | @dev | Descoberta causa-raiz real (build falhando); fix `ccca17d`; build `### Success` |
 | 2026-05-06 | @dev | Granularidade de perfis (não planejado); commit `e07dbbc` |
 | 2026-05-06 | @sm/@qa | Story atualizada com implementação real, achados revisados, QA gate pendente |
+| 2026-05-07 | @dev | Correção do `409 Conflict` em `sys_permissions`: módulo duplicado removido, dedupe, checagem de erro no save e validação local registrada |
