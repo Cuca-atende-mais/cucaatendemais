@@ -33,7 +33,7 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { Users, Plus, Shield, Building2, Mail, Phone, Search, Loader2 } from "lucide-react"
+import { Users, Plus, Shield, Building2, Mail, Phone, Search, Loader2, Send, Trash2 } from "lucide-react"
 import { toast } from "react-hot-toast"
 import { unidadesCuca } from "@/lib/constants"
 
@@ -60,6 +60,10 @@ export default function ColaboradoresPage() {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingColaborador, setEditingColaborador] = useState<any>(null)
     const [searchTerm, setSearchTerm] = useState("")
+    const [resendingId, setResendingId] = useState<string | null>(null)
+    const [deletingColaborador, setDeletingColaborador] = useState<any>(null)
+    const [isDeleting, setIsDeleting] = useState(false)
+    const [resendResult, setResendResult] = useState<{ setupLink?: string; message?: string } | null>(null)
     const { profile, isDeveloper, hasPermission } = useUser()
 
     const canManageStatus = hasPermission('config_colaboradores', 'update')
@@ -152,6 +156,50 @@ export default function ColaboradoresPage() {
         }
     }
 
+    const handleResendInvite = async (colab: any) => {
+        setResendingId(colab.id)
+        setResendResult(null)
+        try {
+            const res = await fetch('/api/colaboradores/resend-invite', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ colaboradorId: colab.id })
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || 'Erro ao reenviar convite')
+            if (data.setupLink) {
+                setResendResult({ setupLink: data.setupLink, message: data.message })
+            } else {
+                toast.success(data.message || 'Convite reenviado!')
+            }
+        } catch (error: any) {
+            toast.error(error.message)
+        } finally {
+            setResendingId(null)
+        }
+    }
+
+    const handleDelete = async () => {
+        if (!deletingColaborador) return
+        setIsDeleting(true)
+        try {
+            const res = await fetch('/api/colaboradores/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ colaboradorId: deletingColaborador.id })
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || 'Erro ao excluir colaborador')
+            toast.success('Colaborador removido!')
+            setDeletingColaborador(null)
+            invalidateColabs()
+        } catch (error: any) {
+            toast.error(error.message)
+        } finally {
+            setIsDeleting(false)
+        }
+    }
+
     const handleEdit = (colab: any) => {
         setEditingColaborador(colab)
         setFormData({
@@ -171,6 +219,7 @@ export default function ColaboradoresPage() {
     )
 
     return (
+        <>
         <div className="p-6 space-y-6">
             <div className="flex justify-between items-center">
                 <div>
@@ -361,9 +410,33 @@ export default function ColaboradoresPage() {
                                             </Badge>
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <Button variant="ghost" size="sm" onClick={() => handleEdit(colab)}>
-                                                Editar
-                                            </Button>
+                                            <div className="flex items-center justify-end gap-1">
+                                                <Button variant="ghost" size="sm" onClick={() => handleEdit(colab)}>
+                                                    Editar
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    title="Reenviar convite / Redefinir senha"
+                                                    disabled={resendingId === colab.id}
+                                                    onClick={() => handleResendInvite(colab)}
+                                                >
+                                                    {resendingId === colab.id
+                                                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                                                        : <Send className="w-4 h-4" />}
+                                                </Button>
+                                                {canManageStatus && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        title="Excluir colaborador"
+                                                        className="text-rose-500 hover:text-rose-600 hover:bg-rose-50"
+                                                        onClick={() => setDeletingColaborador(colab)}
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </Button>
+                                                )}
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))
@@ -373,5 +446,52 @@ export default function ColaboradoresPage() {
                 </CardContent>
             </Card>
         </div>
+        {/* Dialog: confirmação de exclusão */}
+        <Dialog open={!!deletingColaborador} onOpenChange={() => setDeletingColaborador(null)}>
+            <DialogContent className="sm:max-w-[420px]">
+                <DialogHeader>
+                    <DialogTitle className="text-rose-600">Excluir Colaborador</DialogTitle>
+                    <DialogDescription>
+                        Tem certeza que deseja remover <strong>{deletingColaborador?.nome_completo}</strong>?
+                        Essa ação revogará o acesso e não pode ser desfeita.
+                    </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => setDeletingColaborador(null)} disabled={isDeleting}>
+                        Cancelar
+                    </Button>
+                    <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
+                        {isDeleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                        {isDeleting ? 'Removendo...' : 'Confirmar Exclusão'}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+
+        {/* Dialog: link de setup quando e-mail falha no Resend */}
+        <Dialog open={!!resendResult} onOpenChange={() => setResendResult(null)}>
+            <DialogContent className="sm:max-w-[480px]">
+                <DialogHeader>
+                    <DialogTitle>Link de Redefinição de Acesso</DialogTitle>
+                    <DialogDescription>
+                        {resendResult?.message} Compartilhe o link abaixo diretamente com a colaboradora:
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="bg-muted rounded-md p-3 text-sm break-all font-mono select-all">
+                    {resendResult?.setupLink}
+                </div>
+                <DialogFooter>
+                    <Button
+                        onClick={() => {
+                            navigator.clipboard.writeText(resendResult?.setupLink || '')
+                            toast.success('Link copiado!')
+                        }}
+                    >
+                        Copiar Link
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+        </>
     )
 }
