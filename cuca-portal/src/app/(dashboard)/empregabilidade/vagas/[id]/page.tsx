@@ -233,7 +233,7 @@ export default function VagaDetalhesPage() {
             const text = await res.text()
             let data: any
             try { data = JSON.parse(text) } catch {
-                throw new Error("Resposta inválida do servidor. Pode ser timeout — tente com menos currículos.")
+                throw new Error("A análise demorou mais que o esperado (timeout Cloudflare). Tente novamente — o worker reduz automaticamente o lote.")
             }
             if (!res.ok) throw new Error(data.error || "Erro ao triar banco de talentos")
             const novos = data.candidatos || []

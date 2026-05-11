@@ -310,15 +310,17 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
     if termos_vaga:
         com_skills.sort(key=lambda c: _pontuar_candidato(c, termos_vaga), reverse=True)
 
-    # SQS-49: selecao_evento tem múltiplos cargos — varrer teto fixo para garantir resposta dentro do timeout do proxy (60s)
-    # Cada batch de 20 leva ~4-6s → 6 batches = 120 candidatos → ~30-40s total (margem segura)
+    # Cloudflare Pages impõe timeout de 30s wall clock na route Next.js que chama este worker.
+    # Cada batch GPT-4o leva ~4-6s → tetos conservadores para ficar em < 20s (margem de 10s):
+    #   Normal:         2 batches × 20 = 40 candidatos ≈ 10s
+    #   Seleção evento: 3 batches × 20 = 60 candidatos ≈ 15s
     is_selecao_evento = vaga.get("tipo") == "selecao_evento"
     if is_selecao_evento:
-        MAX_VARRER = min(len(com_skills), 120)  # teto fixo: 6 batches × 20 = ~35s
+        MAX_VARRER = min(len(com_skills), 60)
     else:
-        MAX_VARRER = min(len(com_skills), quantidade * 20)
+        MAX_VARRER = min(len(com_skills), 40)
     if len(com_skills) > MAX_VARRER:
-        logger.warning(f"[triar_banco_talentos] Limitando varredura de {len(com_skills)} para {MAX_VARRER} candidatos")
+        logger.warning(f"[triar_banco_talentos] Limitando varredura de {len(com_skills)} para {MAX_VARRER} candidatos (teto Cloudflare)")
         com_skills = com_skills[:MAX_VARRER]
 
     # max_tokens maior para selecao_evento: prompt mais inclusivo tende a aprovar mais candidatos por batch
