@@ -13,11 +13,19 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: "WORKER_URL não configurado." }, { status: 500 })
         }
 
-        const res = await fetch(`${workerUrl}/process-cv`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ candidatura_id, cv_url, vaga_id }),
-        })
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 120_000) // 2 min máximo para análise IA
+        let res: Response
+        try {
+            res = await fetch(`${workerUrl}/process-cv`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ candidatura_id, cv_url, vaga_id }),
+                signal: controller.signal,
+            })
+        } finally {
+            clearTimeout(timeout)
+        }
 
         if (!res.ok) {
             return NextResponse.json({ error: "Erro ao disparar análise de IA no worker." }, { status: 502 })

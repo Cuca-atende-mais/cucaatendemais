@@ -58,10 +58,11 @@ export async function POST(request: Request) {
                 console.error("Erro Auth Supabase:", createUserError)
                 return NextResponse.json({ error: createUserError.message }, { status: 400 })
             }
-            // Buscar usuário existente no Auth por e-mail (paginação — aceitável pois sabemos que existe)
+            // Buscar usuário existente no Auth por e-mail (paginação com limite de 20 páginas = 1000 usuários)
             let found = false
             let page = 1
-            while (!found) {
+            const MAX_PAGES = 20
+            while (!found && page <= MAX_PAGES) {
                 const { data: listData } = await adminAuth.admin.listUsers({ page, perPage: 50 })
                 const match = listData?.users?.find(u => u.email === email)
                 if (match) { userId = match.id; found = true; break }

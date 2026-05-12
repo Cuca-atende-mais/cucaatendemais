@@ -157,20 +157,25 @@ export default function DashboardPage() {
 
     const fetchStats = useCallback(async () => {
         setLoading(true)
-        let lQ = supabase.from("leads").select("id", { count: "exact", head: true })
-        let eQ = supabase.from("ouvidoria_eventos").select("id", { count: "exact", head: true }).eq("status", "ativo")
-        let vQ = supabase.from("vagas").select("id", { count: "exact", head: true }).eq("status", "aberta")
-        let oQ = supabase.from("ouvidoria_registros").select("id", { count: "exact", head: true })
-        if (selectedUnit !== "all") {
-            lQ = lQ.eq("unidade_cuca", selectedUnit)
-            eQ = eQ.eq("unidade_cuca", selectedUnit)
-            vQ = vQ.eq("unidade_cuca", selectedUnit)
-            oQ = oQ.eq("unidade_cuca", selectedUnit)
+        try {
+            let lQ = supabase.from("leads").select("id", { count: "exact", head: true })
+            let eQ = supabase.from("ouvidoria_eventos").select("id", { count: "exact", head: true }).eq("status", "ativo")
+            let vQ = supabase.from("vagas").select("id", { count: "exact", head: true }).eq("status", "aberta")
+            let oQ = supabase.from("ouvidoria_registros").select("id", { count: "exact", head: true })
+            if (selectedUnit !== "all") {
+                lQ = lQ.eq("unidade_cuca", selectedUnit)
+                eQ = eQ.eq("unidade_cuca", selectedUnit)
+                vQ = vQ.eq("unidade_cuca", selectedUnit)
+                oQ = oQ.eq("unidade_cuca", selectedUnit)
+            }
+            const [l, e, v, o] = await Promise.all([lQ, eQ, vQ, oQ])
+            setStats({ leads: l.count ?? 0, eventos: e.count ?? 0, vagas: v.count ?? 0, ouvidoria: o.count ?? 0 })
+            setLastRefresh(new Date())
+        } catch (err) {
+            console.error("[dashboard] Erro ao carregar stats:", err)
+        } finally {
+            setLoading(false)
         }
-        const [l, e, v, o] = await Promise.all([lQ, eQ, vQ, oQ])
-        setStats({ leads: l.count ?? 0, eventos: e.count ?? 0, vagas: v.count ?? 0, ouvidoria: o.count ?? 0 })
-        setLastRefresh(new Date())
-        setLoading(false)
     }, [selectedUnit])
 
     useEffect(() => { fetchStats() }, [fetchStats])
