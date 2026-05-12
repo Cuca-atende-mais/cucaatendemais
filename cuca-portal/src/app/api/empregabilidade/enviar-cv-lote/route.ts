@@ -76,8 +76,10 @@ export async function POST(request: NextRequest) {
             for (const c of grupo.slice(0, 5)) {
                 const cvUrl = c.arquivo_cv_url || null
                 if (cvUrl) {
+                    const dlController = new AbortController()
+                    const dlTimeout = setTimeout(() => dlController.abort(), 15_000) // 15s por arquivo
                     try {
-                        const fileRes = await fetch(cvUrl)
+                        const fileRes = await fetch(cvUrl, { signal: dlController.signal })
                         if (fileRes.ok) {
                             const ext = cvUrl.split(".").pop()?.split("?")[0] || "pdf"
                             const nomeSanitizado = (c.nome || "candidato").replace(/[^a-zA-Z0-9]/g, "_").slice(0, 30)
@@ -87,7 +89,9 @@ export async function POST(request: NextRequest) {
                             })
                         }
                     } catch {
-                        // ignora falha de download individual — e-mail segue sem aquele anexo
+                        // ignora falha/timeout de download individual — e-mail segue sem aquele anexo
+                    } finally {
+                        clearTimeout(dlTimeout)
                     }
                 }
             }

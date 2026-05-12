@@ -75,19 +75,27 @@ Com base nesses dados, gere um JSON estritamente no formato abaixo (sem markdown
   ]
 }`
 
-        const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            },
-            body: JSON.stringify({
-                model: 'gpt-4o-mini',
-                messages: [{ role: 'user', content: prompt }],
-                max_tokens: 1500,
-                temperature: 0.3,
-            }),
-        })
+        const openaiController = new AbortController()
+        const openaiTimeout = setTimeout(() => openaiController.abort(), 60_000) // 60s máximo para OpenAI
+        let openaiRes: Response
+        try {
+            openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o-mini',
+                    messages: [{ role: 'user', content: prompt }],
+                    max_tokens: 1500,
+                    temperature: 0.3,
+                }),
+                signal: openaiController.signal,
+            })
+        } finally {
+            clearTimeout(openaiTimeout)
+        }
 
         if (!openaiRes.ok) {
             const err = await openaiRes.text()

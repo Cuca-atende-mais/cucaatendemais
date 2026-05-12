@@ -8,11 +8,11 @@ function makeQueryClient() {
     return new QueryClient({
         defaultOptions: {
             queries: {
-                staleTime: 30 * 1000,       // 30s — dados frescos
-                gcTime: 5 * 60 * 1000,      // 5min — manter em cache sem subscribers
+                staleTime: 60 * 1000,        // 60s — reduz fetches desnecessários
+                gcTime: 5 * 60 * 1000,       // 5min — manter em cache sem subscribers
                 retry: 1,
-                refetchOnWindowFocus: true,  // refetch ao voltar para a aba
-                refetchOnReconnect: true,    // refetch ao reconectar
+                refetchOnWindowFocus: false, // desabilitado: causava refetch em massa a cada troca de aba
+                refetchOnReconnect: true,
             },
         },
     });

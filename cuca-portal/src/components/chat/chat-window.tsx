@@ -175,14 +175,16 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
     async function fetchMessages(requestSeq: number) {
         if (!conversationId) return;
         try {
+            // Busca as 200 mais recentes (DESC) e inverte para exibir em ordem cronológica
             const { data, error } = await supabase
                 .from('mensagens')
                 .select('*')
                 .eq('conversa_id', conversationId)
-                .order('created_at', { ascending: true });
+                .order('created_at', { ascending: false })
+                .limit(200);
             if (requestSeq !== requestSeqRef.current) return;
             if (error) throw error;
-            setMessages(data || []);
+            setMessages((data || []).reverse());
         } catch (err: unknown) {
             if (requestSeq !== requestSeqRef.current) return;
             toast.error("Erro ao carregar mensagens: " + errorMessage(err));

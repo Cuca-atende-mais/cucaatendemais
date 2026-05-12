@@ -13,17 +13,19 @@ export async function POST(request: Request) {
         // Isso previne que o Frontend React tente acessar a porta 8000 (CORS/Exposição)
         const workerUrl = process.env.WORKER_URL || 'http://127.0.0.1:8000'
 
-        const response = await fetch(`${workerUrl}/process-cv`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                candidatura_id,
-                cv_url,
-                vaga_id
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 120_000) // 2 min máximo para OCR
+        let response: Response
+        try {
+            response = await fetch(`${workerUrl}/process-cv`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ candidatura_id, cv_url, vaga_id }),
+                signal: controller.signal,
             })
-        })
+        } finally {
+            clearTimeout(timeout)
+        }
 
         if (!response.ok) {
             const errorText = await response.text()
