@@ -21,6 +21,20 @@ interface ChatSidebarProps {
     title?: string;
 }
 
+type SidebarLead = {
+    nome?: string | null;
+    telefone?: string | null;
+};
+
+type SidebarConversation = {
+    id: string;
+    status: string;
+    updated_at?: string | null;
+    instancia_uazapi?: string | null;
+    nao_lidas?: number | null;
+    leads?: SidebarLead | null;
+};
+
 export default function ChatSidebar({
     activeConversationId,
     onSelectConversation,
@@ -29,11 +43,12 @@ export default function ChatSidebar({
     filterUnidade,
     title = "Atendimento",
 }: ChatSidebarProps) {
-    const [conversations, setConversations] = useState<any[]>([]);
+    const [conversations, setConversations] = useState<SidebarConversation[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
     const supabase = createClient();
     const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const requestSeqRef = useRef(0);
     // Ref estável para fetchConversations — evita stale closure no canal Realtime
     const fetchRef = useRef<() => Promise<void>>(async () => {});
 
@@ -48,7 +63,11 @@ export default function ChatSidebar({
     }
 
     useEffect(() => {
+        let mounted = true;
+        const requestSeq = ++requestSeqRef.current;
+
         const fetchConversations = async () => {
+            if (!mounted || requestSeq !== requestSeqRef.current) return;
             let query = supabase
                 .from('conversas')
                 .select(`*, leads (nome, telefone)`)
@@ -63,11 +82,14 @@ export default function ChatSidebar({
                     .eq('ativa', true);
 
                 const nomes = instancias?.map(i => i.nome) ?? [];
+                if (!mounted || requestSeq !== requestSeqRef.current) return;
                 if (nomes.length > 0) {
                     query = query.in('instancia_uazapi', nomes);
                 } else {
-                    setConversations([]);
-                    setLoading(false);
+                    if (mounted && requestSeq === requestSeqRef.current) {
+                        setConversations([]);
+                        setLoading(false);
+                    }
                     return;
                 }
             } else if (filterAgenteTipo && filterAgenteTipo.length > 0) {
@@ -78,11 +100,14 @@ export default function ChatSidebar({
                         .eq('unidade_cuca', filterUnidade)
                         .eq('ativa', true);
                     const nomesUnidade = instanciasUnidade?.map(i => i.nome) ?? [];
+                    if (!mounted || requestSeq !== requestSeqRef.current) return;
                     if (nomesUnidade.length > 0) {
                         query = query.in('agente_tipo', filterAgenteTipo).in('instancia_uazapi', nomesUnidade);
                     } else {
-                        setConversations([]);
-                        setLoading(false);
+                        if (mounted && requestSeq === requestSeqRef.current) {
+                            setConversations([]);
+                            setLoading(false);
+                        }
                         return;
                     }
                 } else {
@@ -91,6 +116,7 @@ export default function ChatSidebar({
             }
 
             const { data, error } = await query;
+            if (!mounted || requestSeq !== requestSeqRef.current) return;
             if (!error && data) setConversations(data);
             setLoading(false);
         };
@@ -108,9 +134,14 @@ export default function ChatSidebar({
                 schema: 'public',
                 table: 'conversas',
             }, () => scheduleFetch())
-            .subscribe();
+            .subscribe((status) => {
+                if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                    console.warn(`[chat-sidebar] Realtime ${status} no canal ${channelName}`);
+                }
+            });
 
         return () => {
+            mounted = false;
             clearTimeout(debounceRef.current);
             supabase.removeChannel(channel);
         };
@@ -126,7 +157,7 @@ export default function ChatSidebar({
             const aHuman = a.status === 'awaiting_human' ? 0 : 1;
             const bHuman = b.status === 'awaiting_human' ? 0 : 1;
             if (aHuman !== bHuman) return aHuman - bHuman;
-            return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+            return new Date(b.updated_at ?? 0).getTime() - new Date(a.updated_at ?? 0).getTime();
         });
     }, [conversations, searchTerm]);
 

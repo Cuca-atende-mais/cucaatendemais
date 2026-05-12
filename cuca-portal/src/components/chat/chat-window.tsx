@@ -16,30 +16,64 @@ interface ChatWindowProps {
     moduloAtendimento?: string;
 }
 
+type ChatLead = {
+    nome?: string | null;
+    telefone?: string | null;
+};
+
+type ChatConversation = {
+    id: string;
+    lead_id: string;
+    instancia_uazapi: string;
+    status: string;
+    leads?: ChatLead | null;
+};
+
+type ChatMessage = {
+    id: string;
+    conversa_id: string;
+    lead_id: string;
+    remetente: "lead" | "agente" | string;
+    tipo: string;
+    conteudo: string | null;
+    created_at: string;
+};
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 export default function ChatWindow({ conversationId, moduloAtendimento = 'atendimentos_institucional' }: ChatWindowProps) {
     const { hasPermission } = useUser();
-    const [messages, setMessages] = useState<any[]>([]);
-    const [conversation, setConversation] = useState<any>(null);
+    const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [conversation, setConversation] = useState<ChatConversation | null>(null);
     const [loading, setLoading] = useState(false);
     const [newMessage, setNewMessage] = useState("");
     const [sending, setSending] = useState(false);
     const [assumindo, setAssumindo] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const requestSeqRef = useRef(0);
     const supabase = createClient();
 
     // Ref com dados de conexão — evita race condition no markAsRead (conversation pode ser null no 1º Realtime)
     const connectionDataRef = useRef<{ telefone: string; instancia: string } | null>(null);
 
     useEffect(() => {
+        const requestSeq = ++requestSeqRef.current;
+
         if (!conversationId) {
             setConversation(null);
             setMessages([]);
+            setLoading(false);
             connectionDataRef.current = null;
             return;
         }
 
-        fetchConversationDetails();
-        fetchMessages();
+        setConversation(null);
+        setMessages([]);
+        connectionDataRef.current = null;
+        fetchConversationDetails(requestSeq);
+        fetchMessages(requestSeq);
 
         const channel = supabase
             .channel(`chat-${conversationId}`)
@@ -50,7 +84,8 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 table: 'conversas',
                 filter: `id=eq.${conversationId}`,
             }, (payload) => {
-                setConversation((prev: any) => prev ? { ...prev, ...payload.new } : payload.new);
+                const next = payload.new as ChatConversation;
+                setConversation((prev) => prev ? { ...prev, ...next } : next);
             })
             // Mensagens novas da conversa
             .on('postgres_changes', {
@@ -59,14 +94,19 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 table: 'mensagens',
                 filter: `conversa_id=eq.${conversationId}`,
             }, (payload) => {
+                const incoming = payload.new as ChatMessage;
                 setMessages(prev => {
-                    if (prev.find(m => m.id === payload.new.id)) return prev;
-                    return [...prev, payload.new];
+                    if (prev.find(m => m.id === incoming.id)) return prev;
+                    return [...prev, incoming];
                 });
                 // T2: markAsRead via ref — não depende do estado async 'conversation'
-                if (payload.new.remetente === 'lead') markAsReadViaRef();
+                if (incoming.remetente === 'lead') markAsReadViaRef();
             })
-            .subscribe();
+            .subscribe((status) => {
+                if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                    console.warn(`[chat-window] Realtime ${status} na conversa ${conversationId}`);
+                }
+            });
 
         return () => {
             supabase.removeChannel(channel);
@@ -103,7 +143,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
         }
     }, [conversationId]);
 
-    async function fetchConversationDetails() {
+    async function fetchConversationDetails(requestSeq: number) {
         if (!conversationId) return;
         setLoading(true);
         try {
@@ -112,6 +152,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 .select('*, leads(*)')
                 .eq('id', conversationId)
                 .single();
+            if (requestSeq !== requestSeqRef.current) return;
             if (error) throw error;
             setConversation(data);
             // T2: popular ref assim que dados chegam — corrige race condition
@@ -123,14 +164,15 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 // Marcar como lido imediatamente ao abrir conversa
                 markAsReadViaRef();
             }
-        } catch (err: any) {
-            toast.error("Erro ao carregar conversa: " + err.message);
+        } catch (err: unknown) {
+            if (requestSeq !== requestSeqRef.current) return;
+            toast.error("Erro ao carregar conversa: " + errorMessage(err));
         } finally {
-            setLoading(false);
+            if (requestSeq === requestSeqRef.current) setLoading(false);
         }
     }
 
-    async function fetchMessages() {
+    async function fetchMessages(requestSeq: number) {
         if (!conversationId) return;
         try {
             const { data, error } = await supabase
@@ -138,15 +180,21 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 .select('*')
                 .eq('conversa_id', conversationId)
                 .order('created_at', { ascending: true });
+            if (requestSeq !== requestSeqRef.current) return;
             if (error) throw error;
             setMessages(data || []);
-        } catch (err: any) {
-            toast.error("Erro ao carregar mensagens: " + err.message);
+        } catch (err: unknown) {
+            if (requestSeq !== requestSeqRef.current) return;
+            toast.error("Erro ao carregar mensagens: " + errorMessage(err));
         }
     }
 
     async function handleSendMessage() {
         if (!newMessage.trim() || sending || !conversation) return;
+        if (!conversation.leads?.telefone) {
+            toast.error("Conversa sem telefone do lead. Recarregue os dados antes de enviar.");
+            return;
+        }
         setSending(true);
         try {
             const { data: savedMsg, error } = await supabase
@@ -162,6 +210,10 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 .select()
                 .single();
             if (error) throw error;
+            setMessages(prev => {
+                if (prev.find(m => m.id === savedMsg.id)) return prev;
+                return [...prev, savedMsg];
+            });
 
             const sendResp = await fetch('/api/chat/send-message', {
                 method: 'POST',
@@ -174,12 +226,14 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
             });
             if (!sendResp.ok) {
                 const errBody = await sendResp.text().catch(() => `HTTP ${sendResp.status}`);
+                await supabase.from('mensagens').delete().eq('id', savedMsg.id);
+                setMessages(prev => prev.filter(m => m.id !== savedMsg.id));
                 throw new Error(`Falha ao enviar via UAZAPI (${sendResp.status}): ${errBody}`);
             }
             setNewMessage("");
             toast.success("Mensagem enviada!");
-        } catch (err: any) {
-            toast.error("Erro ao enviar: " + err.message);
+        } catch (err: unknown) {
+            toast.error("Erro ao enviar: " + errorMessage(err));
         } finally {
             setSending(false);
         }
@@ -195,8 +249,8 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 .eq("id", conversationId);
             if (error) throw error;
             toast.success("IA pausada. Você assumiu o atendimento.");
-        } catch (err: any) {
-            toast.error("Erro ao assumir atendimento: " + err.message);
+        } catch (err: unknown) {
+            toast.error("Erro ao assumir atendimento: " + errorMessage(err));
         } finally {
             setAssumindo(false);
         }
@@ -211,8 +265,8 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 .eq("id", conversationId);
             if (error) throw error;
             toast.success("IA reativada. Bot voltará a responder.");
-        } catch (err: any) {
-            toast.error("Erro ao retornar IA: " + err.message);
+        } catch (err: unknown) {
+            toast.error("Erro ao retornar IA: " + errorMessage(err));
         }
     }
 
