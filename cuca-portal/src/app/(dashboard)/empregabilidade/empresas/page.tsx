@@ -42,6 +42,10 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 
+function getErrorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error ? error.message : fallback
+}
+
 export default function EmpresasPage() {
     const [empresas, setEmpresas] = useState<Empresa[]>([])
     const [loading, setLoading] = useState(true)
@@ -69,18 +73,20 @@ export default function EmpresasPage() {
 
     const fetchEmpresas = async () => {
         setLoading(true)
-        const { data, error } = await supabase
-            .from("empresas")
-            .select("*")
-            .order("nome", { ascending: true })
+        try {
+            const { data, error } = await supabase
+                .from("empresas")
+                .select("*")
+                .order("nome", { ascending: true })
 
-        if (error) {
+            if (error) throw error
+            setEmpresas(data || [])
+        } catch (error) {
             console.error("Erro ao buscar empresas:", error)
             toast.error("Erro ao carregar empresas")
-        } else {
-            setEmpresas(data || [])
+        } finally {
+            setLoading(false)
         }
-        setLoading(false)
     }
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -167,8 +173,8 @@ export default function EmpresasPage() {
                 `Empresa excluída. ${json.vagasRemovidas} vaga(s) e candidatos removidos.`
             )
             fetchEmpresas()
-        } catch (err: any) {
-            toast.error(err.message || "Erro ao excluir empresa.")
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Erro ao excluir empresa."))
         } finally {
             setDeleteLoading(false)
             setDeletingEmpresa(null)

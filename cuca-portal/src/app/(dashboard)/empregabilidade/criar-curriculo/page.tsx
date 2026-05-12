@@ -29,7 +29,7 @@ import {
 interface CurriculoRow {
     id: string
     talent_id: string
-    dados: Record<string, any>
+    dados: Record<string, unknown>
     deleted_at: string | null
     created_at: string
     updated_at: string
@@ -58,6 +58,10 @@ const AREAS_INTERESSE = [
     "Beleza e Estética (barbeiro, manicure, cabeleireiro)",
     "Cuidados Pessoais (babá, cuidador de idosos)",
 ]
+
+function getErrorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error ? error.message : fallback
+}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -94,22 +98,27 @@ export default function CriarCurriculoListPage() {
 
     const fetchCurriculos = useCallback(async () => {
         setLoading(true)
-        const from = page * PAGE_SIZE
-        const to = from + PAGE_SIZE - 1
+        try {
+            const from = page * PAGE_SIZE
+            const to = from + PAGE_SIZE - 1
 
-        const { data, error, count } = await supabase
-            .from("curriculos")
-            .select("*, talent_bank(nome, telefone)", { count: "exact" })
-            .is("deleted_at", null)
-            .order("updated_at", { ascending: false })
-            .range(from, to)
+            const { data, error, count } = await supabase
+                .from("curriculos")
+                .select("*, talent_bank(nome, telefone)", { count: "exact" })
+                .is("deleted_at", null)
+                .order("updated_at", { ascending: false })
+                .range(from, to)
 
-        if (error) { toast.error("Erro ao carregar currículos"); console.error(error) }
-        else {
+            if (error) throw error
+
             setCurriculos((data || []) as unknown as CurriculoRow[])
             setTotal(count ?? 0)
+        } catch (error) {
+            toast.error("Erro ao carregar currículos")
+            console.error("[criar-curriculo/list]", error)
+        } finally {
+            setLoading(false)
         }
-        setLoading(false)
     }, [page])
 
     useEffect(() => { fetchCurriculos() }, [fetchCurriculos])
@@ -146,8 +155,8 @@ export default function CriarCurriculoListPage() {
             setNovoOpen(false)
             setNovoNome(""); setNovoTel(""); setNovoNasc(""); setNovoArea("")
             router.push(`/empregabilidade/criar-curriculo/${talentId}`)
-        } catch (err: any) {
-            toast.error(err.message || "Erro ao criar candidato.")
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Erro ao criar candidato."))
         } finally {
             setCriando(false)
         }
@@ -173,14 +182,21 @@ export default function CriarCurriculoListPage() {
         setVincularCurriculo(c)
         setVagaSearch("")
         setVagaLoading(true)
-        const { data } = await supabase
-            .from("vagas")
-            .select("id, titulo, unidade_cuca, status, empresas(nome)")
-            .eq("status", "aberta")
-            .order("created_at", { ascending: false })
-            .limit(200)
-        setVagas((data || []) as unknown as VagaRow[])
-        setVagaLoading(false)
+        try {
+            const { data, error } = await supabase
+                .from("vagas")
+                .select("id, titulo, unidade_cuca, status, empresas(nome)")
+                .eq("status", "aberta")
+                .order("created_at", { ascending: false })
+                .limit(200)
+            if (error) throw error
+            setVagas((data || []) as unknown as VagaRow[])
+        } catch (error) {
+            toast.error("Erro ao carregar vagas.")
+            console.error("[criar-curriculo/vagas]", error)
+        } finally {
+            setVagaLoading(false)
+        }
     }
 
     const handleVincular = async (vaga: VagaRow) => {

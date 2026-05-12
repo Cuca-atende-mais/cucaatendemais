@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
-import { Candidatura, Vaga } from "@/lib/types/database"
+import { Candidatura } from "@/lib/types/database"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -29,11 +29,15 @@ type CandidatoComVaga = Candidatura & {
     } | null
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error ? error.message : fallback
+}
+
 export default function CandidatosGlobaisPage() {
     const [candidatos, setCandidatos] = useState<CandidatoComVaga[]>([])
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState("")
-    const [selectedCandidato, setSelectedCandidato] = useState<any>(null)
+    const [selectedCandidato, setSelectedCandidato] = useState<CandidatoComVaga | null>(null)
     const [isMatchModalOpen, setIsMatchModalOpen] = useState(false)
     const router = useRouter()
 
@@ -45,18 +49,20 @@ export default function CandidatosGlobaisPage() {
 
     const fetchCandidatos = async () => {
         setLoading(true)
-        const { data, error } = await supabase
-            .from("candidaturas")
-            .select("*, vagas(id, titulo, unidade_cuca)")
-            .order("created_at", { ascending: false })
+        try {
+            const { data, error } = await supabase
+                .from("candidaturas")
+                .select("*, vagas(id, titulo, unidade_cuca)")
+                .order("created_at", { ascending: false })
 
-        if (error) {
+            if (error) throw error
+            setCandidatos(data || [])
+        } catch (error) {
             console.error("Erro ao buscar candidatos:", error)
             toast.error("Erro ao carregar candidatos")
-        } else {
-            setCandidatos(data || [])
+        } finally {
+            setLoading(false)
         }
-        setLoading(false)
     }
 
     const calcularIdade = (dataStr: string | null) => {
@@ -81,8 +87,8 @@ export default function CandidatosGlobaisPage() {
                 toast.success("Status atualizado.")
             }
             fetchCandidatos()
-        } catch (error: any) {
-            toast.error(error.message || "Falha ao mudar status.")
+        } catch (error: unknown) {
+            toast.error(getErrorMessage(error, "Falha ao mudar status."))
         }
     }
 

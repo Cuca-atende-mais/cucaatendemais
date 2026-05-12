@@ -65,6 +65,10 @@ interface CvForm {
     habilidades: Habilidade[]
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error ? error.message : fallback
+}
+
 interface VagaRow {
     id: string
     titulo: string
@@ -197,9 +201,9 @@ export default function CriarCurriculoEditorPage() {
                 } else {
                     reset({ nome: talent.nome, telefone: talent.telefone || "" } as unknown as CvForm)
                 }
-            } catch (err: any) {
+            } catch (err: unknown) {
                 console.error("[criar-curriculo/init]", err)
-                toast.error(err?.message || "Falha ao carregar candidato.")
+                toast.error(getErrorMessage(err, "Falha ao carregar candidato."))
             } finally {
                 setLoadingInit(false)
             }
@@ -210,39 +214,29 @@ export default function CriarCurriculoEditorPage() {
 
     // ── Salvar currículo + upsert talent_bank (RN1) ──────────────────────────
 
-    const onSubmit = async (values: CvForm) => {
+    const onSubmit = async (values: CvForm): Promise<string | null> => {
         setSaving(true)
         try {
-            if (curriculoId) {
-                const { error } = await supabase
-                    .from("curriculos")
-                    .update({ dados: values })
-                    .eq("id", curriculoId)
-                if (error) throw error
-            } else {
-                const { data, error } = await supabase
-                    .from("curriculos")
-                    .insert({ talent_id: talentId, dados: values })
-                    .select("id")
-                    .single()
-                if (error) throw error
-                setCurriculoId(data.id)
+            const { data: savedId, error } = await supabase.rpc(
+                "salvar_curriculo_estruturado",
+                {
+                    p_talent_id: talentId,
+                    p_curriculo_id: curriculoId,
+                    p_dados: values as unknown,
+                }
+            )
+
+            if (error || !savedId) {
+                throw error || new Error("Erro ao salvar currículo.")
             }
 
-            // RN1: Atualizar nome e telefone no Banco de Talentos
-            if (values.nome || values.telefone) {
-                await supabase
-                    .from("talent_bank")
-                    .update({
-                        ...(values.nome && { nome: values.nome }),
-                        ...(values.telefone && { telefone: values.telefone }),
-                    })
-                    .eq("id", talentId)
-            }
-
+            setCurriculoId(savedId)
+            setTalentNome(values.nome || talentNome)
             toast.success("Currículo salvo e Banco de Talentos atualizado!")
-        } catch (err: any) {
-            toast.error(err.message || "Erro ao salvar.")
+            return savedId
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Erro ao salvar."))
+            return null
         } finally {
             setSaving(false)
         }
@@ -252,9 +246,10 @@ export default function CriarCurriculoEditorPage() {
 
     const handlePrint = () => {
         handleSubmit(async (values) => {
-            await onSubmit(values)
+            const savedId = await onSubmit(values)
+            if (!savedId) return
             // Buscar id do currículo recém-salvo
-            const id = curriculoId || await (async () => {
+            const id = savedId || curriculoId || await (async () => {
                 const { data } = await supabase
                     .from("curriculos")
                     .select("id")
@@ -290,7 +285,11 @@ export default function CriarCurriculoEditorPage() {
 
         // Salvar currículo primeiro se ainda não foi salvo
         const values = watch()
-        await onSubmit(values)
+        const savedId = await onSubmit(values)
+        if (!savedId) {
+            setVinculando(null)
+            return
+        }
 
         const { data: existing } = await supabase
             .from("candidaturas")
@@ -357,7 +356,7 @@ export default function CriarCurriculoEditorPage() {
                                 .limit(1)
                                 .maybeSingle()
                             if (!cur?.dados) return
-                            const d = cur.dados as any
+                            const d = cur.dados as Partial<CvForm>
                             const linhas: string[] = []
                             if (d.nome) linhas.push(`Nome: ${d.nome}`)
                             if (d.telefone) linhas.push(`Telefone: ${d.telefone}`)
@@ -367,25 +366,25 @@ export default function CriarCurriculoEditorPage() {
                             if (d.objetivo) linhas.push(`\nObjetivo:\n${d.objetivo}`)
                             if (d.formacoes?.length) {
                                 linhas.push("\nFormação:")
-                                d.formacoes.forEach((f: any) => {
+                                d.formacoes.forEach((f) => {
                                     linhas.push(`- ${f.escolaridade} em ${f.curso || ''} (${f.instituicao || ''}, ${f.status || ''}, ${f.ano || ''})`)
                                 })
                             }
                             if (d.experiencias?.length) {
                                 linhas.push("\nExperiências:")
-                                d.experiencias.forEach((e: any) => {
+                                d.experiencias.forEach((e) => {
                                     const periodo = `${e.data_inicio || ''}${e.atual ? ' - atual' : e.data_fim ? ` - ${e.data_fim}` : ''}`
                                     linhas.push(`- ${e.cargo || ''} em ${e.empresa || ''} (${periodo})`)
-                                    e.atividades?.forEach((a: any) => linhas.push(`  • ${a.descricao}`))
+                                    e.atividades?.forEach((a) => linhas.push(`  • ${a.descricao}`))
                                 })
                             }
                             if (d.cursos?.length) {
                                 linhas.push("\nCursos:")
-                                d.cursos.forEach((c: any) => linhas.push(`- ${c.titulo} (${c.instituicao || ''}, ${c.ano || ''})`))
+                                d.cursos.forEach((c) => linhas.push(`- ${c.titulo} (${c.instituicao || ''}, ${c.ano || ''})`))
                             }
                             if (d.habilidades?.length) {
                                 linhas.push("\nHabilidades:")
-                                d.habilidades.forEach((h: any) => linhas.push(`- ${h.titulo}: ${h.descricao}`))
+                                d.habilidades.forEach((h) => linhas.push(`- ${h.titulo}: ${h.descricao}`))
                             }
                             const cvText = linhas.join("\n")
                             await fetch("/api/process-cv-text", {
@@ -508,7 +507,7 @@ export default function CriarCurriculoEditorPage() {
                             placeholder="Ex: Auxiliar Administrativo | Atendente de Loja | Estoquista"
                         />
                         <p className="text-xs text-muted-foreground">
-                            Aparece como destaque no currículo. Use cargo(s) separados por " | ".
+                            Aparece como destaque no currículo. Use cargo(s) separados por &quot; | &quot;.
                         </p>
                     </div>
                 </Section>
@@ -578,7 +577,7 @@ export default function CriarCurriculoEditorPage() {
                                                         />
                                                         <Button
                                                             type="button" variant="ghost" size="icon"
-                                                            onClick={() => f.onChange(f.value.filter((_: any, k: number) => k !== j))}
+                                                            onClick={() => f.onChange(f.value.filter((_: Atividade, k: number) => k !== j))}
                                                         >
                                                             <Trash2 className="h-3.5 w-3.5 text-destructive" />
                                                         </Button>

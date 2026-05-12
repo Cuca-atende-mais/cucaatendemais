@@ -190,6 +190,8 @@ Ao salvar, o frontend fazia `delete` de permissões do perfil e em seguida `inse
 |---|---|
 | Perfis existentes sem as novas permissões → colaboradores perdem acesso a telas de Empregabilidade | **ATIVO** — responsável precisa configurar `/configuracoes/perfis` após deploy |
 | A8: outros useEffect sem finally em banco-talentos, candidatos, vagas | **ABERTO** — auditar em próxima story |
+| A14: editor de currículo salvava em duas operações browser-side (`curriculos` + `talent_bank`) | **RESOLVIDO** — RPC `salvar_curriculo_estruturado` transacional aplicada em produção |
+| A15: `UserProvider` recarregava perfil em `TOKEN_REFRESHED`/`INITIAL_SESSION` | **RESOLVIDO** — listener ignora eventos que não mudam usuário |
 | Token Supabase exposto em histórico do shell e chat (durante processo de push) | **ABERTO** — rotacionar PATs do GitHub e token Supabase |
 
 ---
@@ -217,6 +219,11 @@ Ao salvar, o frontend fazia `delete` de permissões do perfil e em seguida `inse
 - [x] `cuca-portal/next.config.ts`
 - [x] `cuca-portal/Dockerfile`
 - [x] `supabase/migrations/20260506000000_sqs51_rpc_criar_candidato_curriculo.sql`
+- [x] `supabase/migrations/20260512000000_sqs51_rpc_salvar_curriculo_estruturado.sql`
+- [x] `cuca-portal/src/lib/auth/user-provider.tsx`
+- [x] `cuca-portal/src/app/(dashboard)/empregabilidade/banco-talentos/page.tsx`
+- [x] `cuca-portal/src/app/(dashboard)/empregabilidade/candidatos/page.tsx`
+- [x] `cuca-portal/src/app/(dashboard)/empregabilidade/empresas/page.tsx`
 - [x] `.gitignore` (adicionado `.mcp.json`)
 - [x] `.mcp.json` removido do tracking
 
@@ -242,6 +249,16 @@ Ao salvar, o frontend fazia `delete` de permissões do perfil e em seguida `inse
 - [ ] `npx tsc --noEmit` — inconclusivo localmente: após regeneração parcial do Next, não emitiu erros mas atingiu timeout de 120s
 - [ ] `npm run build` — inconclusivo localmente: não emitiu erro, mas atingiu timeout de 180s em `Creating an optimized production build`
 
+**Validação local @dev (2026-05-12):**
+
+- [x] `npx tsc --noEmit --pretty false`
+- [x] `npm run lint -- <arquivos alterados>` — 0 erros; warnings legados de hooks/imports não usados permanecem nas telas auditadas
+- [ ] `npm run lint` — inconclusivo localmente: `timeout 120s npm run lint` excedeu 120s sem emitir erros/saída final
+- [ ] `npm run typecheck` — script ausente em `cuca-portal/package.json`
+- [ ] `npm test` — script ausente em `cuca-portal/package.json`
+- [x] Supabase migration aplicada via MCP: `sqs51_rpc_salvar_curriculo_estruturado`
+- [x] Supabase security advisors executado após migration; novo aviso esperado `authenticated_security_definer_function_executable` para a RPC, aceito porque a função valida `auth.uid()` em `colaboradores`
+
 ---
 
 ## 10. Change Log
@@ -254,3 +271,4 @@ Ao salvar, o frontend fazia `delete` de permissões do perfil e em seguida `inse
 | 2026-05-06 | @dev | Granularidade de perfis (não planejado); commit `e07dbbc` |
 | 2026-05-06 | @sm/@qa | Story atualizada com implementação real, achados revisados, QA gate pendente |
 | 2026-05-07 | @dev | Correção do `409 Conflict` em `sys_permissions`: módulo duplicado removido, dedupe, checagem de erro no save e validação local registrada |
+| 2026-05-12 | @dev | Correção definitiva do editor de currículo: save transacional via RPC, sincronização de `curriculos` + `talent_bank.curriculo_estruturado`, auth listener sem reload em token refresh e loaders de Empregabilidade com `finally` |

@@ -158,6 +158,10 @@ function getAreaConfig(areaInteresse: string[] | null | undefined): AreaConfig {
 
 const PAGE_SIZE = 25
 
+function getErrorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error ? error.message : fallback
+}
+
 export default function BancoTalentosPage() {
     const [talentos, setTalentos] = useState<TalentBank[]>([])
     const [loading, setLoading] = useState(true)
@@ -206,68 +210,79 @@ export default function BancoTalentosPage() {
     // Métricas gerais + contagem por área (carregadas uma vez no mount)
     useEffect(() => {
         const fetchMetrics = async () => {
-            const [{ count: total }, { count: disp }, { data: areaRows }] = await Promise.all([
-                supabase.from("talent_bank").select("id", { count: "exact", head: true }),
-                supabase.from("talent_bank").select("id", { count: "exact", head: true }).eq("status", "disponivel"),
-                // Busca apenas area_interesse para montar contagens por card
-                supabase.from("talent_bank").select("area_interesse"),
-            ])
-            setTotalGeral(total ?? 0)
-            setTotalDisponiveis(disp ?? 0)
+            try {
+                const [{ count: total, error: totalErr }, { count: disp, error: dispErr }, { data: areaRows, error: areaErr }] = await Promise.all([
+                    supabase.from("talent_bank").select("id", { count: "exact", head: true }),
+                    supabase.from("talent_bank").select("id", { count: "exact", head: true }).eq("status", "disponivel"),
+                    // Busca apenas area_interesse para montar contagens por card
+                    supabase.from("talent_bank").select("area_interesse"),
+                ])
+                if (totalErr) throw totalErr
+                if (dispErr) throw dispErr
+                if (areaErr) throw areaErr
 
-            // Computa contagem por área localmente a partir dos dados brutos
-            const map = new Map<string | null, number>()
-            for (const row of (areaRows || [])) {
-                const areas = row.area_interesse as string[] | null
-                const cfg = getAreaConfig(areas)
-                map.set(cfg.key, (map.get(cfg.key) ?? 0) + 1)
+                setTotalGeral(total ?? 0)
+                setTotalDisponiveis(disp ?? 0)
+
+                // Computa contagem por área localmente a partir dos dados brutos
+                const map = new Map<string | null, number>()
+                for (const row of (areaRows || [])) {
+                    const areas = row.area_interesse as string[] | null
+                    const cfg = getAreaConfig(areas)
+                    map.set(cfg.key, (map.get(cfg.key) ?? 0) + 1)
+                }
+                setContagemPorArea(map)
+            } catch (error) {
+                console.error("[banco-talentos/metrics]", error)
             }
-            setContagemPorArea(map)
         }
         fetchMetrics()
     }, [])
 
     const fetchTalentos = useCallback(async () => {
         setLoading(true)
-        let query = supabase
-            .from("talent_bank")
-            .select("*", { count: "exact" })
-            .order("created_at", { ascending: false })
+        try {
+            let query = supabase
+                .from("talent_bank")
+                .select("*", { count: "exact" })
+                .order("created_at", { ascending: false })
 
-        if (debouncedSearch) {
-            query = query.or(`nome.ilike.%${debouncedSearch}%,telefone.ilike.%${debouncedSearch}%`)
-        }
-        if (filtroStatus !== "todos") query = query.eq("status", filtroStatus)
-        if (filtroArea !== undefined) {
-            if (filtroArea === null) {
-                query = query.is("area_interesse", null)
-            } else {
-                // Extrai o termo principal antes de " / " e "(" para suportar tanto
-                // o texto longo ("Administrativo / Escritório (...)") quanto o curto
-                // ("Administrativo") que podem estar salvos em registros de origens distintas.
-                // O cast ::text converte o array para string permitindo o ilike.
-                const termoPrincipal = filtroArea.split(" / ")[0].split("(")[0].trim()
-                query = query.filter("area_interesse::text", "ilike", `%${termoPrincipal}%`)
+            if (debouncedSearch) {
+                query = query.or(`nome.ilike.%${debouncedSearch}%,telefone.ilike.%${debouncedSearch}%`)
             }
-        }
-        if (filtroEscolaridade) query = query.eq("escolaridade_normalizada", filtroEscolaridade)
-        if (filtroGenero) query = query.eq("genero", filtroGenero)
-        if (filtroPCD !== "") query = query.eq("pcd", filtroPCD === "true")
-        if (filtroPrimeiroEmprego !== "") query = query.eq("primeiro_emprego", filtroPrimeiroEmprego === "true")
-        if (filtroBairro) query = query.ilike("bairro", `%${filtroBairro}%`)
+            if (filtroStatus !== "todos") query = query.eq("status", filtroStatus)
+            if (filtroArea !== undefined) {
+                if (filtroArea === null) {
+                    query = query.is("area_interesse", null)
+                } else {
+                    // Extrai o termo principal antes de " / " e "(" para suportar tanto
+                    // o texto longo ("Administrativo / Escritório (...)") quanto o curto
+                    // ("Administrativo") que podem estar salvos em registros de origens distintas.
+                    // O cast ::text converte o array para string permitindo o ilike.
+                    const termoPrincipal = filtroArea.split(" / ")[0].split("(")[0].trim()
+                    query = query.filter("area_interesse::text", "ilike", `%${termoPrincipal}%`)
+                }
+            }
+            if (filtroEscolaridade) query = query.eq("escolaridade_normalizada", filtroEscolaridade)
+            if (filtroGenero) query = query.eq("genero", filtroGenero)
+            if (filtroPCD !== "") query = query.eq("pcd", filtroPCD === "true")
+            if (filtroPrimeiroEmprego !== "") query = query.eq("primeiro_emprego", filtroPrimeiroEmprego === "true")
+            if (filtroBairro) query = query.ilike("bairro", `%${filtroBairro}%`)
 
-        const from = page * PAGE_SIZE
-        const to = from + PAGE_SIZE - 1
-        const { data, error, count } = await query.range(from, to)
+            const from = page * PAGE_SIZE
+            const to = from + PAGE_SIZE - 1
+            const { data, error, count } = await query.range(from, to)
 
-        if (error) {
-            console.error("Erro ao buscar talentos:", error)
-            toast.error("Erro ao carregar banco de talentos")
-        } else {
+            if (error) throw error
+
             setTalentos(data || [])
             setTotalCount(count ?? 0)
+        } catch (error) {
+            console.error("Erro ao buscar talentos:", error)
+            toast.error("Erro ao carregar banco de talentos")
+        } finally {
+            setLoading(false)
         }
-        setLoading(false)
     }, [debouncedSearch, filtroStatus, filtroArea, filtroEscolaridade, filtroGenero, filtroPCD, filtroPrimeiroEmprego, filtroBairro, page])
 
     useEffect(() => { fetchTalentos() }, [fetchTalentos])
@@ -305,8 +320,8 @@ export default function BancoTalentosPage() {
             setCadastroOpen(false)
             setFormNome(""); setFormTelefone(""); setFormNasc(""); setFormArea(""); setFormArquivo(null)
             fetchTalentos()
-        } catch (err: any) {
-            toast.error(err.message || "Erro ao cadastrar.")
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Erro ao cadastrar."))
         } finally {
             setSavingCadastro(false)
         }
@@ -323,8 +338,8 @@ export default function BancoTalentosPage() {
             }
             setTalentos(prev => prev.filter(t => t.id !== id))
             toast.success(`${nome} removido do banco de talentos.`)
-        } catch (err: any) {
-            toast.error(err.message || "Erro ao deletar candidato.")
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Erro ao deletar candidato."))
         } finally {
             setDeletandoId(null)
         }

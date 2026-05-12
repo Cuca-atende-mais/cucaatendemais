@@ -1,12 +1,20 @@
 "use client"
 
-import { createContext, useContext, useEffect, useMemo, useCallback, useState, useRef } from "react"
+import { createContext, useContext, useEffect, useMemo, useCallback, useState } from "react"
 import { User } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
 
-type Permission = {
-    recurso: string
-    acao: string
+type PermissionRecord = {
+    module: string
+    can_read: boolean
+    can_create: boolean
+    can_update: boolean
+    can_delete: boolean
+}
+
+type RoleJoin = {
+    name?: string | null
+    sys_permissions?: PermissionRecord[] | null
 }
 
 type UserProfile = {
@@ -14,7 +22,7 @@ type UserProfile = {
     nome_completo: string
     funcao: {
         nome: string
-        permissoes: any[]
+        permissoes: PermissionRecord[]
     }
     unidade_cuca: string
     email: string
@@ -84,8 +92,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                 email: data.email,
                 unidade_cuca: data.unidade_cuca,
                 funcao: {
-                    nome: (data.sys_roles as any)?.name || 'Sem Função',
-                    permissoes: (data.sys_roles as any)?.sys_permissions || []
+                    nome: (data.sys_roles as RoleJoin | null)?.name || 'Sem Função',
+                    permissoes: (data.sys_roles as RoleJoin | null)?.sys_permissions || []
                 }
             }
             return mappedProfile
@@ -122,12 +130,18 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
         initializeUser()
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
             if (!isMounted) return
 
             try {
                 const currentUser = session?.user ?? null
                 setUser(currentUser)
+
+                if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED") {
+                    return
+                }
+
+                setLoading(true)
 
                 if (currentUser) {
                     const userProfile = await fetchProfile(currentUser.id)
@@ -157,7 +171,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         if (DEVELOPER_ONLY_MODULES.includes(recurso)) return false
         if (profile.funcao.nome === 'Super Admin Cuca') return true
 
-        const resourcePerm = profile.funcao.permissoes.find((p: any) => p.module === recurso)
+        const resourcePerm = profile.funcao.permissoes.find((p) => p.module === recurso)
         if (!resourcePerm) return false
 
         switch (acao) {
