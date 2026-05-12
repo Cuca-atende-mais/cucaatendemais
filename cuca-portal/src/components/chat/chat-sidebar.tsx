@@ -49,6 +49,7 @@ export default function ChatSidebar({
     const supabase = createClient();
     const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const requestSeqRef = useRef(0);
+    const loadControllerRef = useRef<AbortController | null>(null);
     // Ref estável para fetchConversations — evita stale closure no canal Realtime
     const fetchRef = useRef<() => Promise<void>>(async () => {});
 
@@ -65,60 +66,75 @@ export default function ChatSidebar({
     useEffect(() => {
         let mounted = true;
         const requestSeq = ++requestSeqRef.current;
+        loadControllerRef.current?.abort();
+        const controller = new AbortController();
+        loadControllerRef.current = controller;
 
         const fetchConversations = async () => {
             if (!mounted || requestSeq !== requestSeqRef.current) return;
-            let query = supabase
-                .from('conversas')
-                .select(`*, leads (nome, telefone)`)
-                .order('updated_at', { ascending: false })
-                .limit(PAGE_SIZE);
+            setLoading(true);
+            try {
+                let query = supabase
+                    .from('conversas')
+                    .select(`*, leads (nome, telefone)`)
+                    .order('updated_at', { ascending: false })
+                    .limit(PAGE_SIZE)
+                    .abortSignal(controller.signal);
 
-            if (filterCanalTipo) {
-                const { data: instancias } = await supabase
-                    .from('instancias_uazapi')
-                    .select('nome')
-                    .eq('canal_tipo', filterCanalTipo)
-                    .eq('ativa', true);
-
-                const nomes = instancias?.map(i => i.nome) ?? [];
-                if (!mounted || requestSeq !== requestSeqRef.current) return;
-                if (nomes.length > 0) {
-                    query = query.in('instancia_uazapi', nomes);
-                } else {
-                    if (mounted && requestSeq === requestSeqRef.current) {
-                        setConversations([]);
-                        setLoading(false);
-                    }
-                    return;
-                }
-            } else if (filterAgenteTipo && filterAgenteTipo.length > 0) {
-                if (filterUnidade) {
-                    const { data: instanciasUnidade } = await supabase
+                if (filterCanalTipo) {
+                    const { data: instancias } = await supabase
                         .from('instancias_uazapi')
                         .select('nome')
-                        .eq('unidade_cuca', filterUnidade)
-                        .eq('ativa', true);
-                    const nomesUnidade = instanciasUnidade?.map(i => i.nome) ?? [];
+                        .eq('canal_tipo', filterCanalTipo)
+                        .eq('ativa', true)
+                        .abortSignal(controller.signal);
+
+                    const nomes = instancias?.map(i => i.nome) ?? [];
                     if (!mounted || requestSeq !== requestSeqRef.current) return;
-                    if (nomesUnidade.length > 0) {
-                        query = query.in('agente_tipo', filterAgenteTipo).in('instancia_uazapi', nomesUnidade);
+                    if (controller.signal.aborted) return;
+                    if (nomes.length > 0) {
+                        query = query.in('instancia_uazapi', nomes);
                     } else {
-                        if (mounted && requestSeq === requestSeqRef.current) {
-                            setConversations([]);
-                            setLoading(false);
-                        }
+                        setConversations([]);
                         return;
                     }
-                } else {
-                    query = query.in('agente_tipo', filterAgenteTipo);
+                } else if (filterAgenteTipo && filterAgenteTipo.length > 0) {
+                    if (filterUnidade) {
+                        const { data: instanciasUnidade } = await supabase
+                            .from('instancias_uazapi')
+                            .select('nome')
+                            .eq('unidade_cuca', filterUnidade)
+                            .eq('ativa', true)
+                            .abortSignal(controller.signal);
+                        const nomesUnidade = instanciasUnidade?.map(i => i.nome) ?? [];
+                        if (!mounted || requestSeq !== requestSeqRef.current) return;
+                        if (controller.signal.aborted) return;
+                        if (nomesUnidade.length > 0) {
+                            query = query.in('agente_tipo', filterAgenteTipo).in('instancia_uazapi', nomesUnidade);
+                        } else {
+                            setConversations([]);
+                            return;
+                        }
+                    } else {
+                        query = query.in('agente_tipo', filterAgenteTipo);
+                    }
+                }
+
+                const { data, error } = await query;
+                if (!mounted || requestSeq !== requestSeqRef.current) return;
+                if (controller.signal.aborted) return;
+                if (!error && data) setConversations(data);
+            } catch (err) {
+                if (controller.signal.aborted) return;
+                if (mounted && requestSeq === requestSeqRef.current) {
+                    console.warn("[chat-sidebar] Falha ao carregar conversas:", err);
+                    setConversations([]);
+                }
+            } finally {
+                if (mounted && requestSeq === requestSeqRef.current && loadControllerRef.current === controller) {
+                    setLoading(false);
                 }
             }
-
-            const { data, error } = await query;
-            if (!mounted || requestSeq !== requestSeqRef.current) return;
-            if (!error && data) setConversations(data);
-            setLoading(false);
         };
 
         // Registrar ref estável antes de montar o canal
@@ -143,9 +159,10 @@ export default function ChatSidebar({
         return () => {
             mounted = false;
             clearTimeout(debounceRef.current);
+            controller.abort();
             supabase.removeChannel(channel);
         };
-    }, [channelName, filterCanalTipo, filterAgenteTipo, filterUnidade]);
+    }, [supabase, channelName, filterCanalTipo, filterAgenteTipo, filterUnidade]);
 
     // T5: ordenar — awaiting_human primeiro, depois por updated_at desc
     const sortedConversations = useMemo(() => {

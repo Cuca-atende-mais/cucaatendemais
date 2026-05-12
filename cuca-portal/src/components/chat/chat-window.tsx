@@ -53,6 +53,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
     const [assumindo, setAssumindo] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const requestSeqRef = useRef(0);
+    const loadControllerRef = useRef<AbortController | null>(null);
     const supabase = createClient();
 
     // Ref com dados de conexão — evita race condition no markAsRead (conversation pode ser null no 1º Realtime)
@@ -60,8 +61,8 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
 
     useEffect(() => {
         const requestSeq = ++requestSeqRef.current;
-
         if (!conversationId) {
+            loadControllerRef.current?.abort();
             setConversation(null);
             setMessages([]);
             setLoading(false);
@@ -69,11 +70,15 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
             return;
         }
 
+        loadControllerRef.current?.abort();
+        const controller = new AbortController();
+        loadControllerRef.current = controller;
+
         setConversation(null);
         setMessages([]);
         connectionDataRef.current = null;
-        fetchConversationDetails(requestSeq);
-        fetchMessages(requestSeq);
+        fetchConversationDetails(requestSeq, controller.signal);
+        fetchMessages(requestSeq, controller.signal);
 
         const channel = supabase
             .channel(`chat-${conversationId}`)
@@ -109,6 +114,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
             });
 
         return () => {
+            controller.abort();
             supabase.removeChannel(channel);
         };
     }, [conversationId]);
@@ -121,18 +127,20 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
     }, [messages]);
 
     // T2: markAsRead usando ref (não depende do state 'conversation' que pode ser null)
-    const markAsReadViaRef = useCallback(async () => {
+    const markAsReadViaRef = useCallback(async (signal?: AbortSignal) => {
         const conn = connectionDataRef.current;
-        if (!conn) return;
+        if (!conn || signal?.aborted) return;
         try {
             await fetch('/api/chat/read-message', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal,
                 body: JSON.stringify({
                     remoteJid: `${conn.telefone}@s.whatsapp.net`,
                     instance: conn.instancia,
                 }),
             });
+            if (signal?.aborted) return;
             // Zerar contador de não lidas
             await supabase
                 .from('conversas')
@@ -143,7 +151,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
         }
     }, [conversationId]);
 
-    async function fetchConversationDetails(requestSeq: number) {
+    async function fetchConversationDetails(requestSeq: number, signal: AbortSignal) {
         if (!conversationId) return;
         setLoading(true);
         try {
@@ -151,8 +159,10 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 .from('conversas')
                 .select('*, leads(*)')
                 .eq('id', conversationId)
+                .abortSignal(signal)
                 .single();
             if (requestSeq !== requestSeqRef.current) return;
+            if (signal.aborted) return;
             if (error) throw error;
             setConversation(data);
             // T2: popular ref assim que dados chegam — corrige race condition
@@ -162,17 +172,20 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                     instancia: data.instancia_uazapi,
                 };
                 // Marcar como lido imediatamente ao abrir conversa
-                markAsReadViaRef();
+                void markAsReadViaRef(signal);
             }
         } catch (err: unknown) {
             if (requestSeq !== requestSeqRef.current) return;
+            if (signal.aborted) return;
             toast.error("Erro ao carregar conversa: " + errorMessage(err));
         } finally {
-            if (requestSeq === requestSeqRef.current) setLoading(false);
+            if (requestSeq === requestSeqRef.current && !signal.aborted && loadControllerRef.current && !loadControllerRef.current.signal.aborted) {
+                setLoading(false);
+            }
         }
     }
 
-    async function fetchMessages(requestSeq: number) {
+    async function fetchMessages(requestSeq: number, signal: AbortSignal) {
         if (!conversationId) return;
         try {
             // Busca as 200 mais recentes (DESC) e inverte para exibir em ordem cronológica
@@ -181,12 +194,15 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 .select('*')
                 .eq('conversa_id', conversationId)
                 .order('created_at', { ascending: false })
-                .limit(200);
+                .limit(200)
+                .abortSignal(signal);
             if (requestSeq !== requestSeqRef.current) return;
+            if (signal.aborted) return;
             if (error) throw error;
             setMessages((data || []).reverse());
         } catch (err: unknown) {
             if (requestSeq !== requestSeqRef.current) return;
+            if (signal.aborted) return;
             toast.error("Erro ao carregar mensagens: " + errorMessage(err));
         }
     }

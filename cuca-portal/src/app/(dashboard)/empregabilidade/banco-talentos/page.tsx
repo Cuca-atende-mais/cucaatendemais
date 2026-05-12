@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { TalentBank } from "@/lib/types/database"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -197,6 +197,8 @@ export default function BancoTalentosPage() {
     const supabase = createClient()
     const { isDeveloper, profile } = useUser()
     const podeExcluir = isDeveloper || profile?.funcao?.nome === "Super Admin Cuca"
+    const metricsControllerRef = useRef<AbortController | null>(null)
+    const loadControllerRef = useRef<AbortController | null>(null)
 
     // Debounce de texto de busca
     useEffect(() => {
@@ -209,14 +211,19 @@ export default function BancoTalentosPage() {
 
     // Métricas gerais + contagem por área (carregadas uma vez no mount)
     useEffect(() => {
+        metricsControllerRef.current?.abort()
+        const controller = new AbortController()
+        metricsControllerRef.current = controller
+
         const fetchMetrics = async () => {
             try {
                 const [{ count: total, error: totalErr }, { count: disp, error: dispErr }, { data: areaRows, error: areaErr }] = await Promise.all([
-                    supabase.from("talent_bank").select("id", { count: "exact", head: true }),
-                    supabase.from("talent_bank").select("id", { count: "exact", head: true }).eq("status", "disponivel"),
+                    supabase.from("talent_bank").select("id", { count: "exact", head: true }).abortSignal(controller.signal),
+                    supabase.from("talent_bank").select("id", { count: "exact", head: true }).eq("status", "disponivel").abortSignal(controller.signal),
                     // Busca apenas area_interesse para montar contagens por card
-                    supabase.from("talent_bank").select("area_interesse"),
+                    supabase.from("talent_bank").select("area_interesse").abortSignal(controller.signal),
                 ])
+                if (controller.signal.aborted || metricsControllerRef.current !== controller) return
                 if (totalErr) throw totalErr
                 if (dispErr) throw dispErr
                 if (areaErr) throw areaErr
@@ -233,19 +240,27 @@ export default function BancoTalentosPage() {
                 }
                 setContagemPorArea(map)
             } catch (error) {
+                if (controller.signal.aborted) return
                 console.error("[banco-talentos/metrics]", error)
             }
         }
         fetchMetrics()
-    }, [])
+        return () => {
+            controller.abort()
+        }
+    }, [supabase])
 
     const fetchTalentos = useCallback(async () => {
+        loadControllerRef.current?.abort()
+        const controller = new AbortController()
+        loadControllerRef.current = controller
         setLoading(true)
         try {
             let query = supabase
                 .from("talent_bank")
                 .select("*", { count: "exact" })
                 .order("created_at", { ascending: false })
+                .abortSignal(controller.signal)
 
             if (debouncedSearch) {
                 query = query.or(`nome.ilike.%${debouncedSearch}%,telefone.ilike.%${debouncedSearch}%`)
@@ -273,19 +288,28 @@ export default function BancoTalentosPage() {
             const to = from + PAGE_SIZE - 1
             const { data, error, count } = await query.range(from, to)
 
+            if (controller.signal.aborted || loadControllerRef.current !== controller) return
             if (error) throw error
 
             setTalentos(data || [])
             setTotalCount(count ?? 0)
         } catch (error) {
+            if (controller.signal.aborted) return
             console.error("Erro ao buscar talentos:", error)
             toast.error("Erro ao carregar banco de talentos")
         } finally {
-            setLoading(false)
+            if (loadControllerRef.current === controller) {
+                setLoading(false)
+            }
         }
-    }, [debouncedSearch, filtroStatus, filtroArea, filtroEscolaridade, filtroGenero, filtroPCD, filtroPrimeiroEmprego, filtroBairro, page])
+    }, [supabase, debouncedSearch, filtroStatus, filtroArea, filtroEscolaridade, filtroGenero, filtroPCD, filtroPrimeiroEmprego, filtroBairro, page])
 
-    useEffect(() => { fetchTalentos() }, [fetchTalentos])
+    useEffect(() => {
+        void fetchTalentos()
+        return () => {
+            loadControllerRef.current?.abort()
+        }
+    }, [fetchTalentos])
 
     const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
@@ -319,7 +343,7 @@ export default function BancoTalentosPage() {
             toast.success("Candidato adicionado ao Banco de Talentos!")
             setCadastroOpen(false)
             setFormNome(""); setFormTelefone(""); setFormNasc(""); setFormArea(""); setFormArquivo(null)
-            fetchTalentos()
+            void fetchTalentos()
         } catch (err: unknown) {
             toast.error(getErrorMessage(err, "Erro ao cadastrar."))
         } finally {
@@ -692,7 +716,7 @@ export default function BancoTalentosPage() {
             {/* ── Modal currículo completo ───────────────────────────────────── */}
             <Dialog open={!!selectedTalento} onOpenChange={(o) => !o && setSelectedTalento(null)}>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                    {selectedTalento && <CurriculoModal talento={selectedTalento} onRefresh={fetchTalentos} />}
+                    {selectedTalento && <CurriculoModal talento={selectedTalento} />}
                 </DialogContent>
             </Dialog>
 
@@ -759,7 +783,7 @@ export default function BancoTalentosPage() {
 
 // ─── Modal de currículo completo ──────────────────────────────────────────────
 
-function CurriculoModal({ talento, onRefresh }: { talento: TalentBank; onRefresh?: () => void }) {
+function CurriculoModal({ talento }: { talento: TalentBank }) {
     const router = useRouter()
     const ocr = talento.skills_jsonb || {}
     const area = getAreaConfig(talento.area_interesse as string[] | null)

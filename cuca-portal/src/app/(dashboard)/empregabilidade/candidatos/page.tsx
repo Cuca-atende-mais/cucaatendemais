@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Candidatura } from "@/lib/types/database"
@@ -29,10 +29,6 @@ type CandidatoComVaga = Candidatura & {
     } | null
 }
 
-function getErrorMessage(error: unknown, fallback: string): string {
-    return error instanceof Error ? error.message : fallback
-}
-
 export default function CandidatosGlobaisPage() {
     const [candidatos, setCandidatos] = useState<CandidatoComVaga[]>([])
     const [loading, setLoading] = useState(true)
@@ -42,28 +38,40 @@ export default function CandidatosGlobaisPage() {
     const router = useRouter()
 
     const supabase = createClient()
+    const loadControllerRef = useRef<AbortController | null>(null)
 
-    useEffect(() => {
-        fetchCandidatos()
-    }, [])
-
-    const fetchCandidatos = async () => {
+    const fetchCandidatos = useCallback(async () => {
+        loadControllerRef.current?.abort()
+        const controller = new AbortController()
+        loadControllerRef.current = controller
         setLoading(true)
         try {
             const { data, error } = await supabase
                 .from("candidaturas")
                 .select("*, vagas(id, titulo, unidade_cuca)")
                 .order("created_at", { ascending: false })
+                .abortSignal(controller.signal)
 
+            if (controller.signal.aborted || loadControllerRef.current !== controller) return
             if (error) throw error
             setCandidatos(data || [])
         } catch (error) {
+            if (controller.signal.aborted) return
             console.error("Erro ao buscar candidatos:", error)
             toast.error("Erro ao carregar candidatos")
         } finally {
-            setLoading(false)
+            if (loadControllerRef.current === controller) {
+                setLoading(false)
+            }
         }
-    }
+    }, [supabase])
+
+    useEffect(() => {
+        void fetchCandidatos()
+        return () => {
+            loadControllerRef.current?.abort()
+        }
+    }, [fetchCandidatos])
 
     const calcularIdade = (dataStr: string | null) => {
         if (!dataStr) return "-"
@@ -74,22 +82,6 @@ export default function CandidatosGlobaisPage() {
         // Formatar para o MatchModal que espera { candidato, vaga }
         setSelectedCandidato(candidato)
         setIsMatchModalOpen(true)
-    }
-
-    const handleUpdateStatus = async (candidaturaId: string, novoStatus: string) => {
-        try {
-            const { error } = await supabase.from("candidaturas").update({ status: novoStatus }).eq("id", candidaturaId)
-            if (error) throw error
-
-            if (novoStatus === 'rejeitado') {
-                toast.success("Candidato movido para o Banco de Talentos.")
-            } else {
-                toast.success("Status atualizado.")
-            }
-            fetchCandidatos()
-        } catch (error: unknown) {
-            toast.error(getErrorMessage(error, "Falha ao mudar status."))
-        }
     }
 
     const filteredCandidatos = candidatos.filter((c) => {
