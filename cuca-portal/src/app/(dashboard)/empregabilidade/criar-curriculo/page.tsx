@@ -323,8 +323,9 @@ export default function CriarCurriculoListPage() {
                                         const nome = c.talent_bank?.nome ?? "—"
                                         const dados = c.dados || {}
                                         const temDados = Object.keys(dados).length > 1 // mais que só {nome, telefone}
-                                        const objetivo = dados.objetivo
-                                            ? String(dados.objetivo).slice(0, 50) + (dados.objetivo.length > 50 ? "…" : "")
+                                        const objetivoTexto = typeof dados.objetivo === "string" ? dados.objetivo : ""
+                                        const objetivo = objetivoTexto
+                                            ? objetivoTexto.slice(0, 50) + (objetivoTexto.length > 50 ? "…" : "")
                                             : "—"
                                         const atualizado = format(new Date(c.updated_at), "dd/MM/yyyy", { locale: ptBR })
                                         return (
