@@ -1159,8 +1159,39 @@ _INTENCAO_BANCO_TALENTOS = {
     "nenhuma dessas", "nenhuma", "não encontrei", "nao encontrei",
     "guardar meu currículo", "guardar curriculo", "banco de talentos",
     "deixar currículo", "deixar curriculo", "quero me cadastrar",
-    "não tem nada", "nao tem nada",
+    "não tem nada", "nao tem nada", "enviar currículo", "enviar curriculo",
+    "mandar currículo", "mandar curriculo", "cadastrar currículo",
+    "cadastrar curriculo", "opção 4", "opcao 4", "número 4", "numero 4",
+    "menu 4", "opção quatro", "opcao quatro",
 }
+
+
+def _quer_banco_talentos(texto: str, etapa: str = "", fluxo: dict | None = None) -> bool:
+    """Detecta correção de intenção para banco de talentos sem roubar opções válidas."""
+    t = texto.strip().lower()
+    if any(p in t for p in _INTENCAO_BANCO_TALENTOS):
+        return True
+
+    # "4" puro é ambíguo em menus dinâmicos. Só redireciona se a etapa atual
+    # não tiver uma opção 4 válida visível para o lead.
+    if t not in ("4", "4.", "04"):
+        return False
+
+    fluxo = fluxo or {}
+    if etapa == "listou_categorias" and "4" in (fluxo.get("mapa_categorias") or {}):
+        return False
+    if etapa == "listou_vagas" and "4" in (fluxo.get("mapa_vagas") or {}):
+        return False
+    if etapa == "aguardando_escolha_unidade" and len(fluxo.get("unidades_opcoes") or []) >= 4:
+        return False
+    if etapa == "listando_cargos_selecao" and len(fluxo.get("cargos_disponiveis") or []) >= 4:
+        return False
+
+    return etapa in {
+        "inicio", "listou_categorias", "listou_vagas",
+        "aguardando_escolha_unidade", "listando_cargos_selecao",
+        "pos_candidatura", "candidatura_confirmada", "oferta_banco_talentos",
+    }
 
 
 async def _processar_publico(
@@ -1180,10 +1211,32 @@ async def _processar_publico(
     async def e(msg: str):
         await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
 
+    async def iniciar_banco_talentos():
+        historico_aplicadas = list(fluxo.get("historico_vagas_aplicadas") or [])
+        await e(
+            "📁 *Banco de Talentos CUCA*\n\n"
+            "Podemos cadastrar seu currículo no banco de talentos. "
+            "Quando surgir uma vaga compatível com seu perfil, a equipe entrará em contato.\n\n"
+            "Para continuar, preciso do seu *nome completo*:"
+        )
+        _set_fluxo(conversa_id, {
+            "perfil": "publico",
+            "etapa": "coletando_nome_candidato",
+            "banco_talentos": True,
+            "historico_vagas_aplicadas": historico_aplicadas,
+            "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
+        })
+
     # Encerramento
     # S37C-03: pos_candidatura é tolerante — "obrigado", "valeu" não encerram o fluxo
     if _quer_encerrar(texto) and etapa not in ("coletando_nome_candidato", "confirmando_terceiro", "pos_candidatura"):
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
+        return
+
+    # SQS-53: correção de rota quando o lead escolheu vagas por engano e depois
+    # expressa intenção de enviar currículo para o banco de talentos.
+    if _quer_banco_talentos(texto, etapa, fluxo):
+        await iniciar_banco_talentos()
         return
 
     # --- ETAPA: aguardando_confirmacao_candidatura ---
@@ -1504,21 +1557,8 @@ async def _processar_publico(
         vagas = [v for v in vagas if v["id"] not in ids_excluir]
 
     # Intenção de banco de talentos
-    if any(p in t_lower for p in _INTENCAO_BANCO_TALENTOS):
-        await e(
-            "📁 *Banco de Talentos CUCA*\n\n"
-            "Podemos cadastrar seu currículo no banco de talentos. "
-            "Quando surgir uma vaga compatível com seu perfil, a equipe entrará em contato.\n\n"
-            "Para continuar, preciso do seu *nome completo*:"
-        )
-        _set_fluxo(conversa_id, {
-            "perfil": "publico",
-            "etapa": "coletando_nome_candidato",
-            "banco_talentos": True,
-            # HF37-02: preserva histórico para não reoferecer vagas já aplicadas
-            "historico_vagas_aplicadas": historico_aplicadas,
-            "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
-        })
+    if _quer_banco_talentos(texto, etapa, fluxo):
+        await iniciar_banco_talentos()
         return
 
     # Verificar se quer se candidatar a vaga específica (por número sequencial, título ou "quero essa")
