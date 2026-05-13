@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useEffect, useMemo, useCallback, useState } from "react"
+import { createContext, useContext, useEffect, useMemo, useCallback, useState, useRef } from "react"
 import { User } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
 
@@ -54,6 +54,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null)
     const [profile, setProfile] = useState<UserProfile | null>(null)
     const [loading, setLoading] = useState(true)
+    // Rastreia o userId atual para evitar re-fetch de perfil quando o Supabase/middleware
+    // dispara SIGNED_IN redundante ao renovar token em produção (causa do flash de loading).
+    const currentUserIdRef = useRef<string | null>(null)
 
     // Estabiliza a instância do Supabase client — não recriada a cada render
     const supabase = useMemo(() => createClient(), [])
@@ -114,6 +117,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                 if (!isMounted) return
 
                 setUser(currentUser)
+                currentUserIdRef.current = currentUser?.id ?? null
 
                 if (currentUser) {
                     const userProfile = await fetchProfile(currentUser.id)
@@ -141,6 +145,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                     return
                 }
 
+                // Bloqueia re-fetch quando é o mesmo usuário já carregado.
+                // O middleware Next.js renova o token a cada request e pode disparar
+                // SIGNED_IN redundante em produção — sem esta guarda, causa loading flash
+                // e "Erro ao carregar perfil" por race condition com outras operações.
+                if (currentUser?.id && currentUser.id === currentUserIdRef.current) {
+                    return
+                }
+
+                currentUserIdRef.current = currentUser?.id ?? null
                 setLoading(true)
 
                 if (currentUser) {
