@@ -192,18 +192,24 @@ def _identificar_perfil(texto: str, fluxo: dict) -> str:
     """
     t = texto.lower()
 
+    # Apenas termos que indicam inequivocamente contexto de empresa/empregador
     palavras_empresa = [
-        "vaga", "contratar", "selecionar", "divulgar", "empresa",
-        "cnpj", "candidato", "processo seletivo", "emprego", "oferecer",
-        "disponibilizar", "preciso de funcionário", "estágio", "trainee",
+        "contratar", "selecionar", "divulgar", "cnpj",
+        "processo seletivo", "oferecer vaga", "disponibilizar vaga",
+        "preciso de funcionário", "quero contratar", "quero divulgar",
+        "divulgar vaga", "abrir vaga", "criar vaga",
     ]
     palavras_candidato = [
         "minha candidatura", "me candidatei", "número da candidatura",
         "status", "cpf", "fui selecionado", "aprovado", "entrevista",
         "acompanhar", "como está", "resultado",
     ]
+    # "vaga/vagas/emprego" são ambíguos — pertencem ao público geral (quem busca trabalho)
     palavras_publico = [
         "vaga aberta", "quero trabalhar", "quero emprego", "tem vaga",
+        "vagas disponíveis", "vagas disponiveis", "quais vagas", "quais são as vagas",
+        "ver vagas", "tem vagas", "procurando emprego", "busca de trabalho",
+        "procuro emprego", "oportunidade de trabalho",
         "como me candidato", "como faço", "oportunidade", "interesse em vaga",
     ]
 
@@ -540,9 +546,33 @@ async def _processar_empresa(
 
     # --- ETAPA: aguardando_cnpj ---
     if etapa == "aguardando_cnpj":
+        # Escape: pessoa entrou no fluxo errado e indica que não é empresa
+        _frases_nao_empresa = [
+            "não sou empresa", "nao sou empresa", "não tenho empresa", "nao tenho empresa",
+            "sou pessoa física", "pessoa fisica", "pessoa física",
+            "busca de trabalho", "procurando emprego", "procuro emprego",
+            "quero trabalhar", "quero emprego", "não tenho cnpj", "nao tenho cnpj",
+            "sou candidato", "candidato", "busco emprego", "erro", "voltar", "menu",
+        ]
+        t_lower = texto.lower()
+        if any(f in t_lower for f in _frases_nao_empresa):
+            _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
+            await _enviar(
+                instance_name, token, phone,
+                "Sem problema! 😊 Vamos recomeçar.\n\n"
+                "Como posso te ajudar?\n\n"
+                "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
+                "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
+                "3️⃣ *Vagas* — Quero ver vagas abertas\n"
+                "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
+                "Responda com o número ou descreva o que precisa.",
+                conversa_id=conversa_id, lead_id=lead_id,
+            )
+            return
+
         cnpj_limpo = re.sub(r"\D", "", texto)
         if len(cnpj_limpo) != 14:
-            await e("CNPJ inválido. Por favor, informe os *14 dígitos* do CNPJ da sua empresa:")
+            await e("CNPJ inválido. Por favor, informe os *14 dígitos* do CNPJ da sua empresa:\n\n_(Se entrou aqui por engano, digite *menu* para voltar ao início.)_")
             return
 
         # Verificar no banco
