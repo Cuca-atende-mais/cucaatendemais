@@ -56,3 +56,21 @@ node_modules
 .aiox-core/local/
 .claude/settings.local.json
 .aiox/install-log.txt
+
+# Build outputs do Next/OpenNext (nunca versionar — incham o archive do deploy)
+.next/
+.open-next/
+.turbo/
+
+# Dados sensíveis de pessoas reais (LGPD) — manter apenas local, nunca no repositório
+CURRÍCULOS/
+curriculos/
+*.pdf
+*.docx
+
+# Arquivos compactados / dumps grandes que não pertencem ao código
+*.zip
+.aiox-core/
+.gemini/
+2026/
+xlsx_content/
