@@ -51,6 +51,7 @@ export const menuItems = [
         permission: { recurso: "ae_painel", acao: "read" },
         items: [
             { title: "Painel Geral", url: "/academia-enem", permission: { recurso: "ae_painel", acao: "read" } },
+            { title: "Base de Conhecimento", url: "/academia-enem/base-conhecimento", permission: { recurso: "ae_rag", acao: "read" } },
         ],
     },
     {

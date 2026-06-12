@@ -88,6 +88,7 @@ const MODULE_GROUPS = [
         category: 'Academia Enem',
         modules: [
             { id: 'ae_painel', label: 'Academia Enem: Painel Geral (Dashboard)' },
+            { id: 'ae_rag', label: 'Academia Enem: Base de Conhecimento (RAG)' },
         ]
     },
     {

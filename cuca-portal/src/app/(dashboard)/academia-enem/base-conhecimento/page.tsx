@@ -21,12 +21,15 @@ import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import {
-    Globe, Plus, Zap, FileText, CheckCircle2,
+    GraduationCap, Plus, Zap, FileText, CheckCircle2,
     Clock, AlertCircle, Pencil, Trash2, ShieldAlert, Upload, FileUp,
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
+
+// S-AE-05: discriminador de canal deste módulo no pipeline RAG (documentos_rag / motor-agente).
+const SOURCE_TYPE = "academia_enem"
 
 type Documento = {
     id: string
@@ -39,11 +42,11 @@ type Documento = {
     created_at: string
 }
 
-const TIPOS = ["Institucional", "Endereços", "Programas", "Horários", "Contatos", "FAQ", "Outro"]
+const TIPOS = ["Enem", "Inscrição", "Cronograma", "Locais de Prova", "Documentos", "FAQ", "Outro"]
 
 const EMPTY_FORM = {
     titulo: "",
-    tipo: "Institucional",
+    tipo: "Enem",
     conteudo: "",
     ativo: true,
     modo: "texto" as "texto" | "pdf",
@@ -56,8 +59,15 @@ const STATUS_CHUNK = (doc: Documento) => {
     return { label: `${chunks ?? "?"} chunks`, color: "default" as const, icon: CheckCircle2 }
 }
 
-export default function RagGlobalPage() {
-    const { isDeveloper, hasPermission } = useUser()
+export default function AcademiaEnemRagPage() {
+    const { isDeveloper, hasPermission, loading: authLoading } = useUser()
+
+    // DoD transversal S-AE-01: leitura protege a rota; create/update/delete escondem os controles.
+    const canRead = isDeveloper || hasPermission("ae_rag", "read")
+    const canCreate = isDeveloper || hasPermission("ae_rag", "create")
+    const canUpdate = isDeveloper || hasPermission("ae_rag", "update")
+    const canDelete = isDeveloper || hasPermission("ae_rag", "delete")
+    const canIndex = canCreate || canUpdate
 
     const [docs, setDocs] = useState<Documento[]>([])
     const [loading, setLoading] = useState(true)
@@ -72,30 +82,32 @@ export default function RagGlobalPage() {
     const supabase = createClient()
 
     useEffect(() => {
-        if (!isDeveloper && !hasPermission("programacao_rag_global", "read")) {
+        // Aguarda o perfil/permissões resolverem antes de decidir acesso (evita flash de "Acesso Restrito").
+        if (authLoading) return
+        if (!canRead) {
             setSemPermissao(true)
             return
         }
         setSemPermissao(false)
         fetchDocs()
-    }, [isDeveloper, hasPermission])
+    }, [authLoading, canRead])
 
     const fetchDocs = async () => {
         setLoading(true)
+        // Filtra apenas os documentos deste módulo pelo source_type (evita vazar/herdar docs de outros canais).
         const { data, error } = await supabase
             .from("documentos_rag")
             .select("*")
-            .is("unidade_cuca", null)
+            .contains("metadados", { source_type: SOURCE_TYPE })
             .order("created_at", { ascending: false })
         if (error) toast.error("Erro ao carregar documentos")
-        // Exclui docs de módulos próprios (ex.: Academia Enem) que também têm unidade_cuca null,
-        // para que não vazem nesta gestão global. null-safe: docs antigos sem source_type permanecem.
-        else setDocs((data || []).filter(d => (d.metadados as Record<string, unknown> | null)?.source_type !== "academia_enem"))
+        else setDocs(data || [])
         setLoading(false)
     }
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
+        if (editing ? !canUpdate : !canCreate) { toast.error("Sem permissão"); return }
         if (!form.titulo.trim()) { toast.error("Título obrigatório"); return }
         if (form.modo === "texto" && !form.conteudo.trim()) { toast.error("Conteúdo obrigatório"); return }
         if (form.modo === "pdf" && !editing && !pdfFile) { toast.error("Selecione um arquivo PDF"); return }
@@ -103,11 +115,11 @@ export default function RagGlobalPage() {
         setUploadandoPdf(true)
         try {
             let pdfUrl: string | null = null
-            let metadados: Record<string, unknown> = { source_type: "rede_cuca_global" }
+            let metadados: Record<string, unknown> = { source_type: SOURCE_TYPE }
 
             // Upload do PDF se necessário
             if (form.modo === "pdf" && pdfFile) {
-                const path = `global/${Date.now()}_${pdfFile.name.replace(/\s+/g, "_")}`
+                const path = `${SOURCE_TYPE}/${Date.now()}_${pdfFile.name.replace(/\s+/g, "_")}`
                 const { error: uploadError } = await supabase.storage
                     .from("rag-documentos")
                     .upload(path, pdfFile, { contentType: "application/pdf", upsert: false })
@@ -125,7 +137,7 @@ export default function RagGlobalPage() {
                 unidade_cuca: null,
                 ativo: form.ativo,
                 metadados: editing
-                    ? { ...(editing.metadados ?? {}), source_type: "rede_cuca_global", ...(pdfUrl ? { pdf_path: metadados.pdf_path, pdf_nome: metadados.pdf_nome } : {}) }
+                    ? { ...(editing.metadados ?? {}), source_type: SOURCE_TYPE, ...(pdfUrl ? { pdf_path: metadados.pdf_path, pdf_nome: metadados.pdf_nome } : {}) }
                     : metadados,
             }
 
@@ -140,14 +152,15 @@ export default function RagGlobalPage() {
             }
             fetchDocs()
             closeDialog()
-        } catch (err: any) {
-            toast.error(err.message ?? "Erro ao salvar")
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Erro ao salvar")
         } finally {
             setUploadandoPdf(false)
         }
     }
 
     const handleIndexar = async (doc: Documento) => {
+        if (!canIndex) { toast.error("Sem permissão"); return }
         setIndexando(doc.id)
         try {
             const { data: { session } } = await supabase.auth.getSession()
@@ -163,7 +176,7 @@ export default function RagGlobalPage() {
                     },
                     body: JSON.stringify({
                         documento_id: doc.id,
-                        source_type: "rede_cuca_global",
+                        source_type: SOURCE_TYPE,
                         cuca_unit_id: null,
                         ...(pdfPath && { pdf_path: pdfPath }),
                     }),
@@ -171,7 +184,7 @@ export default function RagGlobalPage() {
             )
             const result = await res.json()
             if (!res.ok) throw new Error(result.error)
-            toast.success(`${result.total_chunks} chunks indexados no RAG Global!`)
+            toast.success(`${result.total_chunks} chunks indexados no RAG da Academia Enem!`)
             fetchDocs()
         } catch (err) {
             toast.error(`Erro ao indexar: ${err}`)
@@ -181,7 +194,8 @@ export default function RagGlobalPage() {
     }
 
     const handleDelete = async (doc: Documento) => {
-        if (!confirm("Remover este documento da base de conhecimento global?")) return
+        if (!canDelete) { toast.error("Sem permissão"); return }
+        if (!confirm("Remover este documento da base de conhecimento da Academia Enem?")) return
         // Remover PDF do storage se existir
         const pdfPath = doc.metadados?.pdf_path as string | null
         if (pdfPath) {
@@ -217,12 +231,27 @@ export default function RagGlobalPage() {
     const totalChunks = docs.reduce((acc, d) => acc + ((d.metadados?.total_chunks as number) || 0), 0)
     const indexados = docs.filter(d => d.metadados?.indexado_em).length
 
+    // Enquanto o perfil/permissões carregam, não decide acesso (evita flash de "Acesso Restrito").
+    if (authLoading) {
+        return (
+            <div className="space-y-4 animate-pulse">
+                <div className="h-9 w-80 bg-muted rounded" />
+                <div className="grid gap-4 md:grid-cols-3">
+                    <div className="h-24 bg-muted rounded" />
+                    <div className="h-24 bg-muted rounded" />
+                    <div className="h-24 bg-muted rounded" />
+                </div>
+                <div className="h-64 bg-muted rounded" />
+            </div>
+        )
+    }
+
     if (semPermissao) {
         return (
             <div className="flex-1 flex flex-col items-center justify-center p-12 gap-4 text-center">
                 <ShieldAlert className="h-16 w-16 text-slate-300" />
                 <h2 className="text-xl font-bold text-slate-700">Acesso Restrito</h2>
-                <p className="text-slate-500 max-w-sm">Este módulo é exclusivo do Gestor de Divulgação com permissão de Base de Conhecimento Global.</p>
+                <p className="text-slate-500 max-w-sm">Você não tem permissão para acessar a Base de Conhecimento da Academia Enem.</p>
             </div>
         )
     }
@@ -231,22 +260,23 @@ export default function RagGlobalPage() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-blue-100 border border-blue-200">
-                        <Globe className="h-6 w-6 text-blue-600" />
+                    <div className="p-2.5 rounded-xl bg-primary/10 border border-primary/20">
+                        <GraduationCap className="h-6 w-6 text-primary" />
                     </div>
                     <div>
-                        <h1 className="text-3xl font-bold tracking-tight">Base de Conhecimento — Rede Geral</h1>
+                        <h1 className="text-3xl font-bold tracking-tight">Base de Conhecimento — Academia Enem</h1>
                         <p className="text-muted-foreground text-sm">
-                            Documentos globais sobre a Rede CUCA. Usados pela persona Divulgação e como fallback dos Institucionais.
+                            Documentos sobre o Enem usados pela automação da Academia Enem para responder dúvidas (RAG).
                         </p>
                     </div>
                 </div>
-                <Button
-                    className="bg-blue-600 hover:bg-blue-700"
-                    onClick={() => { setEditing(null); setForm(EMPTY_FORM); setDialogOpen(true) }}
-                >
-                    <Plus className="mr-2 h-4 w-4" /> Novo Documento
-                </Button>
+                {canCreate && (
+                    <Button
+                        onClick={() => { setEditing(null); setForm(EMPTY_FORM); setDialogOpen(true) }}
+                    >
+                        <Plus className="mr-2 h-4 w-4" /> Novo Documento
+                    </Button>
+                )}
             </div>
 
             {/* Métricas */}
@@ -273,22 +303,22 @@ export default function RagGlobalPage() {
                 </Card>
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between pb-2">
-                        <CardTitle className="text-sm font-medium">Chunks Globais</CardTitle>
-                        <Globe className="h-4 w-4 text-blue-600" />
+                        <CardTitle className="text-sm font-medium">Chunks da Academia Enem</CardTitle>
+                        <GraduationCap className="h-4 w-4 text-primary" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold text-blue-600">{totalChunks}</div>
-                        <p className="text-xs text-muted-foreground">source_type: rede_cuca_global</p>
+                        <div className="text-2xl font-bold text-primary">{totalChunks}</div>
+                        <p className="text-xs text-muted-foreground">source_type: {SOURCE_TYPE}</p>
                     </CardContent>
                 </Card>
             </div>
 
             {/* Info */}
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-sm">
-                <Globe className="h-4 w-4 mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-foreground text-sm">
+                <GraduationCap className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
                 <span>
-                    Estes documentos são indexados com <code className="bg-blue-100 px-1 rounded text-xs">source_type = &apos;rede_cuca_global&apos;</code> e
-                    sem filtro de unidade. Suporte a texto livre ou upload de PDF (até 50 MB).
+                    Estes documentos são indexados com <code className="bg-primary/10 px-1 rounded text-xs">source_type = &apos;{SOURCE_TYPE}&apos;</code> e
+                    usados apenas pela automação da Academia Enem (assuntos do Enem). Suporte a texto livre ou upload de PDF (até 50 MB).
                     Após criar, clique em <strong>Indexar</strong> para processar no RAG.
                 </span>
             </div>
@@ -296,20 +326,22 @@ export default function RagGlobalPage() {
             {/* Tabela */}
             <Card>
                 <CardHeader>
-                    <CardTitle>Documentos Globais</CardTitle>
-                    <CardDescription>Base de conhecimento compartilhada por todos os canais da Rede CUCA</CardDescription>
+                    <CardTitle>Documentos da Academia Enem</CardTitle>
+                    <CardDescription>Base de conhecimento restrita ao tema Enem, consumida pela automação do módulo</CardDescription>
                 </CardHeader>
                 <CardContent>
                     {loading ? (
                         <div className="text-center py-8 text-muted-foreground">Carregando...</div>
                     ) : docs.length === 0 ? (
                         <div className="text-center py-12 space-y-2">
-                            <Globe className="mx-auto h-12 w-12 text-muted-foreground/40" />
-                            <p className="text-muted-foreground">Nenhum documento global cadastrado</p>
-                            <p className="text-xs text-muted-foreground">Adicione texto livre ou faça upload de um PDF com informações da Rede CUCA</p>
-                            <Button variant="outline" onClick={() => setDialogOpen(true)}>
-                                <Plus className="mr-2 h-4 w-4" /> Adicionar primeiro documento
-                            </Button>
+                            <GraduationCap className="mx-auto h-12 w-12 text-muted-foreground/40" />
+                            <p className="text-muted-foreground">Nenhum documento cadastrado</p>
+                            <p className="text-xs text-muted-foreground">Adicione texto livre ou faça upload de um PDF com informações sobre o Enem</p>
+                            {canCreate && (
+                                <Button variant="outline" onClick={() => setDialogOpen(true)}>
+                                    <Plus className="mr-2 h-4 w-4" /> Adicionar primeiro documento
+                                </Button>
+                            )}
                         </div>
                     ) : (
                         <Table>
@@ -366,23 +398,29 @@ export default function RagGlobalPage() {
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex items-center justify-end gap-1">
-                                                    <Button
-                                                        variant="outline" size="sm"
-                                                        onClick={() => handleIndexar(doc)}
-                                                        disabled={indexando === doc.id}
-                                                    >
-                                                        {indexando === doc.id
-                                                            ? <Clock className="h-4 w-4 animate-spin" />
-                                                            : <Zap className="h-4 w-4" />}
-                                                        <span className="ml-1 text-xs">Indexar</span>
-                                                    </Button>
-                                                    <Button variant="ghost" size="sm" onClick={() => handleEdit(doc)}>
-                                                        <Pencil className="h-4 w-4" />
-                                                    </Button>
-                                                    <Button variant="ghost" size="sm" className="text-red-600"
-                                                        onClick={() => handleDelete(doc)}>
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
+                                                    {canIndex && (
+                                                        <Button
+                                                            variant="outline" size="sm"
+                                                            onClick={() => handleIndexar(doc)}
+                                                            disabled={indexando === doc.id}
+                                                        >
+                                                            {indexando === doc.id
+                                                                ? <Clock className="h-4 w-4 animate-spin" />
+                                                                : <Zap className="h-4 w-4" />}
+                                                            <span className="ml-1 text-xs">Indexar</span>
+                                                        </Button>
+                                                    )}
+                                                    {canUpdate && (
+                                                        <Button variant="ghost" size="sm" onClick={() => handleEdit(doc)}>
+                                                            <Pencil className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
+                                                    {canDelete && (
+                                                        <Button variant="ghost" size="sm" className="text-red-600"
+                                                            onClick={() => handleDelete(doc)}>
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             </TableCell>
                                         </TableRow>
@@ -399,9 +437,9 @@ export default function RagGlobalPage() {
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                     <form onSubmit={handleSubmit}>
                         <DialogHeader>
-                            <DialogTitle>{editing ? "Editar Documento Global" : "Novo Documento Global"}</DialogTitle>
+                            <DialogTitle>{editing ? "Editar Documento" : "Novo Documento"}</DialogTitle>
                             <DialogDescription>
-                                Adicione informações institucionais da Rede CUCA via texto livre ou upload de PDF.
+                                Adicione informações sobre o Enem via texto livre ou upload de PDF.
                             </DialogDescription>
                         </DialogHeader>
 
@@ -411,7 +449,7 @@ export default function RagGlobalPage() {
                                 <Label htmlFor="titulo">Título *</Label>
                                 <Input id="titulo" value={form.titulo}
                                     onChange={e => f("titulo", e.target.value)}
-                                    placeholder="Ex: Endereços das 5 Unidades CUCA" required />
+                                    placeholder="Ex: Datas e locais de prova do Enem 2026" required />
                             </div>
 
                             {/* Tipo */}
@@ -456,7 +494,7 @@ export default function RagGlobalPage() {
                                     <Label htmlFor="conteudo">Conteúdo *</Label>
                                     <Textarea id="conteudo" rows={14} value={form.conteudo}
                                         onChange={e => f("conteudo", e.target.value)}
-                                        placeholder="Escreva as informações institucionais que a IA deve saber sobre a Rede CUCA..."
+                                        placeholder="Escreva as informações sobre o Enem que a IA deve saber (inscrição, datas, locais, documentos, etc.)..."
                                         required={form.modo === "texto"} />
                                     <p className="text-xs text-muted-foreground">{form.conteudo.length} caracteres</p>
                                 </div>
@@ -515,7 +553,7 @@ export default function RagGlobalPage() {
 
                         <DialogFooter>
                             <Button type="button" variant="outline" onClick={closeDialog}>Cancelar</Button>
-                            <Button type="submit" className="bg-blue-600 hover:bg-blue-700" disabled={uploadandoPdf}>
+                            <Button type="submit" disabled={uploadandoPdf}>
                                 {uploadandoPdf
                                     ? <><Clock className="mr-2 h-4 w-4 animate-spin" />Enviando...</>
                                     : editing ? "Atualizar" : "Criar"}
