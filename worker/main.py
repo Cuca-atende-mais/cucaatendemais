@@ -618,6 +618,16 @@ async def process_webhook_payload(payload: dict, token: str):
                     logger.error(f"[Institucional] Erro no motor: {inst_err}", exc_info=True)
                 return  # Não passa para o motor-agente genérico
 
+            # S-AE-00: Ponto de roteamento RESERVADO para o canal Academia Enem (WhatsApp Oficial Meta / AuctaFlux).
+            # O engine próprio (academia_enem_engine.py) será implementado em S-AE-04. Aqui o canal apenas
+            # é reconhecido e não cai no motor-agente genérico — evita atendimento incorreto antes do engine existir.
+            if not from_me and canal_tipo == "AcademiaEnem":
+                logger.info(
+                    f"[AcademiaEnem] Conversa {conversation_id}: canal reconhecido, engine reservado (S-AE-04). "
+                    "Mensagem não roteada para o motor genérico."
+                )
+                return  # Não passa para o motor-agente genérico
+
             # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa'
             if not from_me and conversation_status in ("ativa", "encerrada"):
                 # ── Anti-ban passivo: checar limite diário e aplicar delay humano ──

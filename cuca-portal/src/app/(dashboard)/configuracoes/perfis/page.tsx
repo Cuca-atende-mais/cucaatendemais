@@ -85,6 +85,12 @@ const MODULE_GROUPS = [
         ]
     },
     {
+        category: 'Academia Enem',
+        modules: [
+            { id: 'ae_painel', label: 'Academia Enem: Painel Geral (Dashboard)' },
+        ]
+    },
+    {
         category: 'Administração & Sistema',
         modules: [
             { id: 'config_whatsapp', label: 'Config. WhatsApp (Gerenciar Instâncias e QR Code)' },

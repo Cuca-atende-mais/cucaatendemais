@@ -45,6 +45,15 @@ export const menuItems = [
         ],
     },
     {
+        title: "Academia Enem",
+        url: "/academia-enem",
+        icon: "GraduationCap",
+        permission: { recurso: "ae_painel", acao: "read" },
+        items: [
+            { title: "Painel Geral", url: "/academia-enem", permission: { recurso: "ae_painel", acao: "read" } },
+        ],
+    },
+    {
         title: "Acesso CUCA",
         url: "/acesso-cuca",
         icon: "DoorOpen",

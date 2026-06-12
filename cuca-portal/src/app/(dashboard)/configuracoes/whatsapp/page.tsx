@@ -7,7 +7,7 @@ import { INSTANCIAS_KEY } from "@/hooks/queries/use-instancias"
 import {
     Wifi, WifiOff, RefreshCw, QrCode, Building2, Calendar,
     Smartphone, TriangleAlert, Info, Loader2, Plus, Pencil,
-    Trash2, Phone, UserCheck, Shield, X, Save, ChevronDown, Megaphone,
+    Trash2, Phone, UserCheck, Shield, X, Save, ChevronDown, Megaphone, GraduationCap,
 } from "lucide-react"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -29,7 +29,9 @@ import { unidadesCuca } from "@/lib/constants"
 import { useUazapi } from "@/hooks/use-uazapi"
 
 /* ─── Tipos ──────────────────────────────────────────────── */
-type CanalTipo = "Institucional" | "Empregabilidade" | "Acesso" | "Ouvidoria" | "Reserva" | "Divulgação"
+// "AcademiaEnem" é canal WhatsApp Oficial Meta (provider AuctaFlux/BSP), instanciado em S-AE-02 — não via uazapi/QR.
+// Registrado aqui apenas como valor reconhecido; intencionalmente fora de CANAL_TIPOS_ADMIN/GERENTE (não criável por aqui).
+type CanalTipo = "Institucional" | "Empregabilidade" | "Acesso" | "Ouvidoria" | "Reserva" | "Divulgação" | "AcademiaEnem"
 
 type Instancia = {
     id: string
@@ -71,6 +73,7 @@ const CANAL_ICONS: Record<string, React.ReactNode> = {
     Ouvidoria: <Phone className="h-5 w-5" />,
     Reserva: <Smartphone className="h-5 w-5" />,
     Divulgação: <Megaphone className="h-5 w-5" />,
+    AcademiaEnem: <GraduationCap className="h-5 w-5" />,
 }
 
 const CANAL_DESC: Record<string, string> = {
@@ -80,6 +83,7 @@ const CANAL_DESC: Record<string, string> = {
     Ouvidoria: "Críticas e sugestões (GLOBAL – Super Admin)",
     Reserva: "Chip em standby anti-ban",
     Divulgação: "Aviso mensal global para toda a Rede — Gestor Geral",
+    AcademiaEnem: "Canal WhatsApp Oficial Meta (Academia Enem) — instanciado via AuctaFlux (S-AE-02)",
 }
 
 /* ─── Componente Principal ───────────────────────────────── */

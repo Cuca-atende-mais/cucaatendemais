@@ -15,6 +15,7 @@ import {
     BarChart2,
     Megaphone,
     Radio,
+    GraduationCap,
     ChevronRight,
 } from "lucide-react"
 import {
@@ -51,6 +52,7 @@ const iconMap = {
     BarChart2,
     Megaphone,
     Radio,
+    GraduationCap,
 }
 
 // Categorização dos módulos
