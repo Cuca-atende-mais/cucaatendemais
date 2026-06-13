@@ -91,6 +91,7 @@ const MODULE_GROUPS = [
             { id: 'ae_rag', label: 'Academia Enem: Base de Conhecimento (RAG)' },
             { id: 'ae_presenca', label: 'Academia Enem: Importação de Presença' },
             { id: 'ae_kpis', label: 'Academia Enem: KPIs / Dashboard de Presença' },
+            { id: 'ae_leads_filtro', label: 'Academia Enem: Filtro de Leads / Tag de Matrícula' },
         ]
     },
     {

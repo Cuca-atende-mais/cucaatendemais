@@ -54,6 +54,7 @@ export const menuItems = [
             { title: "Base de Conhecimento", url: "/academia-enem/base-conhecimento", permission: { recurso: "ae_rag", acao: "read" } },
             { title: "Presença", url: "/academia-enem/presencas", permission: { recurso: "ae_presenca", acao: "read" } },
             { title: "KPIs de Presença", url: "/academia-enem/kpis", permission: { recurso: "ae_kpis", acao: "read" } },
+            { title: "Público / Matrículas", url: "/academia-enem/leads-publico", permission: { recurso: "ae_leads_filtro", acao: "read" } },
         ],
     },
     {
