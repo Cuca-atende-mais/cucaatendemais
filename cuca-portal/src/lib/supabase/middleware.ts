@@ -61,6 +61,7 @@ export async function updateSession(request: NextRequest) {
         isPublicEmpregabilidade ||                     // páginas públicas específicas (whitelist)
         pathname.startsWith('/vagas') ||               // páginas públicas de vagas
         pathname.startsWith('/api/empregabilidade') || // APIs públicas de empregabilidade
+        pathname === '/api/academia-enem/webhook/auctaflux' || // webhook BSP (máquina-a-máquina, sem sessão; valida HMAC internamente)
         pathname.startsWith('/feedback-empresa')        // formulário público de feedback para empresas
 
     // Usuário não autenticado tentando acessar rota protegida

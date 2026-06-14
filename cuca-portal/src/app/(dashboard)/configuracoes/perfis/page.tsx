@@ -88,6 +88,8 @@ const MODULE_GROUPS = [
         category: 'Academia Enem',
         modules: [
             { id: 'ae_painel', label: 'Academia Enem: Painel Geral (Dashboard)' },
+            { id: 'ae_instancia', label: 'Academia Enem: Instâncias WhatsApp (AuctaFlux)' },
+            { id: 'atendimentos_academia_enem', label: 'Academia Enem: Atendimento (Painel de Conversas)' },
             { id: 'ae_rag', label: 'Academia Enem: Base de Conhecimento (RAG)' },
             { id: 'ae_presenca', label: 'Academia Enem: Importação de Presença' },
             { id: 'ae_kpis', label: 'Academia Enem: KPIs / Dashboard de Presença' },
