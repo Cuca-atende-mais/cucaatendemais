@@ -51,6 +51,7 @@ export const menuItems = [
         permission: { recurso: "ae_painel", acao: "read" },
         items: [
             { title: "Painel Geral", url: "/academia-enem", permission: { recurso: "ae_painel", acao: "read" } },
+            { title: "Atendimento", url: "/academia-enem/mensagens", permission: { recurso: "atendimentos_academia_enem", acao: "read" } },
             { title: "Instâncias WhatsApp", url: "/academia-enem/instancias", permission: { recurso: "ae_instancia", acao: "read" } },
             { title: "Base de Conhecimento", url: "/academia-enem/base-conhecimento", permission: { recurso: "ae_rag", acao: "read" } },
             { title: "Presença", url: "/academia-enem/presencas", permission: { recurso: "ae_presenca", acao: "read" } },
