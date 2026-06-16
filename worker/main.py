@@ -618,15 +618,9 @@ async def process_webhook_payload(payload: dict, token: str):
                     logger.error(f"[Institucional] Erro no motor: {inst_err}", exc_info=True)
                 return  # Não passa para o motor-agente genérico
 
-            # S-AE-00: Ponto de roteamento RESERVADO para o canal Academia Enem (WhatsApp Oficial Meta / AuctaFlux).
-            # O engine próprio (academia_enem_engine.py) será implementado em S-AE-04. Aqui o canal apenas
-            # é reconhecido e não cai no motor-agente genérico — evita atendimento incorreto antes do engine existir.
-            if not from_me and canal_tipo == "AcademiaEnem":
-                logger.info(
-                    f"[AcademiaEnem] Conversa {conversation_id}: canal reconhecido, engine reservado (S-AE-04). "
-                    "Mensagem não roteada para o motor genérico."
-                )
-                return  # Não passa para o motor-agente genérico
+            # S-AE-04: o canal Academia Enem (AuctaFlux) NÃO passa pelo worker uazapi. Seu engine próprio
+            # (academia_enem_engine.py) é acionado pelo webhook AuctaFlux do portal (POST /academia-enem/process).
+            # A branch reservada da S-AE-00 foi removida aqui — main.py permanece exclusivo do uazapi (blindado).
 
             # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa'
             if not from_me and conversation_status in ("ativa", "encerrada"):
@@ -1109,6 +1103,36 @@ async def process_cv_espontaneo_endpoint(request: Request, background_tasks: Bac
         return {"status": "processing_started"}
     except Exception as e:
         logger.error(f"Erro ao startar OCR espontâneo: {str(e)}")
+        return Response(status_code=500, content=str(e))
+
+
+@app.post("/academia-enem/process")
+async def academia_enem_process_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """S-AE-04: acionado pelo webhook AuctaFlux (portal) a cada inbound de lead. Roda o engine
+    próprio da Academia Enem (independente do motor uazapi). Fire-and-forget: responde já e
+    processa em background para não atrasar o webhook que chamou.
+
+    Autenticação M2M: exige header `x-internal-token` == WEBHOOK_INTERNAL_TOKEN (mesmo segredo
+    interno usado para a edge function). Como o endpoint dispara envio de WhatsApp, falha fechada:
+    se o token não estiver configurado no worker, rejeita (não roda sem proteção)."""
+    expected = os.getenv("WEBHOOK_INTERNAL_TOKEN")
+    if not expected:
+        logger.error("[academia-enem/process] WEBHOOK_INTERNAL_TOKEN não configurada no worker — rejeitando.")
+        return Response(status_code=503, content="internal token not configured")
+    if request.headers.get("x-internal-token") != expected:
+        logger.warning("[academia-enem/process] token interno inválido — requisição rejeitada (401).")
+        return Response(status_code=401, content="unauthorized")
+    try:
+        payload = await request.json()
+        ae_conversa_id = payload.get("ae_conversa_id")
+        if not ae_conversa_id:
+            return Response(status_code=400, content="Faltando ae_conversa_id")
+
+        from academia_enem_engine import processar_mensagem_academia_enem
+        background_tasks.add_task(processar_mensagem_academia_enem, ae_conversa_id)
+        return {"status": "processing_started"}
+    except Exception as e:
+        logger.error(f"[academia-enem/process] Erro: {str(e)}")
         return Response(status_code=500, content=str(e))
 
 

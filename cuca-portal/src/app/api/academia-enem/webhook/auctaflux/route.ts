@@ -92,6 +92,26 @@ async function getOrCreateConversa(
     return (novo?.id as string | undefined) ?? null
 }
 
+// S-AE-04: aciona o engine de automação (worker Python) após persistir um inbound de lead.
+// Fire-and-forget: NUNCA bloqueia nem derruba a resposta 200 do webhook (se o worker estiver
+// fora/lento, a AuctaFlux não deve reenfileirar por causa disso). Padrão portal→worker já usado
+// em /process-cv-text, /sentiment, etc.
+const WORKER_URL = (process.env.WORKER_URL || process.env.NEXT_PUBLIC_WORKER_URL || "").replace(/\/$/, "")
+const WEBHOOK_INTERNAL_TOKEN = process.env.WEBHOOK_INTERNAL_TOKEN || ""
+
+function dispararEngineAE(aeConversaId: string): void {
+    if (!WORKER_URL || !WEBHOOK_INTERNAL_TOKEN) return
+    void fetch(`${WORKER_URL}/academia-enem/process`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            // Auth M2M interna — o worker rejeita (401) sem este header (S-AE-04, achado do @qa).
+            "x-internal-token": WEBHOOK_INTERNAL_TOKEN,
+        },
+        body: JSON.stringify({ ae_conversa_id: aeConversaId }),
+    }).catch((e) => console.warn("[AE webhook] falha ao acionar engine (ignorado):", e))
+}
+
 async function persistirEvento(admin: SupabaseClient, ev: EventoMeta): Promise<number> {
     const instanciaId = await resolverInstancia(admin, ev.phone_number_id)
     if (!instanciaId) return 0
@@ -139,6 +159,9 @@ async function persistirEvento(admin: SupabaseClient, ev: EventoMeta): Promise<n
             ...(pushName ? { push_name: pushName } : {}),
             updated_at: new Date().toISOString(),
         }).eq("id", conversaId)
+
+        // Aciona o engine de automação (S-AE-04) só para inbound real de lead — fire-and-forget.
+        dispararEngineAE(conversaId)
     }
 
     // Status de entrega/leitura das NOSSAS mensagens enviadas (best-effort).
