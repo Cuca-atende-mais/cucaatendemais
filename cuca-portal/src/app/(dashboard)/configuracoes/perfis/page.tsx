@@ -187,7 +187,7 @@ export default function GestaoPerfisPage() {
 
     const fetchRoles = useCallback(async () => {
         setLoading(true)
-        const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
+        const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral' || profile?.funcao?.nome === 'Super Admin Cuca'
         let query = supabase.from('sys_roles').select('*').order('name')
         if (!canSeeAllUnits && profile?.unidade_cuca) {
             query = query.or(`unidade_cuca.is.null,unidade_cuca.eq.${profile.unidade_cuca}`)
@@ -228,7 +228,7 @@ export default function GestaoPerfisPage() {
         if (!roleForm.name.trim()) return toast.error("Digite o nome do Perfil")
         try {
             if (isCreating) {
-                const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
+                const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral' || profile?.funcao?.nome === 'Super Admin Cuca'
                 const { data, error } = await supabase
                     .from('sys_roles')
                     .insert({ name: roleForm.name, description: roleForm.description, unidade_cuca: canSeeAllUnits ? null : profile?.unidade_cuca })
