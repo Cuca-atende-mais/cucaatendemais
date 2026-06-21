@@ -66,7 +66,7 @@ export default function ProgramacaoPage() {
     const { profile, isDeveloper, hasPermission } = useUser()
 
     // Vê todas as unidades quem não tem unidade atribuída (sem vínculo ou "Geral")
-    const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
+    const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral' || profile?.funcao?.nome === 'Super Admin Cuca'
 
     const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
     const canDelete = profile?.email && DEVELOPER_EMAILS.includes(profile.email)

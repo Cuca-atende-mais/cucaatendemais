@@ -70,7 +70,7 @@ export default function ColaboradoresPage() {
 
     const supabase = createClient()
     const qc = useQueryClient()
-    const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
+    const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral' || profile?.funcao?.nome === 'Super Admin Cuca'
 
     const { data: colabData, isLoading: loading } = useQuery({
         queryKey: [...COLABORADORES_KEY, profile?.id],
