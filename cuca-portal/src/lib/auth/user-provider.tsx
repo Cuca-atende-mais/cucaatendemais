@@ -45,7 +45,7 @@ const UserContext = createContext<UserContextType>({
 })
 
 // Emails autorizados como Developer real (bypass total de RBAC + acesso ao Developer Console)
-const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com', 'dev01@cucadev.com.br']
+const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com', 'admin@cucadev.com.br']
 
 // Módulos exclusivos dos 2 Developers — ninguém mais acessa nem via RBAC
 const DEVELOPER_ONLY_MODULES = ['developer']
