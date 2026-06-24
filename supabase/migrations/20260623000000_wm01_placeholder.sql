@@ -1,0 +1,2 @@
+-- S-WM-01: placeholder sem DDL
+-- As tabelas meta_phone_numbers e coluna canal_ativo são criadas em S-WM-03.

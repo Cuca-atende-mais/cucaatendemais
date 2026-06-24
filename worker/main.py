@@ -245,6 +245,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 from uazapi_manager import router as uazapi_router
 app.include_router(uazapi_router)
 
+from meta_adapter_inbound import validar_hmac_meta, processar_webhook_meta
+
+_META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+_META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "")
+
 async def process_webhook_payload(payload: dict, token: str):
     """Processa o payload do webhook em background."""
     try:
@@ -680,7 +685,7 @@ async def process_webhook_payload(payload: dict, token: str):
                         _agora = datetime.now(_tz_fortaleza)
                         payload_edge = {
                             "telefone": phone,
-                            "instancia_uazapi": instance_name,
+                            "canal_origem": instance_name,
                             "agente_tipo": agente_tipo,
                             "unidade_cuca": unidade_cuca,
                             "canal_tipo": canal_tipo,
@@ -1216,6 +1221,40 @@ async def triar_banco_talentos_endpoint(request: Request):
         import traceback
         logger.error(f"[triar_banco_talentos] Erro: {str(e)}\n{traceback.format_exc()}")
         return Response(status_code=500, content=str(e))
+
+
+# ─── Meta Cloud API Webhook (S-WM-01) ────────────────────────────────────────
+# Rotas definidas ANTES de /webhook/{token} para evitar captura pelo route parametrizado.
+# Rate limiter: /webhook/meta já é isento via path.startswith("/webhook/") (main.py:166).
+
+@app.get("/webhook/meta")
+async def meta_webhook_verify(request: Request):
+    """Verificação de webhook Meta (hub challenge)."""
+    params = request.query_params
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge", "")
+
+    if mode == "subscribe" and token == _META_VERIFY_TOKEN:
+        logger.info("[meta-inbound] Webhook Meta verificado com sucesso")
+        return Response(content=challenge, media_type="text/plain")
+
+    logger.warning(f"[meta-inbound] Verificação falhou: mode={mode} token_match={token == _META_VERIFY_TOKEN}")
+    return Response(status_code=403, content="Forbidden")
+
+
+@app.post("/webhook/meta")
+async def meta_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Recepção de webhook Meta com validação HMAC-SHA256."""
+    raw_body = await request.body()
+    sig = request.headers.get("X-Hub-Signature-256")
+
+    if not validar_hmac_meta(raw_body, sig, _META_APP_SECRET):
+        logger.warning("[meta-inbound] HMAC inválido — requisição rejeitada")
+        return Response(status_code=403, content="Forbidden")
+
+    background_tasks.add_task(processar_webhook_meta, raw_body)
+    return Response(status_code=200, content=json.dumps({"status": "received"}))
 
 
 @app.post("/webhook/{token}")
