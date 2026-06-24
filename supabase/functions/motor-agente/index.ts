@@ -108,7 +108,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json();
-    const { mensagem, midia_url, midia_tipo, telefone, instancia_uazapi, agente_tipo, unidade_cuca } = body;
+    const { mensagem, midia_url, midia_tipo, telefone, canal_origem: instancia_uazapi, agente_tipo, unidade_cuca } = body;
     console.log("[motor-agente v18] Agente: " + agente_tipo + ", Unidade: " + unidade_cuca);
 
     if (!telefone || !agente_tipo) return new Response(JSON.stringify({ error: "telefone e agente_tipo sao obrigatorios" }), { status: 400 });
