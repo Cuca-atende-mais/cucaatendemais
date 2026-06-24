@@ -229,20 +229,18 @@ class TestContratoV2:
 class TestRenomeTouchPoints:
     def test_rename_touch_point_regressao(self):
         """
-        AC #9: payload_edge (main.py) e payload motor-agente (institucional_engine.py)
-        devem usar 'canal_origem', não 'instancia_uazapi'.
-
-        Nota: main.py ainda tem 'instancia_uazapi' como coluna de banco (logs_webhook,
-        conversas) — fora do escopo desta story (S-WM-03 renomeia o schema). O teste
-        verifica o contexto do payload_edge, não colunas de DB.
+        S-WM-01 touch points: payload motor-agente (institucional_engine.py) e Edge Function
+        devem usar 'canal_origem'. Touch point 1 (main.py payload_edge via UAZAPI) foi
+        removido em S-WM-02 junto com process_webhook_payload() — validado pela ausência
+        do código UAZAPI em main.py.
         """
         worker_dir = os.path.join(os.path.dirname(__file__), "..")
 
-        # Touch point 1: payload_edge em main.py deve ter canal_origem
+        # Touch point 1 (S-WM-02): process_webhook_payload removido — não deve existir em main.py
         with open(os.path.join(worker_dir, "main.py"), encoding="utf-8") as f:
             main_content = f.read()
-        assert '"canal_origem": instance_name,' in main_content, (
-            "Regressão touch point 1: 'canal_origem' não encontrado no payload_edge de main.py"
+        assert "process_webhook_payload" not in main_content, (
+            "Regressão S-WM-02 touch point 1: process_webhook_payload ainda presente em main.py"
         )
 
         # Touch point 2: payload do motor-agente em institucional_engine.py deve estar limpo

@@ -9,7 +9,6 @@ import os
 import re
 import logging
 import asyncio
-import httpx
 from datetime import date
 from urllib.parse import quote
 from supabase import create_client, Client
@@ -18,7 +17,6 @@ logger = logging.getLogger("empregabilidade_engine")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
-UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
 PORTAL_URL = os.getenv("PORTAL_URL", "https://www.cucaatendemais.com.br")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -31,7 +29,7 @@ _PALAVRAS_ENCERRAR = {
 
 
 # ---------------------------------------------------------------------------
-# Envio de mensagem de texto via UAZAPI
+# Envio de mensagem de texto via Meta Cloud API (S-WM-02)
 # ---------------------------------------------------------------------------
 
 def _montar_historico(conversa_id: str, limite: int = 6) -> str:
@@ -58,15 +56,17 @@ def _montar_historico(conversa_id: str, limite: int = 6) -> str:
         return "(erro ao carregar histórico)"
 
 
-async def _enviar(instance_name: str, token: str, phone: str, texto: str, conversa_id: str = "", lead_id: str = ""):
-    async with httpx.AsyncClient(timeout=15) as client:
-        await client.post(
-            f"{UAZAPI_URL}/send/text",
-            headers={"token": token, "Content-Type": "application/json"},
-            json={"number": phone, "delay": 1200, "text": texto},
-        )
-    # Gravar mensagem de saída do bot na tabela mensagens para exibição no painel
-    if conversa_id:
+async def _enviar(instance_name: str, token: str, phone: str, texto: str, conversa_id: str = "", lead_id: str = "") -> bool:
+    # instance_name e token são vestigiais — Meta usa env vars globais (S-WM-02)
+    from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+    ok = await _meta_enviar(
+        os.getenv("META_STUB_PHONE_NUMBER_ID_EMPREG", ""),
+        phone,
+        texto,
+        os.getenv("META_SYSTEM_USER_TOKEN", ""),
+    )
+    # Gravar no painel somente em envio bem-sucedido (AC #8)
+    if ok and conversa_id:
         def _inserir():
             return supabase.table("mensagens").insert({
                 "conversa_id": conversa_id,
@@ -79,6 +79,7 @@ async def _enviar(instance_name: str, token: str, phone: str, texto: str, conver
             await asyncio.to_thread(_inserir)
         except Exception as _e:
             logger.error(f"[_enviar] Falha ao gravar mensagem bot no DB: {_e}", exc_info=True)
+    return ok
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +92,7 @@ async def _consultar_cnpj(cnpj: str) -> dict | None:
     if len(cnpj_limpo) != 14:
         return None
     try:
+        import httpx  # noqa: PLC0415
         async with httpx.AsyncClient(timeout=10) as client:
             res = await client.get(f"https://publica.cnpj.ws/cnpj/{cnpj_limpo}")
             if res.status_code == 200:
@@ -1874,53 +1876,20 @@ async def processar_mensagem_empregabilidade(
     cm_meta = (cm_res.data or {}).get("metadata") or {}
     
     if cm_meta.get("ultima_intencao") == "duvida":
-        # Limpar flag para não repetir infinitamente nesta conversa se o humano não assumir
         cm_meta["ultima_intencao"] = None
         supabase.table("conversas").update({"metadata": cm_meta}).eq("id", conversa_id).execute()
-        
-        logger.info(f"[SQS-40] Disparando transbordo para dúvida do lead {phone}")
-        
-        # Notificar equipe de transbordo (Módulo Empregabilidade)
-        try:
-            modulo_alvo = "empregabilidade"
-            handover_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).eq("unidade_cuca", unidade_cuca).eq("ativo", True).execute()
-            contato = (handover_res.data or [None])[0]
-            if not contato:
-                # Fallback global
-                handover_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).is_("unidade_cuca", "null").eq("ativo", True).execute()
-                contato = (handover_res.data or [None])[0]
-
-            if contato:
-                tel_destino = contato["telefone_destino"]
-                setor_resp = contato.get("nome_responsavel") or "Empregabilidade"
-                historico = _montar_historico(conversa_id)
-                msg_handover = (
-                    f"🚨 *TRANSBORDO — EMPREGABILIDADE*\n\n"
-                    f"👤 *Lead:* {push_name}\n"
-                    f"📱 *Telefone:* {phone}\n"
-                    f"🏢 *Setor:* {setor_resp}\n\n"
-                    f"📋 *Histórico da conversa:*\n{historico}\n\n"
-                    f"🔗 Iniciar chat: https://wa.me/{phone}"
-                )
-                async with httpx.AsyncClient() as hc:
-                    await hc.post(
-                        f"{UAZAPI_URL}/send/text",
-                        headers={"token": token, "Content-Type": "application/json"},
-                        json={"number": tel_destino, "text": msg_handover, "delay": 1200}
-                    )
-                # Pausar IA — portal fica disponível para o humano responder
-                supabase.table("conversas").update({"status": "awaiting_human"}).eq("id", conversa_id).execute()
-                # Avisar o lead que um humano foi chamado
-                await _enviar(
-                    instance_name, token, phone,
-                    "Entendi que você tem uma dúvida. 🤝 Estarei encaminhando sua mensagem para nossa equipe humana de empregabilidade. "
-                    "Em breve um de nossos consultores falará com você por aqui!",
-                    conversa_id=conversa_id, lead_id=lead_id
-                )
-                return # Interrompe fluxo bot
-        except Exception as _he:
-            logger.error(f"[SQS-40] Erro ao disparar transbordo por dúvida: {_he}")
-        return  # Sempre encerra após tentativa de transbordo por dúvida
+        logger.info(f"[SQS-40] Disparando transbordo por dúvida — lead {phone[:6]}****")
+        await _enviar(
+            instance_name, token, phone,
+            "Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+            conversa_id=conversa_id, lead_id=lead_id,
+        )
+        logger.info(
+            "[handover] %s",
+            {"event": "handover_requested", "telefone": phone[:6] + "****",
+             "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": "duvida"},
+        )
+        return
 
     # Detecção por expressão natural: usuário pede explicitamente atendimento humano
     _texto_lower = texto.strip().lower()
@@ -1937,43 +1906,18 @@ async def processar_mensagem_empregabilidade(
         "quero atendimento", "preciso de atendimento", "falar com suporte",
     }
     if any(kw in _texto_lower for kw in _CONTAINS_HANDOVER):
-        logger.info(f"[HANDOVER-KW] Transbordo por palavra-chave para {phone}")
-        try:
-            modulo_alvo = "empregabilidade"
-            hw_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).eq("unidade_cuca", unidade_cuca).eq("ativo", True).execute()
-            contato_hw = (hw_res.data or [None])[0]
-            if not contato_hw:
-                hw_res = supabase.table("human_handover_contacts").select("*").eq("modulo", modulo_alvo).is_("unidade_cuca", "null").eq("ativo", True).execute()
-                contato_hw = (hw_res.data or [None])[0]
-            if contato_hw:
-                tel_destino = contato_hw["telefone_destino"]
-                setor_resp = contato_hw.get("nome_responsavel") or "Empregabilidade"
-                historico = _montar_historico(conversa_id)
-                msg_hw = (
-                    f"🚨 *TRANSBORDO — EMPREGABILIDADE*\n\n"
-                    f"👤 *Lead:* {push_name}\n"
-                    f"📱 *Telefone:* {phone}\n"
-                    f"🏢 *Setor:* {setor_resp}\n\n"
-                    f"📋 *Histórico da conversa:*\n{historico}\n\n"
-                    f"🔗 Iniciar chat: https://wa.me/{phone}"
-                )
-                async with httpx.AsyncClient() as hc:
-                    await hc.post(
-                        f"{UAZAPI_URL}/send/text",
-                        headers={"token": token, "Content-Type": "application/json"},
-                        json={"number": tel_destino, "text": msg_hw, "delay": 1200}
-                    )
-                # Pausar IA — portal fica disponível para o humano responder
-                supabase.table("conversas").update({"status": "awaiting_human"}).eq("id", conversa_id).execute()
-                await _enviar(
-                    instance_name, token, phone,
-                    "Entendido! 🤝 Estou encaminhando você para nossa equipe humana de empregabilidade. Em breve um consultor falará com você por aqui!",
-                    conversa_id=conversa_id, lead_id=lead_id
-                )
-                return
-        except Exception as _hwe:
-            logger.error(f"[HANDOVER-KW] Erro ao disparar transbordo por palavra-chave: {_hwe}")
-        return  # Sempre encerra após tentativa de transbordo por palavra-chave
+        logger.info(f"[HANDOVER-KW] Transbordo por palavra-chave — lead {phone[:6]}****")
+        await _enviar(
+            instance_name, token, phone,
+            "Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+            conversa_id=conversa_id, lead_id=lead_id,
+        )
+        logger.info(
+            "[handover] %s",
+            {"event": "handover_requested", "telefone": phone[:6] + "****",
+             "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": "palavra_chave"},
+        )
+        return
 
     # SQS-40 Task 3.4: Interceptar respostas ao convite de entrevista
     texto_norm = texto.strip()
@@ -2190,7 +2134,7 @@ async def empregabilidade_notify_loop():
     while True:
         try:
             res = supabase.table("conversas").select(
-                "id, metadata, instancia_uazapi"
+                "id, metadata, instancia_uazapi, lead_id"
             ).eq("agente_tipo", "Empregabilidade").in_("status", ["ativa", "aberta"]).execute()
 
             conversas = res.data or []
@@ -2204,27 +2148,21 @@ async def empregabilidade_notify_loop():
                                    "aguardando_confirmacao_candidatura", "aguardando_retorno_selecao"):
                     continue
 
-                # Buscar dados da conversa e instância para envio
                 conversa_id = c["id"]
-                instance_name = c.get("instancia_uazapi", "")
-                inst_res = supabase.table("instancias_uazapi").select(
-                    "token, unidade_cuca"
-                ).eq("nome", instance_name).single().execute()
-                inst = inst_res.data or {}
-                token = inst.get("token", "")
-                unidade_cuca = inst.get("unidade_cuca", "")
-
-                lead_res = supabase.table("conversas").select(
-                    "lead_id"
-                ).eq("id", conversa_id).single().execute()
-                lead_id = (lead_res.data or {}).get("lead_id", "")
+                lead_id = c.get("lead_id", "")
+                # instancia_uazapi armazena phone_number_id temporariamente (S-WM-02/S-WM-03)
+                instance_name = c.get("instancia_uazapi", "")  # vestigial
+                token = ""  # vestigial; _enviar usa META_SYSTEM_USER_TOKEN de env
+                unidade_cuca = ""  # não disponível na conversa Meta (S-WM-03 adiciona)
 
                 lead_phone_res = supabase.table("leads").select(
                     "telefone"
                 ).eq("id", lead_id).single().execute()
                 phone = (lead_phone_res.data or {}).get("telefone", "")
 
-                if not phone or not token or not instance_name:
+                _meta_pnid = os.getenv("META_STUB_PHONE_NUMBER_ID_EMPREG", "")
+                _meta_tok = os.getenv("META_SYSTEM_USER_TOKEN", "")
+                if not phone or not _meta_pnid or not _meta_tok:
                     continue
 
                 empresa_id = fluxo.get("empresa_id")
@@ -2239,7 +2177,7 @@ async def empregabilidade_notify_loop():
                     vaga_titulo = fluxo.get("vaga_titulo", "")
                     numero_ref = f"#{vaga_numero}" if vaga_numero else f"...{vaga_criada_id[-6:].upper()}"
 
-                    await _enviar(
+                    _ok = await _enviar(
                         instance_name, token, phone,
                         f"✅ *Vaga cadastrada com sucesso!*\n\n"
                         f"📋 *Título:* {vaga_titulo}\n"
@@ -2252,16 +2190,17 @@ async def empregabilidade_notify_loop():
                         "4️⃣ Cancelar uma vaga\n\n"
                         "Responda com *1*, *2*, *3* ou *4*."
                     )
-                    _set_fluxo(conversa_id, {
-                        "perfil": "empresa",
-                        "etapa": "menu_empresa_acoes",
-                        "empresa_id": empresa_id,
-                        "empresa_nome": fluxo.get("empresa_nome", ""),
-                        "empresa_nome_exibicao": empresa_nome,
-                        "cnpj": fluxo.get("cnpj"),
-                        "ultima_vaga_id": vaga_criada_id,
-                    })
-                    logger.info(f"[empreg-notify] Notificação de criação enviada para conversa {conversa_id} — vaga {numero_ref}")
+                    if _ok:
+                        _set_fluxo(conversa_id, {
+                            "perfil": "empresa",
+                            "etapa": "menu_empresa_acoes",
+                            "empresa_id": empresa_id,
+                            "empresa_nome": fluxo.get("empresa_nome", ""),
+                            "empresa_nome_exibicao": empresa_nome,
+                            "cnpj": fluxo.get("cnpj"),
+                            "ultima_vaga_id": vaga_criada_id,
+                        })
+                        logger.info(f"[empreg-notify] Notificação de criação enviada para conversa {conversa_id} — vaga {numero_ref}")
 
                 # --- SQS-49: Notificação de seleção por evento criada ---
                 elif etapa_c == "aguardando_retorno_selecao":
@@ -2271,7 +2210,7 @@ async def empregabilidade_notify_loop():
                     selecao_titulo = fluxo.get("vaga_titulo", "Processo Seletivo")
                     selecao_numero = fluxo.get("vaga_numero")
                     numero_ref = f"#{selecao_numero}" if selecao_numero else f"...{selecao_criada_id[-6:].upper()}"
-                    await _enviar(
+                    _ok = await _enviar(
                         instance_name, token, phone,
                         f"✅ *Processo seletivo cadastrado com sucesso!*\n\n"
                         f"📋 *Título:* {selecao_titulo}\n"
@@ -2285,16 +2224,17 @@ async def empregabilidade_notify_loop():
                         "4️⃣ Cancelar uma vaga\n\n"
                         "Responda com *1*, *2*, *3* ou *4*."
                     )
-                    _set_fluxo(conversa_id, {
-                        "perfil": "empresa",
-                        "etapa": "menu_empresa_acoes",
-                        "empresa_id": empresa_id,
-                        "empresa_nome": fluxo.get("empresa_nome", ""),
-                        "empresa_nome_exibicao": empresa_nome,
-                        "cnpj": fluxo.get("cnpj"),
-                        "ultima_vaga_id": selecao_criada_id,
-                    })
-                    logger.info(f"[empreg-notify] Seleção por evento confirmada para conversa {conversa_id} — ref {numero_ref}")
+                    if _ok:
+                        _set_fluxo(conversa_id, {
+                            "perfil": "empresa",
+                            "etapa": "menu_empresa_acoes",
+                            "empresa_id": empresa_id,
+                            "empresa_nome": fluxo.get("empresa_nome", ""),
+                            "empresa_nome_exibicao": empresa_nome,
+                            "cnpj": fluxo.get("cnpj"),
+                            "ultima_vaga_id": selecao_criada_id,
+                        })
+                        logger.info(f"[empreg-notify] Seleção por evento confirmada para conversa {conversa_id} — ref {numero_ref}")
 
                 # --- Notificação de edição confirmada ---
                 elif etapa_c == "aguardando_retorno_edicao":
@@ -2304,7 +2244,7 @@ async def empregabilidade_notify_loop():
                     vaga_titulo = fluxo.get("vaga_editada_titulo", "")
                     vaga_unidade = fluxo.get("vaga_editada_unidade", "")
 
-                    await _enviar(
+                    _ok = await _enviar(
                         instance_name, token, phone,
                         f"✅ *Alterações recebidas com sucesso!*\n\n"
                         f"📋 *Vaga:* {vaga_titulo}\n\n"
@@ -2316,15 +2256,16 @@ async def empregabilidade_notify_loop():
                         "4️⃣ Cancelar uma vaga\n\n"
                         "Responda com *1*, *2*, *3* ou *4*."
                     )
-                    _set_fluxo(conversa_id, {
-                        "perfil": "empresa",
-                        "etapa": "menu_empresa_acoes",
-                        "empresa_id": empresa_id,
-                        "empresa_nome": fluxo.get("empresa_nome", ""),
-                        "empresa_nome_exibicao": empresa_nome,
-                        "cnpj": fluxo.get("cnpj"),
-                    })
-                    logger.info(f"[empreg-notify] Confirmação de edição enviada para conversa {conversa_id} — vaga {vaga_editada_id}")
+                    if _ok:
+                        _set_fluxo(conversa_id, {
+                            "perfil": "empresa",
+                            "etapa": "menu_empresa_acoes",
+                            "empresa_id": empresa_id,
+                            "empresa_nome": fluxo.get("empresa_nome", ""),
+                            "empresa_nome_exibicao": empresa_nome,
+                            "cnpj": fluxo.get("cnpj"),
+                        })
+                        logger.info(f"[empreg-notify] Confirmação de edição enviada para conversa {conversa_id} — vaga {vaga_editada_id}")
 
                 # --- Notificação de candidatura confirmada (candidato) ---
                 elif etapa_c == "aguardando_confirmacao_candidatura":
@@ -2333,7 +2274,7 @@ async def empregabilidade_notify_loop():
                         continue
                     eh_banco_talentos = fluxo.get("banco_talentos", False)
                     if eh_banco_talentos:
-                        await _enviar(
+                        _ok = await _enviar(
                             instance_name, token, phone,
                             "✅ *Currículo salvo com sucesso!*\n\n"
                             "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
@@ -2343,40 +2284,42 @@ async def empregabilidade_notify_loop():
                             "Deseja ver as *vagas abertas* ou encerrar por aqui?\n"
                             "Responda *vagas* para ver oportunidades ou *encerrar*."
                         )
-                        _set_fluxo(conversa_id, {
-                            "etapa": "candidatura_confirmada",
-                            "perfil": "publico",
-                        })
-                        logger.info(f"[empreg-notify] Banco de talentos confirmado para conversa {conversa_id}")
+                        if _ok:
+                            _set_fluxo(conversa_id, {
+                                "etapa": "candidatura_confirmada",
+                                "perfil": "publico",
+                            })
+                            logger.info(f"[empreg-notify] Banco de talentos confirmado para conversa {conversa_id}")
                     else:
                         candidatura_codigo = fluxo.get("candidatura_codigo")
                         codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
                         # S37C-02: Mensagem 1 — confirmação com o código
-                        await _enviar(
+                        _ok = await _enviar(
                             instance_name, token, phone,
                             f"🎉 *Candidatura recebida com sucesso!*\n\n"
                             f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
                             "Guarde esse número! Com ele você pode verificar o status da sua candidatura a qualquer momento. ✅"
                         )
-                        # S37C-02: Mensagem 2 — oferta de nova candidatura
+                        # S37C-02: Mensagem 2 — oferta de nova candidatura (best-effort)
                         await _enviar(
                             instance_name, token, phone,
                             "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
                             "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
                         )
-                        # S37C-04/05: salva histórico e prefill
-                        vaga_confirmada = fluxo.get("vaga_id_selecionada")
-                        historico = list(fluxo.get("historico_vagas_aplicadas") or [])
-                        if vaga_confirmada and vaga_confirmada not in historico:
-                            historico.append(vaga_confirmada)
-                        _set_fluxo(conversa_id, {
-                            "etapa": "pos_candidatura",  # S37C-01
-                            "perfil": "publico",
-                            "ultima_candidatura_codigo": codigo,
-                            "historico_vagas_aplicadas": historico,
-                            "nome_candidato_prefill": fluxo.get("nome_candidato", ""),
-                        })
-                        logger.info(f"[empreg-notify] Confirmação enviada → pos_candidatura para conversa {conversa_id} — código {codigo}")
+                        # S37C-04/05: salva histórico e prefill somente após envio principal (AC #11)
+                        if _ok:
+                            vaga_confirmada = fluxo.get("vaga_id_selecionada")
+                            historico = list(fluxo.get("historico_vagas_aplicadas") or [])
+                            if vaga_confirmada and vaga_confirmada not in historico:
+                                historico.append(vaga_confirmada)
+                            _set_fluxo(conversa_id, {
+                                "etapa": "pos_candidatura",  # S37C-01
+                                "perfil": "publico",
+                                "ultima_candidatura_codigo": codigo,
+                                "historico_vagas_aplicadas": historico,
+                                "nome_candidato_prefill": fluxo.get("nome_candidato", ""),
+                            })
+                            logger.info(f"[empreg-notify] Confirmação enviada → pos_candidatura para conversa {conversa_id} — código {codigo}")
 
         except Exception as e:
             logger.error(f"[empreg-notify] Erro no loop: {e}")

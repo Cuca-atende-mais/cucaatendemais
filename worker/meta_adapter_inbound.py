@@ -187,13 +187,27 @@ async def build_contrato_v2(meta_payload: dict, instancia_data: dict) -> dict:
     }
 
 
+# ─── Supabase (lazy singleton — evita colisão com pasta supabase/ do projeto) ──
+_supabase_client = None
+
+
+def _get_supabase():
+    global _supabase_client
+    if _supabase_client is None:
+        from supabase import create_client  # noqa: PLC0415
+        _supabase_client = create_client(
+            os.getenv("SUPABASE_URL"),
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
+        )
+    return _supabase_client
+
+
 # ─── Background Task ───────────────────────────────────────────────────────────
 async def processar_webhook_meta(raw_body: bytes) -> None:
     """
     Background task do webhook Meta.
-
-    Guard: phone_number_id desconhecido → log + discard silencioso (AC #4, R3).
-    S-WM-03 substituirá o stub e adicionará o dispatch para os engines.
+    Persiste Lead, Conversa e Mensagem antes do dispatch (AC #5).
+    Despacha para Empregabilidade se agente_tipo corresponder (AC #6).
     """
     try:
         payload = json.loads(raw_body)
@@ -214,11 +228,14 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         logger.info("[meta-inbound] Evento sem messages[] (status update) — ignorado")
         return
 
-    # Guard: phone_number_id desconhecido → discard silencioso (AC #4)
+    # Guard: phone_number_id desconhecido → discard silencioso (AC #5 segurança)
     instancia_data = _get_instancia_by_phone_number_id(phone_number_id)
     if instancia_data is None:
         logger.warning(f"[meta-inbound] phone_number_id desconhecido: {phone_number_id} — descartado")
         return
+
+    contacts = value.get("contacts", [])
+    push_name = (contacts[0].get("profile", {}).get("name") or "Cidadão") if contacts else "Cidadão"
 
     try:
         contrato_v2 = await build_contrato_v2(payload, instancia_data)
@@ -227,6 +244,87 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             f"tel={contrato_v2['telefone']} agente={contrato_v2['agente_tipo']} "
             f"midia_tipo={contrato_v2['midia_tipo']}"
         )
-        # S-WM-03: adicionar dispatch para engines aqui (feature flag + routing por agente_tipo/canal_tipo)
     except Exception as exc:
         logger.error(f"[meta-inbound] Erro ao processar Contrato v2: {exc}")
+        return
+
+    telefone: str = contrato_v2["telefone"]
+    agente_tipo: str = contrato_v2["agente_tipo"]
+    canal_tipo: str = contrato_v2["canal_tipo"]
+    unidade_cuca = contrato_v2.get("unidade_cuca")
+    mensagem: str = contrato_v2["mensagem"]
+    midia_tipo: str = contrato_v2["midia_tipo"]
+
+    supabase = _get_supabase()
+
+    # ── DB A: upsert Lead por telefone ────────────────────────────────────
+    try:
+        lead_result = supabase.table("leads").upsert(
+            {"telefone": telefone, "nome": push_name, "updated_at": "now()"},
+            on_conflict="telefone",
+        ).execute()
+        lead_id: str = lead_result.data[0]["id"]
+        _fresh = supabase.table("leads").select("bloqueado").eq("id", lead_id).single().execute()
+        bloqueado: bool = (_fresh.data or {}).get("bloqueado", False)
+    except Exception as exc:
+        logger.error(f"[meta-inbound] Erro ao gerenciar Lead: {exc}")
+        return
+
+    if bloqueado:
+        logger.info(f"[meta-inbound] Lead {telefone} está bloqueado — mensagem ignorada")
+        return
+
+    # ── DB B: recuperar ou criar Conversa por (lead_id, phone_number_id) ─
+    # phone_number_id é armazenado em instancia_uazapi temporariamente (S-WM-03 renomeia)
+    try:
+        conv_result = supabase.table("conversas").select("id, status").match(
+            {"lead_id": lead_id, "instancia_uazapi": phone_number_id}
+        ).execute()
+
+        if conv_result.data:
+            conversa_id: str = conv_result.data[0]["id"]
+            supabase.table("conversas").update({"updated_at": "now()"}).eq("id", conversa_id).execute()
+        else:
+            new_conv = supabase.table("conversas").insert({
+                "lead_id": lead_id,
+                "instancia_uazapi": phone_number_id,  # temporário — S-WM-03
+                "status": "ativa",
+                "agente_tipo": agente_tipo,
+            }).execute()
+            conversa_id = new_conv.data[0]["id"]
+    except Exception as exc:
+        logger.error(f"[meta-inbound] Erro ao gerenciar Conversa: {exc}")
+        return
+
+    # ── DB C: inserir Mensagem inbound e incrementar não lidas ──────────
+    try:
+        supabase.table("mensagens").insert({
+            "conversa_id": conversa_id,
+            "lead_id": lead_id,
+            "tipo": midia_tipo,
+            "conteudo": mensagem,
+            "remetente": "lead",
+            "created_at": "now()",
+        }).execute()
+        supabase.rpc("increment_nao_lidas", {"conv_id": conversa_id}).execute()
+    except Exception as exc:
+        logger.error(f"[meta-inbound] Erro ao salvar Mensagem: {exc}")
+
+    # ── Dispatch: Empregabilidade (AC #6) ────────────────────────────────
+    if agente_tipo == "Empregabilidade":
+        try:
+            from empregabilidade_engine import processar_mensagem_empregabilidade  # noqa: PLC0415
+            await processar_mensagem_empregabilidade(
+                texto=mensagem,
+                phone=telefone,
+                instance_name=phone_number_id,  # vestigial; S-WM-04 limpa assinatura
+                token="",
+                lead_id=lead_id,
+                conversa_id=conversa_id,
+                unidade_cuca=unidade_cuca or "",
+                push_name=push_name,
+            )
+        except Exception as exc:
+            logger.error(f"[meta-inbound] Erro no dispatch Empregabilidade: {exc}")
+    else:
+        logger.info(f"[meta-inbound] agente_tipo={agente_tipo!r} — sem dispatch nesta story")
