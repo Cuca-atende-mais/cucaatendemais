@@ -68,7 +68,7 @@ async def _meta_enviar(
             erro_body = resp.json()
             erro_resumo = str(erro_body).replace(token, "[REDACTED]")[:300]
         except Exception:
-            erro_resumo = resp.text[:300]
+            erro_resumo = resp.text[:300].replace(token, "[REDACTED]")
         logger.error(
             "[meta-outbound] Graph API %s para %s: %s",
             resp.status_code,
