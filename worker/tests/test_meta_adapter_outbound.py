@@ -19,7 +19,42 @@ sys.modules.setdefault("openai", MagicMock())
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from meta_adapter_outbound import _meta_enviar, GRAPH_API_VERSION
+from meta_adapter_outbound import _meta_enviar, GRAPH_API_VERSION, _normalizar_telefone_br
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Normalização do nono dígito brasileiro
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestNormalizarTelefoneBr:
+
+    def test_adiciona_nono_digito_celular_sem_nove(self):
+        """12 dígitos BR sem 9 após DDD → inserção do 9."""
+        assert _normalizar_telefone_br("558581733321") == "5585981733321"
+
+    def test_nao_altera_numero_ja_com_nono_13_digitos(self):
+        """13 dígitos → já no formato correto, sem alteração."""
+        assert _normalizar_telefone_br("5585981733321") == "5585981733321"
+
+    def test_nao_altera_sp_com_nono(self):
+        """SP 13 dígitos → inalterado."""
+        assert _normalizar_telefone_br("5511999999999") == "5511999999999"
+
+    def test_nao_altera_rj_com_nono(self):
+        """RJ 13 dígitos → inalterado."""
+        assert _normalizar_telefone_br("5521988888888") == "5521988888888"
+
+    def test_nao_altera_12_digitos_com_nove_na_posicao_4(self):
+        """12 dígitos BR mas pos[4]='9' → função não altera (9 já presente)."""
+        assert _normalizar_telefone_br("558591733321") == "558591733321"
+
+    def test_nao_altera_numero_nao_br(self):
+        """Não começa com 55 → inalterado."""
+        assert _normalizar_telefone_br("447911234567") == "447911234567"
+
+    def test_nao_altera_numero_curto(self):
+        """Menos de 12 dígitos → inalterado."""
+        assert _normalizar_telefone_br("5585173332") == "5585173332"
 
 
 def _make_httpx_mock():

@@ -10,6 +10,21 @@ logger = logging.getLogger("worker-cuca")
 GRAPH_API_VERSION = "v23.0"
 
 
+def _normalizar_telefone_br(telefone: str) -> str:
+    """
+    Adiciona o nono dígito em números celulares brasileiros se ausente.
+    Formato entrada: 558581733321 (12 dígitos total, 8 na parte local)
+    Formato saída:  5585981733321 (13 dígitos total, 9 na parte local)
+    Só aplica se: começa com 55, tem 12 dígitos total,
+    e o dígito após o DDD não é 9.
+    """
+    if (len(telefone) == 12 and
+            telefone.startswith("55") and
+            telefone[4] != "9"):
+        return telefone[:4] + "9" + telefone[4:]
+    return telefone
+
+
 async def _meta_enviar(
     phone_number_id: str,
     to: str,
@@ -34,6 +49,8 @@ async def _meta_enviar(
     if not to or not text:
         logger.error("[meta-outbound] Envio abortado: destinatário ou texto ausente")
         return False
+
+    to = _normalizar_telefone_br(to)
 
     import httpx  # noqa: PLC0415 — lazy: httpx ausente nos containers de teste
 
