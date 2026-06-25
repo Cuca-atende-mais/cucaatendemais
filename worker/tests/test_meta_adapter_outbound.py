@@ -352,18 +352,13 @@ class TestDispatchInbound:
 class TestEngineMeta:
 
     @pytest.mark.asyncio
-    async def test_enviar_usa_meta_env_vars(self):
-        """AC #7: _enviar() delega para _meta_enviar com env vars META_STUB_PHONE_NUMBER_ID_EMPREG."""
+    async def test_enviar_usa_meta_phone_da_tabela(self):
+        """AC #7 (S-WM-03): _enviar() busca phone_number_id em meta_phone_numbers via _get_meta_phone."""
         from empregabilidade_engine import _enviar
 
         meta_mock = AsyncMock(return_value=True)
-        env = {
-            "META_STUB_PHONE_NUMBER_ID_EMPREG": "PNID_EMPREG_TEST",
-            "META_SYSTEM_USER_TOKEN": "TOKEN_EMPREG_TEST",
-        }
-        # _meta_enviar é importada lazily de meta_adapter_outbound → patch na origem
         with patch("meta_adapter_outbound._meta_enviar", meta_mock), \
-             patch.dict(os.environ, env):
+             patch("empregabilidade_engine._get_meta_phone", return_value=("PNID_EMPREG_TEST", "TOKEN_EMPREG_TEST")):
             await _enviar("vestigial_inst", "vestigial_token", "5585999", "Mensagem")
 
         meta_mock.assert_called_once()
@@ -372,6 +367,23 @@ class TestEngineMeta:
         assert args[1] == "5585999"
         assert args[2] == "Mensagem"
         assert args[3] == "TOKEN_EMPREG_TEST"
+
+    @pytest.mark.asyncio
+    async def test_enviar_nao_grava_mensagem_em_falha_meta(self):
+        """AC 17 (S-WM-03 / AC 8 S-WM-02): insert em mensagens NÃO ocorre quando _meta_enviar retorna False."""
+        from empregabilidade_engine import _enviar
+
+        meta_mock = AsyncMock(return_value=False)
+        mock_sb = MagicMock()
+
+        with patch("meta_adapter_outbound._meta_enviar", meta_mock), \
+             patch("empregabilidade_engine._get_meta_phone", return_value=("PNID", "TOK")), \
+             patch("empregabilidade_engine.supabase", mock_sb):
+            result = await _enviar("", "", "5585999", "Texto", conversa_id="conv-uuid", lead_id="lead-uuid")
+
+        assert result is False
+        mensagens_calls = [c for c in mock_sb.table.call_args_list if c.args and c.args[0] == "mensagens"]
+        assert not mensagens_calls, f"insert em mensagens não deve ocorrer em falha: {mensagens_calls}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -428,7 +440,7 @@ class TestLoopProativo:
         conversa_fake = {
             "id": "conv-uuid",
             "lead_id": "lead-uuid",
-            "instancia_uazapi": "PNID_EMPREG",
+            "origem_id": "PNID_EMPREG",
             "metadata": {
                 "empreg_fluxo": {
                     "etapa": "aguardando_retorno_vaga",
@@ -458,12 +470,11 @@ class TestLoopProativo:
             call_count += 1
             raise asyncio_lib.CancelledError()
 
-        # Patching asyncio.sleep diretamente (função usa `import asyncio` local)
         with patch("empregabilidade_engine.supabase", mock_sb), \
              patch("empregabilidade_engine._enviar", _fail_enviar), \
              patch("empregabilidade_engine._set_fluxo", _fake_set_fluxo), \
-             patch("asyncio.sleep", _fake_sleep), \
-             patch.dict(os.environ, {"META_STUB_PHONE_NUMBER_ID_EMPREG": "PNID", "META_SYSTEM_USER_TOKEN": "TOK"}):
+             patch("empregabilidade_engine._get_meta_phone", return_value=("PNID", "TOK")), \
+             patch("asyncio.sleep", _fake_sleep):
             try:
                 await empregabilidade_notify_loop()
             except asyncio_lib.CancelledError:
@@ -471,6 +482,93 @@ class TestLoopProativo:
 
         assert set_fluxo_calls == [], \
             f"_set_fluxo foi chamado mesmo após falha no envio: {set_fluxo_calls}"
+
+    @pytest.mark.asyncio
+    async def test_loop_filtra_etapas_corretas(self):
+        """AC 18 (S-WM-03 / AC 10 S-WM-02): loop processa etapa de notificação e ignora outras."""
+        from empregabilidade_engine import empregabilidade_notify_loop
+        import asyncio as asyncio_lib
+
+        # Uma conversa com etapa de notificação + dados corretos → deve avançar estado
+        # Uma conversa com etapa ignorada → não deve avançar estado
+        conversas_fake = [
+            {
+                "id": "conv-notif",
+                "lead_id": "lead-uuid",
+                "origem_id": "PNID",
+                "metadata": {"empreg_fluxo": {
+                    "etapa": "aguardando_retorno_vaga",
+                    "vaga_criada_id": "v-uuid",
+                    "vaga_numero": 1,
+                    "vaga_titulo": "Vaga Teste",
+                }},
+            },
+            {
+                "id": "conv-ignorado",
+                "lead_id": "lead-uuid",
+                "origem_id": "PNID",
+                "metadata": {"empreg_fluxo": {"etapa": "listou_vagas"}},
+            },
+        ]
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value.data = conversas_fake
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"telefone": "5585999999999"}
+
+        envio_count = []
+
+        async def _fake_enviar(*args, **kwargs):
+            envio_count.append(1)
+            return True
+
+        set_fluxo_ids = []
+
+        def _fake_set_fluxo(conv_id, data):
+            set_fluxo_ids.append(conv_id)
+
+        async def _fake_sleep(seconds):
+            raise asyncio_lib.CancelledError()
+
+        with patch("empregabilidade_engine.supabase", mock_sb), \
+             patch("empregabilidade_engine._enviar", _fake_enviar), \
+             patch("empregabilidade_engine._set_fluxo", _fake_set_fluxo), \
+             patch("empregabilidade_engine._get_meta_phone", return_value=("PNID", "TOK")), \
+             patch("asyncio.sleep", _fake_sleep):
+            try:
+                await empregabilidade_notify_loop()
+            except asyncio_lib.CancelledError:
+                pass
+
+        assert len(envio_count) == 1, \
+            f"_enviar deve ser chamado 1 vez (etapa de notificação com dados), foi {len(envio_count)}"
+        assert "conv-notif" in set_fluxo_ids, "_set_fluxo deve ser chamado para conv-notif"
+        assert "conv-ignorado" not in set_fluxo_ids, \
+            "_set_fluxo não deve ser chamado para etapa ignorada"
+
+    @pytest.mark.asyncio
+    async def test_loop_sleep_chamado_ao_final_de_iteracao(self):
+        """AC 18 (S-WM-03 / AC 10 S-WM-02): asyncio.sleep(20) chamado ao final de cada iteração."""
+        from empregabilidade_engine import empregabilidade_notify_loop
+        import asyncio as asyncio_lib
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value.data = []
+
+        sleep_calls = []
+
+        async def _fake_sleep(seconds):
+            sleep_calls.append(seconds)
+            raise asyncio_lib.CancelledError()
+
+        with patch("empregabilidade_engine.supabase", mock_sb), \
+             patch("asyncio.sleep", _fake_sleep):
+            try:
+                await empregabilidade_notify_loop()
+            except asyncio_lib.CancelledError:
+                pass
+
+        assert len(sleep_calls) >= 1, "asyncio.sleep deve ser chamado ao final da iteração"
+        assert sleep_calls[0] == 20, f"sleep deve ser 20s, mas foi {sleep_calls[0]}"
 
 
 import importlib as _importlib

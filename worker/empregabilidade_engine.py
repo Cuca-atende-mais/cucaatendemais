@@ -56,14 +56,32 @@ def _montar_historico(conversa_id: str, limite: int = 6) -> str:
         return "(erro ao carregar histórico)"
 
 
+def _get_meta_phone(agente_tipo: str) -> tuple[str, str]:
+    """Retorna (phone_number_id, system_token) para o agente desde meta_phone_numbers."""
+    try:
+        res = supabase.table("meta_phone_numbers") \
+            .select("phone_number_id") \
+            .eq("agente_tipo", agente_tipo) \
+            .eq("ativo", True) \
+            .limit(1) \
+            .single() \
+            .execute()
+        pnid = (res.data or {}).get("phone_number_id", "")
+    except Exception as exc:
+        logger.error("[meta-phone] Erro ao buscar phone_number_id para %s: %s", agente_tipo, exc)
+        pnid = ""
+    return pnid, os.getenv("META_SYSTEM_USER_TOKEN", "")
+
+
 async def _enviar(instance_name: str, token: str, phone: str, texto: str, conversa_id: str = "", lead_id: str = "") -> bool:
-    # instance_name e token são vestigiais — Meta usa env vars globais (S-WM-02)
+    # instance_name e token são vestigiais — Meta usa meta_phone_numbers (S-WM-03)
     from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+    pnid, meta_tok = _get_meta_phone("Empregabilidade")
     ok = await _meta_enviar(
-        os.getenv("META_STUB_PHONE_NUMBER_ID_EMPREG", ""),
+        pnid,
         phone,
         texto,
-        os.getenv("META_SYSTEM_USER_TOKEN", ""),
+        meta_tok,
     )
     # Gravar no painel somente em envio bem-sucedido (AC #8)
     if ok and conversa_id:
@@ -2134,7 +2152,7 @@ async def empregabilidade_notify_loop():
     while True:
         try:
             res = supabase.table("conversas").select(
-                "id, metadata, instancia_uazapi, lead_id"
+                "id, metadata, origem_id, lead_id"
             ).eq("agente_tipo", "Empregabilidade").in_("status", ["ativa", "aberta"]).execute()
 
             conversas = res.data or []
@@ -2150,19 +2168,18 @@ async def empregabilidade_notify_loop():
 
                 conversa_id = c["id"]
                 lead_id = c.get("lead_id", "")
-                # instancia_uazapi armazena phone_number_id temporariamente (S-WM-02/S-WM-03)
-                instance_name = c.get("instancia_uazapi", "")  # vestigial
-                token = ""  # vestigial; _enviar usa META_SYSTEM_USER_TOKEN de env
-                unidade_cuca = ""  # não disponível na conversa Meta (S-WM-03 adiciona)
+                instance_name = c.get("origem_id", "")  # vestigial
+                token = ""  # vestigial; _enviar usa _get_meta_phone (S-WM-03)
+                unidade_cuca = ""
 
                 lead_phone_res = supabase.table("leads").select(
                     "telefone"
                 ).eq("id", lead_id).single().execute()
                 phone = (lead_phone_res.data or {}).get("telefone", "")
 
-                _meta_pnid = os.getenv("META_STUB_PHONE_NUMBER_ID_EMPREG", "")
-                _meta_tok = os.getenv("META_SYSTEM_USER_TOKEN", "")
+                _meta_pnid, _meta_tok = _get_meta_phone("Empregabilidade")
                 if not phone or not _meta_pnid or not _meta_tok:
+                    logger.warning("[empreg-notify] phone_number_id não configurado em meta_phone_numbers — loop aguardando")
                     continue
 
                 empresa_id = fluxo.get("empresa_id")

@@ -13,20 +13,24 @@ from datetime import datetime, timezone, timedelta
 logger = logging.getLogger("worker-cuca")
 
 
-# ─── Stub de Lookup (S-WM-03 substitui por query em meta_phone_numbers) ───────
-_STUB_PHONE_NUMBER_MAP: dict[str, dict] = {
-    os.getenv("META_STUB_PHONE_NUMBER_ID", "STUB_ID"): {
-        "canal_origem": os.getenv("META_STUB_CANAL_ORIGEM", "cuca_empregabilidade_01"),
-        "agente_tipo":  os.getenv("META_STUB_AGENTE_TIPO", "Empregabilidade"),
-        "canal_tipo":   os.getenv("META_STUB_CANAL_TIPO", "Empregabilidade"),
-        "unidade_cuca": None,
-    }
-}
-
-
 def _get_instancia_by_phone_number_id(phone_number_id: str) -> dict | None:
-    """Stub — S-WM-03 substitui por: supabase.table('meta_phone_numbers').select(...)..."""
-    return _STUB_PHONE_NUMBER_MAP.get(phone_number_id)
+    """Busca dados do canal em meta_phone_numbers por phone_number_id (S-WM-03)."""
+    try:
+        res = _get_supabase().table("meta_phone_numbers").select(
+            "phone_number_id, agente_tipo, canal_tipo, unidade_cuca"
+        ).eq("phone_number_id", phone_number_id).eq("ativo", True).maybe_single().execute()
+        if not res.data:
+            return None
+        d = res.data
+        return {
+            "canal_origem": d["phone_number_id"],
+            "agente_tipo":  d["agente_tipo"],
+            "canal_tipo":   d["canal_tipo"],
+            "unidade_cuca": d.get("unidade_cuca"),
+        }
+    except Exception as exc:
+        logger.error("[meta-inbound] Erro ao buscar meta_phone_numbers para %s: %s", phone_number_id, exc)
+        return None
 
 
 # ─── Validação HMAC-SHA256 ─────────────────────────────────────────────────────
@@ -274,11 +278,10 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         logger.info(f"[meta-inbound] Lead {telefone} está bloqueado — mensagem ignorada")
         return
 
-    # ── DB B: recuperar ou criar Conversa por (lead_id, phone_number_id) ─
-    # phone_number_id é armazenado em instancia_uazapi temporariamente (S-WM-03 renomeia)
+    # ── DB B: recuperar ou criar Conversa por (lead_id, origem_id) ──────
     try:
         conv_result = supabase.table("conversas").select("id, status").match(
-            {"lead_id": lead_id, "instancia_uazapi": phone_number_id}
+            {"lead_id": lead_id, "origem_id": phone_number_id}
         ).execute()
 
         if conv_result.data:
@@ -286,9 +289,10 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             supabase.table("conversas").update({"updated_at": "now()"}).eq("id", conversa_id).execute()
         else:
             new_conv = supabase.table("conversas").insert({
-                "lead_id": lead_id,
-                "instancia_uazapi": phone_number_id,  # temporário — S-WM-03
-                "status": "ativa",
+                "lead_id":    lead_id,
+                "origem_id":  phone_number_id,
+                "canal_ativo": "meta",
+                "status":     "ativa",
                 "agente_tipo": agente_tipo,
             }).execute()
             conversa_id = new_conv.data[0]["id"]

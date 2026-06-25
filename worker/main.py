@@ -307,13 +307,43 @@ async def send_manual_message(token: str, request: Request):
 
     try:
         from meta_adapter_outbound import _meta_enviar
-        phone_number_id = os.getenv("META_STUB_PHONE_NUMBER_ID_EMPREG", "")
-        meta_token = os.getenv("META_SYSTEM_USER_TOKEN", "")
-        ok = await _meta_enviar(phone_number_id, number, text, meta_token)
-        if ok:
-            logger.info(f"[send-manual] Mensagem enviada para {number} via Meta")
-            return {"status": "sent"}
-        return Response(status_code=502, content="Falha no envio Meta")
+        from meta_adapter_inbound import _get_supabase
+
+        conversa_id_payload = payload.get("conversa_id")
+
+        if conversa_id_payload:
+            # Routing por canal_ativo da conversa (AC 12-13 S-WM-03)
+            sb = _get_supabase()
+            conv = sb.table("conversas").select("canal_ativo, origem_id").eq(
+                "id", conversa_id_payload
+            ).maybe_single().execute()
+            if not conv.data:
+                return Response(status_code=404, content="Conversa não encontrada")
+            canal_ativo = conv.data.get("canal_ativo", "uazapi")
+            origem_id = conv.data.get("origem_id", "")
+            if canal_ativo == "meta":
+                meta_token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+                ok = await _meta_enviar(origem_id, number, text, meta_token)
+                if ok:
+                    logger.info(f"[send-manual] Mensagem enviada via Meta (canal_ativo=meta) para {number}")
+                    return {"status": "sent"}
+                return Response(status_code=502, content="Falha no envio Meta")
+            elif canal_ativo == "uazapi":
+                return Response(
+                    status_code=501,
+                    content="Canal UAZAPI não suportado neste endpoint — use o cliente UAZAPI direto",
+                )
+            else:
+                return Response(status_code=400, content=f"Canal desconhecido: {canal_ativo}")
+        else:
+            # Fallback legado (AC 14): sem conversa_id — usa meta_phone_numbers (S-WM-03)
+            from empregabilidade_engine import _get_meta_phone
+            phone_number_id, meta_token = _get_meta_phone("Empregabilidade")
+            ok = await _meta_enviar(phone_number_id, number, text, meta_token)
+            if ok:
+                logger.info(f"[send-manual] Mensagem enviada para {number} via Meta (fallback legado)")
+                return {"status": "sent"}
+            return Response(status_code=502, content="Falha no envio Meta")
     except Exception as e:
         logger.error(f"[send-manual] Erro: {e}", exc_info=True)
         return Response(status_code=500, content=str(e))

@@ -134,7 +134,14 @@ class TestHmac:
 # ─── Lookup / Guard ───────────────────────────────────────────────────────────
 class TestLookup:
     def test_phone_number_id_desconhecido_retorna_none(self):
-        assert _get_instancia_by_phone_number_id("PHONE_ID_NAO_EXISTE_JAMAIS") is None
+        """Guard: DB retorna data=None → None (sem erro)."""
+        from unittest.mock import MagicMock, patch
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value \
+            .eq.return_value.eq.return_value \
+            .maybe_single.return_value.execute.return_value.data = None
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
+            assert _get_instancia_by_phone_number_id("PHONE_ID_NAO_EXISTE_JAMAIS") is None
 
     @pytest.mark.asyncio
     async def test_phone_number_id_desconhecido_200_discard(self):
