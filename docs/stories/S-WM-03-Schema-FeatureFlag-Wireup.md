@@ -459,4 +459,34 @@ claude-sonnet-4-6 (@dev Dex)
 | 2026-06-25 | @dev (Dex) | Implementação completa — Tasks 1–9. 3 migrations aplicadas no cuca-dev. Wire-up inbound/engine/main/campanhas. Testes novos AC 17–18 + regressão. Status Ready → Ready for Review. |
 
 ## QA Results
-_A preencher pelo @qa._
+
+**Data:** 2026-06-25 | **Agente:** Quinn (@qa) | **Commit:** `17be86f`
+
+**Veredito:** PASS WITH CONCERNS
+
+### Issues
+
+| ID | Severidade | Categoria | Descrição |
+|----|-----------|-----------|-----------|
+| Q1 | MEDIUM | Testes | ACs 12–14 sem cobertura executável — `TestSendMessageEndpoint` bloqueado por `sentry_sdk` ausente no ambiente local (pré-existente; lógica revisada e correta). Tratar como débito técnico: instalar `sentry-sdk` no ambiente de test. |
+| Q2 | LOW | Código | `_get_meta_phone` usa `.limit(1).single()` — `maybe_single()` seria mais semântico. Tratado via try/except; não bloqueia. |
+| Q3 | LOW | Migration | `ADD CONSTRAINT` na migration 3 sem guard de idempotência (risco prático nulo via Supabase migration tracking). |
+
+### Checks
+
+| Check | Status |
+|-------|--------|
+| 1 — Code Review | ✅ PASS |
+| 2 — Testes (31/34; 3 pré-existentes) | ✅ PASS |
+| 3 — ACs 1–20 rastreados | ✅ PASS (AC 20 bloqueado externamente) |
+| 4 — Regressão zero | ✅ PASS |
+| 5 — Performance | ✅ PASS |
+| 6 — Segurança (RLS, token em env, guard inbound) | ✅ PASS |
+| 7 — Documentação | ✅ PASS |
+
+### Schema verificado via MCP (cuca-dev)
+
+- `meta_phone_numbers`: 9 colunas ✅, RLS habilitada ✅, 2 policies ativas ✅, seed `1215172285010519` ✅
+- `conversas.canal_ativo`: varchar NOT NULL default `'uazapi'` ✅
+- `conversas.origem_id`: varchar NOT NULL ✅; `instancia_uazapi` ausente ✅
+- UNIQUE `conversas_lead_id_origem_id_key` ativa ✅
