@@ -348,11 +348,11 @@ async def processar_item_disparo(item: dict, origem: str, delay_min: int, delay_
                             try:
                                 supabase.table("conversas").upsert({
                                     "lead_id": lead_id,
-                                    "instancia_uazapi": instance_name,
+                                    "origem_id": instance_name,
                                     "agente_tipo": "Institucional",
                                     "status": "ativa",
                                     "metadata": breadcrumb
-                                }, on_conflict="lead_id,instancia_uazapi").execute()
+                                }, on_conflict="lead_id,origem_id").execute()
                             except Exception as bc_err:
                                 logger.warning(f"[Breadcrumb] Erro ao gravar contexto: {bc_err}")
                     else:

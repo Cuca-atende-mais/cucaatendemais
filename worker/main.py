@@ -1,16 +1,11 @@
 import os
-import io
 import hmac
-import base64
 import hashlib
 import json
 import logging
 import asyncio
 import time
-import random
-from typing import Optional
 from collections import defaultdict
-from datetime import date
 from fastapi import FastAPI, Request, Response, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,47 +19,6 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 
 load_dotenv()
 
-
-# ─── WhatsApp Media Decryption ────────────────────────────────────────────────
-def _hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
-    """HKDF-Expand (RFC 5869) usando SHA-256."""
-    hash_len = 32
-    n = (length + hash_len - 1) // hash_len
-    okm, t = b"", b""
-    for i in range(1, n + 1):
-        t = hmac.new(prk, t + info + bytes([i]), hashlib.sha256).digest()
-        okm += t
-    return okm[:length]
-
-
-async def decrypt_whatsapp_audio(media_key_b64: str, enc_url: str, mimetype: str = "") -> bytes:
-    """Baixa e descriptografa arquivo de mídia WhatsApp (.enc) → bytes de áudio."""
-    import httpx
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.backends import default_backend
-
-    media_type = "audio"
-    info = b"WhatsApp Audio Keys"
-
-    media_key = base64.b64decode(media_key_b64 + "==")  # padding seguro
-    salt = bytes(32)
-    prk = hmac.new(salt, media_key, hashlib.sha256).digest()
-    expanded = _hkdf_expand(prk, info, 112)
-    iv = expanded[:16]
-    cipher_key = expanded[16:48]
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(enc_url, timeout=30.0, follow_redirects=True)
-        resp.raise_for_status()
-        enc_bytes = resp.content
-
-    # AES-256-CBC decrypt — remover últimos 10 bytes (HMAC-SHA256 truncado)
-    cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
-    raw = decryptor.update(enc_bytes[:-10]) + decryptor.finalize()
-    # Remover padding PKCS7
-    pad_len = raw[-1] if raw else 0
-    return raw[:-pad_len] if pad_len else raw
 
 # ─── Sentry: Monitoramento de Erros ───────────────────────────────────────────
 _SENTRY_DSN = os.getenv("SENTRY_DSN_WORKER")
@@ -115,20 +69,6 @@ def check_rate_limit(ip: str) -> bool:
         return True  # bloqueado
     _rate_limit_store[ip].append(now)
     return False
-
-
-# ─── Anti-ban: contador diário passivo por instância ────────────────────────
-# Estrutura: {(instance_name, date): count}
-_passive_daily_count: dict = defaultdict(int)
-
-def _passive_limit_exceeded(instance_name: str, daily_limit: int) -> bool:
-    """Retorna True se a instância já atingiu o limite diário de msgs passivas."""
-    key = (instance_name, date.today())
-    return _passive_daily_count[key] >= daily_limit
-
-def _passive_count_increment(instance_name: str):
-    key = (instance_name, date.today())
-    _passive_daily_count[key] += 1
 
 
 app = FastAPI(title="Worker Sistema CUCA", docs_url=None, redoc_url=None)
@@ -241,640 +181,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         content={"error": exc.detail},
     )
 
-# ─── Router: UAZAPI Manager ─────────────────────────────────────────────────
-from uazapi_manager import router as uazapi_router
-app.include_router(uazapi_router)
+from meta_adapter_inbound import validar_hmac_meta, processar_webhook_meta
 
-async def process_webhook_payload(payload: dict, token: str):
-    """Processa o payload do webhook em background."""
-    try:
-        # 1. Salvar o log bruto do webhook para auditoria
-        event_type = payload.get("event") or payload.get("EventType", "unknown")
-        instance_raw = payload.get("instance") or payload.get("instanceName", "unknown")
-        if isinstance(instance_raw, dict):
-            instance_name = instance_raw.get("name", "unknown")
-        else:
-            instance_name = instance_raw
-        data = payload.get("data", payload)
-        
-        # Tenta salvar em logs_webhook
-        try:
-            supabase.table("logs_webhook").insert({
-                "instancia_uazapi": instance_name,
-                "tipo_evento": event_type,
-                "payload": payload,
-                "processado": False
-            }).execute()
-        except Exception as e:
-            logger.error(f"Erro ao salvar em logs_webhook: {str(e)}")
+_META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+_META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "")
 
-        # 2. Roteamento básico de eventos
-        # UAZAPI v2: evento de conexão é 'connection'
-        if event_type in ("connection", "connection.update"):
-            # instance_data: objeto interno com status string (connected/disconnected)
-            instance_data = data.get("instance", {})
-            if isinstance(instance_data, dict):
-                state = instance_data.get("status") or data.get("state") or ""
-                disconnect_reason = instance_data.get("lastDisconnectReason") or instance_data.get("lastDisconnect") or ""
-            else:
-                state = data.get("state") or ""
-                disconnect_reason = data.get("lastDisconnectReason") or ""
-            # status_info: objeto {connected: bool, loggedIn: bool, jid: {...}}
-            status_info = data.get("status", {})
-            bool_connected = status_info.get("connected", False) if isinstance(status_info, dict) else False
-            jid = status_info.get("jid") if isinstance(status_info, dict) else None
-            phone_jid = data.get("wuid") or data.get("me", {}).get("id", "")
-            phone = None
-            if jid and isinstance(jid, dict):
-                phone = jid.get("user")
-            elif phone_jid:
-                phone = phone_jid.split("@")[0].split(":")[0]
-            try:
-                from uazapi_manager import handle_connection_update
-                await handle_connection_update(instance_name, state, token, phone, bool_connected, disconnect_reason)
-            except Exception as conn_err:
-                logger.error(f"Erro em handle_connection_update: {conn_err}")
-
-        # SQS-40 Task 3.3.3: Monitorar status_code 1004 (Número não encontrado)
-        elif event_type in ("messages.update", "ack"):
-            status_code = data.get("status") or data.get("statusCode")
-            if str(status_code) == "1004":
-                message_id = data.get("key", {}).get("id") or data.get("id")
-                # remote_jid = data.get("key", {}).get("remoteJid") or data.get("remoteJid")
-                logger.warning(f"[SQS-40] Falha de envio (1004): Número não existe no WhatsApp. MsgID: {message_id}")
-                # Aqui poderíamos marcar a candidatura como 'telefone_invalido' se tivermos o vínculo
-
-        elif event_type in ("messages.upsert", "messages"):
-
-            logger.info(f"Nova mensagem recebida na instância {instance_name}")
-            
-            # Extrair dados básicos da mensagem
-            # UAZAPI v1 usa data["message"], v2 costuma mandar o objeto "message" diretamente na raiz da payload
-            message_data = data.get("message", {}) if "message" in data else data
-            
-            # Ajuste de key / remoteJid para v2
-            remote_jid = data.get("key", {}).get("remoteJid") or payload.get("chat", {}).get("wa_chatid")
-            phone = remote_jid.split("@")[0] if remote_jid else (payload.get("chat", {}).get("phone", "").replace("+", "").replace(" ", "").replace("-", "") or payload.get("message", {}).get("owner"))
-            
-            from_me = data.get("key", {}).get("fromMe")
-            if from_me is None:
-                from_me = payload.get("message", {}).get("fromMe", False)
-                
-            push_name = data.get("pushName") or payload.get("chat", {}).get("wa_name") or payload.get("chat", {}).get("name", "Usuário")
-            
-            # Conteúdo (texto base ou áudio para transcrição)
-            text_content = ""
-            midia_url = None
-            midia_tipo = "text"
-
-            # Detectar mensagem de áudio/ptt — UAZAPI v2 usa campos planos: messageType + mediaType + content
-            msg_type = (message_data.get("messageType") or message_data.get("type") or "").lower()
-            media_type = (message_data.get("mediaType") or "").lower()
-            content_val = message_data.get("content")
-
-            is_audio = (
-                msg_type in ("audiomessage", "pttmessage", "audio", "ptt") or
-                media_type in ("audio", "ptt")
-            )
-
-            if is_audio:
-                midia_tipo = "ptt" if (media_type == "ptt" or msg_type in ("pttmessage", "ptt")) else "audio"
-                # WhatsApp message ID (key.id) — não confundir com fileSHA256 (messageid)
-                _audio_wa_id = data.get("key", {}).get("id") or message_data.get("messageid") or message_data.get("id")
-                _audio_messageid = _audio_wa_id  # backward compat
-            else:
-                # Mensagem de texto
-                if "conversation" in message_data:
-                    text_content = message_data["conversation"]
-                elif "extendedTextMessage" in message_data:
-                    text_content = message_data["extendedTextMessage"].get("text", "")
-                elif "text" in message_data and isinstance(message_data["text"], str):
-                    text_content = message_data["text"]
-                # content só aceitar se for string
-                if not text_content and isinstance(content_val, str):
-                    text_content = content_val
-
-            logger.info(f"[AUDIO] midia_url={midia_url}, midia_tipo={midia_tipo}, text_content={repr(text_content[:50]) if text_content else ''}")
-
-            if not phone:
-                logger.error("Phone number could not be extracted from payload.")
-                return
-
-            # --- Fluxo de Banco de Dados ---
-            
-            # A. Garantir que o Lead existe
-            try:
-                # Upsert lead (baseado no telefone)
-                lead_result = supabase.table("leads").upsert({
-                    "telefone": phone,
-                    "nome": push_name if not from_me else None,
-                    "updated_at": "now()"
-                }, on_conflict="telefone").execute()
-                lead_id = lead_result.data[0]["id"]
-                opt_in = lead_result.data[0].get("opt_in", False)
-                # Fresh SELECT para evitar valor stale do upsert (ex: desbloqueio pelo portal)
-                _lead_fresh = supabase.table("leads").select("bloqueado").eq("id", lead_id).single().execute()
-                bloqueado = (_lead_fresh.data or {}).get("bloqueado", False)
-            except Exception as e:
-                logger.error(f"Erro ao gerenciar Lead: {str(e)}")
-                return # Se não tiver lead, não salvamos mensagem
-
-            if bloqueado and not from_me:
-                logger.info(f"[Bloqueado] Lead {phone} está bloqueado — mensagem ignorada.")
-                return
-
-            # B. Garantir que a Conversa existe
-            try:
-                # Tenta buscar conversa (verificando se está em modo manual ou ativa)
-                conv_result = supabase.table("conversas").select("id, status").match({
-                    "lead_id": lead_id,
-                    "instancia_uazapi": instance_name
-                }).execute()
-                
-                conversation_status = "ativa" # Default
-                if conv_result.data:
-                    conversation_id = conv_result.data[0]["id"]
-                    conversation_status = conv_result.data[0].get("status", "ativa")
-                    # Atualizar timestamp
-                    supabase.table("conversas").update({"updated_at": "now()"}).eq("id", conversation_id).execute()
-                else:
-                    # Buscar agente_tipo real da instância para criar a conversa já corretamente classificada
-                    _inst_pre = supabase.table("instancias_uazapi").select("agente_tipo, canal_tipo").eq("nome", instance_name).single().execute()
-                    _agente_inicial = "Institucional"
-                    if _inst_pre.data:
-                        _ct = _inst_pre.data.get("canal_tipo", "")
-                        _at = _inst_pre.data.get("agente_tipo", "Institucional")
-                        _agente_inicial = "maria_divulgacao" if _ct == "Divulgação" else _at
-                    new_conv = supabase.table("conversas").insert({
-                        "lead_id": lead_id,
-                        "instancia_uazapi": instance_name,
-                        "status": "ativa",
-                        "agente_tipo": _agente_inicial,
-                    }).execute()
-                    conversation_id = new_conv.data[0]["id"]
-            except Exception as e:
-                logger.error(f"Erro ao gerenciar Conversa: {str(e)}")
-                return
-
-            # C. Salvar em Mensagens
-            try:
-                supabase.table("mensagens").insert({
-                    "conversa_id": conversation_id,
-                    "lead_id": lead_id,
-                    "tipo": "text", # Por enquanto fixo para MVP
-                    "conteudo": text_content,
-                    "remetente": "lead" if not from_me else "agente",
-                    "created_at": "now()"
-                }).execute()
-                logger.info(f"Mensagem salva com sucesso. ConvID: {conversation_id}")
-                # Incrementar contador de não lidas quando mensagem vem do lead
-                if not from_me:
-                    supabase.rpc("increment_nao_lidas", {"conv_id": conversation_id}).execute()
-            except Exception as e:
-                logger.error(f"Erro ao salvar mensagem: {str(e)}")
-            
-            # Epic 1 — Buffer de transbordo humano: operador enviou mensagem, pausar bot por 1 minuto
-            if from_me and conversation_id:
-                try:
-                    from datetime import datetime, timezone, timedelta
-                    pausa_ate = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
-                    cm_res = supabase.table("conversas").select("metadata").eq("id", conversation_id).single().execute()
-                    cm = (cm_res.data or {}).get("metadata") or {}
-                    cm["bot_pausado_ate"] = pausa_ate
-                    supabase.table("conversas").update({"metadata": cm}).eq("id", conversation_id).execute()
-                    logger.info(f"[TRANSBORDO] fromMe=True — bot pausado até {pausa_ate} (conversa {conversation_id})")
-                except Exception as _pe:
-                    logger.warning(f"[TRANSBORDO] Erro ao registrar pausa do bot: {_pe}")
-            
-            # SQS-40 Task 3.3: Detectar intenção de "Dúvida" do lead
-            if not from_me and text_content:
-                keywords_duvida = ["ajuda", "duvida", "dúvida", "não entendi", "nao entendi", "como faço", "pode explicar", "atendente", "humano"]
-                texto_baixa = text_content.lower()
-                if any(k in texto_baixa for k in keywords_duvida):
-                    logger.info(f"[SQS-40] Intenção de Dúvida detectada no lead {phone}")
-                    # Notificar transbordo (será feito abaixo se não houver resposta automática do motor específico)
-                    # Adicionamos uma flag no metadata para o motor saber que houve dúvida
-                    try:
-                        cm_res = supabase.table("conversas").select("metadata").eq("id", conversation_id).single().execute()
-                        cm = (cm_res.data or {}).get("metadata") or {}
-                        cm["ultima_intencao"] = "duvida"
-                        supabase.table("conversas").update({"metadata": cm}).eq("id", conversation_id).execute()
-                    except Exception: pass
-
-            # S14-01: Checar dados da instância
-            inst_result = supabase.table("instancias_uazapi").select("unidade_cuca, agente_tipo, token, canal_tipo").eq("nome", instance_name).single().execute()
-            agente_tipo = inst_result.data.get("agente_tipo", "maria") if inst_result.data else "maria"
-            unidade_cuca = inst_result.data.get("unidade_cuca") if inst_result.data else None
-            inst_token = inst_result.data.get("token") if inst_result.data else ""
-            canal_tipo = inst_result.data.get("canal_tipo", "") if inst_result.data else ""
-
-            # Descriptografar e transcrever áudio WhatsApp diretamente no worker
-            if is_audio and isinstance(content_val, dict):
-                _media_key = content_val.get("mediaKey") or content_val.get("MediaKey")
-                _enc_url = content_val.get("URL") or content_val.get("url") or ""
-                _mimetype = content_val.get("mimetype") or content_val.get("mimeType") or "audio/ogg"
-                logger.info(f"[AUDIO] Iniciando decrypt: mediaKey={'sim' if _media_key else 'nao'} url={_enc_url[:80]}")
-                if _media_key and _enc_url.startswith("http"):
-                    try:
-                        audio_bytes = await decrypt_whatsapp_audio(_media_key, _enc_url, _mimetype)
-                        logger.info(f"[AUDIO] Decrypt OK: {len(audio_bytes)} bytes, mimetype={_mimetype}")
-                        # Determinar extensão para Whisper
-                        _ext = "ogg"
-                        if "mp4" in _mimetype or "mpeg" in _mimetype:
-                            _ext = "mp4"
-                        elif "webm" in _mimetype:
-                            _ext = "webm"
-                        # Transcrever via Whisper
-                        import openai as _openai
-                        _oa = _openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                        _buf = io.BytesIO(audio_bytes)
-                        _buf.name = f"audio.{_ext}"
-                        _tr = await _oa.audio.transcriptions.create(
-                            model="whisper-1",
-                            file=_buf,
-                            language="pt"
-                        )
-                        text_content = _tr.text
-                        midia_tipo = "text"  # agente receberá como texto já transcrito
-                        logger.info(f"[AUDIO] Transcrição: {text_content[:100]}")
-                    except Exception as _ae:
-                        logger.error(f"[AUDIO] Erro decrypt/transcrição: {_ae}")
-                else:
-                    logger.warning(f"[AUDIO] Sem mediaKey ou URL inválida — áudio ignorado")
-            
-            # Normalizar agente_tipo pelo canal antes de usar em qualquer lugar
-            # Divulgação usa persona global; Institucional usa o valor do banco diretamente
-            if canal_tipo == "Divulgação":
-                agente_tipo = "maria_divulgacao"
-                unidade_cuca = None
-
-            # Atualiza o agente_tipo da conversa com valor já normalizado
-            if conversation_status == "ativa" and inst_result.data:
-                 supabase.table("conversas").update({"agente_tipo": agente_tipo}).eq("id", conversation_id).execute()
-
-            # --- S9-08: STOP Automático — apenas intenções explícitas e inequívocas de remoção ---
-            # Despedidas educadas ("obrigado", "até logo", "valeu") NÃO são opt-out
-            PALAVRAS_STOP_HANDLER = {
-                "stop", "parar de receber", "cancelar mensagens", "cancelar cadastro",
-                "nao quero mais receber", "não quero mais receber",
-                "remover da lista", "me remova da lista", "remova meu numero",
-                "descadastrar", "descadastre meu numero", "sair da lista",
-                "tirar da lista", "me tire da lista", "não quero mais mensagens",
-                "nao quero mais mensagens", "para de me mandar mensagem",
-                "pare de me mandar mensagem"
-            }
-            if not from_me:
-                texto_stop = text_content.lower().strip() if isinstance(text_content, str) else ""
-                # Verificar opt-out: apenas frases que indicam remoção explícita da lista
-                is_stop = any(p in texto_stop for p in PALAVRAS_STOP_HANDLER)
-
-                # Reativar lead que havia feito opt-out e agora retorna (qualquer mensagem que não seja novo opt-out)
-                lead_result = supabase.table("leads").select("opt_in").eq("id", lead_id).single().execute()
-                lead_opt_in = lead_result.data.get("opt_in", True) if lead_result.data else True
-                if not lead_opt_in and not is_stop:
-                    supabase.table("leads").update({"opt_in": True}).eq("id", lead_id).execute()
-                    logger.info(f"[RETORNO] Lead {lead_id} ({phone}) reativado automaticamente.")
-
-                if is_stop:
-                    try:
-                        supabase.table("leads").update({"opt_in": False}).eq("id", lead_id).execute()
-                        logger.info(f"[STOP] Lead {lead_id} ({phone}) removido da lista.")
-                        UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                        inst_result = supabase.table("instancias_uazapi").select("token") \
-                            .eq("nome", instance_name).single().execute()
-                        inst_token = inst_result.data.get("token") if inst_result.data else ""
-                        import httpx
-                        async with httpx.AsyncClient() as client:
-                            await client.post(
-                                f"{UAZAPI_URL}/message/sendText/{instance_name}",
-                                headers={"apikey": inst_token, "Content-Type": "application/json"},
-                                json={
-                                    "number": phone,
-                                    "delay": 1200,
-                                    "text": "✅ Pronto! Você foi removido da nossa lista de mensagens. Sentiremos sua falta! Se mudar de ideia, é só nos mandar uma mensagem."
-                                }
-                            )
-                    except Exception as stop_err:
-                        logger.error(f"[STOP] Erro ao processar opt_out: {stop_err}")
-                    return  # Não processa IA após STOP explícito
-
-            # Epic 1 & SQS-40 — Verificar buffer de transbordo humano antes de qualquer processamento
-            if not from_me:
-                try:
-                    from datetime import datetime, timezone
-                    _cm_res = supabase.table("conversas").select("metadata").eq("id", conversation_id).single().execute()
-                    _cm_meta = (_cm_res.data or {}).get("metadata") or {}
-                    _bot_pausa = _cm_meta.get("bot_pausado_ate")
-                    if _bot_pausa:
-                        _pausa_ate = datetime.fromisoformat(_bot_pausa)
-                        if datetime.now(timezone.utc) < _pausa_ate:
-                            logger.info(f"[TRANSBORDO] Bot em pausa até {_bot_pausa} — mensagem do lead ignorada (conversa {conversation_id})")
-                            return
-
-                    # Se detectamos dúvida acima, e não há motor específico tratando agora, podemos enviar para transbordo
-                    # Nota: os motores abaixo (empregabilidade/institucional) têm prioridade.
-                except Exception as _pce:
-                    logger.warning(f"[TRANSBORDO] Erro ao verificar pausa do bot: {_pce}")
-
-            # S29-03: Roteamento para motor de empregabilidade (instância tipo Empregabilidade)
-            if not from_me and agente_tipo == "Empregabilidade":
-                if conversation_status == "awaiting_human":
-                    logger.info(f"[Empregabilidade] Conversa {conversation_id} em awaiting_human — IA silenciada.")
-                    return
-                try:
-                    from empregabilidade_engine import processar_mensagem_empregabilidade
-                    inst_token_emp = inst_result.data.get("token", "") if inst_result.data else ""
-                    await processar_mensagem_empregabilidade(
-                        texto=text_content or "",
-                        phone=phone,
-                        instance_name=instance_name,
-                        token=inst_token_emp,
-                        lead_id=lead_id,
-                        conversa_id=conversation_id,
-                        unidade_cuca=unidade_cuca or "",
-                        push_name=push_name or "Cidadão",
-                    )
-                except Exception as emp_err:
-                    logger.error(f"[Empregabilidade] Erro no motor: {emp_err}", exc_info=True)
-                return  # Não passa para o motor-agente genérico
-
-            # Roteamento para motor institucional (seleção de unidade + RAG)
-            if not from_me and canal_tipo == "Institucional":
-                if conversation_status == "awaiting_human":
-                    logger.info(f"[Institucional] Conversa {conversation_id} em awaiting_human — IA silenciada.")
-                    return
-                try:
-                    from institucional_engine import processar_mensagem_institucional
-                    await processar_mensagem_institucional(
-                        texto=text_content or "",
-                        phone=phone,
-                        instance_name=instance_name,
-                        token=inst_token,
-                        lead_id=lead_id,
-                        conversa_id=conversation_id,
-                        unidade_cuca_instancia=unidade_cuca or "",
-                    )
-                except Exception as inst_err:
-                    logger.error(f"[Institucional] Erro no motor: {inst_err}", exc_info=True)
-                return  # Não passa para o motor-agente genérico
-
-            # S-AE-04: o canal Academia Enem (AuctaFlux) NÃO passa pelo worker uazapi. Seu engine próprio
-            # (academia_enem_engine.py) é acionado pelo webhook AuctaFlux do portal (POST /academia-enem/process).
-            # A branch reservada da S-AE-00 foi removida aqui — main.py permanece exclusivo do uazapi (blindado).
-
-            # A IA só é disparada se não for uma mensagem nossa, se o status for 'ativa'
-            if not from_me and conversation_status in ("ativa", "encerrada"):
-                # ── Anti-ban passivo: checar limite diário e aplicar delay humano ──
-                try:
-                    _passive_limit = int(
-                        supabase.table("configuracoes").select("valor")
-                        .eq("chave", "anti_ban_daily_limit").execute()
-                        .data[0]["valor"]
-                    )
-                except Exception:
-                    _passive_limit = 80
-
-                if _passive_limit_exceeded(instance_name, _passive_limit):
-                    logger.warning(
-                        f"[Anti-Ban Passivo] Instância '{instance_name}' atingiu limite diário "
-                        f"de {_passive_limit} msgs passivas. Resposta suprimida."
-                    )
-                    return
-
-                try:
-                    _delay_min = int(
-                        supabase.table("configuracoes").select("valor")
-                        .eq("chave", "anti_ban_delay_min").execute()
-                        .data[0]["valor"]
-                    )
-                    _delay_max = int(
-                        supabase.table("configuracoes").select("valor")
-                        .eq("chave", "anti_ban_delay_max").execute()
-                        .data[0]["valor"]
-                    )
-                except Exception:
-                    _delay_min, _delay_max = 5000, 15000
-
-                _delay_s = random.uniform(_delay_min / 1000, _delay_max / 1000)
-                logger.info(f"[Anti-Ban Passivo] Aguardando {_delay_s:.1f}s antes de responder ({instance_name})")
-                await asyncio.sleep(_delay_s)
-                _passive_count_increment(instance_name)
-
-                try:
-                    # Chamar Edge Function motor-agente
-                    # Nota: O token interno garante que a requisição partiu do nosso worker
-                    import httpx
-                    
-                    async with httpx.AsyncClient() as client:
-                        # Buscamos a URL base do Supabase do .env
-                        edge_url = f"{SUPABASE_URL}/functions/v1/motor-agente"
-                        headers = {
-                            "Authorization": f"Bearer {SUPABASE_KEY}",
-                            "Content-Type": "application/json",
-                            "x-internal-token": os.getenv("WEBHOOK_INTERNAL_TOKEN")
-                        }
-                        # S5-02 + S9-13: Dados da instância já obtidos acima
-                        
-                        from datetime import datetime, timezone, timedelta
-                        _tz_fortaleza = timezone(timedelta(hours=-3))
-                        _agora = datetime.now(_tz_fortaleza)
-                        payload_edge = {
-                            "telefone": phone,
-                            "instancia_uazapi": instance_name,
-                            "agente_tipo": agente_tipo,
-                            "unidade_cuca": unidade_cuca,
-                            "canal_tipo": canal_tipo,
-                            "mensagem": text_content,
-                            "midia_url": midia_url,
-                            "midia_tipo": midia_tipo,
-                            "data_atual": _agora.strftime("%A, %d de %B de %Y, %H:%M"),
-                        }
-                        
-                        logger.info(f"Roteando para motor-agente: {edge_url}")
-                        
-                        # S5-08: Agora esperamos a resposta da IA para extrair Mídia Contextual (Flyers) e enviar via UAZAPI
-                        # Timeout 45s (GPT-4 pode demorar) mas como estamos em background, não trava o webhook de 200 OK
-                        resp = await client.post(edge_url, json=payload_edge, headers=headers, timeout=45.0)
-                        
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            logger.info(f"[motor-agente] resposta: success={data.get('success')} | keys={list(data.keys())} | erro={data.get('error','')[:120] if not data.get('success') else ''}")
-                            if data.get("success") and "resposta" in data:
-                                resposta_ia = data["resposta"]
-                                import re
-                                media_url = None
-                                
-                                # Tenta extrair flyer markdown `![alt](url)`
-                                match_md = re.search(r'!\[.*?\]\((.*?)\)', resposta_ia)
-                                # Tenta extrair flyer tag `[FLYER: url]`
-                                match_tag = re.search(r'\[(?:FLYER|MÍDIA):\s*(.*?)\]', resposta_ia)
-                                
-                                if match_md:
-                                    media_url = match_md.group(1).strip()
-                                    resposta_ia = resposta_ia.replace(match_md.group(0), '').strip()
-                                elif match_tag:
-                                    media_url = match_tag.group(1).strip()
-                                    resposta_ia = resposta_ia.replace(match_tag.group(0), '').strip()
-                                
-                                # Ouvidoria: salvar manifestação quando Sofia confirma protocolo
-                                if agente_tipo.lower() in ["ouvidoria", "sofia"] and (
-                                    "protocolo seguro" in resposta_ia.lower() or
-                                    "registrada em nossa ouvidoria" in resposta_ia.lower()
-                                ):
-                                    asyncio.create_task(salvar_manifestacao_ouvidoria(
-                                        conversa_id=conversation_id,
-                                        lead_id=lead_id,
-                                        unidade_cuca=unidade_cuca,
-                                        phone=phone,
-                                    ))
-
-                                # S11-06: Transbordo Humano Inteligente
-                                # Bug 4 corrigido: motor-agente emite [[HANDOVER]], alinhando a regex aqui
-                                handover_from_ia = data.get("handover", False)
-                                match_handover = re.search(
-                                    r'\[\[HANDOVER\]\]|\[TRANSBORDO\]|\[HUMANO\]|\[TRANSBORDO_HUMANO\]',
-                                    resposta_ia, re.IGNORECASE
-                                )
-                                if handover_from_ia or match_handover:
-                                    if match_handover:
-                                        resposta_ia = resposta_ia.replace(match_handover.group(0), '').strip()
-                                    logger.info(f"Transbordo Humano ativado para o Lead {phone}!")
-                                    if not resposta_ia:
-                                        resposta_ia = "Certo, estou te transferindo para um atendente humano. Aguarde um momento por favor!"
-                                        
-                                    try:
-                                        # 1. Mapear Agente -> Módulo
-                                        modulo_alvo = "geral"
-                                        # Bug 4 extra: agente_tipo real usa 'julia' (não julia_geral/julia_unidade)
-                                        if agente_tipo in ["julia", "julia_geral", "julia_unidade"]:
-                                            modulo_alvo = "empregabilidade"
-                                        elif agente_tipo in ["sofia", "ouvidoria"]:
-                                            modulo_alvo = "ouvidoria"
-                                        elif agente_tipo in ["ana", "acesso"]:
-                                            modulo_alvo = "acesso"
-                                            
-                                        # 2. Buscar contato na tabela correta: transbordo_humano
-                                        # Bug 3 corrigido: era human_handover_contacts
-                                        # Primeiro tenta específico da unidade
-                                        handover_res = (
-                                            supabase.table("transbordo_humano")
-                                            .select("*")
-                                            .eq("modulo", modulo_alvo)
-                                            .eq("unidade_cuca", unidade_cuca)
-                                            .eq("ativo", True)
-                                            .execute()
-                                        ) if unidade_cuca else None
-                                        contato_handover = None
-                                        
-                                        if handover_res and handover_res.data:
-                                            contato_handover = handover_res.data[0]
-                                        else:
-                                            # Fallback global (sem unidade específica)
-                                            fallback_res = (
-                                                supabase.table("transbordo_humano")
-                                                .select("*")
-                                                .eq("modulo", modulo_alvo)
-                                                .is_("unidade_cuca", "null")
-                                                .eq("ativo", True)
-                                                .execute()
-                                            )
-                                            if fallback_res.data:
-                                                contato_handover = fallback_res.data[0]
-                                                
-                                        if contato_handover:
-                                            tel_destino = contato_handover["telefone"]
-                                            setor_resp = contato_handover.get("responsavel") or "Atendimento"
-                                            lead_nome = push_name or "Cidadão"
-                                            # Montar histórico das últimas mensagens
-                                            try:
-                                                hist_res = supabase.table("mensagens").select("remetente, conteudo").eq("conversa_id", conversation_id).order("created_at", desc=True).limit(6).execute()
-                                                hist_msgs = list(reversed(hist_res.data or []))
-                                                hist_linhas = []
-                                                for hm in hist_msgs:
-                                                    quem = "👤 Lead" if hm["remetente"] == "lead" else "🤖 IA"
-                                                    hist_linhas.append(f"{quem}: {(hm['conteudo'] or '')[:120]}")
-                                                historico_fmt = "\n".join(hist_linhas) if hist_linhas else "(sem histórico)"
-                                            except Exception:
-                                                historico_fmt = "(erro ao carregar histórico)"
-                                            msg_handover = (
-                                                f"🚨 *TRANSBORDO — {modulo_alvo.upper()}*\n\n"
-                                                f"👤 *Lead:* {lead_nome}\n"
-                                                f"📱 *Telefone:* {phone}\n"
-                                                f"🏢 *Setor:* {setor_resp}\n\n"
-                                                f"📋 *Histórico da conversa:*\n{historico_fmt}\n\n"
-                                                f"🔗 Iniciar chat: https://wa.me/{phone}"
-                                            )
-                                            
-                                            UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                                            async with httpx.AsyncClient() as hc:
-                                                await hc.post(
-                                                    f"{UAZAPI_URL}/send/text",
-                                                    headers={"token": inst_token, "Content-Type": "application/json"},
-                                                    json={
-                                                        "number": tel_destino,
-                                                        "text": msg_handover,
-                                                        "delay": 1200
-                                                    }
-                                                )
-                                            logger.info(f"Transbordo disparado para {tel_destino} ({setor_resp})")
-                                        else:
-                                            logger.warning(f"Nenhum contato de transbordo encontrado para módulo='{modulo_alvo}' unidade='{unidade_cuca}'")
-                                    except Exception as eh:
-                                        logger.error(f"Erro ao processar transbordo: {eh}")
-                                
-                                UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-                                
-                                if media_url:
-                                    logger.info(f"Flyer detectado! Enviando media_url: {media_url}")
-                                    # Envia a Midia e o restante da resposta como caption
-                                    await client.post(
-                                        f"{UAZAPI_URL}/message/sendMedia/{instance_name}",
-                                        headers={"apikey": inst_token, "Content-Type": "application/json"},
-                                        json={
-                                            "number": phone,
-                                            "options": {"delay": 1500, "presence": "composing"},
-                                            "mediaMessage": {
-                                                "mediatype": "image",
-                                                "caption": resposta_ia,
-                                                "media": media_url
-                                            }
-                                        }
-                                    )
-                                else:
-                                    logger.info(f"Apenas texto detectado. Tamanho: {len(resposta_ia)}")
-                                    await client.post(
-                                        f"{UAZAPI_URL}/send/text",
-                                        headers={"token": inst_token, "Content-Type": "application/json"},
-                                        json={
-                                            "number": phone,
-                                            "delay": 1200,
-                                            "text": resposta_ia
-                                        }
-                                    )
-                                # Persistir resposta da IA na tabela mensagens para exibição no painel
-                                try:
-                                    def _salvar_resposta_ia():
-                                        supabase.table("mensagens").insert({
-                                            "conversa_id": conversation_id,
-                                            "lead_id": lead_id,
-                                            "remetente": "agente",
-                                            "tipo": "text",
-                                            "conteudo": resposta_ia,
-                                        }).execute()
-                                    await asyncio.to_thread(_salvar_resposta_ia)
-                                    logger.info(f"[motor-agente] Resposta IA persistida em mensagens. ConvID: {conversation_id}")
-                                except Exception as _se:
-                                    logger.error(f"[motor-agente] Falha ao persistir resposta IA: {_se}")
-                        else:
-                            logger.error(f"Erro no motor-agente HTTP {resp.status_code}: {resp.text}")
-                except httpx.ReadTimeout:
-                    logger.error("Timeout aguardando processamento da IA (motor-agente demorou mais de 45s).")
-                except Exception as e:
-                    logger.error(f"Erro crítico no fluxo com motor-agente: {str(e)}")
-            
-
-    except Exception as e:
-        logger.error(f"Erro no processamento em background: {str(e)}")
 
 async def salvar_manifestacao_ouvidoria(conversa_id: str, lead_id: str, unidade_cuca: str | None, phone: str):
     """Extrai e salva manifestação da Ouvidoria quando Sofia confirma protocolo.
@@ -975,74 +286,67 @@ async def health_check():
 
 @app.post("/send-message/{token}")
 async def send_manual_message(token: str, request: Request):
-    """S5-06: Envio manual de mensagem via Portal -> Worker -> UAZAPI."""
+    """S-WM-02: Envio manual de mensagem via Portal → Worker → Meta Cloud API."""
     if token != os.getenv("WEBHOOK_INTERNAL_TOKEN"):
         return Response(status_code=403, content="Token inválido")
-    
+
     try:
         payload = await request.json()
-        number = payload.get("number")
-        text = payload.get("text")
-        instance = payload.get("instance")
+    except Exception:
+        return Response(status_code=400, content="Body inválido")
 
-        # 1. Buscar credenciais da instância no Supabase
-        inst_res = supabase.table("instancias_uazapi").select("nome, token").eq("nome", instance).single().execute()
-        if not inst_res.data:
-            return Response(status_code=404, content="Instância não encontrada")
-        
-        inst_token = inst_res.data["token"]
-        UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
+    # Rejeitar contrato antigo {phone, message} (AC #13)
+    if "phone" in payload or "message" in payload:
+        return Response(status_code=400, content="Contrato obsoleto: usar {number, text, instance}")
 
-        # 2. Disparar para UAZAPI
-        import httpx
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{UAZAPI_URL}/send/text",
-                headers={"token": inst_token, "Content-Type": "application/json"},
-                json={
-                    "number": number,
-                    "delay": 1200,
-                    "text": text
-                }
-            )
-            if response.status_code >= 400:
-                logger.error(f"[send-manual] UAZAPI retornou erro {response.status_code}: {response.text}")
-                return Response(status_code=response.status_code, content=response.text)
-            logger.info(f"[send-manual] Mensagem enviada com sucesso para {number} via {instance}")
-            try:
-                return response.json()
-            except Exception:
-                return {"status": "sent", "raw": response.text[:200]}
+    number = payload.get("number")
+    text = payload.get("text")
+    # instance recebido por compatibilidade temporária do portal (AC #12) — ignorado
+    if not number or not text:
+        return Response(status_code=422, content="Campos obrigatórios: number, text")
+
+    try:
+        from meta_adapter_outbound import _meta_enviar
+        from meta_adapter_inbound import _get_supabase
+
+        conversa_id_payload = payload.get("conversa_id")
+
+        if conversa_id_payload:
+            # Routing por canal_ativo da conversa (AC 12-13 S-WM-03)
+            sb = _get_supabase()
+            conv = sb.table("conversas").select("canal_ativo, origem_id").eq(
+                "id", conversa_id_payload
+            ).maybe_single().execute()
+            if not conv.data:
+                return Response(status_code=404, content="Conversa não encontrada")
+            canal_ativo = conv.data.get("canal_ativo", "uazapi")
+            origem_id = conv.data.get("origem_id", "")
+            if canal_ativo == "meta":
+                meta_token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+                ok = await _meta_enviar(origem_id, number, text, meta_token)
+                if ok:
+                    logger.info(f"[send-manual] Mensagem enviada via Meta (canal_ativo=meta) para {number}")
+                    return {"status": "sent"}
+                return Response(status_code=502, content="Falha no envio Meta")
+            elif canal_ativo == "uazapi":
+                return Response(
+                    status_code=501,
+                    content="Canal UAZAPI não suportado neste endpoint — use o cliente UAZAPI direto",
+                )
+            else:
+                return Response(status_code=400, content=f"Canal desconhecido: {canal_ativo}")
+        else:
+            # Fallback legado (AC 14): sem conversa_id — usa meta_phone_numbers (S-WM-03)
+            from empregabilidade_engine import _get_meta_phone
+            phone_number_id, meta_token = _get_meta_phone("Empregabilidade")
+            ok = await _meta_enviar(phone_number_id, number, text, meta_token)
+            if ok:
+                logger.info(f"[send-manual] Mensagem enviada para {number} via Meta (fallback legado)")
+                return {"status": "sent"}
+            return Response(status_code=502, content="Falha no envio Meta")
     except Exception as e:
-        logger.error(f"[send-manual] Erro ao enviar mensagem manual: {str(e)}", exc_info=True)
+        logger.error(f"[send-manual] Erro: {e}", exc_info=True)
         return Response(status_code=500, content=str(e))
-
-@app.post("/read-message/{token}")
-async def mark_as_read(token: str, request: Request):
-    """S5-07: Sincronização - Marcar conversa como lida no celular."""
-    if token != os.getenv("WEBHOOK_INTERNAL_TOKEN"):
-        return Response(status_code=403, content="Token inválido")
-    
-    try:
-        payload = await request.json()
-        remote_jid = payload.get("remoteJid") # formato: "558599999999@s.whatsapp.net"
-        instance = payload.get("instance")
-
-        inst_res = supabase.table("instancias_uazapi").select("token").eq("nome", instance).single().execute()
-        if not inst_res.data: return Response(status_code=404)
-
-        UAZAPI_URL = os.getenv("UAZAPI_BASE_URL", "https://uazapi.com.br")
-        import httpx
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{UAZAPI_URL}/chat/read/{instance}",
-                headers={"apikey": inst_res.data["token"], "Content-Type": "application/json"},
-                json={"remoteJid": remote_jid}
-            )
-        return {"success": True}
-    except Exception as e:
-        logger.error(f"Erro ao marcar como lida: {str(e)}")
-        return Response(status_code=500)
 
 @app.post("/process-cv")
 async def process_cv_endpoint(request: Request, background_tasks: BackgroundTasks):
@@ -1218,24 +522,37 @@ async def triar_banco_talentos_endpoint(request: Request):
         return Response(status_code=500, content=str(e))
 
 
-@app.post("/webhook/{token}")
-async def uazapi_webhook(token: str, request: Request, background_tasks: BackgroundTasks):
-    # 1. Resposta 200 OK imediata (Requisito Crítico UAZAPI / Anti-Ban)
-    # A resposta deve ser rápida para evitar que a UAZAPI tente reenvios agressivos
-    
-    try:
-        payload = await request.json()
-        evento_recebido = payload.get('event') or payload.get('EventType')
-        logger.info(f"Webhook recebido: {evento_recebido} via token: {token}")
-        
-        # 2. Agendar processamento pesado em background
-        background_tasks.add_task(process_webhook_payload, payload, token)
-        
-        return Response(status_code=200, content=json.dumps({"status": "received"}))
-    except Exception as e:
-        logger.error(f"Erro ao receber webhook: {str(e)}")
-        # Retornamos 200 mesmo assim para não travar o fluxo da UAZAPI
-        return Response(status_code=200, content=json.dumps({"status": "error", "message": str(e)}))
+# ─── Meta Cloud API Webhook (S-WM-01) ────────────────────────────────────────
+
+@app.get("/webhook/meta")
+async def meta_webhook_verify(request: Request):
+    """Verificação de webhook Meta (hub challenge)."""
+    params = request.query_params
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge", "")
+
+    if mode == "subscribe" and token == _META_VERIFY_TOKEN:
+        logger.info("[meta-inbound] Webhook Meta verificado com sucesso")
+        return Response(content=challenge, media_type="text/plain")
+
+    logger.warning(f"[meta-inbound] Verificação falhou: mode={mode} token_match={token == _META_VERIFY_TOKEN}")
+    return Response(status_code=403, content="Forbidden")
+
+
+@app.post("/webhook/meta")
+async def meta_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Recepção de webhook Meta com validação HMAC-SHA256."""
+    raw_body = await request.body()
+    sig = request.headers.get("X-Hub-Signature-256")
+
+    if not validar_hmac_meta(raw_body, sig, _META_APP_SECRET):
+        logger.warning("[meta-inbound] HMAC inválido — requisição rejeitada")
+        return Response(status_code=403, content="Forbidden")
+
+    background_tasks.add_task(processar_webhook_meta, raw_body)
+    return Response(status_code=200, content=json.dumps({"status": "received"}))
+
 
 if __name__ == "__main__":
     import uvicorn

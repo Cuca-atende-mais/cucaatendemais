@@ -264,7 +264,7 @@ async def _chamar_motor_agente(
 
     payload = {
         "telefone": phone,
-        "instancia_uazapi": instance_name,
+        "canal_origem": instance_name,
         "agente_tipo": "Institucional",
         "unidade_cuca": unidade,
         "canal_tipo": "Institucional",

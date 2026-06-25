@@ -1,6 +1,9 @@
 # Documentação sensível (manter apenas local)
 *.md
 !PLANO_DESENVOLVIMENTO.md
+!README.md
+!SCHEMA_BANCO_DADOS.md
+!docs/**/*.md
 *.xlsx
 
 # SQS-51 (A7): MCP config contém token Supabase — nunca versionar
