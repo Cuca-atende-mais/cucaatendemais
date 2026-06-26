@@ -206,6 +206,95 @@ def _get_supabase():
     return _supabase_client
 
 
+# ─── Agentes despachados via motor-agente Edge Function ────────────────────────
+_AGENTES_MOTOR_AGENTE = frozenset({"Institucional", "maria", "sofia", "ana"})
+
+
+async def _chamar_motor_agente(
+    contrato_v2: dict,
+    conversa_id: str,
+    supabase,
+) -> str | None:
+    """
+    Chama o motor-agente (Supabase Edge Function) e retorna o texto de resposta.
+
+    Atualiza conversas.status se handover ou encerrado (a motor-agente também
+    faz isso internamente, mas o inbound atualiza o mesmo registro por origem_id).
+    Retorna None em caso de falha HTTP, resposta sem texto ou erro do motor.
+    Nunca propaga exceção — falhas são logadas e retornam None.
+    """
+    import httpx  # noqa: PLC0415
+
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
+    if not supabase_url or not service_key:
+        logger.error("[meta-inbound] SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausentes — motor-agente abortado")
+        return None
+
+    body = {
+        "mensagem":    contrato_v2["mensagem"],
+        "midia_url":   contrato_v2.get("midia_url"),
+        "midia_tipo":  contrato_v2.get("midia_tipo"),
+        "telefone":    contrato_v2["telefone"],
+        "canal_origem": contrato_v2["canal_origem"],
+        "agente_tipo": contrato_v2["agente_tipo"],
+        "unidade_cuca": contrato_v2.get("unidade_cuca"),
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{supabase_url}/functions/v1/motor-agente",
+                headers={
+                    "Authorization": f"Bearer {service_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+    except Exception as exc:
+        logger.error("[meta-inbound] Erro de rede ao chamar motor-agente: %s", type(exc).__name__)
+        return None
+
+    if not resp.is_success:
+        logger.error(
+            "[meta-inbound] motor-agente HTTP %s para agente=%s: %s",
+            resp.status_code,
+            contrato_v2.get("agente_tipo"),
+            resp.text[:200],
+        )
+        return None
+
+    try:
+        data = resp.json()
+    except Exception:
+        logger.error("[meta-inbound] motor-agente retornou resposta não-JSON")
+        return None
+
+    if not data.get("success"):
+        logger.error("[meta-inbound] motor-agente erro: %s", data.get("error", "desconhecido"))
+        return None
+
+    # Atualizar status da conversa local (motor-agente atualiza o próprio registro)
+    if data.get("handover"):
+        try:
+            supabase.table("conversas").update(
+                {"status": "awaiting_human", "updated_at": "now()"}
+            ).eq("id", conversa_id).execute()
+        except Exception as exc:
+            logger.warning("[meta-inbound] Erro ao setar awaiting_human: %s", exc)
+
+    elif data.get("encerrado"):
+        try:
+            supabase.table("conversas").update(
+                {"status": "encerrada", "updated_at": "now()"}
+            ).eq("id", conversa_id).execute()
+        except Exception as exc:
+            logger.warning("[meta-inbound] Erro ao setar encerrada: %s", exc)
+
+    return data.get("resposta") or None
+
+
 # ─── Background Task ───────────────────────────────────────────────────────────
 async def processar_webhook_meta(raw_body: bytes) -> None:
     """
@@ -314,14 +403,14 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
     except Exception as exc:
         logger.error(f"[meta-inbound] Erro ao salvar Mensagem: {exc}")
 
-    # ── Dispatch: Empregabilidade (AC #6) ────────────────────────────────
+    # ── Dispatch ─────────────────────────────────────────────────────────────
     if agente_tipo == "Empregabilidade":
         try:
             from empregabilidade_engine import processar_mensagem_empregabilidade  # noqa: PLC0415
             await processar_mensagem_empregabilidade(
                 texto=mensagem,
                 phone=telefone,
-                instance_name=phone_number_id,  # vestigial; S-WM-04 limpa assinatura
+                instance_name=phone_number_id,  # vestigial; limpa em story futura
                 token="",
                 lead_id=lead_id,
                 conversa_id=conversa_id,
@@ -330,5 +419,16 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             )
         except Exception as exc:
             logger.error(f"[meta-inbound] Erro no dispatch Empregabilidade: {exc}")
+
+    elif agente_tipo in ("Institucional", "maria", "sofia", "ana"):
+        try:
+            from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+            token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+            resposta = await _chamar_motor_agente(contrato_v2, conversa_id, supabase)
+            if resposta:
+                await _meta_enviar(phone_number_id, telefone, resposta, token)
+        except Exception as exc:
+            logger.error(f"[meta-inbound] Erro no dispatch motor-agente ({agente_tipo}): {exc}")
+
     else:
-        logger.info(f"[meta-inbound] agente_tipo={agente_tipo!r} — sem dispatch nesta story")
+        logger.info(f"[meta-inbound] agente_tipo={agente_tipo!r} sem dispatch — descartado")

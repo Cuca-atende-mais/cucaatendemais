@@ -131,9 +131,9 @@ Deno.serve(async (req: Request) => {
 
     // 2. Conversa
     let conversaJustCreated = false;
-    let { data: conversa } = await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("instancia_uazapi", instancia_uazapi || "test").single();
+    let { data: conversa } = await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", instancia_uazapi || "test").single();
     if (!conversa) {
-      const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, instancia_uazapi: instancia_uazapi || "test", agente_tipo, status: "ativa" }).select("id, status, metadata").single();
+      const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: instancia_uazapi || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata").single();
       conversa = data; conversaJustCreated = true;
     } else if (conversa.status === "encerrada") {
       await supabase.from("conversas").update({ status: "ativa", updated_at: new Date().toISOString() }).eq("id", conversa.id);
