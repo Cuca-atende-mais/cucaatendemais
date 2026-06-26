@@ -250,15 +250,9 @@ class TestRenomeTouchPoints:
             "Regressão S-WM-02 touch point 1: process_webhook_payload ainda presente em main.py"
         )
 
-        # Touch point 2: payload do motor-agente em institucional_engine.py deve estar limpo
-        with open(os.path.join(worker_dir, "institucional_engine.py"), encoding="utf-8") as f:
-            engine_content = f.read()
-        assert '"instancia_uazapi":' not in engine_content, (
-            "Regressão touch point 2: institucional_engine.py ainda contém "
-            "'\"instancia_uazapi\":' como chave de dict."
-        )
-        assert '"canal_origem":' in engine_content, (
-            "Regressão touch point 2: 'canal_origem' não encontrado em institucional_engine.py"
+        # Touch point 2 (S-WM-05): institucional_engine.py foi DELETADO — confirmar ausência
+        assert not os.path.exists(os.path.join(worker_dir, "institucional_engine.py")), (
+            "Regressão S-WM-05 touch point 2: institucional_engine.py ainda existe — deve ter sido deletado"
         )
 
         # Touch point 3: Edge Function motor-agente deve ler 'canal_origem' do body

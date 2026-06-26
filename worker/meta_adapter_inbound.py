@@ -420,7 +420,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         except Exception as exc:
             logger.error(f"[meta-inbound] Erro no dispatch Empregabilidade: {exc}")
 
-    elif agente_tipo in ("Institucional", "maria", "sofia", "ana"):
+    elif agente_tipo in _AGENTES_MOTOR_AGENTE:
         try:
             from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
             token = os.getenv("META_SYSTEM_USER_TOKEN", "")
