@@ -1,7 +1,7 @@
 # S-WM-05 — Campanhas Meta: Templates, Sunset UAZAPI e Correção de Chamadores
 
 ## Status
-Ready
+Ready for Review
 
 ## Executor Assignment
 ```yaml
@@ -141,12 +141,14 @@ Criação e aprovação são responsabilidade do sócio — fora do escopo desta
 ## Dev Agent Record
 
 ### File List
-- `worker/campanhas_engine.py` — modificado (sunset UAZAPI, templates Meta)
-- `worker/institucional_engine.py` — **DELETADO**
-- `worker/main.py` — modificado (remover imports legados; suporte a template no `/send-message`)
-- `cuca-portal/src/app/api/empregabilidade/notificar-selecionado/route.ts` — modificado
-- `cuca-portal/src/app/api/empregabilidade/vagas/convocar/route.ts` — verificar/modificar
-- `cuca-portal/src/app/api/empregabilidade/vagas/[id]/solicitar-feedback/route.ts` — verificar/modificar
+- `worker/campanhas_engine.py` — reescrito (sunset UAZAPI completo, `_enviar_template_meta`, `_get_phone_by_canal_tipo_sync`, flag `META_TEMPLATES_APROVADOS`, templates `cuca_evento_pontual`, `cuca_programacao_mensal`, `cuca_pesquisa_ouvidoria`)
+- `worker/institucional_engine.py` — **DELETADO** (AC 7)
+- `worker/main.py` — modificado (suporte a `template_name`/`components` no `/send-message`; mensagem legado sem referência a "UAZAPI")
+- `worker/empregabilidade_engine.py` — modificado (notificação cancelamento vaga: `instancias_uazapi` substituído por `_meta_enviar` via `meta_phone_numbers`)
+- `worker/tests/test_meta_adapter_inbound.py` — modificado (touch point 2: assert arquivo não existe em vez de verificar conteúdo)
+- `cuca-portal/src/app/api/empregabilidade/notificar-selecionado/route.ts` — modificado (remove `instancias_uazapi`, usa `WEBHOOK_INTERNAL_TOKEN`, payload `{number, text}`)
+- `cuca-portal/src/app/api/empregabilidade/vagas/convocar/route.ts` — modificado (remove `instancias_uazapi`, remove campo `instance` do payload)
+- `cuca-portal/src/app/api/empregabilidade/vagas/[id]/solicitar-feedback/route.ts` — modificado (remove `instancias_uazapi`, remove campo `instance` do payload)
 
 ### Completion Notes
 > **instancias_uazapi — tabela órfã:** após esta story, nenhum arquivo em `worker/` referencia `instancias_uazapi`. A tabela permanece no banco para evitar impacto em possíveis referências do portal Next.js ainda não auditadas. Candidata a `DROP TABLE` em story futura de limpeza de banco após auditoria completa do portal.
@@ -156,3 +158,4 @@ Criação e aprovação são responsabilidade do sócio — fora do escopo desta
 |---|---|---|
 | 2026-06-26 | @sm (River) | Story criada |
 | 2026-06-26 | @po (Pax) | Adicionados: deleção de `institucional_engine.py`, AC 6/7 bloqueantes, AC 9 tabela órfã, Completion Notes — GO 9/10 — status Draft → Ready |
+| 2026-06-26 | @dev (Dex) | Implementação concluída — 44/44 testes passando — AC6 zero ocorrências funcionais — AC7 `institucional_engine.py` deletado — status Ready → Ready for Review |

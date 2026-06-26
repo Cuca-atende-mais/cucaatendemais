@@ -301,9 +301,11 @@ async def send_manual_message(token: str, request: Request):
 
     number = payload.get("number")
     text = payload.get("text")
-    # instance recebido por compatibilidade temporária do portal (AC #12) — ignorado
-    if not number or not text:
-        return Response(status_code=422, content="Campos obrigatórios: number, text")
+    template_name = payload.get("template_name")
+    template_components = payload.get("components", [])
+    # instance ignorado — canal roteado por conversa_id
+    if not number or (not text and not template_name):
+        return Response(status_code=422, content="Campos obrigatórios: number + (text ou template_name)")
 
     try:
         from meta_adapter_outbound import _meta_enviar
@@ -323,21 +325,31 @@ async def send_manual_message(token: str, request: Request):
             origem_id = conv.data.get("origem_id", "")
             if canal_ativo == "meta":
                 meta_token = os.getenv("META_SYSTEM_USER_TOKEN", "")
-                ok = await _meta_enviar(origem_id, number, text, meta_token)
-                if ok:
-                    logger.info(f"[send-manual] Mensagem enviada via Meta (canal_ativo=meta) para {number}")
-                    return {"status": "sent"}
-                return Response(status_code=502, content="Falha no envio Meta")
+                if template_name:
+                    from campanhas_engine import _enviar_template_meta  # noqa: PLC0415
+                    ok = await _enviar_template_meta(
+                        origem_id, number, meta_token, template_name, template_components
+                    )
+                    if ok:
+                        logger.info(f"[send-manual] Template {template_name!r} enviado via Meta para {number}")
+                        return {"status": "sent"}
+                    return Response(status_code=502, content="Falha no envio de template Meta")
+                else:
+                    ok = await _meta_enviar(origem_id, number, text, meta_token)
+                    if ok:
+                        logger.info(f"[send-manual] Mensagem enviada via Meta (canal_ativo=meta) para {number}")
+                        return {"status": "sent"}
+                    return Response(status_code=502, content="Falha no envio Meta")
             elif canal_ativo == "uazapi":
                 return Response(
                     status_code=501,
-                    content="Canal UAZAPI não suportado neste endpoint — use o cliente UAZAPI direto",
+                    content="Canal legado não suportado neste endpoint",
                 )
             else:
                 return Response(status_code=400, content=f"Canal desconhecido: {canal_ativo}")
         else:
-            # Fallback legado (AC 14): sem conversa_id — usa meta_phone_numbers (S-WM-03)
-            from empregabilidade_engine import _get_meta_phone
+            # Fallback legado (AC 14): sem conversa_id — usa meta_phone_numbers (Empregabilidade)
+            from empregabilidade_engine import _get_meta_phone  # noqa: PLC0415
             phone_number_id, meta_token = _get_meta_phone("Empregabilidade")
             ok = await _meta_enviar(phone_number_id, number, text, meta_token)
             if ok:

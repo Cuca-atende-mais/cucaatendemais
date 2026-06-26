@@ -518,19 +518,22 @@ async def _processar_empresa(
                     lead_res = supabase.table("leads").select("telefone").eq("id", created_by).single().execute()
                     lead_phone = (lead_res.data or {}).get("telefone")
                     if lead_phone:
-                        inst_res = supabase.table("instancias_uazapi").select(
-                            "nome, token"
-                        ).eq("unidade_cuca", unidade_vaga).eq("canal_tipo", "Institucional").eq("ativa", True).limit(1).execute()
-                        inst = (inst_res.data or [None])[0]
-                        if inst:
-                            tel_limpo = re.sub(r"\D", "", lead_phone)
-                            tel_fmt = tel_limpo if tel_limpo.startswith("55") else f"55{tel_limpo}"
-                            msg_lead = (
-                                f"❌ *Vaga Cancelada*\n\n"
-                                f"A empresa *{empresa_nome}* solicitou o cancelamento da vaga *{vaga_titulo_cancelar}*.\n\n"
-                                "O histórico foi registrado. Nenhuma ação é necessária."
-                            )
-                            await _enviar(inst["nome"], inst["token"], tel_fmt, msg_lead)
+                        tel_limpo = re.sub(r"\D", "", lead_phone)
+                        tel_fmt = tel_limpo if tel_limpo.startswith("55") else f"55{tel_limpo}"
+                        msg_lead = (
+                            f"❌ *Vaga Cancelada*\n\n"
+                            f"A empresa *{empresa_nome}* solicitou o cancelamento da vaga *{vaga_titulo_cancelar}*.\n\n"
+                            "O histórico foi registrado. Nenhuma ação é necessária."
+                        )
+                        try:
+                            from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+                            from campanhas_engine import _get_phone_by_canal_tipo_sync  # noqa: PLC0415
+                            canal_info = _get_phone_by_canal_tipo_sync("Institucional")
+                            if canal_info:
+                                phone_number_id_inst, meta_token_inst = canal_info
+                                await _meta_enviar(phone_number_id_inst, tel_fmt, msg_lead, meta_token_inst)
+                        except Exception as e_meta:
+                            logger.warning(f"Erro ao notificar lead via Meta: {e_meta}")
                 except Exception as e_lead:
                     logger.warning(f"[cancelamento] Erro ao notificar lead: {e_lead}")
 

@@ -1,7 +1,7 @@
 # S-WM-04 — Dispatch Completo: Institucional, Sofia, Ana via Motor-Agente
 
 ## Status
-InReview
+Done
 
 ## Executor Assignment
 ```yaml
@@ -129,3 +129,4 @@ Data: 2026-06-26 | Agente: @qa (Quinn)
 | 2026-06-26 | @po (Pax) | Validação GO — 10/10 — status Draft → Ready |
 | 2026-06-26 | @dev (Dex) | Implementação concluída — 19/19 testes passando — status → Ready for Review |
 | 2026-06-26 | @qa (Quinn) | QA gate — PASS WITH CONCERNS (Q1 MEDIUM: frozenset morto, Q2 MEDIUM: scope declarado OUT mas necessário, Q3 LOW: fallback preexistente) — status → InReview |
+| 2026-06-26 | @dev (Dex) | Q1 fix aplicado: `elif agente_tipo in _AGENTES_MOTOR_AGENTE` (linha 423 meta_adapter_inbound.py) — status → Done |

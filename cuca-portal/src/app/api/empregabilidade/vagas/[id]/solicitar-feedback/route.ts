@@ -78,35 +78,7 @@ export async function POST(
 
         if (tokenErr) throw tokenErr
 
-        // 4. Buscar instância de WhatsApp da unidade (Empregabilidade > Institucional > qualquer ativa)
-        const { data: instancias } = await supabaseAdmin
-            .from("instancias_uazapi")
-            .select("nome, token, canal_tipo")
-            .eq("unidade_cuca", vaga.unidade_cuca)
-            .eq("ativa", true)
-            .limit(10)
-
-        let instancia = instancias?.find(i => i.canal_tipo === "Empregabilidade")
-            || instancias?.find(i => i.canal_tipo === "Institucional")
-            || instancias?.[0]
-
-        if (!instancia) {
-            // Fallback: qualquer instância Empregabilidade ativa na rede
-            const { data: instGlobal } = await supabaseAdmin
-                .from("instancias_uazapi")
-                .select("nome, token, canal_tipo")
-                .eq("canal_tipo", "Empregabilidade")
-                .eq("ativa", true)
-                .limit(1)
-                .single()
-            if (instGlobal) instancia = instGlobal
-        }
-
-        if (!instancia) {
-            return NextResponse.json({ error: "Nenhuma instância WhatsApp ativa encontrada para enviar o feedback." }, { status: 500 })
-        }
-
-        // 5. Enviar mensagem via Worker -> UAZAPI (mesmo padrão de /vagas/convocar)
+        // 4. Preparar envio via Worker (Meta Cloud API)
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL || "http://localhost:3000"
         const feedbackLink = `${appUrl}/feedback-empresa/${token}`
         const mensagem = `Olá, equipe de RH da *${empresa.nome}*! 👋\n\nGostaríamos de solicitar o seu feedback sobre os candidatos encaminhados para a vaga de *${vaga.titulo}*.\n\nPor favor, acesse o link seguro abaixo para avaliar os candidatos:\n🔗 ${feedbackLink}\n\nO link expira em 48h. Agradecemos a parceria! 🚀`
@@ -122,14 +94,14 @@ export async function POST(
         const telLimpo = telefoneRH.replace(/\D/g, "")
         const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
 
-        console.info(`[solicitar-feedback] Enviando para ${number} via instância '${instancia.nome}' — worker: ${workerUrl}`)
+        console.info(`[solicitar-feedback] Enviando para ${number} via worker: ${workerUrl}`)
 
         let sendWarning: string | null = null
         try {
             const sendRes = await fetch(`${workerUrl}/send-message/${internalToken}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ number, text: mensagem, instance: instancia.nome }),
+                body: JSON.stringify({ number, text: mensagem }),
             })
             if (!sendRes.ok) {
                 const errLog = await sendRes.text()
