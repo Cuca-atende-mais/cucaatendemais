@@ -13,6 +13,7 @@ import {
     Wifi,
     RefreshCw,
     ScanSearch,
+    Phone,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -61,6 +62,15 @@ const consoleModules = [
         icon: Wifi,
         href: "/developer/instancias",
         badge: "Fundação OK",
+        badgeVariant: "default" as const,
+        status: "active",
+    },
+    {
+        title: "Números WhatsApp (Meta)",
+        description: "Mapear phone_number_id → agente_tipo na API oficial Meta — edição inline, sem UPDATE manual no banco",
+        icon: Phone,
+        href: "/developer/meta-numeros",
+        badge: "Meta API",
         badgeVariant: "default" as const,
         status: "active",
     },
