@@ -410,7 +410,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             await processar_mensagem_empregabilidade(
                 texto=mensagem,
                 phone=telefone,
-                instance_name=phone_number_id,  # vestigial; limpa em story futura
+                instance_name=phone_number_id,
                 token="",
                 lead_id=lead_id,
                 conversa_id=conversa_id,
