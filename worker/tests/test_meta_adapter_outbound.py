@@ -387,21 +387,21 @@ class TestDispatchInbound:
 class TestEngineMeta:
 
     @pytest.mark.asyncio
-    async def test_enviar_usa_meta_phone_da_tabela(self):
-        """AC #7 (S-WM-03): _enviar() busca phone_number_id em meta_phone_numbers via _get_meta_phone."""
+    async def test_enviar_usa_instance_name_do_inbound(self):
+        """AC #2 (S-WM-07): _enviar() usa instance_name diretamente como phone_number_id — nunca _get_meta_phone."""
         from empregabilidade_engine import _enviar
 
         meta_mock = AsyncMock(return_value=True)
         with patch("meta_adapter_outbound._meta_enviar", meta_mock), \
-             patch("empregabilidade_engine._get_meta_phone", return_value=("PNID_EMPREG_TEST", "TOKEN_EMPREG_TEST")):
-            await _enviar("vestigial_inst", "vestigial_token", "5585999", "Mensagem")
+             patch.dict("os.environ", {"META_SYSTEM_USER_TOKEN": "TOKEN_ENV"}):
+            await _enviar("PNID_INBOUND", "", "5585999", "Mensagem")
 
         meta_mock.assert_called_once()
         args = meta_mock.call_args.args
-        assert args[0] == "PNID_EMPREG_TEST"
+        assert args[0] == "PNID_INBOUND"
         assert args[1] == "5585999"
         assert args[2] == "Mensagem"
-        assert args[3] == "TOKEN_EMPREG_TEST"
+        assert args[3] == "TOKEN_ENV"
 
     @pytest.mark.asyncio
     async def test_enviar_nao_grava_mensagem_em_falha_meta(self):
@@ -412,9 +412,8 @@ class TestEngineMeta:
         mock_sb = MagicMock()
 
         with patch("meta_adapter_outbound._meta_enviar", meta_mock), \
-             patch("empregabilidade_engine._get_meta_phone", return_value=("PNID", "TOK")), \
              patch("empregabilidade_engine.supabase", mock_sb):
-            result = await _enviar("", "", "5585999", "Texto", conversa_id="conv-uuid", lead_id="lead-uuid")
+            result = await _enviar("PNID", "", "5585999", "Texto", conversa_id="conv-uuid", lead_id="lead-uuid")
 
         assert result is False
         mensagens_calls = [c for c in mock_sb.table.call_args_list if c.args and c.args[0] == "mensagens"]

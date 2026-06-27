@@ -63,6 +63,7 @@ def _get_meta_phone(agente_tipo: str) -> tuple[str, str]:
             .select("phone_number_id") \
             .eq("agente_tipo", agente_tipo) \
             .eq("ativo", True) \
+            .order("phone_number_id") \
             .limit(1) \
             .single() \
             .execute()
@@ -74,14 +75,12 @@ def _get_meta_phone(agente_tipo: str) -> tuple[str, str]:
 
 
 async def _enviar(instance_name: str, token: str, phone: str, texto: str, conversa_id: str = "", lead_id: str = "") -> bool:
-    # instance_name e token são vestigiais — Meta usa meta_phone_numbers (S-WM-03)
     from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
-    pnid, meta_tok = _get_meta_phone("Empregabilidade")
     ok = await _meta_enviar(
-        pnid,
+        instance_name,
         phone,
         texto,
-        meta_tok,
+        os.getenv("META_SYSTEM_USER_TOKEN", ""),
     )
     # Gravar no painel somente em envio bem-sucedido (AC #8)
     if ok and conversa_id:
@@ -2171,18 +2170,21 @@ async def empregabilidade_notify_loop():
 
                 conversa_id = c["id"]
                 lead_id = c.get("lead_id", "")
-                instance_name = c.get("origem_id", "")  # vestigial
-                token = ""  # vestigial; _enviar usa _get_meta_phone (S-WM-03)
+                instance_name = c.get("origem_id", "")
+                token = ""
                 unidade_cuca = ""
+
+                if not instance_name:
+                    logger.warning("[empreg-notify] origem_id ausente na conversa %s — skipping", conversa_id)
+                    continue
 
                 lead_phone_res = supabase.table("leads").select(
                     "telefone"
                 ).eq("id", lead_id).single().execute()
                 phone = (lead_phone_res.data or {}).get("telefone", "")
 
-                _meta_pnid, _meta_tok = _get_meta_phone("Empregabilidade")
-                if not phone or not _meta_pnid or not _meta_tok:
-                    logger.warning("[empreg-notify] phone_number_id não configurado em meta_phone_numbers — loop aguardando")
+                if not phone:
+                    logger.warning("[empreg-notify] telefone do lead ausente — conversa %s skipped", conversa_id)
                     continue
 
                 empresa_id = fluxo.get("empresa_id")
