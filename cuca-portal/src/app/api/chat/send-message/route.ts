@@ -12,10 +12,10 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { number, text, instance } = body
+    const { number, text, conversa_id } = body
 
-    if (!number || !text || !instance) {
-        return NextResponse.json({ error: "number, text e instance são obrigatórios" }, { status: 400 })
+    if (!number || !text || !conversa_id) {
+        return NextResponse.json({ error: "number, text e conversa_id são obrigatórios" }, { status: 400 })
     }
 
     const controller = new AbortController()
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
         const resp = await fetch(`${workerUrl}/send-message/${token}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ number, text, instance }),
+            body: JSON.stringify({ number, text, conversa_id }),
             signal: controller.signal,
         })
 

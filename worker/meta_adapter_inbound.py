@@ -375,6 +375,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
 
         if conv_result.data:
             conversa_id: str = conv_result.data[0]["id"]
+            conversa_status = conv_result.data[0].get("status")
             supabase.table("conversas").update({"updated_at": "now()"}).eq("id", conversa_id).execute()
         else:
             new_conv = supabase.table("conversas").insert({
@@ -385,6 +386,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
                 "agente_tipo": agente_tipo,
             }).execute()
             conversa_id = new_conv.data[0]["id"]
+            conversa_status = "ativa"
     except Exception as exc:
         logger.error(f"[meta-inbound] Erro ao gerenciar Conversa: {exc}")
         return
@@ -402,6 +404,14 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         supabase.rpc("increment_nao_lidas", {"conv_id": conversa_id}).execute()
     except Exception as exc:
         logger.error(f"[meta-inbound] Erro ao salvar Mensagem: {exc}")
+
+    # ── Guard awaiting_human: IA silenciada enquanto colaborador controla ────────
+    if conversa_status == "awaiting_human":
+        logger.info(
+            "[awaiting_human] IA silenciada — conversa %s em atendimento humano. Descartando inbound.",
+            conversa_id,
+        )
+        return
 
     # ── Dispatch ─────────────────────────────────────────────────────────────
     if agente_tipo == "Empregabilidade":
