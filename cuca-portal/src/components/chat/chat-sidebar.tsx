@@ -30,7 +30,7 @@ type SidebarConversation = {
     id: string;
     status: string;
     updated_at?: string | null;
-    instancia_uazapi?: string | null;
+    origem_id?: string | null;
     nao_lidas?: number | null;
     leads?: SidebarLead | null;
 };
@@ -82,18 +82,18 @@ export default function ChatSidebar({
                     .abortSignal(controller.signal);
 
                 if (filterCanalTipo) {
-                    const { data: instancias } = await supabase
-                        .from('instancias_uazapi')
-                        .select('nome')
+                    const { data: phoneNumbers } = await supabase
+                        .from('meta_phone_numbers')
+                        .select('phone_number_id')
                         .eq('canal_tipo', filterCanalTipo)
-                        .eq('ativa', true)
+                        .eq('ativo', true)
                         .abortSignal(controller.signal);
 
-                    const nomes = instancias?.map(i => i.nome) ?? [];
+                    const phoneNumberIds = phoneNumbers?.map(p => p.phone_number_id) ?? [];
                     if (!mounted || requestSeq !== requestSeqRef.current) return;
                     if (controller.signal.aborted) return;
-                    if (nomes.length > 0) {
-                        query = query.in('instancia_uazapi', nomes);
+                    if (phoneNumberIds.length > 0) {
+                        query = query.in('origem_id', phoneNumberIds);
                     } else {
                         setConversations([]);
                         return;
@@ -116,6 +116,7 @@ export default function ChatSidebar({
                             return;
                         }
                     } else {
+                        // Ouvidoria: filtra por agente_tipo diretamente — sem dependência de instancias_uazapi ou meta_phone_numbers
                         query = query.in('agente_tipo', filterAgenteTipo);
                     }
                 }
@@ -266,7 +267,7 @@ export default function ChatSidebar({
                                     </div>
                                     <div className="flex items-center gap-2 mt-0.5">
                                         <p className="text-[11px] text-muted-foreground truncate flex-1 opacity-70">
-                                            {conv.leads?.telefone || conv.instancia_uazapi}
+                                            {conv.leads?.telefone || conv.origem_id}
                                         </p>
                                         {/* T5: badge de status */}
                                         {isHuman ? (

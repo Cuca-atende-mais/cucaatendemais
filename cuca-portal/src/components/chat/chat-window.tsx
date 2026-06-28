@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -24,7 +24,7 @@ type ChatLead = {
 type ChatConversation = {
     id: string;
     lead_id: string;
-    instancia_uazapi: string;
+    origem_id: string;
     status: string;
     leads?: ChatLead | null;
 };
@@ -56,9 +56,6 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
     const loadControllerRef = useRef<AbortController | null>(null);
     const supabase = createClient();
 
-    // Ref com dados de conexão — evita race condition no markAsRead (conversation pode ser null no 1º Realtime)
-    const connectionDataRef = useRef<{ telefone: string; instancia: string } | null>(null);
-
     useEffect(() => {
         const requestSeq = ++requestSeqRef.current;
         if (!conversationId) {
@@ -66,7 +63,6 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
             setConversation(null);
             setMessages([]);
             setLoading(false);
-            connectionDataRef.current = null;
             return;
         }
 
@@ -76,7 +72,6 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
 
         setConversation(null);
         setMessages([]);
-        connectionDataRef.current = null;
         fetchConversationDetails(requestSeq, controller.signal);
         fetchMessages(requestSeq, controller.signal);
 
@@ -104,8 +99,6 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                     if (prev.find(m => m.id === incoming.id)) return prev;
                     return [...prev, incoming];
                 });
-                // T2: markAsRead via ref — não depende do estado async 'conversation'
-                if (incoming.remetente === 'lead') markAsReadViaRef();
             })
             .subscribe((status) => {
                 if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
@@ -126,31 +119,6 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
         }
     }, [messages]);
 
-    // T2: markAsRead usando ref (não depende do state 'conversation' que pode ser null)
-    const markAsReadViaRef = useCallback(async (signal?: AbortSignal) => {
-        const conn = connectionDataRef.current;
-        if (!conn || signal?.aborted) return;
-        try {
-            await fetch('/api/chat/read-message', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                signal,
-                body: JSON.stringify({
-                    remoteJid: `${conn.telefone}@s.whatsapp.net`,
-                    instance: conn.instancia,
-                }),
-            });
-            if (signal?.aborted) return;
-            // Zerar contador de não lidas
-            await supabase
-                .from('conversas')
-                .update({ nao_lidas: 0 })
-                .eq('id', conversationId);
-        } catch (err) {
-            console.error("Erro ao sincronizar leitura:", err);
-        }
-    }, [conversationId]);
-
     async function fetchConversationDetails(requestSeq: number, signal: AbortSignal) {
         if (!conversationId) return;
         setLoading(true);
@@ -165,15 +133,6 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
             if (signal.aborted) return;
             if (error) throw error;
             setConversation(data);
-            // T2: popular ref assim que dados chegam — corrige race condition
-            if (data?.leads?.telefone && data?.instancia_uazapi) {
-                connectionDataRef.current = {
-                    telefone: data.leads.telefone,
-                    instancia: data.instancia_uazapi,
-                };
-                // Marcar como lido imediatamente ao abrir conversa
-                void markAsReadViaRef(signal);
-            }
         } catch (err: unknown) {
             if (requestSeq !== requestSeqRef.current) return;
             if (signal.aborted) return;
@@ -239,14 +198,14 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 body: JSON.stringify({
                     number: conversation.leads.telefone,
                     text: newMessage.trim(),
-                    instance: conversation.instancia_uazapi,
+                    conversa_id: conversationId,
                 }),
             });
             if (!sendResp.ok) {
                 const errBody = await sendResp.text().catch(() => `HTTP ${sendResp.status}`);
                 await supabase.from('mensagens').delete().eq('id', savedMsg.id);
                 setMessages(prev => prev.filter(m => m.id !== savedMsg.id));
-                throw new Error(`Falha ao enviar via UAZAPI (${sendResp.status}): ${errBody}`);
+                throw new Error(`Falha ao enviar via worker (${sendResp.status}): ${errBody}`);
             }
             setNewMessage("");
             toast.success("Mensagem enviada!");
