@@ -1,7 +1,7 @@
 # S-WM-09 — Transbordo completo: worker seta awaiting_human e notifica colaborador via Meta template
 
 ## Status
-Ready for Review
+Done
 
 ## Executor Assignment
 ```yaml
@@ -200,3 +200,4 @@ Gate: PASS WITH CONCERNS → docs/qa/gates/s-wm-09-transbordo-completo.yml
 | 2026-06-27 | @po (Pax) | Ajuste pós-validação: ACs expandidos para cobrir explicitamente motor-agente/sofia e motor-agente/maria (ACs 7-9); escopo e task 4 reescritos para deixar claro que _notificar_transbordo é sempre worker Python, nunca Edge Function; mapeamento agente_tipo→modulo adicionado |
 | 2026-06-27 | @dev (Dex) | Implementação concluída — _notificar_transbordo, _AGENTE_MODULO_MAP, transbordo Empregabilidade dúvida+keyword, motor-agente handover integrado, META_TEMPLATES_APROVADOS; 50/50 testes OK |
 | 2026-06-28 | @qa (Quinn) | QA Gate PASS WITH CONCERNS — 50/50 testes, ACs 1-2/4-10 verificados, AC3 WAIVED, M-001/L-001/L-002 registrados |
+| 2026-06-28 | @devops (Gage) | commit d8c67dc + push feat/migracao-meta + PR #10 → develop; status → Done |
