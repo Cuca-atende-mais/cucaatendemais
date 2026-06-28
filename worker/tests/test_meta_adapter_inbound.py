@@ -453,6 +453,80 @@ class TestDispatchMotorAgente:
         mock_motor.assert_not_called()
         mock_enviar.assert_not_called()
 
+    # ── Guard awaiting_human: IA silenciada, nenhum dispatch ─────────────
+    @pytest.mark.asyncio
+    async def test_awaiting_human_silencia_ia(self):
+        """AC 1/4: status='awaiting_human' → IA silenciada, nenhum dispatch chamado."""
+        import sys, types
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        mock_processar_emp = AsyncMock()
+        fake_emp_module = types.ModuleType("empregabilidade_engine")
+        fake_emp_module.processar_mensagem_empregabilidade = mock_processar_emp
+
+        for agente in ("Empregabilidade", "Institucional", "sofia", "ana"):
+            stub = self._make_stub(agente, canal_tipo=agente if agente == "Empregabilidade" else "Institucional")
+            payload = _payload_texto(phone_number_id="PHONE_AWAIT", texto="mensagem lead")
+            raw = json.dumps(payload).encode()
+
+            mock_supabase = MagicMock()
+            mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "l-aw"}]
+            mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"bloqueado": False}
+            mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+                {"id": "c-aw", "status": "awaiting_human"}
+            ]
+            mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+            mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+            mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+            with patch.dict(sys.modules, {"empregabilidade_engine": fake_emp_module}), \
+                 patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+                 patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+                 patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock) as mock_motor, \
+                 patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock) as mock_enviar:
+                await processar_webhook_meta(raw)
+
+            mock_motor.assert_not_called(), f"motor-agente chamado para agente={agente} em awaiting_human"
+            mock_processar_emp.assert_not_called(), f"empregabilidade chamada para agente={agente} em awaiting_human"
+            mock_enviar.assert_not_called(), f"_meta_enviar chamado para agente={agente} em awaiting_human"
+            mock_processar_emp.reset_mock()
+
+    # ── Guard awaiting_human: status null (UAZAPI legado) → dispatch normal ──
+    @pytest.mark.asyncio
+    async def test_status_null_nao_silencia_ia(self):
+        """AC 2: conversas com status=null (UAZAPI legado) não são silenciadas."""
+        import sys, types
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        mock_processar = AsyncMock()
+        fake_emp_module = types.ModuleType("empregabilidade_engine")
+        fake_emp_module.processar_mensagem_empregabilidade = mock_processar
+
+        stub = _STUB_INSTANCIA
+        payload = _payload_texto(phone_number_id="EMP_NULL", texto="mensagem")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "l-null"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"bloqueado": False}
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "c-null", "status": None}
+        ]
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch.dict(sys.modules, {"empregabilidade_engine": fake_emp_module}), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock) as mock_motor:
+            await processar_webhook_meta(raw)
+
+        mock_processar.assert_called_once()
+        mock_motor.assert_not_called()
+
     # ── Regressão: Empregabilidade não afetada pelo novo dispatch ─────────
     @pytest.mark.asyncio
     async def test_empregabilidade_nao_usa_motor_agente(self):
