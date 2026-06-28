@@ -208,12 +208,19 @@ def _get_supabase():
 
 # ─── Agentes despachados via motor-agente Edge Function ────────────────────────
 _AGENTES_MOTOR_AGENTE = frozenset({"Institucional", "maria", "sofia", "ana"})
+_AGENTE_MODULO_MAP: dict[str, str] = {
+    "sofia":         "ouvidoria",
+    "Institucional": "programacao",
+    "maria":         "programacao",
+    "ana":           "acesso_cuca",
+}
 
 
 async def _chamar_motor_agente(
     contrato_v2: dict,
     conversa_id: str,
     supabase,
+    phone_number_id_origem: str = "",
 ) -> str | None:
     """
     Chama o motor-agente (Supabase Edge Function) e retorna o texto de resposta.
@@ -283,6 +290,15 @@ async def _chamar_motor_agente(
             ).eq("id", conversa_id).execute()
         except Exception as exc:
             logger.warning("[meta-inbound] Erro ao setar awaiting_human: %s", exc)
+        agente_tipo_hdv = contrato_v2.get("agente_tipo", "")
+        logger.info("[transbordo] motor-agente %s sinalizado", agente_tipo_hdv)
+        await _notificar_transbordo(
+            conversa_id=conversa_id,
+            modulo=_AGENTE_MODULO_MAP.get(agente_tipo_hdv, agente_tipo_hdv.lower()),
+            unidade_cuca=contrato_v2.get("unidade_cuca"),
+            phone_number_id_origem=phone_number_id_origem,
+            lead_identificacao=contrato_v2.get("telefone", ""),
+        )
 
     elif data.get("encerrado"):
         try:
@@ -293,6 +309,60 @@ async def _chamar_motor_agente(
             logger.warning("[meta-inbound] Erro ao setar encerrada: %s", exc)
 
     return data.get("resposta") or None
+
+
+async def _notificar_transbordo(
+    conversa_id: str,
+    modulo: str,
+    unidade_cuca: str | None,
+    phone_number_id_origem: str,
+    lead_identificacao: str,
+) -> None:
+    """Notifica colaboradores configurados sobre transbordo via template Meta."""
+    try:
+        sb = _get_supabase()
+        contacts: list = []
+        if unidade_cuca:
+            res = sb.table("human_handover_contacts").select("*") \
+                .eq("modulo", modulo).eq("unidade_cuca", unidade_cuca).eq("ativo", True).execute()
+            contacts = res.data or []
+        if not contacts:
+            res = sb.table("human_handover_contacts").select("*") \
+                .eq("modulo", modulo).is_("unidade_cuca", "null").eq("ativo", True).execute()
+            contacts = res.data or []
+        if not contacts:
+            logger.warning(
+                "[transbordo] Nenhum contato ativo para modulo=%s unidade=%s conversa=%s",
+                modulo, unidade_cuca, conversa_id,
+            )
+            return
+        templates_aprovados = os.getenv("META_TEMPLATES_APROVADOS", "false").lower() == "true"
+        token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+        for contato in contacts:
+            nome = contato.get("nome_responsavel") or "Equipe"
+            telefone_destino = contato["telefone_destino"]
+            if not templates_aprovados:
+                logger.info(
+                    "[transbordo] notificaria %s mas META_TEMPLATES_APROVADOS=false",
+                    telefone_destino,
+                )
+                continue
+            from campanhas_engine import _enviar_template_meta  # noqa: PLC0415
+            components = [{"type": "body", "parameters": [
+                {"type": "text", "text": nome},
+                {"type": "text", "text": lead_identificacao},
+                {"type": "text", "text": modulo},
+            ]}]
+            ok = await _enviar_template_meta(
+                phone_number_id_origem, telefone_destino, token,
+                "cuca_transbordo_colaborador", components,
+            )
+            if ok:
+                logger.info("[transbordo] Notificação enviada para %s (modulo=%s)", telefone_destino, modulo)
+            else:
+                logger.warning("[transbordo] Falha ao notificar %s (modulo=%s)", telefone_destino, modulo)
+    except Exception as exc:
+        logger.error("[transbordo] Erro inesperado em _notificar_transbordo: %s", exc)
 
 
 # ─── Background Task ───────────────────────────────────────────────────────────
@@ -434,7 +504,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         try:
             from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
             token = os.getenv("META_SYSTEM_USER_TOKEN", "")
-            resposta = await _chamar_motor_agente(contrato_v2, conversa_id, supabase)
+            resposta = await _chamar_motor_agente(contrato_v2, conversa_id, supabase, phone_number_id)
             if resposta:
                 await _meta_enviar(phone_number_id, telefone, resposta, token)
         except Exception as exc:

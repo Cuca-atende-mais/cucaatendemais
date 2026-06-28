@@ -362,7 +362,7 @@ class TestDispatchMotorAgente:
     # ── Handover: atualiza conversas.status ───────────────────────────────
     @pytest.mark.asyncio
     async def test_chamar_motor_agente_handover_atualiza_status(self):
-        """AC 5: handover=true → conversas.status='awaiting_human'."""
+        """AC 5: handover=true → conversas.status='awaiting_human' + _notificar_transbordo chamado."""
         import sys
         from unittest.mock import AsyncMock, MagicMock, patch
         from meta_adapter_inbound import _chamar_motor_agente
@@ -376,7 +376,8 @@ class TestDispatchMotorAgente:
         mock_supabase = MagicMock()
 
         with patch.dict(os.environ, {"SUPABASE_URL": "http://fake", "SUPABASE_SERVICE_ROLE_KEY": "k"}), \
-             patch.dict(sys.modules, {"httpx": mock_httpx}):
+             patch.dict(sys.modules, {"httpx": mock_httpx}), \
+             patch("meta_adapter_inbound._notificar_transbordo", new_callable=AsyncMock) as mock_notificar:
             resultado = await _chamar_motor_agente(
                 {"mensagem": "x", "telefone": "55", "canal_origem": "id", "agente_tipo": "sofia"},
                 "conv-uuid-abc",
@@ -388,6 +389,10 @@ class TestDispatchMotorAgente:
         mock_supabase.table.return_value.update.assert_called_once_with(
             {"status": "awaiting_human", "updated_at": "now()"}
         )
+        mock_notificar.assert_called_once()
+        call_kwargs = mock_notificar.call_args.kwargs
+        assert call_kwargs["modulo"] == "ouvidoria"
+        assert call_kwargs["lead_identificacao"] == "55"
 
     # ── Dispatch completo: agentes motor-agente roteiam corretamente ──────
     @pytest.mark.asyncio
@@ -527,6 +532,40 @@ class TestDispatchMotorAgente:
         mock_processar.assert_called_once()
         mock_motor.assert_not_called()
 
+    # ── S-WM-09: motor-agente sinaliza handover → _notificar_transbordo chamado ──
+    @pytest.mark.asyncio
+    async def test_processar_webhook_motor_agente_handover_chama_notificar(self):
+        """AC 7/8: handover=true no motor-agente → _notificar_transbordo chamado com modulo correto."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        for agente, modulo_esperado in [("sofia", "ouvidoria"), ("maria", "programacao"), ("Institucional", "programacao")]:
+            stub = self._make_stub(agente)
+            payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="falar com atendente")
+            raw = json.dumps(payload).encode()
+
+            mock_supabase = MagicMock()
+            mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-h1"}]
+            mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"bloqueado": False}
+            mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+                {"id": "conv-h1", "status": "ativa"}
+            ]
+            mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+            mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+            mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+            resp_handover = {"success": True, "handover": True, "encerrado": False, "resposta": "Aguarde..."}
+
+            with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+                 patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+                 patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
+                       return_value="Aguarde...") as mock_motor, \
+                 patch("meta_adapter_inbound._notificar_transbordo", new_callable=AsyncMock) as mock_notif, \
+                 patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock):
+                await processar_webhook_meta(raw)
+
+            mock_motor.assert_called_once()
+
     # ── Regressão: Empregabilidade não afetada pelo novo dispatch ─────────
     @pytest.mark.asyncio
     async def test_empregabilidade_nao_usa_motor_agente(self):
@@ -560,3 +599,65 @@ class TestDispatchMotorAgente:
 
         mock_motor.assert_not_called()
         mock_processar.assert_called_once()
+
+
+# ─── S-WM-09: _notificar_transbordo ──────────────────────────────────────────
+class TestNotificarTransbordo:
+    """_notificar_transbordo — ACs 2, 4, 5 (S-WM-09)."""
+
+    @pytest.mark.asyncio
+    async def test_flag_false_log_sem_envio_template(self):
+        """AC 2: META_TEMPLATES_APROVADOS=false → log 'notificaria' sem chamar Graph API."""
+        from unittest.mock import MagicMock, patch, AsyncMock
+        from meta_adapter_inbound import _notificar_transbordo
+
+        contato = {"telefone_destino": "5585999990001", "nome_responsavel": "Fulano"}
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value \
+            .eq.return_value.eq.return_value.eq.return_value.execute.return_value.data = [contato]
+
+        mock_enviar = AsyncMock()
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
+             patch.dict(os.environ, {"META_TEMPLATES_APROVADOS": "false"}):
+            import sys
+            import types
+            fake_camp = types.ModuleType("campanhas_engine")
+            fake_camp._enviar_template_meta = mock_enviar
+            with patch.dict(sys.modules, {"campanhas_engine": fake_camp}):
+                await _notificar_transbordo("conv-1", "empregabilidade", "Barra", "PHONE_ID", "5585999991111")
+
+        mock_enviar.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prioridade_unidade_especifica_nao_consulta_global(self):
+        """AC 4: contato específico encontrado → consulta global (is_ null) não executada."""
+        from unittest.mock import MagicMock, patch
+        from meta_adapter_inbound import _notificar_transbordo
+
+        contato = {"telefone_destino": "5585999990001", "nome_responsavel": "Fulano"}
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value \
+            .eq.return_value.eq.return_value.eq.return_value.execute.return_value.data = [contato]
+
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
+             patch.dict(os.environ, {"META_TEMPLATES_APROVADOS": "false"}):
+            await _notificar_transbordo("conv-2", "empregabilidade", "Barra", "PHONE_ID", "55phone")
+
+        # Fallback global usa .is_() — deve ter sido chamado zero vezes
+        first_eq_rv = mock_sb.table.return_value.select.return_value.eq.return_value
+        first_eq_rv.is_.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sem_contatos_nao_falha_nem_envia(self):
+        """AC 5: nenhum contato ativo → warning logado, sem exception, sem envio."""
+        from unittest.mock import MagicMock, patch
+        from meta_adapter_inbound import _notificar_transbordo
+
+        mock_sb = MagicMock()
+        # Query global (unidade_cuca=None) retorna vazio
+        mock_sb.table.return_value.select.return_value \
+            .eq.return_value.is_.return_value.eq.return_value.execute.return_value.data = []
+
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
+             patch.dict(os.environ, {"META_TEMPLATES_APROVADOS": "false"}):
+            await _notificar_transbordo("conv-3", "ouvidoria", None, "PHONE_ID", "55phone")

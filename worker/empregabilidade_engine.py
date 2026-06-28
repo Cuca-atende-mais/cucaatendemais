@@ -1909,6 +1909,11 @@ async def processar_mensagem_empregabilidade(
             {"event": "handover_requested", "telefone": phone[:6] + "****",
              "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": "duvida"},
         )
+        supabase.table("conversas").update(
+            {"status": "awaiting_human", "updated_at": "now()"}
+        ).eq("id", conversa_id).execute()
+        from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
+        await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
         return
 
     # Detecção por expressão natural: usuário pede explicitamente atendimento humano
@@ -1937,6 +1942,11 @@ async def processar_mensagem_empregabilidade(
             {"event": "handover_requested", "telefone": phone[:6] + "****",
              "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": "palavra_chave"},
         )
+        supabase.table("conversas").update(
+            {"status": "awaiting_human", "updated_at": "now()"}
+        ).eq("id", conversa_id).execute()
+        from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
+        await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
         return
 
     # SQS-40 Task 3.4: Interceptar respostas ao convite de entrevista
