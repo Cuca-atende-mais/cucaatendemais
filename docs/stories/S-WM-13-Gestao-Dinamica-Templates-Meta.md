@@ -274,7 +274,40 @@ Seguir padrão de `/developer/instancias/page.tsx` para assertDeveloper().
 - Teste `test_prioridade_unidade_especifica_nao_consulta_global` precisou de `side_effect` por tabela no mock para evitar que a query dinâmica de `meta_templates` retornasse MagicMock truthy e tentasse chamar `_enviar_template_meta` real.
 
 ## QA Results
-_(a ser preenchido pelo @qa)_
+
+**Data:** 2026-06-29 | **Agente:** @qa (Quinn) | **Veredito:** PASS com CONCERNS
+
+### Verificações executadas
+
+| Check | Status |
+|---|---|
+| 1. Code review — padrões, legibilidade, manutenção | ✅ PASS |
+| 2. Testes — cobertura e resultado (50 passed, 0 failed) | ✅ PASS |
+| 3. Acceptance Criteria — rastreabilidade 10/10 | ✅ PASS |
+| 4. Regressão — nenhuma função existente quebrada | ✅ PASS |
+| 5. Performance — GIN index, asyncio.to_thread correto | ✅ PASS |
+| 6. Segurança — assertDeveloper, CAMPOS_EDITAVEIS whitelist, RLS | ✅ PASS |
+| 7. Documentação — story, hub developer, File List | ✅ PASS |
+
+### DB verificado (cuca-dev)
+
+```
+total_rows: 12 ✅ | ativos: 12 ✅ | pendentes: 12 ✅
+rls_enabled: true ✅ | gin_index: 1 ✅ | unique_nome_index: 1 ✅ | num_policies: 1 ✅
+policy: developer_admin_full_access — cmd=ALL, has_permission('meta_templates','read'/'write') ✅
+```
+
+### Concerns (nenhum bloqueia merge)
+
+- **LOW C1:** `worker/.env.example` ainda referencia `META_TEMPLATES_APROVADOS=false` — remover em PR de limpeza
+- **LOW C2:** `DEVELOPER_EMAILS` duplicado em `route.ts` e `[id]/route.ts` — extrair para `lib/developer-auth.ts` em refactor futuro
+- **OPERACIONAL C3:** 12 templates com `status='pendente'` — automações permanecem silenciosas até aprovação manual no BSP Meta pós-deploy produção
+- **LOW C4:** Campo `variaveis` na UI é texto livre (comma-separated) em vez de JSON estruturado — declarado OUT-of-scope; story futura
+- **LOW C5:** `campanhas_loop()` pode gerar warnings em cada ciclo em staging até templates aprovados — aceitável
+
+### Resumo
+
+Todos os 10 ACs verificados e atendidos. Nenhum issue CRITICAL ou HIGH. Migration idempotente, RLS ativa, testes verdes, META_TEMPLATES_APROVADOS removida do código. Story pronta para `@devops *push`.
 
 ## Change Log
 | Data | Agente | Ação |
