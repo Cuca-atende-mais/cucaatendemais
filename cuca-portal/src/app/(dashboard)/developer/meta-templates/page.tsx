@@ -78,8 +78,8 @@ export default function MetaTemplatesPage() {
             const res = await fetch("/api/admin/meta-templates")
             if (!res.ok) throw new Error(await res.text())
             setTemplates(await res.json())
-        } catch (err: any) {
-            toast.error("Erro ao carregar templates: " + err.message)
+        } catch (err) {
+            toast.error("Erro ao carregar templates: " + (err instanceof Error ? err.message : String(err)))
         } finally {
             setLoading(false)
         }
@@ -144,8 +144,8 @@ export default function MetaTemplatesPage() {
             toast.success("Template atualizado")
             cancelEdit()
             await fetchTemplates()
-        } catch (err: any) {
-            toast.error(err.message)
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : String(err))
         } finally {
             setSaving(false)
         }
@@ -163,8 +163,8 @@ export default function MetaTemplatesPage() {
             toast.success(`Template "${tpl.nome}" desativado`)
             setDeleteTarget(null)
             await fetchTemplates()
-        } catch (err: any) {
-            toast.error(err.message)
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : String(err))
         }
     }
 
@@ -516,8 +516,8 @@ function CreateTemplateModal({ open, onClose, onCreated }: CreateTemplateModalPr
             toast.success(`Template "${form.nome}" criado`)
             handleClose()
             await onCreated()
-        } catch (err: any) {
-            toast.error(err.message)
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : String(err))
         } finally {
             setSubmitting(false)
         }
