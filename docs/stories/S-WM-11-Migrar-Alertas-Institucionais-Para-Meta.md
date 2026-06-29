@@ -199,3 +199,4 @@ Testes via INSERT em cuca-dev não funcionam (PG functions chamam URL de prod). 
 | 2026-06-29 | @sm (River) | Story criada a partir de investigação de impacto da migração Meta (read-only, 2026-06-29) |
 | 2026-06-29 | @po (Pax) | Validação GO 10/10 — status promovido Draft → Ready. Obs: task de auditoria de callers deve ser a primeira executada pelo @dev; risco de duplicação com _notificar_transbordo (S-WM-09) deve ser resolvido antes de qualquer mudança de código |
 | 2026-06-29 | @dev (Dex) | Implementação concluída — Edge Function migrada UAZAPI → Meta Graph API (type:template + flag META_TEMPLATES_APROVADOS). Deploy em cuca-dev. Teste direto: 4 paths validados. pytest 50/50. Status: Ready → InReview |
+| 2026-06-29 | @devops (Gage) | Push feat/migracao-meta + PR #11 → develop aberto: https://github.com/Cuca-atende-mais/cucaatendemais/pull/11 |
