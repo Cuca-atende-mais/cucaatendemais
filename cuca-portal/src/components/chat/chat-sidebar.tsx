@@ -100,17 +100,17 @@ export default function ChatSidebar({
                     }
                 } else if (filterAgenteTipo && filterAgenteTipo.length > 0) {
                     if (filterUnidade) {
-                        const { data: instanciasUnidade } = await supabase
-                            .from('instancias_uazapi')
-                            .select('nome')
+                        const { data: phoneNumbers } = await supabase
+                            .from('meta_phone_numbers')
+                            .select('phone_number_id')
                             .eq('unidade_cuca', filterUnidade)
-                            .eq('ativa', true)
+                            .eq('ativo', true)
                             .abortSignal(controller.signal);
-                        const nomesUnidade = instanciasUnidade?.map(i => i.nome) ?? [];
+                        const phoneNumberIds = phoneNumbers?.map(p => p.phone_number_id) ?? [];
                         if (!mounted || requestSeq !== requestSeqRef.current) return;
                         if (controller.signal.aborted) return;
-                        if (nomesUnidade.length > 0) {
-                            query = query.in('agente_tipo', filterAgenteTipo).in('instancia_uazapi', nomesUnidade);
+                        if (phoneNumberIds.length > 0) {
+                            query = query.in('agente_tipo', filterAgenteTipo).in('origem_id', phoneNumberIds);
                         } else {
                             setConversations([]);
                             return;

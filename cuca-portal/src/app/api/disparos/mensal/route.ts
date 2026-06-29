@@ -42,16 +42,16 @@ export async function POST(req: Request) {
 
         const portalUrl = configs?.valor || "https://cucaatendemais.com.br"
 
-        // 3. Resgatar uma instância WhatsApp disponível (preferência pela da mesma unidade)
-        const { data: instancia } = await supabase
-            .from("instancias_uazapi")
-            .select("nome")
-            .eq("ativa", true)
-            .order("unidade_cuca", { ascending: false }) // Tenta priorizar algo se houver sorting, mas ok pegar a primeira
+        // 3. Resgatar phone_number_id Meta para Divulgação
+        const { data: phoneNumber } = await supabase
+            .from("meta_phone_numbers")
+            .select("phone_number_id")
+            .eq("canal_tipo", "Divulgação")
+            .eq("ativo", true)
             .limit(1)
-            .single()
+            .maybeSingle()
 
-        const instanciaNome = instancia?.nome || "Padrao_Sistema"
+        const phoneNumberId = phoneNumber?.phone_number_id || null
 
         // 4. Contar leads para total_destinatarios (da unidade e opt_in = true)
         const { count, error: leadErr } = await supabase
@@ -70,12 +70,13 @@ export async function POST(req: Request) {
         const template = `Olá {nome}! A programação do mês de ${nomeMes} do ${campanha.unidade_cuca} já está no ar. Temos ${campanha.total_atividades} atividades preparadas.\n\nCaso você queira saber mais informações diga qual sua categoria de interesse:\n1 - CURSOS\n2 - DIA A DIA\n3 - ESPORTES\n4 - EVENTOS DESTAQUES\n\nOu siga ${portalUrl}/programacao`
 
         // 6. Criar o registro de Disparo
+        // instancia_uazapi armazena phone_number_id (campo mantido por compatibilidade com campanhas_engine.py)
         const { data: novoDisparo, error: dispErr } = await supabase
             .from("disparos")
             .insert({
                 tipo: "campanha_mensal",
                 campanha_mensal_id: campanha.id,
-                instancia_uazapi: instanciaNome,
+                instancia_uazapi: phoneNumberId,
                 mensagem_template: template,
                 total_destinatarios: totalDest,
                 total_enviados: 0,

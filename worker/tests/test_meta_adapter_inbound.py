@@ -263,9 +263,9 @@ class TestRenomeTouchPoints:
         assert "canal_origem" in edge_content, (
             "Regressão touch point 3: 'canal_origem' não encontrado em motor-agente/index.ts"
         )
-        # Garante que o body não lê mais 'instancia_uazapi' diretamente (linha do destructure)
-        assert "canal_origem: instancia_uazapi" in edge_content, (
-            "Regressão touch point 3: alias 'canal_origem: instancia_uazapi' ausente em motor-agente/index.ts"
+        # S-WM-12 AC 8: alias transitório 'canal_origem: instancia_uazapi' foi REMOVIDO — destructure direto
+        assert "canal_origem: instancia_uazapi" not in edge_content, (
+            "Regressão S-WM-12 AC 8: alias transitório ainda presente — deve ter sido limpo"
         )
 
 

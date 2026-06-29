@@ -144,83 +144,24 @@ export default function DivulgacaoPage() {
             })
             setUnidades(statusPorUnidade)
 
-            // 3. Buscar instância Divulgação ativa (apenas o nome para o modal)
-            const { data: inst } = await supabase
-                .from("instancias_uazapi")
-                .select("nome")
+            // 3. Buscar phone_number_id Meta para Divulgação
+            const { data: metaDisp } = await supabase
+                .from("meta_phone_numbers")
+                .select("display_name")
                 .eq("canal_tipo", "Divulgação")
-                .eq("ativa", true)
+                .eq("ativo", true)
                 .limit(1)
                 .maybeSingle()
 
-            setInstanciaDisp(inst?.nome ?? null)
+            setInstanciaDisp(metaDisp?.display_name ?? null)
 
-            // 3.5 Buscar instâncias Institucionais ativas para popular os links do WhatsApp no Modal
-            const { data: instsInst } = await supabase
-                .from("instancias_uazapi")
-                .select("unidade_cuca, telefone")
-                .eq("canal_tipo", "Institucional")
-                .eq("ativa", true)
-                .not("unidade_cuca", "is", null)
+            // 3.5 instanciasInstitucionais (UI morta — mantido por compatibilidade de tipo, sem query UAZAPI)
+            setInstanciasInstitucionais([])
 
-            setInstanciasInstitucionais(instsInst ?? [])
-
-            // 3.6 Buscar número de contato global da Rede CUCA (número dinâmico — nunca hardcode)
-            // Prioridade: 1) institucionalredecuca com telefone preenchido
-            //             2) qualquer Institucional sem unidade com telefone
-            //             3) divulgacaoredecuca (chip de broadcast — tem telefone garantido)
-            //             4) qualquer instância ativa com telefone
-            const { data: instNomeExato } = await supabase
-                .from("instancias_uazapi")
-                .select("telefone")
-                .ilike("nome", "%institucionalredecuca%")
-                .eq("ativa", true)
-                .not("telefone", "is", null)
-                .limit(1)
-                .maybeSingle()
-
-            if (instNomeExato?.telefone) {
-                setTelefoneInstGlobal(instNomeExato.telefone)
-            } else {
-                // Fallback 2: Institucional global (sem unidade) com telefone
-                const { data: instInstitucional } = await supabase
-                    .from("instancias_uazapi")
-                    .select("telefone")
-                    .eq("canal_tipo", "Institucional")
-                    .eq("ativa", true)
-                    .is("unidade_cuca", null)
-                    .not("telefone", "is", null)
-                    .limit(1)
-                    .maybeSingle()
-
-                if (instInstitucional?.telefone) {
-                    setTelefoneInstGlobal(instInstitucional.telefone)
-                } else {
-                    // Fallback 3: chip Divulgação da Rede (divulgacaoredecuca)
-                    const { data: instDivulgacao } = await supabase
-                        .from("instancias_uazapi")
-                        .select("telefone")
-                        .eq("nome", "divulgacaoredecuca")
-                        .eq("ativa", true)
-                        .not("telefone", "is", null)
-                        .limit(1)
-                        .maybeSingle()
-
-                    if (instDivulgacao?.telefone) {
-                        setTelefoneInstGlobal(instDivulgacao.telefone)
-                    } else {
-                        // Fallback 4: qualquer instância ativa com telefone preenchido
-                        const { data: instAny } = await supabase
-                            .from("instancias_uazapi")
-                            .select("telefone")
-                            .eq("ativa", true)
-                            .not("telefone", "is", null)
-                            .limit(1)
-                            .maybeSingle()
-                        if (instAny?.telefone) setTelefoneInstGlobal(instAny.telefone)
-                    }
-                }
-            }
+            // 3.6 telefoneInstGlobal: meta_phone_numbers não tem campo telefone — mantido vazio
+            // Número de contato global da Rede CUCA deve ser configurado via NEXT_PUBLIC_CUCA_WHATSAPP
+            // ou inserindo o número diretamente em meta_phone_numbers (migração futura)
+            setTelefoneInstGlobal(process.env.NEXT_PUBLIC_CUCA_WHATSAPP ?? "")
 
             // 4. Histórico de disparos
             const { data: hist } = await supabase
