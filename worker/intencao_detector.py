@@ -104,6 +104,92 @@ class IntencaoDetector:
             return {"intencao": "ambiguo", "nome": lead_nome}
 
 
+# Mapeamento keyword→canonical para filtro de setor em vagas.
+# A canonical é uma substring dos valores de SETORES_VAGA do portal,
+# permitindo match parcial case-insensitive contra a coluna setor (text[]).
+_SETOR_KEYWORDS: list[tuple[str, str]] = [
+    # multi-word primeiro (prioridade)
+    ("serviços gerais", "Serviços Gerais"),
+    ("servicos gerais", "Serviços Gerais"),
+    ("construção civil", "Construção Civil"),
+    ("construcao civil", "Construção Civil"),
+    ("cuidados pessoais", "Cuidados Pessoais"),
+    ("auxiliar administrativo", "Administrativo"),
+    ("suporte técnico", "Tecnologia"),
+    ("suporte tecnico", "Tecnologia"),
+    ("redes sociais", "Criativo"),
+    ("banco de talentos", ""),  # guard: evita falso-positivo da keyword do fluxo
+    # single-word
+    ("limpeza", "Serviços Gerais"),
+    ("portaria", "Serviços Gerais"),
+    ("zeladoria", "Serviços Gerais"),
+    ("construção", "Construção Civil"),
+    ("construcao", "Construção Civil"),
+    ("pedreiro", "Construção Civil"),
+    ("eletricista", "Construção Civil"),
+    ("encanador", "Construção Civil"),
+    ("logística", "Logística"),
+    ("logistica", "Logística"),
+    ("entrega", "Logística"),
+    ("estoque", "Logística"),
+    ("motorista", "Logística"),
+    ("motoboy", "Logística"),
+    ("vendas", "Comércio"),
+    ("venda", "Comércio"),
+    ("comercio", "Comércio"),
+    ("comércio", "Comércio"),
+    ("comercial", "Comércio"),
+    ("alimentação", "Alimentação"),
+    ("alimentacao", "Alimentação"),
+    ("cozinha", "Alimentação"),
+    ("garçom", "Alimentação"),
+    ("garcom", "Alimentação"),
+    ("restaurante", "Alimentação"),
+    ("lanchonete", "Alimentação"),
+    ("tecnologia", "Tecnologia"),
+    ("programação", "Tecnologia"),
+    ("programacao", "Tecnologia"),
+    ("design", "Criativo"),
+    ("criativo", "Criativo"),
+    ("beleza", "Beleza"),
+    ("estética", "Beleza"),
+    ("estetica", "Beleza"),
+    ("barbeiro", "Beleza"),
+    ("manicure", "Beleza"),
+    ("cabeleireiro", "Beleza"),
+    ("cuidador", "Cuidados"),
+    ("babá", "Cuidados"),
+    ("baba", "Cuidados"),
+    ("idoso", "Cuidados"),
+    ("administrativo", "Administrativo"),
+    ("administrativa", "Administrativo"),
+    ("escritório", "Administrativo"),
+    ("escritorio", "Administrativo"),
+    ("recepção", "Administrativo"),
+    ("recepcao", "Administrativo"),
+    ("produção", "Produção"),
+    ("producao", "Produção"),
+]
+
+
+def extrair_setor_da_mensagem(texto: str) -> tuple[str | None, str | None]:
+    """
+    Extrai menção a setor profissional na mensagem.
+    Retorna (keyword_do_usuario, canonical_para_filtro) ou (None, None).
+    A canonical é comparada por substring contra os valores do array setor nas vagas.
+    Ex: "quero vaga de vendas" → ("vendas", "Comércio")
+    """
+    if not texto:
+        return None, None
+    t = texto.lower()
+    for keyword, canonical in _SETOR_KEYWORDS:
+        if keyword in t:
+            if not canonical:  # guard para "banco de talentos"
+                return None, None
+            return keyword, canonical
+    return None, None
+
+
 def extrair_nome_heuristico(texto: str) -> str | None:
     """
     Tenta extrair o primeiro nome do texto quando leads.nome não está disponível.

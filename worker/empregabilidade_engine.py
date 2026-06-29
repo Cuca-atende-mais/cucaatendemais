@@ -2123,13 +2123,14 @@ async def processar_mensagem_empregabilidade(
             return
 
     # S-EMP-01-01: Detector de intenção — primeira interação ou perfil indefinido
-    from intencao_detector import IntencaoDetector, extrair_nome_heuristico  # noqa: PLC0415
+    from intencao_detector import IntencaoDetector, extrair_nome_heuristico, extrair_setor_da_mensagem  # noqa: PLC0415
     lead_res = supabase.table("leads").select("nome").eq("id", lead_id).maybe_single().execute()
     lead_nome = (lead_res.data or {}).get("nome") or extrair_nome_heuristico(texto)
     intencao_res = await IntencaoDetector().classificar(texto, midia_tipo, lead_nome)
     _log_intencao(conversa_id, intencao_res["intencao"])
     await _rotear_por_intencao(
-        intencao_res, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca
+        intencao_res, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
+        extrair_setor_da_mensagem,
     )
 
 
@@ -2157,6 +2158,7 @@ async def _rotear_por_intencao(
     lead_id: str,
     conversa_id: str,
     unidade_cuca: str,
+    extrair_setor_fn=None,
 ) -> None:
     """Roteia a primeira mensagem com base na intenção detectada (S-EMP-01-01)."""
     intencao = intencao_res.get("intencao", "ambiguo")
@@ -2170,27 +2172,44 @@ async def _rotear_por_intencao(
 
     if intencao == "empresa":
         # AC#5 — pede CNPJ diretamente, humanizado
-        await e(f"Bom dia{saudacao_nome} Me passa o CNPJ da empresa (somente números) para verificar seu cadastro:")
+        await e(f"Olá{saudacao_nome} Me passa o CNPJ da empresa (somente números) para verificar seu cadastro:")
         _set_fluxo(conversa_id, {"perfil": "empresa", "etapa": "aguardando_cnpj"})
 
     elif intencao == "candidato_vaga":
-        # AC#1 — lista até 5 vagas abertas mais recentes sem mostrar menu numerado
-        vagas_res = supabase.table("vagas").select(
-            "id, titulo, descricao"
-        ).eq("status", "aberta").order("created_at", desc=True).limit(5).execute()
-        vagas = vagas_res.data or []
+        # AC#1 — lista até 5 vagas abertas (com filtro de setor quando mencionado)
+        setor_kw, setor_canonical = extrair_setor_fn(texto) if extrair_setor_fn else (None, None)
+
+        if setor_canonical:
+            # busca mais vagas para filtrar por setor em Python (substring match)
+            vagas_pool = (supabase.table("vagas").select("id, titulo, descricao, setor")
+                          .eq("status", "aberta").order("created_at", desc=True).limit(50).execute().data or [])
+            vagas = [
+                v for v in vagas_pool
+                if any(setor_canonical.lower() in (s or "").lower() for s in (v.get("setor") or []))
+            ][:5]
+        else:
+            vagas = (supabase.table("vagas").select("id, titulo, descricao")
+                     .eq("status", "aberta").order("created_at", desc=True).limit(5).execute().data or [])
 
         if not vagas:
-            await e(
-                f"Ok{saudacao_nome} No momento não há vagas abertas. 😕\n\n"
-                "Posso cadastrar seu currículo no banco de talentos para quando surgir uma oportunidade.\n\n"
-                "Deseja? Responda *sim* ou *não*."
-            )
-            _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "oferta_banco_talentos"})
+            if setor_canonical:
+                await e(
+                    f"Não temos vagas de *{setor_kw}* no momento. 😕\n\n"
+                    "Deseja ver outras vagas disponíveis?"
+                )
+                _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+            else:
+                await e(
+                    f"Olá{saudacao_nome} No momento não há vagas abertas. 😕\n\n"
+                    "Posso cadastrar seu currículo no banco de talentos para quando surgir uma oportunidade.\n\n"
+                    "Deseja? Responda *sim* ou *não*."
+                )
+                _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "oferta_banco_talentos"})
             return
 
         mapa_vagas: dict[str, str] = {}
-        linhas = [f"Ok{saudacao_nome} Segue as vagas abertas hoje — digite o número da vaga:\n"]
+        prefixo = f"de *{setor_kw}* " if setor_kw else ""
+        linhas = [f"Olá{saudacao_nome} Segue as vagas {prefixo}abertas hoje — digite o número:\n"]
         for i, v in enumerate(vagas, start=1):
             descricao_curta = (v.get("descricao") or "")[:60].rstrip()
             sufixo = "..." if len(v.get("descricao") or "") > 60 else ""
@@ -2207,18 +2226,18 @@ async def _rotear_por_intencao(
         })
 
     elif intencao == "banco_talentos":
-        # AC#2 + AC#6 — vai direto ao pedido de nome (sem confirmação intermediária)
-        await e(f"Claro{saudacao_nome} Me diz seu *nome completo*:")
-        _set_fluxo(conversa_id, {
-            "perfil": "publico",
-            "etapa": "coletando_nome_candidato",
-            "banco_talentos": True,
-        })
+        # Correção: perguntar contexto (vaga específica ou banco) antes de ir direto ao nome
+        await e(
+            f"Olá{saudacao_nome} Você quer se candidatar a uma *vaga específica* "
+            "ou deixar seu currículo no *Banco de Talentos*?\n\n"
+            "Responda *vaga* ou *banco de talentos*."
+        )
+        _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
 
     elif intencao == "upload":
         # AC#3 — pergunta contexto antes de processar o arquivo
         await e(
-            f"Ok{saudacao_nome} antes de subir seu currículo: você quer se candidatar a uma "
+            f"Olá{saudacao_nome} antes de subir seu currículo: você quer se candidatar a uma "
             "*vaga específica* ou deixar no *Banco de Talentos*?\n\n"
             "Responda *vaga* ou *banco de talentos*."
         )
@@ -2226,8 +2245,7 @@ async def _rotear_por_intencao(
 
     else:
         # AC#4 — ambíguo: pergunta aberta humanizada, sem menu
-        saudacao = "Bom dia" if nome else "Olá"
-        await e(f"{saudacao}{saudacao_nome} Como posso te ajudar? 😊")
+        await e(f"Olá{saudacao_nome} Como posso te ajudar? 😊")
         # Não define fluxo — próxima mensagem re-entra na detecção
 
 
