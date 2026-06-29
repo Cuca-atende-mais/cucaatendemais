@@ -134,6 +134,45 @@ def test_gpt_fallback_excecao_vira_ambiguo(monkeypatch):
     assert res["intencao"] == "ambiguo"
 
 
+# ─── extrair_setor_da_mensagem ────────────────────────────────────────────────
+
+def test_setor_vendas():
+    from intencao_detector import extrair_setor_da_mensagem
+    kw, canonical = extrair_setor_da_mensagem("quero vaga de vendas")
+    assert kw == "vendas"
+    assert canonical == "Comércio"
+
+
+def test_setor_administrativo():
+    from intencao_detector import extrair_setor_da_mensagem
+    kw, canonical = extrair_setor_da_mensagem("procuro emprego na área administrativa")
+    assert kw in ("administrativo", "administrativa")
+    assert canonical == "Administrativo"
+
+
+def test_setor_saude_nao_encontrado():
+    """Saúde não é um setor no SETORES_VAGA — retorna (None, None) graciosamente."""
+    from intencao_detector import extrair_setor_da_mensagem
+    kw, canonical = extrair_setor_da_mensagem("quero vaga na área de saúde")
+    assert kw is None
+    assert canonical is None
+
+
+def test_setor_nenhum():
+    from intencao_detector import extrair_setor_da_mensagem
+    kw, canonical = extrair_setor_da_mensagem("quero uma vaga")
+    assert kw is None
+    assert canonical is None
+
+
+def test_setor_banco_talentos_nao_confunde():
+    """'banco de talentos' tem guard para não ser confundido com setor."""
+    from intencao_detector import extrair_setor_da_mensagem
+    kw, canonical = extrair_setor_da_mensagem("quero banco de talentos")
+    assert kw is None
+    assert canonical is None
+
+
 # ─── extrair_nome_heuristico ──────────────────────────────────────────────────
 
 def test_extrair_nome_primeiro_nome_maiusculo():
