@@ -171,17 +171,6 @@ export default function DivulgacaoPage() {
                 .limit(10)
             setHistorico(hist ?? [])
 
-            // 5. Conversas do canal Divulgação (filtradas pela instância)
-            if (inst?.nome) {
-                const { data: convs } = await supabase
-                    .from("conversas")
-                    .select("id, status, updated_at, leads(nome, telefone)")
-                    .eq("instancia_uazapi", inst.nome)
-                    .order("updated_at", { ascending: false })
-                    .limit(15)
-                setConversas(convs ?? [])
-            }
-
         } catch (e: any) {
             toast.error("Erro ao carregar: " + e.message)
         } finally {
