@@ -191,16 +191,28 @@ async def processar_item_disparo(
     item_id = item.get("id")
     unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
 
-    # Selecionar template e canal Meta por origem
+    # Selecionar canal Meta por origem
     if origem == "eventos_pontuais":
         canal_tipo = "Divulgação"
-        template_name = "cuca_evento_pontual"
+        nome_pattern = "%evento_pontual%"
     elif origem == "ouvidoria_eventos":
         canal_tipo = "Institucional"
-        template_name = "cuca_pesquisa_ouvidoria"
+        nome_pattern = "%pesquisa_ouvidoria%"
     else:
         canal_tipo = "Institucional"
-        template_name = "cuca_evento_pontual"
+        nome_pattern = "%evento_pontual%"
+
+    # Lookup dinâmico de template aprovado
+    _tpl_res = supabase.table("meta_templates").select("nome") \
+        .ilike("nome", nome_pattern).eq("ativo", True).eq("status", "aprovado") \
+        .limit(1).maybe_single().execute()
+    if not _tpl_res.data:
+        logger.warning(
+            f"[campanhas] Nenhum template aprovado com padrão {nome_pattern!r} — item {item.get('id')} pulado"
+        )
+        await asyncio.to_thread(_update_db_sync, origem, item.get("id"), {"status": "pausada"})
+        return
+    template_name = _tpl_res.data["nome"]
 
     await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
 
@@ -370,14 +382,6 @@ async def campanhas_loop():
 
     while True:
         try:
-            if os.getenv("META_TEMPLATES_APROVADOS") != "true":
-                logger.warning(
-                    "[Campanhas] META_TEMPLATES_APROVADOS não ativo — "
-                    "disparos suspensos. Configure a env var para habilitar."
-                )
-                await asyncio.sleep(30)
-                continue
-
             delay_min = await get_config("anti_ban_delay_min", 2000)
             delay_max = await get_config("anti_ban_delay_max", 5000)
             daily_limit = await get_config("anti_ban_daily_limit", 500)
@@ -438,6 +442,18 @@ async def processar_disparos_divulgacao(
     logger.info(f"[Divulgação] Iniciando disparo global {disparo_id} — mês: {mes_nome}")
     await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "em_andamento")
 
+    # Lookup dinâmico do template de divulgação mensal
+    _tpl_div = await asyncio.to_thread(
+        lambda: supabase.table("meta_templates").select("nome")
+        .ilike("nome", "%programacao_mensal%").eq("ativo", True).eq("status", "aprovado")
+        .limit(1).maybe_single().execute()
+    )
+    if not _tpl_div.data:
+        logger.warning(f"[Divulgação] Nenhum template aprovado para programacao_mensal — disparo {disparo_id} cancelado")
+        await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "pausado")
+        return
+    template_divulgacao = _tpl_div.data["nome"]
+
     canal_info = await asyncio.to_thread(_get_phone_by_canal_tipo_sync, "Divulgação")
     if not canal_info:
         logger.error(f"[Divulgação] Nenhum phone_number_id Meta ativo para Divulgação. Pausando {disparo_id}.")
@@ -480,7 +496,7 @@ async def processar_disparos_divulgacao(
         }]
 
         ok = await _enviar_template_meta(
-            phone_number_id, telefone, meta_token, "cuca_programacao_mensal", components
+            phone_number_id, telefone, meta_token, template_divulgacao, components
         )
         if ok:
             enviados += 1

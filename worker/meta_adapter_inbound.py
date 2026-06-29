@@ -336,18 +336,27 @@ async def _notificar_transbordo(
                 modulo, unidade_cuca, conversa_id,
             )
             return
-        templates_aprovados = os.getenv("META_TEMPLATES_APROVADOS", "false").lower() == "true"
+        tpl_res = sb.table("meta_templates").select("nome") \
+            .contains("automacoes", [modulo]) \
+            .eq("ativo", True).eq("status", "aprovado") \
+            .limit(1).maybe_single().execute()
+        if not tpl_res.data:
+            tpl_res = sb.table("meta_templates").select("nome") \
+                .ilike("nome", "%transbordo%") \
+                .eq("ativo", True).eq("status", "aprovado") \
+                .limit(1).maybe_single().execute()
+        if not tpl_res.data:
+            logger.warning(
+                "[transbordo] Nenhum template aprovado para modulo=%s — notificação não enviada",
+                modulo,
+            )
+            return
+        template_name = tpl_res.data["nome"]
         token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+        from campanhas_engine import _enviar_template_meta  # noqa: PLC0415
         for contato in contacts:
             nome = contato.get("nome_responsavel") or "Equipe"
             telefone_destino = contato["telefone_destino"]
-            if not templates_aprovados:
-                logger.info(
-                    "[transbordo] notificaria %s mas META_TEMPLATES_APROVADOS=false",
-                    telefone_destino,
-                )
-                continue
-            from campanhas_engine import _enviar_template_meta  # noqa: PLC0415
             components = [{"type": "body", "parameters": [
                 {"type": "text", "text": nome},
                 {"type": "text", "text": lead_identificacao},
@@ -355,7 +364,7 @@ async def _notificar_transbordo(
             ]}]
             ok = await _enviar_template_meta(
                 phone_number_id_origem, telefone_destino, token,
-                "cuca_transbordo_colaborador", components,
+                template_name, components,
             )
             if ok:
                 logger.info("[transbordo] Notificação enviada para %s (modulo=%s)", telefone_destino, modulo)

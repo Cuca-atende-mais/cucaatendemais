@@ -14,6 +14,7 @@ import {
     RefreshCw,
     ScanSearch,
     Phone,
+    FileText,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -71,6 +72,15 @@ const consoleModules = [
         icon: Phone,
         href: "/developer/meta-numeros",
         badge: "Meta API",
+        badgeVariant: "default" as const,
+        status: "active",
+    },
+    {
+        title: "Templates Meta",
+        description: "Catálogo de templates WhatsApp — aprovar, pausar e cadastrar; worker e edge functions consultam aqui em tempo real",
+        icon: FileText,
+        href: "/developer/meta-templates",
+        badge: "S-WM-13",
         badgeVariant: "default" as const,
         status: "active",
     },
