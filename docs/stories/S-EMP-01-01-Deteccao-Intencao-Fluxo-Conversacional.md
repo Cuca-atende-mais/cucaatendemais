@@ -263,7 +263,27 @@ await supabase.table("conversas").update({
 _(a ser preenchido pelo @dev)_
 
 ## QA Results
-_(a ser preenchido pelo @qa)_
+
+**Veredito: ✅ PASS**
+Revisor: @qa (Quinn) — 2026-06-29
+Gate file: `docs/qa/gates/s-emp-01-01-deteccao-intencao.yml`
+
+| Check | Status | Nota |
+|---|---|---|
+| Code review | ✅ PASS | Keyword priority correta, etapas setadas validadas contra `_ETAPAS_*` |
+| Unit tests | ✅ PASS | 19 testes novos, 69 total, 0 falhos |
+| Acceptance criteria | ✅ PASS | Todos 10 ACs atendidos |
+| Regressions | ✅ PASS | 50 testes pré-existentes passando; guards intactos |
+| Performance | ✅ PASS | GPT só para ambíguos; 2-3 queries extras aceitáveis |
+| Security | ✅ PASS | Queries parametrizadas, GPT prompt seguro |
+| Documentation | ✅ PASS | Story e módulo documentados |
+
+**Issues (todos LOW — não bloqueiam):**
+1. `empresas(nome)` ausente na listagem de vagas — refinamento em stories futuras
+2. `asyncio.get_event_loop()` deprecated nos testes — não afeta produção
+3. `_log_intencao` usa 2 queries separadas — otimização futura opcional
+
+**Validação manual no staging** requerida pelo Junior antes de promover para produção.
 
 ## Change Log
 | Data | Agente | Ação |
@@ -271,3 +291,4 @@ _(a ser preenchido pelo @qa)_
 | 2026-06-29 | @sm (River) | Story criada a partir do spec do usuário — primeira story do épico S-EMP |
 | 2026-06-29 | @po (Pax) | Validação GO 10/10 — Status Draft → Ready. Nota para @dev: atenção ao ciclo de reclassificação para mensagens ambíguas — garantir que `estado_atual` retorna a None corretamente para permitir nova classificação na segunda mensagem. |
 | 2026-06-29 | @dev (Dex) | Implementação completa — IntencaoDetector + integração engine + 19 testes. Status InProgress → Ready for Review. |
+| 2026-06-29 | @qa (Quinn) | QA Gate PASS — 7/7 checks OK, 3 issues LOW. Pronto para @devops push. |
