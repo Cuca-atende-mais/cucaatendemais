@@ -505,6 +505,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
                 conversa_id=conversa_id,
                 unidade_cuca=unidade_cuca or "",
                 push_name=push_name,
+                midia_tipo=midia_tipo,
             )
         except Exception as exc:
             logger.error(f"[meta-inbound] Erro no dispatch Empregabilidade: {exc}")

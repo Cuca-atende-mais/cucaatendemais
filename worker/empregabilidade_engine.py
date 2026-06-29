@@ -1881,6 +1881,7 @@ async def processar_mensagem_empregabilidade(
     conversa_id: str,
     unidade_cuca: str,
     push_name: str = "Cidadão",
+    midia_tipo: str = "",
 ):
     """
     Entry point chamado pelo main.py quando agente_tipo = 'Empregabilidade'.
@@ -2121,31 +2122,113 @@ async def processar_mensagem_empregabilidade(
             logger.info(f"[SQS-49] Confirmação de presença '{confirmacao}' registrada para candidatura {cand['id']}")
             return
 
-    # Primeira interação ou perfil indefinido — identificar pelo conteúdo da mensagem
-    perfil = _identificar_perfil(texto, fluxo)
+    # S-EMP-01-01: Detector de intenção — primeira interação ou perfil indefinido
+    from intencao_detector import IntencaoDetector, extrair_nome_heuristico  # noqa: PLC0415
+    lead_res = supabase.table("leads").select("nome").eq("id", lead_id).maybe_single().execute()
+    lead_nome = (lead_res.data or {}).get("nome") or extrair_nome_heuristico(texto)
+    intencao_res = await IntencaoDetector().classificar(texto, midia_tipo, lead_nome)
+    _log_intencao(conversa_id, intencao_res["intencao"])
+    await _rotear_por_intencao(
+        intencao_res, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca
+    )
 
-    if perfil == "empresa":
-        _set_fluxo(conversa_id, {"perfil": "empresa", "etapa": "solicitar_cnpj"})
-        await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
-    elif perfil == "candidato":
-        _set_fluxo(conversa_id, {"perfil": "candidato", "etapa": "solicitar_identificacao"})
-        await _processar_candidato(texto, phone, instance_name, token, lead_id, conversa_id)
-    elif perfil == "publico":
-        _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
-        await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
-    else:
-        await _enviar(
-            instance_name, token, phone,
-            "👋 Olá! Sou o assistente de empregabilidade do CUCA.\n\n"
-            "Como posso te ajudar?\n\n"
-            "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
-            "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
-            "3️⃣ *Vagas* — Quero ver vagas abertas\n"
-            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
-            "Responda com o número ou descreva o que precisa.",
-            conversa_id=conversa_id, lead_id=lead_id,
+
+# ---------------------------------------------------------------------------
+# S-EMP-01-01 — Helpers de intenção
+# ---------------------------------------------------------------------------
+
+def _log_intencao(conversa_id: str, intencao: str) -> None:
+    """Grava intencao_detectada em conversas.metadata para rastreabilidade (AC#7)."""
+    try:
+        res = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
+        metadata = (res.data or {}).get("metadata") or {}
+        metadata["intencao_detectada"] = intencao
+        supabase.table("conversas").update({"metadata": metadata}).eq("id", conversa_id).execute()
+    except Exception as exc:
+        logger.warning("[intencao] Falha ao gravar intencao_detectada: %s", exc)
+
+
+async def _rotear_por_intencao(
+    intencao_res: dict,
+    texto: str,
+    phone: str,
+    instance_name: str,
+    token: str,
+    lead_id: str,
+    conversa_id: str,
+    unidade_cuca: str,
+) -> None:
+    """Roteia a primeira mensagem com base na intenção detectada (S-EMP-01-01)."""
+    intencao = intencao_res.get("intencao", "ambiguo")
+    nome = intencao_res.get("nome") or ""
+    saudacao_nome = f" {nome}!" if nome else "!"
+
+    async def e(msg: str) -> None:
+        await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
+
+    logger.info("[intencao] %s → %s", phone[:6] + "****", intencao)
+
+    if intencao == "empresa":
+        # AC#5 — pede CNPJ diretamente, humanizado
+        await e(f"Bom dia{saudacao_nome} Me passa o CNPJ da empresa (somente números) para verificar seu cadastro:")
+        _set_fluxo(conversa_id, {"perfil": "empresa", "etapa": "aguardando_cnpj"})
+
+    elif intencao == "candidato_vaga":
+        # AC#1 — lista até 5 vagas abertas mais recentes sem mostrar menu numerado
+        vagas_res = supabase.table("vagas").select(
+            "id, titulo, descricao"
+        ).eq("status", "aberta").order("created_at", desc=True).limit(5).execute()
+        vagas = vagas_res.data or []
+
+        if not vagas:
+            await e(
+                f"Ok{saudacao_nome} No momento não há vagas abertas. 😕\n\n"
+                "Posso cadastrar seu currículo no banco de talentos para quando surgir uma oportunidade.\n\n"
+                "Deseja? Responda *sim* ou *não*."
+            )
+            _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "oferta_banco_talentos"})
+            return
+
+        mapa_vagas: dict[str, str] = {}
+        linhas = [f"Ok{saudacao_nome} Segue as vagas abertas hoje — digite o número da vaga:\n"]
+        for i, v in enumerate(vagas, start=1):
+            descricao_curta = (v.get("descricao") or "")[:60].rstrip()
+            sufixo = "..." if len(v.get("descricao") or "") > 60 else ""
+            linhas.append(f"*{i}* - {v['titulo']}" + (f": {descricao_curta}{sufixo}" if descricao_curta else ""))
+            mapa_vagas[str(i)] = v["id"]
+
+        linhas.append("\nDigite o *número da vaga* para se candidatar.")
+        await e("\n".join(linhas))
+        _set_fluxo(conversa_id, {
+            "perfil": "publico",
+            "etapa": "listou_vagas",
+            "mapa_vagas": mapa_vagas,
+            "ultima_vaga_id": vagas[-1]["id"] if vagas else None,
+        })
+
+    elif intencao == "banco_talentos":
+        # AC#2 + AC#6 — vai direto ao pedido de nome (sem confirmação intermediária)
+        await e(f"Claro{saudacao_nome} Me diz seu *nome completo*:")
+        _set_fluxo(conversa_id, {
+            "perfil": "publico",
+            "etapa": "coletando_nome_candidato",
+            "banco_talentos": True,
+        })
+
+    elif intencao == "upload":
+        # AC#3 — pergunta contexto antes de processar o arquivo
+        await e(
+            f"Ok{saudacao_nome} antes de subir seu currículo: você quer se candidatar a uma "
+            "*vaga específica* ou deixar no *Banco de Talentos*?\n\n"
+            "Responda *vaga* ou *banco de talentos*."
         )
-        _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
+        _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio", "arquivo_pendente": True})
+
+    else:
+        # AC#4 — ambíguo: pergunta aberta humanizada, sem menu
+        saudacao = "Bom dia" if nome else "Olá"
+        await e(f"{saudacao}{saudacao_nome} Como posso te ajudar? 😊")
+        # Não define fluxo — próxima mensagem re-entra na detecção
 
 
 # ---------------------------------------------------------------------------
