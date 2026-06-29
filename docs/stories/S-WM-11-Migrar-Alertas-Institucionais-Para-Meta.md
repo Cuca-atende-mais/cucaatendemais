@@ -159,7 +159,39 @@ Testes via INSERT em cuca-dev não funcionam (PG functions chamam URL de prod). 
 - 2026-06-29: Advisor sinalizou que triggers PG em cuca-dev apontam para URL de produção — testes redirecionados para chamada direta HTTP
 
 ## QA Results
-_(a ser preenchido pelo @qa)_
+
+**Veredito: PASS com CONCERNS** — 2026-06-29 por @qa (Quinn)
+
+### 7 Checks
+
+| Check | Status | Nota |
+|---|---|---|
+| 1. Code review | PASS | Padrão S-WM-09 replicado corretamente; `type:template`; double try/catch |
+| 2. Unit tests | PASS | pytest 50/50; HTTP direto para 4 paths de EF |
+| 3. ACs | PASS/WAIVED | AC1-AC2-AC4-AC5-AC6 PASS; AC3 WAIVED (templates pendentes) |
+| 4. Regressão | PASS | Único arquivo alterado; worker intacto |
+| 5. Performance | PASS | 2046ms com 2 queries + 0 sends; Promise.all paralelo |
+| 6. Segurança | PASS | RLS em 6 tabelas ✅; policies efetivas ✅; sem secret hardcoded |
+| 7. Documentação | PASS | Completion Notes completo; 4 templates com variáveis; bug escalado |
+
+### Banco (MCP Supabase — cuca-dev)
+- `meta_phone_numbers WHERE canal_tipo='Institucional' AND ativo=true` → `1233832826470497` ✅
+- RLS habilitada: meta_phone_numbers, colaboradores, leads, conversas, eventos_pontuais, solicitacoes_acesso ✅
+- `meta_phone_numbers`: policy `service_role full access` ativa ✅
+
+### Concerns (não bloqueantes)
+
+**MEDIUM — Resposta `success:true` mesmo com sends falhando:** Quando `META_TEMPLATES_APROVADOS=true` e token inválido, falhas individuais são capturadas mas resposta retorna `success:true`. Corrigir antes de habilitar flag em produção (adicionar contador `sent/failed`).
+
+**MEDIUM — Normalização de telefone ausente:** `colaboradores.telefone` passado diretamente à Meta API. Worker Python usa `_normalizar_numero_meta()`. Números com prefixo `+` causam erro 131026. Verificar/normalizar antes de habilitar flag em produção.
+
+**LOW — `verify_jwt: false`:** Pré-existente, necessário para PG triggers. Sem ação requerida.
+
+### Pré-requisitos para produção (antes de flipar META_TEMPLATES_APROVADOS=true)
+1. Aprovar 4 templates no WABA Manager: `cuca_alerta_evento_pontual`, `cuca_alerta_handover`, `cuca_alerta_acesso_n1`, `cuca_alerta_acesso_n2`
+2. Verificar formato de `colaboradores.telefone` (E.164 sem `+`)
+3. Confirmar `META_SYSTEM_USER_TOKEN` nos secrets da Edge Function cuca-dev
+4. Junior decidir status de `trigger_alerta_handover` em produção
 
 ## Change Log
 | Data | Agente | Ação |
