@@ -163,11 +163,18 @@ export async function PATCH(
 
                     if (phoneNumber) {
                         const metaToken = process.env.META_SYSTEM_USER_TOKEN
-                        const templatesAprovados = process.env.META_TEMPLATES_APROVADOS === "true"
+                        const { data: tpl } = await supabaseAdmin
+                            .from("meta_templates")
+                            .select("nome")
+                            .ilike("nome", "%alteracao_vaga%")
+                            .eq("ativo", true)
+                            .eq("status", "aprovado")
+                            .limit(1)
+                            .maybeSingle()
                         const telLimpo = lead.telefone.replace(/\D/g, "")
                         const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
-                        if (!templatesAprovados) {
-                            console.info(`[vagas/${id}] notificaria ${number} mas META_TEMPLATES_APROVADOS=false`)
+                        if (!tpl) {
+                            console.info(`[vagas/${id}] notificaria ${number} mas nenhum template aprovado em meta_templates`)
                         } else if (metaToken) {
                             await fetch(`https://graph.facebook.com/v23.0/${phoneNumber.phone_number_id}/messages`, {
                                 method: "POST",
@@ -177,7 +184,7 @@ export async function PATCH(
                                     to: number,
                                     type: "template",
                                     template: {
-                                        name: "cuca_alteracao_vaga",
+                                        name: tpl.nome,
                                         language: { code: "pt_BR" },
                                         components: [{ type: "body", parameters: [
                                             { type: "text", text: vagaLead.titulo || id },

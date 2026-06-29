@@ -606,25 +606,36 @@ class TestNotificarTransbordo:
     """_notificar_transbordo — ACs 2, 4, 5 (S-WM-09)."""
 
     @pytest.mark.asyncio
-    async def test_flag_false_log_sem_envio_template(self):
-        """AC 2: META_TEMPLATES_APROVADOS=false → log 'notificaria' sem chamar Graph API."""
+    async def test_sem_template_aprovado_nao_envia(self):
+        """S-WM-13 AC 3: nenhum template aprovado em meta_templates → log + sem chamada à Graph API."""
         from unittest.mock import MagicMock, patch, AsyncMock
         from meta_adapter_inbound import _notificar_transbordo
 
         contato = {"telefone_destino": "5585999990001", "nome_responsavel": "Fulano"}
         mock_sb = MagicMock()
-        mock_sb.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.eq.return_value.execute.return_value.data = [contato]
+
+        contacts_mock = MagicMock()
+        contacts_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value \
+            .execute.return_value.data = [contato]
+
+        templates_mock = MagicMock()
+        templates_mock.select.return_value.contains.return_value.eq.return_value.eq.return_value \
+            .limit.return_value.maybe_single.return_value.execute.return_value.data = None
+        templates_mock.select.return_value.ilike.return_value.eq.return_value.eq.return_value \
+            .limit.return_value.maybe_single.return_value.execute.return_value.data = None
+
+        def _table_side_effect(name):
+            return contacts_mock if name == "human_handover_contacts" else templates_mock
+        mock_sb.table.side_effect = _table_side_effect
 
         mock_enviar = AsyncMock()
+        import sys
+        import types
+        fake_camp = types.ModuleType("campanhas_engine")
+        fake_camp._enviar_template_meta = mock_enviar
         with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
-             patch.dict(os.environ, {"META_TEMPLATES_APROVADOS": "false"}):
-            import sys
-            import types
-            fake_camp = types.ModuleType("campanhas_engine")
-            fake_camp._enviar_template_meta = mock_enviar
-            with patch.dict(sys.modules, {"campanhas_engine": fake_camp}):
-                await _notificar_transbordo("conv-1", "empregabilidade", "Barra", "PHONE_ID", "5585999991111")
+             patch.dict(sys.modules, {"campanhas_engine": fake_camp}):
+            await _notificar_transbordo("conv-1", "empregabilidade", "Barra", "PHONE_ID", "5585999991111")
 
         mock_enviar.assert_not_called()
 
@@ -639,12 +650,22 @@ class TestNotificarTransbordo:
         mock_sb.table.return_value.select.return_value \
             .eq.return_value.eq.return_value.eq.return_value.execute.return_value.data = [contato]
 
-        with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
-             patch.dict(os.environ, {"META_TEMPLATES_APROVADOS": "false"}):
+        templates_mock = MagicMock()
+        templates_mock.select.return_value.contains.return_value.eq.return_value.eq.return_value \
+            .limit.return_value.maybe_single.return_value.execute.return_value.data = None
+        templates_mock.select.return_value.ilike.return_value.eq.return_value.eq.return_value \
+            .limit.return_value.maybe_single.return_value.execute.return_value.data = None
+
+        def _table_side_effect_2(name):
+            return mock_sb._contacts_mock if name == "human_handover_contacts" else templates_mock
+        mock_sb._contacts_mock = mock_sb.table.return_value
+        mock_sb.table.side_effect = _table_side_effect_2
+
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
             await _notificar_transbordo("conv-2", "empregabilidade", "Barra", "PHONE_ID", "55phone")
 
         # Fallback global usa .is_() — deve ter sido chamado zero vezes
-        first_eq_rv = mock_sb.table.return_value.select.return_value.eq.return_value
+        first_eq_rv = mock_sb._contacts_mock.select.return_value.eq.return_value
         first_eq_rv.is_.assert_not_called()
 
     @pytest.mark.asyncio
@@ -658,6 +679,5 @@ class TestNotificarTransbordo:
         mock_sb.table.return_value.select.return_value \
             .eq.return_value.is_.return_value.eq.return_value.execute.return_value.data = []
 
-        with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
-             patch.dict(os.environ, {"META_TEMPLATES_APROVADOS": "false"}):
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
             await _notificar_transbordo("conv-3", "ouvidoria", None, "PHONE_ID", "55phone")

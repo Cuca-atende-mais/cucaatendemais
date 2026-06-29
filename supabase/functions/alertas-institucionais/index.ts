@@ -14,7 +14,6 @@ Deno.serve(async (req) => {
         );
 
         const META_SYSTEM_USER_TOKEN = Deno.env.get("META_SYSTEM_USER_TOKEN") || "";
-        const META_TEMPLATES_APROVADOS = Deno.env.get("META_TEMPLATES_APROVADOS") === "true";
 
         // 1. Localizar phone_number_id Meta Institucional
         const { data: phoneNumber, error: pnErr } = await supabase
@@ -48,7 +47,6 @@ Deno.serve(async (req) => {
                 .eq("ativo", true);
 
             recipients = admins || [];
-            templateName = "cuca_alerta_evento_pontual";
             // Template vars: {{1}} titulo, {{2}} unidade_cuca, {{3}} data_evento
             templateComponents = [{
                 type: "body",
@@ -58,6 +56,10 @@ Deno.serve(async (req) => {
                     { type: "text", text: String(record.data_evento || "") },
                 ]
             }];
+            const { data: tpl1 } = await supabase.from("meta_templates").select("nome")
+                .ilike("nome", "%alerta_evento_pontual%").eq("ativo", true).eq("status", "aprovado")
+                .limit(1).maybeSingle();
+            templateName = tpl1?.nome ?? "";
 
         } else if (table === 'conversas' && record.status === 'awaiting_human') {
             // ALERTA: Handover para Operador da Unidade
@@ -78,7 +80,6 @@ Deno.serve(async (req) => {
                 .eq("id", record.lead_id)
                 .single();
 
-            templateName = "cuca_alerta_handover";
             // Template vars: {{1}} lead_nome, {{2}} lead_telefone, {{3}} unidade_cuca
             templateComponents = [{
                 type: "body",
@@ -88,6 +89,10 @@ Deno.serve(async (req) => {
                     { type: "text", text: record.unidade_cuca || "" },
                 ]
             }];
+            const { data: tpl2 } = await supabase.from("meta_templates").select("nome")
+                .ilike("nome", "%alerta_handover%").eq("ativo", true).eq("status", "aprovado")
+                .limit(1).maybeSingle();
+            templateName = tpl2?.nome ?? "";
 
         } else if (table === 'solicitacoes_acesso') {
             if (record.status === 'aguardando_aprovacao_tecnica') {
@@ -100,7 +105,6 @@ Deno.serve(async (req) => {
                     .eq("ativo", true);
 
                 recipients = coordinators || [];
-                templateName = "cuca_alerta_acesso_n1";
                 // Template vars: {{1}} nome_solicitante, {{2}} tipo_evento, {{3}} data_evento, {{4}} unidade_cuca
                 templateComponents = [{
                     type: "body",
@@ -111,6 +115,10 @@ Deno.serve(async (req) => {
                         { type: "text", text: record.unidade_cuca || "" },
                     ]
                 }];
+                const { data: tpl3 } = await supabase.from("meta_templates").select("nome")
+                    .ilike("nome", "%alerta_acesso_n1%").eq("ativo", true).eq("status", "aprovado")
+                    .limit(1).maybeSingle();
+                templateName = tpl3?.nome ?? "";
 
             } else if (record.status === 'aguardando_aprovacao_secretaria') {
                 // ALERTA: Acesso CUCA N2 (Secretaria)
@@ -121,7 +129,6 @@ Deno.serve(async (req) => {
                     .eq("ativo", true);
 
                 recipients = secretaries || [];
-                templateName = "cuca_alerta_acesso_n2";
                 // Template vars: {{1}} nome_solicitante, {{2}} tipo_evento, {{3}} unidade_cuca
                 templateComponents = [{
                     type: "body",
@@ -131,6 +138,10 @@ Deno.serve(async (req) => {
                         { type: "text", text: record.unidade_cuca || "" },
                     ]
                 }];
+                const { data: tpl4 } = await supabase.from("meta_templates").select("nome")
+                    .ilike("nome", "%alerta_acesso_n2%").eq("ativo", true).eq("status", "aprovado")
+                    .limit(1).maybeSingle();
+                templateName = tpl4?.nome ?? "";
             }
         }
 
@@ -138,13 +149,14 @@ Deno.serve(async (req) => {
             return new Response(JSON.stringify({ message: "Nenhum destinatário elegível." }), { status: 200 });
         }
 
+        if (!templateName) {
+            console.warn(`[Institucional] Nenhum template aprovado para evento=${table}/${record.status} — envio cancelado`);
+            return new Response(JSON.stringify({ message: "Nenhum template aprovado." }), { status: 200 });
+        }
+
         // 2. Enviar templates Meta em lote
         const sendPromises = recipients.map(async (recipient) => {
             const telefone = recipient.telefone;
-            if (!META_TEMPLATES_APROVADOS) {
-                console.info(`[Institucional] notificaria ${telefone} (${templateName}) mas META_TEMPLATES_APROVADOS=false`);
-                return { logged: true };
-            }
             try {
                 const response = await fetch(
                     `https://graph.facebook.com/v23.0/${phoneNumberId}/messages`,
