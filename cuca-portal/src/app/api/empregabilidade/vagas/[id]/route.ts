@@ -153,28 +153,39 @@ export async function PATCH(
                     .single()
 
                 if (lead?.telefone) {
-                    const { data: instancias } = await supabaseAdmin
-                        .from("instancias_uazapi")
-                        .select("nome, token")
-                        .eq("unidade_cuca", vagaLead.unidade_cuca)
-                        .eq("canal_tipo", "Institucional")
-                        .eq("ativa", true)
+                    const { data: phoneNumber } = await supabaseAdmin
+                        .from("meta_phone_numbers")
+                        .select("phone_number_id")
+                        .eq("canal_tipo", "Empregabilidade")
+                        .eq("ativo", true)
                         .limit(1)
+                        .maybeSingle()
 
-                    if (instancias && instancias.length > 0) {
-                        const { token } = instancias[0]
+                    if (phoneNumber) {
+                        const metaToken = process.env.META_SYSTEM_USER_TOKEN
+                        const templatesAprovados = process.env.META_TEMPLATES_APROVADOS === "true"
                         const telLimpo = lead.telefone.replace(/\D/g, "")
-                        const mensagem = `📝 *Alteração de Vaga*\n\nA empresa solicitou alterações na vaga *${vagaLead.titulo || id}*.\n\nA vaga voltou para *pré-cadastro* e aguarda sua validação antes de aceitar novas candidaturas.`
-                        const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
-
-                        await fetch(`${workerUrl}/send-message/${token}`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                phone: telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`,
-                                message: mensagem,
-                            }),
-                        })
+                        const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
+                        if (!templatesAprovados) {
+                            console.info(`[vagas/${id}] notificaria ${number} mas META_TEMPLATES_APROVADOS=false`)
+                        } else if (metaToken) {
+                            await fetch(`https://graph.facebook.com/v23.0/${phoneNumber.phone_number_id}/messages`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${metaToken}` },
+                                body: JSON.stringify({
+                                    messaging_product: "whatsapp",
+                                    to: number,
+                                    type: "template",
+                                    template: {
+                                        name: "cuca_alteracao_vaga",
+                                        language: { code: "pt_BR" },
+                                        components: [{ type: "body", parameters: [
+                                            { type: "text", text: vagaLead.titulo || id },
+                                        ]}],
+                                    },
+                                }),
+                            }).catch(e => console.warn(`[vagas/${id}] Falha ao notificar lead via Meta:`, e))
+                        }
                     }
                 }
             }

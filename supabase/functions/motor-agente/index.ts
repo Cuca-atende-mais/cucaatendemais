@@ -108,7 +108,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json();
-    const { mensagem, midia_url, midia_tipo, telefone, canal_origem: instancia_uazapi, agente_tipo, unidade_cuca } = body;
+    const { mensagem, midia_url, midia_tipo, telefone, canal_origem, agente_tipo, unidade_cuca } = body;
     console.log("[motor-agente v18] Agente: " + agente_tipo + ", Unidade: " + unidade_cuca);
 
     if (!telefone || !agente_tipo) return new Response(JSON.stringify({ error: "telefone e agente_tipo sao obrigatorios" }), { status: 400 });
@@ -131,9 +131,9 @@ Deno.serve(async (req: Request) => {
 
     // 2. Conversa
     let conversaJustCreated = false;
-    let { data: conversa } = await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", instancia_uazapi || "test").single();
+    let { data: conversa } = await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
     if (!conversa) {
-      const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: instancia_uazapi || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata").single();
+      const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: canal_origem || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata").single();
       conversa = data; conversaJustCreated = true;
     } else if (conversa.status === "encerrada") {
       await supabase.from("conversas").update({ status: "ativa", updated_at: new Date().toISOString() }).eq("id", conversa.id);

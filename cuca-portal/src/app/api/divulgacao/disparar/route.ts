@@ -50,18 +50,18 @@ export async function POST(req: NextRequest) {
             }, { status: 409 })
         }
 
-        // Buscar instância Divulgação ativa
-        const { data: instancia } = await supabase
-            .from("instancias_uazapi")
-            .select("nome")
+        // Buscar phone_number_id Meta para Divulgação
+        const { data: phoneNumber } = await supabase
+            .from("meta_phone_numbers")
+            .select("phone_number_id")
             .eq("canal_tipo", "Divulgação")
-            .eq("ativa", true)
+            .eq("ativo", true)
             .limit(1)
             .maybeSingle()
 
-        if (!instancia) {
+        if (!phoneNumber) {
             return NextResponse.json({
-                error: "Nenhuma instância do tipo Divulgação está conectada. Configure o chip antes de disparar."
+                error: "Nenhum número Meta do tipo Divulgação configurado. Cadastre um phone_number_id antes de disparar."
             }, { status: 422 })
         }
 
@@ -71,6 +71,7 @@ export async function POST(req: NextRequest) {
             .eq("opt_in", true)
 
         // Criar o registro de disparo
+        // instancia_uazapi armazena phone_number_id (campo mantido por compatibilidade com campanhas_engine.py)
         const { data: disparo, error: errInsert } = await supabase
             .from("disparos_divulgacao")
             .insert({
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
                 ano,
                 titulo: titulo || `Aviso Programação ${mes}/${ano}`,
                 mensagem_template,
-                instancia_uazapi: instancia.nome,
+                instancia_uazapi: phoneNumber.phone_number_id,
                 status: "pendente",
                 total_leads: totalLeads ?? 0,
                 criado_por: user.id,
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
             success: true,
             id: disparo.id,
             total_leads: totalLeads ?? 0,
-            instancia: instancia.nome,
+            phone_number_id: phoneNumber.phone_number_id,
             message: `Disparo criado com sucesso. O motor enviará para ${totalLeads ?? 0} leads.`
         })
 
