@@ -191,24 +191,24 @@ async def processar_item_disparo(
     item_id = item.get("id")
     unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
 
-    # Selecionar canal Meta por origem
+    # Selecionar canal Meta e template por origem
     if origem == "eventos_pontuais":
         canal_tipo = "Divulgação"
-        nome_pattern = "%evento_pontual%"
+        template_nome_exato = "cuca_evento_pontual"
     elif origem == "ouvidoria_eventos":
         canal_tipo = "Institucional"
-        nome_pattern = "%pesquisa_ouvidoria%"
+        template_nome_exato = "cuca_pesquisa_ouvidoria"
     else:
         canal_tipo = "Institucional"
-        nome_pattern = "%evento_pontual%"
+        template_nome_exato = "cuca_evento_pontual"
 
-    # Lookup dinâmico de template aprovado
-    _tpl_res = supabase.table("meta_templates").select("nome") \
-        .ilike("nome", nome_pattern).eq("ativo", True).eq("status", "aprovado") \
+    # Lookup dinâmico de template aprovado (nome exato)
+    _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto") \
+        .eq("nome", template_nome_exato).eq("ativo", True).eq("status", "aprovado") \
         .limit(1).maybe_single().execute()
     if not _tpl_res.data:
         logger.warning(
-            f"[campanhas] Nenhum template aprovado com padrão {nome_pattern!r} — item {item.get('id')} pulado"
+            f"[campanhas] Nenhum template aprovado com nome {template_nome_exato!r} — item {item.get('id')} pulado"
         )
         await asyncio.to_thread(_update_db_sync, origem, item.get("id"), {"status": "pausada"})
         return
@@ -444,8 +444,8 @@ async def processar_disparos_divulgacao(
 
     # Lookup dinâmico do template de divulgação mensal
     _tpl_div = await asyncio.to_thread(
-        lambda: supabase.table("meta_templates").select("nome")
-        .ilike("nome", "%programacao_mensal%").eq("ativo", True).eq("status", "aprovado")
+        lambda: supabase.table("meta_templates").select("nome, corpo_texto")
+        .eq("nome", "cuca_programacao_mensal").eq("ativo", True).eq("status", "aprovado")
         .limit(1).maybe_single().execute()
     )
     if not _tpl_div.data:

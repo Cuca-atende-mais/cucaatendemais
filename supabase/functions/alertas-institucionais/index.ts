@@ -34,12 +34,15 @@ Deno.serve(async (req) => {
 
         let recipients: any[] = [];
         let templateName = "";
-        let templateComponents: object[] = [];
 
-        // --- LÓGICA DE ROTEAMENTO DE ALERTAS ---
+        // getComponents recebe o nome do destinatário e devolve os components Meta
+        type ComponentsBuilder = (recipientNome: string) => object[];
+        let getComponents: ComponentsBuilder = () => [];
+
+        // --- ROTEAMENTO DE ALERTAS ---
 
         if (table === 'eventos_pontuais' && record.status === 'aguardando_aprovacao') {
-            // ALERTA: Novo Evento Pontual para Super Admin
+            // Novo Evento Pontual → alerta ao super_admin
             const { data: admins } = await supabase
                 .from("colaboradores")
                 .select("nome_completo, telefone, funcoes!inner(nome)")
@@ -47,8 +50,9 @@ Deno.serve(async (req) => {
                 .eq("ativo", true);
 
             recipients = admins || [];
-            // Template vars: {{1}} titulo, {{2}} unidade_cuca, {{3}} data_evento
-            templateComponents = [{
+
+            // cuca_evento_pontual_admin: {{1}} titulo, {{2}} unidade_cuca, {{3}} data_evento
+            getComponents = (_nome) => [{
                 type: "body",
                 parameters: [
                     { type: "text", text: record.titulo || "" },
@@ -56,15 +60,19 @@ Deno.serve(async (req) => {
                     { type: "text", text: String(record.data_evento || "") },
                 ]
             }];
-            const { data: tpl1 } = await supabase.from("meta_templates").select("nome")
-                .ilike("nome", "%alerta_evento_pontual%").eq("ativo", true).eq("status", "aprovado")
-                .limit(1).maybeSingle();
-            templateName = tpl1?.nome ?? "";
+
+            const { data: tpl } = await supabase
+                .from("meta_templates")
+                .select("nome")
+                .eq("nome", "cuca_evento_pontual_admin")
+                .eq("ativo", true)
+                .eq("status", "aprovado")
+                .maybeSingle();
+            templateName = tpl?.nome ?? "";
 
         } else if (table === 'conversas' && record.status === 'awaiting_human') {
-            // ALERTA: Handover para Operador da Unidade
-            // Nota: trigger_alerta_handover foi dropado em cuca-dev (S-WM-09 cobre via _notificar_transbordo).
-            // Bloco mantido pois trigger pode existir em produção — defer ao Junior decidir drop em prod.
+            // Handover → alerta ao operador da unidade
+            // (trigger pode ter sido dropado em cuca-dev; mantido pois pode existir em produção)
             const { data: operators } = await supabase
                 .from("colaboradores")
                 .select("nome_completo, telefone, funcoes!inner(nome)")
@@ -76,72 +84,68 @@ Deno.serve(async (req) => {
 
             const { data: lead } = await supabase
                 .from("leads")
-                .select("nome, telefone")
+                .select("nome")
                 .eq("id", record.lead_id)
-                .single();
+                .maybeSingle();
 
-            // Template vars: {{1}} lead_nome, {{2}} lead_telefone, {{3}} unidade_cuca
-            templateComponents = [{
+            // cuca_transbordo_colaborador: {{1}} nome colaborador, {{2}} nome lead, {{3}} canal
+            const leadNome = lead?.nome || "Cidadão";
+            const canal = record.unidade_cuca || "CUCA";
+            getComponents = (recipientNome) => [{
                 type: "body",
                 parameters: [
-                    { type: "text", text: lead?.nome || "Cidadão" },
-                    { type: "text", text: lead?.telefone || "Desconhecido" },
-                    { type: "text", text: record.unidade_cuca || "" },
+                    { type: "text", text: recipientNome },
+                    { type: "text", text: leadNome },
+                    { type: "text", text: canal },
                 ]
             }];
-            const { data: tpl2 } = await supabase.from("meta_templates").select("nome")
-                .ilike("nome", "%alerta_handover%").eq("ativo", true).eq("status", "aprovado")
-                .limit(1).maybeSingle();
-            templateName = tpl2?.nome ?? "";
+
+            const { data: tpl } = await supabase
+                .from("meta_templates")
+                .select("nome")
+                .eq("nome", "cuca_transbordo_colaborador")
+                .eq("ativo", true)
+                .eq("status", "aprovado")
+                .maybeSingle();
+            templateName = tpl?.nome ?? "";
 
         } else if (table === 'solicitacoes_acesso') {
+            // cuca_transbordo_colaborador: {{1}} nome colaborador, {{2}} solicitante, {{3}} "Acesso CUCA"
+            const nomeSolicitante = record.nome_solicitante || "";
+            getComponents = (recipientNome) => [{
+                type: "body",
+                parameters: [
+                    { type: "text", text: recipientNome },
+                    { type: "text", text: nomeSolicitante },
+                    { type: "text", text: "Acesso CUCA" },
+                ]
+            }];
+
+            const { data: tpl } = await supabase
+                .from("meta_templates")
+                .select("nome")
+                .eq("nome", "cuca_transbordo_colaborador")
+                .eq("ativo", true)
+                .eq("status", "aprovado")
+                .maybeSingle();
+            templateName = tpl?.nome ?? "";
+
             if (record.status === 'aguardando_aprovacao_tecnica') {
-                // ALERTA: Acesso CUCA N1 (Coordenador)
                 const { data: coordinators } = await supabase
                     .from("colaboradores")
                     .select("nome_completo, telefone, funcoes!inner(nome)")
                     .eq("funcoes.nome", "coordenador")
                     .eq("unidade_cuca", record.unidade_cuca)
                     .eq("ativo", true);
-
                 recipients = coordinators || [];
-                // Template vars: {{1}} nome_solicitante, {{2}} tipo_evento, {{3}} data_evento, {{4}} unidade_cuca
-                templateComponents = [{
-                    type: "body",
-                    parameters: [
-                        { type: "text", text: record.nome_solicitante || "" },
-                        { type: "text", text: record.tipo_evento || "" },
-                        { type: "text", text: String(record.data_evento || "") },
-                        { type: "text", text: record.unidade_cuca || "" },
-                    ]
-                }];
-                const { data: tpl3 } = await supabase.from("meta_templates").select("nome")
-                    .ilike("nome", "%alerta_acesso_n1%").eq("ativo", true).eq("status", "aprovado")
-                    .limit(1).maybeSingle();
-                templateName = tpl3?.nome ?? "";
 
             } else if (record.status === 'aguardando_aprovacao_secretaria') {
-                // ALERTA: Acesso CUCA N2 (Secretaria)
                 const { data: secretaries } = await supabase
                     .from("colaboradores")
                     .select("nome_completo, telefone, funcoes!inner(nome)")
                     .eq("funcoes.nome", "secretaria")
                     .eq("ativo", true);
-
                 recipients = secretaries || [];
-                // Template vars: {{1}} nome_solicitante, {{2}} tipo_evento, {{3}} unidade_cuca
-                templateComponents = [{
-                    type: "body",
-                    parameters: [
-                        { type: "text", text: record.nome_solicitante || "" },
-                        { type: "text", text: record.tipo_evento || "" },
-                        { type: "text", text: record.unidade_cuca || "" },
-                    ]
-                }];
-                const { data: tpl4 } = await supabase.from("meta_templates").select("nome")
-                    .ilike("nome", "%alerta_acesso_n2%").eq("ativo", true).eq("status", "aprovado")
-                    .limit(1).maybeSingle();
-                templateName = tpl4?.nome ?? "";
             }
         }
 
@@ -154,9 +158,10 @@ Deno.serve(async (req) => {
             return new Response(JSON.stringify({ message: "Nenhum template aprovado." }), { status: 200 });
         }
 
-        // 2. Enviar templates Meta em lote
+        // 2. Enviar templates Meta em lote (components por destinatário)
         const sendPromises = recipients.map(async (recipient) => {
             const telefone = recipient.telefone;
+            const components = getComponents(recipient.nome_completo || "");
             try {
                 const response = await fetch(
                     `https://graph.facebook.com/v23.0/${phoneNumberId}/messages`,
@@ -173,7 +178,7 @@ Deno.serve(async (req) => {
                             template: {
                                 name: templateName,
                                 language: { code: "pt_BR" },
-                                components: templateComponents,
+                                components,
                             }
                         })
                     }

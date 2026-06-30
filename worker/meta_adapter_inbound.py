@@ -13,6 +13,14 @@ from datetime import datetime, timezone, timedelta
 logger = logging.getLogger("worker-cuca")
 
 
+def _render_template(corpo_texto: str, variaveis: dict[int, str]) -> str:
+    """Substitui {{N}} pelo valor correspondente — usado para log/preview."""
+    resultado = corpo_texto
+    for pos, valor in variaveis.items():
+        resultado = resultado.replace(f"{{{{{pos}}}}}", valor)
+    return resultado
+
+
 def _get_instancia_by_phone_number_id(phone_number_id: str) -> dict | None:
     """Busca dados do canal em meta_phone_numbers por phone_number_id (S-WM-03)."""
     try:
@@ -336,13 +344,13 @@ async def _notificar_transbordo(
                 modulo, unidade_cuca, conversa_id,
             )
             return
-        tpl_res = sb.table("meta_templates").select("nome") \
+        tpl_res = sb.table("meta_templates").select("nome, corpo_texto") \
             .contains("automacoes", [modulo]) \
             .eq("ativo", True).eq("status", "aprovado") \
             .limit(1).maybe_single().execute()
         if not tpl_res.data:
-            tpl_res = sb.table("meta_templates").select("nome") \
-                .ilike("nome", "%transbordo%") \
+            tpl_res = sb.table("meta_templates").select("nome, corpo_texto") \
+                .eq("nome", "cuca_transbordo_colaborador") \
                 .eq("ativo", True).eq("status", "aprovado") \
                 .limit(1).maybe_single().execute()
         if not tpl_res.data:
@@ -352,6 +360,7 @@ async def _notificar_transbordo(
             )
             return
         template_name = tpl_res.data["nome"]
+        corpo_texto = tpl_res.data.get("corpo_texto") or ""
         token = os.getenv("META_SYSTEM_USER_TOKEN", "")
         from campanhas_engine import _enviar_template_meta  # noqa: PLC0415
         for contato in contacts:
@@ -362,6 +371,9 @@ async def _notificar_transbordo(
                 {"type": "text", "text": lead_identificacao},
                 {"type": "text", "text": modulo},
             ]}]
+            if corpo_texto:
+                preview = _render_template(corpo_texto, {1: nome, 2: lead_identificacao, 3: modulo})
+                logger.debug("[transbordo] preview: %s", preview[:120])
             ok = await _enviar_template_meta(
                 phone_number_id_origem, telefone_destino, token,
                 template_name, components,

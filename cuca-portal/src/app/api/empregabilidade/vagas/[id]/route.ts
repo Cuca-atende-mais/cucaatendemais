@@ -137,68 +137,7 @@ export async function PATCH(
             console.warn("[vagas/[id]] Erro ao notificar worker:", notifyErr)
         }
 
-        // Notificar lead responsável via worker
-        try {
-            const { data: vagaLead } = await supabaseAdmin
-                .from("vagas")
-                .select("created_by, titulo, unidade_cuca")
-                .eq("id", id)
-                .single()
 
-            if (vagaLead?.created_by) {
-                const { data: lead } = await supabaseAdmin
-                    .from("leads")
-                    .select("telefone")
-                    .eq("id", vagaLead.created_by)
-                    .single()
-
-                if (lead?.telefone) {
-                    const { data: phoneNumber } = await supabaseAdmin
-                        .from("meta_phone_numbers")
-                        .select("phone_number_id")
-                        .eq("canal_tipo", "Empregabilidade")
-                        .eq("ativo", true)
-                        .limit(1)
-                        .maybeSingle()
-
-                    if (phoneNumber) {
-                        const metaToken = process.env.META_SYSTEM_USER_TOKEN
-                        const { data: tpl } = await supabaseAdmin
-                            .from("meta_templates")
-                            .select("nome")
-                            .ilike("nome", "%alteracao_vaga%")
-                            .eq("ativo", true)
-                            .eq("status", "aprovado")
-                            .limit(1)
-                            .maybeSingle()
-                        const telLimpo = lead.telefone.replace(/\D/g, "")
-                        const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
-                        if (!tpl) {
-                            console.info(`[vagas/${id}] notificaria ${number} mas nenhum template aprovado em meta_templates`)
-                        } else if (metaToken) {
-                            await fetch(`https://graph.facebook.com/v23.0/${phoneNumber.phone_number_id}/messages`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${metaToken}` },
-                                body: JSON.stringify({
-                                    messaging_product: "whatsapp",
-                                    to: number,
-                                    type: "template",
-                                    template: {
-                                        name: tpl.nome,
-                                        language: { code: "pt_BR" },
-                                        components: [{ type: "body", parameters: [
-                                            { type: "text", text: vagaLead.titulo || id },
-                                        ]}],
-                                    },
-                                }),
-                            }).catch(e => console.warn(`[vagas/${id}] Falha ao notificar lead via Meta:`, e))
-                        }
-                    }
-                }
-            }
-        } catch (leadErr) {
-            console.warn("[vagas/[id]] Erro ao notificar lead:", leadErr)
-        }
 
         return NextResponse.json({ ok: true })
     } catch (err: any) {

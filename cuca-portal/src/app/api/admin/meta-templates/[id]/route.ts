@@ -19,8 +19,33 @@ async function assertDeveloper(): Promise<string | null> {
 const CAMPOS_EDITAVEIS = [
     "nome", "categoria", "status", "variaveis", "automacoes",
     "waba_ids", "phone_number_ids", "observacoes", "ativo",
+    "corpo_texto", "corpo_texto_aprovado",
 ] as const
 type CampoEditavel = typeof CAMPOS_EDITAVEIS[number]
+
+export async function GET(
+    _req: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    const email = await assertDeveloper()
+    if (!email) {
+        return NextResponse.json({ error: "Não autorizado" }, { status: 401 })
+    }
+
+    const { id } = await params
+    const admin = createAdminClient()
+    const { data, error } = await admin
+        .from("meta_templates")
+        .select("*")
+        .eq("id", id)
+        .single()
+
+    if (error || !data) {
+        return NextResponse.json({ error: "Template não encontrado" }, { status: 404 })
+    }
+
+    return NextResponse.json(data)
+}
 
 export async function PATCH(
     req: NextRequest,

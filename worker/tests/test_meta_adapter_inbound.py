@@ -621,7 +621,8 @@ class TestNotificarTransbordo:
         templates_mock = MagicMock()
         templates_mock.select.return_value.contains.return_value.eq.return_value.eq.return_value \
             .limit.return_value.maybe_single.return_value.execute.return_value.data = None
-        templates_mock.select.return_value.ilike.return_value.eq.return_value.eq.return_value \
+        # fallback por nome exato (S-WM-14: ilike → eq)
+        templates_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value \
             .limit.return_value.maybe_single.return_value.execute.return_value.data = None
 
         def _table_side_effect(name):

@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { nome, categoria, status, variaveis, automacoes, waba_ids, phone_number_ids, observacoes, ativo } = body
+    const { nome, categoria, status, variaveis, automacoes, waba_ids, phone_number_ids, observacoes, ativo, corpo_texto } = body
 
     if (!nome?.trim()) {
         return NextResponse.json({ error: "Campo obrigatório: nome" }, { status: 400 })
@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
             phone_number_ids: phone_number_ids ?? [],
             observacoes: observacoes ?? null,
             ativo: ativo ?? true,
+            corpo_texto: corpo_texto ?? null,
         })
         .select()
         .single()

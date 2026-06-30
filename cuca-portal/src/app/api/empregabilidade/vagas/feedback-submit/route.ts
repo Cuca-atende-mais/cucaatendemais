@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
                         const { data: tpl } = await supabaseAdmin
                             .from("meta_templates")
                             .select("nome")
-                            .ilike("nome", "%feedback_vaga%")
+                            .eq("nome", "cuca_feedback_vaga")
                             .eq("ativo", true)
                             .eq("status", "aprovado")
                             .limit(1)
