@@ -71,6 +71,20 @@ export async function PATCH(
     }
 
     const admin = createAdminClient()
+
+    if (typeof update.nome === "string") {
+        const { data: existing } = await admin
+            .from("meta_templates")
+            .select("id")
+            .eq("nome", update.nome)
+            .neq("id", id)
+            .maybeSingle()
+
+        if (existing) {
+            return NextResponse.json({ error: "Já existe outro template com este nome" }, { status: 409 })
+        }
+    }
+
     const { data, error } = await admin
         .from("meta_templates")
         .update(update)

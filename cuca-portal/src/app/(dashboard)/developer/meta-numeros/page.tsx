@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import {
-    Phone, Plus, Save, X, ArrowLeft, Loader2, Hash, Building2,
+    Phone, Plus, Save, X, ArrowLeft, Loader2, Hash, Building2, Trash2,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -44,12 +44,16 @@ type MetaPhoneNumber = {
 
 type EditState = {
     phone_number_id: string
+    waba_id: string
     agente_tipo: AgenteMetaTipo
     canal_tipo: CanalMetaTipo
     display_name: string
     unidade_cuca: string | null
     ativo: boolean
 }
+
+// Formato real de phone_number_id/waba_id na Meta Graph API: string numérica, 15-17 dígitos
+const META_ID_REGEX = /^\d{15,17}$/
 
 const CANAL_BADGE_COLORS: Record<string, string> = {
     "Empregabilidade": "bg-blue-500/10 text-blue-600 border-blue-200",
@@ -68,6 +72,9 @@ export default function MetaNumerosPage() {
     const [editState, setEditState] = useState<EditState | null>(null)
     const [saving, setSaving] = useState(false)
     const [showModal, setShowModal] = useState(false)
+    const [confirmCritical, setConfirmCritical] = useState(false)
+    const [deactivating, setDeactivating] = useState<string | null>(null)
+    const [confirmDeactivate, setConfirmDeactivate] = useState<MetaPhoneNumber | null>(null)
 
     const fetchNumeros = useCallback(async () => {
         setLoading(true)
@@ -88,27 +95,56 @@ export default function MetaNumerosPage() {
         setEditingId(row.phone_number_id)
         setEditState({
             phone_number_id: row.phone_number_id,
+            waba_id: row.waba_id,
             agente_tipo: row.agente_tipo,
             canal_tipo: row.canal_tipo,
             display_name: row.display_name,
             unidade_cuca: row.unidade_cuca,
             ativo: row.ativo,
         })
+        setConfirmCritical(false)
     }
 
     function cancelEdit() {
         setEditingId(null)
         setEditState(null)
+        setConfirmCritical(false)
+    }
+
+    function criticalFieldsChanged(): boolean {
+        if (!editState || !editingId) return false
+        return editState.phone_number_id !== editingId ||
+            editState.waba_id !== numeros.find(n => n.phone_number_id === editingId)?.waba_id
+    }
+
+    function requestSave() {
+        if (!editState) return
+        if (!META_ID_REGEX.test(editState.phone_number_id)) {
+            toast.error("phone_number_id inválido — deve ser numérico com 15 a 17 dígitos")
+            return
+        }
+        if (!META_ID_REGEX.test(editState.waba_id)) {
+            toast.error("waba_id inválido — deve ser numérico com 15 a 17 dígitos")
+            return
+        }
+        if (criticalFieldsChanged()) {
+            // Modal de confirmação explícita antes de mudar phone_number_id/waba_id (S-WM-16 Task 3)
+            setConfirmCritical(true)
+            return
+        }
+        saveEdit()
     }
 
     async function saveEdit() {
-        if (!editState) return
+        if (!editState || !editingId) return
         setSaving(true)
         try {
-            const res = await fetch(`/api/admin/meta-phone-numbers/${encodeURIComponent(editState.phone_number_id)}`, {
+            const res = await fetch(`/api/admin/meta-phone-numbers/${encodeURIComponent(editingId)}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    phone_number_id: editState.phone_number_id,
+                    waba_id: editState.waba_id,
                     agente_tipo: editState.agente_tipo,
                     canal_tipo: editState.canal_tipo,
                     display_name: editState.display_name,
@@ -123,11 +159,33 @@ export default function MetaNumerosPage() {
             toast.success("Mapeamento atualizado com sucesso")
             setEditingId(null)
             setEditState(null)
+            setConfirmCritical(false)
             await fetchNumeros()
         } catch (err: any) {
             toast.error(err.message)
         } finally {
             setSaving(false)
+        }
+    }
+
+    async function confirmarDeactivate() {
+        if (!confirmDeactivate) return
+        setDeactivating(confirmDeactivate.phone_number_id)
+        try {
+            const res = await fetch(`/api/admin/meta-phone-numbers/${encodeURIComponent(confirmDeactivate.phone_number_id)}`, {
+                method: "DELETE",
+            })
+            if (!res.ok) {
+                const err = await res.json()
+                throw new Error(err.error ?? "Erro ao desativar")
+            }
+            toast.success(`"${confirmDeactivate.display_name}" desativado`)
+            setConfirmDeactivate(null)
+            await fetchNumeros()
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : String(err))
+        } finally {
+            setDeactivating(null)
         }
     }
 
@@ -215,9 +273,18 @@ export default function MetaNumerosPage() {
                                                 )}
                                             </TableCell>
 
-                                            {/* phone_number_id — sempre somente leitura */}
+                                            {/* phone_number_id — editável (S-WM-16 Task 3, exige confirmação explícita ao salvar) */}
                                             <TableCell>
-                                                <code className="text-xs text-muted-foreground">{row.phone_number_id}</code>
+                                                {isEditing ? (
+                                                    <Input
+                                                        className="h-8 w-40 text-xs font-mono"
+                                                        value={es!.phone_number_id}
+                                                        onChange={(e) => setEditState(s => s ? { ...s, phone_number_id: e.target.value.trim() } : s)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    />
+                                                ) : (
+                                                    <code className="text-xs text-muted-foreground">{row.phone_number_id}</code>
+                                                )}
                                             </TableCell>
 
                                             {/* agente_tipo */}
@@ -267,9 +334,18 @@ export default function MetaNumerosPage() {
                                                 )}
                                             </TableCell>
 
-                                            {/* waba_id — sempre somente leitura */}
+                                            {/* waba_id — editável (S-WM-16 Task 3, exige confirmação explícita ao salvar) */}
                                             <TableCell>
-                                                <code className="text-xs text-muted-foreground">{row.waba_id}</code>
+                                                {isEditing ? (
+                                                    <Input
+                                                        className="h-8 w-40 text-xs font-mono"
+                                                        value={es!.waba_id}
+                                                        onChange={(e) => setEditState(s => s ? { ...s, waba_id: e.target.value.trim() } : s)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    />
+                                                ) : (
+                                                    <code className="text-xs text-muted-foreground">{row.waba_id}</code>
+                                                )}
                                             </TableCell>
 
                                             {/* ativo */}
@@ -294,7 +370,7 @@ export default function MetaNumerosPage() {
                                                         <Button
                                                             size="sm"
                                                             className="h-7 gap-1 px-2 text-xs"
-                                                            onClick={saveEdit}
+                                                            onClick={requestSave}
                                                             disabled={saving}
                                                         >
                                                             {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
@@ -310,7 +386,17 @@ export default function MetaNumerosPage() {
                                                             <X className="h-3 w-3" />
                                                         </Button>
                                                     </div>
-                                                ) : null}
+                                                ) : (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                                                        onClick={() => setConfirmDeactivate(row)}
+                                                        title="Desativar (soft delete)"
+                                                    >
+                                                        <Trash2 className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                )}
                                             </TableCell>
                                         </TableRow>
                                     )
@@ -327,6 +413,55 @@ export default function MetaNumerosPage() {
                 onClose={() => setShowModal(false)}
                 onCreated={fetchNumeros}
             />
+
+            {/* Modal: confirmação de troca de phone_number_id/waba_id (S-WM-16 Task 3) */}
+            <Dialog open={confirmCritical} onOpenChange={(v) => { if (!v) setConfirmCritical(false) }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Tem certeza?</DialogTitle>
+                        <DialogDescription>
+                            Isso muda para qual número as mensagens desta automação serão enviadas/recebidas.
+                            phone_number_id: <code className="text-xs">{editState?.phone_number_id}</code>{" "}
+                            waba_id: <code className="text-xs">{editState?.waba_id}</code>
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setConfirmCritical(false)} disabled={saving}>
+                            Cancelar
+                        </Button>
+                        <Button
+                            onClick={() => { setConfirmCritical(false); saveEdit() }}
+                            disabled={saving}
+                            className="gap-2"
+                        >
+                            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                            Confirmar e salvar
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Modal: confirmação de desativação (soft delete) */}
+            <Dialog open={!!confirmDeactivate} onOpenChange={(v) => { if (!v) setConfirmDeactivate(null) }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Desativar número?</DialogTitle>
+                        <DialogDescription>
+                            &ldquo;{confirmDeactivate?.display_name}&rdquo; ({confirmDeactivate?.phone_number_id}) deixa de aparecer como ativo,
+                            mas o histórico é preservado (soft delete — <code className="text-xs">ativo=false</code>).
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setConfirmDeactivate(null)} disabled={!!deactivating}>
+                            Cancelar
+                        </Button>
+                        <Button variant="destructive" onClick={confirmarDeactivate} disabled={!!deactivating} className="gap-2">
+                            {deactivating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                            Desativar
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

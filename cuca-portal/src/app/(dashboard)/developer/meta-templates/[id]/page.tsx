@@ -53,6 +53,12 @@ const TODAS_AUTOMACOES = [
     "Programação Pontual",
 ]
 
+// Nomes usados como chave de lookup hardcoded no worker (S-WM-16 Task 1/2)
+const NOMES_HARDCODED_WORKER: Record<string, string> = {
+    cuca_programacao_mensal: "Divulgação mensal (worker/campanhas_engine.py)",
+    cuca_transbordo_colaborador: "Notificação de transbordo (worker/meta_adapter_inbound.py)",
+}
+
 // Extrai posições únicas de {{N}} no corpo do texto, ordenadas
 function detectarPosicoes(texto: string): number[] {
     const matches = [...texto.matchAll(/\{\{(\d+)\}\}/g)]
@@ -78,10 +84,14 @@ export default function EditarTemplatePage() {
 
     const [template, setTemplate] = useState<MetaTemplate | null>(null)
     const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([])
+    const [outrosNomes, setOutrosNomes] = useState<string[]>([])
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
 
     // Estado do form
+    const [nome, setNome] = useState("")
+    const [nomeOriginal, setNomeOriginal] = useState("")
+    const [confirmRenameHardcoded, setConfirmRenameHardcoded] = useState(false)
     const [categoria, setCategoria] = useState("")
     const [status, setStatus] = useState("")
     const [corpoTexto, setCorpoTexto] = useState("")
@@ -98,16 +108,22 @@ export default function EditarTemplatePage() {
     const load = useCallback(async () => {
         setLoading(true)
         try {
-            const [tplRes, pnRes] = await Promise.all([
+            const [tplRes, pnRes, allTplRes] = await Promise.all([
                 fetch(`/api/admin/meta-templates/${id}`),
                 fetch("/api/admin/meta-phone-numbers"),
+                fetch("/api/admin/meta-templates"),
             ])
             if (!tplRes.ok) throw new Error("Template não encontrado")
             const tpl: MetaTemplate = await tplRes.json()
             const pns: PhoneNumber[] = pnRes.ok ? await pnRes.json() : []
+            const allTpls: MetaTemplate[] = allTplRes.ok ? await allTplRes.json() : []
 
             setTemplate(tpl)
             setPhoneNumbers(pns)
+            setOutrosNomes(allTpls.filter(t => t.id !== tpl.id).map(t => t.nome))
+            setNome(tpl.nome)
+            setNomeOriginal(tpl.nome)
+            setConfirmRenameHardcoded(false)
             setCategoria(tpl.categoria ?? "UTILITY")
             setStatus(tpl.status)
             setCorpoTexto(tpl.corpo_texto ?? "")
@@ -150,12 +166,29 @@ export default function EditarTemplatePage() {
     }
 
     async function handleSave() {
+        const nomeTrimmed = nome.trim()
+        if (!nomeTrimmed) {
+            toast.error("Nome do template não pode ficar vazio")
+            return
+        }
+        if (nomeTrimmed !== nomeOriginal) {
+            if (outrosNomes.includes(nomeTrimmed)) {
+                toast.error("Já existe outro template com este nome")
+                return
+            }
+            if (NOMES_HARDCODED_WORKER[nomeOriginal] && !confirmRenameHardcoded) {
+                toast.error("Confirme que está ciente do impacto antes de renomear")
+                return
+            }
+        }
+
         setSaving(true)
         try {
             const res = await fetch(`/api/admin/meta-templates/${id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    nome: nomeTrimmed,
                     categoria: categoria || null,
                     status,
                     corpo_texto: corpoTexto.trim() || null,
@@ -216,16 +249,21 @@ export default function EditarTemplatePage() {
             {/* Card */}
             <div className="rounded-xl border bg-card p-6 flex flex-col gap-5">
 
-                {/* Linha 1: Nome (readonly) + Categoria + Status */}
+                {/* Linha 1: Nome (readonly condicional) + Categoria + Status */}
                 <div className="grid grid-cols-[1fr_150px_160px] gap-4">
                     <div className="flex flex-col gap-1.5">
                         <Label className="text-xs uppercase tracking-wide text-muted-foreground">
                             Nome do template <span className="normal-case text-muted-foreground/60">(BSP Meta)</span>
                         </Label>
                         <Input
-                            value={template.nome}
-                            readOnly
-                            className="font-mono text-sm text-muted-foreground cursor-not-allowed"
+                            value={nome}
+                            readOnly={template.status === "aprovado" && template.ativo}
+                            onChange={e => setNome(e.target.value)}
+                            className={
+                                template.status === "aprovado" && template.ativo
+                                    ? "font-mono text-sm text-muted-foreground cursor-not-allowed"
+                                    : "font-mono text-sm"
+                            }
                         />
                     </div>
                     <div className="flex flex-col gap-1.5">
@@ -251,6 +289,26 @@ export default function EditarTemplatePage() {
                         </Select>
                     </div>
                 </div>
+
+                {/* Aviso: renomear template com lookup hardcoded no worker */}
+                {nome.trim() !== nomeOriginal && NOMES_HARDCODED_WORKER[nomeOriginal] && (
+                    <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3.5 text-[13px]">
+                        <p className="text-amber-700 dark:text-amber-400">
+                            <strong>Atenção:</strong> este nome está fixo no código do worker
+                            ({NOMES_HARDCODED_WORKER[nomeOriginal]}). Renomear quebra essa automação
+                            silenciosamente até o código ser atualizado.
+                        </p>
+                        <label className="flex items-center gap-2 cursor-pointer select-none text-amber-800 dark:text-amber-300">
+                            <input
+                                type="checkbox"
+                                checked={confirmRenameHardcoded}
+                                onChange={e => setConfirmRenameHardcoded(e.target.checked)}
+                                className="accent-amber-600 w-4 h-4"
+                            />
+                            Estou ciente do impacto e quero renomear mesmo assim
+                        </label>
+                    </div>
+                )}
 
                 {/* Corpo do texto */}
                 <div className="flex flex-col gap-1.5">
@@ -404,7 +462,14 @@ export default function EditarTemplatePage() {
                     <Link href="/developer/meta-templates">
                         <Button variant="outline">Cancelar</Button>
                     </Link>
-                    <Button onClick={handleSave} disabled={saving} className="gap-2">
+                    <Button
+                        onClick={handleSave}
+                        disabled={
+                            saving ||
+                            (nome.trim() !== nomeOriginal && !!NOMES_HARDCODED_WORKER[nomeOriginal] && !confirmRenameHardcoded)
+                        }
+                        className="gap-2"
+                    >
                         {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                         Salvar template
                     </Button>
