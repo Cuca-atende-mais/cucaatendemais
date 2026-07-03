@@ -34,8 +34,10 @@ type MetaTemplate = {
 type PhoneNumber = {
     id: string
     phone_number_id: string
+    waba_id: string
     display_name: string
     canal_tipo: string
+    agente_tipo: string
     ativo: boolean
 }
 
@@ -43,21 +45,6 @@ type PhoneNumber = {
 
 const CATEGORIAS = ["UTILITY", "MARKETING", "AUTHENTICATION"]
 const STATUS_OPTIONS = ["pendente", "aprovado", "rejeitado", "pausado"]
-
-const TODAS_AUTOMACOES = [
-    "Empregabilidade",
-    "Institucional",
-    "Ouvidoria",
-    "Acesso CUCA",
-    "Divulgação",
-    "Programação Pontual",
-]
-
-// Nomes usados como chave de lookup hardcoded no worker (S-WM-16 Task 1/2)
-const NOMES_HARDCODED_WORKER: Record<string, string> = {
-    cuca_programacao_mensal: "Divulgação mensal (worker/campanhas_engine.py)",
-    cuca_transbordo_colaborador: "Notificação de transbordo (worker/meta_adapter_inbound.py)",
-}
 
 // Extrai posições únicas de {{N}} no corpo do texto, ordenadas
 function detectarPosicoes(texto: string): number[] {
@@ -91,18 +78,19 @@ export default function EditarTemplatePage() {
     // Estado do form
     const [nome, setNome] = useState("")
     const [nomeOriginal, setNomeOriginal] = useState("")
-    const [confirmRenameHardcoded, setConfirmRenameHardcoded] = useState(false)
     const [categoria, setCategoria] = useState("")
     const [status, setStatus] = useState("")
     const [corpoTexto, setCorpoTexto] = useState("")
     const [variaveis, setVariaveis] = useState<VariavelItem[]>([])
-    const [automacoes, setAutomacoes] = useState<string[]>([])
-    const [phoneIds, setPhoneIds] = useState<string[]>([])
+    const [phoneNumberId, setPhoneNumberId] = useState("")
     const [observacoes, setObservacoes] = useState("")
     const [ativo, setAtivo] = useState(true)
 
     // Placeholders detectados no corpo_texto
     const posicoes = detectarPosicoes(corpoTexto)
+
+    // Telefone selecionado — deriva automação/agente/WABA automaticamente
+    const selectedPhone = phoneNumbers.find(p => p.phone_number_id === phoneNumberId) ?? null
 
     // Carregar template + números
     const load = useCallback(async () => {
@@ -119,17 +107,15 @@ export default function EditarTemplatePage() {
             const allTpls: MetaTemplate[] = allTplRes.ok ? await allTplRes.json() : []
 
             setTemplate(tpl)
-            setPhoneNumbers(pns)
+            setPhoneNumbers(pns.filter(p => p.ativo))
             setOutrosNomes(allTpls.filter(t => t.id !== tpl.id).map(t => t.nome))
             setNome(tpl.nome)
             setNomeOriginal(tpl.nome)
-            setConfirmRenameHardcoded(false)
             setCategoria(tpl.categoria ?? "UTILITY")
             setStatus(tpl.status)
             setCorpoTexto(tpl.corpo_texto ?? "")
             setVariaveis(Array.isArray(tpl.variaveis) ? tpl.variaveis : [])
-            setAutomacoes(tpl.automacoes ?? [])
-            setPhoneIds(tpl.phone_number_ids ?? [])
+            setPhoneNumberId(tpl.phone_number_ids?.[0] ?? "")
             setObservacoes(tpl.observacoes ?? "")
             setAtivo(tpl.ativo)
         } catch (err) {
@@ -147,18 +133,6 @@ export default function EditarTemplatePage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [corpoTexto])
 
-    function toggleAutomacao(nome: string) {
-        setAutomacoes(prev =>
-            prev.includes(nome) ? prev.filter(a => a !== nome) : [...prev, nome]
-        )
-    }
-
-    function togglePhone(phoneId: string) {
-        setPhoneIds(prev =>
-            prev.includes(phoneId) ? prev.filter(p => p !== phoneId) : [...prev, phoneId]
-        )
-    }
-
     function setVarDescricao(posicao: number, descricao: string) {
         setVariaveis(prev =>
             prev.map(v => v.posicao === posicao ? { ...v, descricao } : v)
@@ -171,15 +145,13 @@ export default function EditarTemplatePage() {
             toast.error("Nome do template não pode ficar vazio")
             return
         }
-        if (nomeTrimmed !== nomeOriginal) {
-            if (outrosNomes.includes(nomeTrimmed)) {
-                toast.error("Já existe outro template com este nome")
-                return
-            }
-            if (NOMES_HARDCODED_WORKER[nomeOriginal] && !confirmRenameHardcoded) {
-                toast.error("Confirme que está ciente do impacto antes de renomear")
-                return
-            }
+        if (nomeTrimmed !== nomeOriginal && outrosNomes.includes(nomeTrimmed)) {
+            toast.error("Já existe outro template com este nome")
+            return
+        }
+        if (!selectedPhone) {
+            toast.error("Selecione um número Meta")
+            return
         }
 
         setSaving(true)
@@ -193,8 +165,9 @@ export default function EditarTemplatePage() {
                     status,
                     corpo_texto: corpoTexto.trim() || null,
                     variaveis,
-                    automacoes,
-                    phone_number_ids: phoneIds,
+                    automacoes: [selectedPhone.canal_tipo],
+                    phone_number_ids: [selectedPhone.phone_number_id],
+                    waba_ids: [selectedPhone.waba_id],
                     observacoes: observacoes.trim() || null,
                     ativo,
                 }),
@@ -249,21 +222,16 @@ export default function EditarTemplatePage() {
             {/* Card */}
             <div className="rounded-xl border bg-card p-6 flex flex-col gap-5">
 
-                {/* Linha 1: Nome (readonly condicional) + Categoria + Status */}
+                {/* Linha 1: Nome (sempre editável) + Categoria + Status */}
                 <div className="grid grid-cols-[1fr_150px_160px] gap-4">
                     <div className="flex flex-col gap-1.5">
                         <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-                            Nome do template <span className="normal-case text-muted-foreground/60">(BSP Meta)</span>
+                            Nome do template <span className="normal-case text-muted-foreground/60">(exato, como aprovado na Meta)</span>
                         </Label>
                         <Input
                             value={nome}
-                            readOnly={template.status === "aprovado" && template.ativo}
                             onChange={e => setNome(e.target.value)}
-                            className={
-                                template.status === "aprovado" && template.ativo
-                                    ? "font-mono text-sm text-muted-foreground cursor-not-allowed"
-                                    : "font-mono text-sm"
-                            }
+                            className="font-mono text-sm"
                         />
                     </div>
                     <div className="flex flex-col gap-1.5">
@@ -289,26 +257,6 @@ export default function EditarTemplatePage() {
                         </Select>
                     </div>
                 </div>
-
-                {/* Aviso: renomear template com lookup hardcoded no worker */}
-                {nome.trim() !== nomeOriginal && NOMES_HARDCODED_WORKER[nomeOriginal] && (
-                    <div className="flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3.5 text-[13px]">
-                        <p className="text-amber-700 dark:text-amber-400">
-                            <strong>Atenção:</strong> este nome está fixo no código do worker
-                            ({NOMES_HARDCODED_WORKER[nomeOriginal]}). Renomear quebra essa automação
-                            silenciosamente até o código ser atualizado.
-                        </p>
-                        <label className="flex items-center gap-2 cursor-pointer select-none text-amber-800 dark:text-amber-300">
-                            <input
-                                type="checkbox"
-                                checked={confirmRenameHardcoded}
-                                onChange={e => setConfirmRenameHardcoded(e.target.checked)}
-                                className="accent-amber-600 w-4 h-4"
-                            />
-                            Estou ciente do impacto e quero renomear mesmo assim
-                        </label>
-                    </div>
-                )}
 
                 {/* Corpo do texto */}
                 <div className="flex flex-col gap-1.5">
@@ -363,77 +311,39 @@ export default function EditarTemplatePage() {
                     </div>
                 )}
 
-                {/* Automações */}
+                {/* Telefone — deriva automação/agente/WABA automaticamente */}
                 <div className="flex flex-col gap-1.5">
                     <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-                        Automações que usam este template{" "}
-                        <span className="normal-case text-muted-foreground/60">— seletor (múltiplo)</span>
+                        Telefone <span className="normal-case text-muted-foreground/60">— define automação, agente e WABA</span>
                     </Label>
-                    <div className="grid grid-cols-3 gap-2.5">
-                        {TODAS_AUTOMACOES.map(a => {
-                            const on = automacoes.includes(a)
-                            return (
-                                <label
-                                    key={a}
-                                    className={`flex items-center gap-2.5 px-3 py-2.5 border rounded-lg cursor-pointer text-[13px] transition-colors select-none ${
-                                        on
-                                            ? "border-primary/40 bg-primary/10 text-primary"
-                                            : "border-border bg-muted/30 hover:border-border/60 text-muted-foreground"
-                                    }`}
-                                    onClick={() => toggleAutomacao(a)}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={on}
-                                        onChange={() => toggleAutomacao(a)}
-                                        className="accent-primary w-4 h-4"
-                                        onClick={e => e.stopPropagation()}
-                                    />
-                                    {a}
-                                </label>
-                            )
-                        })}
-                    </div>
+                    <Select value={phoneNumberId} onValueChange={setPhoneNumberId}>
+                        <SelectTrigger>
+                            <SelectValue placeholder="Selecione o número Meta" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {phoneNumbers.map(p => (
+                                <SelectItem key={p.phone_number_id} value={p.phone_number_id}>
+                                    {p.display_name} — {p.phone_number_id}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
 
-                {/* Números Meta */}
-                {phoneNumbers.length > 0 && (
+                <div className="grid grid-cols-3 gap-4">
                     <div className="flex flex-col gap-1.5">
-                        <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-                            Números que usam este template{" "}
-                            <span className="normal-case text-muted-foreground/60">— puxa de meta_phone_numbers ativos</span>
-                        </Label>
-                        <div className="flex flex-col gap-2">
-                            {phoneNumbers.filter(pn => pn.ativo).map(pn => {
-                                const on = phoneIds.includes(pn.phone_number_id)
-                                return (
-                                    <label
-                                        key={pn.id}
-                                        className={`flex items-center gap-3 px-3 py-2.5 border rounded-lg cursor-pointer text-[13px] transition-colors select-none ${
-                                            on
-                                                ? "border-primary/40 bg-primary/10"
-                                                : "border-border bg-muted/30 hover:border-border/60"
-                                        }`}
-                                        onClick={() => togglePhone(pn.phone_number_id)}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={on}
-                                            onChange={() => togglePhone(pn.phone_number_id)}
-                                            className="accent-primary w-4 h-4"
-                                            onClick={e => e.stopPropagation()}
-                                        />
-                                        <span className="font-mono text-[12px] text-foreground">{pn.phone_number_id}</span>
-                                        <span className="text-muted-foreground">— {pn.display_name}</span>
-                                        {pn.canal_tipo && (
-                                            <span className="ml-auto text-[11px] text-muted-foreground/60">{pn.canal_tipo}</span>
-                                        )}
-                                    </label>
-                                )
-                            })}
-                        </div>
+                        <Label className="text-xs uppercase tracking-wide text-muted-foreground">Automação</Label>
+                        <Input readOnly value={selectedPhone?.canal_tipo ?? ""} className="text-sm text-muted-foreground cursor-not-allowed" />
                     </div>
-                )}
+                    <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs uppercase tracking-wide text-muted-foreground">Agente</Label>
+                        <Input readOnly value={selectedPhone?.agente_tipo ?? ""} className="text-sm text-muted-foreground cursor-not-allowed" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs uppercase tracking-wide text-muted-foreground">WABA</Label>
+                        <Input readOnly value={selectedPhone?.waba_id ?? ""} className="font-mono text-xs text-muted-foreground cursor-not-allowed" />
+                    </div>
+                </div>
 
                 {/* Observações */}
                 <div className="flex flex-col gap-1.5">
@@ -462,14 +372,7 @@ export default function EditarTemplatePage() {
                     <Link href="/developer/meta-templates">
                         <Button variant="outline">Cancelar</Button>
                     </Link>
-                    <Button
-                        onClick={handleSave}
-                        disabled={
-                            saving ||
-                            (nome.trim() !== nomeOriginal && !!NOMES_HARDCODED_WORKER[nomeOriginal] && !confirmRenameHardcoded)
-                        }
-                        className="gap-2"
-                    >
+                    <Button onClick={handleSave} disabled={saving} className="gap-2">
                         {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                         Salvar template
                     </Button>

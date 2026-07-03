@@ -43,6 +43,16 @@ type MetaTemplate = {
     updated_at: string
 }
 
+type PhoneNumber = {
+    id: string
+    phone_number_id: string
+    waba_id: string
+    display_name: string
+    canal_tipo: string
+    agente_tipo: string
+    ativo: boolean
+}
+
 const STATUS_OPTIONS: TemplateStatus[] = ["pendente", "aprovado", "rejeitado", "pausado"]
 
 const STATUS_BADGE: Record<TemplateStatus, string> = {
@@ -339,7 +349,7 @@ type CreateForm = {
     nome: string
     categoria: string
     status: TemplateStatus
-    automacoes: string
+    phoneNumberId: string
     corpo_texto: string
     observacoes: string
     ativo: boolean
@@ -347,14 +357,25 @@ type CreateForm = {
 
 const INITIAL_FORM: CreateForm = {
     nome: "", categoria: "UTILITY", status: "pendente",
-    automacoes: "", corpo_texto: "", observacoes: "", ativo: true,
+    phoneNumberId: "", corpo_texto: "", observacoes: "", ativo: true,
 }
 
 const CATEGORIAS = ["UTILITY", "MARKETING", "AUTHENTICATION"]
 
 function CreateTemplateModal({ open, onClose, onCreated }: CreateTemplateModalProps) {
     const [form, setForm] = useState<CreateForm>(INITIAL_FORM)
+    const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([])
     const [submitting, setSubmitting] = useState(false)
+
+    useEffect(() => {
+        if (!open) return
+        fetch("/api/admin/meta-phone-numbers")
+            .then(res => res.ok ? res.json() : [])
+            .then((data: PhoneNumber[]) => setPhoneNumbers(data.filter(p => p.ativo)))
+            .catch(() => setPhoneNumbers([]))
+    }, [open])
+
+    const selectedPhone = phoneNumbers.find(p => p.phone_number_id === form.phoneNumberId) ?? null
 
     function handleClose() {
         setForm(INITIAL_FORM)
@@ -366,9 +387,12 @@ function CreateTemplateModal({ open, onClose, onCreated }: CreateTemplateModalPr
             toast.error("Nome do template é obrigatório")
             return
         }
+        if (!selectedPhone) {
+            toast.error("Selecione um número Meta")
+            return
+        }
         setSubmitting(true)
         try {
-            const automacoes = form.automacoes.split(",").map(x => x.trim()).filter(Boolean)
             const res = await fetch("/api/admin/meta-templates", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -376,7 +400,9 @@ function CreateTemplateModal({ open, onClose, onCreated }: CreateTemplateModalPr
                     nome: form.nome.trim(),
                     categoria: form.categoria || null,
                     status: form.status,
-                    automacoes,
+                    automacoes: [selectedPhone.canal_tipo],
+                    phone_number_ids: [selectedPhone.phone_number_id],
+                    waba_ids: [selectedPhone.waba_id],
                     corpo_texto: form.corpo_texto.trim() || null,
                     observacoes: form.observacoes.trim() || null,
                     ativo: form.ativo,
@@ -394,7 +420,7 @@ function CreateTemplateModal({ open, onClose, onCreated }: CreateTemplateModalPr
         }
     }
 
-    function f(field: keyof CreateForm) {
+    function f(field: "nome" | "corpo_texto" | "observacoes") {
         return (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
             setForm(p => ({ ...p, [field]: e.target.value }))
     }
@@ -415,8 +441,8 @@ function CreateTemplateModal({ open, onClose, onCreated }: CreateTemplateModalPr
 
                 <div className="flex flex-col gap-4 py-2">
                     <div className="flex flex-col gap-1.5">
-                        <Label htmlFor="tpl-nome">Nome (exato, snake_case) <span className="text-destructive">*</span></Label>
-                        <Input id="tpl-nome" placeholder="ex: cuca_transbordo_colaborador"
+                        <Label htmlFor="tpl-nome">Nome do template (exato, como aprovado na Meta) <span className="text-destructive">*</span></Label>
+                        <Input id="tpl-nome" placeholder="ex: institucional_transbordo_v1"
                             value={form.nome} onChange={f("nome")} className="font-mono text-sm" />
                     </div>
 
@@ -448,11 +474,32 @@ function CreateTemplateModal({ open, onClose, onCreated }: CreateTemplateModalPr
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                        <Label htmlFor="tpl-automacoes">
-                            Automações <span className="text-muted-foreground text-xs">(separadas por vírgula)</span>
-                        </Label>
-                        <Input id="tpl-automacoes" placeholder="ex: Empregabilidade, Institucional"
-                            value={form.automacoes} onChange={f("automacoes")} />
+                        <Label>Telefone <span className="text-destructive">*</span></Label>
+                        <Select value={form.phoneNumberId} onValueChange={v => setForm(p => ({ ...p, phoneNumberId: v }))}>
+                            <SelectTrigger><SelectValue placeholder="Selecione o número Meta" /></SelectTrigger>
+                            <SelectContent>
+                                {phoneNumbers.map(p => (
+                                    <SelectItem key={p.phone_number_id} value={p.phone_number_id}>
+                                        {p.display_name} — {p.phone_number_id}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                        <div className="flex flex-col gap-1.5">
+                            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Automação</Label>
+                            <Input readOnly value={selectedPhone?.canal_tipo ?? ""} className="text-sm text-muted-foreground cursor-not-allowed" />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Agente</Label>
+                            <Input readOnly value={selectedPhone?.agente_tipo ?? ""} className="text-sm text-muted-foreground cursor-not-allowed" />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <Label className="text-xs uppercase tracking-wide text-muted-foreground">WABA</Label>
+                            <Input readOnly value={selectedPhone?.waba_id ?? ""} className="font-mono text-xs text-muted-foreground cursor-not-allowed" />
+                        </div>
                     </div>
 
                     <div className="flex flex-col gap-1.5">

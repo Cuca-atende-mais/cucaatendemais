@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
         .from("meta_templates")
         .select("id")
         .eq("nome", nome.trim())
+        .eq("ativo", true)
         .maybeSingle()
 
     if (existing) {

@@ -95,7 +95,8 @@ export async function POST(request: NextRequest) {
                         const { data: tpl } = await supabaseAdmin
                             .from("meta_templates")
                             .select("nome")
-                            .eq("nome", "cuca_feedback_vaga")
+                            .eq("automacoes", ["Empregabilidade"])
+                            .contains("phone_number_ids", [phoneNumber.phone_number_id])
                             .eq("ativo", true)
                             .eq("status", "aprovado")
                             .limit(1)

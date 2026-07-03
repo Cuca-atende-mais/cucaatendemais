@@ -223,6 +223,26 @@ _AGENTE_MODULO_MAP: dict[str, str] = {
     "ana":           "acesso_cuca",
 }
 
+# S-WM-16 Task 2: normaliza modulo/agente_tipo (snake_case interno) para a tag de
+# automação salva em meta_templates.automacoes (capitalizada, como aparece no Developer
+# Console). Cobre tanto valores de agente_tipo quanto os já normalizados por
+# _AGENTE_MODULO_MAP, já que _notificar_transbordo recebe modulo de origens diferentes
+# (literal "empregabilidade" em empregabilidade_engine.py, ou _AGENTE_MODULO_MAP.get(...)
+# em meta_adapter_inbound.py).
+MODULO_AUTOMACAO_MAP: dict[str, str] = {
+    "empregabilidade": "Empregabilidade",
+    "julia":           "Empregabilidade",
+    "sofia":           "Ouvidoria",
+    "sofia_global":    "Ouvidoria",
+    "sofia_unidade":   "Ouvidoria",
+    "ana":             "Acesso CUCA",
+    "Institucional":   "Institucional",
+    "maria":           "Institucional",
+    "programacao":     "Institucional",
+    "ouvidoria":       "Ouvidoria",
+    "acesso_cuca":     "Acesso CUCA",
+}
+
 
 async def _chamar_motor_agente(
     contrato_v2: dict,
@@ -344,19 +364,20 @@ async def _notificar_transbordo(
                 modulo, unidade_cuca, conversa_id,
             )
             return
+        automacao = MODULO_AUTOMACAO_MAP.get(modulo, modulo)
+        # Lookup relacional (automação + número + tag "Transbordo" — zero nome hardcoded).
+        # A 2ª tag "Transbordo" desambigua de outros templates que também usam o mesmo
+        # canal/número (ex.: programação mensal, evento pontual), já que várias finalidades
+        # podem compartilhar a mesma automação + phone_number_id.
         tpl_res = sb.table("meta_templates").select("nome, corpo_texto") \
-            .contains("automacoes", [modulo]) \
+            .contains("automacoes", [automacao, "Transbordo"]) \
+            .contains("phone_number_ids", [phone_number_id_origem]) \
             .eq("ativo", True).eq("status", "aprovado") \
             .limit(1).maybe_single().execute()
         if not tpl_res.data:
-            tpl_res = sb.table("meta_templates").select("nome, corpo_texto") \
-                .eq("nome", "cuca_transbordo_colaborador") \
-                .eq("ativo", True).eq("status", "aprovado") \
-                .limit(1).maybe_single().execute()
-        if not tpl_res.data:
             logger.warning(
-                "[transbordo] Nenhum template aprovado para modulo=%s — notificação não enviada",
-                modulo,
+                "[transbordo] Nenhum template aprovado para automacao=%s phone_number_id=%s — notificação não enviada",
+                automacao, phone_number_id_origem,
             )
             return
         template_name = tpl_res.data["nome"]

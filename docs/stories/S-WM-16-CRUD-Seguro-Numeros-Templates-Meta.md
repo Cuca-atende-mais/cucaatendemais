@@ -1,7 +1,7 @@
 # S-WM-16 — CRUD completo e seguro de Números e Templates Meta (Developer Console)
 
 ## Status
-InProgress
+Ready for Review
 
 ## Executor Assignment
 ```yaml
@@ -197,14 +197,54 @@ Verificação direta no cuca-dev (não apenas leitura de código) via `execute_s
 Auditado o que Task 1 e Task 3 tocam: ambas as rotas usam `createAdminClient()` (service_role) e não passam por nenhuma camada de cache — qualquer `UPDATE` feito pela UI reflete imediatamente na próxima leitura do worker (mesmo princípio de S-WM-13/14, sem código novo de cache introduzido). O smoke test completo pedido no AC9 (editar `phone_number_id` de um registro real e confirmar via `get_logs` que uma mensagem simulada usa a config nova) **não foi executado** — depende de simular uma mensagem inbound real contra um número Meta configurado no cuca-dev, o que está fora do que consigo/devo fazer sem coordenar com Junior sobre qual número de teste usar (evitar mexer em mapeamento real usado por outras automações em andamento). Deixo como pendência explícita, não como "concluído".
 
 ### Completion Notes List
-- **Task 1: concluída.** Nome editável condicionalmente, guard funcional para os 2 nomes hardcoded, validação de unicidade frontend + backend.
-- **Task 2: BLOQUEADA — HALT.** Ambiguidade real confirmada em produção (dados do cuca-dev, não hipótese) nos dois pontos do worker. Não implementada — decisão de arquitetura necessária antes de codar (ver Debug Log). Escalando para o usuário/Junior decidir entre as 2 opções levantadas, ou outra.
+- **Task 1: concluída (com revisão).** Guard/readOnly condicional dos 2 nomes hardcoded foi **removido** por decisão de Junior no ajuste final — Task 2 passou a ser 100% relacional (automação + phone_number_id), eliminando o motivo do guard. Nome do template agora é sempre editável em texto livre, tanto no modal de criação quanto na página de edição.
+- **Task 2: concluída — redesenhada como CRUD relacional completo** (ajuste final de Junior, substitui o design original de "renomear nomes hardcoded"). Ver seção própria abaixo para detalhes técnicos.
 - **Task 3: concluída.** `phone_number_id`/`waba_id` editáveis com validação de formato (regra estendida a `waba_id` por instrução do @po), modal de confirmação explícita, soft delete via nova rota `DELETE`. Verificado diretamente no cuca-dev que o update de PK funciona.
 - **Task 4: não iniciada — gate intacto.** Aguardando avaliação de custo-benefício com @po, conforme a própria story exige antes de qualquer código.
-- **Task 5: parcial.** Auditoria de reflexo imediato (sem cache) feita por inspeção de código. Smoke test end-to-end (AC9) pendente — precisa de coordenação sobre qual número de teste usar no cuca-dev.
-- `pytest worker/tests/test_meta_adapter_inbound.py`: 25/25 passando (baseline, sem alteração no worker — Task 2 não implementada).
-- `npx tsc --noEmit`: 0 erros.
-- `npx eslint` nos 4 arquivos tocados: 5 erros remanescentes, todos pré-existentes (confirmado via diff contra a versão anterior do arquivo) — nenhum introduzido pelo código novo desta story.
+- **Task 5: parcial.** Reflexo imediato (sem cache) confirmado por inspeção de código — rotas usam `createAdminClient()`/service_role, sem camada de cache. Disambiguação das 4 queries relacionais **verificada diretamente no cuca-dev via `execute_sql`** (não só por inspeção de código — rodei as 4 queries reais e confirmei 1 resultado único cada). **Smoke test E2E fim-a-fim com mensagem real fica para Junior** (validação final descrita na story, exige número de teste real — fora do que dá pra simular aqui).
+- `pytest worker/tests/`: **74 passed, 3 skipped** (suíte completa, não só o arquivo de transbordo). 1 teste (`test_sem_template_aprovado_nao_envia`) precisou de atualização de mock — o mock antigo simulava a query de 2 passos (contains + fallback por nome) que não existe mais; atualizado para o novo formato de query única (automação + phone_number_id). Mudança de teste, não de comportamento — a asserção continua a mesma (sem template aprovado → não envia).
+- `npx tsc --noEmit`: 0 erros em todo o portal.
+- `npx eslint` nos arquivos tocados: erros remanescentes todos pré-existentes (confirmado via diff linha a linha contra a versão anterior de cada arquivo) — nenhum introduzido pelo código novo desta story.
+- `python -m ast.parse`: sintaxe válida em `campanhas_engine.py` e `meta_adapter_inbound.py`.
+
+### Task 2 (redesenhada) — CRUD relacional de templates Meta
+
+**Modelo final:** todo template Meta se vincula a exatamente 1 número (`phone_number_id`), do qual `automação` (canal_tipo), `agente` (agente_tipo) e `waba_id` são derivados automaticamente — nunca digitados à mão. `nome` é sempre texto livre (o nome real aprovado na Meta). Nenhum nome de template está mais hardcoded em nenhum lookup do worker ou do portal.
+
+**Decisão técnica não trivial, documentada aqui porque não veio de nenhuma instrução explícita — foi resolução minha durante a implementação:** vários templates compartilham a mesma automação + mesmo número (ex.: `institucional_transbordo_v1` e `institucional_programacao_mensal_v1` usam ambos `automacoes` contendo "Institucional" e o mesmo `phone_number_id`). Filtrar só por automação+número não bastava — adicionei uma **2ª tag específica** em `automacoes` para os casos que precisam de desambiguação: `"Transbordo"` (nos 2 templates de transbordo) e `"Pontual"`/`"Convite"` (nos 2 templates catálogo-only). O template "padrão" de cada canal (`institucional_programacao_mensal_v1`, `empregabilidade_feedback_empresa_v1`) fica com **1 tag só**, e o lookup dele usa **igualdade exata de array** (`.eq("automacoes", ["Institucional"])`), não `.contains`, pra não colidir com os templates de 2 tags. Verifiquei as 4 combinações reais no banco (query por query, ver Debug Log) — cada uma retorna exatamente 1 linha.
+
+**Arquivos do worker:**
+- `worker/meta_adapter_inbound.py`: `MODULO_AUTOMACAO_MAP` novo (normaliza `modulo`/`agente_tipo` em qualquer formato — `empregabilidade`, `julia`, `sofia_global`, `sofia_unidade`, `ana`, `Institucional`, `maria`, etc. — para a tag de automação salva no banco). `_notificar_transbordo` agora faz 1 query só (`automação`+`"Transbordo"`+`phone_number_id`), fallback hardcoded removido completamente.
+- `worker/campanhas_engine.py`: `processar_disparos_divulgacao` reordenada — busca `phone_number_id` por `canal_tipo="Institucional"` (era `"Divulgação"`, trocado por decisão de Junior — o número de Divulgação é o mesmo do Institucional) **antes** do lookup do template, porque o template agora depende do `phone_number_id` para desambiguar. Removido o 3º parâmetro do `components` (`link_ou_msg`) — Junior confirmou que o template real só tem 2 variáveis (`nome`, `mês`).
+
+**Arquivo do portal (3º ponto hardcoded, achado nesta investigação, fora dos 2 que Junior apontou originalmente):**
+- `cuca-portal/src/app/api/empregabilidade/vagas/feedback-submit/route.ts`: `.eq("nome","cuca_feedback_vaga")` → lookup relacional (`automacoes=["Empregabilidade"]` exato + `phone_number_ids` contains). Por decisão explícita de Junior, os parâmetros que esse endpoint já envia (título da vaga, nome da empresa, contagem de aprovados) **não foram alterados** — o `corpo_texto` de `empregabilidade_feedback_empresa_v1` no catálogo (com `{{link_feedback}}`) documenta o template real aprovado, mas hoje esse endpoint específico ainda não envia esse conjunto de parâmetros. Divergência conhecida e aceita, a corrigir em story futura (também não migrei `solicitar-feedback/route.ts`, que hoje envia texto livre e seria o candidato mais natural pro conteúdo real do template — fora de escopo desta story, por decisão de Junior).
+
+**Migration:** `supabase/migrations/20260703000000_wm16_templates_relacionais.sql`, aplicada via `apply_migration` no cuca-dev:
+1. Índice único `meta_templates_nome_unique` recriado como **parcial** (`WHERE ativo = true`) — sem isso, soft-delete + recriar com o mesmo nome bateria 409 porque a linha antiga inativa ainda ocupava o nome. Também ajustei os 2 pre-checks de duplicidade no app (`meta-templates/route.ts` POST e `[id]/route.ts` PATCH) pra respeitarem `ativo=true`, senão o índice parcial resolvia mas o app continuava bloqueando.
+2. Removidos `cuca_transbordo_colaborador`, `cuca_programacao_mensal`, `cuca_feedback_vaga` (substituídos pelos nomes reais).
+3. Inseridos os 6 templates reais com nomes/corpos fornecidos por Junior — **placeholders nomeados convertidos para `{{1}}`, `{{2}}`... na ordem em que apareciam**, com o nome original preservado como `descricao` de cada posição em `variaveis` (Meta só aceita `{{N}}` numérico; confirmei lendo o código que `_enviar_template_meta` manda parâmetros posicionais, não lê `corpo_texto` — esse campo é só preview/documentação).
+
+**Frontend:**
+- `meta-templates/page.tsx` (criar) e `meta-templates/[id]/page.tsx` (editar): removidos os campos antigos (input de automações por vírgula na criação; checkboxes de automações + checkboxes de números na edição). Substituídos pelos 5 campos pedidos: nome livre, dropdown de telefone (`meta_phone_numbers` ativos), e 3 campos read-only (automação/agente/WABA) que atualizam instantaneamente ao trocar o telefone — sem chamada de rede, é só `.find()` na lista já carregada.
+- CRUD de exclusão (soft delete) **já existia** em `meta-templates/page.tsx` (rota `DELETE` + modal de confirmação da S-WM-13/14) — não precisou de código novo, só passou a funcionar de verdade para recriar-com-mesmo-nome depois do índice parcial.
+
+### File List
+
+**Modificados nesta rodada (além dos 4 já listados acima, da Task 1/3):**
+- `cuca-portal/src/app/(dashboard)/developer/meta-templates/page.tsx` — CreateTemplateModal redesenhado (dropdown telefone + 3 readonly, tipo `PhoneNumber` novo)
+- `cuca-portal/src/app/(dashboard)/developer/meta-templates/[id]/page.tsx` — reescrito: guard/readOnly da Task 1 removido, checkboxes de automações/números substituídos por dropdown+readonly
+- `cuca-portal/src/app/api/admin/meta-templates/route.ts` — pre-check de duplicidade de nome agora filtra `ativo=true`
+- `cuca-portal/src/app/api/admin/meta-templates/[id]/route.ts` — idem, no PATCH
+- `cuca-portal/src/app/api/empregabilidade/vagas/feedback-submit/route.ts` — hardcode de nome eliminado (3º ponto, achado nesta investigação)
+- `worker/campanhas_engine.py` — lookup relacional da programação mensal, canal trocado Divulgação→Institucional, 3º parâmetro removido
+- `worker/meta_adapter_inbound.py` — `MODULO_AUTOMACAO_MAP` novo, lookup relacional do transbordo, fallback hardcoded removido
+- `worker/tests/test_meta_adapter_inbound.py` — mock de 1 teste atualizado pro novo formato de query (comportamento testado não mudou)
+
+**Criados:**
+- `supabase/migrations/20260703000000_wm16_templates_relacionais.sql` — índice único parcial + migração dos 6 templates reais
+
+**Zero nome de template hardcoded restante** — confirmado por grep: nenhuma ocorrência de `.eq("nome", "cuca_...")` ou similar nos 3 arquivos que tinham esse padrão.
 
 ### File List
 
@@ -219,11 +259,11 @@ Auditado o que Task 1 e Task 3 tocam: ambas as rotas usam `createAdminClient()` 
 - `worker/meta_adapter_inbound.py` — nenhuma alteração, hardcode de `cuca_transbordo_colaborador` permanece
 
 ### Tasks
-- [x] **Task 1 — Liberar edição segura de "nome" de template:** concluída (ver Debug Log).
-- [ ] **Task 2 — Remover hardcode de nome no worker:** **BLOQUEADA — HALT.** Ambiguidade real confirmada nos dois pontos do worker (ver Debug Log). Decisão de arquitetura pendente antes de codar.
+- [x] **Task 1 — Liberar edição segura de "nome" de template:** concluída; guard/readOnly condicional removido no ajuste final (Task 2 elimina o motivo dele).
+- [x] **Task 2 — CRUD relacional completo de templates Meta (redesenhada):** concluída. Migration aplicada no cuca-dev, 3 pontos de hardcode eliminados (2 no worker + 1 achado no portal), disambiguação verificada via SQL direto.
 - [x] **Task 3 — CRUD completo e seguro de Número Meta:** concluída, incluindo validação de `waba_id` (nota do @po incorporada) e rota DELETE.
 - [ ] **Task 4 — Validação cruzada com a API real da Meta:** não iniciada — gate com @po intacto, conforme escopo da story.
-- [ ] **Task 5 — Auditoria de consistência:** parcial — reflexo imediato auditado por inspeção de código; smoke test end-to-end (AC9) pendente.
+- [~] **Task 5 — Auditoria de consistência:** reflexo imediato + disambiguação relacional verificados diretamente no cuca-dev. Smoke test E2E com mensagem real fica para Junior (validação final combinada).
 
 ## QA Results
 _Pendente — aguardando execução @dev e posterior QA gate._
@@ -234,3 +274,4 @@ _Pendente — aguardando execução @dev e posterior QA gate._
 | 2026-07-03 | @sm (River) | Story criada a partir do plano de Junior sobre cima da investigação read-only do @dev (turno anterior desta sessão): 5 tasks (edição segura de nome de template, remoção de hardcode no worker, CRUD seguro de número Meta, validação cruzada com a API da Meta — opcional, gate com @po antes de codar — e auditoria de consistência). Achados exatos do @dev citados como Dev Notes, sem reinvestigação. |
 | 2026-07-03 | @po (Pax) | Validação GO 9/10 — Draft → Ready. Ver observações não-bloqueantes no veredito abaixo. |
 | 2026-07-03 | @dev (Dex) | Ready → InProgress. Tasks 1 e 3 concluídas (nota do @po sobre validação de `waba_id` incorporada). Task 2 **BLOQUEADA (HALT)** — ambiguidade real de lookup confirmada em dados de produção do cuca-dev, não hipotética; ver Debug Log para as 2 opções levantadas. Task 4 não iniciada (gate @po intacto). Task 5 parcial. tsc limpo, eslint sem novos erros, pytest do worker 25/25 (baseline). |
+| 2026-07-03 | @dev (Dex) | Task 2 redesenhada por Junior como CRUD relacional completo (automação+número, zero nome hardcoded) e implementada de ponta a ponta: migration aplicada no cuca-dev (índice único parcial + 6 templates reais), 2 pontos do worker corrigidos, 3º ponto hardcoded achado e corrigido no portal (`feedback-submit/route.ts`), frontend das 2 telas de template redesenhado (dropdown telefone + 3 campos derivados), guard da Task 1 removido. Disambiguação de queries verificada diretamente no cuca-dev (não só teórica). pytest completo 74 passed/3 skipped (1 mock desatualizado corrigido). tsc 0 erros, eslint sem novos erros. InProgress → **Ready for Review**. Task 4 segue gated (@po). Smoke test E2E fica para Junior validar manualmente. Sugestão: chamar @qa para o gate. |

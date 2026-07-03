@@ -430,7 +430,6 @@ async def processar_disparos_divulgacao(
     disparo = res.data[0]
     disparo_id = disparo["id"]
     mes_num = disparo.get("mes", 0)
-    link_ou_msg = disparo.get("mensagem_template", "") or disparo.get("titulo", "")
 
     _MESES = {
         1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -442,25 +441,29 @@ async def processar_disparos_divulgacao(
     logger.info(f"[Divulgação] Iniciando disparo global {disparo_id} — mês: {mes_nome}")
     await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "em_andamento")
 
-    # Lookup dinâmico do template de divulgação mensal
-    _tpl_div = await asyncio.to_thread(
-        lambda: supabase.table("meta_templates").select("nome, corpo_texto")
-        .eq("nome", "cuca_programacao_mensal").eq("ativo", True).eq("status", "aprovado")
-        .limit(1).maybe_single().execute()
-    )
-    if not _tpl_div.data:
-        logger.warning(f"[Divulgação] Nenhum template aprovado para programacao_mensal — disparo {disparo_id} cancelado")
-        await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "pausado")
-        return
-    template_divulgacao = _tpl_div.data["nome"]
-
-    canal_info = await asyncio.to_thread(_get_phone_by_canal_tipo_sync, "Divulgação")
+    canal_info = await asyncio.to_thread(_get_phone_by_canal_tipo_sync, "Institucional")
     if not canal_info:
-        logger.error(f"[Divulgação] Nenhum phone_number_id Meta ativo para Divulgação. Pausando {disparo_id}.")
+        logger.error(f"[Divulgação] Nenhum phone_number_id Meta ativo para Institucional. Pausando {disparo_id}.")
         await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "pausado")
         return
 
     phone_number_id, meta_token = canal_info
+
+    # Lookup relacional do template de programação mensal (automação + número — zero nome hardcoded).
+    # automacoes=["Institucional"] exato (não .contains) para não colidir com templates que também
+    # usam o canal Institucional mas carregam uma 2ª tag (ex.: transbordo, evento pontual).
+    _tpl_div = await asyncio.to_thread(
+        lambda: supabase.table("meta_templates").select("nome, corpo_texto")
+        .eq("automacoes", ["Institucional"])
+        .contains("phone_number_ids", [phone_number_id])
+        .eq("ativo", True).eq("status", "aprovado")
+        .limit(1).maybe_single().execute()
+    )
+    if not _tpl_div.data:
+        logger.warning(f"[Divulgação] Nenhum template aprovado para Institucional/{phone_number_id} — disparo {disparo_id} cancelado")
+        await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "pausado")
+        return
+    template_divulgacao = _tpl_div.data["nome"]
 
     leads_res = await asyncio.to_thread(_query_leads_divulgacao_sync)
     leads = leads_res.data or []
@@ -491,7 +494,6 @@ async def processar_disparos_divulgacao(
             "parameters": [
                 {"type": "text", "text": nome},
                 {"type": "text", "text": mes_nome},
-                {"type": "text", "text": link_ou_msg},
             ],
         }]
 

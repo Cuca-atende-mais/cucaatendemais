@@ -77,6 +77,7 @@ export async function PATCH(
             .from("meta_templates")
             .select("id")
             .eq("nome", update.nome)
+            .eq("ativo", true)
             .neq("id", id)
             .maybeSingle()
 

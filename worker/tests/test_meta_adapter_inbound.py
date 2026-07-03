@@ -619,11 +619,11 @@ class TestNotificarTransbordo:
             .execute.return_value.data = [contato]
 
         templates_mock = MagicMock()
-        templates_mock.select.return_value.contains.return_value.eq.return_value.eq.return_value \
-            .limit.return_value.maybe_single.return_value.execute.return_value.data = None
-        # fallback por nome exato (S-WM-14: ilike → eq)
-        templates_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value \
-            .limit.return_value.maybe_single.return_value.execute.return_value.data = None
+        # S-WM-16 Task 2: lookup relacional único (automação + número + tag "Transbordo"),
+        # sem fallback por nome hardcoded.
+        templates_mock.select.return_value.contains.return_value.contains.return_value \
+            .eq.return_value.eq.return_value.limit.return_value.maybe_single.return_value \
+            .execute.return_value.data = None
 
         def _table_side_effect(name):
             return contacts_mock if name == "human_handover_contacts" else templates_mock
