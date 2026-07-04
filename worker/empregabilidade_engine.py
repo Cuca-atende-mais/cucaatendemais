@@ -56,6 +56,25 @@ def _montar_historico(conversa_id: str, limite: int = 6) -> str:
         return "(erro ao carregar histórico)"
 
 
+def _ultima_mensagem_bot(conversa_id: str) -> str | None:
+    """Busca a última mensagem enviada pelo agente, para dar contexto ao
+    classificador semântico (S-WM-20 Task 3)."""
+    try:
+        res = (
+            supabase.table("mensagens")
+            .select("conteudo")
+            .eq("conversa_id", conversa_id)
+            .eq("remetente", "agente")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+        return rows[0]["conteudo"] if rows else None
+    except Exception:
+        return None
+
+
 def _get_meta_phone(agente_tipo: str) -> tuple[str, str]:
     """Retorna (phone_number_id, system_token) para o agente desde meta_phone_numbers."""
     try:
@@ -198,51 +217,6 @@ async def _encerrar_fluxo(
         )
     await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id)
     _set_fluxo(conversa_id, {})
-
-
-# ---------------------------------------------------------------------------
-# Identificação de perfil (empresa, candidato, público geral)
-# ---------------------------------------------------------------------------
-
-def _identificar_perfil(texto: str, fluxo: dict) -> str:
-    """
-    Retorna 'empresa', 'candidato', 'publico' ou 'indefinido'.
-    Usa palavras-chave para classificação inicial.
-    """
-    t = texto.lower()
-
-    # Apenas termos que indicam inequivocamente contexto de empresa/empregador
-    palavras_empresa = [
-        "contratar", "selecionar", "divulgar", "cnpj",
-        "processo seletivo", "oferecer vaga", "disponibilizar vaga",
-        "preciso de funcionário", "quero contratar", "quero divulgar",
-        "divulgar vaga", "abrir vaga", "criar vaga",
-    ]
-    palavras_candidato = [
-        "minha candidatura", "me candidatei", "número da candidatura",
-        "status", "cpf", "fui selecionado", "aprovado", "entrevista",
-        "acompanhar", "como está", "resultado",
-    ]
-    # "vaga/vagas/emprego" são ambíguos — pertencem ao público geral (quem busca trabalho)
-    palavras_publico = [
-        "vaga aberta", "quero trabalhar", "quero emprego", "tem vaga",
-        "vagas disponíveis", "vagas disponiveis", "quais vagas", "quais são as vagas",
-        "ver vagas", "tem vagas", "procurando emprego", "busca de trabalho",
-        "procuro emprego", "oportunidade de trabalho",
-        "como me candidato", "como faço", "oportunidade", "interesse em vaga",
-    ]
-
-    score_empresa = sum(1 for p in palavras_empresa if p in t)
-    score_candidato = sum(1 for p in palavras_candidato if p in t)
-    score_publico = sum(1 for p in palavras_publico if p in t)
-
-    if score_empresa > score_candidato and score_empresa > score_publico:
-        return "empresa"
-    if score_candidato > score_empresa and score_candidato > score_publico:
-        return "candidato"
-    if score_publico > 0:
-        return "publico"
-    return "indefinido"
 
 
 # ---------------------------------------------------------------------------
@@ -1090,8 +1064,11 @@ async def _processar_candidato(
     async def e(msg: str):
         await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
 
-    # Encerramento
-    if _quer_encerrar(texto) and etapa != "aguardando_id_candidato":
+    # Encerramento — S-WM-20 Task 2: exclusão de "aguardando_id_candidato" removida.
+    # Não havia justificativa documentada (diferente de S37C-03 em pos_candidatura, ou
+    # das frases_nao_empresa em aguardando_cnpj) — era exatamente o bug 3 do relatório:
+    # lead preso no estado sem conseguir sair mesmo dizendo "tchau"/"obrigado".
+    if _quer_encerrar(texto):
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, "candidato")
         return
 
@@ -1106,6 +1083,24 @@ async def _processar_candidato(
         return
 
     if etapa == "aguardando_id_candidato":
+        # S-WM-20 Task 3: escape hatch semântico antes do parser sintático —
+        # bug 3 do relatório ("nao nao, sou uma empresa" não batia com
+        # _quer_encerrar nem com o parser de CPF/ref/telefone/nome, caindo
+        # sempre em "não encontrei candidatura").
+        from intencao_detector import avaliar_mensagem_contextual  # noqa: PLC0415
+        sem = await avaliar_mensagem_contextual(
+            texto, perfil="candidato", etapa=etapa,
+            ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
+        )
+        if sem["quer_sair"]:
+            await _encerrar_fluxo(conversa_id, instance_name, token, phone, "candidato")
+            return
+        if sem["mudou_de_assunto"] and sem["intencao"] != "ambiguo":
+            await _rotear_por_intencao(
+                sem, texto, phone, instance_name, token, lead_id, conversa_id, "",
+            )
+            return
+
         apenas_digitos = re.sub(r"\D", "", texto)
         texto_limpo = texto.strip()
 
@@ -1221,8 +1216,23 @@ _INTENCAO_BANCO_TALENTOS = {
 def _quer_banco_talentos(texto: str, etapa: str = "", fluxo: dict | None = None) -> bool:
     """Detecta correção de intenção para banco de talentos sem roubar opções válidas."""
     t = texto.strip().lower()
-    if any(p in t for p in _INTENCAO_BANCO_TALENTOS):
-        return True
+    # S-WM-20 Task 5: risco residual encontrado ao testar o fast-path quer_banco
+    # de oferta_banco_talentos (apontado pelo @qa) — "não quero banco de talentos,
+    # sou uma empresa" batia em "banco de talentos" aqui, ANTES de qualquer
+    # dispatch por etapa, interceptando a mensagem antes mesmo do gate semântico
+    # de oferta_banco_talentos ter chance de rodar.
+    # Fix cuidadoso: alguns dos próprios gatilhos legítimos já contêm "não"/"nao"
+    # por design ("não encontrei", "não tem nada") — um filtro cego de negação
+    # quebraria esses casos. Em vez disso, remove os trechos que deram match e só
+    # cancela se sobrar "não"/"nao" no resto da frase (negação de fato externa ao
+    # gatilho, não parte dele).
+    matched = [p for p in _INTENCAO_BANCO_TALENTOS if p in t]
+    if matched:
+        resto = t
+        for p in matched:
+            resto = resto.replace(p, "")
+        if not any(neg in resto for neg in ("não", "nao")):
+            return True
 
     # "4" puro é ambíguo em menus dinâmicos. Só redireciona se a etapa atual
     # não tiver uma opção 4 válida visível para o lead.
@@ -1396,8 +1406,16 @@ async def _processar_publico(
 
     # --- ETAPA: oferta_banco_talentos ---
     if etapa == "oferta_banco_talentos":
-        quer_banco = any(p in t_lower for p in ("sim", "quero", "ok", "claro", "pode", "banco", "talentos", "cadastrar"))
-        quer_recusar = any(p in t_lower for p in ("não", "nao", "não quero", "dispenso", "encerrar", "tchau", "até logo"))
+        # S-WM-20 Task 5: risco residual apontado pelo @qa no gate da Task 3/4 —
+        # "não quero banco de talentos, sou empresa" batia em "banco"/"talentos"
+        # e disparava o fast-path antes de chegar ao gate semântico. Reproduzido
+        # e confirmado real (ver Dev Agent Record). Fix: presença de negação
+        # desativa o fast-path e deixa a decisão para o classificador semântico,
+        # que lê a frase inteira em vez de uma palavra isolada.
+        tem_negacao = any(p in t_lower for p in ("não", "nao"))
+        quer_banco = not tem_negacao and any(
+            p in t_lower for p in ("sim", "quero", "ok", "claro", "pode", "banco", "talentos", "cadastrar")
+        )
         if quer_banco:
             await e("Para continuar, preciso do seu *nome completo*:")
             _set_fluxo(conversa_id, {
@@ -1407,12 +1425,25 @@ async def _processar_publico(
                 "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
                 "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
             })
-        else:
-            # Recusa ou mensagem ambígua → despedida e encerramento
-            await e(
-                "Tudo bem! Qualquer novidade, entraremos em contato. Até logo! 👋"
+            return
+
+        # S-WM-20 Task 3: gate semântico substitui a checagem de negação por
+        # substring isolada (bug 5 do relatório: "nao nao, eu sou uma empresa
+        # e gostava de subir uma vaga aqui" encerrava o fluxo por causa da
+        # substring "nao", ignorando o resto da frase).
+        from intencao_detector import avaliar_mensagem_contextual  # noqa: PLC0415
+        sem = await avaliar_mensagem_contextual(
+            texto, perfil="publico", etapa=etapa,
+            ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
+        )
+        if sem["mudou_de_assunto"] and sem["intencao"] not in ("ambiguo", "banco_talentos"):
+            await _rotear_por_intencao(
+                sem, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
             )
-            await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
+            return
+
+        # Recusa ou mensagem ambígua → única despedida e encerramento
+        await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
         return
 
     # --- ETAPA: coletando_nome_candidato ---
@@ -2122,11 +2153,14 @@ async def processar_mensagem_empregabilidade(
             logger.info(f"[SQS-49] Confirmação de presença '{confirmacao}' registrada para candidatura {cand['id']}")
             return
 
-    # S-EMP-01-01: Detector de intenção — primeira interação ou perfil indefinido
-    from intencao_detector import IntencaoDetector, extrair_nome_heuristico, extrair_setor_da_mensagem  # noqa: PLC0415
+    # S-EMP-01-01 / S-WM-20 Task 3: Detector de intenção — primeira interação ou perfil indefinido
+    from intencao_detector import avaliar_mensagem_contextual, extrair_nome_heuristico, extrair_setor_da_mensagem  # noqa: PLC0415
     lead_res = supabase.table("leads").select("nome").eq("id", lead_id).maybe_single().execute()
     lead_nome = (lead_res.data or {}).get("nome") or extrair_nome_heuristico(texto)
-    intencao_res = await IntencaoDetector().classificar(texto, midia_tipo, lead_nome)
+    intencao_res = await avaliar_mensagem_contextual(
+        texto, midia_tipo, perfil=None, etapa=None,
+        ultima_msg_bot=_ultima_mensagem_bot(conversa_id), lead_nome=lead_nome,
+    )
     _log_intencao(conversa_id, intencao_res["intencao"])
     await _rotear_por_intencao(
         intencao_res, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
@@ -2244,9 +2278,19 @@ async def _rotear_por_intencao(
         _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio", "arquivo_pendente": True})
 
     else:
-        # AC#4 — ambíguo: pergunta aberta humanizada, sem menu
-        await e(f"Olá{saudacao_nome} Como posso te ajudar? 😊")
-        # Não define fluxo — próxima mensagem re-entra na detecção
+        # AC#4 / bug 1 (S-WM-20 Task 3): ambíguo — menu determinístico em vez de
+        # pergunta aberta. O LLM sem contexto (primeira mensagem) não é confiável
+        # o bastante para decidir sozinho; o menu numérico dá uma saída
+        # inequívoca e deixa a próxima resposta ser tratada sem precisar do LLM.
+        await e(
+            f"Olá{saudacao_nome} Não entendi bem o que você precisa. Escolha uma das opções:\n\n"
+            "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
+            "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
+            "3️⃣ *Vagas* — Quero ver vagas abertas\n"
+            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
+            "Digite *1*, *2*, *3* ou *4*."
+        )
+        _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
 
 
 # ---------------------------------------------------------------------------

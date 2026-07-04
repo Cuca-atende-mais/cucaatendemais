@@ -416,6 +416,7 @@ class TestDispatchMotorAgente:
             mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
                 {"id": "conv-id-1", "status": "ativa"}
             ]
+            mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
             mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
             mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
             mock_supabase.rpc.return_value.execute.return_value = MagicMock()
@@ -519,6 +520,7 @@ class TestDispatchMotorAgente:
         mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
             {"id": "c-null", "status": None}
         ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
         mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
         mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
         mock_supabase.rpc.return_value.execute.return_value = MagicMock()
@@ -550,6 +552,7 @@ class TestDispatchMotorAgente:
             mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
                 {"id": "conv-h1", "status": "ativa"}
             ]
+            mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
             mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
             mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
             mock_supabase.rpc.return_value.execute.return_value = MagicMock()
@@ -588,6 +591,7 @@ class TestDispatchMotorAgente:
         mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "l2"}]
         mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"bloqueado": False}
         mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [{"id": "c2", "status": "ativa"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
         mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
         mock_supabase.rpc.return_value.execute.return_value = MagicMock()
 
@@ -682,3 +686,82 @@ class TestNotificarTransbordo:
 
         with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
             await _notificar_transbordo("conv-3", "ouvidoria", None, "PHONE_ID", "55phone")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-WM-20 Task 1: dedupe de mensagens inbound por wamid
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDedupeWamid:
+
+    @staticmethod
+    def _mock_supabase_fluxo_completo(wamid_ja_existe: bool):
+        """Mock com toda a cadeia de processar_webhook_meta configurada."""
+        from unittest.mock import MagicMock
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-dedupe"}]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        mock_sb.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-dedupe", "status": "ativa"}
+        ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = (
+            [{"id": "msg-existente"}] if wamid_ja_existe else []
+        )
+        mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_sb.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_sb.rpc.return_value.execute.return_value = MagicMock()
+        return mock_sb
+
+    @pytest.mark.asyncio
+    async def test_reentrega_mesmo_wamid_e_descartada_sem_dispatch(self):
+        """AC 9: wamid já processado → early return, sem upsert de lead nem dispatch."""
+        import sys, types
+        from unittest.mock import patch, AsyncMock
+
+        mock_processar = AsyncMock()
+        fake_emp_module = types.ModuleType("empregabilidade_engine")
+        fake_emp_module.processar_mensagem_empregabilidade = mock_processar
+
+        mock_sb = self._mock_supabase_fluxo_completo(wamid_ja_existe=True)
+        payload = _payload_texto(phone_number_id="DEDUPE_ID", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        with patch.dict(sys.modules, {"empregabilidade_engine": fake_emp_module}), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
+                   return_value={"canal_origem": "c", "agente_tipo": "Empregabilidade",
+                                 "canal_tipo": "Empregabilidade", "unidade_cuca": None}), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
+            await processar_webhook_meta(raw)
+
+        mock_processar.assert_not_called()
+        mock_sb.table.assert_any_call("mensagens")
+        # Dedupe descarta antes do upsert de lead — "leads" nunca é chamado.
+        for call in mock_sb.table.call_args_list:
+            assert call.args[0] != "leads", "Reentrega não deveria chegar a tocar em 'leads'"
+
+    @pytest.mark.asyncio
+    async def test_wamid_novo_processa_normalmente_e_persiste(self):
+        """AC 9: wamid inédito → fluxo normal, dispatch chamado, wamid persistido no insert."""
+        import sys, types
+        from unittest.mock import patch, AsyncMock
+
+        mock_processar = AsyncMock()
+        fake_emp_module = types.ModuleType("empregabilidade_engine")
+        fake_emp_module.processar_mensagem_empregabilidade = mock_processar
+
+        mock_sb = self._mock_supabase_fluxo_completo(wamid_ja_existe=False)
+        payload = _payload_texto(phone_number_id="DEDUPE_ID_2", texto="oi de novo")
+        raw = json.dumps(payload).encode()
+
+        with patch.dict(sys.modules, {"empregabilidade_engine": fake_emp_module}), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
+                   return_value={"canal_origem": "c", "agente_tipo": "Empregabilidade",
+                                 "canal_tipo": "Empregabilidade", "unidade_cuca": None}), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
+            await processar_webhook_meta(raw)
+
+        mock_processar.assert_called_once()
+        insert_call = mock_sb.table.return_value.insert.call_args
+        assert insert_call.args[0]["wamid"] == "wamid.test"

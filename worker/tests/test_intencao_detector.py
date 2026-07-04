@@ -7,21 +7,22 @@ import asyncio
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from intencao_detector import IntencaoDetector, extrair_nome_heuristico
+from intencao_detector import IntencaoDetector, avaliar_mensagem_contextual, extrair_nome_heuristico
 
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
 
 def _classif(msg: str, midia: str = "", nome: str | None = None) -> dict:
-    """Executa classificar de forma síncrona para uso nos testes."""
+    """Executa classificar de forma síncrona para uso nos testes.
+
+    asyncio.run() em vez de asyncio.get_event_loop().run_until_complete(): o
+    padrão antigo depende de haver um "current event loop" já setado na
+    thread, o que quebra quando outros testes async (pytest-asyncio, modo
+    STRICT) rodam antes na mesma sessão e fecham o loop deles."""
     detector = IntencaoDetector()
-    return asyncio.get_event_loop().run_until_complete(
-        detector.classificar(msg, midia, nome)
-    )
+    return asyncio.run(detector.classificar(msg, midia, nome))
 
 
 # ─── Cenários obrigatórios (AC#10) ────────────────────────────────────────────
@@ -70,6 +71,25 @@ def test_keyword_composta_vaga_e_saudacao():
     """'Boa tarde, quero me candidatar a uma vaga de emprego' → candidato_vaga."""
     res = _classif("Boa tarde, quero me candidatar a uma vaga de emprego")
     assert res["intencao"] == "candidato_vaga"
+
+
+def test_empresa_abrir_uma_vaga_nao_deveria_inverter_intencao(monkeypatch):
+    """Bug 4 (relatório, 04/07/2026): 'abrir uma vaga' (com 'uma' no meio) não
+    batia com a keyword exata 'abrir vaga' de KEYWORDS_EMPRESA, caía em
+    KEYWORDS_VAGA pela palavra solta 'vaga' e classificava como candidato_vaga
+    — o oposto do que a empresa quis dizer. Resolvido pelo classificador
+    semântico da Task 3 (S-WM-20): `avaliar_mensagem_contextual`, decisão
+    primária em produção, sem keywords antes do LLM."""
+    import intencao_detector
+
+    async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+        return {"intencao": "empresa", "quer_sair": False, "mudou_de_assunto": False}
+
+    monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+    res = asyncio.run(avaliar_mensagem_contextual(
+        "gostaria de saber como faço para abrir uma vaga para ser gerida pela rede cuca"
+    ))
+    assert res["intencao"] == "empresa"
 
 
 # ─── Testes adicionais ────────────────────────────────────────────────────────
@@ -132,6 +152,74 @@ def test_gpt_fallback_excecao_vira_ambiguo(monkeypatch):
     monkeypatch.setattr(IntencaoDetector, "_gpt_fallback", mock_gpt_error)
     res = _classif("oi tudo bem")
     assert res["intencao"] == "ambiguo"
+
+
+# ─── avaliar_mensagem_contextual (S-WM-20 Task 3) ─────────────────────────────
+
+def test_contextual_upload_nao_chama_llm():
+    """Upload é sinal dominante — não deveria nem tentar chamar o LLM."""
+    res = asyncio.run(avaliar_mensagem_contextual("", midia_tipo="document"))
+    assert res["intencao"] == "upload"
+    assert res["quer_sair"] is False
+    assert res["mudou_de_assunto"] is False
+
+
+def test_contextual_digito_puro_nao_chama_llm():
+    """AC#2: dígito puro (atalho de menu) responde sem chamar o LLM."""
+    res = asyncio.run(avaliar_mensagem_contextual("2"))
+    assert res["quer_sair"] is False
+    assert res["mudou_de_assunto"] is False
+
+
+def test_contextual_texto_vazio_retorna_default():
+    res = asyncio.run(avaliar_mensagem_contextual(""))
+    assert res["intencao"] == "ambiguo"
+
+
+def test_contextual_repassa_quer_sair_e_mudou_de_assunto(monkeypatch):
+    """AC#3: frase livre chama o LLM com o contexto completo e repassa os
+    sinais de escape (quer_sair, mudou_de_assunto) tal como retornados."""
+    import intencao_detector
+
+    capturado = {}
+
+    async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+        capturado.update(texto=texto, perfil=perfil, etapa=etapa, ultima_msg_bot=ultima_msg_bot)
+        return {"intencao": "empresa", "quer_sair": False, "mudou_de_assunto": True}
+
+    monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+    res = asyncio.run(avaliar_mensagem_contextual(
+        "nao nao, sou uma empresa", perfil="candidato", etapa="aguardando_id_candidato",
+        ultima_msg_bot="Informe seu CPF ou telefone",
+    ))
+    assert res == {"intencao": "empresa", "quer_sair": False, "mudou_de_assunto": True, "nome": None}
+    assert capturado == {
+        "texto": "nao nao, sou uma empresa", "perfil": "candidato",
+        "etapa": "aguardando_id_candidato", "ultima_msg_bot": "Informe seu CPF ou telefone",
+    }
+
+
+def test_contextual_intencao_invalida_vira_ambiguo(monkeypatch):
+    import intencao_detector
+
+    async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+        return {"intencao": "nao_existe", "quer_sair": False, "mudou_de_assunto": False}
+
+    monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+    res = asyncio.run(avaliar_mensagem_contextual("mensagem qualquer"))
+    assert res["intencao"] == "ambiguo"
+
+
+def test_contextual_excecao_vira_default_seguro(monkeypatch):
+    """Falha no LLM (rede, JSON malformado, etc.) nunca deve travar o fluxo."""
+    import intencao_detector
+
+    async def mock_gpt_error(texto, perfil, etapa, ultima_msg_bot):
+        raise RuntimeError("OpenAI indisponível")
+
+    monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt_error)
+    res = asyncio.run(avaliar_mensagem_contextual("mensagem qualquer"))
+    assert res == {"intencao": "ambiguo", "quer_sair": False, "mudou_de_assunto": False, "nome": None}
 
 
 # ─── extrair_setor_da_mensagem ────────────────────────────────────────────────

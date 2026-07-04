@@ -1,6 +1,15 @@
 """
 S-EMP-01-01 — Detector de intenção para o canal Empregabilidade.
 Classifica a primeira mensagem por palavras-chave; GPT-4o-mini como fallback para ambíguos.
+
+S-WM-20 Task 3 — `avaliar_mensagem_contextual` substitui `IntencaoDetector.classificar`
+como decisão primária em produção: GPT-4o-mini é consultado com o contexto completo
+(perfil + etapa + última mensagem do bot), sem keywords antes. `classificar`/KEYWORDS_*
+ficam mantidos como fallback/legado — remoção é uma fase "contract" (expand/contract),
+deliberadamente adiada até a Task 5 validar em staging que o classificador novo cobre
+de verdade os 6 cenários de regressão da S-EMP-01-01 e os 5 bugs do relatório. Remover
+antes disso violaria o mesmo princípio já aplicado à migração UAZAPI→Meta (não desligar
+o caminho antigo antes do novo estar validado com dados reais).
 """
 import json
 import logging
@@ -102,6 +111,92 @@ class IntencaoDetector:
         except Exception as exc:
             logger.warning("[intencao_detector] GPT fallback erro: %s", exc)
             return {"intencao": "ambiguo", "nome": lead_nome}
+
+
+async def avaliar_mensagem_contextual(
+    texto: str,
+    midia_tipo: str = "",
+    perfil: str | None = None,
+    etapa: str | None = None,
+    ultima_msg_bot: str | None = None,
+    lead_nome: str | None = None,
+) -> dict:
+    """Classificador semântico contextual (S-WM-20 Task 3).
+
+    Contrato novo: recebe a frase inteira + perfil já declarado + etapa atual
+    + última mensagem do bot, e pede ao GPT-4o-mini um veredito único sobre
+    intenção E sinais de escape (quer_sair, mudou_de_assunto) — diferente do
+    `classificar()` acima (keyword-primeiro, sem contexto de conversa,
+    só para a primeira mensagem). É a decisão PRIMÁRIA agora: keywords não são
+    mais consultadas antes do LLM. Atalhos determinísticos (upload, dígito
+    puro) continuam sem chamar o LLM, por serem inequívocos e por custo/latência
+    (AC#12).
+
+    Retorna sempre {"intencao", "quer_sair", "mudou_de_assunto", "nome"} — nunca
+    propaga exceção; qualquer falha (JSON malformado, API fora do ar, etc.) cai
+    no default seguro (ambíguo, sem sinais de escape) para nunca travar o fluxo.
+    """
+    default = {"intencao": "ambiguo", "quer_sair": False, "mudou_de_assunto": False, "nome": lead_nome}
+
+    if midia_tipo in ("document", "image"):
+        return {**default, "intencao": "upload"}
+
+    texto_limpo = (texto or "").strip()
+    if not texto_limpo:
+        return default
+
+    # Atalho determinístico: dígito puro (menu 1-9) nunca precisa do LLM.
+    if re.fullmatch(r"\d{1,2}", texto_limpo):
+        return default
+
+    try:
+        data = await _chamar_gpt_contextual(texto_limpo, perfil, etapa, ultima_msg_bot)
+        intencao = data.get("intencao", "ambiguo")
+        if intencao not in _CATEGORIAS_VALIDAS:
+            intencao = "ambiguo"
+        return {
+            "intencao": intencao,
+            "quer_sair": bool(data.get("quer_sair", False)),
+            "mudou_de_assunto": bool(data.get("mudou_de_assunto", False)),
+            "nome": lead_nome,
+        }
+    except Exception as exc:
+        logger.warning("[avaliar_mensagem_contextual] erro, fallback seguro: %s", exc)
+        return default
+
+
+async def _chamar_gpt_contextual(
+    texto: str, perfil: str | None, etapa: str | None, ultima_msg_bot: str | None,
+) -> dict:
+    """Chamada real ao GPT-4o-mini, isolada em função própria para permitir mock
+    direto nos testes (mesmo padrão de `IntencaoDetector._gpt_fallback`)."""
+    from openai import AsyncOpenAI  # noqa: PLC0415
+    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": (
+                "Você interpreta mensagens de WhatsApp do canal de Empregabilidade "
+                "da rede CUCA. Considere o contexto da conversa e a frase do lead. "
+                "Retorne SOMENTE JSON com as chaves:\n"
+                "- 'intencao': um de candidato_vaga | banco_talentos | empresa | ambiguo\n"
+                "- 'quer_sair': true se o lead claramente quer encerrar/parar a conversa "
+                "(despedida, negativa de continuar, sem intenção de fazer outra coisa)\n"
+                "- 'mudou_de_assunto': true se o lead está redirecionando para uma intenção "
+                "diferente da etapa atual (ex.: nega o que foi perguntado e diz que quer outra "
+                "coisa), mesmo sem querer encerrar a conversa\n\n"
+                f"Perfil já declarado: {perfil or 'nenhum'}\n"
+                f"Etapa atual da conversa: {etapa or 'nenhuma'}\n"
+                f"Última mensagem do bot: {ultima_msg_bot or 'nenhuma'}\n"
+                f"Mensagem do lead: {texto}"
+            ),
+        }],
+        response_format={"type": "json_object"},
+        temperature=0.0,
+        max_tokens=100,
+    )
+    return json.loads(response.choices[0].message.content)
 
 
 # Mapeamento keyword→canonical para filtro de setor em vagas.

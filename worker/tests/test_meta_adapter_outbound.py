@@ -264,6 +264,7 @@ class TestPersistenciaInboundMeta:
         mock_sb.table.return_value.upsert.return_value.execute.return_value = lead_data
         mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = fresh_data
         mock_sb.table.return_value.select.return_value.match.return_value.execute.return_value = conv_data
+        mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
         mock_sb.table.return_value.insert.return_value.execute.return_value = new_conv
         mock_sb.rpc.return_value.execute.return_value = rpc_data
 
@@ -293,6 +294,7 @@ class TestPersistenciaInboundMeta:
         fresh_data.data = {"bloqueado": True}
         mock_sb.table.return_value.upsert.return_value.execute.return_value = lead_data
         mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = fresh_data
+        mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
 
         dispatch_mock = AsyncMock()
         with patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
@@ -323,6 +325,7 @@ class TestPersistenciaInboundMeta:
         mock_sb.table.return_value.upsert.return_value.execute.return_value = lead_data
         mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = fresh_data
         mock_sb.table.return_value.select.return_value.match.return_value.execute.return_value = conv_data
+        mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
         mock_sb.table.return_value.insert.return_value.execute.return_value = msg_data
         mock_sb.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
         mock_sb.rpc.return_value.execute.return_value = rpc_data
@@ -361,6 +364,7 @@ class TestDispatchInbound:
         mock_sb.table.return_value.upsert.return_value.execute.return_value = lead_data
         mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = fresh_data
         mock_sb.table.return_value.select.return_value.match.return_value.execute.return_value = conv_data
+        mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
         mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock()
         mock_sb.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
         mock_sb.rpc.return_value.execute.return_value = MagicMock()

@@ -180,6 +180,7 @@ async def build_contrato_v2(meta_payload: dict, instancia_data: dict) -> dict:
 
     msg = messages[0]
     telefone: str = msg.get("from", "")
+    wamid: str = msg.get("id", "")
 
     mensagem, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
 
@@ -196,6 +197,7 @@ async def build_contrato_v2(meta_payload: dict, instancia_data: dict) -> dict:
         "midia_url":    midia_url,
         "midia_tipo":   midia_tipo,
         "data_atual":   data_atual,
+        "wamid":        wamid,
     }
 
 
@@ -439,6 +441,22 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         logger.warning(f"[meta-inbound] phone_number_id desconhecido: {phone_number_id} — descartado")
         return
 
+    supabase = _get_supabase()
+
+    # Dedupe por wamid (S-WM-20): reentrega do webhook (retry da Meta) não deve
+    # duplicar Lead/Conversa/Mensagem nem disparar dispatch/resposta 2x. Checagem
+    # o mais cedo possível — antes até de build_contrato_v2, que pode transcrever
+    # áudio via Whisper (custoso e desnecessário repetir numa reentrega).
+    wamid: str = messages[0].get("id", "")
+    if wamid:
+        try:
+            ja_processado = supabase.table("mensagens").select("id").eq("wamid", wamid).limit(1).execute()
+            if ja_processado.data:
+                logger.info(f"[meta-inbound] wamid={wamid!r} já processado — reentrega descartada")
+                return
+        except Exception as exc:
+            logger.warning(f"[meta-inbound] Erro ao checar dedupe de wamid={wamid!r}: {exc}")
+
     contacts = value.get("contacts", [])
     push_name = (contacts[0].get("profile", {}).get("name") or "Cidadão") if contacts else "Cidadão"
 
@@ -459,8 +477,6 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
     unidade_cuca = contrato_v2.get("unidade_cuca")
     mensagem: str = contrato_v2["mensagem"]
     midia_tipo: str = contrato_v2["midia_tipo"]
-
-    supabase = _get_supabase()
 
     # ── DB A: upsert Lead por telefone ────────────────────────────────────
     try:
@@ -512,6 +528,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             "conteudo": mensagem,
             "remetente": "lead",
             "created_at": "now()",
+            "wamid": contrato_v2.get("wamid") or None,
         }).execute()
         supabase.rpc("increment_nao_lidas", {"conv_id": conversa_id}).execute()
     except Exception as exc:
