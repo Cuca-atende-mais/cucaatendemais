@@ -562,6 +562,22 @@ async def meta_webhook(request: Request, background_tasks: BackgroundTasks):
         logger.warning("[meta-inbound] HMAC inválido — requisição rejeitada")
         return Response(status_code=403, content="Forbidden")
 
+    # DIAGNÓSTICO TEMPORÁRIO (investigação de duplicação de mensagens, remover após
+    # conclusão): captura no ponto mais externo possível — antes de add_task — pra
+    # distinguir "Meta entrega 2x na camada HTTP" de "bug de concorrência interno".
+    try:
+        _payload = json.loads(raw_body)
+        _value = _payload["entry"][0]["changes"][0]["value"]
+        _wamid = _value.get("messages", [{}])[0].get("id", "")
+        _phone_number_id = _value.get("metadata", {}).get("phone_number_id", "")
+        from meta_adapter_inbound import _get_supabase  # noqa: PLC0415
+        _get_supabase().table("_debug_wamid_capture_rota").insert({
+            "wamid": _wamid,
+            "phone_number_id": _phone_number_id,
+        }).execute()
+    except Exception as _exc:
+        logger.warning(f"[debug-wamid-rota] Falha ao capturar (não impacta o fluxo): {_exc}")
+
     background_tasks.add_task(processar_webhook_meta, raw_body)
     return Response(status_code=200, content=json.dumps({"status": "received"}))
 
