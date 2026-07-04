@@ -392,6 +392,23 @@ O Debug Log e o Change Log (linha do @dev acima) afirmam que a correção do loo
 
 **Sem achados novos de segurança/performance** — mesmas rotas, mesmo padrão de auth (nenhuma rota nova foi criada nesta rodada), consultas com mesmo custo de antes.
 
+---
+
+### Revisão da correção — ambiguidade de telefone Institucional (2026-07-04, commit `cf6d725`)
+
+**Veredito: PASS** para esta correção específica — achado anterior fechado, nada novo encontrado.
+
+Não confiei no relato — reproduzi cada verificação de forma independente:
+- `SELECT phone_number_id, ativo FROM meta_phone_numbers WHERE canal_tipo='Institucional'` → confirmado: `1233832826470497` (`ativo=true`), `1215172285010519` (`ativo=false`). Exatamente 1 número ativo agora.
+- Reproduzi a query exata da edge function (`.eq("canal_tipo","Institucional").eq("ativo",true).limit(1)`) → resolve, sem ambiguidade, para `1233832826470497`. Antes da correção retornava o número de teste; confirmei a mudança de resultado, não só o estado final.
+- Reproduzi a query completa do lookup do handover (`automacoes @> ['Institucional','Transbordo'] AND phone_number_ids @> ['1233832826470497']`) → retorna `institucional_transbordo_v1`. O handover institucional está de fato restaurado, verificado por mim, não só pelo relato do @dev.
+- **Checagem de regressão que não estava no pedido:** confirmei que desativar o número de teste não quebrou o lookup de `institucional_programacao_mensal_v1` (também vinculado a `1233832826470497`, `automacoes=['Institucional']` exato) — continua resolvendo para exatamente 1 linha.
+- `pytest worker/tests/`: 74 passed, 3 skipped — reproduzido, sem regressão (mudança foi só de dado, nenhum código alterado nesta rodada).
+- Migration `wm16_desativar_numero_teste_institucional` registrada em `list_migrations`.
+- Texto do Debug Log/Change Log: conferi que a correção de linguagem foi aplicada nos 2 pontos que eu tinha apontado (linha do handover no Debug Log de `alertas-institucionais`, e a linha do Change Log do commit anterior) — ambos agora deixam claro que a restauração completa só se efetivou com esta correção, não no commit anterior. Sem inconsistência remanescente no texto.
+
+**Nota de escopo, não bloqueante:** esta revisão fecha o achado específico que eu tinha levantado. Os itens já registrados anteriormente no QA Results desta story (decisão da Task 4 pendente com @po, smoke test E2E manual de Junior para AC9) continuam em aberto — não fazem parte do que foi pedido revisar agora, mas seguem sendo pré-requisito para o status **Done** da story como um todo.
+
 ## Change Log
 | Data | Agente | Ação |
 |---|---|---|
