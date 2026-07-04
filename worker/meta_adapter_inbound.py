@@ -369,7 +369,7 @@ async def _notificar_transbordo(
         # A 2ª tag "Transbordo" desambigua de outros templates que também usam o mesmo
         # canal/número (ex.: programação mensal, evento pontual), já que várias finalidades
         # podem compartilhar a mesma automação + phone_number_id.
-        tpl_res = sb.table("meta_templates").select("nome, corpo_texto") \
+        tpl_res = sb.table("meta_templates").select("nome, corpo_texto, variaveis") \
             .contains("automacoes", [automacao, "Transbordo"]) \
             .contains("phone_number_ids", [phone_number_id_origem]) \
             .eq("ativo", True).eq("status", "aprovado") \
@@ -382,16 +382,16 @@ async def _notificar_transbordo(
             return
         template_name = tpl_res.data["nome"]
         corpo_texto = tpl_res.data.get("corpo_texto") or ""
+        variaveis_transbordo = tpl_res.data.get("variaveis")
         token = os.getenv("META_SYSTEM_USER_TOKEN", "")
-        from campanhas_engine import _enviar_template_meta  # noqa: PLC0415
+        from campanhas_engine import _enviar_template_meta, _montar_parametros_named  # noqa: PLC0415
         for contato in contacts:
             nome = contato.get("nome_responsavel") or "Equipe"
             telefone_destino = contato["telefone_destino"]
-            components = [{"type": "body", "parameters": [
-                {"type": "text", "text": nome},
-                {"type": "text", "text": lead_identificacao},
-                {"type": "text", "text": modulo},
-            ]}]
+            components = [{
+                "type": "body",
+                "parameters": _montar_parametros_named(variaveis_transbordo, [nome, lead_identificacao, modulo]),
+            }]
             if corpo_texto:
                 preview = _render_template(corpo_texto, {1: nome, 2: lead_identificacao, 3: modulo})
                 logger.debug("[transbordo] preview: %s", preview[:120])

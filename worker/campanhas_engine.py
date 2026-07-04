@@ -141,6 +141,22 @@ def _get_phone_by_canal_tipo_sync(canal_tipo: str) -> tuple[str, str] | None:
         return None
 
 
+def _montar_parametros_named(variaveis: list[dict] | None, valores: list[str]) -> list[dict]:
+    """Monta os parameters do body com parameter_name a partir de meta_templates.variaveis.
+
+    Necessário porque os templates Meta aqui usados foram aprovados com variáveis
+    NOMEADAS (ex.: {{nome}}, {{mes}}), não posicionais numéricas — a Graph API rejeita
+    o envio com HTTP 400 "(#100) Parameter name is missing or empty" se o parâmetro não
+    tiver parameter_name. A ordem de valores segue a posição declarada em `variaveis`
+    (não hardcoded), então funciona para qualquer template futuro com o mesmo formato.
+    """
+    ordenadas = sorted(variaveis or [], key=lambda v: v.get("posicao", 0))
+    return [
+        {"type": "text", "parameter_name": v.get("descricao", f"var{i + 1}"), "text": valor}
+        for i, (v, valor) in enumerate(zip(ordenadas, valores))
+    ]
+
+
 async def _enviar_template_meta(
     phone_number_id: str,
     to: str,
@@ -240,7 +256,7 @@ async def _processar_item_disparo_interno(
     # templates multi-tag (ex.: ["Institucional", "Transbordo"]), quebrando o match
     # exato que este lookup exige.
     automacao_filtro = '{"' + automacao_tag + '"}'
-    _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto") \
+    _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto, variaveis") \
         .eq("automacoes", automacao_filtro) \
         .contains("phone_number_ids", [phone_number_id]) \
         .eq("ativo", True).eq("status", "aprovado") \
@@ -253,6 +269,7 @@ async def _processar_item_disparo_interno(
         await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
         return
     template_name = _tpl_res.data["nome"]
+    variaveis_item = _tpl_res.data.get("variaveis")
 
     categorias_alvo = item.get("categorias_alvo") or None
     if isinstance(categorias_alvo, list) and len(categorias_alvo) == 0:
@@ -324,22 +341,15 @@ async def _processar_item_disparo_interno(
         if origem == "ouvidoria_eventos":
             components = [{
                 "type": "body",
-                "parameters": [
-                    {"type": "text", "text": nome_lead},
-                    {"type": "text", "text": texto_pesquisa},
-                ],
+                "parameters": _montar_parametros_named(variaveis_item, [nome_lead, texto_pesquisa]),
             }]
         else:
             components = [{
                 "type": "body",
-                "parameters": [
-                    {"type": "text", "text": titulo},
-                    {"type": "text", "text": descricao},
-                    {"type": "text", "text": data_fmt},
-                    {"type": "text", "text": hora_inicio},
-                    {"type": "text", "text": local_evento},
-                    {"type": "text", "text": unidade or ""},
-                ],
+                "parameters": _montar_parametros_named(
+                    variaveis_item,
+                    [titulo, descricao, data_fmt, hora_inicio, local_evento, unidade or ""],
+                ),
             }]
 
         ok = await _enviar_template_meta(phone_number_id, numero, meta_token, template_name, components)
@@ -499,7 +509,7 @@ async def _processar_disparo_divulgacao_interno(
     # (ex.: '{"Institucional"}'), não de uma lista Python — o postgrest-py serializa lista como
     # str(list) ("['Institucional']"), que o Postgrest rejeita com 400 (malformed array literal).
     _tpl_div = await asyncio.to_thread(
-        lambda: supabase.table("meta_templates").select("nome, corpo_texto")
+        lambda: supabase.table("meta_templates").select("nome, corpo_texto, variaveis")
         .eq("automacoes", '{"Institucional"}')
         .contains("phone_number_ids", [phone_number_id])
         .eq("ativo", True).eq("status", "aprovado")
@@ -510,6 +520,7 @@ async def _processar_disparo_divulgacao_interno(
         await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "pausado")
         return
     template_divulgacao = _tpl_div.data["nome"]
+    variaveis_divulgacao = _tpl_div.data.get("variaveis")
 
     leads_res = await asyncio.to_thread(_query_leads_divulgacao_sync)
     leads = leads_res.data or []
@@ -537,10 +548,7 @@ async def _processar_disparo_divulgacao_interno(
 
         components = [{
             "type": "body",
-            "parameters": [
-                {"type": "text", "text": nome},
-                {"type": "text", "text": mes_nome},
-            ],
+            "parameters": _montar_parametros_named(variaveis_divulgacao, [nome, mes_nome]),
         }]
 
         ok = await _enviar_template_meta(
