@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import {
     Megaphone, CheckCircle2, Clock, AlertCircle, Send,
     RefreshCw, BarChart3, Loader2,
-    Building2, CalendarCheck, ShieldAlert, Info, MessageSquare, User, ChevronLeft, ChevronRight,
+    Building2, CalendarCheck, ShieldAlert, Info, ChevronLeft, ChevronRight, Smartphone,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -15,13 +15,11 @@ import {
     Dialog, DialogContent, DialogDescription, DialogFooter,
     DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
-import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { ChipDivulgacaoTab } from "@/components/instancias/chip-divulgacao-tab"
 import { useUser } from "@/lib/auth/user-provider"
 
 /* ─── Tipos ─── */
@@ -48,8 +46,20 @@ type DisparoHistorico = {
     created_at: string
 }
 
+type NumeroMetaInstitucional = {
+    display_name: string | null
+    phone_number_id: string
+}
+
+type TemplateMeta = {
+    nome: string
+    corpo_texto: string
+}
+
 /* ─── Constantes ─── */
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : "Erro desconhecido"
 
 const STATUS_CONFIG: Record<StatusCampanha, { label: string; color: string; icon: React.ReactNode }> = {
     sem_planilha: {
@@ -85,7 +95,7 @@ const DISPARO_STATUS_CONFIG: Record<StatusDisparo, { label: string; color: strin
 /* ─── Componente ─── */
 export default function DivulgacaoPage() {
     const router = useRouter()
-    const supabase = createClient()
+    const supabase = useMemo(() => createClient(), [])
     const { hasPermission } = useUser()
     const hoje = new Date()
     const [mesAtual, setMesAtual] = useState(hoje.getMonth() + 1)
@@ -93,7 +103,7 @@ export default function DivulgacaoPage() {
 
     const navegarMes = (delta: number) => {
         setMesAtual(prev => {
-            let novoMes = prev + delta
+            const novoMes = prev + delta
             if (novoMes < 1) { setAnoAtual(a => a - 1); return 12 }
             if (novoMes > 12) { setAnoAtual(a => a + 1); return 1 }
             return novoMes
@@ -105,14 +115,11 @@ export default function DivulgacaoPage() {
     const [unidades, setUnidades] = useState<UnidadeStatus[]>([])
     const [historico, setHistorico] = useState<DisparoHistorico[]>([])
     const [podeCriar, setPodeCriar] = useState(false)
-    const [conversas, setConversas] = useState<any[]>([])
 
     // Modal de disparo
     const [modalAberto, setModalAberto] = useState(false)
-    const [template, setTemplate] = useState("")
-    const [instanciaDisp, setInstanciaDisp] = useState<string | null>(null)
-    const [instanciasInstitucionais, setInstanciasInstitucionais] = useState<any[]>([])
-    const [telefoneInstGlobal, setTelefoneInstGlobal] = useState<string>("")
+    const [numeroMeta, setNumeroMeta] = useState<NumeroMetaInstitucional | null>(null)
+    const [templateMeta, setTemplateMeta] = useState<TemplateMeta | null>(null)
     const [disparando, setDisparando] = useState(false)
 
     const fetchData = useCallback(async () => {
@@ -144,24 +151,13 @@ export default function DivulgacaoPage() {
             })
             setUnidades(statusPorUnidade)
 
-            // 3. Buscar phone_number_id Meta para Divulgação
-            const { data: metaDisp } = await supabase
-                .from("meta_phone_numbers")
-                .select("display_name")
-                .eq("canal_tipo", "Divulgação")
-                .eq("ativo", true)
-                .limit(1)
-                .maybeSingle()
-
-            setInstanciaDisp(metaDisp?.display_name ?? null)
-
-            // 3.5 instanciasInstitucionais (UI morta — mantido por compatibilidade de tipo, sem query UAZAPI)
-            setInstanciasInstitucionais([])
-
-            // 3.6 telefoneInstGlobal: meta_phone_numbers não tem campo telefone — mantido vazio
-            // Número de contato global da Rede CUCA deve ser configurado via NEXT_PUBLIC_CUCA_WHATSAPP
-            // ou inserindo o número diretamente em meta_phone_numbers (migração futura)
-            setTelefoneInstGlobal(process.env.NEXT_PUBLIC_CUCA_WHATSAPP ?? "")
+            // 3. A API expõe somente a configuração necessária à Divulgação;
+            // o lookup administrativo permanece protegido no servidor.
+            const configResponse = await fetch("/api/divulgacao/disparar", { cache: "no-store" })
+            const config = await configResponse.json()
+            if (!configResponse.ok) throw new Error(config.error || "Falha ao carregar configuração Meta")
+            setNumeroMeta(config.numero as NumeroMetaInstitucional | null)
+            setTemplateMeta(config.template as TemplateMeta | null)
 
             // 4. Histórico de disparos
             const { data: hist } = await supabase
@@ -171,42 +167,32 @@ export default function DivulgacaoPage() {
                 .limit(10)
             setHistorico(hist ?? [])
 
-        } catch (e: any) {
-            toast.error("Erro ao carregar: " + e.message)
+        } catch (error: unknown) {
+            toast.error("Erro ao carregar: " + getErrorMessage(error))
         } finally {
             setCarregando(false)
         }
-    }, [mesAtual, anoAtual])
+    }, [anoAtual, hasPermission, mesAtual, router, supabase])
 
     useEffect(() => { fetchData() }, [fetchData])
 
-    // Montar template dinâmico quando abrir o modal
     const abrirModal = () => {
-        const nomeMes = MESES[mesAtual - 1]
-
-        if (!telefoneInstGlobal) {
-            toast.warning("Instância institucionalredecuca não encontrada ou sem telefone cadastrado. Configure a instância antes de disparar.")
+        if (!podeCriar) {
+            toast.error("Você não possui permissão para criar disparos de divulgação.")
+            return
         }
-
-        const linkRedeCuca = telefoneInstGlobal
-            ? `wa.me/${telefoneInstGlobal}`
-            : "[NÚMERO NÃO ENCONTRADO — configure a instância institucionalredecuca]"
-
-        const tpl = `Bom dia, {nome}!
-A programação de ${nomeMes}/${anoAtual} já está disponível!
-
-Se quiser se matricular nas nossas atividades e conferir a programação completa, acesse o Portal da Juventude:
-🔗 https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/
-
-Caso queira mais informações sobre a programação de qualquer unidade, fale diretamente conosco no WhatsApp:
-📍 Rede Cuca: ${linkRedeCuca}`
-
-        setTemplate(tpl)
+        if (!numeroMeta || !templateMeta) {
+            toast.error("Número ou template Meta Institucional indisponível.")
+            return
+        }
         setModalAberto(true)
     }
 
     const handleDisparar = async () => {
-        if (!template.trim()) { toast.error("Escreva a mensagem antes de disparar."); return }
+        if (!podeCriar || !numeroMeta || !templateMeta) {
+            toast.error("O disparo não está disponível para este usuário ou configuração.")
+            return
+        }
         setDisparando(true)
         try {
             const res = await fetch("/api/divulgacao/disparar", {
@@ -216,7 +202,6 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
                     mes: mesAtual,
                     ano: anoAtual,
                     titulo: `Aviso Programação ${MESES[mesAtual - 1]}/${anoAtual}`,
-                    mensagem_template: template,
                 })
             })
             if (!res.ok) {
@@ -226,8 +211,8 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
             toast.success("Disparo criado e na fila! O motor iniciará o envio em instantes.")
             setModalAberto(false)
             fetchData()
-        } catch (e: any) {
-            toast.error("Erro: " + e.message)
+        } catch (error: unknown) {
+            toast.error("Erro: " + getErrorMessage(error))
         } finally {
             setDisparando(false)
         }
@@ -235,7 +220,19 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
 
     const aprovadas = unidades.filter(u => u.status === "aprovado").length
     // SQS-44 AC-10: disparo somente quando TODAS as unidades estiverem aprovadas
-    const podeDiparar = aprovadas === unidadesCuca.length && !!instanciaDisp
+    const podeDisparar = podeCriar
+        && aprovadas === unidadesCuca.length
+        && !!numeroMeta
+        && !!templateMeta
+    const motivoBloqueio = !podeCriar
+        ? "Sem permissão divulgacao:create"
+        : aprovadas < unidadesCuca.length
+            ? `Aguardando aprovação: ${unidades.filter(u => u.status !== "aprovado").map(u => u.unidade.replace("Cuca ", "")).join(", ")}`
+            : !numeroMeta
+                ? "Número Meta Institucional indisponível"
+                : !templateMeta
+                    ? "Template Meta Institucional aprovado indisponível"
+                    : "Todas as unidades aprovadas — pronto para disparar"
 
     if (carregando) {
         return (
@@ -290,26 +287,45 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
                         <Button
                             className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold gap-2 disabled:opacity-50"
                             onClick={abrirModal}
-                            disabled={!podeDiparar}
-                            title={!podeDiparar
-                                ? `Aguardando aprovação: ${unidades.filter(u => u.status !== "aprovado").map(u => u.unidade.replace("Cuca ", "")).join(", ")}`
-                                : "Todas as unidades aprovadas — pronto para disparar"
-                            }
+                            disabled={!podeDisparar}
+                            title={motivoBloqueio}
                         >
                             <Megaphone className="h-4 w-4" />
                             Disparar Aviso Global
                         </Button>
-                        {!podeDiparar && aprovadas < unidadesCuca.length && (
+                        {!podeDisparar && (
                             <p className="text-[10px] text-muted-foreground text-right">
-                                Aguardando: {unidades.filter(u => u.status !== "aprovado").map(u => u.unidade.replace("Cuca ", "")).join(", ")}
+                                {motivoBloqueio}
                             </p>
                         )}
                     </div>
                 </div>
             </div>
 
-            {/* Chip de Divulgação — gestão inline com QR Code */}
-            <ChipDivulgacaoTab podeCriar={podeCriar} />
+            <Card className="border-blue-500/20 bg-blue-500/[0.04] shadow-sm">
+                <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-3">
+                        <div className="rounded-lg border border-blue-500/25 bg-blue-500/10 p-2">
+                            <Smartphone className="h-4 w-4 text-blue-400" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-semibold text-foreground">
+                                Número Meta Institucional — {numeroMeta?.display_name ?? "indisponível"}
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                                {numeroMeta
+                                    ? <>phone_number_id: <span className="font-mono text-foreground/80">{numeroMeta.phone_number_id}</span></>
+                                    : "Nenhum número Institucional ativo foi encontrado."}
+                            </p>
+                        </div>
+                    </div>
+                    <Badge variant="outline" className={numeroMeta && templateMeta
+                        ? "w-fit border-green-500/30 bg-green-500/10 text-green-400"
+                        : "w-fit border-red-500/30 bg-red-500/10 text-red-400"}>
+                        {numeroMeta && templateMeta ? "Meta pronta para envio" : "Configuração incompleta"}
+                    </Badge>
+                </CardContent>
+            </Card>
 
             {/* Status por unidade */}
             <Card className="shadow-sm">
@@ -319,7 +335,7 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
                         Status da Programação — {MESES[mesAtual - 1]}/{anoAtual}
                     </CardTitle>
                     <CardDescription className="text-xs">
-                        Cada Gerente deve subir a planilha e clicar em "Aprovar Programação" antes do disparo global.
+                        Cada Gerente deve subir a planilha e clicar em &quot;Aprovar Programação&quot; antes do disparo global.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -398,71 +414,6 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
                 </CardContent>
             </Card>
 
-            {/* Conversas do Canal Divulgação */}
-            {instanciaDisp && (
-                <Card className="shadow-sm">
-                    <CardHeader className="pb-3">
-                        <CardTitle className="flex items-center gap-2 text-base">
-                            <MessageSquare className="h-5 w-5 text-muted-foreground" />
-                            Conversas Recentes — Canal Divulgação
-                        </CardTitle>
-                        <CardDescription className="text-xs">
-                            Respostas recebidas no chip Divulgação ({instanciaDisp}) após disparos.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="p-0">
-                        {conversas.length === 0 ? (
-                            <div className="py-10 text-center text-muted-foreground text-sm">
-                                Nenhuma conversa no canal Divulgação ainda.
-                            </div>
-                        ) : (
-                            <div className="divide-y divide-border/50">
-                                {conversas.map((conv: any) => {
-                                    const lead = conv.leads as any
-                                    const statusColors: Record<string, string> = {
-                                        ativa: "bg-green-500/15 text-green-400",
-                                        awaiting_human: "bg-amber-500/15 text-amber-400",
-                                        encerrada: "bg-muted/60 text-muted-foreground",
-                                    }
-                                    const statusLabel: Record<string, string> = {
-                                        ativa: "Ativa",
-                                        awaiting_human: "Aguardando atendente",
-                                        encerrada: "Encerrada",
-                                    }
-                                    return (
-                                        <div key={conv.id} className="flex items-center justify-between px-6 py-3 hover:bg-muted/30 transition-colors">
-                                            <div className="flex items-center gap-3">
-                                                <div className="h-8 w-8 rounded-full bg-yellow-500/15 border border-yellow-500/30 flex items-center justify-center shrink-0">
-                                                    <User className="h-4 w-4 text-yellow-400" />
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm font-medium text-foreground">
-                                                        {lead?.nome || lead?.telefone || "Desconhecido"}
-                                                    </p>
-                                                    {lead?.telefone && lead?.nome && (
-                                                        <p className="text-xs text-muted-foreground/60">{lead.telefone}</p>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                {conv.updated_at && (
-                                                    <span className="text-xs text-muted-foreground/60 hidden sm:block">
-                                                        {format(new Date(conv.updated_at), "dd/MM HH:mm", { locale: ptBR })}
-                                                    </span>
-                                                )}
-                                                <Badge className={`text-xs font-medium ${statusColors[conv.status] ?? "bg-muted/60 text-muted-foreground"}`}>
-                                                    {statusLabel[conv.status] ?? conv.status}
-                                                </Badge>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-            )}
-
             {/* Modal de Disparo */}
             <Dialog open={modalAberto} onOpenChange={setModalAberto}>
                 <DialogContent className="sm:max-w-[580px]">
@@ -473,27 +424,36 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
                         </DialogTitle>
                         <DialogDescription>
                             Esta mensagem será enviada para <strong>todos os leads opt-in</strong> da base completa da Rede CUCA.
-                            Edite o template abaixo e clique em Confirmar Disparo.
+                            Confira o remetente e o template Meta aprovado antes de confirmar.
                         </DialogDescription>
                     </DialogHeader>
 
                     <div className="space-y-4 py-2">
                         <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
                             <Info className="h-4 w-4 shrink-0" />
-                            <span>Chip de disparo: <strong>{instanciaDisp ?? "(nenhum)"}</strong> · {aprovadas}/{unidadesCuca.length} unidades aprovadas</span>
+                            <span>
+                                Número Meta Institucional — <strong>{numeroMeta?.display_name ?? "indisponível"}</strong>
+                                {numeroMeta && <> · phone_number_id <span className="font-mono">{numeroMeta.phone_number_id}</span></>}
+                            </span>
                         </div>
 
                         <div className="space-y-1.5">
-                            <Label>Mensagem (Edite os links wa.me antes de enviar)</Label>
-                            <Textarea
-                                value={template}
-                                onChange={e => setTemplate(e.target.value)}
-                                rows={10}
-                                className="font-mono text-sm resize-none"
-                                placeholder="Digite a mensagem do aviso..."
-                            />
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <Label>Preview do template Meta aprovado</Label>
+                                <Badge variant="secondary" className="font-mono text-[10px]">
+                                    {templateMeta?.nome ?? "template indisponível"}
+                                </Badge>
+                            </div>
+                            <div
+                                role="textbox"
+                                aria-readonly="true"
+                                className="min-h-32 whitespace-pre-wrap rounded-lg border border-border bg-muted/35 p-4 text-sm leading-relaxed text-foreground"
+                            >
+                                {templateMeta?.corpo_texto ?? "O template Meta Institucional aprovado não está disponível."}
+                            </div>
                             <p className="text-xs text-muted-foreground">
-                                Use {"{nome}"} para personalizar com o nome do lead. O motor irá variar automaticamente as saudações (Spintax).
+                                Parâmetros preenchidos pelo motor: <strong>{"{{1}}"} nome</strong> e <strong>{"{{2}}"} mês</strong>.
+                                O conteúdo acima é somente leitura e corresponde ao envio real.
                             </p>
                         </div>
                     </div>
@@ -505,7 +465,7 @@ Caso queira mais informações sobre a programação de qualquer unidade, fale d
                         <Button
                             className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold"
                             onClick={handleDisparar}
-                            disabled={disparando || !template.trim()}
+                            disabled={disparando || !podeDisparar}
                         >
                             {disparando ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
                             Confirmar Disparo
