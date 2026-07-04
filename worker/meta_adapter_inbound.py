@@ -433,18 +433,6 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         logger.info("[meta-inbound] Evento sem messages[] (status update) — ignorado")
         return
 
-    # DIAGNÓSTICO TEMPORÁRIO (investigação de duplicação de mensagens, remover após conclusão):
-    # captura o wamid de cada evento recebido para comparar se duplicatas têm o mesmo
-    # wamid (Meta reentregou o mesmo evento) ou wamids diferentes (2 entregas distintas).
-    try:
-        _wamid = messages[0].get("id", "")
-        _get_supabase().table("_debug_wamid_capture").insert({
-            "wamid": _wamid,
-            "phone_number_id": phone_number_id,
-        }).execute()
-    except Exception as _exc:
-        logger.warning(f"[debug-wamid] Falha ao capturar wamid (não impacta o fluxo): {_exc}")
-
     # Guard: phone_number_id desconhecido → discard silencioso (AC #5 segurança)
     instancia_data = _get_instancia_by_phone_number_id(phone_number_id)
     if instancia_data is None:

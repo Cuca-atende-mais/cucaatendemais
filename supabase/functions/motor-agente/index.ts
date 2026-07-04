@@ -102,6 +102,14 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
   return chunks.map((c: { conteudo: string }) => c.conteudo).join("\n");
 }
 
+// PREMISSA (S-WM-17): esta function espera ser chamada DEPOIS que o lead, a conversa e a
+// mensagem do lead já foram persistidos por quem a invoca (hoje, só o worker Meta —
+// worker/meta_adapter_inbound.py::_chamar_motor_agente). A busca de lead/conversa abaixo
+// (passos 1-2) é mantida como fallback defensivo (encontra o que o worker já criou; só cria
+// do zero se chamada de outro jeito), mas esta function NÃO grava mais a mensagem do lead —
+// isso é responsabilidade exclusiva de quem chama. Se um novo consumidor precisar chamar esta
+// function de forma isolada (sem persistência prévia), ele passa a ser responsável por gravar
+// a mensagem do lead antes, ou este contrato precisa ser revisto explicitamente.
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   console.log("[motor-agente v18] Recebendo requisicao...");
@@ -127,7 +135,7 @@ Deno.serve(async (req: Request) => {
       const { data } = await supabase.from("leads").insert({ telefone, unidade_cuca, origem: "whatsapp", opt_in: true }).select("id,nome,opt_in,bloqueado").single();
       lead = data;
     }
-    if (!lead || lead.bloqueado || !lead.opt_in) return new Response(JSON.stringify({ blocked: true }), { status: 200 });
+    if (!lead || lead.bloqueado) return new Response(JSON.stringify({ blocked: true }), { status: 200 });
 
     // 2. Conversa
     let conversaJustCreated = false;
@@ -140,8 +148,12 @@ Deno.serve(async (req: Request) => {
       conversaJustCreated = true;
     }
 
-    // 3. Salvar mensagem
-    await supabase.from("mensagens").insert({ conversa_id: conversa.id, lead_id: lead.id, tipo: midia_tipo === "audio" ? "audio" : "text", conteudo: textoFinal, remetente: "lead" });
+    // 3. Mensagem do lead — NÃO gravar aqui (S-WM-17). Quem chama esta function (hoje,
+    // sempre worker/meta_adapter_inbound.py::processar_webhook_meta) já persiste lead,
+    // conversa e a mensagem do lead antes de invocar este endpoint. Gravar de novo aqui
+    // duplicava cada mensagem do lead (worker + function), causando registro e resposta
+    // dobrados no canal Institucional/Ouvidoria/Acesso CUCA. O histórico (passo 4 abaixo)
+    // já encontra a mensagem, gravada pelo chamador, sem precisar reinseri-la.
 
     // 4. Histórico
     const { data: hist } = await supabase.from("mensagens").select("conteudo,remetente").eq("conversa_id", conversa.id).order("created_at", { ascending: false }).limit(MAX_HISTORICO);
