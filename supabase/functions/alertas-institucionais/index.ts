@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
 
             recipients = admins || [];
 
-            // cuca_evento_pontual_admin: {{1}} titulo, {{2}} unidade_cuca, {{3}} data_evento
+            // Alerta admin de evento pontual: {{1}} titulo, {{2}} unidade_cuca, {{3}} data_evento
             getComponents = (_nome) => [{
                 type: "body",
                 parameters: [
@@ -61,10 +61,13 @@ Deno.serve(async (req) => {
                 ]
             }];
 
+            // Lookup relacional (automação + phone_number_id, zero nome hardcoded — S-WM-16).
+            // Tag "EventoAdmin" desambigua de outros templates Institucional (ex. programação mensal).
             const { data: tpl } = await supabase
                 .from("meta_templates")
                 .select("nome")
-                .eq("nome", "cuca_evento_pontual_admin")
+                .contains("automacoes", ["Institucional", "EventoAdmin"])
+                .contains("phone_number_ids", [phoneNumberId])
                 .eq("ativo", true)
                 .eq("status", "aprovado")
                 .maybeSingle();
@@ -88,7 +91,7 @@ Deno.serve(async (req) => {
                 .eq("id", record.lead_id)
                 .maybeSingle();
 
-            // cuca_transbordo_colaborador: {{1}} nome colaborador, {{2}} nome lead, {{3}} canal
+            // Notificação de transbordo (handover): {{1}} nome colaborador, {{2}} nome lead, {{3}} canal
             const leadNome = lead?.nome || "Cidadão";
             const canal = record.unidade_cuca || "CUCA";
             getComponents = (recipientNome) => [{
@@ -100,17 +103,19 @@ Deno.serve(async (req) => {
                 ]
             }];
 
+            // Lookup relacional — mesmo template usado por _notificar_transbordo (worker)
             const { data: tpl } = await supabase
                 .from("meta_templates")
                 .select("nome")
-                .eq("nome", "cuca_transbordo_colaborador")
+                .contains("automacoes", ["Institucional", "Transbordo"])
+                .contains("phone_number_ids", [phoneNumberId])
                 .eq("ativo", true)
                 .eq("status", "aprovado")
                 .maybeSingle();
             templateName = tpl?.nome ?? "";
 
         } else if (table === 'solicitacoes_acesso') {
-            // cuca_transbordo_colaborador: {{1}} nome colaborador, {{2}} solicitante, {{3}} "Acesso CUCA"
+            // Notificação de acesso: {{1}} nome colaborador, {{2}} solicitante, {{3}} "Acesso CUCA"
             const nomeSolicitante = record.nome_solicitante || "";
             getComponents = (recipientNome) => [{
                 type: "body",
@@ -121,10 +126,13 @@ Deno.serve(async (req) => {
                 ]
             }];
 
+            // Lookup relacional. Nenhum template "Acesso CUCA"+"Transbordo" existe hoje —
+            // pula graciosamente até um template real ser cadastrado para esse caso.
             const { data: tpl } = await supabase
                 .from("meta_templates")
                 .select("nome")
-                .eq("nome", "cuca_transbordo_colaborador")
+                .contains("automacoes", ["Acesso CUCA", "Transbordo"])
+                .contains("phone_number_ids", [phoneNumberId])
                 .eq("ativo", true)
                 .eq("status", "aprovado")
                 .maybeSingle();

@@ -248,6 +248,42 @@ Auditado o que Task 1 e Task 3 tocam: ambas as rotas usam `createAdminClient()` 
 
 **Zero nome de template hardcoded restante** — confirmado por grep: nenhuma ocorrência de `.eq("nome", "cuca_...")` ou similar nos 3 arquivos que tinham esse padrão.
 
+#### Ajuste final — eliminação total de hardcode + remoção dos 3 templates legados (2026-07-03)
+
+Junior reportou que os 3 templates `cuca_evento_pontual`, `cuca_evento_pontual_admin`, `cuca_pesquisa_ouvidoria` (mantidos "fora de escopo" na rodada anterior) estavam "atrapalhando". Investigação read-only prévia (turno anterior) descartou ambiguidade de lookup (os 3 têm `phone_number_ids=[]`, nunca batem em nenhum `.contains("phone_number_ids",...)`) e identificou a causa real: a tela de edição (`[id]/page.tsx`) bloqueia salvar **qualquer** campo desses 3 templates porque exige um telefone selecionado, e eles nunca tiveram um `phone_number_id` fixo (usam seleção dinâmica de canal).
+
+Junior then pediu eliminação total: **zero nome hardcoded em qualquer lugar do código**, com os 3 registros removidos do banco depois que o código parar de referenciá-los por nome.
+
+**Grep completo (worker + portal + edge functions, não só os 2 arquivos originais):**
+- `worker/campanhas_engine.py:207` — `.eq("nome", template_nome_exato)` em `processar_item_disparo` (usada por `eventos_pontuais`/`ouvidoria_eventos`) — não fazia parte do escopo original da Task 2.
+- `worker/campanhas_engine.py:296,308` (linhas antigas) — `if template_name == "cuca_evento_pontual":` / `elif template_name == "cuca_pesquisa_ouvidoria":` na montagem de `components` — hardcode "silencioso" (não é query, mas ainda amarra lógica ao nome).
+- **Achado não solicitado, fora do escopo "worker + portal" mas dentro do espírito do pedido:** `supabase/functions/alertas-institucionais/index.ts` tinha **3 lookups hardcoded** (`cuca_evento_pontual_admin` linha 67; `cuca_transbordo_colaborador` linhas 106 e 127). As duas últimas **já estavam quebradas em produção/cuca-dev** desde a migration anterior desta mesma story — `cuca_transbordo_colaborador` foi deletado quando os 6 templates reais foram criados, e essa edge function nunca foi atualizada. Isso não tinha sido pego pelo grep anterior porque eu só busquei em `worker/` e `cuca-portal/src/app/api/`, nunca em `supabase/functions/`. Reportando com transparência: foi uma lacuna minha na rodada anterior, corrigida agora.
+- 3 comentários/docstrings desatualizados (`worker/.env.example:37`, `worker/campanhas_engine.py:414,421` antigas) citando nomes antigos — corrigidos também, apesar de não serem lógica executável.
+
+**Verificação de impacto antes de aplicar (fato, não suposição):** consultei `eventos_pontuais`, `ouvidoria_eventos` e `solicitacoes_acesso` no cuca-dev — **as 3 tabelas estão com zero linhas** hoje. Ou seja, a migração de `processar_item_disparo` e da edge function não tem nenhum impacto funcional imediato no cuca-dev (nada está sendo disparado por esses caminhos agora).
+
+**Migração aplicada:**
+- `worker/campanhas_engine.py::processar_item_disparo`: reordenado (telefone antes do template, mesmo padrão da Task 2); lookup relacional com tag de automação por origem (`"Divulgação"` para `eventos_pontuais`/fallback, `"Ouvidoria"` para `ouvidoria_eventos`) + `phone_number_id`; `components` agora montado por `origem`, não por `template_name`. Sem template real cadastrado para essas 2 automações após a remoção dos 3 legados — **resultado esperado: pula graciosamente (loga e marca item como "pausada"), não derruba nada** — comportamento já existente na função para "sem template"/"sem telefone", só reaproveitado.
+- `supabase/functions/alertas-institucionais/index.ts`: 3 lookups migrados para relacional.
+  - Alerta admin de evento pontual → tag `["Institucional","EventoAdmin"]` — sem template correspondente hoje, pula graciosamente (mesma lacuna dos itens acima, tabela vazia).
+  - **Handover (`conversas`/`awaiting_human`) → tag `["Institucional","Transbordo"]`** — bate com `institucional_transbordo_v1`, que já existe. **Isso conserta o bug que a migration anterior desta story introduziu** (a função estava buscando `cuca_transbordo_colaborador`, deletado, e silenciosamente não enviava nada).
+  - `solicitacoes_acesso` → tag `["Acesso CUCA","Transbordo"]` — não existe template com essa combinação ainda (gap já registrado no Debug Log anterior: split do transbordo só cobriu Institucional/Empregabilidade). Pula graciosamente, tabela vazia hoje também.
+- Migration `supabase/migrations/20260703220000_wm16_remover_templates_cuca_legado.sql` — `DELETE` dos 3 registros, aplicada só depois do grep confirmar zero referência por nome.
+
+**Grep final (prova, rodado por mim depois de tudo aplicado):**
+```
+grep -rn "cuca_evento_pontual|cuca_evento_pontual_admin|cuca_pesquisa_ouvidoria|cuca_transbordo_colaborador|cuca_programacao_mensal|cuca_feedback_vaga|cuca_convite_entrevista" worker/ cuca-portal/src/ supabase/functions/
+→ 0 ocorrências (exit code 1)
+
+grep -rn '.eq("nome", "' worker/ cuca-portal/src/app/api/ supabase/functions/
+→ 0 ocorrências (exit code 1)
+```
+Rodei também um sweep repo-wide (`--include="*.py" --include="*.ts" --include="*.tsx" .`) pelos 3 nomes deletados — zero resultados em qualquer arquivo de código do repositório.
+
+`pytest worker/tests/`: 74 passed, 3 skipped — sem regressão (sem teste dedicado a `campanhas_engine.py`, então a cobertura dessa função continua sendo verificação manual/leitura de código, como já documentado no Testing da story).
+
+**Não testado (fora do meu alcance sem dados reais):** como as 3 tabelas estão vazias, não há como exercitar `processar_item_disparo`/`alertas-institucionais` ponta a ponta nesta sessão. A correção do bug do handover (`institucional_transbordo_v1`) e o comportamento gracioso das automações sem template ficam para validação de Junior quando/se essas automações forem usadas.
+
 ### File List
 
 **Modificados:**
@@ -256,16 +292,20 @@ Auditado o que Task 1 e Task 3 tocam: ambas as rotas usam `createAdminClient()` 
 - `cuca-portal/src/app/(dashboard)/developer/meta-numeros/page.tsx` — phone_number_id/waba_id editáveis, modal de confirmação crítica, botão + modal de soft delete
 - `cuca-portal/src/app/api/admin/meta-phone-numbers/[id]/route.ts` — CAMPOS_PERMITIDOS estendido, validação de formato Meta ID, checagem de duplicidade, rota DELETE (soft delete)
 
-**Não modificados (Task 2 bloqueada):**
-- `worker/campanhas_engine.py` — nenhuma alteração, hardcode de `cuca_programacao_mensal` permanece
-- `worker/meta_adapter_inbound.py` — nenhuma alteração, hardcode de `cuca_transbordo_colaborador` permanece
+**Modificados (ajuste final — eliminação total de hardcode):**
+- `worker/campanhas_engine.py` — `processar_item_disparo` migrada para lookup relacional; `components` montado por `origem`; comentários desatualizados corrigidos
+- `worker/.env.example` — comentário desatualizado corrigido
+- `supabase/functions/alertas-institucionais/index.ts` — 3 lookups migrados para relacional (1 conserta bug introduzido pela migration anterior)
+
+**Criados (ajuste final):**
+- `supabase/migrations/20260703220000_wm16_remover_templates_cuca_legado.sql` — remove os 3 templates legados, aplicada após confirmação por grep
 
 ### Tasks
 - [x] **Task 1 — Liberar edição segura de "nome" de template:** concluída; guard/readOnly condicional removido no ajuste final (Task 2 elimina o motivo dele).
-- [x] **Task 2 — CRUD relacional completo de templates Meta (redesenhada):** concluída. Migration aplicada no cuca-dev, 3 pontos de hardcode eliminados (2 no worker + 1 achado no portal), disambiguação verificada via SQL direto.
+- [x] **Task 2 — CRUD relacional completo de templates Meta (redesenhada):** concluída, incluindo eliminação total de hardcode (worker + portal + edge functions) e remoção dos 3 templates legados. Zero nome de template hardcoded em todo o repositório — confirmado por grep final e sweep repo-wide.
 - [x] **Task 3 — CRUD completo e seguro de Número Meta:** concluída, incluindo validação de `waba_id` (nota do @po incorporada) e rota DELETE.
 - [ ] **Task 4 — Validação cruzada com a API real da Meta:** não iniciada — gate com @po intacto, conforme escopo da story.
-- [~] **Task 5 — Auditoria de consistência:** reflexo imediato + disambiguação relacional verificados diretamente no cuca-dev. Smoke test E2E com mensagem real fica para Junior (validação final combinada).
+- [~] **Task 5 — Auditoria de consistência:** reflexo imediato + disambiguação relacional verificados diretamente no cuca-dev (inclusive as novas queries de `campanhas_engine.py`/edge function). Smoke test E2E com mensagem real fica para Junior (validação final combinada) — agora inclui também validar o handover institucional (bug corrigido) quando houver tráfego real.
 
 ## QA Results
 
@@ -326,3 +366,5 @@ Debug Log e Completion Notes do @dev são excepcionalmente detalhados e citam ev
 | 2026-07-03 | @dev (Dex) | Task 2 redesenhada por Junior como CRUD relacional completo (automação+número, zero nome hardcoded) e implementada de ponta a ponta: migration aplicada no cuca-dev (índice único parcial + 6 templates reais), 2 pontos do worker corrigidos, 3º ponto hardcoded achado e corrigido no portal (`feedback-submit/route.ts`), frontend das 2 telas de template redesenhado (dropdown telefone + 3 campos derivados), guard da Task 1 removido. Disambiguação de queries verificada diretamente no cuca-dev (não só teórica). pytest completo 74 passed/3 skipped (1 mock desatualizado corrigido). tsc 0 erros, eslint sem novos erros. InProgress → **Ready for Review**. Task 4 segue gated (@po). Smoke test E2E fica para Junior validar manualmente. Sugestão: chamar @qa para o gate. |
 | 2026-07-03 | @qa (Quinn) | Review independente — verdict **CONCERNS**. Confirmou de forma independente (pytest 74 passed/3 skipped, grep próprio, leitura de código, `get_advisors` de segurança) que a implementação está correta e sem achados CRITICAL/HIGH. Apontou drift entre ACs 2/3 (design original, obsoleto) e o comportamento final entregue, AC9 não executado (E2E fica para Junior) e AC10 sem decisão formal registrada (Task 4 não iniciada, sem violação). Recomendou @po reconciliar os ACs antes do fechamento como Done. |
 | 2026-07-03 | @po (Pax) | Reconciliação dos Critérios de Aceite 2, 3, 9 e 10 para refletir o modelo relacional final (automação+`phone_number_id`, sem guard de nomes hardcoded), conforme recomendado por @qa. AC4 reescrito com grep mais abrangente (cobre os 3 pontos hardcoded eliminados, não só os 2 originais) — verificado por mim antes de gravar (zero matches confirmado). ACs 1 e 5-8 mantidos inalterados (não afetados pelo redesenho). Status da story permanece **Ready for Review** — a reconciliação documental não altera o veredito de @qa nem dispensa as pendências (smoke test E2E de Junior, decisão da Task 4). |
+| 2026-07-03 | @devops (Gage) | Push de `develop` para `origin/develop` (4 commits) — sem PR (trabalho direto em `develop`, sem branch de feature). Corrigido credential helper do git (`gh auth setup-git`) e removido token antigo embutido na URL do remote, causa raiz de um hang no push. |
+| 2026-07-03 | @dev (Dex) | Eliminação total de hardcode de nome de template, por pedido de Junior após reportar que os 3 templates `cuca_*` legados "atrapalhavam". Investigação confirmou a causa real: tela de edição bloqueia salvar qualquer campo desses 3 templates por exigir telefone selecionado (eles nunca tiveram `phone_number_id` fixo). Migrado `worker/campanhas_engine.py::processar_item_disparo` (mais 1 ponto de hardcode que não fazia parte do escopo original) e, como achado extra, **3 lookups hardcoded em `supabase/functions/alertas-institucionais/index.ts`** — 2 deles já estavam quebrados desde a migration anterior desta story (buscavam `cuca_transbordo_colaborador`, já deletado); a correção do handover institucional resolve esse bug lateral. `eventos_pontuais`/`ouvidoria_eventos`/`solicitacoes_acesso` confirmadas com zero linhas no cuca-dev — migração sem impacto funcional imediato. Migration `20260703220000_wm16_remover_templates_cuca_legado.sql` removeu os 3 registros após grep confirmar zero referência por nome em todo o repositório (worker + portal + edge functions + sweep geral). pytest 74/3 skipped, sem regressão. |

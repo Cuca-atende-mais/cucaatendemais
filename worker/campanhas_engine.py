@@ -191,28 +191,16 @@ async def processar_item_disparo(
     item_id = item.get("id")
     unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
 
-    # Selecionar canal Meta e template por origem
+    # Selecionar canal Meta e automação-alvo por origem (S-WM-16: zero nome hardcoded)
     if origem == "eventos_pontuais":
         canal_tipo = "Divulgação"
-        template_nome_exato = "cuca_evento_pontual"
+        automacao_tag = "Divulgação"
     elif origem == "ouvidoria_eventos":
         canal_tipo = "Institucional"
-        template_nome_exato = "cuca_pesquisa_ouvidoria"
+        automacao_tag = "Ouvidoria"
     else:
         canal_tipo = "Institucional"
-        template_nome_exato = "cuca_evento_pontual"
-
-    # Lookup dinâmico de template aprovado (nome exato)
-    _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto") \
-        .eq("nome", template_nome_exato).eq("ativo", True).eq("status", "aprovado") \
-        .limit(1).maybe_single().execute()
-    if not _tpl_res.data:
-        logger.warning(
-            f"[campanhas] Nenhum template aprovado com nome {template_nome_exato!r} — item {item.get('id')} pulado"
-        )
-        await asyncio.to_thread(_update_db_sync, origem, item.get("id"), {"status": "pausada"})
-        return
-    template_name = _tpl_res.data["nome"]
+        automacao_tag = "Divulgação"
 
     await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
 
@@ -226,6 +214,23 @@ async def processar_item_disparo(
         return
 
     phone_number_id, meta_token = canal_info
+
+    # Lookup relacional (automação + phone_number_id, zero nome hardcoded). Se nenhum
+    # template corresponder, pula graciosamente (loga e segue) — não há template
+    # cadastrado hoje para "eventos_pontuais"/"ouvidoria_eventos" pós-migração S-WM-16.
+    _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto") \
+        .eq("automacoes", [automacao_tag]) \
+        .contains("phone_number_ids", [phone_number_id]) \
+        .eq("ativo", True).eq("status", "aprovado") \
+        .limit(1).maybe_single().execute()
+    if not _tpl_res.data:
+        logger.warning(
+            f"[campanhas] Nenhum template aprovado para automação={automacao_tag!r} "
+            f"phone_number_id={phone_number_id!r} — item {item_id} pulado"
+        )
+        await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
+        return
+    template_name = _tpl_res.data["nome"]
 
     categorias_alvo = item.get("categorias_alvo") or None
     if isinstance(categorias_alvo, list) and len(categorias_alvo) == 0:
@@ -293,7 +298,16 @@ async def processar_item_disparo(
         nome_lead = lead.get("nome") or "cidadão"
         numero = normalizar_telefone(lead["telefone"])
 
-        if template_name == "cuca_evento_pontual":
+        # Componentes montados por origem (não por nome de template — S-WM-16)
+        if origem == "ouvidoria_eventos":
+            components = [{
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "text": nome_lead},
+                    {"type": "text", "text": texto_pesquisa},
+                ],
+            }]
+        else:
             components = [{
                 "type": "body",
                 "parameters": [
@@ -305,16 +319,6 @@ async def processar_item_disparo(
                     {"type": "text", "text": unidade or ""},
                 ],
             }]
-        elif template_name == "cuca_pesquisa_ouvidoria":
-            components = [{
-                "type": "body",
-                "parameters": [
-                    {"type": "text", "text": nome_lead},
-                    {"type": "text", "text": texto_pesquisa},
-                ],
-            }]
-        else:
-            components = []
 
         ok = await _enviar_template_meta(phone_number_id, numero, meta_token, template_name, components)
         if ok:
@@ -407,7 +411,7 @@ async def campanhas_loop():
         await asyncio.sleep(30)
 
 
-# ─── Disparo Global de Divulgação (cuca_programacao_mensal) ──────────────────
+# ─── Disparo Global de Divulgação (programação mensal) ───────────────────────
 
 async def processar_disparos_divulgacao(
     delay_min: int,
@@ -415,7 +419,7 @@ async def processar_disparos_divulgacao(
     daily_limit: int,
     error_threshold: int,
 ):
-    """Processa fila de disparos globais com template cuca_programacao_mensal."""
+    """Processa fila de disparos globais com o template de programação mensal (lookup relacional)."""
     res = await asyncio.to_thread(
         lambda: supabase.table("disparos_divulgacao")
         .select("*")
