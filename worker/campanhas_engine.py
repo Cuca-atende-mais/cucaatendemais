@@ -189,6 +189,23 @@ async def processar_item_disparo(
 ):
     """Processa e dispara mensagem Meta para um evento aprovado."""
     item_id = item.get("id")
+    await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
+    try:
+        await _processar_item_disparo_interno(item, origem, delay_min, delay_max, daily_limit, error_threshold)
+    except Exception as exc:
+        logger.exception(f"[campanhas] Erro inesperado processando item {item_id} ({origem}): {exc}")
+        await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
+
+
+async def _processar_item_disparo_interno(
+    item: dict,
+    origem: str,
+    delay_min: int,
+    delay_max: int,
+    daily_limit: int,
+    error_threshold: int,
+):
+    item_id = item.get("id")
     unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
 
     # Selecionar canal Meta e automação-alvo por origem (S-WM-16: zero nome hardcoded)
@@ -201,8 +218,6 @@ async def processar_item_disparo(
     else:
         canal_tipo = "Institucional"
         automacao_tag = "Divulgação"
-
-    await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
 
     canal_info = await asyncio.to_thread(_get_phone_by_canal_tipo_sync, canal_tipo)
     if not canal_info:
@@ -218,8 +233,15 @@ async def processar_item_disparo(
     # Lookup relacional (automação + phone_number_id, zero nome hardcoded). Se nenhum
     # template corresponder, pula graciosamente (loga e segue) — não há template
     # cadastrado hoje para "eventos_pontuais"/"ouvidoria_eventos" pós-migração S-WM-16.
+    # Filtro de igualdade exata em coluna array precisa da sintaxe de array literal do
+    # Postgres (ex.: '{"Institucional"}'), não de uma lista Python — o postgrest-py
+    # serializa lista como str(list) ("['Institucional']"), que o Postgrest rejeita com
+    # 400 (malformed array literal). .contains() não serve aqui: combinaria também com
+    # templates multi-tag (ex.: ["Institucional", "Transbordo"]), quebrando o match
+    # exato que este lookup exige.
+    automacao_filtro = '{"' + automacao_tag + '"}'
     _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto") \
-        .eq("automacoes", [automacao_tag]) \
+        .eq("automacoes", automacao_filtro) \
         .contains("phone_number_ids", [phone_number_id]) \
         .eq("ativo", True).eq("status", "aprovado") \
         .limit(1).maybe_single().execute()
@@ -445,6 +467,23 @@ async def processar_disparos_divulgacao(
     logger.info(f"[Divulgação] Iniciando disparo global {disparo_id} — mês: {mes_nome}")
     await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "em_andamento")
 
+    try:
+        await _processar_disparo_divulgacao_interno(
+            disparo_id, mes_nome, delay_min, delay_max, daily_limit, error_threshold
+        )
+    except Exception as exc:
+        logger.exception(f"[Divulgação] Erro inesperado processando disparo {disparo_id}: {exc}")
+        await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "erro")
+
+
+async def _processar_disparo_divulgacao_interno(
+    disparo_id: str,
+    mes_nome: str,
+    delay_min: int,
+    delay_max: int,
+    daily_limit: int,
+    error_threshold: int,
+):
     canal_info = await asyncio.to_thread(_get_phone_by_canal_tipo_sync, "Institucional")
     if not canal_info:
         logger.error(f"[Divulgação] Nenhum phone_number_id Meta ativo para Institucional. Pausando {disparo_id}.")
@@ -456,9 +495,12 @@ async def processar_disparos_divulgacao(
     # Lookup relacional do template de programação mensal (automação + número — zero nome hardcoded).
     # automacoes=["Institucional"] exato (não .contains) para não colidir com templates que também
     # usam o canal Institucional mas carregam uma 2ª tag (ex.: transbordo, evento pontual).
+    # Filtro de igualdade exata em coluna array precisa da sintaxe de array literal do Postgres
+    # (ex.: '{"Institucional"}'), não de uma lista Python — o postgrest-py serializa lista como
+    # str(list) ("['Institucional']"), que o Postgrest rejeita com 400 (malformed array literal).
     _tpl_div = await asyncio.to_thread(
         lambda: supabase.table("meta_templates").select("nome, corpo_texto")
-        .eq("automacoes", ["Institucional"])
+        .eq("automacoes", '{"Institucional"}')
         .contains("phone_number_ids", [phone_number_id])
         .eq("ativo", True).eq("status", "aprovado")
         .limit(1).maybe_single().execute()

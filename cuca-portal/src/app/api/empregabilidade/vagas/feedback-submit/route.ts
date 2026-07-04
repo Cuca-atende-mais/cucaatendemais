@@ -92,10 +92,13 @@ export async function POST(request: NextRequest) {
 
                     if (phoneNumber) {
                         const metaToken = process.env.META_SYSTEM_USER_TOKEN
+                        // Igualdade exata em coluna array precisa da sintaxe de array literal do
+                        // Postgres ('{"Empregabilidade"}'), não de um array JS — ver route.ts de
+                        // divulgacao/disparar para o detalhe do bug (client serializa via toString()).
                         const { data: tpl } = await supabaseAdmin
                             .from("meta_templates")
                             .select("nome")
-                            .eq("automacoes", ["Empregabilidade"])
+                            .eq("automacoes", '{"Empregabilidade"}')
                             .contains("phone_number_ids", [phoneNumber.phone_number_id])
                             .eq("ativo", true)
                             .eq("status", "aprovado")
