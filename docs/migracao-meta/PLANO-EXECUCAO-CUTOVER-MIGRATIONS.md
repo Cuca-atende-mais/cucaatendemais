@@ -129,11 +129,12 @@ SELECT id, email, role_id FROM colaboradores WHERE email = 'admin@cucadev.com.br
 
 ```sql
 -- Ver EXATAMENTE quais linhas seriam apagadas pelo DELETE, antes de decidir
-SELECT id, titulo, data_inicio, categoria_id, created_at
+SELECT id, titulo, data_inicio, categorias_alvo, created_at
 FROM eventos_pontuais
 WHERE data_inicio IS NULL
 ORDER BY created_at;
 ```
+> Corrigido em 2026-07-05 após o ensaio de rollback em staging: a query original referenciava `categoria_id`, coluna que não existe em `eventos_pontuais` (a coluna real é `categorias_alvo`, jsonb) — erro pego ao rodar de verdade contra cuca-dev, não em revisão de texto.
 **Critério de decisão:** se **todas** as linhas retornadas tiverem título com sufixo `(Teste)` (ou claramente forem placeholders), a migration é segura — pode aplicar (o `DELETE` afeta só essas linhas). Se **qualquer linha** parecer um evento real (sem o sufixo, com dados de produção plausíveis), **NÃO aplicar o DELETE** — extrair o texto do `INSERT` da categoria separadamente e tratar o `DELETE` manualmente, linha a linha, ou pular esta migration inteira e criar uma versão sem o `DELETE`.
 
 **Decisão:** ☐ Todas as linhas são teste — aplicar como está  ☐ Há linha real — NÃO aplicar o DELETE (separar o INSERT da categoria)
@@ -228,9 +229,18 @@ SELECT phone_number_id, ativo FROM meta_phone_numbers WHERE phone_number_id = '1
 
 ---
 
+## ⚠️ Risco conhecido — ordem de aplicação real pode divergir da ordem por nome de arquivo (passos 15–17)
+
+Achado no ensaio de rollback em staging (`ENSAIO-ROLLBACK-STAGING-20260705.md`): em cuca-dev, a ordem **real de aplicação** das 3 migrations de debug wamid (passos 15–17) não seguiu a ordem dos nomes de arquivo — `debug_wamid_capture_rota_temporario` foi aplicada **antes** de `wm17_remover_debug_wamid_capture`, o inverso do que os timestamps sugerem. Resultado nesse ambiente: nenhuma das duas tabelas de debug sobrou.
+
+**Isso não significa que o passo 22 (cleanup) seja dispensável.** Produção provavelmente aplica via `supabase db push`, que respeita a ordem por nome de arquivo — nesse caso a sequência real seria `040000 → 043531 → 050000`, deixando `_debug_wamid_capture_rota` órfã (exatamente o que o Relatório 4 descreveu, e por isso o passo 22 continua na lista). O ponto de atenção é o oposto: **se o mecanismo de aplicação em produção não for estritamente ordenado por timestamp de arquivo** (aplicação manual fora de ordem, por exemplo), o comportamento pode divergir do que foi observado em staging — o passo 22 (`DROP TABLE IF EXISTS`) é seguro em qualquer um dos dois cenários (idempotente), mas vale confirmar com Junior qual mecanismo real será usado (ver seção 0).
+
+---
+
 ## Referências
 
 - `RELATORIO-1-diff-codigo-main-vs-develop.md` — escopo do delta e itens fora do escopo Meta
 - `RELATORIO-2-diff-variaveis-ambiente.md` — checklist de env vars do cutover
 - `RELATORIO-3-plano-de-rollback.md` — procedimento de rollback e pré-requisitos de backup
 - `RELATORIO-4-auditoria-seguranca-migrations.md` — análise de risco estrutural que originou este plano
+- `ENSAIO-ROLLBACK-STAGING-20260705.md` — execução real deste plano em staging (cuca-dev): backup, aplicação e restore validados
