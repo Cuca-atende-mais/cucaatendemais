@@ -2280,17 +2280,28 @@ async def _rotear_por_intencao(
     else:
         # AC#4 / bug 1 (S-WM-20 Task 3): ambíguo — menu determinístico em vez de
         # pergunta aberta. O LLM sem contexto (primeira mensagem) não é confiável
-        # o bastante para decidir sozinho; o menu numérico dá uma saída
-        # inequívoca e deixa a próxima resposta ser tratada sem precisar do LLM.
+        # o bastante para decidir sozinho; o menu numérico dá uma opção clara.
+        #
+        # CORREÇÃO CRÍTICA (S-WM-20 Task 5, regressão de produção 2026-07-04):
+        # a versão original desta task também fazia `_set_fluxo(..., {"etapa":
+        # "menu_inicial"})` aqui. Isso reaproveitava a etapa "menu_inicial" já
+        # existente em `processar_mensagem_empregabilidade` — mas aquele branch
+        # faz correspondência EXATA (`t in ("1", "vaga", "candidato", ...)`),
+        # não entende frase livre. Resultado: 1 mensagem ambígua ("oi", "bom
+        # dia") travava a conversa inteira num loop de "Não entendi sua
+        # resposta" — nenhuma mensagem seguinte (nem "abrir uma vaga") voltava
+        # a alcançar o classificador semântico, porque a etapa nunca mudava e o
+        # match exato quase nunca bate com uma frase real. Fix: NÃO define
+        # fluxo — a próxima mensagem sempre re-entra na detecção semântica,
+        # exatamente como funcionava antes desta story (nunca há trava).
         await e(
             f"Olá{saudacao_nome} Não entendi bem o que você precisa. Escolha uma das opções:\n\n"
             "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
             "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
             "3️⃣ *Vagas* — Quero ver vagas abertas\n"
             "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
-            "Digite *1*, *2*, *3* ou *4*."
+            "Digite *1*, *2*, *3* ou *4*, ou simplesmente me conte o que você precisa."
         )
-        _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
 
 
 # ---------------------------------------------------------------------------

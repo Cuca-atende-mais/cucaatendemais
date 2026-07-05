@@ -266,7 +266,29 @@ class TestFallbackAmbiguoPrimeiroContato:
         texto_enviado = mock_enviar.call_args.args[3]
         assert "CNPJ" not in texto_enviado
         assert "1️⃣" in texto_enviado
-        assert estado.get("etapa") == "menu_inicial"
+
+    @pytest.mark.asyncio
+    async def test_ambiguo_nao_trava_a_conversa_em_menu_inicial(self, monkeypatch):
+        """REGRESSÃO CRÍTICA (staging, 2026-07-04): a 1ª versão desta correção
+        também setava etapa='menu_inicial', que faz correspondência EXATA
+        ('t in (\"1\", \"vaga\", ...)') — uma única mensagem ambígua ('oi', 'bom
+        dia') travava a conversa inteira, e nenhuma mensagem seguinte (nem
+        'abrir uma vaga') voltava a alcançar o classificador semântico. Fix:
+        não define nenhum fluxo — a próxima mensagem sempre re-entra na
+        detecção, como já funcionava antes desta story."""
+        estado, fake_get, fake_set = _fluxo_mock("inicio")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "ambiguo", "nome": None},
+            "bom dia", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") != "menu_inicial"
+        assert estado == {"etapa": "inicio"}  # fluxo original preservado, nada travado
 
 
 # ─────────────────────────────────────────────────────────────────────────────
