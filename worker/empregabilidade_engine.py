@@ -220,6 +220,70 @@ async def _encerrar_fluxo(
 
 
 # ---------------------------------------------------------------------------
+# S-WM-20 Task 5 — Escape hatch híbrido: parser determinístico primeiro,
+# classificador semântico só quando o parser falha. Ver Change Log da story
+# para o raciocínio completo (chamar o LLM em toda etapa, incluindo campos de
+# DADO como nome/e-mail/CNPJ válidos, arriscaria classificar mal um valor
+# correto e tirar o usuário de um estado onde ele já estava certo).
+# ---------------------------------------------------------------------------
+
+async def _escape_semantico_ou_none(
+    texto: str,
+    perfil: str,
+    etapa: str,
+    conversa_id: str,
+    phone: str,
+    instance_name: str,
+    token: str,
+    lead_id: str,
+    unidade_cuca: str = "",
+) -> bool:
+    """Chama o classificador semântico quando o parser determinístico da etapa
+    atual já falhou. Retorna True se tratou a mensagem (quer_sair encerra;
+    mudou_de_assunto reroteia) — o chamador deve dar `return` em seguida.
+    Retorna False se o classificador também não teve sinal claro (ambíguo) —
+    o chamador mantém o comportamento original de pedir de novo."""
+    from intencao_detector import avaliar_mensagem_contextual  # noqa: PLC0415
+    sem = await avaliar_mensagem_contextual(
+        texto, perfil=perfil, etapa=etapa, ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
+    )
+    if sem["quer_sair"]:
+        await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil)
+        return True
+    if sem["mudou_de_assunto"] and sem["intencao"] != "ambiguo":
+        await _rotear_por_intencao(
+            sem, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
+        )
+        return True
+    return False
+
+
+async def _quer_sair_semantico(
+    texto: str,
+    perfil: str,
+    etapa: str,
+    conversa_id: str,
+    phone: str,
+    instance_name: str,
+    token: str,
+) -> bool:
+    """Variante de alta precisão para etapas de DADO livre (nome de candidato/
+    terceiro): honra só `quer_sair`, nunca `mudou_de_assunto` — um nome
+    incomum ou fora do padrão teria falso-positivo alto demais nesse sinal
+    (qualquer texto é potencialmente um nome válido, diferente de CNPJ/e-mail/
+    telefone, que têm formato verificável). Retorna True se encerrou o fluxo
+    (chamador deve dar `return` em seguida)."""
+    from intencao_detector import avaliar_mensagem_contextual  # noqa: PLC0415
+    sem = await avaliar_mensagem_contextual(
+        texto, perfil=perfil, etapa=etapa, ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
+    )
+    if sem["quer_sair"]:
+        await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil)
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Fluxo de EMPRESA
 # ---------------------------------------------------------------------------
 
@@ -309,7 +373,23 @@ async def _processar_empresa(
             _set_fluxo(conversa_id, {**fluxo, "etapa": "selecionando_vaga_cancelamento"})
             await _listar_vagas_para_acao(empresa_id, instance_name, token, phone, "cancelamento", conversa_id, fluxo)
         else:
-            await _encerrar_fluxo(conversa_id, instance_name, token, phone, "empresa")
+            # S-WM-20 Task 5: parser (match exato) falhou — antes ia direto para
+            # _encerrar_fluxo em qualquer texto não reconhecido (o mais agressivo
+            # dos casos, encerrava a conversa numa simples ambiguidade). Agora
+            # tenta o classificador semântico antes; só encerra/reroteia se ele
+            # tiver sinal claro, senão apenas re-apresenta o menu.
+            tratado = await _escape_semantico_ou_none(
+                texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+            )
+            if not tratado:
+                await e(
+                    "Não entendi. Escolha uma das opções:\n\n"
+                    "1️⃣ Cadastrar nova vaga\n"
+                    "2️⃣ Consultar status de uma vaga\n"
+                    "3️⃣ Editar uma vaga\n"
+                    "4️⃣ Cancelar uma vaga\n\n"
+                    "Responda com *1*, *2*, *3* ou *4*."
+                )
         return
 
     # --- ETAPA: perguntando_unidade_vaga (DEPRECADO — SQS-41 moveu seleção para o formulário web) ---
@@ -337,6 +417,12 @@ async def _processar_empresa(
         empresa_id = fluxo.get("empresa_id")
         match_num = re.search(r"\b(\d{1,4})\b", texto)
         if not match_num:
+            # S-WM-20 Task 5: sem número — antes só pedia de novo, sem entender
+            # que o usuário pode ter mudado de assunto ou desistido.
+            if await _escape_semantico_ou_none(
+                texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+            ):
+                return
             await e("Por favor, informe o *número* da vaga que deseja editar (ex: 1, 2, 3...):")
             return
         num = match_num.group(1)
@@ -413,6 +499,11 @@ async def _processar_empresa(
         empresa_id = fluxo.get("empresa_id")
         match_num = re.search(r"\b(\d{1,4})\b", texto)
         if not match_num:
+            # S-WM-20 Task 5: mesmo tratamento de selecionando_vaga_edicao.
+            if await _escape_semantico_ou_none(
+                texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+            ):
+                return
             await e("Por favor, informe o *número* da vaga que deseja cancelar (ex: 1, 2, 3...):")
             return
         num = match_num.group(1)
@@ -552,7 +643,11 @@ async def _processar_empresa(
         ]
         t_lower = texto.lower()
         if any(f in t_lower for f in _frases_nao_empresa):
-            _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
+            # S-WM-20 Task 5: corrigido o mesmo bug do menu_inicial (regressão
+            # crítica já corrigida em _rotear_por_intencao) — aqui também
+            # travava a conversa ao setar etapa="menu_inicial" (match exato,
+            # sem entender frase livre). Não define fluxo: a próxima mensagem
+            # sempre re-entra na detecção semântica, sem travar.
             await _enviar(
                 instance_name, token, phone,
                 "Sem problema! 😊 Vamos recomeçar.\n\n"
@@ -564,10 +659,21 @@ async def _processar_empresa(
                 "Responda com o número ou descreva o que precisa.",
                 conversa_id=conversa_id, lead_id=lead_id,
             )
+            _set_fluxo(conversa_id, {})
             return
 
         cnpj_limpo = re.sub(r"\D", "", texto)
         if len(cnpj_limpo) != 14:
+            # S-WM-20 Task 5 (achado do Junior em staging): "nao nao, sou uma
+            # empresa e gostava de subir uma vaga aqui" não bate em nenhuma
+            # frase de _frases_nao_empresa (elas cobrem NEGAÇÃO de ser empresa,
+            # não afirmação com mudança de assunto) nem tem 14 dígitos —
+            # respondia "CNPJ inválido" para sempre. Parser falhou → tenta o
+            # classificador semântico antes de repetir o erro.
+            if await _escape_semantico_ou_none(
+                texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+            ):
+                return
             await e("CNPJ inválido. Por favor, informe os *14 dígitos* do CNPJ da sua empresa:\n\n_(Se entrou aqui por engano, digite *menu* para voltar ao início.)_")
             return
 
@@ -769,6 +875,11 @@ async def _processar_empresa(
         email_candidato = texto.strip()
         # Validação básica de e-mail
         if "@" not in email_candidato or "." not in email_candidato.split("@")[-1]:
+            # S-WM-20 Task 5: e-mail inválido — antes só repetia o pedido.
+            if await _escape_semantico_ou_none(
+                texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+            ):
+                return
             await e(
                 "⚠️ Esse e-mail não parece válido. Por favor, informe um e-mail no formato correto (ex: rh@empresa.com.br):"
             )
@@ -789,6 +900,11 @@ async def _processar_empresa(
     if etapa == "coletando_telefone_responsavel":
         tel_digits = re.sub(r"\D", "", texto.strip())
         if len(tel_digits) < 10:
+            # S-WM-20 Task 5: telefone inválido — antes só repetia o pedido.
+            if await _escape_semantico_ou_none(
+                texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+            ):
+                return
             await e(
                 "⚠️ Telefone inválido. Por favor, informe o número com DDD (ex: 85999990000):"
             )
@@ -854,9 +970,14 @@ async def _processar_empresa(
                 "etapa": "aguardando_retorno_selecao",
             })
         else:
-            await e(
-                "Não entendi. Responda com *1* para criar uma vaga ou *2* para marcar seleção:"
+            # S-WM-20 Task 5: nem 1 nem 2 — antes só repetia o pedido para sempre.
+            tratado = await _escape_semantico_ou_none(
+                texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
             )
+            if not tratado:
+                await e(
+                    "Não entendi. Responda com *1* para criar uma vaga ou *2* para marcar seleção:"
+                )
         return
 
     # --- ETAPA: aguardando_retorno_vaga (após link enviado) ---
@@ -1190,7 +1311,13 @@ async def _processar_candidato(
             )
             _set_fluxo(conversa_id, {"etapa": "aguardando_id_candidato", "perfil": "candidato"})
         else:
-            await _encerrar_fluxo(conversa_id, instance_name, token, phone, "candidato")
+            # S-WM-20 Task 5: antes qualquer coisa que não fosse "outro/outra/
+            # mais" encerrava direto — tenta o classificador semântico antes
+            # (pode ser mudança de assunto, não necessariamente despedida).
+            if not await _escape_semantico_ou_none(
+                texto, "candidato", etapa, conversa_id, phone, instance_name, token, lead_id,
+            ):
+                await _encerrar_fluxo(conversa_id, instance_name, token, phone, "candidato")
         return
 
     # Fallback
@@ -1372,7 +1499,12 @@ async def _processar_publico(
             })
             await _processar_publico("vagas", phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         else:
-            await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
+            # S-WM-20 Task 5: antes qualquer coisa fora de "outra/vagas/mais"
+            # encerrava direto — tenta o classificador semântico primeiro.
+            if not await _escape_semantico_ou_none(
+                texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+            ):
+                await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
         return
 
     # --- ETAPA: pos_candidatura (S37C-01) ---
@@ -1396,12 +1528,18 @@ async def _processar_publico(
         elif quer_encerrar_claro:
             await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
         else:
-            # S37C-03: mensagem ambígua (ex: "obrigado", "valeu") — reapresenta opções sem encerrar
-            await e(
-                "Fico feliz em ter ajudado! 😊\n\n"
-                "Ainda quer se candidatar a outra vaga?\n"
-                "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
-            )
+            # S37C-03 + S-WM-20 Task 5: mensagem ambígua (ex: "obrigado",
+            # "valeu") — antes de reapresentar as opções, tenta o classificador
+            # semântico (pode ser uma mudança de assunto real, ex.: "na
+            # verdade eu sou uma empresa", não apenas um agradecimento).
+            if not await _escape_semantico_ou_none(
+                texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+            ):
+                await e(
+                    "Fico feliz em ter ajudado! 😊\n\n"
+                    "Ainda quer se candidatar a outra vaga?\n"
+                    "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
+                )
         return
 
     # --- ETAPA: oferta_banco_talentos ---
@@ -1448,6 +1586,11 @@ async def _processar_publico(
 
     # --- ETAPA: coletando_nome_candidato ---
     if etapa == "coletando_nome_candidato":
+        # S-WM-20 Task 5, categoria (b): qualquer texto é um nome "válido" —
+        # não dá pra usar mudou_de_assunto (falso-positivo alto em nomes
+        # incomuns). Checa só quer_sair, de alta precisão, antes de aceitar.
+        if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
+            return
         nome_coletado = texto.strip()
         vaga_id_ref = fluxo.get("vaga_id_selecionada")
         eh_banco_talentos = fluxo.get("banco_talentos", False)
@@ -1482,6 +1625,17 @@ async def _processar_publico(
             })
             return
 
+        # S-WM-20 Task 5: diferente das etapas de coleta de nome (qualquer
+        # texto é um nome válido), aqui a resposta esperada é um binário
+        # eu/outra pessoa — se não bateu com o "outra pessoa" acima, o código
+        # assumia sempre "é para si mesmo" e disparava a candidatura em
+        # silêncio, mesmo numa mudança de assunto real. Checa o classificador
+        # completo (não só quer_sair) antes desse default silencioso.
+        if await _escape_semantico_ou_none(
+            texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+        ):
+            return
+
         # É para si mesmo — enviar link
         await _enviar_link_candidatura(
             instance_name, token, phone, conversa_id, fluxo,
@@ -1491,6 +1645,9 @@ async def _processar_publico(
 
     # --- ETAPA: coletando_nome_terceiro ---
     if etapa == "coletando_nome_terceiro":
+        # S-WM-20 Task 5, categoria (b): mesmo tratamento de coletando_nome_candidato.
+        if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
+            return
         nome_terceiro = texto.strip()
         vaga_id_ref = fluxo.get("vaga_id_selecionada")
         eh_banco_talentos = fluxo.get("banco_talentos", False)
@@ -1515,6 +1672,11 @@ async def _processar_publico(
                 if titulo:
                     cargos_escolhidos.append(titulo)
         if not cargos_escolhidos:
+            # S-WM-20 Task 5: nenhum número reconhecido — antes só repetia a lista.
+            if await _escape_semantico_ou_none(
+                texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+            ):
+                return
             linhas_re = ["Não entendi. Digite o número do cargo de interesse. Ex: *1* ou *1,3*\n"]
             for idx_c, c in enumerate(cargos_disponiveis, start=1):
                 linhas_re.append(f"{idx_c}️⃣ {c.get('titulo', '')}")

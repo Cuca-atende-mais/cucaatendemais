@@ -322,3 +322,143 @@ class TestQuerBancoTalentosNegacao:
         """Cenário original da SQS-53 (sem negação) preservado: lead erra o menu
         inicial e depois escreve 'banco de talentos' — ainda redireciona."""
         assert emp._quer_banco_talentos("banco de talentos", "listou_vagas", {}) is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-WM-20 Task 5 — Hibridismo (parser-primeiro, semântica-na-falha) em todas
+# as etapas de texto livre, achado adicional do Junior em staging: o escape
+# hatch só cobria aguardando_id_candidato e oferta_banco_talentos; qualquer
+# outra etapa com parser rígido (aguardando_cnpj, e-mail, telefone, menus por
+# match exato) tinha o mesmo problema. Amostra representativa das ~14 etapas
+# corrigidas — não exaustiva, mas cobre os padrões (a) parser-falha→semântico
+# e (b) quer_sair de alta precisão em estados de nome livre.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mock_gpt(intencao=None, quer_sair=False, mudou_de_assunto=False):
+    async def _fn(texto, perfil, etapa, ultima_msg_bot):
+        return {"intencao": intencao, "quer_sair": quer_sair, "mudou_de_assunto": mudou_de_assunto}
+    return _fn
+
+
+class TestEscapeHatchAguardandoCnpj:
+
+    @pytest.mark.asyncio
+    async def test_negacao_com_mudanca_assunto_nao_repete_cnpj_invalido(self, monkeypatch):
+        """Achado do Junior em staging (teste real via WhatsApp): 'nao nao, eu
+        sou uma empresa e gostava de subir uma vaga aqui' e 'no, quero fazer
+        uma candidatura' repetiam 'CNPJ inválido' para sempre em
+        aguardando_cnpj — _frases_nao_empresa só cobre NEGAÇÃO de ser empresa,
+        não afirmação com mudança de assunto. Parser (14 dígitos) falha →
+        classificador semântico assume."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(
+            intencao_detector, "_chamar_gpt_contextual",
+            _mock_gpt(intencao="candidato_vaga", mudou_de_assunto=True),
+        )
+
+        await emp._processar_empresa(
+            "no, quero fazer uma candidatura",
+            "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "CNPJ inválido" not in texto_enviado
+        assert estado.get("perfil") == "publico"
+
+    @pytest.mark.asyncio
+    async def test_frase_nao_empresa_nao_trava_mais_em_menu_inicial(self, monkeypatch):
+        """Regressão da mesma classe já corrigida em _rotear_por_intencao: o
+        escape de 'não sou empresa' aqui também setava etapa='menu_inicial'
+        (match exato, sem entender frase livre) — travava a conversa. Corrigido
+        para não definir nenhum fluxo."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_empresa(
+            "não sou empresa", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") != "menu_inicial"
+        assert estado == {}
+
+
+class TestEscapeHatchMenuEmpresaAcoes:
+
+    @pytest.mark.asyncio
+    async def test_resposta_nao_reconhecida_nao_encerra_direto(self, monkeypatch):
+        """Antes, qualquer texto fora do match exato ('1'/'nova vaga'/etc.)
+        encerrava a conversa direto via _encerrar_fluxo — o caso mais agressivo
+        de todos (nem repetia o menu, simplesmente acabava a conversa)."""
+        estado, fake_get, fake_set = _fluxo_mock("menu_empresa_acoes", {"perfil": "empresa", "empresa_id": "e1"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(intencao="ambiguo"))
+
+        await emp._processar_empresa(
+            "quero ver como estao indo minhas vagas por favor",
+            "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "Até logo" not in texto_enviado
+        assert estado != {}  # não encerrou o fluxo
+
+
+class TestEscapeHatchNomeLivre:
+
+    @pytest.mark.asyncio
+    async def test_quer_sair_explicito_encerra_em_vez_de_aceitar_como_nome(self, monkeypatch):
+        """Categoria (b): quer_sair de alta precisão — se o lead claramente
+        pede pra sair no meio da coleta do nome, não deve engolir a frase como
+        se fosse o nome dele."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=True))
+
+        await emp._processar_publico(
+            "na verdade desiste, obrigado", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "Esse currículo é para" not in texto_enviado  # não seguiu como se fosse nome
+        assert estado == {}
+
+    @pytest.mark.asyncio
+    async def test_nome_incomum_nao_e_confundido_com_saida(self, monkeypatch):
+        """Guarda contra falso-positivo: um nome incomum deve continuar sendo
+        aceito normalmente — categoria (b) só checa quer_sair, nunca
+        mudou_de_assunto (que teria mais falso-positivo aqui)."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "Xisto Wenceslau", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "Xisto Wenceslau" in texto_enviado
+        assert estado.get("etapa") == "confirmando_terceiro"
