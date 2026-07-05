@@ -88,8 +88,11 @@ class TestEscapeHatchAguardandoIdCandidato:
     async def test_negacao_mudanca_assunto_ainda_nao_sai_do_estado(self, monkeypatch):
         """Bug 3 (relatório): 'nao nao, sou uma empresa' deveria sair do estado
         aguardando_id_candidato — hoje o classificador semântico (Task 3, S-WM-20)
-        reconhece a mudança de assunto e reroteia para o fluxo de empresa, em vez
-        de cair no parser sintático e responder 'não encontrei candidatura'."""
+        reconhece a mudança de assunto e pergunta confirmação de troca de rota
+        (ajuste 3, Task 5) em vez de cair no parser sintático e responder 'não
+        encontrei candidatura'. Migrado para `_escape_semantico_ou_none` — antes
+        desta migração, esta etapa reroteava em silêncio (cópia inline mais
+        antiga que o helper compartilhado)."""
         estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato")
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
@@ -97,6 +100,10 @@ class TestEscapeHatchAguardandoIdCandidato:
         mock_sb = MagicMock()
         mock_sb.table.return_value.select.return_value.ilike.return_value \
             .order.return_value.limit.return_value.execute.return_value.data = []
+        # Neutraliza o check de "convite de entrevista pendente" (SQS-40), que
+        # roda incondicionalmente no topo de processar_mensagem_empregabilidade
+        # (chamado abaixo para confirmar a troca de rota).
+        mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
         monkeypatch.setattr(emp, "supabase", mock_sb)
 
         mock_enviar = AsyncMock(return_value=True)
@@ -115,6 +122,14 @@ class TestEscapeHatchAguardandoIdCandidato:
 
         texto_enviado = mock_enviar.call_args.args[3]
         assert "não encontrei candidatura" not in texto_enviado.lower()
+        assert "sim" in texto_enviado.lower()
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+        # Confirma a troca ("sim") — só então o reroteamento acontece de fato.
+        mock_enviar.reset_mock()
+        await emp.processar_mensagem_empregabilidade(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
         assert estado.get("perfil") == "empresa"
         assert estado.get("etapa") == "aguardando_cnpj"
 
@@ -130,10 +145,16 @@ class TestOfertaBancoTalentos:
         """'nao nao, eu sou uma empresa e gostava de subir uma vaga aqui' — frase real
         do relatório e observada ao vivo (conversa 5b437a1b-...) — antes encerrava o
         fluxo pela substring 'nao'. O gate semântico da Task 3 (S-WM-20) reconhece a
-        mudança de assunto e reroteia para o fluxo de empresa em vez de encerrar."""
+        mudança de assunto e pergunta confirmação (ajuste 3, Task 5) em vez de
+        encerrar. Migrado para `_escape_semantico_ou_none` (antes era cópia inline
+        mais antiga que o helper, sem a pergunta de confirmação)."""
         estado, fake_get, fake_set = _fluxo_mock("oferta_banco_talentos")
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+        monkeypatch.setattr(emp, "supabase", mock_sb)
 
         mock_enviar = AsyncMock(return_value=True)
         monkeypatch.setattr(emp, "_enviar", mock_enviar)
@@ -151,6 +172,11 @@ class TestOfertaBancoTalentos:
         )
 
         assert estado != {}
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+        await emp.processar_mensagem_empregabilidade(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
         assert estado.get("perfil") == "empresa"
         assert estado.get("etapa") == "aguardando_cnpj"
 
@@ -188,10 +214,16 @@ class TestOfertaBancoTalentos:
         gate semântico — roteava errado para coleta de nome do banco de talentos
         mesmo com negação e mudança de assunto explícitas. Reproduzido com uma
         simulação pura da condição (sem LLM) confirmando `quer_banco=True` antes
-        do fix. Corrigido: presença de negação desativa o fast-path."""
+        do fix. Corrigido: presença de negação desativa o fast-path. Migrado para
+        `_escape_semantico_ou_none` — agora pergunta confirmação (ajuste 3) antes
+        de trocar de rota."""
         estado, fake_get, fake_set = _fluxo_mock("oferta_banco_talentos")
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+        monkeypatch.setattr(emp, "supabase", mock_sb)
 
         mock_enviar = AsyncMock(return_value=True)
         monkeypatch.setattr(emp, "_enviar", mock_enviar)
@@ -208,6 +240,11 @@ class TestOfertaBancoTalentos:
             "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
         )
 
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+        await emp.processar_mensagem_empregabilidade(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
         assert estado.get("etapa") != "coletando_nome_candidato"
         assert estado.get("perfil") == "empresa"
         assert estado.get("etapa") == "aguardando_cnpj"
@@ -268,14 +305,17 @@ class TestFallbackAmbiguoPrimeiroContato:
         assert "1️⃣" in texto_enviado
 
     @pytest.mark.asyncio
-    async def test_ambiguo_nao_trava_a_conversa_em_menu_inicial(self, monkeypatch):
+    async def test_ambiguo_define_menu_inicial_com_dígito_restaurado(self, monkeypatch):
         """REGRESSÃO CRÍTICA (staging, 2026-07-04): a 1ª versão desta correção
-        também setava etapa='menu_inicial', que faz correspondência EXATA
-        ('t in (\"1\", \"vaga\", ...)') — uma única mensagem ambígua ('oi', 'bom
-        dia') travava a conversa inteira, e nenhuma mensagem seguinte (nem
-        'abrir uma vaga') voltava a alcançar o classificador semântico. Fix:
-        não define nenhum fluxo — a próxima mensagem sempre re-entra na
-        detecção, como já funcionava antes desta story."""
+        setava etapa='menu_inicial', cujo fallback fazia correspondência EXATA
+        sem entender frase livre — uma mensagem ambígua travava a conversa. O
+        fix daquela vez removeu o `_set_fluxo`, mas isso também quebrou o
+        atalho de dígito puro (Junior encontrou: '3' voltava a mostrar o
+        mesmo menu, sem nunca virar 'vagas'). S-WM-20 Task 5 (ajuste 1): o
+        fallback de menu_inicial agora chama o classificador semântico em vez
+        de travar — por isso voltou a ser seguro setar essa etapa aqui,
+        restaurando o atalho de dígito. Ver TestMenuInicialFallbackSemantico
+        para a prova de que o fallback não trava mais."""
         estado, fake_get, fake_set = _fluxo_mock("inicio")
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
@@ -287,8 +327,84 @@ class TestFallbackAmbiguoPrimeiroContato:
             "bom dia", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
         )
 
-        assert estado.get("etapa") != "menu_inicial"
-        assert estado == {"etapa": "inicio"}  # fluxo original preservado, nada travado
+        assert estado.get("etapa") == "menu_inicial"
+
+    @pytest.mark.asyncio
+    async def test_ambiguo_usa_saudacao_diferente_na_primeira_interacao(self, monkeypatch):
+        """Apontamento do usuário: a mensagem 'Não entendi bem o que você
+        precisa' não faz sentido quando é literalmente a 1ª mensagem da
+        conversa (nada foi dito antes pra não ter sido entendido). Distingue
+        via _ultima_mensagem_bot (None = nenhuma mensagem do bot ainda)."""
+        estado, fake_get, fake_set = _fluxo_mock("inicio")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        monkeypatch.setattr(emp, "_ultima_mensagem_bot", lambda conversa_id: None)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "ambiguo", "nome": None},
+            "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "Não entendi" not in texto_enviado
+        assert "1️⃣" in texto_enviado
+
+
+class TestMenuInicialFallbackSemantico:
+
+    @pytest.mark.asyncio
+    async def test_digito_puro_seleciona_a_opcao_sem_chamar_llm(self, monkeypatch):
+        """Achado do Junior em staging: '3' (dígito puro) repetia o menu
+        ambíguo em vez de escolher a opção 3 (Vagas). Confirma que o atalho
+        determinístico continua funcionando sem chamar o LLM."""
+        estado, fake_get, fake_set = _fluxo_mock("menu_inicial")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def _llm_nao_deveria_ser_chamado(texto, perfil, etapa, ultima_msg_bot):
+            raise AssertionError("LLM não deveria ser chamado no atalho de dígito")
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _llm_nao_deveria_ser_chamado)
+
+        await emp._processar_menu_inicial(
+            "3", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("perfil") == "publico"
+
+    @pytest.mark.asyncio
+    async def test_frase_livre_nao_reconhecida_nao_trava_mais(self, monkeypatch):
+        """A causa raiz real do achado do Junior: o fallback de menu_inicial
+        fazia só correspondência EXATA e travava em qualquer frase livre —
+        agora chama o classificador semântico em vez de repetir o mesmo menu
+        para sempre."""
+        estado, fake_get, fake_set = _fluxo_mock("menu_inicial")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(
+            intencao_detector, "_chamar_gpt_contextual",
+            _mock_gpt(intencao="empresa"),
+        )
+
+        await emp._processar_menu_inicial(
+            "gostaria de saber como faço para abrir uma vaga",
+            "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "Não entendi sua resposta" not in texto_enviado
+        assert estado.get("perfil") == "empresa"
+        assert estado.get("etapa") == "aguardando_cnpj"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -343,13 +459,14 @@ def _mock_gpt(intencao=None, quer_sair=False, mudou_de_assunto=False):
 class TestEscapeHatchAguardandoCnpj:
 
     @pytest.mark.asyncio
-    async def test_negacao_com_mudanca_assunto_nao_repete_cnpj_invalido(self, monkeypatch):
+    async def test_negacao_com_mudanca_assunto_pergunta_confirmacao_antes_de_trocar_rota(self, monkeypatch):
         """Achado do Junior em staging (teste real via WhatsApp): 'nao nao, eu
         sou uma empresa e gostava de subir uma vaga aqui' e 'no, quero fazer
         uma candidatura' repetiam 'CNPJ inválido' para sempre em
         aguardando_cnpj — _frases_nao_empresa só cobre NEGAÇÃO de ser empresa,
         não afirmação com mudança de assunto. Parser (14 dígitos) falha →
-        classificador semântico assume."""
+        classificador semântico assume. S-WM-20 Task 5 (ajuste 3): em vez de
+        trocar de rota em silêncio, agora pergunta confirmação antes."""
         estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
@@ -369,7 +486,60 @@ class TestEscapeHatchAguardandoCnpj:
 
         texto_enviado = mock_enviar.call_args.args[3]
         assert "CNPJ inválido" not in texto_enviado
+        assert "candidatar" in texto_enviado.lower()
+        assert "sim" in texto_enviado.lower()
+        assert estado.get("etapa") == "confirmando_troca_rota"
+        assert estado.get("_troca_rota_pendente", {}).get("intencao") == "candidato_vaga"
+
+    @pytest.mark.asyncio
+    async def test_confirmar_troca_de_rota_com_sim_executa_o_reroteamento(self, monkeypatch):
+        """Continuação do cenário acima: depois da pergunta de confirmação, o
+        lead responde 'sim' — só então a troca de rota acontece de fato."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_troca_rota", {
+            "_troca_rota_pendente": {"intencao": "candidato_vaga", "quer_sair": False, "mudou_de_assunto": True, "nome": None},
+            "_troca_rota_unidade_cuca": "Barra",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        # Neutraliza o check de "convite de entrevista pendente" (SQS-40),
+        # que roda antes desta etapa em processar_mensagem_empregabilidade —
+        # sem isso, o MagicMock de supabase faz `cands_convite` parecer não
+        # vazio e "sim" seria interpretado (errado) como confirmação de entrevista.
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp.processar_mensagem_empregabilidade(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
         assert estado.get("perfil") == "publico"
+
+    @pytest.mark.asyncio
+    async def test_nao_confirmar_troca_de_rota_mostra_menu_sem_travar(self, monkeypatch):
+        """Se o lead não confirmar com um 'sim' claro, não trava repetindo a
+        pergunta — volta pro menu geral."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_troca_rota", {
+            "_troca_rota_pendente": {"intencao": "candidato_vaga", "quer_sair": False, "mudou_de_assunto": True, "nome": None},
+            "_troca_rota_unidade_cuca": "Barra",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp.processar_mensagem_empregabilidade(
+            "não, deixa quieto", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "1️⃣" in texto_enviado
+        assert estado == {}
 
     @pytest.mark.asyncio
     async def test_frase_nao_empresa_nao_trava_mais_em_menu_inicial(self, monkeypatch):

@@ -219,6 +219,33 @@ async def _encerrar_fluxo(
     _set_fluxo(conversa_id, {})
 
 
+async def _mostrar_menu_opcoes(
+    instance_name: str,
+    token: str,
+    phone: str,
+    conversa_id: str,
+    lead_id: str,
+    intro: str = "Escolha uma das opções:",
+) -> None:
+    """Menu numérico de 4 opções, reutilizado pelo branch `ambiguo` de
+    `_rotear_por_intencao`, pelo bypass global de "menu" e pelo fallback de
+    `menu_inicial` — S-WM-20 Task 5 (ajuste 2): antes cada um tinha seu
+    próprio texto ligeiramente diferente (ou nenhum), causando comportamento
+    inconsistente ("menu" pulava direto pra vagas em vez de reabrir a escolha).
+    `intro` permite variar a frase de abertura (ex.: saudação de boas-vindas
+    na 1ª interação vs. "não entendi" numa mensagem ambígua repetida)."""
+    await _enviar(
+        instance_name, token, phone,
+        f"{intro}\n\n"
+        "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
+        "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
+        "3️⃣ *Vagas* — Quero ver vagas abertas\n"
+        "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
+        "Digite *1*, *2*, *3* ou *4*, ou simplesmente me conte o que você precisa.",
+        conversa_id=conversa_id, lead_id=lead_id,
+    )
+
+
 # ---------------------------------------------------------------------------
 # S-WM-20 Task 5 — Escape hatch híbrido: parser determinístico primeiro,
 # classificador semântico só quando o parser falha. Ver Change Log da story
@@ -251,11 +278,52 @@ async def _escape_semantico_ou_none(
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil)
         return True
     if sem["mudou_de_assunto"] and sem["intencao"] != "ambiguo":
-        await _rotear_por_intencao(
-            sem, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
+        # S-WM-20 Task 5 (ajuste 3): antes reroteava direto e em silêncio
+        # (`_rotear_por_intencao` já mandava a 1ª mensagem da rota nova, sem
+        # nenhum "percebi que você mudou de assunto, é isso?"). Agora
+        # pergunta e só reroteia de fato depois da confirmação — ver
+        # `confirmando_troca_rota` em `processar_mensagem_empregabilidade`.
+        await _perguntar_confirmacao_troca_rota(
+            sem, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
         )
         return True
     return False
+
+
+_MENSAGENS_CONFIRMACAO_TROCA_ROTA = {
+    "empresa": "Percebi que você quer divulgar uma vaga ou marcar um processo seletivo, como empresa.",
+    "candidato_vaga": "Percebi que você quer se candidatar a uma vaga.",
+    "banco_talentos": "Percebi que você quer deixar seu currículo no banco de talentos.",
+    "upload": "Percebi que você quer enviar seu currículo.",
+}
+
+
+async def _perguntar_confirmacao_troca_rota(
+    sem: dict,
+    conversa_id: str,
+    phone: str,
+    instance_name: str,
+    token: str,
+    lead_id: str,
+    unidade_cuca: str = "",
+) -> None:
+    """Pergunta antes de trocar de rota no meio da conversa (S-WM-20 Task 5,
+    ajuste 3), em vez de reroteirar em silêncio. Guarda a classificação
+    pendente no fluxo; a confirmação real acontece em
+    `confirmando_troca_rota` (`processar_mensagem_empregabilidade`)."""
+    contexto = _MENSAGENS_CONFIRMACAO_TROCA_ROTA.get(
+        sem.get("intencao", "ambiguo"), "Percebi que você quer falar sobre outro assunto.",
+    )
+    await _enviar(
+        instance_name, token, phone,
+        f"{contexto} É isso mesmo? Responda *sim* ou *não*.",
+        conversa_id=conversa_id, lead_id=lead_id,
+    )
+    _set_fluxo(conversa_id, {
+        "etapa": "confirmando_troca_rota",
+        "_troca_rota_pendente": sem,
+        "_troca_rota_unidade_cuca": unidade_cuca,
+    })
 
 
 async def _quer_sair_semantico(
@@ -1208,18 +1276,16 @@ async def _processar_candidato(
         # bug 3 do relatório ("nao nao, sou uma empresa" não batia com
         # _quer_encerrar nem com o parser de CPF/ref/telefone/nome, caindo
         # sempre em "não encontrei candidatura").
-        from intencao_detector import avaliar_mensagem_contextual  # noqa: PLC0415
-        sem = await avaliar_mensagem_contextual(
-            texto, perfil="candidato", etapa=etapa,
-            ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
-        )
-        if sem["quer_sair"]:
-            await _encerrar_fluxo(conversa_id, instance_name, token, phone, "candidato")
-            return
-        if sem["mudou_de_assunto"] and sem["intencao"] != "ambiguo":
-            await _rotear_por_intencao(
-                sem, texto, phone, instance_name, token, lead_id, conversa_id, "",
-            )
+        #
+        # S-WM-20 Task 5 (migração pós-achado de QA): esta etapa tinha sua
+        # própria cópia inline da lógica de escape, escrita antes de
+        # `_escape_semantico_ou_none` existir como helper compartilhado — por
+        # isso nunca ganhou o ajuste 3 (pergunta de confirmação antes de
+        # trocar de rota). Migrada para usar o helper e ficar consistente com
+        # as outras 14 etapas.
+        if await _escape_semantico_ou_none(
+            texto, "candidato", etapa, conversa_id, phone, instance_name, token, lead_id,
+        ):
             return
 
         apenas_digitos = re.sub(r"\D", "", texto)
@@ -1569,15 +1635,19 @@ async def _processar_publico(
         # substring isolada (bug 5 do relatório: "nao nao, eu sou uma empresa
         # e gostava de subir uma vaga aqui" encerrava o fluxo por causa da
         # substring "nao", ignorando o resto da frase).
-        from intencao_detector import avaliar_mensagem_contextual  # noqa: PLC0415
-        sem = await avaliar_mensagem_contextual(
-            texto, perfil="publico", etapa=etapa,
-            ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
-        )
-        if sem["mudou_de_assunto"] and sem["intencao"] not in ("ambiguo", "banco_talentos"):
-            await _rotear_por_intencao(
-                sem, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
-            )
+        #
+        # S-WM-20 Task 5 (migração pós-achado de QA): esta etapa tinha sua
+        # própria cópia inline da lógica de escape (com uma exclusão extra de
+        # "banco_talentos" que o helper compartilhado não tem — nessa etapa
+        # específica, se o classificador já detecta banco_talentos por vias
+        # indiretas que o fast-path `quer_banco` não pegou, faz mais sentido
+        # perguntar/confirmar do que simplesmente encerrar, que era o
+        # comportamento anterior). Migrada para `_escape_semantico_ou_none`
+        # para ganhar o ajuste 3 (pergunta de confirmação) e ficar consistente
+        # com as outras 14 etapas.
+        if await _escape_semantico_ou_none(
+            texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+        ):
             return
 
         # Recusa ou mensagem ambígua → única despedida e encerramento
@@ -2203,15 +2273,35 @@ async def processar_mensagem_empregabilidade(
             )
             return
 
-    # SQS-41 Ação 2.2: Bypass global — "menu" retorna ao menu de categorias a qualquer momento
+    # S-WM-20 Task 5 (ajuste 3): resposta de confirmação de troca de rota
+    # pendente (ver _perguntar_confirmacao_troca_rota). Checado antes do
+    # roteamento por perfil/etapa porque essa etapa não pertence a nenhum
+    # perfil — é um estado transitório entre fluxos.
+    if etapa_atual == "confirmando_troca_rota":
+        t_conf_rota = texto.strip().lower()
+        sem_pendente = fluxo.get("_troca_rota_pendente") or {}
+        unidade_pendente = fluxo.get("_troca_rota_unidade_cuca", "")
+        if t_conf_rota in ("sim", "s", "isso", "confirmo", "correto", "certo", "ok", "exato"):
+            from intencao_detector import extrair_setor_da_mensagem  # noqa: PLC0415
+            await _rotear_por_intencao(
+                sem_pendente, texto, phone, instance_name, token, lead_id, conversa_id,
+                unidade_pendente, extrair_setor_da_mensagem,
+            )
+            return
+        # Não confirmou (ou resposta que não seja um "sim" claro) — não travar
+        # aqui: volta pro menu geral em vez de insistir na mesma pergunta.
+        await _mostrar_menu_opcoes(instance_name, token, phone, conversa_id, lead_id)
+        _set_fluxo(conversa_id, {})
+        return
+
+    # SQS-41 Ação 2.2: Bypass global — "menu" reabre o menu de 4 opções a
+    # qualquer momento. S-WM-20 Task 5 (ajuste 2): antes pulava direto para a
+    # listagem de vagas (`_processar_publico("vagas", ...)`), sem nunca
+    # mostrar as 4 opções — conflitava com a expectativa de "menu" reabrir a
+    # escolha entre as rotas.
     if texto.strip().lower() == "menu":
-        _set_fluxo(conversa_id, {
-            "perfil": "publico",
-            "etapa": "inicio",
-            "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
-            "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
-        })
-        await _processar_publico("vagas", phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+        await _mostrar_menu_opcoes(instance_name, token, phone, conversa_id, lead_id)
+        _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
         return
 
     # Rotear pelo perfil salvo OU pela etapa (evita loop quando _set_fluxo não preservou perfil)
@@ -2233,47 +2323,7 @@ async def processar_mensagem_empregabilidade(
 
     # Usuário respondeu ao menu inicial com número ou palavra-chave
     if etapa_atual == "menu_inicial":
-        t = texto.strip().lower()
-        if t in ("1", "empresa", "divulgar", "divulgar vaga", "quero divulgar",
-                 "marcar selecao", "marcar seleção", "selecao", "seleção"):
-            _set_fluxo(conversa_id, {"perfil": "empresa", "etapa": "solicitar_cnpj"})
-            await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
-            return
-        if t in ("2", "candidato", "candidatura", "minha candidatura", "acompanhar"):
-            _set_fluxo(conversa_id, {"perfil": "candidato", "etapa": "solicitar_identificacao"})
-            await _processar_candidato(texto, phone, instance_name, token, lead_id, conversa_id)
-            return
-        if t in ("3", "vagas", "vaga", "ver vagas", "vagas abertas", "quero trabalhar", "emprego"):
-            _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
-            await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
-            return
-        if t in ("4", "enviar curriculo", "enviar currículo", "deixar curriculo", "deixar currículo",
-                 "sem vaga", "curriculo sem vaga", "currículo sem vaga", "banco", "cadastrar curriculo",
-                 "cadastrar currículo"):
-            _set_fluxo(conversa_id, {
-                "perfil": "publico",
-                "etapa": "coletando_nome_candidato",
-                "banco_talentos": True,
-            })
-            await _enviar(
-                instance_name, token, phone,
-                "📁 *Enviar Currículo (sem vaga)*\n\n"
-                "Vamos cadastrar seu currículo no banco de talentos da rede CUCA. "
-                "Quando surgir uma oportunidade compatível com seu perfil, a equipe entrará em contato.\n\n"
-                "Para começar, preciso do seu *nome completo*:",
-                conversa_id=conversa_id, lead_id=lead_id,
-            )
-            return
-        await _enviar(
-            instance_name, token, phone,
-            "Não entendi sua resposta. Por favor, escolha uma das opções:\n\n"
-            "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
-            "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
-            "3️⃣ *Vagas* — Quero ver vagas abertas\n"
-            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
-            "Digite *1*, *2*, *3* ou *4*.",
-            conversa_id=conversa_id, lead_id=lead_id,
-        )
+        await _processar_menu_inicial(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         return
 
     # SQS-49: detectar resposta de confirmação de presença (SIM/NÃO) para selecao_evento
@@ -2333,6 +2383,73 @@ async def processar_mensagem_empregabilidade(
 # ---------------------------------------------------------------------------
 # S-EMP-01-01 — Helpers de intenção
 # ---------------------------------------------------------------------------
+
+async def _processar_menu_inicial(
+    texto: str,
+    phone: str,
+    instance_name: str,
+    token: str,
+    lead_id: str,
+    conversa_id: str,
+    unidade_cuca: str,
+) -> None:
+    """Dispatch da etapa `menu_inicial` (extraído de
+    `processar_mensagem_empregabilidade` para ser testável isoladamente,
+    mesmo padrão de `_processar_empresa`/`_processar_candidato`/
+    `_processar_publico`). Dígito/palavra-chave exata primeiro (rápido, sem
+    LLM); só na falha do parser chama o classificador semântico — S-WM-20
+    Task 5 (ajuste 1): antes desse ajuste, qualquer frase que não batesse
+    exatamente reexibia este mesmo menu para sempre (achado do Junior em
+    staging: '3' também não escapava, porque o atalho de dígito em
+    `avaliar_mensagem_contextual` só evita a chamada ao LLM, não interpreta o
+    dígito — quem interpretava era só este dispatch)."""
+    t = texto.strip().lower()
+    if t in ("1", "empresa", "divulgar", "divulgar vaga", "quero divulgar",
+             "marcar selecao", "marcar seleção", "selecao", "seleção"):
+        _set_fluxo(conversa_id, {"perfil": "empresa", "etapa": "solicitar_cnpj"})
+        await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+        return
+    if t in ("2", "candidato", "candidatura", "minha candidatura", "acompanhar"):
+        _set_fluxo(conversa_id, {"perfil": "candidato", "etapa": "solicitar_identificacao"})
+        await _processar_candidato(texto, phone, instance_name, token, lead_id, conversa_id)
+        return
+    if t in ("3", "vagas", "vaga", "ver vagas", "vagas abertas", "quero trabalhar", "emprego"):
+        _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+        await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+        return
+    if t in ("4", "enviar curriculo", "enviar currículo", "deixar curriculo", "deixar currículo",
+             "sem vaga", "curriculo sem vaga", "currículo sem vaga", "banco", "cadastrar curriculo",
+             "cadastrar currículo"):
+        _set_fluxo(conversa_id, {
+            "perfil": "publico",
+            "etapa": "coletando_nome_candidato",
+            "banco_talentos": True,
+        })
+        await _enviar(
+            instance_name, token, phone,
+            "📁 *Enviar Currículo (sem vaga)*\n\n"
+            "Vamos cadastrar seu currículo no banco de talentos da rede CUCA. "
+            "Quando surgir uma oportunidade compatível com seu perfil, a equipe entrará em contato.\n\n"
+            "Para começar, preciso do seu *nome completo*:",
+            conversa_id=conversa_id, lead_id=lead_id,
+        )
+        return
+    # S-WM-20 Task 5 (ajuste 1): nenhum dígito/palavra-chave exata bateu —
+    # antes disso encerrava numa correspondência EXATA sem nunca chamar o
+    # classificador. Parser falhou → tenta o classificador semântico antes de
+    # repetir o erro, mesmo padrão híbrido usado no resto do arquivo.
+    from intencao_detector import avaliar_mensagem_contextual, extrair_setor_da_mensagem  # noqa: PLC0415
+    sem_menu = await avaliar_mensagem_contextual(
+        texto, perfil=None, etapa="menu_inicial", ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
+    )
+    if sem_menu["quer_sair"]:
+        await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
+        return
+    await _rotear_por_intencao(
+        sem_menu, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
+        extrair_setor_da_mensagem,
+    )
+
 
 def _log_intencao(conversa_id: str, intencao: str) -> None:
     """Grava intencao_detectada em conversas.metadata para rastreabilidade (AC#7)."""
@@ -2440,30 +2557,28 @@ async def _rotear_por_intencao(
         _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio", "arquivo_pendente": True})
 
     else:
-        # AC#4 / bug 1 (S-WM-20 Task 3): ambíguo — menu determinístico em vez de
-        # pergunta aberta. O LLM sem contexto (primeira mensagem) não é confiável
-        # o bastante para decidir sozinho; o menu numérico dá uma opção clara.
+        # AC#4 / bug 1 (S-WM-20 Task 3): ambíguo — menu determinístico em vez
+        # de pergunta aberta. O LLM sem contexto (primeira mensagem) não é
+        # confiável o bastante para decidir sozinho; o menu numérico dá uma
+        # opção clara.
         #
-        # CORREÇÃO CRÍTICA (S-WM-20 Task 5, regressão de produção 2026-07-04):
-        # a versão original desta task também fazia `_set_fluxo(..., {"etapa":
-        # "menu_inicial"})` aqui. Isso reaproveitava a etapa "menu_inicial" já
-        # existente em `processar_mensagem_empregabilidade` — mas aquele branch
-        # faz correspondência EXATA (`t in ("1", "vaga", "candidato", ...)`),
-        # não entende frase livre. Resultado: 1 mensagem ambígua ("oi", "bom
-        # dia") travava a conversa inteira num loop de "Não entendi sua
-        # resposta" — nenhuma mensagem seguinte (nem "abrir uma vaga") voltava
-        # a alcançar o classificador semântico, porque a etapa nunca mudava e o
-        # match exato quase nunca bate com uma frase real. Fix: NÃO define
-        # fluxo — a próxima mensagem sempre re-entra na detecção semântica,
-        # exatamente como funcionava antes desta story (nunca há trava).
-        await e(
-            f"Olá{saudacao_nome} Não entendi bem o que você precisa. Escolha uma das opções:\n\n"
-            "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
-            "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
-            "3️⃣ *Vagas* — Quero ver vagas abertas\n"
-            "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
-            "Digite *1*, *2*, *3* ou *4*, ou simplesmente me conte o que você precisa."
+        # S-WM-20 Task 5 (ajuste 1 e 4): a etapa "menu_inicial" agora tem
+        # fallback com classificador semântico (não trava mais em texto livre
+        # — ver processar_mensagem_empregabilidade), então voltou a ser seguro
+        # setá-la aqui, restaurando o atalho de dígito puro (1-4) que ficou
+        # órfão quando essa linha foi removida na correção da regressão
+        # crítica. Também diferencia a 1ª interação real (nenhuma mensagem do
+        # bot ainda existe nesta conversa) de uma ambiguidade repetida — "Não
+        # entendi" não faz sentido quando é a primeira coisa que o lead
+        # escreveu.
+        eh_primeira_interacao = _ultima_mensagem_bot(conversa_id) is None
+        intro = (
+            f"Olá{saudacao_nome} Para eu te ajudar melhor, escolha uma das opções:"
+            if eh_primeira_interacao
+            else f"Olá{saudacao_nome} Não entendi bem o que você precisa. Escolha uma das opções:"
         )
+        await _mostrar_menu_opcoes(instance_name, token, phone, conversa_id, lead_id, intro)
+        _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
 
 
 # ---------------------------------------------------------------------------
