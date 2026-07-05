@@ -225,15 +225,20 @@ async def _processar_item_disparo_interno(
     unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
 
     # Selecionar canal Meta e automação-alvo por origem (S-WM-16: zero nome hardcoded)
+    # S-WM-19 Task 4: canal_tipo="Divulgação" e automacao_tag="Divulgação" nunca
+    # existiram em meta_phone_numbers.canal_tipo nem em meta_templates.automacoes
+    # (confirmado por consulta direta ao cuca-dev) — o template real para
+    # eventos_pontuais é institucional_programacao_pontual_v1, automacoes
+    # ["Institucional", "Pontual"], vinculado ao número canal_tipo="Institucional".
     if origem == "eventos_pontuais":
-        canal_tipo = "Divulgação"
-        automacao_tag = "Divulgação"
+        canal_tipo = "Institucional"
+        automacao_tags = ["Institucional", "Pontual"]
     elif origem == "ouvidoria_eventos":
         canal_tipo = "Institucional"
-        automacao_tag = "Ouvidoria"
+        automacao_tags = ["Ouvidoria"]
     else:
         canal_tipo = "Institucional"
-        automacao_tag = "Divulgação"
+        automacao_tags = ["Divulgação"]
 
     canal_info = await asyncio.to_thread(_get_phone_by_canal_tipo_sync, canal_tipo)
     if not canal_info:
@@ -255,7 +260,7 @@ async def _processar_item_disparo_interno(
     # 400 (malformed array literal). .contains() não serve aqui: combinaria também com
     # templates multi-tag (ex.: ["Institucional", "Transbordo"]), quebrando o match
     # exato que este lookup exige.
-    automacao_filtro = '{"' + automacao_tag + '"}'
+    automacao_filtro = '{' + ','.join(f'"{tag}"' for tag in automacao_tags) + '}'
     _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto, variaveis") \
         .eq("automacoes", automacao_filtro) \
         .contains("phone_number_ids", [phone_number_id]) \
@@ -263,7 +268,7 @@ async def _processar_item_disparo_interno(
         .limit(1).maybe_single().execute()
     if not _tpl_res.data:
         logger.warning(
-            f"[campanhas] Nenhum template aprovado para automação={automacao_tag!r} "
+            f"[campanhas] Nenhum template aprovado para automação={automacao_tags!r} "
             f"phone_number_id={phone_number_id!r} — item {item_id} pulado"
         )
         await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
@@ -344,11 +349,16 @@ async def _processar_item_disparo_interno(
                 "parameters": _montar_parametros_named(variaveis_item, [nome_lead, texto_pesquisa]),
             }]
         else:
+            # S-WM-19 Task 5: institucional_programacao_pontual_v1.variaveis é
+            # [nome, titulo_evento, descricao_evento, data_evento, horario_evento,
+            # local_evento] (confirmado no cuca-dev) — a lista antiga começava em
+            # `titulo` (sem `nome_lead`) e terminava com `unidade` fora de posição,
+            # desalinhando as 6 posições inteiras, não só a 1ª.
             components = [{
                 "type": "body",
                 "parameters": _montar_parametros_named(
                     variaveis_item,
-                    [titulo, descricao, data_fmt, hora_inicio, local_evento, unidade or ""],
+                    [nome_lead, titulo, descricao, data_fmt, hora_inicio, local_evento],
                 ),
             }]
 

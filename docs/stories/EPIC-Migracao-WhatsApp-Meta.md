@@ -1,6 +1,6 @@
 # EPIC — Migração WhatsApp UAZAPI → Meta Cloud API
 
-> **Status:** Em definição
+> **Status:** Em execução — o plano original (Fases 0-3, seção 5) descrevia o backlog previsto em 2026-06-22; a execução real divergiu de título/escopo em várias stories. Ver "5.1 Estado Real das Stories" para o status factual, atualizado em 2026-07-05 (S-WM-19).
 > **Autor:** @sm (River)
 > **Autoridade épica:** @pm (Morgan) — este documento é proposta de @sm; @pm/@po devem ratificar antes das stories posteriores.
 
@@ -151,6 +151,41 @@ S-WM-00 ✅
 
 ---
 
+## 5.1 Estado Real das Stories (atualizado 2026-07-05, S-WM-19 Task 10)
+
+> As tabelas de "Fase 0-3" acima (seção 5) registram o **plano original** de 2026-06-22. Na execução, várias stories mudaram de título/escopo (ex.: o "S-WM-04" planejado como "Migrar Empregabilidade → WABA #2" virou, na prática, `S-WM-04-Dispatch-Completo-Institucional-Motor-Agente.md`) e o backlog cresceu além de S-WM-08. Esta tabela reflete o **título e status reais**, lidos diretamente de cada arquivo em `docs/stories/` — sem inventar detalhe não confirmado (Artigo IV).
+
+| Story | Título real (arquivo) | Status |
+|-------|------------------------|--------|
+| S-WM-00 | Investigação: Contrato de Comunicação UAZAPI (Estado Atual) | Done |
+| S-WM-01 | Adapter Inbound Meta: Recepção de Webhook | InProgress |
+| S-WM-02 | Migração Total Outbound Meta: Empregabilidade | InReview |
+| S-WM-03 | Schema + Feature Flag + Wire-up Real | Ready for Review |
+| S-WM-04 | Dispatch Completo: Institucional, Sofia, Ana via Motor-Agente | Done |
+| S-WM-05 | Campanhas Meta: Templates, Sunset UAZAPI e Correção de Chamadores | Ready for Review |
+| S-WM-06 | Seletor de Mapeamento de Números WhatsApp (Meta) | InReview |
+| S-WM-07 | Fix Roteamento Outbound Reativo Meta: phone_number_id herdado do inbound | Done |
+| S-WM-08 | Migração do Atendimento (portal) para Meta: substituir lookup UAZAPI por meta_phone_numbers | Done |
+| S-WM-09 | Transbordo completo: worker seta awaiting_human e notifica colaborador via Meta template | Done |
+| S-WM-10 | Guard awaiting_human no worker: silenciar IA quando colaborador assumiu o atendimento | Done |
+| S-WM-11 | Migrar Edge Function alertas-institucionais para Meta | InReview |
+| S-WM-12 | Migrar Divulgação e Atendimento Institucional/Programação para Meta (portal) | Done |
+| S-WM-13 | Gestão Dinâmica de Templates Meta (Developer Console) | Ready for Review |
+| S-WM-14 | Refatoração da Gestão de Templates: corpo de texto editável e dinâmico | Ready for Review |
+| S-WM-15 | Paridade de Ambiente: isolar staging de produção nas funções `net.http_post` | Ready |
+| S-WM-16 | CRUD completo e seguro de Números e Templates Meta (Developer Console) | Done |
+| S-WM-17 | Corrigir dupla gravação de mensagem do lead (worker + Edge Function motor-agente) | InReview |
+| S-WM-18 | Migrar Central de Divulgação de UAZAPI para Meta | Done |
+| S-WM-19 | Consolidação de Débitos Técnicos registrados na migração Meta (S-WM-16/18/20) | InProgress (esta story) |
+| S-WM-20 | Refatoração da interpretação de linguagem natural do canal Empregabilidade | InProgress |
+
+**Débitos técnicos conhecidos (consolidados por S-WM-19), não bloqueantes:**
+- RLS de `disparos_divulgacao` sem restrição de INSERT/UPDATE, coluna `parameter_format` ausente em `meta_templates`, teste unitário de `_montar_parametros_named()` ausente, desalinhamento semântico em `eventos_pontuais` — **corrigidos por S-WM-19**.
+- Wiring de `empregabilidade_convite_entrevista_v1` e `empregabilidade_feedback_empresa_v1` — mapeamento feito em S-WM-19, correção **adiada para story separada** (decisão do usuário, 2026-07-05): envolve mover o disparo de `feedback-submit/route.ts` para `solicitar-feedback/route.ts` e notificar o candidato (destinatário hoje não contatado nesse ponto do fluxo).
+- CodeRabbit nunca executado neste ambiente ao longo de toda a migração — risco de processo aceito e recorrente (S-WM-18, S-WM-20, S-WM-19); mitigação vigente é revisão manual linha a linha no gate do @qa.
+
+---
+
 ## 6. Decisões de Arquitetura Registradas
 
 | ID | Decisão | Alternativas consideradas | Rationale |
@@ -192,3 +227,4 @@ O mapeamento `phone_number_id → automação` deve ser **editável via banco de
 | 2026-06-22 | @sm (River) | Backlog completo: 8 stories (S-WM-01..08) detalhadas com deps, arquitetura alvo atualizada, WABAs definidos |
 | 2026-06-22 | @sm (River) | Ajuste aprovado: reordem Fase 2 (Empregabilidade primeiro), S-WM-T adicionada (caminho crítico templates), AC S-WM-05 requer template real |
 | 2026-06-22 | @sm (River) | **Reconstrução pós-levantamento técnico @dev (BLOCOS 1-6):** correções de premissa P1-P7, Contrato v2 definido (mapeamento de-para completo), decisões D1-D6 registradas, S-WM-01 rebaixada para Draft, academia_enem confirmada fora do escopo, ponte UAZAPI de transbordo documentada, Celery removido do escopo |
+| 2026-07-05 | @dev (Dex) — S-WM-19 Task 10 | Documento desatualizado desde S-WM-08 (tabelas da seção 5 só cobriam o plano original, sem refletir S-WM-09 a S-WM-20 nem a divergência de título/escopo ocorrida na execução). Adicionada seção 5.1 com título e status reais de S-WM-00 a S-WM-20, lidos diretamente de cada story file (sem invenção), e registro dos débitos técnicos consolidados por S-WM-19 (corrigidos vs. adiados para story separada). Tabelas originais da seção 5 mantidas como registro histórico do plano, não removidas. |

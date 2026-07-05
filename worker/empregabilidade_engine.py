@@ -448,6 +448,7 @@ async def _processar_empresa(
             # tiver sinal claro, senão apenas re-apresenta o menu.
             tratado = await _escape_semantico_ou_none(
                 texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+                unidade_cuca,
             )
             if not tratado:
                 await e(
@@ -489,6 +490,7 @@ async def _processar_empresa(
             # que o usuário pode ter mudado de assunto ou desistido.
             if await _escape_semantico_ou_none(
                 texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+                unidade_cuca,
             ):
                 return
             await e("Por favor, informe o *número* da vaga que deseja editar (ex: 1, 2, 3...):")
@@ -570,6 +572,7 @@ async def _processar_empresa(
             # S-WM-20 Task 5: mesmo tratamento de selecionando_vaga_edicao.
             if await _escape_semantico_ou_none(
                 texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+                unidade_cuca,
             ):
                 return
             await e("Por favor, informe o *número* da vaga que deseja cancelar (ex: 1, 2, 3...):")
@@ -740,6 +743,7 @@ async def _processar_empresa(
             # classificador semântico antes de repetir o erro.
             if await _escape_semantico_ou_none(
                 texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+                unidade_cuca,
             ):
                 return
             await e("CNPJ inválido. Por favor, informe os *14 dígitos* do CNPJ da sua empresa:\n\n_(Se entrou aqui por engano, digite *menu* para voltar ao início.)_")
@@ -946,6 +950,7 @@ async def _processar_empresa(
             # S-WM-20 Task 5: e-mail inválido — antes só repetia o pedido.
             if await _escape_semantico_ou_none(
                 texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+                unidade_cuca,
             ):
                 return
             await e(
@@ -971,6 +976,7 @@ async def _processar_empresa(
             # S-WM-20 Task 5: telefone inválido — antes só repetia o pedido.
             if await _escape_semantico_ou_none(
                 texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+                unidade_cuca,
             ):
                 return
             await e(
@@ -1041,6 +1047,7 @@ async def _processar_empresa(
             # S-WM-20 Task 5: nem 1 nem 2 — antes só repetia o pedido para sempre.
             tratado = await _escape_semantico_ou_none(
                 texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+                unidade_cuca,
             )
             if not tratado:
                 await e(
