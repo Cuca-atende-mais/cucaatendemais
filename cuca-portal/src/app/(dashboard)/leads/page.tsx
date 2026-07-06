@@ -474,10 +474,10 @@ export default function LeadsPage() {
             const ids = Array.from(selecionados)
             const { error } = await supabase
                 .from("leads")
-                .update({ excluido: true })
+                .delete()
                 .in("id", ids)
             if (error) throw error
-            toast.success(`${ids.length} lead(s) excluído(s)`)
+            toast.success(`${ids.length} lead(s) excluído(s) permanentemente`)
             setSelecionados(new Set())
             setModalExcluirSelecionados(false)
             buscarLeads()
@@ -1185,17 +1185,16 @@ export default function LeadsPage() {
             </Dialog>
 
             {/* ============================
-                Modal — Excluir Selecionados (soft delete em lote)
+                Modal — Excluir Selecionados (hard delete em lote, irreversível)
             ============================ */}
             <Dialog open={modalExcluirSelecionados} onOpenChange={setModalExcluirSelecionados}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Excluir leads selecionados</DialogTitle>
+                        <DialogTitle className="text-destructive">Excluir leads selecionados</DialogTitle>
                         <DialogDescription>
-                            Excluir <strong>{selecionados.size} lead(s)</strong> selecionado(s)? Eles deixam
-                            de aparecer na listagem, mas o histórico de conversas, mensagens e candidaturas
-                            é preservado — esta ação não apaga dados relacionados, apenas remove os leads
-                            da lista.
+                            Esta ação é <strong>IRREVERSÍVEL</strong>. Excluir <strong>{selecionados.size} lead(s)</strong> selecionado(s)?
+                            Os leads e todo o histórico de conversas e mensagens associado serão apagados
+                            definitivamente do banco de dados — não é possível desfazer nem recuperar.
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
