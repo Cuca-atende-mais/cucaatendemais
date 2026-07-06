@@ -105,6 +105,8 @@ export default function LeadsPage() {
     const [modalBloquearTodos, setModalBloquearTodos] = useState(false)
     const [bloqueandoTodos, setBloqueandoTodos] = useState(false)
     const [desbloqueandoSelecionados, setDesbloqueandoSelecionados] = useState(false)
+    const [modalExcluirSelecionados, setModalExcluirSelecionados] = useState(false)
+    const [excluindoSelecionados, setExcluindoSelecionados] = useState(false)
 
     // --- Interesses ---
     const [categoriasInteresse, setCategoriasInteresse] = useState<{ id: string; nome: string; pai_id: string | null }[]>([])
@@ -465,6 +467,27 @@ export default function LeadsPage() {
         }
     }
 
+    const excluirSelecionados = async () => {
+        if (selecionados.size === 0) return
+        setExcluindoSelecionados(true)
+        try {
+            const ids = Array.from(selecionados)
+            const { error } = await supabase
+                .from("leads")
+                .update({ excluido: true })
+                .in("id", ids)
+            if (error) throw error
+            toast.success(`${ids.length} lead(s) excluído(s)`)
+            setSelecionados(new Set())
+            setModalExcluirSelecionados(false)
+            buscarLeads()
+        } catch (err: any) {
+            toast.error("Erro: " + err.message)
+        } finally {
+            setExcluindoSelecionados(false)
+        }
+    }
+
     // -------------------------
     // Helpers
     // -------------------------
@@ -565,6 +588,14 @@ export default function LeadsPage() {
                             {desbloqueandoSelecionados
                                 ? "Desbloqueando..."
                                 : `Desbloquear ${selecionados.size}`}
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setModalExcluirSelecionados(true)}
+                        >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            {`Excluir ${selecionados.size}`}
                         </Button>
                     </div>
                 </div>
@@ -1148,6 +1179,32 @@ export default function LeadsPage() {
                         <Button variant="outline" onClick={() => setModalExcluir(null)}>Cancelar</Button>
                         <Button variant="destructive" onClick={excluirLead} disabled={excluindoLead}>
                             <Trash2 className="mr-2 h-4 w-4" />Excluir
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* ============================
+                Modal — Excluir Selecionados (soft delete em lote)
+            ============================ */}
+            <Dialog open={modalExcluirSelecionados} onOpenChange={setModalExcluirSelecionados}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Excluir leads selecionados</DialogTitle>
+                        <DialogDescription>
+                            Excluir <strong>{selecionados.size} lead(s)</strong> selecionado(s)? Eles deixam
+                            de aparecer na listagem, mas o histórico de conversas, mensagens e candidaturas
+                            é preservado — esta ação não apaga dados relacionados, apenas remove os leads
+                            da lista.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setModalExcluirSelecionados(false)}>
+                            Cancelar
+                        </Button>
+                        <Button variant="destructive" onClick={excluirSelecionados} disabled={excluindoSelecionados}>
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            {excluindoSelecionados ? "Excluindo..." : `Excluir ${selecionados.size}`}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
