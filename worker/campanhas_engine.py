@@ -468,6 +468,9 @@ async def campanhas_loop():
 
 # ─── Disparo Global de Divulgação (programação mensal) ───────────────────────
 
+LINK_PROGRAMACAO_MENSAL = "https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/"
+
+
 async def processar_disparos_divulgacao(
     delay_min: int,
     delay_max: int,
@@ -563,7 +566,9 @@ async def _processar_disparo_divulgacao_interno(
 
         components = [{
             "type": "body",
-            "parameters": _montar_parametros_named(variaveis_divulgacao, [nome, mes_nome]),
+            "parameters": _montar_parametros_named(
+                variaveis_divulgacao, [nome, mes_nome, LINK_PROGRAMACAO_MENSAL]
+            ),
         }]
 
         ok = await _enviar_template_meta(
