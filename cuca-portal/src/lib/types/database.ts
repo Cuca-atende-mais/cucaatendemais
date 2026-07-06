@@ -11,6 +11,7 @@ export type Lead = {
     opt_in: boolean
     bloqueado: boolean
     motivo_bloqueio: string | null
+    excluido: boolean
     data_nascimento: string | null
     equipamentos_principais: string[]
     atividades_principais: string[]

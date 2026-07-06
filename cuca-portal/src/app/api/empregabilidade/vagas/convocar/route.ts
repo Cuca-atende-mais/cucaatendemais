@@ -58,34 +58,6 @@ export async function POST(req: NextRequest) {
 
         if (updateErr) throw updateErr
 
-        // 3. Buscar instância para envio (prioridade: Empregabilidade > Institucional > qualquer ativa)
-        const { data: instancias } = await supabase
-            .from("instancias_uazapi")
-            .select("nome, token, canal_tipo")
-            .eq("unidade_cuca", unidade)
-            .eq("ativa", true)
-            .limit(10)
-
-        let inst = instancias?.find(i => i.canal_tipo === "Empregabilidade")
-            || instancias?.find(i => i.canal_tipo === "Institucional")
-            || instancias?.[0]
-
-        if (!inst) {
-            // Fallback global: qualquer instância Empregabilidade ativa na rede
-            const { data: instGlobal } = await supabase
-                .from("instancias_uazapi")
-                .select("nome, token, canal_tipo")
-                .eq("canal_tipo", "Empregabilidade")
-                .eq("ativa", true)
-                .limit(1)
-                .single()
-            if (instGlobal) inst = instGlobal
-        }
-
-        if (!inst) {
-            return NextResponse.json({ error: "Nenhuma instância WhatsApp ativa encontrada para esta unidade" }, { status: 500 })
-        }
-
         // 4. Preparar mensagem
         const dataFmt = new Date(data_entrevista + 'T12:00:00').toLocaleDateString('pt-BR')
         const mensagem = `Olá ${cand.nome.split(" ")[0]}! 👋\n\nBoas notícias! Você foi selecionado para uma entrevista na vaga de *${vaga.titulo}*.\n\n📅 *Data:* ${dataFmt}\n🕒 *Horário:* ${hora_entrevista}\n📍 *Local:* ${local_entrevista}\n\nPodemos confirmar sua presença?\n\nResponda:\n1 - Sim, confirmo minha presença\n2 - Não poderei comparecer\n3 - Tenho uma dúvida`
@@ -95,15 +67,10 @@ export async function POST(req: NextRequest) {
         const telLimpo = telefone.replace(/\D/g, "")
         const phoneFmt = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
 
-        // Tentamos enviar via endpoint de texto do worker que já está estável
         const res = await fetch(`${workerUrl}/send-message/${process.env.WEBHOOK_INTERNAL_TOKEN}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                number: phoneFmt,
-                text: mensagem,
-                instance: inst.nome
-            }),
+            body: JSON.stringify({ number: phoneFmt, text: mensagem }),
         })
 
         if (!res.ok) {

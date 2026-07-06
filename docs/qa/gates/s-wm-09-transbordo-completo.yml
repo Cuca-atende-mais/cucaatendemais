@@ -1,0 +1,45 @@
+storyId: S-WM-09
+verdict: PASS_WITH_CONCERNS
+reviewDate: 2026-06-28
+reviewedBy: Quinn (Test Architect)
+testResults:
+  total: 53
+  passed: 50
+  skipped: 3
+  failed: 0
+checks:
+  codeReview: PASS
+  unitTests: PASS
+  acceptanceCriteria: PASS
+  regression: PASS
+  performance: PASS
+  security: PASS
+  documentation: PASS
+issues:
+  - id: M-001
+    severity: medium
+    category: tests
+    description: >
+      test_processar_webhook_motor_agente_handover_chama_notificar declara mock_notif
+      mas não faz assert sobre ele. _chamar_motor_agente é mockado inteiramente, logo
+      _notificar_transbordo nunca executa nesse teste. Nome promete "chama_notificar"
+      sem verificar. Cobertura AC7/8 existe via test_chamar_motor_agente_handover_atualiza_status.
+    recommendation: Adicionar mock_notif.assert_called_once() ou renomear o teste. Dívida de teste.
+  - id: L-001
+    severity: low
+    category: code
+    description: >
+      from campanhas_engine import _enviar_template_meta dentro do for loop.
+      Python faz cache do módulo — sem impacto funcional ou de performance.
+    recommendation: Mover import para antes do loop na próxima oportunidade.
+  - id: L-002
+    severity: low
+    category: tests
+    description: >
+      AC3 (META_TEMPLATES_APROVADOS=true → POST Graph API) sem teste automatizado.
+      Dependência de template cuca_transbordo_colaborador aprovado pela Meta.
+    recommendation: WAIVED per @po. Validação manual no staging quando template for aprovado.
+waivers:
+  - ac: AC3
+    reason: Template cuca_transbordo_colaborador não aprovado pela Meta ainda. @po alinhou antecipadamente.
+    verifiedBy: AC2 (flag=false path) como substituto

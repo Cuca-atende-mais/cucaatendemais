@@ -26,20 +26,11 @@ export async function POST(request: Request) {
             return NextResponse.json({ ok: false, motivo: "Candidato sem telefone cadastrado." })
         }
 
-        // Busca instância Institucional ativa para a unidade
-        const { data: instancias } = await supabase
-            .from("instancias_uazapi")
-            .select("nome, token")
-            .eq("unidade_cuca", unidade_cuca)
-            .eq("canal_tipo", "Institucional")
-            .eq("ativa", true)
-            .limit(1)
-
-        if (!instancias || instancias.length === 0) {
-            return NextResponse.json({ ok: false, motivo: "Nenhuma instância institucional ativa para esta unidade." })
+        const internalToken = process.env.WEBHOOK_INTERNAL_TOKEN
+        if (!internalToken) {
+            return NextResponse.json({ ok: false, motivo: "WEBHOOK_INTERNAL_TOKEN não configurado." })
         }
 
-        const { nome: instNome, token } = instancias[0]
         const primeiroNome = nomeAtual?.split(" ")?.[0] || "Candidato"
 
         // SQS-49: buscar tipo da vaga para diferenciar mensagem de seleção por evento
@@ -70,14 +61,12 @@ export async function POST(request: Request) {
 
         const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
         const telLimpo = telefone.replace(/\D/g, "")
+        const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
 
-        const res = await fetch(`${workerUrl}/send-message/${token}`, {
+        const res = await fetch(`${workerUrl}/send-message/${internalToken}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                phone: telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`,
-                message: mensagem,
-            }),
+            body: JSON.stringify({ number, text: mensagem }),
         })
 
         if (!res.ok) {

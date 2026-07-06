@@ -1,0 +1,121 @@
+storyId: S-EMP-01-01
+storyTitle: Detecção de Intenção e Fluxo Conversacional
+branch: feat/s-emp-01-deteccao-intencao
+reviewer: "@qa (Quinn)"
+date: 2026-06-29
+verdict: PASS
+
+# ─── 7 Quality Checks ────────────────────────────────────────────────────────
+
+checks:
+  code_review:
+    status: PASS
+    notes: |
+      - `IntencaoDetector`: estrutura limpa, keyword priority correta (empresa > banco_talentos > candidato_vaga > GPT).
+      - Validação de categoria GPT em dois pontos (dentro de `_gpt_fallback` E em `classificar`) — redundância defensiva aceitável.
+      - `_log_intencao`: lê metadata atual antes de escrever (merge não-destrutivo). Correto.
+      - `_rotear_por_intencao`: todos os fluxos verificados contra `_ETAPAS_EMPRESA`, `_ETAPAS_PUBLICO`:
+          * `aguardando_cnpj` → confirmado em `_ETAPAS_EMPRESA` (linha 1851). ✅
+          * `listou_vagas` → confirmado em `_ETAPAS_PUBLICO` (linha 1864). ✅
+          * `coletando_nome_candidato` → confirmado em `_ETAPAS_PUBLICO` (linha 1865). ✅
+          * `oferta_banco_talentos` → confirmado em `_ETAPAS_PUBLICO` (linha 1868). ✅
+      - O detector é um FALLBACK: só executa quando nenhum guard anterior (handover, convite, perfil, etapa, menu_inicial, confirmação de presença) capturou a mensagem. Não quebra fluxos existentes.
+      - Empresa: detector usa `aguardando_cnpj` (pula `solicitar_cnpj` que enviaria mensagem genérica) — comportamento correto confirmado via leitura do `_processar_empresa` (linha 268, 570).
+
+  unit_tests:
+    status: PASS
+    notes: |
+      - 19 testes novos em `worker/tests/test_intencao_detector.py`.
+      - 6 cenários obrigatórios (AC#10) todos cobertos: candidato direto, banco de talentos, upload documento, upload imagem, empresa/CNPJ, saudação ambígua.
+      - Cenários adicionais: prioridade upload > keywords, GPT valor inválido → ambiguo, GPT exceção → ambiguo, extrair_nome_heuristico (4 variantes).
+      - Suite completa: 69 passed, 3 skipped, 0 failed.
+
+  acceptance_criteria:
+    status: PASS
+    notes: |
+      AC#1 ✅ — "quero uma vaga" → lista top 5 vagas sem menu numerado
+      AC#2 ✅ — "banco de talentos" → "Me diz seu nome completo" direto
+      AC#3 ✅ — midia_tipo=document/image → pergunta contexto antes de processar
+      AC#4 ✅ — "Bom dia" ambíguo (GPT=ambiguo) → "Como posso te ajudar? 😊" sem menu
+      AC#5 ✅ — CNPJ keyword → "Me passa o CNPJ" → etapa aguardando_cnpj (fluxo empresa)
+      AC#6 ✅ — banco_talentos → pula confirmação, vai direto ao pedido de nome
+      AC#7 ✅ — metadata.intencao_detectada gravado por `_log_intencao`
+      AC#8 ✅ — leads.nome consultado e usado na saudação personalizada
+      AC#9 ✅ — etapas setadas pelo roteador reconhecidas pelos guards existentes (sem regressão)
+      AC#10 ✅ — 19 testes novos passando + 50 existentes sem regressão
+
+  regressions:
+    status: PASS
+    notes: |
+      - 50 testes pré-existentes: todos passando.
+      - Guards existentes (handover, convite, perfil/etapa, menu_inicial, SQS-49) permanecem intactos e checados ANTES do detector.
+      - `midia_tipo` adicionado com default `""` — retrocompatível (calls existentes não passam o param).
+      - `_processar_empresa`, `_processar_publico`, `_processar_candidato` não foram modificados.
+
+  performance:
+    status: PASS
+    notes: |
+      - Keyword matching: O(n×k), síncrono, zero custo extra.
+      - GPT fallback: ~200-500ms apenas para mensagens ambíguas (sem keyword match). Aceitável.
+      - Adicionadas 2-3 queries extras (leads.nome + 2 para log de intenção) na primeira interação. Não atinge limites de rate Supabase.
+      OBSERVAÇÃO (baixa): `_log_intencao` faz SELECT + UPDATE separados. Poderia ser otimizado com um UPSERT jsonb_set, mas não é bloqueador.
+
+  security:
+    status: PASS
+    notes: |
+      - Input do usuário não é injetado em queries SQL — `.eq()` parametrizado.
+      - Prompt GPT usa `texto` do lead mas com `max_tokens=30` e `response_format=json_object` — risco de prompt injection negligível.
+      - `midia_tipo` vem do parser Meta (já validado no adapter), não do usuário diretamente.
+      - Nenhum segredo exposto.
+
+  documentation:
+    status: PASS
+    notes: |
+      - Story file: File List completo, todos os checkboxes marcados, Completion Notes e Change Log atualizados.
+      - `intencao_detector.py`: docstring de módulo e docstrings inline nos métodos.
+      - Nenhum README ou CLAUDE.md necessita atualização.
+
+# ─── Issues ──────────────────────────────────────────────────────────────────
+
+issues:
+  - severity: low
+    category: code
+    description: |
+      `_rotear_por_intencao` para candidato_vaga usa `select("id, titulo, descricao")`.
+      O Dev Notes da story sugeria incluir `empresas(nome)` para mostrar empresa na listagem.
+      O AC#1 não exige o campo empresa — apenas "lista de vagas abertas sem menu numerado".
+    recommendation: Incluir empresa na listagem em story futura (S-EMP-01-02+) junto com outros refinamentos de UX.
+
+  - severity: low
+    category: tests
+    description: |
+      `asyncio.get_event_loop()` em `_classif()` emite DeprecationWarning no Python 3.12.
+      Não afeta a execução dos testes nem o código de produção (que é async nativo).
+    recommendation: Migrar o helper de teste para `asyncio.run()` ou usar `pytest-asyncio` com `@pytest.mark.asyncio` em story futura de limpeza de testes.
+
+  - severity: low
+    category: performance
+    description: |
+      `_log_intencao` faz 2 round-trips ao Supabase (SELECT metadata + UPDATE).
+      Poderia ser um único `rpc('jsonb_set_key', ...)` ou UPDATE com jsonb_set.
+    recommendation: Otimização opcional em refactor futuro; impacto real negligível no volume atual.
+
+# ─── Staging Validation (pendente — pré-requisito para Done) ─────────────────
+
+manual_testing_required:
+  - "[ ] Enviar 'quero uma vaga' → confirmar lista de vagas sem menu"
+  - "[ ] Enviar 'Bom dia' → confirmar pergunta humanizada sem menu"
+  - "[ ] Enviar PDF → confirmar pergunta de contexto antes de processar"
+  - "[ ] Inspecionar conversas.metadata após cada interação → confirmar intencao_detectada"
+  note: "Testes manuais dependem do staging estar ativo com cuca-worker-staging deployado."
+
+# ─── Summary ─────────────────────────────────────────────────────────────────
+
+summary: |
+  Implementação sólida e consistente com os ACs. O detector de intenção é um fallback limpo
+  que não interfere com nenhum fluxo existente. Todos os etapas definidos pelo roteador
+  são reconhecidos pelos guards da engine. Testes abrangentes (19 novos, 0 regressões).
+  Os 3 issues são todos LOW e não bloqueiam o merge.
+
+  Aprovado para push. Testes manuais no staging devem ser realizados pelo Junior antes
+  da promoção para produção (padrão do projeto).

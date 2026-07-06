@@ -137,50 +137,7 @@ export async function PATCH(
             console.warn("[vagas/[id]] Erro ao notificar worker:", notifyErr)
         }
 
-        // Notificar lead responsável via worker
-        try {
-            const { data: vagaLead } = await supabaseAdmin
-                .from("vagas")
-                .select("created_by, titulo, unidade_cuca")
-                .eq("id", id)
-                .single()
 
-            if (vagaLead?.created_by) {
-                const { data: lead } = await supabaseAdmin
-                    .from("leads")
-                    .select("telefone")
-                    .eq("id", vagaLead.created_by)
-                    .single()
-
-                if (lead?.telefone) {
-                    const { data: instancias } = await supabaseAdmin
-                        .from("instancias_uazapi")
-                        .select("nome, token")
-                        .eq("unidade_cuca", vagaLead.unidade_cuca)
-                        .eq("canal_tipo", "Institucional")
-                        .eq("ativa", true)
-                        .limit(1)
-
-                    if (instancias && instancias.length > 0) {
-                        const { token } = instancias[0]
-                        const telLimpo = lead.telefone.replace(/\D/g, "")
-                        const mensagem = `📝 *Alteração de Vaga*\n\nA empresa solicitou alterações na vaga *${vagaLead.titulo || id}*.\n\nA vaga voltou para *pré-cadastro* e aguarda sua validação antes de aceitar novas candidaturas.`
-                        const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
-
-                        await fetch(`${workerUrl}/send-message/${token}`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                                phone: telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`,
-                                message: mensagem,
-                            }),
-                        })
-                    }
-                }
-            }
-        } catch (leadErr) {
-            console.warn("[vagas/[id]] Erro ao notificar lead:", leadErr)
-        }
 
         return NextResponse.json({ ok: true })
     } catch (err: any) {

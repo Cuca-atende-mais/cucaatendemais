@@ -82,42 +82,52 @@ export async function POST(request: NextRequest) {
                 const telefoneRH = empresa?.telefone
 
                 if (vaga && telefoneRH) {
-                    const { data: instancias } = await supabaseAdmin
-                        .from("instancias_uazapi")
-                        .select("nome, token, canal_tipo")
-                        .eq("unidade_cuca", (vaga as any).unidade_cuca)
+                    const { data: phoneNumber } = await supabaseAdmin
+                        .from("meta_phone_numbers")
+                        .select("phone_number_id")
+                        .eq("canal_tipo", "Empregabilidade")
                         .eq("ativo", true)
-                        .limit(10)
+                        .limit(1)
+                        .maybeSingle()
 
-                    let instancia = instancias?.find((i: any) => i.canal_tipo === "Empregabilidade")
-                        || instancias?.find((i: any) => i.canal_tipo === "Institucional")
-                        || instancias?.[0]
-
-                    if (!instancia) {
-                        const { data: ig } = await supabaseAdmin
-                            .from("instancias_uazapi")
-                            .select("nome, token, canal_tipo")
-                            .eq("canal_tipo", "Empregabilidade")
+                    if (phoneNumber) {
+                        const metaToken = process.env.META_SYSTEM_USER_TOKEN
+                        // Igualdade exata em coluna array precisa da sintaxe de array literal do
+                        // Postgres ('{"Empregabilidade"}'), não de um array JS — ver route.ts de
+                        // divulgacao/disparar para o detalhe do bug (client serializa via toString()).
+                        const { data: tpl } = await supabaseAdmin
+                            .from("meta_templates")
+                            .select("nome")
+                            .eq("automacoes", '{"Empregabilidade"}')
+                            .contains("phone_number_ids", [phoneNumber.phone_number_id])
                             .eq("ativo", true)
+                            .eq("status", "aprovado")
                             .limit(1)
-                            .single()
-                        if (ig) instancia = ig
-                    }
-
-                    if (instancia) {
-                        const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
-                        const internalToken = process.env.WEBHOOK_INTERNAL_TOKEN
-                        if (internalToken) {
-                            const telLimpo = telefoneRH.replace(/\D/g, "")
-                            const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
+                            .maybeSingle()
+                        const telLimpo = telefoneRH.replace(/\D/g, "")
+                        const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
+                        if (!tpl) {
+                            console.info(`[feedback-submit] notificaria ${number} mas nenhum template aprovado em meta_templates`)
+                        } else if (metaToken) {
                             const aprovados = (evaluations || []).filter((e: any) => e.status === "aprovado_empresa").length
-                            const mensagem = `✅ Obrigado pelo feedback sobre a vaga de *${(vaga as any).titulo}*, *${empresa.nome}*!\n\n` +
-                                `Registramos suas avaliações (${aprovados} aprovado(s)). Nossa equipe acompanhará o processo. 🤝`
-                            await fetch(`${workerUrl}/send-message/${internalToken}`, {
+                            await fetch(`https://graph.facebook.com/v23.0/${phoneNumber.phone_number_id}/messages`, {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ number, text: mensagem, instance: instancia.nome }),
-                            }).catch(e => console.error("[feedback-submit] Falha ao enviar confirmação WhatsApp:", e))
+                                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${metaToken}` },
+                                body: JSON.stringify({
+                                    messaging_product: "whatsapp",
+                                    to: number,
+                                    type: "template",
+                                    template: {
+                                        name: tpl.nome,
+                                        language: { code: "pt_BR" },
+                                        components: [{ type: "body", parameters: [
+                                            { type: "text", text: (vaga as any).titulo || "" },
+                                            { type: "text", text: empresa.nome || "" },
+                                            { type: "text", text: String(aprovados) },
+                                        ]}],
+                                    },
+                                }),
+                            }).catch(e => console.error("[feedback-submit] Falha ao enviar confirmação Meta:", e))
                         }
                     }
                 }

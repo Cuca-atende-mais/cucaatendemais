@@ -78,7 +78,7 @@ export default function AcessoCucaPortalPage() {
             .select("*, espacos_cuca(nome)")
             .order("created_at", { ascending: false })
 
-        const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral'
+        const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral' || profile?.funcao?.nome === 'Super Admin Cuca'
 
         if (!canSeeAllUnits && profile?.unidade_cuca) {
             query = query.eq('unidade_cuca', profile.unidade_cuca)

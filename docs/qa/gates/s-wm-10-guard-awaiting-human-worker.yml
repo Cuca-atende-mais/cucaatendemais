@@ -1,0 +1,30 @@
+schema: 1
+story: 'S-WM-10'
+gate: PASS
+status_reason: >
+  Todos os 6 ACs atendidos: guard awaiting_human posicionado corretamente antes do dispatch,
+  cobrindo Empregabilidade e motor-agente com uma única verificação. 21/21 testes passam sem regressão.
+reviewer: 'Quinn'
+updated: '2026-06-27T00:00:00Z'
+top_issues:
+  - id: 'DOC-001'
+    severity: low
+    finding: 'Dívida técnica do motor-agente (sem guard interno em index.ts:134) documentada apenas no Debug Log da story, não como backlog item formal.'
+    suggested_action: 'Registrar tech debt no backlog em sprint oportuna: adicionar guard awaiting_human na Edge Function motor-agente como defense-in-depth adicional.'
+waiver:
+  active: false
+
+checks:
+  code_review: PASS
+  unit_tests: PASS        # 21/21 passed
+  acceptance_criteria: PASS  # 6/6 ACs atendidos
+  regression: PASS
+  performance: PASS
+  security: PASS
+  documentation: PASS
+
+notes:
+  - 'Guard dispara APÓS save da mensagem (linha 394-406) — comportamento intencional: colaborador vê mensagem no UI.'
+  - 'bare return (não JSONResponse) correto para background task -> None.'
+  - 'status=None (UAZAPI legado) não aciona guard — None == "awaiting_human" → False. Correto.'
+  - 'Motor-agente Edge Function (index.ts:134) não tem guard interno — inbound é única barreira. Documentado no Debug Log.'

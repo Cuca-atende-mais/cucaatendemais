@@ -1,15 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-/**
- * Função para disparar alertas institucionais via UAZAPI.
- * HUB de Alertas: Notifica admins/operadores conforme o evento no banco.
- */
-
 Deno.serve(async (req) => {
     try {
         const payload = await req.json();
-        const { record, table, type } = payload; // 'type' pode vir do webhook payload customizado
+        const { record, table } = payload;
 
         console.log(`[Institucional] Evento em ${table}: ${record?.id || 'Sem ID'}`);
 
@@ -18,29 +13,36 @@ Deno.serve(async (req) => {
             Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
         );
 
-        const UAZAPI_BASE_URL = Deno.env.get("UAZAPI_BASE_URL") || "https://uazapi.com.br";
+        const META_SYSTEM_USER_TOKEN = Deno.env.get("META_SYSTEM_USER_TOKEN") || "";
 
-        // 1. Localizar Instância UAZAPI ativa para envio
-        const { data: instancia, error: instErr } = await supabase
-            .from("instancias_uazapi")
-            .select("nome, token")
-            .eq("ativa", true)
+        // 1. Localizar phone_number_id Meta Institucional
+        const { data: phoneNumber, error: pnErr } = await supabase
+            .from("meta_phone_numbers")
+            .select("phone_number_id")
+            .eq("canal_tipo", "Institucional")
+            .eq("ativo", true)
             .limit(1)
             .maybeSingle();
 
-        if (instErr) throw instErr;
-        if (!instancia) {
-            console.warn("[Institucional] Sem instância ativa.");
-            return new Response(JSON.stringify({ message: "Sem instância ativa" }), { status: 200 });
+        if (pnErr) throw pnErr;
+        if (!phoneNumber) {
+            console.warn("[Institucional] Sem phone_number_id Meta ativo para canal_tipo=Institucional");
+            return new Response(JSON.stringify({ message: "Sem phone_number_id Meta ativo" }), { status: 200 });
         }
 
-        let recipients: any[] = [];
-        let message = "";
+        const phoneNumberId = phoneNumber.phone_number_id;
 
-        // --- LÓGICA DE ROTEAMENTO DE ALERTAS ---
+        let recipients: any[] = [];
+        let templateName = "";
+
+        // getComponents recebe o nome do destinatário e devolve os components Meta
+        type ComponentsBuilder = (recipientNome: string) => object[];
+        let getComponents: ComponentsBuilder = () => [];
+
+        // --- ROTEAMENTO DE ALERTAS ---
 
         if (table === 'eventos_pontuais' && record.status === 'aguardando_aprovacao') {
-            // ALERTA S6-04: Novo Evento Pontual para Super Admin
+            // Novo Evento Pontual → alerta ao super_admin
             const { data: admins } = await supabase
                 .from("colaboradores")
                 .select("nome_completo, telefone, funcoes!inner(nome)")
@@ -48,76 +50,110 @@ Deno.serve(async (req) => {
                 .eq("ativo", true);
 
             recipients = admins || [];
-            message = `🔔 *SUPORTE CUCA: NOVA SOLICITAÇÃO*\n\n` +
-                `Um novo evento pontual requer sua aprovação:\n\n` +
-                `📌 *Título:* ${record.titulo}\n` +
-                `🏢 *Unidade:* ${record.unidade_cuca}\n` +
-                `📅 *Data:* ${record.data_evento}\n\n` +
-                `⚠️ Acesse o portal para validar e liberar o disparo.`;
+
+            // Alerta admin de evento pontual: {{1}} titulo, {{2}} unidade_cuca, {{3}} data_evento
+            getComponents = (_nome) => [{
+                type: "body",
+                parameters: [
+                    { type: "text", text: record.titulo || "" },
+                    { type: "text", text: record.unidade_cuca || "" },
+                    { type: "text", text: String(record.data_evento || "") },
+                ]
+            }];
+
+            // Lookup relacional (automação + phone_number_id, zero nome hardcoded — S-WM-16).
+            // Tag "EventoAdmin" desambigua de outros templates Institucional (ex. programação mensal).
+            const { data: tpl } = await supabase
+                .from("meta_templates")
+                .select("nome")
+                .contains("automacoes", ["Institucional", "EventoAdmin"])
+                .contains("phone_number_ids", [phoneNumberId])
+                .eq("ativo", true)
+                .eq("status", "aprovado")
+                .maybeSingle();
+            templateName = tpl?.nome ?? "";
 
         } else if (table === 'conversas' && record.status === 'awaiting_human') {
-            // ALERTA S7-02: Solicitação de Handover para Operador da Unidade
-            const unitFilter = record.unidade_cuca; // Assumindo que a conversa tem a unidade vinculada
-
+            // Handover → alerta ao operador da unidade
+            // (trigger pode ter sido dropado em cuca-dev; mantido pois pode existir em produção)
             const { data: operators } = await supabase
                 .from("colaboradores")
                 .select("nome_completo, telefone, funcoes!inner(nome)")
                 .eq("funcoes.nome", "operador")
-                .eq("unidade_cuca", unitFilter) // Filtra operadores daquela unidade específica
+                .eq("unidade_cuca", record.unidade_cuca)
                 .eq("ativo", true);
 
             recipients = operators || [];
 
-            // Buscar dados do lead para o alerta
             const { data: lead } = await supabase
                 .from("leads")
-                .select("nome, telefone")
+                .select("nome")
                 .eq("id", record.lead_id)
-                .single();
+                .maybeSingle();
 
-            message = `🎧 *CUCA: INTERVENÇÃO HUMANA REQUEST*\n\n` +
-                `A IA Maria/Júlia solicitou ajuda em uma conversa:\n\n` +
-                `👤 *Lead:* ${lead?.nome || 'Cidadão'} (${lead?.telefone || 'Desconhecido'})\n` +
-                `🏢 *Unidade:* ${unitFilter}\n` +
-                `📄 *Status:* Aguardando Operador\n\n` +
-                `⚠️ Assuma o chat no portal para continuar o atendimento.`;
+            // Notificação de transbordo (handover): {{1}} nome colaborador, {{2}} nome lead, {{3}} canal
+            const leadNome = lead?.nome || "Cidadão";
+            const canal = record.unidade_cuca || "CUCA";
+            getComponents = (recipientNome) => [{
+                type: "body",
+                parameters: [
+                    { type: "text", text: recipientNome },
+                    { type: "text", text: leadNome },
+                    { type: "text", text: canal },
+                ]
+            }];
+
+            // Lookup relacional — mesmo template usado por _notificar_transbordo (worker)
+            const { data: tpl } = await supabase
+                .from("meta_templates")
+                .select("nome")
+                .contains("automacoes", ["Institucional", "Transbordo"])
+                .contains("phone_number_ids", [phoneNumberId])
+                .eq("ativo", true)
+                .eq("status", "aprovado")
+                .maybeSingle();
+            templateName = tpl?.nome ?? "";
 
         } else if (table === 'solicitacoes_acesso') {
-            const unitFilter = record.unidade_cuca;
+            // Notificação de acesso: {{1}} nome colaborador, {{2}} solicitante, {{3}} "Acesso CUCA"
+            const nomeSolicitante = record.nome_solicitante || "";
+            getComponents = (recipientNome) => [{
+                type: "body",
+                parameters: [
+                    { type: "text", text: recipientNome },
+                    { type: "text", text: nomeSolicitante },
+                    { type: "text", text: "Acesso CUCA" },
+                ]
+            }];
+
+            // Lookup relacional. Nenhum template "Acesso CUCA"+"Transbordo" existe hoje —
+            // pula graciosamente até um template real ser cadastrado para esse caso.
+            const { data: tpl } = await supabase
+                .from("meta_templates")
+                .select("nome")
+                .contains("automacoes", ["Acesso CUCA", "Transbordo"])
+                .contains("phone_number_ids", [phoneNumberId])
+                .eq("ativo", true)
+                .eq("status", "aprovado")
+                .maybeSingle();
+            templateName = tpl?.nome ?? "";
 
             if (record.status === 'aguardando_aprovacao_tecnica') {
-                // ALERTA S7-03: Acesso CUCA N1 (Coordenador)
                 const { data: coordinators } = await supabase
                     .from("colaboradores")
                     .select("nome_completo, telefone, funcoes!inner(nome)")
                     .eq("funcoes.nome", "coordenador")
-                    .eq("unidade_cuca", unitFilter)
+                    .eq("unidade_cuca", record.unidade_cuca)
                     .eq("ativo", true);
-
                 recipients = coordinators || [];
-                message = `🏛️ *ACESSO CUCA: NOVA SOLICITAÇÃO (N1)*\n\n` +
-                    `Uma nova reserva de espaço requer análise técnica:\n\n` +
-                    `👤 *Solicitante:* ${record.nome_solicitante}\n` +
-                    `📌 *Evento:* ${record.tipo_evento}\n` +
-                    `📅 *Data:* ${record.data_evento}\n` +
-                    `🏢 *Unidade:* ${unitFilter}\n\n` +
-                    `⚠️ Avalie a viabilidade técnica no portal.`;
 
             } else if (record.status === 'aguardando_aprovacao_secretaria') {
-                // ALERTA S7-04: Acesso CUCA N2 (Secretaria)
                 const { data: secretaries } = await supabase
                     .from("colaboradores")
                     .select("nome_completo, telefone, funcoes!inner(nome)")
                     .eq("funcoes.nome", "secretaria")
                     .eq("ativo", true);
-
                 recipients = secretaries || [];
-                message = `🏛️ *ACESSO CUCA: VALIDAÇÃO FINAL (N2)*\n\n` +
-                    `Uma reserva foi aprovada tecnicamente e aguarda validação final:\n\n` +
-                    `👤 *Solicitante:* ${record.nome_solicitante}\n` +
-                    `📌 *Evento:* ${record.tipo_evento}\n` +
-                    `🏢 *Unidade:* ${unitFilter}\n\n` +
-                    `⚠️ Libere a reserva no portal para notificar o cidadão.`;
             }
         }
 
@@ -125,28 +161,43 @@ Deno.serve(async (req) => {
             return new Response(JSON.stringify({ message: "Nenhum destinatário elegível." }), { status: 200 });
         }
 
-        // 3. Enviar mensagens em lote
+        if (!templateName) {
+            console.warn(`[Institucional] Nenhum template aprovado para evento=${table}/${record.status} — envio cancelado`);
+            return new Response(JSON.stringify({ message: "Nenhum template aprovado." }), { status: 200 });
+        }
+
+        // 2. Enviar templates Meta em lote (components por destinatário)
         const sendPromises = recipients.map(async (recipient) => {
+            const telefone = recipient.telefone;
+            const components = getComponents(recipient.nome_completo || "");
             try {
-                const response = await fetch(`${UAZAPI_BASE_URL}/message/sendText/${instancia.nome}`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "apikey": instancia.token
-                    },
-                    body: JSON.stringify({
-                        number: recipient.telefone,
-                        options: {
-                            delay: 3000,
-                            presence: "composing",
-                            linkPreview: true
+                const response = await fetch(
+                    `https://graph.facebook.com/v23.0/${phoneNumberId}/messages`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${META_SYSTEM_USER_TOKEN}`
                         },
-                        textMessage: { text: message }
-                    })
-                });
-                return await response.json();
+                        body: JSON.stringify({
+                            messaging_product: "whatsapp",
+                            to: telefone,
+                            type: "template",
+                            template: {
+                                name: templateName,
+                                language: { code: "pt_BR" },
+                                components,
+                            }
+                        })
+                    }
+                );
+                const data = await response.json();
+                if (!response.ok) {
+                    console.warn(`[Institucional] HTTP ${response.status} para ${telefone}: ${JSON.stringify(data).slice(0, 200)}`);
+                }
+                return data;
             } catch (fErr) {
-                console.error(`Erro ao disparar para ${recipient.telefone}:`, fErr);
+                console.error(`[Institucional] Erro ao disparar para ${telefone}:`, fErr);
                 return { error: true };
             }
         });

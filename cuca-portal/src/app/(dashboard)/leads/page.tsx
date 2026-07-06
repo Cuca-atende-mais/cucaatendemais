@@ -96,6 +96,10 @@ export default function LeadsPage() {
     const [modalBloquear, setModalBloquear] = useState<Lead | null>(null)
     const [motivoBloqueio, setMotivoBloqueio] = useState("")
 
+    // --- Modal Excluir (soft delete) ---
+    const [modalExcluir, setModalExcluir] = useState<Lead | null>(null)
+    const [excluindoLead, setExcluindoLead] = useState(false)
+
     // --- Seleção múltipla e ações em massa ---
     const [selecionados, setSelecionados] = useState<Set<string>>(new Set())
     const [modalBloquearTodos, setModalBloquearTodos] = useState(false)
@@ -116,6 +120,7 @@ export default function LeadsPage() {
             let query = supabase
                 .from("leads")
                 .select("*", { count: "exact" })
+                .eq("excluido", false)
 
             if (busca.trim()) {
                 query = query.or(
@@ -340,6 +345,20 @@ export default function LeadsPage() {
         if (error) { toast.error("Erro"); return }
         buscarLeads()
         toast.success("Lead desbloqueado")
+    }
+
+    const excluirLead = async () => {
+        if (!modalExcluir) return
+        setExcluindoLead(true)
+        const { error } = await supabase
+            .from("leads")
+            .update({ excluido: true })
+            .eq("id", modalExcluir.id)
+        setExcluindoLead(false)
+        if (error) { toast.error("Erro ao excluir lead"); return }
+        setModalExcluir(null)
+        buscarLeads()
+        toast.success("Lead excluído")
     }
 
     const limparTags = async (lead: Lead) => {
@@ -671,6 +690,13 @@ export default function LeadsPage() {
                                                 <DropdownMenuSeparator />
                                                 <DropdownMenuItem onClick={() => limparTags(lead)}>
                                                     <Eraser className="mr-2 h-4 w-4" />Limpar Tags
+                                                </DropdownMenuItem>
+                                                <DropdownMenuSeparator />
+                                                <DropdownMenuItem
+                                                    className="text-destructive"
+                                                    onClick={() => setModalExcluir(lead)}
+                                                >
+                                                    <Trash2 className="mr-2 h-4 w-4" />Excluir
                                                 </DropdownMenuItem>
                                             </DropdownMenuContent>
                                         </DropdownMenu>
@@ -1100,6 +1126,28 @@ export default function LeadsPage() {
                         <Button variant="outline" onClick={() => setModalBloquear(null)}>Cancelar</Button>
                         <Button variant="destructive" onClick={bloquearLead}>
                             <ShieldBan className="mr-2 h-4 w-4" />Bloquear
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* ============================
+                Modal — Excluir Lead (soft delete)
+            ============================ */}
+            <Dialog open={!!modalExcluir} onOpenChange={open => !open && setModalExcluir(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Excluir Lead</DialogTitle>
+                        <DialogDescription>
+                            Excluir {modalExcluir?.nome ?? modalExcluir?.telefone}? O lead deixa de aparecer
+                            na listagem, mas o histórico de conversas, mensagens e candidaturas é preservado
+                            — esta ação não apaga dados relacionados, apenas remove o lead da lista.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setModalExcluir(null)}>Cancelar</Button>
+                        <Button variant="destructive" onClick={excluirLead} disabled={excluindoLead}>
+                            <Trash2 className="mr-2 h-4 w-4" />Excluir
                         </Button>
                     </DialogFooter>
                 </DialogContent>
