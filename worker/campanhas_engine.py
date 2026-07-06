@@ -48,12 +48,20 @@ async def get_config(key: str, default_val: int) -> int:
     return await asyncio.to_thread(_get_config_sync, key, default_val)
 
 
-def _query_db_sync(tabela: str, status: str):
-    return supabase.table(tabela).select("*").eq("status", status).is_("disparo_id", "null").execute()
-
-
 def _update_db_sync(tabela: str, item_id: str, dados: dict):
     return supabase.table(tabela).update(dados).eq("id", item_id).execute()
+
+
+def _claim_evento_pontual_sync():
+    return supabase.rpc("claim_evento_pontual").execute()
+
+
+def _claim_ouvidoria_evento_sync():
+    return supabase.rpc("claim_ouvidoria_evento").execute()
+
+
+def _claim_disparo_divulgacao_sync():
+    return supabase.rpc("claim_disparo_divulgacao").execute()
 
 
 def _query_leads_sync(unidade: str | None = None, categorias_alvo: list | None = None):
@@ -203,9 +211,8 @@ async def processar_item_disparo(
     daily_limit: int,
     error_threshold: int,
 ):
-    """Processa e dispara mensagem Meta para um evento aprovado."""
+    """Processa e dispara mensagem Meta para um evento já reivindicado atomicamente (claim RPC)."""
     item_id = item.get("id")
-    await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
     try:
         await _processar_item_disparo_interno(item, origem, delay_min, delay_max, daily_limit, error_threshold)
     except Exception as exc:
@@ -433,16 +440,22 @@ async def campanhas_loop():
             daily_limit = await get_config("anti_ban_daily_limit", 500)
             error_threshold = await get_config("anti_ban_error_threshold", 10)
 
-            res_pontuais = await asyncio.to_thread(_query_db_sync, "eventos_pontuais", "aprovado")
-            for evento in (res_pontuais.data or []):
+            while True:
+                res_pontual = await asyncio.to_thread(_claim_evento_pontual_sync)
+                itens_pontuais = res_pontual.data or []
+                if not itens_pontuais:
+                    break
                 await processar_item_disparo(
-                    evento, "eventos_pontuais", delay_min, delay_max, daily_limit, error_threshold
+                    itens_pontuais[0], "eventos_pontuais", delay_min, delay_max, daily_limit, error_threshold
                 )
 
-            res_ouvidoria = await asyncio.to_thread(_query_db_sync, "ouvidoria_eventos", "ativo")
-            for ouv in (res_ouvidoria.data or []):
+            while True:
+                res_ouvidoria = await asyncio.to_thread(_claim_ouvidoria_evento_sync)
+                itens_ouvidoria = res_ouvidoria.data or []
+                if not itens_ouvidoria:
+                    break
                 await processar_item_disparo(
-                    ouv, "ouvidoria_eventos", delay_min, delay_max, daily_limit, error_threshold
+                    itens_ouvidoria[0], "ouvidoria_eventos", delay_min, delay_max, daily_limit, error_threshold
                 )
 
             await processar_disparos_divulgacao(delay_min, delay_max, daily_limit, error_threshold)
@@ -462,14 +475,7 @@ async def processar_disparos_divulgacao(
     error_threshold: int,
 ):
     """Processa fila de disparos globais com o template de programação mensal (lookup relacional)."""
-    res = await asyncio.to_thread(
-        lambda: supabase.table("disparos_divulgacao")
-        .select("*")
-        .eq("status", "pendente")
-        .order("created_at", desc=False)
-        .limit(1)
-        .execute()
-    )
+    res = await asyncio.to_thread(_claim_disparo_divulgacao_sync)
     if not res.data:
         return
 
@@ -485,7 +491,6 @@ async def processar_disparos_divulgacao(
     mes_nome = _MESES.get(mes_num, str(mes_num))
 
     logger.info(f"[Divulgação] Iniciando disparo global {disparo_id} — mês: {mes_nome}")
-    await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "em_andamento")
 
     try:
         await _processar_disparo_divulgacao_interno(
