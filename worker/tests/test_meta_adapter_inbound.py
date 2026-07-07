@@ -198,6 +198,18 @@ class TestParseMensagem:
         _, _, midia_tipo = await _parse_mensagem_meta(msg)
         assert midia_tipo == "image"
 
+    @pytest.mark.asyncio
+    async def test_parse_mensagem_imagem_descarta_legenda(self):
+        """Achado (não corrigido): imagem sempre vira mensagem="", mesmo com legenda —
+        Meta envia legenda em image.caption, mas _parse_mensagem_meta nunca lê esse campo."""
+        msg = {
+            "type": "image",
+            "from": "558599999999",
+            "image": {"mime_type": "image/jpeg", "sha256": "x", "id": "IMG_ID", "caption": "Isso está certo?"},
+        }
+        mensagem, _, _ = await _parse_mensagem_meta(msg)
+        assert mensagem == ""
+
 
 # ─── Contrato v2 ──────────────────────────────────────────────────────────────
 class TestContratoV2:
@@ -431,6 +443,94 @@ class TestDispatchMotorAgente:
 
             mock_motor.assert_called_once(), f"motor-agente não chamado para agente={agente}"
             mock_enviar.assert_called_once(), f"_meta_enviar não chamado para agente={agente}"
+
+    # ── §1 auditoria: motor-agente retorna None → fallback ao lead, nunca silêncio ──
+    @pytest.mark.asyncio
+    async def test_processar_webhook_motor_agente_none_envia_fallback(self):
+        """§1: _chamar_motor_agente retornando None não pode resultar em silêncio total."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [
+            {"id": "lead-id-1"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-id-1", "status": "ativa"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
+                   return_value=None) as mock_motor, \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock,
+                   return_value=True) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        mock_motor.assert_called_once()
+        mock_enviar.assert_called_once()
+        texto_enviado = mock_enviar.call_args.args[2]
+        assert "problema técnico" in texto_enviado
+
+    # ── Achado (não corrigido): lead manda imagem → cai no MESMO fallback de "problema
+    # técnico" do §1, mas a causa real é "motor-agente não lê imagem", não uma falha técnica ──
+    @pytest.mark.asyncio
+    async def test_processar_webhook_imagem_cai_no_fallback_tecnico(self):
+        """Reproduz ponta a ponta (sem mockar _chamar_motor_agente): imagem → mensagem="" →
+        motor-agente responderia HTTP 400 "Nenhuma mensagem" → _chamar_motor_agente retorna
+        None → dispatch envia a mensagem de fallback do §1, que é enganosa para este caso."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_imagem(phone_number_id="INST_PHONE_ID")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [
+            {"id": "lead-id-1"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-id-1", "status": "ativa"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        mock_resp_400 = MagicMock()
+        mock_resp_400.is_success = False
+        mock_resp_400.status_code = 400
+        mock_resp_400.text = '{"error": "Nenhuma mensagem"}'
+        mock_httpx, _ = self._make_mock_httpx(post_return=mock_resp_400)
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch.dict(os.environ, {"SUPABASE_URL": "http://fake", "SUPABASE_SERVICE_ROLE_KEY": "fake_key"}), \
+             patch.dict(sys.modules, {"httpx": mock_httpx}), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock,
+                   return_value=True) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        mock_enviar.assert_called_once()
+        texto_enviado = mock_enviar.call_args.args[2]
+        # Achado: a mensagem enviada é a de "problema técnico" — não menciona imagem/foto,
+        # o que é enganoso (não houve falha técnica, imagem simplesmente não é suportada).
+        assert "problema técnico" in texto_enviado
 
     # ── Discard: agente_tipo desconhecido não envia nada ─────────────────
     @pytest.mark.asyncio

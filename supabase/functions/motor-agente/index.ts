@@ -23,11 +23,11 @@ const UNIDADES_MAP: Record<string, string> = {
 
 const MENU_UNIDADES = "Sobre qual unidade CUCA voc\u00ea quer saber? \ud83d\ude0a\n\n1\ufe0f\u20e3 Barra\n2\ufe0f\u20e3 Jangurussu\n3\ufe0f\u20e3 Mondubim\n4\ufe0f\u20e3 Pici\n5\ufe0f\u20e3 Jos\u00e9 Walter";
 
-function ehSelecaoMenu(texto: string): boolean {
+export function ehSelecaoMenu(texto: string): boolean {
   return /^[1-5]$/.test(texto.trim());
 }
 
-function extrairTextoMenu(numero: string, ultimaMsgAgente: string): string {
+export function extrairTextoMenu(numero: string, ultimaMsgAgente: string): string {
   for (const linha of ultimaMsgAgente.split('\n')) {
     const s = linha.trim().replace(/[\ufe0f\u20e3]/g, '');
     if (s.startsWith(numero + ' ') || s.startsWith(numero + '.') || s.startsWith(numero + ')')) {
@@ -37,19 +37,107 @@ function extrairTextoMenu(numero: string, ultimaMsgAgente: string): string {
   return '';
 }
 
+function escaparRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * §6 (débito parcial): endurece o parsing de tags de controle contra variação de case e
+ * espaçamento (ex.: "[[handover]]", "[[ HANDOVER ]]"). NÃO resolve paráfrase — se o GPT
+ * comunicar a intenção sem emitir a tag literal, isso ainda escapa. Resolver isso exigiria
+ * structured output real (campo booleano via response_format), o que por sua vez exige
+ * reescrever as instruções em prompts_agentes (4 personas, hoje instruídas a emitir a tag
+ * como texto) coordenado com a mudança de parsing — decisão adiada, ver relatório.
+ */
+export function removerTag(texto: string, nomeTag: string): { encontrada: boolean; texto: string } {
+  const nomeEscapado = escaparRegex(nomeTag);
+  const encontrada = new RegExp("\\[\\[\\s*" + nomeEscapado + "\\s*\\]\\]", "i").test(texto);
+  const textoLimpo = texto.replace(new RegExp("\\[\\[\\s*" + nomeEscapado + "\\s*\\]\\]", "gi"), "").trim();
+  return { encontrada, texto: textoLimpo };
+}
+
+/** Testa se `chave` aparece em `texto` como palavra inteira (n\u00e3o substring solta, ex.: "barra" em "barra de chocolate") */
+export function contemPalavra(texto: string, chave: string): boolean {
+  return new RegExp("\\b" + escaparRegex(chave) + "\\b").test(texto);
+}
+
 /** Detecta se a mensagem menciona uma unidade diferente da atual */
-function detectarTrocaUnidade(texto: string, unidadeAtual: string): string | null {
+export function detectarTrocaUnidade(texto: string, unidadeAtual: string): string | null {
   const lower = texto.toLowerCase().trim();
   const nomesUnidades: Record<string, string> = {
     'barra': 'Cuca Barra', 'jangurussu': 'Cuca Jangurussu', 'mondubim': 'Cuca Mondubim',
     'pici': 'Cuca Pici', 'jos\u00e9 walter': 'Cuca Jos\u00e9 Walter', 'jose walter': 'Cuca Jos\u00e9 Walter', 'walter': 'Cuca Jos\u00e9 Walter',
   };
   for (const [chave, unidade] of Object.entries(nomesUnidades)) {
-    if (lower.includes(chave) && unidade !== unidadeAtual) {
+    if (contemPalavra(lower, chave) && unidade !== unidadeAtual) {
       return unidade;
     }
   }
   return null;
+}
+
+const UNIDADES_VALIDAS = ['Cuca Barra', 'Cuca Jangurussu', 'Cuca Mondubim', 'Cuca Pici', 'Cuca José Walter'];
+
+export type AvaliacaoSelecaoUnidade = { unidade: string | null; quer_sair: boolean; mudou_de_assunto: boolean };
+
+const AVALIACAO_SELECAO_UNIDADE_DEFAULT: AvaliacaoSelecaoUnidade = { unidade: null, quer_sair: false, mudou_de_assunto: false };
+
+/** Valida o JSON retornado pelo GPT contra o contrato esperado — nunca confia cegamente no LLM */
+export function validarAvaliacaoSelecaoUnidade(data: unknown): AvaliacaoSelecaoUnidade {
+  const obj = (data && typeof data === "object") ? data as Record<string, unknown> : {};
+  const unidade = (typeof obj.unidade === "string" && UNIDADES_VALIDAS.includes(obj.unidade)) ? obj.unidade : null;
+  return {
+    unidade,
+    quer_sair: obj.quer_sair === true,
+    mudou_de_assunto: obj.mudou_de_assunto === true,
+  };
+}
+
+/**
+ * Fallback semântico (padrão S-WM-20 `avaliar_mensagem_contextual`, portado de Python/worker
+ * para TS/Deno) para quando o lead não escolheu a unidade por nome/número exato — cobre
+ * erro de digitação ("jangurusu"), referência indireta ("a do José Walter mesmo") e permite
+ * diferenciar "não entendi qual unidade" (ambíguo, tentando escolher) de "não estava tentando
+ * escolher uma unidade" (cortesia/mudança de assunto/saída), pra não empurrar o menu de novo
+ * em cima de uma mensagem tipo "Obrigado pela mensagem".
+ * Nunca propaga exceção — qualquer falha cai no default seguro (equivalente a "não identifiquei").
+ */
+async function avaliarSelecaoUnidade(texto: string, openaiKey: string): Promise<AvaliacaoSelecaoUnidade> {
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + openaiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        max_tokens: 60,
+        response_format: { type: "json_object" },
+        messages: [{
+          role: "user",
+          content: [
+            "Um lead da rede CUCA recebeu este menu e está respondendo:",
+            MENU_UNIDADES,
+            "",
+            "Unidades válidas (use o nome EXATO): Cuca Barra, Cuca Jangurussu, Cuca Mondubim, Cuca Pici, Cuca José Walter.",
+            "",
+            "Retorne SOMENTE JSON com as chaves:",
+            "- \"unidade\": o nome exato de uma das 5 unidades válidas se o lead mencionou uma (mesmo com erro de digitação ou de forma indireta), ou null se não deu pra identificar.",
+            "- \"quer_sair\": true se o lead claramente não quer continuar / não vai escolher uma unidade agora (ex.: agradecimento de despedida, \"deixa pra lá\", \"depois eu vejo\").",
+            "- \"mudou_de_assunto\": true se a mensagem não é uma tentativa de escolher unidade nem de sair (ex.: cortesia como \"obrigado pela mensagem\", pergunta sobre outro assunto).",
+            "",
+            "Mensagem do lead: " + texto,
+          ].join("\n"),
+        }],
+      }),
+    });
+    if (!resp.ok) return AVALIACAO_SELECAO_UNIDADE_DEFAULT;
+    const body = await resp.json();
+    const parsed = JSON.parse(body.choices[0].message.content);
+    return validarAvaliacaoSelecaoUnidade(parsed);
+  } catch (exc) {
+    console.error("[motor-agente v18] avaliarSelecaoUnidade erro, fallback seguro:", exc);
+    return AVALIACAO_SELECAO_UNIDADE_DEFAULT;
+  }
 }
 
 async function getOpenAIKey(supabase: ReturnType<typeof createClient>): Promise<string> {
@@ -79,11 +167,34 @@ async function gerarEmbedding(texto: string, apiKey: string): Promise<number[]> 
   return (await resp.json()).data[0].embedding;
 }
 
-async function chamarGPT(prompt_sistema: string, historico: { role: string; content: string }[], apiKey: string, temperatura: number, max_tokens: number) {
+const GPT_MAX_TENTATIVAS = 2; // tentativas extras além da 1ª, só para 429/rate_limit_exceeded
+const GPT_ESPERA_MAX_SEGUNDOS = 10; // teto de espera por tentativa (worker chama com timeout=60s)
+
+/** Extrai o tempo de espera sugerido pela própria OpenAI (header retry-after ou corpo do erro) */
+export function parseRetryAfterSegundos(retryAfterHeader: string | null, corpoErro: string): number {
+  if (retryAfterHeader) {
+    const segundos = Number(retryAfterHeader);
+    if (!Number.isNaN(segundos) && segundos >= 0) return segundos;
+  }
+  const match = corpoErro.match(/try again in ([\d.]+)s/i);
+  if (match) return Number(match[1]);
+  return 1; // fallback se a API não informar tempo (ex.: 429 sem detalhe)
+}
+
+async function chamarGPT(prompt_sistema: string, historico: { role: string; content: string }[], apiKey: string, temperatura: number, max_tokens: number, tentativa = 0): Promise<{ texto: string }> {
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST", headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ model: GPT_MODEL, temperature: temperatura, max_tokens: max_tokens, messages: [{ role: "system", content: prompt_sistema }, ...historico] }),
   });
+
+  if (resp.status === 429 && tentativa < GPT_MAX_TENTATIVAS) {
+    const corpoErro = await resp.text();
+    const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
+    console.log("[motor-agente v18] Rate limit OpenAI (tentativa " + (tentativa + 1) + "/" + GPT_MAX_TENTATIVAS + "), aguardando " + esperaSegundos + "s antes de tentar de novo");
+    await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
+    return chamarGPT(prompt_sistema, historico, apiKey, temperatura, max_tokens, tentativa + 1);
+  }
+
   if (!resp.ok) throw new Error("GPT-4o error: " + await resp.text());
   return { texto: (await resp.json()).choices[0].message.content };
 }
@@ -110,7 +221,14 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
 // isso é responsabilidade exclusiva de quem chama. Se um novo consumidor precisar chamar esta
 // function de forma isolada (sem persistência prévia), ele passa a ser responsável por gravar
 // a mensagem do lead antes, ou este contrato precisa ser revisto explicitamente.
-Deno.serve(async (req: Request) => {
+// import.meta.main evita que o import deste arquivo por um teste (Deno.test) suba um
+// listener HTTP real — Supabase invoca este módulo como entrypoint direto (main=true);
+// um teste que importa as funções puras (ehSelecaoMenu etc.) não deve disparar o servidor.
+if (import.meta.main) {
+  Deno.serve(handler);
+}
+
+async function handler(req: Request): Promise<Response> {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   console.log("[motor-agente v18] Recebendo requisicao...");
 
@@ -190,11 +308,30 @@ Deno.serve(async (req: Request) => {
         }
       } else if (aguardando) {
         const msgLower = textoFinal.toLowerCase().trim();
-        const unidadeDetectada = Object.entries(UNIDADES_MAP).find(([k]) => msgLower.includes(k) || msgLower === k)?.[1];
+        let unidadeDetectada = Object.entries(UNIDADES_MAP).find(([k]) => contemPalavra(msgLower, k))?.[1];
+        let avaliacaoSemantica: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
+
+        if (!unidadeDetectada) {
+          avaliacaoSemantica = await avaliarSelecaoUnidade(textoFinal, openaiKey);
+          unidadeDetectada = avaliacaoSemantica.unidade ?? undefined;
+        }
+
         if (unidadeDetectada) {
           await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: unidadeDetectada, aguardando_unidade: false } }).eq('id', conversa.id);
           unidadeEfetiva = unidadeDetectada;
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
+        } else if (avaliacaoSemantica.quer_sair) {
+          // Lead n\u00e3o quer escolher agora \u2014 n\u00e3o insiste no menu (aguardando_unidade permanece
+          // true, o menu ainda aparece se ele voltar a perguntar sobre unidades depois).
+          const respSemInsistencia = "Sem problemas! Quando quiser saber sobre alguma unidade CUCA, \u00e9 s\u00f3 chamar. \ud83d\ude0a";
+          await salvarMensagemAgente(supabase, conversa.id, lead.id, respSemInsistencia);
+          return new Response(JSON.stringify({ success: true, resposta: respSemInsistencia, handover: false }), { headers: { "Content-Type": "application/json" } });
+        } else if (avaliacaoSemantica.mudou_de_assunto) {
+          // Mensagem n\u00e3o era uma tentativa de escolher unidade (cortesia, outro assunto) \u2014
+          // evita a moldura acusat\u00f3ria de "n\u00e3o consegui identificar" pra isso.
+          const respSemAcusacao = "Claro! \ud83d\ude0a Quando quiser saber sobre alguma unidade CUCA, escolha uma:\n\n" + MENU_UNIDADES;
+          await salvarMensagemAgente(supabase, conversa.id, lead.id, respSemAcusacao);
+          return new Response(JSON.stringify({ success: true, resposta: respSemAcusacao, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           const respMenu = "N\u00e3o consegui identificar a unidade \ud83d\ude0a\n\n" + MENU_UNIDADES;
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respMenu);
@@ -213,7 +350,9 @@ Deno.serve(async (req: Request) => {
     const isAgenteProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
     const isSelecaoMenu = ehSelecaoMenu(textoFinal);
 
-    if (temUnidadeDefinida && isAgenteProgramacao) {
+    const precisaVisaoGeral = conversaJustCreated || trocouUnidade || isSelecaoMenu;
+
+    if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
       const conteudoPrograma = await carregarProgramacaoMensal(supabase, unidadeEfetiva);
 
       let instrucaoArea = "";
@@ -239,6 +378,21 @@ Deno.serve(async (req: Request) => {
       });
       if (chunksEventos && chunksEventos.length > 0) {
         contextRAG += "\n\n--- EVENTOS E FAQ ---\n" + chunksEventos.map((c: { conteudo: string; fonte_tipo?: string }) =>
+          c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
+        ).join("\n");
+      }
+    } else if (temUnidadeDefinida && isAgenteProgramacao) {
+      // Pergunta de acompanhamento (conversa em andamento, mesma unidade, sem sele\u00e7\u00e3o de menu):
+      // busca vetorial de poucos chunks em vez de carregar toda a programa\u00e7\u00e3o mensal (~40 chunks).
+      const embedding = await gerarEmbedding(textoFinal, openaiKey);
+      const { data: chunksPrograma } = await supabase.rpc("buscar_chunks_similares", {
+        query_embedding: "[" + embedding.join(",") + "]",
+        p_tipos: ["monthly_program", "eventos_pontuais", "FAQ"],
+        p_unidade_cuca: unidadeEfetiva,
+        p_limite: 5,
+      });
+      if (chunksPrograma && chunksPrograma.length > 0) {
+        contextRAG = "\n\n--- CONTEXTO ---\n" + chunksPrograma.map((c: { conteudo: string; fonte_tipo?: string }) =>
           c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
         ).join("\n");
       }
@@ -312,8 +466,18 @@ Deno.serve(async (req: Request) => {
     const { texto: respostaGerada } = await chamarGPT(promptFinal, historico, openaiKey, prompt.temperatura, prompt.max_tokens);
     let resposta = respostaGerada;
     let handover = false; let encerrado = false;
-    if (resposta.includes("[[HANDOVER]]")) { handover = true; resposta = resposta.replace("[[HANDOVER]]", "").trim(); }
-    if (resposta.includes("[[ENCERRAR]]")) { encerrado = true; resposta = resposta.replace("[[ENCERRAR]]", "").trim(); }
+    const avaliacaoHandover = removerTag(resposta, "handover");
+    if (avaliacaoHandover.encontrada) { handover = true; resposta = avaliacaoHandover.texto; }
+    const avaliacaoEncerrar = removerTag(resposta, "encerrar");
+    if (avaliacaoEncerrar.encontrada) { encerrado = true; resposta = avaliacaoEncerrar.texto; }
+    // GPT pode responder só com a tag, sem texto (ex.: "[[ENCERRAR]]"). resposta="" nesse ponto
+    // vira None no worker (data.get("resposta") or None), que hoje interpreta None como falha
+    // técnica e reenvia "tivemos um problema técnico" — mensagem errada para um encerramento/
+    // handover legítimo. Garantir texto sempre não-vazio quando success=true.
+    if (!resposta) {
+      if (handover) resposta = "Vou te encaminhar para um atendente humano, só um momento!";
+      else if (encerrado) resposta = "Tudo certo! Qualquer coisa, é só chamar novamente. 😊";
+    }
 
     // 12. Salvar
     await salvarMensagemAgente(supabase, conversa.id, lead.id, resposta);
@@ -327,4 +491,4 @@ Deno.serve(async (req: Request) => {
     console.error("[motor-agente v18]", errMsg);
     return new Response(JSON.stringify({ error: "Erro interno", details: errMsg }), { status: 500 });
   }
-});
+}

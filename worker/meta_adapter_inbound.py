@@ -567,6 +567,12 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             resposta = await _chamar_motor_agente(contrato_v2, conversa_id, supabase, phone_number_id)
             if resposta:
                 await _meta_enviar(phone_number_id, telefone, resposta, token)
+            else:
+                await _meta_enviar(
+                    phone_number_id, telefone,
+                    "Desculpe, tivemos um problema técnico. Poderia repetir sua mensagem em instantes?",
+                    token,
+                )
         except Exception as exc:
             logger.error(f"[meta-inbound] Erro no dispatch motor-agente ({agente_tipo}): {exc}")
 
