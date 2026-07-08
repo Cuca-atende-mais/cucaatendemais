@@ -284,11 +284,13 @@ export function parseRetryAfterSegundos(retryAfterHeader: string | null, corpoEr
 }
 
 /**
- * Extraído para permitir teste automatizado (AUD-13) — mesma condição usada hoje
- * (só 429), nenhuma correção aplicada.
+ * AUD-13: retry com backoff cobre 429 (rate limit) E os erros 5xx transitórios mais comuns da
+ * OpenAI (500/502/503) — antes só 429 era tratado, e um 503 em pico de carga virava "problema
+ * técnico" imediato pro lead sem nenhuma tentativa de repetição.
  */
 export function deveTentarNovamente(status: number, tentativa: number): boolean {
-  return status === 429 && tentativa < GPT_MAX_TENTATIVAS;
+  const statusTransitorio = status === 429 || status === 500 || status === 502 || status === 503;
+  return statusTransitorio && tentativa < GPT_MAX_TENTATIVAS;
 }
 
 async function chamarGPT(prompt_sistema: string, historico: { role: string; content: string }[], apiKey: string, temperatura: number, max_tokens: number, tentativa = 0): Promise<{ texto: string }> {
@@ -311,6 +313,22 @@ async function chamarGPT(prompt_sistema: string, historico: { role: string; cont
 
 async function salvarMensagemAgente(supabase: ReturnType<typeof createClient>, conversa_id: string, lead_id: string, conteudo: string) {
   await supabase.from("mensagens").insert({ conversa_id, lead_id, tipo: "text", conteudo, remetente: "agente" });
+}
+
+/**
+ * TOM-05: os textos fixos dos ramos early-return (menu de unidades, "não consegui identificar"
+ * etc.) não passam pelo GPT — se o mesmo ramo disparar duas vezes seguidas, o lead recebe
+ * literalmente o mesmo texto, palavra por palavra, um dos sinais mais fortes de "isso é um
+ * robô". Opção mais simples que variação rotativa (que exigiria escrever e manter 2-3 textos
+ * por situação): detecta se a resposta candidata é idêntica à última mensagem do agente no
+ * histórico e, nesse caso, complementa com uma frase curta antes de repetir.
+ */
+export function evitarRepeticaoLiteral(respostaCandidata: string, historico: { role: string; content: string }[]): string {
+  const ultimaDoAgente = [...historico].reverse().find((m) => m.role === "assistant");
+  if (ultimaDoAgente && ultimaDoAgente.content === respostaCandidata) {
+    return "De novo, foi mal! 😅\n\n" + respostaCandidata;
+  }
+  return respostaCandidata;
 }
 
 /** Carrega todos os chunks do monthly_program ativo para uma unidade diretamente (sem embedding) */
@@ -376,6 +394,13 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: canal_origem || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata").single();
       conversa = data; conversaJustCreated = true;
     } else if (conversa.status === "encerrada") {
+      // AUD-15 (achado pendente, não corrigido aqui — ver relatório): reabrir uma conversa
+      // encerrada trata o lead como contato novo (conversaJustCreated=true), o que força visão
+      // geral completa + instrução de "primeira mensagem" pro GPT mesmo pra quem já conversou
+      // antes. motor-agente é compartilhado por outros agente_tipo (Sofia/Ouvidoria), então
+      // mudar esse flag também muda o comportamento de reabertura da Sofia (ex.: reenvio do
+      // menu_boas_vindas) — fora do escopo desta auditoria do Institucional decidir sozinho.
+      // Fica registrado como decisão de produto pendente, não implementado nesta leva.
       await supabase.from("conversas").update({ status: "ativa", updated_at: new Date().toISOString() }).eq("id", conversa.id);
       conversaJustCreated = true;
     }
@@ -439,9 +464,10 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           trocouUnidade = true;
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
         } else {
+          const respostaFinal = evitarRepeticaoLiteral(decisao.resposta!, historico);
           await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
-          await salvarMensagemAgente(supabase, conversa.id, lead.id, decisao.resposta!);
-          return new Response(JSON.stringify({ success: true, resposta: decisao.resposta, handover: false }), { headers: { "Content-Type": "application/json" } });
+          await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
+          return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         }
       } else {
         const decisaoPrimeira = decidirPrimeiraMensagem(textoFinal);
@@ -453,9 +479,10 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           trocouUnidade = true;
           console.log("[motor-agente v18] Unidade salva (1a mensagem): " + unidadeEfetiva);
         } else {
+          const respostaFinal = evitarRepeticaoLiteral(decisaoPrimeira.resposta!, historico);
           await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
-          await salvarMensagemAgente(supabase, conversa.id, lead.id, decisaoPrimeira.resposta!);
-          return new Response(JSON.stringify({ success: true, resposta: decisaoPrimeira.resposta, handover: false }), { headers: { "Content-Type": "application/json" } });
+          await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
+          return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         }
       }
     }
@@ -539,8 +566,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       "1. USE APENAS dados do bloco '--- PROGRAMACAO MENSAL ATUAL ---' ou '--- CONTEXTO ---'.",
       "   NUNCA invente atividades, horarios, nomes de professores ou modalidades.",
       "",
-      "2. Se a informacao nao estiver no contexto, diga claramente:",
-      "   'Nao encontrei essa informacao na programacao atual. Consulte a unidade!' e pare.",
+      "2. Se a informacao nao estiver no contexto, diga com suas proprias palavras e no seu",
+      "   tom que nao encontrou essa informacao na programacao atual e sugira falar com a",
+      "   unidade. Nunca invente um dado que nao esteja no contexto.",
       "",
       "3. NUNCA peca desculpas por informacoes corretas. Se o usuario disser que uma",
       "   informacao esta errada, verifique o contexto antes de concordar. Se o contexto",
@@ -574,12 +602,29 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       prompt.prompt_sistema, DATA_ATUAL, INSTRUCAO_SEGURANCA,
       prompt.prompt_contexto || "", CONTEXTO_DISPARO, contextRAG,
       "UNIDADE: " + (unidadeEfetiva || "Nao informada"),
+      // TOM-04: regra genérica, sem dado do usuário — o dado (nome) vai isolado no turno
+      // "user" (contextoNomeLead), sem diretiva junto. Separar dado de instrução fecha a
+      // superfície de prompt injection (lead.nome é controlado pelo próprio usuário) e mantém
+      // a regra comportamental no prompt de sistema, onde é seguida de forma confiável — uma
+      // instrução de moderação num turno "user" antecipado, longe do ponto de geração, é
+      // seguida com muito menos confiabilidade.
+      "Se o contexto informar o nome do lead, use-o com moderacao (1-2x, em momentos naturais da conversa).",
       trocouUnidade ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade. Inicie com uma mensagem de transicao amigavel (ex: 'Claro! Vou te mostrar o que tem no [unidade] 😊') e apresente um resumo geral da programacao usando formato compacto." : "",
       conversaJustCreated ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : "",
     ].filter(Boolean).join("\n\n");
 
+    // TOM-04: o worker já captura e grava lead.nome (push_name do WhatsApp), mas esse dado
+    // nunca chegava ao prompt do GPT. Aqui vai só o FATO, sem diretiva — a regra de como usar
+    // fica no promptFinal (system) acima. lead.nome é o nome de exibição do WhatsApp,
+    // controlado pelo próprio usuário; marcado explicitamente como contexto interno pra não
+    // ser lido como fala do lead.
+    const contextoNomeLead = {
+      role: "user",
+      content: "[CONTEXTO INTERNO — nao e mensagem do lead] NOME DO LEAD: " + (lead.nome || "Nao informado"),
+    };
+
     // 11. GPT
-    const { texto: respostaGerada } = await chamarGPT(promptFinal, historico, openaiKey, prompt.temperatura, prompt.max_tokens);
+    const { texto: respostaGerada } = await chamarGPT(promptFinal, [contextoNomeLead, ...historico], openaiKey, prompt.temperatura, prompt.max_tokens);
     let resposta = respostaGerada;
     let handover = false; let encerrado = false;
     const avaliacaoHandover = removerTag(resposta, "handover");
