@@ -27,7 +27,16 @@ export function ehSelecaoMenu(texto: string): boolean {
   return /^[1-5]$/.test(texto.trim());
 }
 
+/**
+ * Extrai o texto da opção escolhida (ex.: "3" -> "Natação") num menu numerado de CATEGORIA de
+ * programação enviado pelo agente. AUD-09: quando `ultimaMsgAgente` é o menu de UNIDADES
+ * (MENU_UNIDADES), o dígito nunca é resposta a uma seleção de categoria — é resposta à
+ * pergunta "qual unidade", já tratada em decidirAguardandoUnidade/decidirPrimeiraMensagem.
+ * Sem esse guard, "3" (Mondubim) contaminava a instrução ao GPT como se fosse uma área de
+ * programação selecionada.
+ */
 export function extrairTextoMenu(numero: string, ultimaMsgAgente: string): string {
+  if (ultimaMsgAgente === MENU_UNIDADES) return '';
   for (const linha of ultimaMsgAgente.split('\n')) {
     const s = linha.trim().replace(/[\ufe0f\u20e3]/g, '');
     if (s.startsWith(numero + ' ') || s.startsWith(numero + '.') || s.startsWith(numero + ')')) {
@@ -200,20 +209,36 @@ export function calcularPrecisaVisaoGeral(params: { conversaJustCreated: boolean
   return params.conversaJustCreated || params.trocouUnidade || params.isSelecaoMenu;
 }
 
+/**
+ * Detecção direta de unidade por nome/dígito exato (contemPalavra + UNIDADES_MAP). Usada tanto
+ * na resolução dentro de `aguardando_unidade` quanto na 1ª mensagem de uma conversa nova
+ * (decidirPrimeiraMensagem) — extraída pra não duplicar a mesma lógica nos dois lugares (AUD-07).
+ */
+export function detectarUnidadeDireta(texto: string): string | undefined {
+  const msgLower = texto.toLowerCase().trim();
+  return Object.entries(UNIDADES_MAP).find(([k]) => contemPalavra(msgLower, k))?.[1];
+}
+
 export type DecisaoPrimeiraMensagem = {
   unidadeSelecionada: string | null;
   aguardandoUnidade: boolean;
-  resposta: string;
+  /** null significa "unidade resolvida, siga o fluxo normal" — mesma convenção de
+   * DecisaoAguardandoUnidade.resposta. */
+  resposta: string | null;
 };
 
 /**
  * Decide o que fazer na 1ª mensagem de uma conversa em unidade_cuca='Geral' (sem
- * aguardando_unidade nem unidade_selecionada em metadata ainda). Extraído para permitir
- * teste automatizado (AUD-07) — comportamento idêntico ao inline anterior: ignora o
- * conteúdo de `textoFinal` e sempre pede o menu, mesmo que o lead já tenha citado uma
- * unidade nessa mesma mensagem. Nenhuma correção aplicada nesta extração.
+ * aguardando_unidade nem unidade_selecionada em metadata ainda).
+ * AUD-07: se o lead já citar a unidade na própria 1ª mensagem ("quero saber da Barra"),
+ * resolve direto (reaproveitando detectarUnidadeDireta, a mesma detecção usada em
+ * decidirAguardandoUnidade) em vez de sempre pedir o menu de novo, evitando uma rodada extra.
  */
-export function decidirPrimeiraMensagem(_textoFinal: string): DecisaoPrimeiraMensagem {
+export function decidirPrimeiraMensagem(textoFinal: string): DecisaoPrimeiraMensagem {
+  const unidadeDetectadaDireta = detectarUnidadeDireta(textoFinal);
+  if (unidadeDetectadaDireta) {
+    return { unidadeSelecionada: unidadeDetectadaDireta, aguardandoUnidade: false, resposta: null };
+  }
   return { unidadeSelecionada: null, aguardandoUnidade: true, resposta: MENU_UNIDADES };
 }
 
@@ -310,7 +335,7 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
 // listener HTTP real — Supabase invoca este módulo como entrypoint direto (main=true);
 // um teste que importa as funções puras (ehSelecaoMenu etc.) não deve disparar o servidor.
 if (import.meta.main) {
-  Deno.serve(handler);
+  Deno.serve((req: Request) => handler(req));
 }
 
 // `supabaseOverride` existe só para permitir teste automatizado do handler completo (AUD-04 —
@@ -396,8 +421,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           unidadeEfetiva = unidadeSalva;
         }
       } else if (aguardando) {
-        const msgLower = textoFinal.toLowerCase().trim();
-        const unidadeDetectadaDireta = Object.entries(UNIDADES_MAP).find(([k]) => contemPalavra(msgLower, k))?.[1];
+        const unidadeDetectadaDireta = detectarUnidadeDireta(textoFinal);
         let avaliacaoSemantica: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDireta) {
@@ -421,9 +445,18 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         }
       } else {
         const decisaoPrimeira = decidirPrimeiraMensagem(textoFinal);
-        await supabase.from('conversas').update({ metadata: { ...(conversa?.metadata || {}), aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
-        await salvarMensagemAgente(supabase, conversa.id, lead.id, decisaoPrimeira.resposta);
-        return new Response(JSON.stringify({ success: true, resposta: decisaoPrimeira.resposta, handover: false }), { headers: { "Content-Type": "application/json" } });
+        if (decisaoPrimeira.unidadeSelecionada) {
+          // AUD-07: unidade já citada na própria 1ª mensagem — resolve direto e segue pro
+          // fluxo normal (RAG/GPT) em vez de mandar o menu e forçar uma rodada extra.
+          await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: decisaoPrimeira.unidadeSelecionada, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+          unidadeEfetiva = decisaoPrimeira.unidadeSelecionada;
+          trocouUnidade = true;
+          console.log("[motor-agente v18] Unidade salva (1a mensagem): " + unidadeEfetiva);
+        } else {
+          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+          await salvarMensagemAgente(supabase, conversa.id, lead.id, decisaoPrimeira.resposta!);
+          return new Response(JSON.stringify({ success: true, resposta: decisaoPrimeira.resposta, handover: false }), { headers: { "Content-Type": "application/json" } });
+        }
       }
     }
 

@@ -48,8 +48,9 @@ function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>
   };
 }
 
-/** Base comum aos 2 cenários AUD-04 abaixo — só muda `conversas.metadata` e a mensagem do lead. */
-function respostasBaseAUD04(metadataConversa: Record<string, unknown>): Record<string, { data: unknown }> {
+/** Base comum aos cenários de handler (AUD-04, AUD-07) abaixo — só muda `conversas.metadata` e
+ * a mensagem do lead. */
+function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record<string, { data: unknown }> {
   return {
     "rpc:get_openai_key": { data: "fake-openai-key" },
     "leads": { data: { id: "lead-1", nome: "Fulano", opt_in: true, bloqueado: false } },
@@ -116,7 +117,7 @@ Deno.test("AUD-01: quando o lead sinaliza que 'quer sair', a conversa deveria sa
 Deno.test("AUD-04: resolver a unidade por NOME (não só dígito) ativa a visão geral completa da programação", async () => {
   const chamadas: ChamadaRegistrada[] = [];
   const supabaseMock = criarSupabaseMock(
-    respostasBaseAUD04({ aguardando_unidade: true }), // sem unidade_selecionada ainda — 1ª resolução
+    respostasBaseHandler({ aguardando_unidade: true }), // sem unidade_selecionada ainda — 1ª resolução
     chamadas,
   );
   await comFetchMockado(async () => {
@@ -134,7 +135,7 @@ Deno.test("AUD-04: resolver a unidade por NOME (não só dígito) ativa a visão
 Deno.test("AUD-04 (guarda-costas): pergunta de acompanhamento com unidade já salva NÃO deveria recarregar a visão geral completa (controle de custo de RAG do commit 168e8d2)", async () => {
   const chamadas: ChamadaRegistrada[] = [];
   const supabaseMock = criarSupabaseMock(
-    respostasBaseAUD04({ unidade_selecionada: "Cuca Mondubim" }), // unidade já resolvida antes, sem troca nesta mensagem
+    respostasBaseHandler({ unidade_selecionada: "Cuca Mondubim" }), // unidade já resolvida antes, sem troca nesta mensagem
     chamadas,
   );
   await comFetchMockado(async () => {
@@ -167,6 +168,29 @@ Deno.test("AUD-07: 1ª mensagem que já cita uma unidade deveria resolvê-la dir
     decisao.unidadeSelecionada,
     "Cuca Barra",
     "AUD-07: o lead já disse a unidade na própria 1ª mensagem, mas o código ignora o conteúdo e sempre manda o menu de unidades de novo",
+  );
+});
+
+// Prova a wiring no HANDLER, não só a função pura acima — mesma lição do AUD-04: a função
+// pura podia mudar sem o call-site consumir `unidadeSelecionada`, deixando o bug real (rodada
+// extra) intacto. `metadata: {}` numa conversa EXISTENTE ("ativa") isola a contribuição do
+// fix — se `conversaJustCreated` fosse true (conversa nova/inserida), precisaVisaoGeral já
+// daria true de qualquer jeito, mascarando se o fix realmente funciona.
+Deno.test("AUD-07 (handler): unidade já citada na 1ª mensagem carrega a visão geral completa, sem rodada extra", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(
+    respostasBaseHandler({}), // conversa existente, metadata vazio — nem aguardando, nem unidade salva
+    chamadas,
+  );
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("quero saber da Barra"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(
+    carregouProgramacaoCompleta,
+    true,
+    "AUD-07: unidade já citada na 1ª mensagem ('Barra') deveria carregar a programação completa (documentos_rag) na mesma resposta, sem forçar uma rodada extra de menu — mas o call-site descartava unidadeSelecionada e sempre retornava o menu cedo",
   );
 });
 
