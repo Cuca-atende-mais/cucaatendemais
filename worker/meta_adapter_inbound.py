@@ -110,6 +110,17 @@ async def _transcrever_audio_meta(audio_bytes: bytes, mimetype: str) -> str | No
         return None
 
 
+# AUD-14: texto descritivo mínimo pro histórico quando não há mensagem de texto (mídia sem
+# legenda, ou áudio cuja transcrição falhou/veio vazia). Só usado no registro em `mensagens`
+# (rastreabilidade no painel) — nunca no que é enviado ao motor-agente.
+def _texto_historico_para_midia_vazia(midia_tipo: str) -> str:
+    if midia_tipo == "image":
+        return "[Imagem enviada sem legenda]"
+    if midia_tipo in ("voz", "audio", "ptt"):
+        return "[Áudio enviado]"
+    return "[Mídia enviada]"
+
+
 # ─── Parser de Mensagem Meta ───────────────────────────────────────────────────
 async def _parse_mensagem_meta(msg: dict) -> tuple[str, str | None, str]:
     """
@@ -525,7 +536,13 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             "conversa_id": conversa_id,
             "lead_id": lead_id,
             "tipo": midia_tipo,
-            "conteudo": mensagem,
+            # AUD-14: mídia sem legenda (imagem) ou áudio sem transcrição chegam com
+            # mensagem="" — gravar string vazia no histórico polui o painel do colaborador
+            # com turnos de usuário vazios e sem rastreabilidade do que o lead realmente
+            # mandou. `mensagem` (o texto real, se houver) segue intacto pro motor-agente
+            # via contrato_v2["mensagem"] — só o registro no histórico ganha um texto
+            # descritivo mínimo quando não há texto nenhum.
+            "conteudo": mensagem or _texto_historico_para_midia_vazia(midia_tipo),
             "remetente": "lead",
             "created_at": "now()",
             "wamid": contrato_v2.get("wamid") or None,
@@ -562,13 +579,28 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
 
     elif agente_tipo in _AGENTES_MOTOR_AGENTE:
         try:
-            from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+            from meta_adapter_outbound import _meta_enviar, _meta_marcar_lida_e_digitando  # noqa: PLC0415
             token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+            # TOM-02: marca lida + "digitando..." antes de chamar motor-agente (pode levar até
+            # ~20s no pior caso do retry de rate limit) — reduz a percepção de "bot travado".
+            # Best-effort, não bloqueia o dispatch se falhar.
+            await _meta_marcar_lida_e_digitando(phone_number_id, wamid, token)
             resposta = await _chamar_motor_agente(contrato_v2, conversa_id, supabase, phone_number_id)
             if resposta:
                 await _meta_enviar(phone_number_id, telefone, resposta, token)
             else:
-                fallback_tecnico = "Desculpe, tivemos um problema técnico. Poderia repetir sua mensagem em instantes?"
+                # TOM-01: tom neutro-amigável único pros 4 agente_tipo que passam por aqui
+                # (Institucional, maria, sofia, ana — não "julia", que despacha por
+                # Empregabilidade, outro caminho). Decisão: NÃO diferenciar por persona —
+                # esse fallback dispara antes/sem saber se o motor-agente respondeu, o worker
+                # não tem acesso ao prompt_contexto de cada persona (isso vive em
+                # prompts_agentes, dentro da Edge Function), e duplicar tom por persona aqui
+                # arriscaria dessincronizar do texto real de cada persona no futuro. Mantém a
+                # substring "problema técnico" de propósito — é o que
+                # test_processar_webhook_imagem_cai_no_fallback_tecnico (AUD-08, já commitado)
+                # usa pra identificar esse caminho; mudar a palavra quebraria esse teste sem
+                # relação com o achado que ele documenta.
+                fallback_tecnico = "Ih, deu um problema técnico aqui do meu lado 😅 Pode mandar de novo pra mim?"
                 await _meta_enviar(phone_number_id, telefone, fallback_tecnico, token)
                 supabase.table("mensagens").insert({
                     "conversa_id": conversa_id,
