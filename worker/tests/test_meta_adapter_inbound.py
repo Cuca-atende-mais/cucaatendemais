@@ -483,6 +483,53 @@ class TestDispatchMotorAgente:
         texto_enviado = mock_enviar.call_args.args[2]
         assert "problema técnico" in texto_enviado
 
+    @pytest.mark.asyncio
+    async def test_processar_webhook_fallback_deveria_ser_gravado_em_mensagens(self):
+        """AUD-03 (auditoria externa 2026-07-07): a mensagem de fallback ("problema
+        técnico") enviada ao lead quando _chamar_motor_agente falha deveria ficar
+        registrada em `mensagens` (remetente="agente"), igual à resposta normal do
+        motor-agente — hoje ela é enviada via _meta_enviar mas nunca é inserida na
+        tabela, criando um buraco no histórico visto pelo colaborador no portal."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [
+            {"id": "lead-id-1"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-id-1", "status": "ativa"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
+                   return_value=None), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock,
+                   return_value=True):
+            await processar_webhook_meta(raw)
+
+        inserts_de_agente = [
+            call.args[0] for call in mock_supabase.table.return_value.insert.call_args_list
+            if isinstance(call.args[0], dict) and call.args[0].get("remetente") == "agente"
+        ]
+        assert len(inserts_de_agente) == 1, (
+            "AUD-03: a mensagem de fallback 'problema técnico' deveria ser gravada em "
+            "`mensagens` (remetente='agente'), mas hoje só é enviada via _meta_enviar "
+            "sem nunca ser inserida na tabela"
+        )
+
     # ── Achado (não corrigido): lead manda imagem → cai no MESMO fallback de "problema
     # técnico" do §1, mas a causa real é "motor-agente não lê imagem", não uma falha técnica ──
     @pytest.mark.asyncio
