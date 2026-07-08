@@ -166,14 +166,14 @@ export function decidirAguardandoUnidade(
   if (avaliacaoSemantica.quer_sair) {
     return {
       unidadeSelecionada: null,
-      aguardandoUnidade: true,
+      aguardandoUnidade: false,
       resposta: "Sem problemas! Quando quiser saber sobre alguma unidade CUCA, é só chamar. 😊",
     };
   }
   if (avaliacaoSemantica.mudou_de_assunto) {
     return {
       unidadeSelecionada: null,
-      aguardandoUnidade: true,
+      aguardandoUnidade: false,
       resposta: "Claro! 😊 Quando quiser saber sobre alguma unidade CUCA, escolha uma:\n\n" + MENU_UNIDADES,
     };
   }
@@ -399,6 +399,7 @@ async function handler(req: Request): Promise<Response> {
           unidadeEfetiva = decisao.unidadeSelecionada;
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
         } else {
+          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
           await salvarMensagemAgente(supabase, conversa.id, lead.id, decisao.resposta!);
           return new Response(JSON.stringify({ success: true, resposta: decisao.resposta, handover: false }), { headers: { "Content-Type": "application/json" } });
         }
