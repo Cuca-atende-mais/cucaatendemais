@@ -56,8 +56,16 @@ export function removerTag(texto: string, nomeTag: string): { encontrada: boolea
   return { encontrada, texto: textoLimpo };
 }
 
-/** Testa se `chave` aparece em `texto` como palavra inteira (n\u00e3o substring solta, ex.: "barra" em "barra de chocolate") */
+/**
+ * Testa se `chave` aparece em `texto` como palavra inteira (n\u00e3o substring solta, ex.: "barra"
+ * em "barra de chocolate"). Exce\u00e7\u00e3o (AUD-05): quando `chave` \u00e9 um d\u00edgito 1-5 (as chaves
+ * num\u00e9ricas de UNIDADES_MAP), um d\u00edgito solto em qualquer parte da frase ("...maiores de 3
+ * anos?") n\u00e3o pode contar como escolha de unidade \u2014 s\u00f3 conta quando a mensagem inteira \u00e9
+ * o d\u00edgito (mesmo padr\u00e3o de ehSelecaoMenu, ^[1-5]$). Nomes por extenso continuam via match de
+ * palavra inteira normal.
+ */
 export function contemPalavra(texto: string, chave: string): boolean {
+  if (/^[1-5]$/.test(chave)) return ehSelecaoMenu(texto) && texto.trim() === chave;
   return new RegExp("\\b" + escaparRegex(chave) + "\\b").test(texto);
 }
 
@@ -305,7 +313,11 @@ if (import.meta.main) {
   Deno.serve(handler);
 }
 
-async function handler(req: Request): Promise<Response> {
+// `supabaseOverride` existe só para permitir teste automatizado do handler completo (AUD-04 —
+// prova que a resolução de unidade por nome/dígito, na wiring real do call-site, gera o
+// precisaVisaoGeral correto). Comportamento em produção idêntico: Deno.serve(handler) nunca
+// passa esse 2º argumento, então o client real é sempre criado normalmente.
+export async function handler(req: Request, supabaseOverride?: ReturnType<typeof createClient>): Promise<Response> {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   console.log("[motor-agente v18] Recebendo requisicao...");
 
@@ -316,7 +328,7 @@ async function handler(req: Request): Promise<Response> {
 
     if (!telefone || !agente_tipo) return new Response(JSON.stringify({ error: "telefone e agente_tipo sao obrigatorios" }), { status: 400 });
 
-    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const supabase = supabaseOverride ?? createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const openaiKey = await getOpenAIKey(supabase);
     if (!openaiKey) throw new Error("OPENAI_API_KEY nao encontrada");
 
@@ -397,6 +409,10 @@ async function handler(req: Request): Promise<Response> {
         if (decisao.unidadeSelecionada) {
           await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: decisao.unidadeSelecionada, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
           unidadeEfetiva = decisao.unidadeSelecionada;
+          // AUD-04: resolução inicial de unidade dentro de aguardando_unidade (por nome OU
+          // dígito) conta como equivalente a trocouUnidade — sem isso, só quem escolhe por
+          // dígito (isSelecaoMenu) recebia a visão geral completa da programação.
+          trocouUnidade = true;
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
         } else {
           await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);

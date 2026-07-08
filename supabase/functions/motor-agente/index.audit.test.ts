@@ -7,13 +7,86 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   contemPalavra,
   decidirAguardandoUnidade,
-  calcularPrecisaVisaoGeral,
-  ehSelecaoMenu,
   extrairTextoMenu,
   decidirPrimeiraMensagem,
   deveTentarNovamente,
   MENU_UNIDADES,
+  handler,
 } from "./index.ts";
+
+// ── Mock mínimo e encadeável do client Supabase, usado pelos testes AUD-04 abaixo ───────────
+// Mesmo espírito do MagicMock encadeável do lado pytest (worker/tests/test_meta_adapter_inbound.py),
+// adaptado para a API fluente do supabase-js (.from().select().eq()... / .rpc()). Cada chamada é
+// registrada em `chamadas`, e a resolução final (await/.then()) devolve o que
+// `respostasPorTabela[tabela]` configurar para aquela tabela/rpc — não distingue o formato da
+// chain (select vs. update vs. insert): nos fluxos testados aqui isso não muda o resultado
+// observável, só o dado de leitura importa.
+type ChamadaRegistrada = { tabela: string; metodo: string };
+
+// deno-lint-ignore no-explicit-any
+function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>, chamadas: ChamadaRegistrada[]): any {
+  function criarChain(tabela: string) {
+    // deno-lint-ignore no-explicit-any
+    const chain: any = {};
+    for (const metodo of ["select", "insert", "update", "eq", "order", "limit", "single"]) {
+      chain[metodo] = (..._args: unknown[]) => {
+        chamadas.push({ tabela, metodo });
+        return chain;
+      };
+    }
+    chain.then = (resolve: (v: { data: unknown; error: null }) => unknown) =>
+      resolve({ data: respostasPorTabela[tabela]?.data ?? null, error: null });
+    return chain;
+  }
+  return {
+    from: (tabela: string) => criarChain(tabela),
+    rpc: (nome: string, ..._args: unknown[]) => {
+      chamadas.push({ tabela: "rpc:" + nome, metodo: "rpc" });
+      const resposta = respostasPorTabela["rpc:" + nome];
+      return { then: (resolve: (v: { data: unknown; error: null }) => unknown) => resolve({ data: resposta?.data ?? null, error: null }) };
+    },
+  };
+}
+
+/** Base comum aos 2 cenários AUD-04 abaixo — só muda `conversas.metadata` e a mensagem do lead. */
+function respostasBaseAUD04(metadataConversa: Record<string, unknown>): Record<string, { data: unknown }> {
+  return {
+    "rpc:get_openai_key": { data: "fake-openai-key" },
+    "leads": { data: { id: "lead-1", nome: "Fulano", opt_in: true, bloqueado: false } },
+    "conversas": { data: { id: "conv-1", status: "ativa", metadata: metadataConversa } },
+    "mensagens": { data: [] },
+    "prompts_agentes": { data: { prompt_sistema: "sistema", prompt_contexto: "", temperatura: 0.7, max_tokens: 500, menu_boas_vindas: null } },
+    "documentos_rag": { data: { id: "doc-1" } },
+    "chunks_documentos": { data: [{ conteudo: "chunk de teste" }] },
+    "rpc:buscar_chunks_similares": { data: [] },
+  };
+}
+
+/** Stub de `fetch` global — intercepta só as 2 chamadas à OpenAI que o handler faz nesse fluxo
+ * (embeddings e chat/completions); qualquer outra URL não-mockada derruba o teste (falha alta,
+ * não falso-positivo silencioso). */
+function comFetchMockado<T>(fn: () => Promise<T>): Promise<T> {
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = ((url: string | URL | Request) => {
+    const urlStr = String(url instanceof Request ? url.url : url);
+    if (urlStr.includes("api.openai.com/v1/embeddings")) {
+      return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [0, 0, 0] }] }), { status: 200 }));
+    }
+    if (urlStr.includes("api.openai.com/v1/chat/completions")) {
+      return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: "Resposta de teste" } }] }), { status: 200 }));
+    }
+    throw new Error("fetch não-mockado nesse teste: " + urlStr);
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+  return fn().finally(() => { globalThis.fetch = fetchOriginal; });
+}
+
+function requestFake(mensagem: string): Request {
+  return new Request("http://localhost/motor-agente", {
+    method: "POST",
+    body: JSON.stringify({ mensagem, telefone: "5585999999999", canal_origem: "test", agente_tipo: "Institucional", unidade_cuca: "Geral" }),
+  });
+}
 
 // ── AUD-01: "aguardando_unidade" é um estado sem saída ──────────────────────
 Deno.test("AUD-01: quando o lead 'mudou de assunto', a conversa deveria sair do estado de espera de unidade", () => {
@@ -35,19 +108,44 @@ Deno.test("AUD-01: quando o lead sinaliza que 'quer sair', a conversa deveria sa
 });
 
 // ── AUD-04: seleção de unidade por nome não recebe a visão geral ────────────
-Deno.test("AUD-04: seleção de unidade por NOME deveria ativar a visão geral completa da programação, igual à seleção por dígito", () => {
-  // Cenário real: lead digita "Mondubim" (nome) em vez de "3" (dígito) para escolher a
-  // unidade. Não é conversa nova, não é troca de unidade — hoje isSelecaoMenu só reconhece
-  // dígito isolado, então a visão geral completa (resumo da programação) não aparece.
-  const resultado = calcularPrecisaVisaoGeral({
-    conversaJustCreated: false,
-    trocouUnidade: false,
-    isSelecaoMenu: ehSelecaoMenu("Mondubim"),
+// Reescrito para exercitar o HANDLER real (não a função pura calcularPrecisaVisaoGeral
+// isolada): o bug de verdade estava na wiring do call-site (trocouUnidade nunca era setado
+// na resolução inicial de unidade), não na fórmula em si — um teste que só chama a função
+// pura com inputs sintéticos não prova a wiring, e não consegue provar as duas pontas ao
+// mesmo tempo sem contradição (ver Change Log / relatório @dev, Bloco B).
+Deno.test("AUD-04: resolver a unidade por NOME (não só dígito) ativa a visão geral completa da programação", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(
+    respostasBaseAUD04({ aguardando_unidade: true }), // sem unidade_selecionada ainda — 1ª resolução
+    chamadas,
+  );
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("Mondubim"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   });
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
   assertEquals(
-    resultado,
+    carregouProgramacaoCompleta,
     true,
-    "AUD-04: selecionar a unidade digitando o nome deveria disparar a mesma 'visão geral' que selecionar por número dispara, mas hoje não dispara (isSelecaoMenu só aceita dígito 1-5)",
+    "AUD-04: resolver a unidade digitando o NOME ('Mondubim') deveria carregar a programação mensal completa (documentos_rag), igual à seleção por dígito — mas a wiring do call-site nunca seta trocouUnidade nesse caminho",
+  );
+});
+
+Deno.test("AUD-04 (guarda-costas): pergunta de acompanhamento com unidade já salva NÃO deveria recarregar a visão geral completa (controle de custo de RAG do commit 168e8d2)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(
+    respostasBaseAUD04({ unidade_selecionada: "Cuca Mondubim" }), // unidade já resolvida antes, sem troca nesta mensagem
+    chamadas,
+  );
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("Tem natação essa semana?"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(
+    carregouProgramacaoCompleta,
+    false,
+    "uma pergunta de acompanhamento (unidade já salva, sem seleção nova) não pode recarregar os ~40 chunks da programação completa — isso reintroduziria o RAG token bloat que o commit 168e8d2 corrigiu; deveria usar busca vetorial de poucos chunks",
   );
 });
 
