@@ -21,7 +21,7 @@ const UNIDADES_MAP: Record<string, string> = {
   '1': 'Cuca Barra', '2': 'Cuca Jangurussu', '3': 'Cuca Mondubim', '4': 'Cuca Pici', '5': 'Cuca Jos\u00e9 Walter',
 };
 
-const MENU_UNIDADES = "Sobre qual unidade CUCA voc\u00ea quer saber? \ud83d\ude0a\n\n1\ufe0f\u20e3 Barra\n2\ufe0f\u20e3 Jangurussu\n3\ufe0f\u20e3 Mondubim\n4\ufe0f\u20e3 Pici\n5\ufe0f\u20e3 Jos\u00e9 Walter";
+export const MENU_UNIDADES = "Sobre qual unidade CUCA voc\u00ea quer saber? \ud83d\ude0a\n\n1\ufe0f\u20e3 Barra\n2\ufe0f\u20e3 Jangurussu\n3\ufe0f\u20e3 Mondubim\n4\ufe0f\u20e3 Pici\n5\ufe0f\u20e3 Jos\u00e9 Walter";
 
 export function ehSelecaoMenu(texto: string): boolean {
   return /^[1-5]$/.test(texto.trim());
@@ -140,6 +140,75 @@ async function avaliarSelecaoUnidade(texto: string, openaiKey: string): Promise<
   }
 }
 
+export type DecisaoAguardandoUnidade = {
+  unidadeSelecionada: string | null;
+  aguardandoUnidade: boolean;
+  resposta: string | null;
+};
+
+/**
+ * Decide o que fazer quando a conversa está em `aguardando_unidade=true` e chega uma nova
+ * mensagem. `resposta !== null` significa "responda isto e encerre a requisição agora";
+ * `resposta === null` significa "unidade resolvida, siga o fluxo normal".
+ * Extraído do handler só para permitir teste automatizado (auditoria AUD-01 em
+ * docs/qa/AUDITORIA-motor-agente-institucional-2026-07-07.md) — comportamento idêntico ao
+ * inline anterior, nenhuma correção aplicada nesta extração.
+ */
+export function decidirAguardandoUnidade(
+  unidadeDetectadaDireta: string | undefined,
+  avaliacaoSemantica: AvaliacaoSelecaoUnidade,
+): DecisaoAguardandoUnidade {
+  const unidadeDetectada = unidadeDetectadaDireta ?? avaliacaoSemantica.unidade ?? undefined;
+
+  if (unidadeDetectada) {
+    return { unidadeSelecionada: unidadeDetectada, aguardandoUnidade: false, resposta: null };
+  }
+  if (avaliacaoSemantica.quer_sair) {
+    return {
+      unidadeSelecionada: null,
+      aguardandoUnidade: true,
+      resposta: "Sem problemas! Quando quiser saber sobre alguma unidade CUCA, é só chamar. 😊",
+    };
+  }
+  if (avaliacaoSemantica.mudou_de_assunto) {
+    return {
+      unidadeSelecionada: null,
+      aguardandoUnidade: true,
+      resposta: "Claro! 😊 Quando quiser saber sobre alguma unidade CUCA, escolha uma:\n\n" + MENU_UNIDADES,
+    };
+  }
+  return {
+    unidadeSelecionada: null,
+    aguardandoUnidade: true,
+    resposta: "Não consegui identificar a unidade 😊\n\n" + MENU_UNIDADES,
+  };
+}
+
+/**
+ * Extraído do handler para permitir teste automatizado (auditoria AUD-04) — mesma fórmula
+ * usada hoje, nenhuma correção aplicada.
+ */
+export function calcularPrecisaVisaoGeral(params: { conversaJustCreated: boolean; trocouUnidade: boolean; isSelecaoMenu: boolean }): boolean {
+  return params.conversaJustCreated || params.trocouUnidade || params.isSelecaoMenu;
+}
+
+export type DecisaoPrimeiraMensagem = {
+  unidadeSelecionada: string | null;
+  aguardandoUnidade: boolean;
+  resposta: string;
+};
+
+/**
+ * Decide o que fazer na 1ª mensagem de uma conversa em unidade_cuca='Geral' (sem
+ * aguardando_unidade nem unidade_selecionada em metadata ainda). Extraído para permitir
+ * teste automatizado (AUD-07) — comportamento idêntico ao inline anterior: ignora o
+ * conteúdo de `textoFinal` e sempre pede o menu, mesmo que o lead já tenha citado uma
+ * unidade nessa mesma mensagem. Nenhuma correção aplicada nesta extração.
+ */
+export function decidirPrimeiraMensagem(_textoFinal: string): DecisaoPrimeiraMensagem {
+  return { unidadeSelecionada: null, aguardandoUnidade: true, resposta: MENU_UNIDADES };
+}
+
 async function getOpenAIKey(supabase: ReturnType<typeof createClient>): Promise<string> {
   const { data } = await supabase.rpc("get_openai_key");
   return data || Deno.env.get("OPENAI_API_KEY") || "";
@@ -181,13 +250,21 @@ export function parseRetryAfterSegundos(retryAfterHeader: string | null, corpoEr
   return 1; // fallback se a API não informar tempo (ex.: 429 sem detalhe)
 }
 
+/**
+ * Extraído para permitir teste automatizado (AUD-13) — mesma condição usada hoje
+ * (só 429), nenhuma correção aplicada.
+ */
+export function deveTentarNovamente(status: number, tentativa: number): boolean {
+  return status === 429 && tentativa < GPT_MAX_TENTATIVAS;
+}
+
 async function chamarGPT(prompt_sistema: string, historico: { role: string; content: string }[], apiKey: string, temperatura: number, max_tokens: number, tentativa = 0): Promise<{ texto: string }> {
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST", headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ model: GPT_MODEL, temperature: temperatura, max_tokens: max_tokens, messages: [{ role: "system", content: prompt_sistema }, ...historico] }),
   });
 
-  if (resp.status === 429 && tentativa < GPT_MAX_TENTATIVAS) {
+  if (deveTentarNovamente(resp.status, tentativa)) {
     const corpoErro = await resp.text();
     const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
     console.log("[motor-agente v18] Rate limit OpenAI (tentativa " + (tentativa + 1) + "/" + GPT_MAX_TENTATIVAS + "), aguardando " + esperaSegundos + "s antes de tentar de novo");
@@ -308,39 +385,28 @@ async function handler(req: Request): Promise<Response> {
         }
       } else if (aguardando) {
         const msgLower = textoFinal.toLowerCase().trim();
-        let unidadeDetectada = Object.entries(UNIDADES_MAP).find(([k]) => contemPalavra(msgLower, k))?.[1];
+        const unidadeDetectadaDireta = Object.entries(UNIDADES_MAP).find(([k]) => contemPalavra(msgLower, k))?.[1];
         let avaliacaoSemantica: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
-        if (!unidadeDetectada) {
+        if (!unidadeDetectadaDireta) {
           avaliacaoSemantica = await avaliarSelecaoUnidade(textoFinal, openaiKey);
-          unidadeDetectada = avaliacaoSemantica.unidade ?? undefined;
         }
 
-        if (unidadeDetectada) {
-          await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: unidadeDetectada, aguardando_unidade: false } }).eq('id', conversa.id);
-          unidadeEfetiva = unidadeDetectada;
+        const decisao = decidirAguardandoUnidade(unidadeDetectadaDireta, avaliacaoSemantica);
+
+        if (decisao.unidadeSelecionada) {
+          await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: decisao.unidadeSelecionada, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
+          unidadeEfetiva = decisao.unidadeSelecionada;
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
-        } else if (avaliacaoSemantica.quer_sair) {
-          // Lead n\u00e3o quer escolher agora \u2014 n\u00e3o insiste no menu (aguardando_unidade permanece
-          // true, o menu ainda aparece se ele voltar a perguntar sobre unidades depois).
-          const respSemInsistencia = "Sem problemas! Quando quiser saber sobre alguma unidade CUCA, \u00e9 s\u00f3 chamar. \ud83d\ude0a";
-          await salvarMensagemAgente(supabase, conversa.id, lead.id, respSemInsistencia);
-          return new Response(JSON.stringify({ success: true, resposta: respSemInsistencia, handover: false }), { headers: { "Content-Type": "application/json" } });
-        } else if (avaliacaoSemantica.mudou_de_assunto) {
-          // Mensagem n\u00e3o era uma tentativa de escolher unidade (cortesia, outro assunto) \u2014
-          // evita a moldura acusat\u00f3ria de "n\u00e3o consegui identificar" pra isso.
-          const respSemAcusacao = "Claro! \ud83d\ude0a Quando quiser saber sobre alguma unidade CUCA, escolha uma:\n\n" + MENU_UNIDADES;
-          await salvarMensagemAgente(supabase, conversa.id, lead.id, respSemAcusacao);
-          return new Response(JSON.stringify({ success: true, resposta: respSemAcusacao, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
-          const respMenu = "N\u00e3o consegui identificar a unidade \ud83d\ude0a\n\n" + MENU_UNIDADES;
-          await salvarMensagemAgente(supabase, conversa.id, lead.id, respMenu);
-          return new Response(JSON.stringify({ success: true, resposta: respMenu, handover: false }), { headers: { "Content-Type": "application/json" } });
+          await salvarMensagemAgente(supabase, conversa.id, lead.id, decisao.resposta!);
+          return new Response(JSON.stringify({ success: true, resposta: decisao.resposta, handover: false }), { headers: { "Content-Type": "application/json" } });
         }
       } else {
-        await supabase.from('conversas').update({ metadata: { ...(conversa?.metadata || {}), aguardando_unidade: true } }).eq('id', conversa.id);
-        await salvarMensagemAgente(supabase, conversa.id, lead.id, MENU_UNIDADES);
-        return new Response(JSON.stringify({ success: true, resposta: MENU_UNIDADES, handover: false }), { headers: { "Content-Type": "application/json" } });
+        const decisaoPrimeira = decidirPrimeiraMensagem(textoFinal);
+        await supabase.from('conversas').update({ metadata: { ...(conversa?.metadata || {}), aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+        await salvarMensagemAgente(supabase, conversa.id, lead.id, decisaoPrimeira.resposta);
+        return new Response(JSON.stringify({ success: true, resposta: decisaoPrimeira.resposta, handover: false }), { headers: { "Content-Type": "application/json" } });
       }
     }
 
@@ -350,7 +416,7 @@ async function handler(req: Request): Promise<Response> {
     const isAgenteProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
     const isSelecaoMenu = ehSelecaoMenu(textoFinal);
 
-    const precisaVisaoGeral = conversaJustCreated || trocouUnidade || isSelecaoMenu;
+    const precisaVisaoGeral = calcularPrecisaVisaoGeral({ conversaJustCreated, trocouUnidade, isSelecaoMenu });
 
     if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
       const conteudoPrograma = await carregarProgramacaoMensal(supabase, unidadeEfetiva);
