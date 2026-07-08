@@ -335,7 +335,7 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
 // listener HTTP real — Supabase invoca este módulo como entrypoint direto (main=true);
 // um teste que importa as funções puras (ehSelecaoMenu etc.) não deve disparar o servidor.
 if (import.meta.main) {
-  Deno.serve(handler);
+  Deno.serve((req: Request) => handler(req));
 }
 
 // `supabaseOverride` existe só para permitir teste automatizado do handler completo (AUD-04 —
