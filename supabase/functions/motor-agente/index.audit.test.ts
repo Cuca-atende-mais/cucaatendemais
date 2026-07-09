@@ -8,6 +8,7 @@ import {
   contemPalavra,
   decidirAguardandoUnidade,
   extrairTextoMenu,
+  ultimaMensagemEhMenuNumerado,
   decidirPrimeiraMensagem,
   deveTentarNovamente,
   MENU_UNIDADES,
@@ -80,6 +81,18 @@ function comFetchMockado<T>(fn: () => Promise<T>): Promise<T> {
     // deno-lint-ignore no-explicit-any
   }) as any;
   return fn().finally(() => { globalThis.fetch = fetchOriginal; });
+}
+
+/** Captura as chamadas de console.log durante `fn`, restaurando o original ao final (mesmo
+ * espírito de comFetchMockado acima) — usado pelos testes VAL-04 (observabilidade) abaixo. */
+function comConsoleLogCapturado<T>(fn: () => Promise<T>): Promise<{ resultado: T; linhas: string[] }> {
+  const originalLog = console.log;
+  const linhas: string[] = [];
+  // deno-lint-ignore no-explicit-any
+  console.log = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as any;
+  return fn()
+    .then((resultado) => ({ resultado, linhas }))
+    .finally(() => { console.log = originalLog; });
 }
 
 function requestFake(mensagem: string): Request {
@@ -212,5 +225,121 @@ Deno.test("AUD-13: um 503 transitório da OpenAI também deveria ser retentado, 
     deveTentarNovamente(503, 0),
     true,
     "AUD-13: erros 5xx transitórios da OpenAI (500/502/503) também deveriam acionar o retry com backoff, mas hoje só 429 é tratado — um 503 vira 'problema técnico' imediato para o lead",
+  );
+});
+
+// ── VAL-04: observabilidade — dava para confirmar o AUD-04/VAL-02 só cruzando ausência de
+// log com query manual no banco. Estes testes provam que o log agora expõe a decisão
+// diretamente (docs/migracao-meta/VALIDACAO-producao-institucional.md). ──────────────────────
+Deno.test("VAL-04: loga precisaVisaoGeral explicitamente (pergunta de acompanhamento, unidade já salva)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(
+    respostasBaseHandler({ unidade_selecionada: "Cuca Mondubim" }), // unidade já resolvida, sem troca/seleção nesta mensagem
+    chamadas,
+  );
+  const { linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("quem é o professor de natação?"), supabaseMock))
+  );
+  const logouDecisao = linhas.some((l) => l.includes("precisaVisaoGeral=false") && l.includes("Cuca Mondubim"));
+  assertEquals(
+    logouDecisao,
+    true,
+    "VAL-04: uma pergunta de acompanhamento (sem troca/seleção de menu) deveria logar precisaVisaoGeral=false explicitamente — hoje só dá pra inferir isso pela AUSÊNCIA da linha 'Chunks diretos monthly_program', o que exigiu perícia manual (log + query cruzada no banco) para confirmar VAL-01/VAL-02",
+  );
+});
+
+Deno.test("VAL-04: loga quantos chunks a busca vetorial de acompanhamento retornou", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "a" }, { conteudo: "b" }, { conteudo: "c" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const { linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("quem é o professor de natação?"), supabaseMock))
+  );
+  const logouContagem = linhas.some((l) => l.includes("Busca vetorial acompanhamento: 3 chunks") && l.includes("Cuca Barra"));
+  assertEquals(
+    logouContagem,
+    true,
+    "VAL-04: a busca vetorial de acompanhamento (p_limite=5, caminho que gerou 'João Silva' em VAL-02) deveria logar quantos chunks realmente voltaram — sem isso não dá pra distinguir 'a busca não achou o chunk certo' de 'o GPT ignorou o contexto que recebeu'",
+  );
+});
+
+// ── VAL-07 (corrige AUD-15): reabertura de conversa encerrada não deveria ser tratada como
+// primeiro contato quando já existe unidade selecionada ─────────────────────────────────────
+Deno.test("VAL-07: reabrir conversa encerrada com unidade já selecionada NÃO deveria recarregar a visão geral completa", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["conversas"] = { data: { id: "conv-1", status: "encerrada", metadata: { unidade_selecionada: "Cuca Barra" } } };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("posso escolher outra unidade?"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(
+    carregouProgramacaoCompleta,
+    false,
+    "VAL-07/AUD-15: reabrir uma conversa encerrada que já tinha unidade selecionada não deveria recarregar os ~40 chunks da programação completa nem tratar a mensagem como 'primeira mensagem' — é uma continuação, não um primeiro contato",
+  );
+});
+
+Deno.test("VAL-07: o log de precisaVisaoGeral reflete conversaGenuinamenteNova=false na reabertura (não conversaJustCreated, que continua true para não afetar a Sofia)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["conversas"] = { data: { id: "conv-1", status: "encerrada", metadata: { unidade_selecionada: "Cuca Barra" } } };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const { linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("quem é o professor de natação?"), supabaseMock))
+  );
+  const logouCorreto = linhas.some((l) => l.includes("precisaVisaoGeral=false") && l.includes("conversaGenuinamenteNova=false"));
+  assertEquals(logouCorreto, true, "VAL-07: a reabertura de uma conversa com unidade já salva deveria logar conversaGenuinamenteNova=false e precisaVisaoGeral=false");
+});
+
+// ── VAL-08 (variante do AUD-09): dígito solto só conta como resposta a menu se a última
+// mensagem do agente realmente foi um menu numerado ─────────────────────────────────────────
+Deno.test("ultimaMensagemEhMenuNumerado: reconhece MENU_UNIDADES", () => {
+  assertEquals(ultimaMensagemEhMenuNumerado(MENU_UNIDADES), true);
+});
+
+Deno.test("ultimaMensagemEhMenuNumerado: reconhece um menu de categorias com linhas numeradas", () => {
+  const menuCategoria = "1️⃣ Esportes\n2️⃣ Cursos e Oficinas\n3️⃣ Atividades Culturais\n4️⃣ Tecnologia";
+  assertEquals(ultimaMensagemEhMenuNumerado(menuCategoria), true);
+});
+
+Deno.test("ultimaMensagemEhMenuNumerado: rejeita uma pergunta em texto livre sem nenhuma linha numerada", () => {
+  assertEquals(ultimaMensagemEhMenuNumerado("Qual unidade você quer saber mais?"), false);
+});
+
+Deno.test("VAL-08: dígito respondendo pergunta improvisada do GPT (sem menu numerado) NÃO deveria recarregar a visão geral completa", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [{ conteudo: "Qual unidade você quer saber mais?", remetente: "agente" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("2"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(
+    carregouProgramacaoCompleta,
+    false,
+    "VAL-08: '2' respondendo uma pergunta que o GPT improvisou em texto livre (sem nenhuma lista numerada) não deveria disparar precisaVisaoGeral — antes desse fix, qualquer dígito 1-5 sozinho contava como 'seleção de menu' independente do que a última mensagem do agente realmente foi",
+  );
+});
+
+Deno.test("VAL-08 (regressão): dígito respondendo um menu de categorias numerado de verdade continua recarregando a visão geral", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [{ conteudo: "1️⃣ Esportes\n2️⃣ Cursos e Oficinas\n3️⃣ Atividades Culturais\n4️⃣ Tecnologia", remetente: "agente" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("2"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(
+    carregouProgramacaoCompleta,
+    true,
+    "VAL-08 não pode quebrar o caso legítimo: '2' respondendo um menu de categorias numerado de verdade ainda deve carregar a área selecionada",
   );
 });

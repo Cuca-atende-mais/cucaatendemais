@@ -46,6 +46,26 @@ export function extrairTextoMenu(numero: string, ultimaMsgAgente: string): strin
   return '';
 }
 
+/**
+ * VAL-08 (docs/migracao-meta/VALIDACAO-producao-institucional.md), variante do AUD-09: um
+ * d\u00edgito solto (`ehSelecaoMenu`) s\u00f3 \u00e9 resposta leg\u00edtima a um menu se a \u00faltima mensagem do
+ * agente REALMENTE foi um menu numerado (MENU_UNIDADES ou um menu de categorias com linhas
+ * numeradas) \u2014 n\u00e3o a qualquer pergunta em texto livre que o GPT tenha inventado sozinho
+ * (ex.: "qual unidade voc\u00ea quer saber mais?", sem lista numerada nenhuma). Confirmado em
+ * produ\u00e7\u00e3o: "2" respondendo a uma pergunta assim recarregava a vis\u00e3o geral completa (~40
+ * chunks) \u00e0 toa, sem nenhuma rela\u00e7\u00e3o com o menu de unidades/categorias do c\u00f3digo.
+ * Corre\u00e7\u00e3o PARCIAL do problema de fundo: cobre o caso "GPT perguntou em texto livre, sem
+ * n\u00fameros"; N\u00c3O cobre o caso do GPT improvisar um menu numerado pr\u00f3prio (isso seria
+ * indistingu\u00edvel de um menu real por este teste \u2014 ver VAL-06 no relat\u00f3rio).
+ */
+export function ultimaMensagemEhMenuNumerado(ultimaMsgAgente: string): boolean {
+  if (ultimaMsgAgente === MENU_UNIDADES) return true;
+  return ultimaMsgAgente.split('\n').some((linha) => {
+    const s = linha.trim().replace(/[\ufe0f\u20e3]/g, '');
+    return /^[1-9][.\)]?\s/.test(s);
+  });
+}
+
 function escaparRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -389,18 +409,28 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
     // 2. Conversa
     let conversaJustCreated = false;
+    // VAL-07 (docs/migracao-meta/VALIDACAO-producao-institucional.md), corrige AUD-15:
+    // `conversaJustCreated` continua true tanto para inserção nova quanto para reabertura de
+    // conversa encerrada — preservado de propósito, é o que o branch da Sofia (isSofia &&
+    // menu_boas_vindas, logo abaixo) usa pra decidir se reenvia o menu de boas-vindas; mudar
+    // isso mudaria o comportamento da Sofia, decisão que não é desta auditoria (comentário
+    // original abaixo). `conversaGenuinamenteNova` é o flag novo, true SÓ na inserção de fato —
+    // usado mais abaixo (precisaVisaoGeral, isAgenteProgramacao) pra não tratar reabertura como
+    // "primeiro contato" só para Institucional/maria, sem tocar no fluxo de outros agentes.
+    let conversaGenuinamenteNova = false;
     let { data: conversa } = await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
     if (!conversa) {
       const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: canal_origem || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata").single();
-      conversa = data; conversaJustCreated = true;
+      conversa = data; conversaJustCreated = true; conversaGenuinamenteNova = true;
     } else if (conversa.status === "encerrada") {
-      // AUD-15 (achado pendente, não corrigido aqui — ver relatório): reabrir uma conversa
-      // encerrada trata o lead como contato novo (conversaJustCreated=true), o que força visão
-      // geral completa + instrução de "primeira mensagem" pro GPT mesmo pra quem já conversou
-      // antes. motor-agente é compartilhado por outros agente_tipo (Sofia/Ouvidoria), então
-      // mudar esse flag também muda o comportamento de reabertura da Sofia (ex.: reenvio do
-      // menu_boas_vindas) — fora do escopo desta auditoria do Institucional decidir sozinho.
-      // Fica registrado como decisão de produto pendente, não implementado nesta leva.
+      // AUD-15/VAL-07: reabrir uma conversa encerrada tratava o lead como contato novo
+      // (conversaJustCreated=true) só pela ausência da distinção acima — confirmado em
+      // produção que isso recarrega os ~40 chunks do monthly_program e diz ao GPT "esta é a
+      // primeira mensagem" para quem já conversou minutos antes (17min no caso real). motor-
+      // agente é compartilhado por outros agente_tipo (Sofia/Ouvidoria); `conversaJustCreated`
+      // continua true aqui de propósito (Sofia decide sozinha, fora de escopo mudar), só
+      // `conversaGenuinamenteNova` fica false — o que muda é escopado a Institucional/maria
+      // via isAgenteProgramacao mais abaixo.
       await supabase.from("conversas").update({ status: "ativa", updated_at: new Date().toISOString() }).eq("id", conversa.id);
       conversaJustCreated = true;
     }
@@ -491,9 +521,18 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     let contextRAG = "";
     const temUnidadeDefinida = unidadeEfetiva && unidadeEfetiva !== 'Geral';
     const isAgenteProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
-    const isSelecaoMenu = ehSelecaoMenu(textoFinal);
+    const ultimaMsgAgente = [...historico].reverse().find((m) => m.role === 'assistant');
+    // VAL-08: um dígito solto só conta como seleção de menu se a última mensagem do agente
+    // REALMENTE foi um menu numerado (MENU_UNIDADES ou categorias numeradas) — não qualquer
+    // pergunta que o GPT tenha improvisado em texto livre (ver ultimaMensagemEhMenuNumerado).
+    const isSelecaoMenu = ehSelecaoMenu(textoFinal) && (ultimaMsgAgente ? ultimaMensagemEhMenuNumerado(ultimaMsgAgente.content) : false);
 
-    const precisaVisaoGeral = calcularPrecisaVisaoGeral({ conversaJustCreated, trocouUnidade, isSelecaoMenu });
+    const precisaVisaoGeral = calcularPrecisaVisaoGeral({ conversaJustCreated: conversaGenuinamenteNova, trocouUnidade, isSelecaoMenu });
+    // VAL-04: sem esta linha não dava para saber, pelo log, se a visão geral completa
+    // (~40 chunks direto do monthly_program) foi carregada ou se a resposta dependeu só da
+    // busca vetorial de acompanhamento — confirmar isso exigia cruzar ausência de log com
+    // query manual no banco (ver VAL-01/VAL-02 no relatório).
+    console.log("[motor-agente v18] precisaVisaoGeral=" + precisaVisaoGeral + " (unidade=" + unidadeEfetiva + ", conversaGenuinamenteNova=" + conversaGenuinamenteNova + ", trocouUnidade=" + trocouUnidade + ", isSelecaoMenu=" + isSelecaoMenu + ")");
 
     if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
       const conteudoPrograma = await carregarProgramacaoMensal(supabase, unidadeEfetiva);
@@ -502,7 +541,6 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       if (trocouUnidade) {
         instrucaoArea = "\nO usu\u00e1rio acabou de trocar para esta unidade. Apresente um resumo geral do que tem na programa\u00e7\u00e3o.";
       } else if (isSelecaoMenu) {
-        const ultimaMsgAgente = [...historico].reverse().find(m => m.role === 'assistant');
         const textoOpcao = ultimaMsgAgente ? extrairTextoMenu(textoFinal.trim(), ultimaMsgAgente.content) : '';
         if (textoOpcao) instrucaoArea = "\nO usu\u00e1rio selecionou a \u00e1rea: " + textoOpcao + ". Foque APENAS nessa \u00e1rea.";
       }
@@ -534,6 +572,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_unidade_cuca: unidadeEfetiva,
         p_limite: 5,
       });
+      // VAL-02/VAL-04: quantos chunks a busca de acompanhamento realmente trouxe — sem isso,
+      // "o GPT respondeu errado" e "a busca não trouxe o chunk certo" eram indistinguíveis no log.
+      console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
       if (chunksPrograma && chunksPrograma.length > 0) {
         contextRAG = "\n\n--- CONTEXTO ---\n" + chunksPrograma.map((c: { conteudo: string; fonte_tipo?: string }) =>
           c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
@@ -610,7 +651,11 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // seguida com muito menos confiabilidade.
       "Se o contexto informar o nome do lead, use-o com moderacao (1-2x, em momentos naturais da conversa).",
       trocouUnidade ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade. Inicie com uma mensagem de transicao amigavel (ex: 'Claro! Vou te mostrar o que tem no [unidade] 😊') e apresente um resumo geral da programacao usando formato compacto." : "",
-      conversaJustCreated ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : "",
+      // VAL-07: para Institucional/maria, só dizer "primeira mensagem" quando for de fato
+      // conversaGenuinamenteNova (não reabertura) — evita mandar essa instrução pro GPT numa
+      // conversa retomada minutos depois. Outros agente_tipo (Sofia/Ouvidoria) continuam no
+      // conversaJustCreated original, sem mudança — decisão sobre eles fica fora deste escopo.
+      (isAgenteProgramacao ? conversaGenuinamenteNova : conversaJustCreated) ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : "",
     ].filter(Boolean).join("\n\n");
 
     // TOM-04: o worker já captura e grava lead.nome (push_name do WhatsApp), mas esse dado
