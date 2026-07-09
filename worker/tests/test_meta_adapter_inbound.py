@@ -437,6 +437,8 @@ class TestDispatchMotorAgente:
                  patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
                  patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
                        return_value="Resposta motor") as mock_motor, \
+                 patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
+                       return_value=True), \
                  patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock,
                        return_value=True) as mock_enviar:
                 await processar_webhook_meta(raw)
@@ -474,6 +476,8 @@ class TestDispatchMotorAgente:
              patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
              patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
                    return_value=None) as mock_motor, \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
+                   return_value=True), \
              patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock,
                    return_value=True) as mock_enviar:
             await processar_webhook_meta(raw)
@@ -516,6 +520,8 @@ class TestDispatchMotorAgente:
              patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
              patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
                    return_value=None), \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
+                   return_value=True), \
              patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock,
                    return_value=True):
             await processar_webhook_meta(raw)
@@ -711,6 +717,8 @@ class TestDispatchMotorAgente:
                  patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
                        return_value="Aguarde...") as mock_motor, \
                  patch("meta_adapter_inbound._notificar_transbordo", new_callable=AsyncMock) as mock_notif, \
+                 patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
+                       return_value=True), \
                  patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock):
                 await processar_webhook_meta(raw)
 

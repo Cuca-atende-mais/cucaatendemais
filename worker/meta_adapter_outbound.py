@@ -96,3 +96,64 @@ async def _meta_enviar(
 
     logger.info("[meta-outbound] Mensagem enviada para %s via %s", to, phone_number_id)
     return True
+
+
+async def _meta_marcar_lida_e_digitando(
+    phone_number_id: str,
+    message_id: str,
+    token: str,
+) -> bool:
+    """
+    TOM-02: marca a mensagem inbound como lida (✓✓ azul) e ativa o indicador de "digitando..."
+    numa única chamada (POST /{phone_number_id}/messages, status="read" + typing_indicator) —
+    reduz a percepção de "bot travado" durante os até ~20s do pior caso do retry de rate limit
+    da OpenAI (o lead vê "digitando" em vez de silêncio total).
+
+    Best-effort: nunca propaga exceção nem bloqueia o dispatch — falha aqui só é logada.
+    """
+    if not phone_number_id or not token or not message_id:
+        logger.warning(
+            "[meta-outbound] Marcação lida/digitando abortada: phone_number_id=%s message_id=%s token=%s",
+            bool(phone_number_id),
+            bool(message_id),
+            bool(token),
+        )
+        return False
+
+    import httpx  # noqa: PLC0415 — lazy: httpx ausente nos containers de teste
+
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
+    body = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": message_id,
+        "typing_indicator": {"type": "text"},
+    }
+
+    try:
+        # timeout curto de propósito: essa chamada é awaited no caminho crítico, antes do
+        # motor-agente — um timeout longo aqui devoraria justamente a latência que essa
+        # feature existe pra mascarar. Um indicador de "digitando" que chega atrasado não vale
+        # a espera (o WhatsApp já expira o indicador sozinho em ~25s).
+        async with httpx.AsyncClient(timeout=2) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+    except Exception as exc:
+        logger.warning("[meta-outbound] Falha ao marcar lida/digitando: %s", type(exc).__name__)
+        return False
+
+    if resp.status_code < 200 or resp.status_code >= 300:
+        logger.warning(
+            "[meta-outbound] Graph API %s ao marcar lida/digitando para message_id=%s",
+            resp.status_code,
+            message_id,
+        )
+        return False
+
+    return True
