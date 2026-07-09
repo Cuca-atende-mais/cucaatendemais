@@ -2,12 +2,14 @@
 Adapter Inbound — Meta Cloud API → Contrato v2
 S-WM-01: recepção de webhook, validação HMAC-SHA256, normalização para Contrato v2.
 """
+import asyncio
 import io
 import hmac
 import hashlib
 import json
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("worker-cuca")
@@ -420,6 +422,78 @@ async def _notificar_transbordo(
         logger.error("[transbordo] Erro inesperado em _notificar_transbordo: %s", exc)
 
 
+# ─── Debounce de dispatch (VAL-05) ─────────────────────────────────────────────
+# docs/migracao-meta/VALIDACAO-producao-institucional.md: mensagens rápidas em sequência do
+# mesmo lead ("entendi" / "beleza então" / "obrigado") disparavam um dispatch completo ao
+# motor-agente (ou Empregabilidade) POR MENSAGEM — 3 chamadas de GPT e 3 respostas separadas
+# e quase idênticas pro mesmo lead, sinal forte de "isso é automatizado". A persistência
+# (Lead/Conversa/Mensagem) continua acontecendo por mensagem, imediatamente — só o DISPATCH
+# (chamada ao motor-agente/Empregabilidade + envio da resposta) é adiado. Cada mensagem nova
+# do mesmo lead cancela o dispatch pendente da anterior e reagenda — só a última mensagem da
+# janela efetivamente dispara, mas o `historico` que o motor-agente lê já inclui todas as
+# mensagens persistidas nesse meio-tempo (S-WM-17).
+#
+# Limitação conhecida, documentada e aceita (não bloqueadora agora): `_DEBOUNCE_TASKS` é um
+# dict em memória do processo — só funciona corretamente com o worker rodando como processo
+# único (`gunicorn -w 1`, configuração atual do Dockerfile). Se o worker escalar para múltiplas
+# réplicas, cada réplica passa a ter seu próprio dict sem coordenação entre si, e o debounce
+# deixa de funcionar de forma correta (mensagens do mesmo lead podem cair em réplicas
+# diferentes) — precisaria migrar para um mecanismo compartilhado (Redis, ou uma tabela no
+# Supabase) antes de escalar horizontalmente.
+_DEBOUNCE_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _debounce_segundos() -> float:
+    """Lido a cada chamada (não cacheado em import) para permitir override em teste via
+    monkeypatch de variável de ambiente sem precisar recarregar o módulo."""
+    return float(os.getenv("META_DEBOUNCE_SECONDS", "3"))
+
+
+async def _dormir_debounce(segundos: float) -> None:
+    """Isolado do `asyncio.sleep` direto só para ser interceptável em teste (cuidado 2 do
+    pedido: tempo injetável, não esperar o real). Testes que não mexem nisso usam a suíte
+    inteira com o debounce real de `_debounce_segundos()` — por isso `worker/tests/conftest.py`
+    substitui esta função por um no-op autouse, para não deixar a suíte inteira lenta."""
+    await asyncio.sleep(segundos)
+
+
+async def _agendar_dispatch_debounced(chave: str, dispatch: Callable[[], Awaitable[None]]) -> None:
+    """Cancela o dispatch pendente da mesma `chave` (se houver) e agenda `dispatch` para rodar
+    depois de `_debounce_segundos()`. `chave` é o `conversa_id` — identidade exata da conversa,
+    já garante unicidade por (lead, canal) sem precisar compor telefone+phone_number_id.
+
+    Fica pendurado em `await` até o dispatch (cancelado ou não) resolver — isso é seguro porque
+    quem chama esta função (`processar_webhook_meta`) já roda como BackgroundTask do FastAPI,
+    ou seja, já está fora do ciclo de vida da requisição HTTP (a resposta 200 pro webhook da
+    Meta já foi enviada antes do BackgroundTask começar a rodar); não há custo de latência
+    percebido por ninguém além do próprio lead esperando a resposta, que é exatamente o
+    trade-off aceito do debounce.
+    """
+    tarefa_anterior = _DEBOUNCE_TASKS.get(chave)
+    if tarefa_anterior and not tarefa_anterior.done():
+        tarefa_anterior.cancel()
+
+    async def _aguardar_e_despachar() -> None:
+        try:
+            await _dormir_debounce(_debounce_segundos())
+        except asyncio.CancelledError:
+            logger.info("[debounce] dispatch da conversa %s cancelado — mensagem mais recente chegou", chave)
+            raise
+        await dispatch()
+
+    tarefa = asyncio.create_task(_aguardar_e_despachar())
+    _DEBOUNCE_TASKS[chave] = tarefa
+    try:
+        await tarefa
+    except asyncio.CancelledError:
+        pass
+    finally:
+        # Só remove do dict se ainda for ESTA tarefa — se uma mensagem mais nova já cancelou
+        # e reagendou (sobrescrevendo a entrada), não pode apagar a referência da tarefa nova.
+        if _DEBOUNCE_TASKS.get(chave) is tarefa:
+            _DEBOUNCE_TASKS.pop(chave, None)
+
+
 # ─── Background Task ───────────────────────────────────────────────────────────
 async def processar_webhook_meta(raw_body: bytes) -> None:
     """
@@ -552,6 +626,10 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         logger.error(f"[meta-inbound] Erro ao salvar Mensagem: {exc}")
 
     # ── Guard awaiting_human: IA silenciada enquanto colaborador controla ────────
+    # Checagem na CHEGADA da mensagem — early exit barato, evita até agendar o debounce à toa.
+    # Não substitui a checagem no MOMENTO do dispatch (cuidado 1, dentro de _executar_dispatch):
+    # entre a chegada e o dispatch de fato (adiado pelo debounce) o status pode mudar — ex.: um
+    # colaborador assumiu a conversa manualmente enquanto o lead ainda mandava mensagens.
     if conversa_status == "awaiting_human":
         logger.info(
             "[awaiting_human] IA silenciada — conversa %s em atendimento humano. Descartando inbound.",
@@ -559,7 +637,60 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         )
         return
 
-    # ── Dispatch ─────────────────────────────────────────────────────────────
+    # ── Dispatch (adiado por debounce — VAL-05) ─────────────────────────────
+    async def _dispatch() -> None:
+        await _executar_dispatch(
+            agente_tipo=agente_tipo,
+            contrato_v2=contrato_v2,
+            conversa_id=conversa_id,
+            lead_id=lead_id,
+            telefone=telefone,
+            phone_number_id=phone_number_id,
+            wamid=wamid,
+            push_name=push_name,
+            midia_tipo=midia_tipo,
+            unidade_cuca=unidade_cuca,
+            mensagem=mensagem,
+            supabase=supabase,
+        )
+
+    await _agendar_dispatch_debounced(conversa_id, _dispatch)
+
+
+async def _executar_dispatch(
+    *,
+    agente_tipo: str,
+    contrato_v2: dict,
+    conversa_id: str,
+    lead_id: str,
+    telefone: str,
+    phone_number_id: str,
+    wamid: str,
+    push_name: str,
+    midia_tipo: str,
+    unidade_cuca,
+    mensagem: str,
+    supabase,
+) -> None:
+    """Dispatch de verdade (motor-agente/Empregabilidade + envio da resposta) — roda depois do
+    debounce (VAL-05). Mesma lógica que já existia inline em `processar_webhook_meta`, só
+    extraída para poder ser adiada, mais o cuidado 1: reconferir `awaiting_human` aqui, porque
+    o status pode ter mudado durante a espera do debounce."""
+    try:
+        status_result = supabase.table("conversas").select("status").eq("id", conversa_id).single().execute()
+        status_no_dispatch = (status_result.data or {}).get("status")
+    except Exception as exc:
+        logger.warning("[debounce] Erro ao reconferir status antes do dispatch adiado: %s", exc)
+        status_no_dispatch = None
+
+    if status_no_dispatch == "awaiting_human":
+        logger.info(
+            "[awaiting_human] IA silenciada no momento do dispatch adiado — conversa %s passou a "
+            "atendimento humano enquanto aguardava o debounce.",
+            conversa_id,
+        )
+        return
+
     if agente_tipo == "Empregabilidade":
         try:
             from empregabilidade_engine import processar_mensagem_empregabilidade  # noqa: PLC0415

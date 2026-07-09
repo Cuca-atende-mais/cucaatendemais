@@ -1,12 +1,14 @@
 """
 Testes unitários — Adapter Inbound Meta (S-WM-01)
 """
+import asyncio
 import json
 import hmac
 import hashlib
 import os
 import sys
 import pytest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -920,3 +922,183 @@ class TestDedupeWamid:
         mock_processar.assert_called_once()
         insert_call = mock_sb.table.return_value.insert.call_args
         assert insert_call.args[0]["wamid"] == "wamid.test"
+
+
+# ─── VAL-05: debounce de dispatch ──────────────────────────────────────────────
+# docs/migracao-meta/VALIDACAO-producao-institucional.md: mensagens rápidas em sequência do
+# mesmo lead disparavam um dispatch (chamada ao motor-agente + resposta) POR MENSAGEM. Estes
+# testes provam: (1) N mensagens rápidas da mesma conversa geram 1 só dispatch, com a última
+# mensagem; (2) o cuidado 1 pedido — reconferir awaiting_human no momento do dispatch adiado,
+# não só na chegada; (3) chaves (conversa_id) diferentes não interferem entre si.
+class TestDebounceDispatch:
+
+    @staticmethod
+    def _payload_com_wamid(phone_number_id: str, telefone: str, texto: str, wamid: str) -> dict:
+        return {
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "id": "WABA_ID",
+                "changes": [{
+                    "value": {
+                        "messaging_product": "whatsapp",
+                        "metadata": {"display_phone_number": "558500000000", "phone_number_id": phone_number_id},
+                        "contacts": [{"profile": {"name": "Teste"}, "wa_id": telefone}],
+                        "messages": [{
+                            "from": telefone,
+                            "id": wamid,
+                            "timestamp": "1750000000",
+                            "type": "text",
+                            "text": {"body": texto},
+                        }],
+                    },
+                    "field": "messages",
+                }],
+            }],
+        }
+
+    @staticmethod
+    def _mock_supabase_conversa_unica(conversa_id: str, status_conversas: str = "ativa"):
+        """Cada `.table(nome)` retorna um mock PRÓPRIO (por nome), não o mesmo objeto
+        compartilhado dos helpers acima — precisa disso aqui porque os testes de debounce
+        precisam diferenciar a checagem de `conversas.status` (cuidado 1) da checagem de
+        `leads.bloqueado`, que usam a mesma forma de chain (`.eq().single().execute().data`)
+        mas em tabelas diferentes."""
+        from unittest.mock import MagicMock
+
+        mock_leads = MagicMock()
+        mock_leads.upsert.return_value.execute.return_value.data = [{"id": "lead-debounce"}]
+        mock_leads.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+
+        mock_conversas = MagicMock()
+        mock_conversas.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": conversa_id, "status": "ativa"}  # status na CHEGADA — sempre ativa nesta suíte
+        ]
+        mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "status": status_conversas  # status no momento do DISPATCH ADIADO — controlável por teste
+        }
+        mock_conversas.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+        mock_mensagens = MagicMock()
+        mock_mensagens.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_mensagens.insert.return_value.execute.return_value = MagicMock()
+
+        def _por_tabela(nome: str):
+            return {"leads": mock_leads, "conversas": mock_conversas, "mensagens": mock_mensagens}.get(
+                nome, MagicMock()
+            )
+
+        mock_sb = MagicMock()
+        mock_sb.table.side_effect = _por_tabela
+        mock_sb.rpc.return_value.execute.return_value = MagicMock()
+        return mock_sb
+
+    # ── 1) N mensagens rápidas → 1 só dispatch, com a última mensagem ──────────
+    @pytest.mark.asyncio
+    async def test_mensagens_rapidas_geram_um_so_dispatch_com_a_ultima_mensagem(self, monkeypatch):
+        import meta_adapter_inbound
+        from unittest.mock import AsyncMock
+
+        class SleepControlavel:
+            """Só resolve quando o teste manda — permite testar cancelamento/reagendamento
+            sem depender de tempo real (`asyncio.sleep`)."""
+            def __init__(self):
+                self.entrou = asyncio.Event()
+                self._liberar = asyncio.Event()
+
+            async def __call__(self, segundos):
+                self.entrou.set()
+                await self._liberar.wait()
+
+            def liberar(self):
+                self._liberar.set()
+
+        fake_sleep = SleepControlavel()
+        monkeypatch.setattr(meta_adapter_inbound, "_dormir_debounce", fake_sleep)
+
+        mock_sb = self._mock_supabase_conversa_unica("conv-debounce-1")
+        stub = {"canal_origem": "PHONE_DEB", "agente_tipo": "Institucional", "canal_tipo": "Institucional", "unidade_cuca": None}
+
+        raw1 = json.dumps(self._payload_com_wamid("PHONE_DEB", "558598887777", "entendi", "wamid.deb.1")).encode()
+        raw2 = json.dumps(self._payload_com_wamid("PHONE_DEB", "558598887777", "beleza então", "wamid.deb.2")).encode()
+        raw3 = json.dumps(self._payload_com_wamid("PHONE_DEB", "558598887777", "obrigado", "wamid.deb.3")).encode()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
+                   return_value="Até mais! 😊") as mock_motor, \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
+
+            tarefa1 = asyncio.create_task(processar_webhook_meta(raw1))
+            await fake_sleep.entrou.wait()
+            fake_sleep.entrou.clear()
+
+            tarefa2 = asyncio.create_task(processar_webhook_meta(raw2))
+            await fake_sleep.entrou.wait()
+            fake_sleep.entrou.clear()
+
+            tarefa3 = asyncio.create_task(processar_webhook_meta(raw3))
+            await fake_sleep.entrou.wait()
+
+            fake_sleep.liberar()
+            await asyncio.gather(tarefa1, tarefa2, tarefa3)
+
+        mock_motor.assert_called_once()
+        mock_enviar.assert_called_once()
+        contrato_usado = mock_motor.call_args.args[0]
+        assert contrato_usado["mensagem"] == "obrigado", (
+            "VAL-05: das 3 mensagens rápidas, só a ÚLTIMA ('obrigado') deveria efetivamente "
+            "disparar o dispatch — as 2 primeiras deveriam ser canceladas/reagendadas, não "
+            "gerar 3 chamadas separadas ao motor-agente"
+        )
+
+    # ── 2) cuidado 1: reconfere awaiting_human no momento do dispatch adiado ───
+    @pytest.mark.asyncio
+    async def test_awaiting_human_mudou_durante_debounce_cancela_dispatch(self):
+        """Status='ativa' na CHEGADA da mensagem (passa pelo guard early-return), mas já
+        virou 'awaiting_human' no momento em que o dispatch adiado dispara de fato (ex.: um
+        colaborador assumiu a conversa manualmente enquanto o debounce esperava) — o dispatch
+        não pode rodar mesmo assim."""
+        from unittest.mock import AsyncMock
+
+        mock_sb = self._mock_supabase_conversa_unica("conv-debounce-2", status_conversas="awaiting_human")
+        stub = {"canal_origem": "PHONE_DEB2", "agente_tipo": "Institucional", "canal_tipo": "Institucional", "unidade_cuca": None}
+        raw = json.dumps(self._payload_com_wamid("PHONE_DEB2", "558598887778", "oi", "wamid.deb.4")).encode()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock) as mock_motor, \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        mock_motor.assert_not_called(), (
+            "cuidado 1 (VAL-05): status virou 'awaiting_human' antes do dispatch adiado disparar — "
+            "motor-agente não deveria ser chamado mesmo a mensagem tendo chegado com status 'ativa'"
+        )
+        mock_enviar.assert_not_called()
+
+    # ── 3) chaves diferentes (conversas diferentes) não interferem ─────────────
+    @pytest.mark.asyncio
+    async def test_agendar_dispatch_debounced_chaves_diferentes_nao_cancelam_uma_a_outra(self):
+        import meta_adapter_inbound
+
+        chamadas: list[str] = []
+
+        async def _dispatch_a():
+            chamadas.append("a")
+
+        async def _dispatch_b():
+            chamadas.append("b")
+
+        await asyncio.gather(
+            meta_adapter_inbound._agendar_dispatch_debounced("conversa-A", _dispatch_a),
+            meta_adapter_inbound._agendar_dispatch_debounced("conversa-B", _dispatch_b),
+        )
+
+        assert sorted(chamadas) == ["a", "b"], (
+            "duas conversas diferentes (chaves distintas) não podem cancelar o dispatch uma da outra"
+        )
+        assert meta_adapter_inbound._DEBOUNCE_TASKS == {}, "dict de tarefas pendentes deveria ficar vazio após ambas resolverem"
