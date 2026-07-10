@@ -10,6 +10,7 @@ import {
   extrairTextoMenu,
   ultimaMensagemEhMenuNumerado,
   decidirPrimeiraMensagem,
+  detectarUnidadeDireta,
   deveTentarNovamente,
   extrairTagComArgumento,
   validarCanalEncaminhamento,
@@ -25,7 +26,11 @@ import {
 // `respostasPorTabela[tabela]` configurar para aquela tabela/rpc — não distingue o formato da
 // chain (select vs. update vs. insert): nos fluxos testados aqui isso não muda o resultado
 // observável, só o dado de leitura importa.
-type ChamadaRegistrada = { tabela: string; metodo: string };
+// `args` (opcional) captura os argumentos da chamada — usado pelos testes VAL-12 que precisam
+// confirmar QUAIS parâmetros (p_tipos/p_unidade_cuca) foram passados pra buscar_chunks_similares,
+// não só que a RPC foi chamada. Aditivo: nenhum teste existente faz igualdade do array inteiro,
+// só `.some((c) => c.tabela === ...)`, então adicionar o campo não quebra nada.
+type ChamadaRegistrada = { tabela: string; metodo: string; args?: unknown[] };
 
 // deno-lint-ignore no-explicit-any
 function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>, chamadas: ChamadaRegistrada[]): any {
@@ -44,8 +49,8 @@ function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>
   }
   return {
     from: (tabela: string) => criarChain(tabela),
-    rpc: (nome: string, ..._args: unknown[]) => {
-      chamadas.push({ tabela: "rpc:" + nome, metodo: "rpc" });
+    rpc: (nome: string, ...args: unknown[]) => {
+      chamadas.push({ tabela: "rpc:" + nome, metodo: "rpc", args });
       const resposta = respostasPorTabela["rpc:" + nome];
       return { then: (resolve: (v: { data: unknown; error: null }) => unknown) => resolve({ data: resposta?.data ?? null, error: null }) };
     },
@@ -108,12 +113,27 @@ function requestFake(mensagem: string): Request {
 }
 
 // ── AUD-01: "aguardando_unidade" é um estado sem saída ──────────────────────
-Deno.test("AUD-01: quando o lead 'mudou de assunto', a conversa deveria sair do estado de espera de unidade", () => {
-  const decisao = decidirAguardandoUnidade(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true });
+// Reescrito no E4 (VAL-12): a versão original testava mudou_de_assunto=true isolado, sem o
+// sinal pergunta_geral (que não existia). Isso colidia com VAL-13 (cortesia pura não pode
+// destravar o fluxo) — a intenção original do AUD-01 ("não travar quem genuinamente quer
+// mudar de assunto") só se aplica quando é uma pergunta institucional real, não uma cortesia.
+Deno.test("AUD-01: pergunta institucional real (mudou de assunto de verdade) sai do estado de espera de unidade", () => {
+  const decisao = decidirAguardandoUnidade(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true });
   assertEquals(
     decisao.aguardandoUnidade,
     false,
-    "AUD-01: depois de reconhecer que a mensagem não era uma tentativa de escolher unidade, a conversa deveria poder seguir para outros assuntos — hoje ela permanece travada em aguardando_unidade=true para sempre",
+    "AUD-01: uma pergunta institucional de verdade (não é escolha de unidade, nem cortesia) deveria destravar aguardando_unidade e seguir pro fluxo normal — preserva a intenção original: não travar quem genuinamente quer falar de outra coisa",
+  );
+});
+
+// ── VAL-13: cortesia pura (ex.: "bom dia") NÃO pode abandonar o fluxo de escolha de unidade —
+// diferente do AUD-01 acima (pergunta real), aqui não há pergunta_geral nenhuma pra responder.
+Deno.test("VAL-13: cortesia pura (mudou_de_assunto sem pergunta_geral) mantém aguardandoUnidade=true", () => {
+  const decisao = decidirAguardandoUnidade(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false });
+  assertEquals(
+    decisao.aguardandoUnidade,
+    true,
+    "VAL-13: um cumprimento/cortesia no meio do fluxo (ex.: 'bom dia') não pode resetar aguardando_unidade — o lead ainda não escolheu unidade nenhuma, e a resposta já reapresenta o menu",
   );
 });
 
@@ -181,11 +201,67 @@ Deno.test("AUD-05: um dígito 1-5 que aparece como idade/quantidade na frase nã
 
 // ── AUD-07: 1ª mensagem ignora o conteúdo, sempre pede o menu ───────────────
 Deno.test("AUD-07: 1ª mensagem que já cita uma unidade deveria resolvê-la direto, sem pedir o menu de novo", () => {
-  const decisao = decidirPrimeiraMensagem("quero saber da barra");
+  // VAL-12: assinatura mudou (recebe unidadeDetectadaDireta + avaliacaoSemantica em vez do
+  // texto cru) — mesmo padrão de decidirAguardandoUnidade. Valor esperado não muda.
+  const decisao = decidirPrimeiraMensagem(
+    detectarUnidadeDireta("quero saber da barra"),
+    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
+  );
   assertEquals(
     decisao.unidadeSelecionada,
     "Cuca Barra",
     "AUD-07: o lead já disse a unidade na própria 1ª mensagem, mas o código ignora o conteúdo e sempre manda o menu de unidades de novo",
+  );
+});
+
+// ── VAL-12: pergunta institucional real já na 1ª mensagem não força o menu ──────────────────
+Deno.test("VAL-12: decidirPrimeiraMensagem com pergunta_geral=true não força o menu (segue pro fluxo normal)", () => {
+  const decisao = decidirPrimeiraMensagem(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true });
+  assertEquals(decisao.unidadeSelecionada, null);
+  assertEquals(decisao.aguardandoUnidade, false, "VAL-12: pergunta geral real não pode deixar a conversa aguardando unidade");
+  assertEquals(decisao.resposta, null, "VAL-12: resposta=null sinaliza 'siga o fluxo normal' — não é pra responder com o menu canned");
+});
+
+Deno.test("VAL-12: decidirAguardandoUnidade (branch mudou_de_assunto) com pergunta_geral=true também segue pro fluxo normal", () => {
+  const decisao = decidirAguardandoUnidade(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true });
+  assertEquals(decisao.unidadeSelecionada, null);
+  assertEquals(decisao.aguardandoUnidade, false);
+  assertEquals(decisao.resposta, null, "VAL-12: mesma convenção do branch de 1ª mensagem — resposta=null segue pro RAG geral");
+});
+
+// Prova a wiring no HANDLER: pergunta geral na 1ª mensagem (sem nome direto de unidade) precisa
+// chegar ao Passo 6 e usar p_tipos:["FAQ"] isolado — não o conjunto misto de RAG_FONTES_POR_AGENTE
+// (que incluiria monthly_program, sempre atrelado a uma unidade específica; ver diagnóstico E3/E4).
+// O classificador (avaliarSelecaoUnidade) é a MESMA chamada chat/completions que o
+// comFetchMockado intercepta — respostaChatCompletions aqui é o JSON que o classificador espera;
+// a resposta final do GPT (chamarGPT, mais adiante no handler) reaproveita esse mesmo texto
+// canned, o que é inofensivo pra esta prova (só interessa o parâmetro passado pra RPC).
+Deno.test("VAL-12 (handler): pergunta geral na 1ª mensagem busca RAG com p_tipos:['FAQ'] isolado e p_unidade_cuca:null", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({}), chamadas); // 1ª mensagem: sem aguardando, sem unidade_selecionada
+  await comFetchMockado(
+    async () => {
+      const resp = await handler(requestFake("a rede CUCA é da prefeitura?"), supabaseMock);
+      assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+    },
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true }),
+  );
+  const chamadaRag = chamadas.find((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(
+    chamadaRag !== undefined,
+    true,
+    "VAL-12: pergunta geral deveria chegar ao Passo 6 e chamar buscar_chunks_similares, não fazer early-return com o menu",
+  );
+  const paramsRag = chamadaRag?.args?.[0] as { p_tipos?: string[]; p_unidade_cuca?: string | null } | undefined;
+  assertEquals(
+    paramsRag?.p_tipos,
+    ["FAQ"],
+    "VAL-12: pergunta geral sem unidade escolhida deve buscar SÓ em FAQ, isolado de monthly_program/eventos_pontuais — evita vazar conteúdo de uma unidade aleatória",
+  );
+  assertEquals(
+    paramsRag?.p_unidade_cuca,
+    null,
+    "VAL-12: sem unidade escolhida ainda, a busca não pode filtrar por nenhuma unidade específica",
   );
 });
 

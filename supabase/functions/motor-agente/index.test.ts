@@ -95,27 +95,27 @@ Deno.test("parseRetryAfterSegundos: retorna fallback de 1s sem header nem tempo 
 Deno.test("validarAvaliacaoSelecaoUnidade: aceita unidade válida e sinais true", () => {
   assertEquals(
     validarAvaliacaoSelecaoUnidade({ unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false }),
-    { unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false },
+    { unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
   );
 });
 
 Deno.test("validarAvaliacaoSelecaoUnidade: rejeita unidade fora da lista válida (nunca confia cegamente no LLM)", () => {
   assertEquals(
     validarAvaliacaoSelecaoUnidade({ unidade: "Cuca Inventada", quer_sair: false, mudou_de_assunto: false }),
-    { unidade: null, quer_sair: false, mudou_de_assunto: false },
+    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
   );
 });
 
 Deno.test("validarAvaliacaoSelecaoUnidade: JSON malformado/vazio cai no default seguro", () => {
-  assertEquals(validarAvaliacaoSelecaoUnidade(null), { unidade: null, quer_sair: false, mudou_de_assunto: false });
-  assertEquals(validarAvaliacaoSelecaoUnidade({}), { unidade: null, quer_sair: false, mudou_de_assunto: false });
-  assertEquals(validarAvaliacaoSelecaoUnidade("string solta"), { unidade: null, quer_sair: false, mudou_de_assunto: false });
+  assertEquals(validarAvaliacaoSelecaoUnidade(null), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false });
+  assertEquals(validarAvaliacaoSelecaoUnidade({}), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false });
+  assertEquals(validarAvaliacaoSelecaoUnidade("string solta"), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false });
 });
 
 Deno.test("validarAvaliacaoSelecaoUnidade: só aceita booleano literal true, não truthy genérico", () => {
   assertEquals(
     validarAvaliacaoSelecaoUnidade({ unidade: null, quer_sair: "sim", mudou_de_assunto: 1 }),
-    { unidade: null, quer_sair: false, mudou_de_assunto: false },
+    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
   );
 });
 
