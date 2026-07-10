@@ -224,9 +224,9 @@ export function detectarTrocaUnidade(texto: string, unidadeAtual: string): strin
 
 const UNIDADES_VALIDAS = ['Cuca Barra', 'Cuca Jangurussu', 'Cuca Mondubim', 'Cuca Pici', 'Cuca José Walter'];
 
-export type AvaliacaoSelecaoUnidade = { unidade: string | null; quer_sair: boolean; mudou_de_assunto: boolean };
+export type AvaliacaoSelecaoUnidade = { unidade: string | null; quer_sair: boolean; mudou_de_assunto: boolean; pergunta_geral: boolean };
 
-const AVALIACAO_SELECAO_UNIDADE_DEFAULT: AvaliacaoSelecaoUnidade = { unidade: null, quer_sair: false, mudou_de_assunto: false };
+const AVALIACAO_SELECAO_UNIDADE_DEFAULT: AvaliacaoSelecaoUnidade = { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false };
 
 /** Valida o JSON retornado pelo GPT contra o contrato esperado — nunca confia cegamente no LLM */
 export function validarAvaliacaoSelecaoUnidade(data: unknown): AvaliacaoSelecaoUnidade {
@@ -236,6 +236,9 @@ export function validarAvaliacaoSelecaoUnidade(data: unknown): AvaliacaoSelecaoU
     unidade,
     quer_sair: obj.quer_sair === true,
     mudou_de_assunto: obj.mudou_de_assunto === true,
+    // VAL-12: só tem sentido quando mudou_de_assunto=true — diferencia pergunta institucional
+    // real ("a rede CUCA é da prefeitura?") de cortesia pura ("bom dia"), ver avaliarSelecaoUnidade.
+    pergunta_geral: obj.pergunta_geral === true,
   };
 }
 
@@ -270,6 +273,7 @@ async function avaliarSelecaoUnidade(texto: string, openaiKey: string): Promise<
             "- \"unidade\": o nome exato de uma das 5 unidades válidas se o lead mencionou uma (mesmo com erro de digitação ou de forma indireta), ou null se não deu pra identificar.",
             "- \"quer_sair\": true se o lead claramente não quer continuar / não vai escolher uma unidade agora (ex.: agradecimento de despedida, \"deixa pra lá\", \"depois eu vejo\").",
             "- \"mudou_de_assunto\": true se a mensagem não é uma tentativa de escolher unidade nem de sair (ex.: cortesia como \"obrigado pela mensagem\", pergunta sobre outro assunto).",
+            "- \"pergunta_geral\": true SOMENTE se mudou_de_assunto=true E a mensagem for uma pergunta real sobre o CUCA que não depende de saber qual unidade (ex.: \"a rede CUCA é da prefeitura?\", \"tem curso pago?\"). false se for só cortesia/cumprimento sem pergunta de verdade (ex.: \"bom dia\", \"tudo bem?\", \"obrigado\").",
             "",
             "Mensagem do lead: " + texto,
           ].join("\n"),
@@ -295,7 +299,8 @@ export type DecisaoAguardandoUnidade = {
 /**
  * Decide o que fazer quando a conversa está em `aguardando_unidade=true` e chega uma nova
  * mensagem. `resposta !== null` significa "responda isto e encerre a requisição agora";
- * `resposta === null` significa "unidade resolvida, siga o fluxo normal".
+ * `resposta === null` significa "resolvido, siga o fluxo normal" — cobre tanto unidade
+ * escolhida quanto pergunta_geral=true (VAL-12, ver abaixo).
  * Extraído do handler só para permitir teste automatizado (auditoria AUD-01 em
  * docs/qa/AUDITORIA-motor-agente-institucional-2026-07-07.md) — comportamento idêntico ao
  * inline anterior, nenhuma correção aplicada nesta extração.
@@ -317,9 +322,18 @@ export function decidirAguardandoUnidade(
     };
   }
   if (avaliacaoSemantica.mudou_de_assunto) {
+    if (avaliacaoSemantica.pergunta_geral) {
+      // VAL-12: pergunta institucional real (não é só cortesia) — resolve o estado de espera
+      // e segue pro fluxo normal (Passo 6, RAG geral) em vez de reabrir o menu. Preserva a
+      // intenção original do AUD-01: não travar quem genuinamente quer falar de outra coisa.
+      return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
+    }
+    // VAL-13: cortesia pura (ex.: "bom dia") não pode tirar a conversa do estado
+    // aguardando_unidade — o lead ainda não escolheu unidade, e a resposta abaixo já
+    // reapresenta o menu.
     return {
       unidadeSelecionada: null,
-      aguardandoUnidade: false,
+      aguardandoUnidade: true,
       resposta: "Claro! 😊 Quando quiser saber sobre alguma unidade CUCA, escolha uma:\n\n" + MENU_UNIDADES,
     };
   }
@@ -362,11 +376,22 @@ export type DecisaoPrimeiraMensagem = {
  * AUD-07: se o lead já citar a unidade na própria 1ª mensagem ("quero saber da Barra"),
  * resolve direto (reaproveitando detectarUnidadeDireta, a mesma detecção usada em
  * decidirAguardandoUnidade) em vez de sempre pedir o menu de novo, evitando uma rodada extra.
+ * VAL-12: assinatura espelha decidirAguardandoUnidade (recebe a detecção direta E a avaliação
+ * semântica já prontas, em vez do texto cru) — o caller (handler) chama avaliarSelecaoUnidade
+ * antes, mesmo padrão de duas etapas já usado no branch aguardando_unidade, mantendo esta
+ * função pura e testável sem mock de fetch.
  */
-export function decidirPrimeiraMensagem(textoFinal: string): DecisaoPrimeiraMensagem {
-  const unidadeDetectadaDireta = detectarUnidadeDireta(textoFinal);
+export function decidirPrimeiraMensagem(
+  unidadeDetectadaDireta: string | undefined,
+  avaliacaoSemantica: AvaliacaoSelecaoUnidade,
+): DecisaoPrimeiraMensagem {
   if (unidadeDetectadaDireta) {
     return { unidadeSelecionada: unidadeDetectadaDireta, aguardandoUnidade: false, resposta: null };
+  }
+  if (avaliacaoSemantica.pergunta_geral) {
+    // VAL-12: pergunta institucional real já na 1ª mensagem — não força o menu, segue pro
+    // fluxo normal (Passo 6, RAG geral) pra responder de verdade.
+    return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
   }
   return { unidadeSelecionada: null, aguardandoUnidade: true, resposta: MENU_UNIDADES };
 }
@@ -568,6 +593,10 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // 5b. Seleção / troca de unidade (instância Geral)
     let unidadeEfetiva = unidade_cuca;
     let trocouUnidade = false;
+    // VAL-12: true quando o lead fez uma pergunta institucional real sem unidade escolhida
+    // (1ª mensagem ou dentro de aguardando_unidade) — sinaliza pro Passo 6 buscar RAG geral
+    // (FAQ isolado) em vez de early-return com o menu.
+    let perguntaGeralAtiva = false;
 
     if (unidade_cuca === 'Geral') {
       const metadata = conversa?.metadata || {};
@@ -602,14 +631,27 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // dígito (isSelecaoMenu) recebia a visão geral completa da programação.
           trocouUnidade = true;
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
-        } else {
-          const respostaFinal = evitarRepeticaoLiteral(decisao.resposta!, historico);
+        } else if (decisao.resposta !== null) {
+          const respostaFinal = evitarRepeticaoLiteral(decisao.resposta, historico);
           await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
+        } else {
+          // VAL-12: pergunta_geral=true — nem unidade escolhida, nem resposta canned. Grava
+          // aguardando_unidade=false e segue pro fluxo normal (Passo 6 responde de verdade).
+          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
+          perguntaGeralAtiva = true;
+          console.log("[motor-agente v18] Pergunta geral identificada (aguardando_unidade): segue pro RAG geral (FAQ isolado)");
         }
       } else {
-        const decisaoPrimeira = decidirPrimeiraMensagem(textoFinal);
+        const unidadeDetectadaDireta1a = detectarUnidadeDireta(textoFinal);
+        let avaliacaoSemantica1a: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
+
+        if (!unidadeDetectadaDireta1a) {
+          avaliacaoSemantica1a = await avaliarSelecaoUnidade(textoFinal, openaiKey);
+        }
+
+        const decisaoPrimeira = decidirPrimeiraMensagem(unidadeDetectadaDireta1a, avaliacaoSemantica1a);
         if (decisaoPrimeira.unidadeSelecionada) {
           // AUD-07: unidade já citada na própria 1ª mensagem — resolve direto e segue pro
           // fluxo normal (RAG/GPT) em vez de mandar o menu e forçar uma rodada extra.
@@ -617,11 +659,16 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           unidadeEfetiva = decisaoPrimeira.unidadeSelecionada;
           trocouUnidade = true;
           console.log("[motor-agente v18] Unidade salva (1a mensagem): " + unidadeEfetiva);
-        } else {
-          const respostaFinal = evitarRepeticaoLiteral(decisaoPrimeira.resposta!, historico);
+        } else if (decisaoPrimeira.resposta !== null) {
+          const respostaFinal = evitarRepeticaoLiteral(decisaoPrimeira.resposta, historico);
           await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
+        } else {
+          // VAL-12: pergunta_geral=true já na 1ª mensagem — segue pro fluxo normal (Passo 6).
+          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+          perguntaGeralAtiva = true;
+          console.log("[motor-agente v18] Pergunta geral identificada (1a mensagem): segue pro RAG geral (FAQ isolado)");
         }
       }
     }
@@ -686,6 +733,24 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
       if (chunksPrograma && chunksPrograma.length > 0) {
         contextRAG = "\n\n--- CONTEXTO ---\n" + chunksPrograma.map((c: { conteudo: string; fonte_tipo?: string }) =>
+          c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
+        ).join("\n");
+      }
+    } else if (isAgenteProgramacao && perguntaGeralAtiva) {
+      // VAL-12: pergunta institucional real sem unidade escolhida ainda — busca só em FAQ.
+      // documentos_rag confirma (produção, 2026-07-10): FAQ é 4/4 documentos sem unidade_cuca
+      // (sempre geral), monthly_program é 5/5 SEMPRE atrelado a uma unidade — misturar tipos
+      // aqui (como RAG_FONTES_POR_AGENTE faz) vazaria conteúdo de uma unidade aleatória (a mais
+      // parecida por embedding) numa resposta que ainda não tem unidade definida.
+      const embedding = await gerarEmbedding(textoFinal, openaiKey);
+      const { data: chunksFaq } = await supabase.rpc("buscar_chunks_similares", {
+        query_embedding: "[" + embedding.join(",") + "]",
+        p_tipos: ["FAQ"],
+        p_unidade_cuca: null,
+        p_limite: 5,
+      });
+      if (chunksFaq && chunksFaq.length > 0) {
+        contextRAG = "\n\n--- CONTEXTO ---\n" + chunksFaq.map((c: { conteudo: string; fonte_tipo?: string }) =>
           c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
         ).join("\n");
       }
