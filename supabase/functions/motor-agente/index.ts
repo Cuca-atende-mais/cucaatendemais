@@ -371,6 +371,23 @@ export type DecisaoPrimeiraMensagem = {
 };
 
 /**
+ * Backlog 4b: saudação de abertura pro fallback de decidirPrimeiraMensagem (1ª mensagem sem
+ * nome direto de unidade E sem pergunta_geral) — hoje esse branch nunca chama GPT (retorna só
+ * texto fixo) e não deve passar a chamar só por causa da saudação. Mesmo espírito do TOM-05
+ * (fixas rotativas): aqui vale o custo de manter variações porque é o primeiro contato do lead
+ * com a Maria — ao contrário dos ramos genéricos de TOM-05, que preferiram o approach mais
+ * barato (evitarRepeticaoLiteral) por serem muitos ramos diferentes.
+ */
+export const SAUDACOES_ABERTURA: string[] = [
+  "Oi! Que bom te ver por aqui! 😊",
+  "Olá! Seja muito bem-vindo(a) à Rede CUCA! 🎉",
+  "E aí! Fico super feliz com seu interesse no CUCA! 😊",
+  "Oi, oi! Bora conhecer tudo que o CUCA tem pra você? 🎉",
+  "Olá! Que legal ter você aqui com a gente! ✨",
+  "Oi! Bem-vindo(a)! Vamos descobrir o CUCA juntos? 😊",
+];
+
+/**
  * Decide o que fazer na 1ª mensagem de uma conversa em unidade_cuca='Geral' (sem
  * aguardando_unidade nem unidade_selecionada em metadata ainda).
  * AUD-07: se o lead já citar a unidade na própria 1ª mensagem ("quero saber da Barra"),
@@ -393,7 +410,12 @@ export function decidirPrimeiraMensagem(
     // fluxo normal (Passo 6, RAG geral) pra responder de verdade.
     return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
   }
-  return { unidadeSelecionada: null, aguardandoUnidade: true, resposta: MENU_UNIDADES };
+  // Backlog 4b: nem nome de unidade, nem pergunta geral — é a 1ª mensagem "crua" (ex.: "oi",
+  // "quero saber sobre vocês"). Prefixa uma saudação de abertura rotativa antes do menu; NÃO
+  // mexe no branch de unidadeDetectadaDireta acima, que já cai no fluxo de GPT (que já combina
+  // saudação e menu sozinho, ver prompt_sistema "PRIMEIRA INTERAÇÃO").
+  const saudacao = SAUDACOES_ABERTURA[Math.floor(Math.random() * SAUDACOES_ABERTURA.length)];
+  return { unidadeSelecionada: null, aguardandoUnidade: true, resposta: saudacao + "\n\n" + MENU_UNIDADES };
 }
 
 async function getOpenAIKey(supabase: ReturnType<typeof createClient>): Promise<string> {

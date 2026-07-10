@@ -16,6 +16,7 @@ import {
   validarCanalEncaminhamento,
   montarMensagemEncaminhamento,
   MENU_UNIDADES,
+  SAUDACOES_ABERTURA,
   handler,
 } from "./index.ts";
 
@@ -220,6 +221,36 @@ Deno.test("VAL-12: decidirPrimeiraMensagem com pergunta_geral=true não força o
   assertEquals(decisao.unidadeSelecionada, null);
   assertEquals(decisao.aguardandoUnidade, false, "VAL-12: pergunta geral real não pode deixar a conversa aguardando unidade");
   assertEquals(decisao.resposta, null, "VAL-12: resposta=null sinaliza 'siga o fluxo normal' — não é pra responder com o menu canned");
+});
+
+// ── Backlog 4b: saudação de abertura no fallback puro de decidirPrimeiraMensagem ────────────
+// Esse branch nunca chama GPT (nem antes, nem depois desta mudança) — a variação vem de um
+// array fixo (SAUDACOES_ABERTURA) sorteado localmente, não gerado por modelo. Escolha aleatória
+// em vez de rotação por índice: mais simples (não exige plumbar um contador/estado por lead
+// através do handler só pra alternar 6 frases fixas) e o teste abaixo prova a variação de forma
+// estatística (100 chamadas sem seed fixo), não determinística — trade-off aceito pela mesma
+// razão de simplicidade.
+Deno.test("Backlog 4b: 1ª mensagem sem unidade nem pergunta geral recebe uma saudação de abertura antes do menu", () => {
+  const avaliacaoDefault = { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false };
+  const respostasObservadas = new Set<string>();
+  for (let i = 0; i < 100; i++) {
+    const decisao = decidirPrimeiraMensagem(undefined, avaliacaoDefault);
+    assertEquals(decisao.unidadeSelecionada, null);
+    assertEquals(decisao.aguardandoUnidade, true);
+    assertStringIncludes(decisao.resposta ?? "", MENU_UNIDADES, "a resposta precisa conter o menu de unidades na íntegra");
+    const comecaComSaudacaoConhecida = SAUDACOES_ABERTURA.some((s) => decisao.resposta?.startsWith(s));
+    assertEquals(
+      comecaComSaudacaoConhecida,
+      true,
+      "Backlog 4b: a resposta desse branch precisa começar com uma das saudações de SAUDACOES_ABERTURA, antes do menu",
+    );
+    respostasObservadas.add(decisao.resposta ?? "");
+  }
+  assertEquals(
+    respostasObservadas.size > 1,
+    true,
+    "Backlog 4b: em 100 chamadas sem seed fixo, esperava-se mais de uma variação de saudação (probabilidade de sempre sair a mesma, com 6 opções, é (1/6)^99 — praticamente zero); se sempre igual, a escolha aleatória não está funcionando",
+  );
 });
 
 Deno.test("VAL-12: decidirAguardandoUnidade (branch mudou_de_assunto) com pergunta_geral=true também segue pro fluxo normal", () => {
