@@ -86,6 +86,115 @@ export function removerTag(texto: string, nomeTag: string): { encontrada: boolea
 }
 
 /**
+ * Backlog 4a (fallback para outros canais): irmã de `removerTag`, mas para tags que carregam
+ * um argumento — `[[ENCAMINHAR:canal]]`. Captura o valor do argumento separadamente do texto
+ * limpo. Mesmo espírito de `removerTag`: tolera variação de case/espaçamento na tag em si.
+ * O argumento capturado NUNCA deve ser usado como dado confiável por si só — quem chama isto
+ * precisa validar contra uma lista fechada (ver `validarCanalEncaminhamento`) antes de usar,
+ * mesmo princípio de "nunca confia cegamente no LLM" já aplicado a `validarAvaliacaoSelecaoUnidade`.
+ */
+export function extrairTagComArgumento(
+  texto: string,
+  nomeTag: string,
+): { encontrada: boolean; argumento: string | null; texto: string } {
+  const nomeEscapado = escaparRegex(nomeTag);
+  const regexComGrupo = new RegExp("\\[\\[\\s*" + nomeEscapado + "\\s*:\\s*([a-z_]+)\\s*\\]\\]", "i");
+  const regexGlobal = new RegExp("\\[\\[\\s*" + nomeEscapado + "\\s*:\\s*[a-z_]+\\s*\\]\\]", "gi");
+  const match = texto.match(regexComGrupo);
+  const textoLimpo = texto.replace(regexGlobal, "").trim();
+  return {
+    encontrada: !!match,
+    argumento: match ? match[1].toLowerCase() : null,
+    texto: textoLimpo,
+  };
+}
+
+/**
+ * Backlog 4a: canais da Rede CUCA fora do escopo do RAG do Institucional, pra onde a Maria
+ * pode encaminhar o lead via [[ENCAMINHAR:canal]]. Lista fechada de propósito — é o que
+ * `validarCanalEncaminhamento` usa pra nunca confiar cegamente no argumento que o GPT emitiu.
+ */
+const CANAIS_ENCAMINHAMENTO = ["empregabilidade", "acesso_cuca", "ouvidoria", "academia_enem"] as const;
+export type CanalEncaminhamento = typeof CANAIS_ENCAMINHAMENTO[number];
+
+/** Nunca confia cegamente no argumento capturado da tag — só aceita um dos 4 valores fechados
+ * (mesmo princípio de `validarAvaliacaoSelecaoUnidade`: o LLM pode alucinar um canal que não
+ * existe, ex. "financeiro"). */
+export function validarCanalEncaminhamento(valor: string | null): CanalEncaminhamento | null {
+  if (valor && (CANAIS_ENCAMINHAMENTO as readonly string[]).includes(valor)) {
+    return valor as CanalEncaminhamento;
+  }
+  return null;
+}
+
+/**
+ * Textos exatos do sócio, um por canal (tom próprio de cada um, não uma fórmula genérica
+ * única). `comNumero` recebe o número JÁ SANITIZADO (só dígitos, formato wa.me/55XXXXXXXXXXX);
+ * `semNumero` é o texto pros 3 canais ainda sem contato confirmado — mantém a parte que explica
+ * o que o canal faz, só troca o trecho do wa.me por "em breve te passo o contato".
+ */
+const MENSAGENS_CANAL: Record<CanalEncaminhamento, { comNumero: (numero: string) => string; semNumero: string }> = {
+  empregabilidade: {
+    comNumero: (numero) =>
+      "Que legal seu interesse! 😊 Pra vagas de emprego e oportunidades de trabalho, quem cuida disso é a equipe de Empregabilidade da Rede CUCA — chama eles direto no wa.me/" + numero + " que te atendem certinho!",
+    semNumero:
+      "Que legal seu interesse! 😊 Pra vagas de emprego e oportunidades de trabalho, quem cuida disso é a equipe de Empregabilidade da Rede CUCA — em breve te passo o contato certinho aqui — já estamos organizando esse canal!",
+  },
+  acesso_cuca: {
+    comNumero: (numero) =>
+      "Entendi! Pra reservar espaços do CUCA (salas, quadras, auditório etc.), quem cuida disso é o time de Acesso CUCA — fala com eles pelo wa.me/" + numero + " 😉 Eles vão te passar a disponibilidade certinho!",
+    semNumero:
+      "Entendi! Pra reservar espaços do CUCA (salas, quadras, auditório etc.), quem cuida disso é o time de Acesso CUCA — em breve te passo o contato certinho aqui — já estamos organizando esse canal!",
+  },
+  ouvidoria: {
+    comNumero: (numero) =>
+      "Obrigada por trazer isso. Pra registrar reclamação, sugestão ou elogio formal, o canal certo é a Ouvidoria da Rede CUCA — é só chamar no wa.me/" + numero + ", eles vão te dar atenção total.",
+    semNumero:
+      "Obrigada por trazer isso. Pra registrar reclamação, sugestão ou elogio formal, o canal certo é a Ouvidoria da Rede CUCA — em breve te passo o contato certinho aqui — já estamos organizando esse canal!",
+  },
+  academia_enem: {
+    comNumero: (numero) =>
+      "Oi! Pra tudo sobre a Academia Enem — inscrição, aulas, cronograma — fala direto com a equipe deles no wa.me/" + numero + " 📚 Eles vão te passar tudo certinho!",
+    semNumero:
+      "Oi! Pra tudo sobre a Academia Enem — inscrição, aulas, cronograma — em breve te passo o contato certinho aqui — já estamos organizando esse canal!",
+  },
+};
+
+/**
+ * Monta a mensagem final de encaminhamento — SEMPRE a partir de dados do código/config, NUNCA
+ * do texto que o GPT gerou. É essa a garantia de segurança pedida: o GPT só sinaliza a
+ * INTENÇÃO via tag; o número real (ou a ausência dele) vem exclusivamente do parâmetro
+ * `numero`, buscado na tabela `configuracoes` por quem chama esta função.
+ * Sanitiza `numero` pra só dígitos antes de montar o link wa.me — nunca gera "wa.me/None" nem
+ * variação quebrada; se sobrar vazio depois de sanitizar (config malformada), cai no texto
+ * `semNumero` da mesma forma que `numero === null`.
+ */
+export function montarMensagemEncaminhamento(canal: CanalEncaminhamento, numero: string | null): string {
+  const mensagens = MENSAGENS_CANAL[canal];
+  const numeroLimpo = numero ? numero.replace(/\D/g, "") : "";
+  if (!numeroLimpo) return mensagens.semNumero;
+  return mensagens.comNumero(numeroLimpo);
+}
+
+/** Busca os 4 números de encaminhamento em `configuracoes` (chave='numeros_canais_cuca').
+ * Nunca propaga exceção — linha ausente, JSON malformado ou erro de rede caem no default
+ * seguro (todos os canais null), que `montarMensagemEncaminhamento` já trata sem número. */
+async function buscarNumeroCanal(
+  supabase: ReturnType<typeof createClient>,
+  canal: CanalEncaminhamento,
+): Promise<string | null> {
+  try {
+    const { data } = await supabase.from("configuracoes").select("valor").eq("chave", "numeros_canais_cuca").single();
+    const numeros = (data?.valor ?? {}) as Record<string, unknown>;
+    const numero = numeros[canal];
+    return typeof numero === "string" && numero.length > 0 ? numero : null;
+  } catch (exc) {
+    console.error("[motor-agente v18] buscarNumeroCanal erro, fallback sem número:", exc);
+    return null;
+  }
+}
+
+/**
  * Testa se `chave` aparece em `texto` como palavra inteira (n\u00e3o substring solta, ex.: "barra"
  * em "barra de chocolate"). Exce\u00e7\u00e3o (AUD-05): quando `chave` \u00e9 um d\u00edgito 1-5 (as chaves
  * num\u00e9ricas de UNIDADES_MAP), um d\u00edgito solto em qualquer parte da frase ("...maiores de 3
@@ -676,6 +785,27 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     if (avaliacaoHandover.encontrada) { handover = true; resposta = avaliacaoHandover.texto; }
     const avaliacaoEncerrar = removerTag(resposta, "encerrar");
     if (avaliacaoEncerrar.encontrada) { encerrado = true; resposta = avaliacaoEncerrar.texto; }
+
+    // Backlog 4a: encaminhamento pra outro canal da Rede CUCA (Empregabilidade/Acesso CUCA/
+    // Ouvidoria/Academia Enem) — fora do escopo do RAG do Institucional. Regra de segurança
+    // inegociável: a resposta final é INTEIRAMENTE construída pelo código a partir do número
+    // buscado em `configuracoes`, nunca a partir do texto que o GPT gerou — o GPT só sinaliza
+    // a intenção via tag. Substitui `resposta` por completo quando a tag é válida (não
+    // complementa o texto do GPT), fechando de vez a superfície de um número inventado
+    // aparecer em qualquer lugar da mensagem.
+    const avaliacaoEncaminhar = extrairTagComArgumento(resposta, "encaminhar");
+    if (avaliacaoEncaminhar.encontrada) {
+      const canal = validarCanalEncaminhamento(avaliacaoEncaminhar.argumento);
+      if (canal) {
+        const numeroCanal = await buscarNumeroCanal(supabase, canal);
+        resposta = montarMensagemEncaminhamento(canal, numeroCanal);
+      } else {
+        // Canal fora da lista fechada (GPT alucinou um valor) — remove só a tag mal-formada,
+        // mantém o texto do GPT como resposta normal em vez de inventar um encaminhamento.
+        resposta = avaliacaoEncaminhar.texto;
+      }
+    }
+
     // GPT pode responder só com a tag, sem texto (ex.: "[[ENCERRAR]]"). resposta="" nesse ponto
     // vira None no worker (data.get("resposta") or None), que hoje interpreta None como falha
     // técnica e reenvia "tivemos um problema técnico" — mensagem errada para um encerramento/

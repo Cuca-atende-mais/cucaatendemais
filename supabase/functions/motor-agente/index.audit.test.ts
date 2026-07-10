@@ -3,7 +3,7 @@
 // docs/qa/AUDITORIA-motor-agente-institucional-2026-07-07.md. Eles descrevem o
 // comportamento DESEJADO/correto — se o bug ainda não foi corrigido, o teste FALHA.
 // Isso é intencional: é uma suíte "vermelha" servindo de checklist executável.
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   contemPalavra,
   decidirAguardandoUnidade,
@@ -11,6 +11,9 @@ import {
   ultimaMensagemEhMenuNumerado,
   decidirPrimeiraMensagem,
   deveTentarNovamente,
+  extrairTagComArgumento,
+  validarCanalEncaminhamento,
+  montarMensagemEncaminhamento,
   MENU_UNIDADES,
   handler,
 } from "./index.ts";
@@ -66,8 +69,10 @@ function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record
 
 /** Stub de `fetch` global — intercepta só as 2 chamadas à OpenAI que o handler faz nesse fluxo
  * (embeddings e chat/completions); qualquer outra URL não-mockada derruba o teste (falha alta,
- * não falso-positivo silencioso). */
-function comFetchMockado<T>(fn: () => Promise<T>): Promise<T> {
+ * não falso-positivo silencioso). `respostaChatCompletions` é opcional (default "Resposta de
+ * teste", preserva todo call-site existente) — testes de backlog 4a usam pra simular o GPT
+ * emitindo a tag [[ENCAMINHAR:canal]]. */
+function comFetchMockado<T>(fn: () => Promise<T>, respostaChatCompletions = "Resposta de teste"): Promise<T> {
   const fetchOriginal = globalThis.fetch;
   globalThis.fetch = ((url: string | URL | Request) => {
     const urlStr = String(url instanceof Request ? url.url : url);
@@ -75,7 +80,7 @@ function comFetchMockado<T>(fn: () => Promise<T>): Promise<T> {
       return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [0, 0, 0] }] }), { status: 200 }));
     }
     if (urlStr.includes("api.openai.com/v1/chat/completions")) {
-      return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: "Resposta de teste" } }] }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: respostaChatCompletions } }] }), { status: 200 }));
     }
     throw new Error("fetch não-mockado nesse teste: " + urlStr);
     // deno-lint-ignore no-explicit-any
@@ -342,4 +347,149 @@ Deno.test("VAL-08 (regressão): dígito respondendo um menu de categorias numera
     true,
     "VAL-08 não pode quebrar o caso legítimo: '2' respondendo um menu de categorias numerado de verdade ainda deve carregar a área selecionada",
   );
+});
+
+// ── Backlog 4a: fallback para outros canais da Rede CUCA ────────────────────────────────────
+// Regra de segurança inegociável: o número de WhatsApp de outro canal NUNCA vem do texto que
+// o GPT gerou — só a INTENÇÃO, via tag [[ENCAMINHAR:canal]]. O código busca o número real em
+// `configuracoes` e monta a mensagem inteira. Estes testes provam isso nos dois sentidos: o
+// número certo aparece, E um número falso que o GPT tenha tentado colar no texto não aparece.
+
+Deno.test("extrairTagComArgumento: detecta [[ENCAMINHAR:canal]] e captura o argumento em minúsculo", () => {
+  const r = extrairTagComArgumento("Isso é com outro time! [[ENCAMINHAR:Empregabilidade]]", "encaminhar");
+  assertEquals(r.encontrada, true);
+  assertEquals(r.argumento, "empregabilidade");
+  assertEquals(r.texto, "Isso é com outro time!");
+});
+
+Deno.test("extrairTagComArgumento: tolera espaçamento dentro dos colchetes e ao redor dos dois-pontos", () => {
+  const r = extrairTagComArgumento("texto [[ ENCAMINHAR : acesso_cuca ]]", "encaminhar");
+  assertEquals(r.encontrada, true);
+  assertEquals(r.argumento, "acesso_cuca");
+});
+
+Deno.test("extrairTagComArgumento: encontrada=false e texto inalterado quando a tag não aparece", () => {
+  const r = extrairTagComArgumento("resposta normal, sem tag nenhuma", "encaminhar");
+  assertEquals(r.encontrada, false);
+  assertEquals(r.argumento, null);
+  assertEquals(r.texto, "resposta normal, sem tag nenhuma");
+});
+
+Deno.test("validarCanalEncaminhamento: aceita os 4 canais válidos", () => {
+  for (const canal of ["empregabilidade", "acesso_cuca", "ouvidoria", "academia_enem"]) {
+    assertEquals(validarCanalEncaminhamento(canal), canal);
+  }
+});
+
+Deno.test("validarCanalEncaminhamento: nunca confia cegamente no argumento do GPT — rejeita canal fora da lista fechada", () => {
+  assertEquals(validarCanalEncaminhamento("financeiro"), null, "canal inventado pelo GPT não pode passar");
+  assertEquals(validarCanalEncaminhamento(null), null);
+  assertEquals(validarCanalEncaminhamento(""), null);
+});
+
+Deno.test("montarMensagemEncaminhamento: empregabilidade com número — texto exato do sócio, com link wa.me", () => {
+  assertEquals(
+    montarMensagemEncaminhamento("empregabilidade", "5585986332359"),
+    "Que legal seu interesse! 😊 Pra vagas de emprego e oportunidades de trabalho, quem cuida disso é a equipe de Empregabilidade da Rede CUCA — chama eles direto no wa.me/5585986332359 que te atendem certinho!",
+  );
+});
+
+Deno.test("montarMensagemEncaminhamento: acesso_cuca com número — texto exato do sócio", () => {
+  assertEquals(
+    montarMensagemEncaminhamento("acesso_cuca", "5585900000001"),
+    "Entendi! Pra reservar espaços do CUCA (salas, quadras, auditório etc.), quem cuida disso é o time de Acesso CUCA — fala com eles pelo wa.me/5585900000001 😉 Eles vão te passar a disponibilidade certinho!",
+  );
+});
+
+Deno.test("montarMensagemEncaminhamento: ouvidoria com número — texto exato do sócio", () => {
+  assertEquals(
+    montarMensagemEncaminhamento("ouvidoria", "5585900000002"),
+    "Obrigada por trazer isso. Pra registrar reclamação, sugestão ou elogio formal, o canal certo é a Ouvidoria da Rede CUCA — é só chamar no wa.me/5585900000002, eles vão te dar atenção total.",
+  );
+});
+
+Deno.test("montarMensagemEncaminhamento: academia_enem com número — texto exato do sócio", () => {
+  assertEquals(
+    montarMensagemEncaminhamento("academia_enem", "5585900000003"),
+    "Oi! Pra tudo sobre a Academia Enem — inscrição, aulas, cronograma — fala direto com a equipe deles no wa.me/5585900000003 📚 Eles vão te passar tudo certinho!",
+  );
+});
+
+Deno.test("montarMensagemEncaminhamento: número null (os 3 canais pendentes hoje) mantém a explicação do canal, sem wa.me nem link quebrado", () => {
+  for (const canal of ["empregabilidade", "acesso_cuca", "ouvidoria", "academia_enem"] as const) {
+    const msg = montarMensagemEncaminhamento(canal, null);
+    assertEquals(msg.includes("wa.me"), false, "canal=" + canal + ": sem número confirmado, a mensagem NÃO pode conter 'wa.me' (viraria um link quebrado tipo wa.me/None)");
+    assertStringIncludes(msg, "em breve te passo o contato certinho aqui — já estamos organizando esse canal!");
+  }
+});
+
+Deno.test("montarMensagemEncaminhamento: sanitiza número com símbolos (espaço/traço/parênteses/+) antes de montar o link wa.me", () => {
+  const msg = montarMensagemEncaminhamento("empregabilidade", "+55 (85) 98633-2359");
+  assertStringIncludes(msg, "wa.me/5585986332359");
+  assertEquals(msg.includes("+"), false, "o link wa.me não pode carregar símbolos — só dígitos, formato wa.me/55XXXXXXXXXXX");
+  assertEquals(msg.includes("("), false);
+  assertEquals(msg.includes("-"), false);
+});
+
+Deno.test("montarMensagemEncaminhamento: número vazio depois de sanitizar (config malformada) cai no texto sem wa.me, nunca gera link quebrado", () => {
+  const msg = montarMensagemEncaminhamento("ouvidoria", "não-confirmado");
+  assertEquals(msg.includes("wa.me"), false);
+});
+
+// ── Handler completo: os 4 canais, incluindo o caso número=null ────────────────────────────
+const NUMEROS_CANAIS_TESTE: Record<string, string | null> = {
+  empregabilidade: "5585986332359",
+  acesso_cuca: null,
+  ouvidoria: "5585900000001",
+  academia_enem: "5585900000002",
+};
+
+for (const canal of ["empregabilidade", "acesso_cuca", "ouvidoria", "academia_enem"] as const) {
+  Deno.test(`backlog 4a (handler): canal=${canal} — resposta final usa o número da config, nunca o número que o GPT tentou colar no texto`, async () => {
+    const chamadas: ChamadaRegistrada[] = [];
+    const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+    respostas["configuracoes"] = { data: { valor: NUMEROS_CANAIS_TESTE } };
+    const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+    // O GPT "tenta" colar um número FALSO no texto livre, além de emitir a tag — prova que o
+    // código ignora esse número e usa só o que veio da config.
+    const numeroFalsoDoGpt = "5599999999999";
+    const respostaGptComTagETagFalsa = "Sobre isso, pode falar com eles no " + numeroFalsoDoGpt + "! [[ENCAMINHAR:" + canal + "]]";
+
+    const resp = await comFetchMockado(
+      () => handler(requestFake("pergunta fora do escopo do RAG"), supabaseMock),
+      respostaGptComTagETagFalsa,
+    );
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+    const body = await resp.json();
+
+    assertEquals(
+      body.resposta.includes(numeroFalsoDoGpt),
+      false,
+      "backlog 4a: o número que o GPT tentou colar no texto livre NUNCA pode aparecer na resposta final",
+    );
+
+    const numeroEsperado = NUMEROS_CANAIS_TESTE[canal];
+    if (numeroEsperado) {
+      assertStringIncludes(body.resposta, "wa.me/" + numeroEsperado, "a resposta final deveria conter o link wa.me com o número real vindo de `configuracoes`");
+    } else {
+      assertEquals(body.resposta.includes("wa.me"), false, "canal=" + canal + " sem número confirmado na config — a resposta não pode conter link wa.me quebrado");
+      assertEquals(/\d{8,}/.test(body.resposta), false, "canal=" + canal + " sem número confirmado na config — a resposta não pode conter nenhum número");
+    }
+  });
+}
+
+Deno.test("backlog 4a (handler): canal inválido/alucinado pelo GPT não gera encaminhamento — mantém o texto normal do GPT", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["configuracoes"] = { data: { valor: NUMEROS_CANAIS_TESTE } };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("pergunta qualquer"), supabaseMock),
+    "Resposta normal do GPT. [[ENCAMINHAR:financeiro]]",
+  );
+  assertEquals(resp.status, 200);
+  const body = await resp.json();
+  assertEquals(body.resposta, "Resposta normal do GPT.", "canal fora da lista fechada não pode gerar mensagem de encaminhamento — só remove a tag mal-formada e mantém o texto do GPT");
 });
