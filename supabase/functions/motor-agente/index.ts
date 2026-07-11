@@ -624,6 +624,47 @@ async function salvarMensagemAgente(supabase: ReturnType<typeof createClient>, c
 }
 
 /**
+ * Item 2 (S-WM-22, TOM-03b): reconhece uma linha no formato compacto que a regra 6 de
+ * `INSTRUCAO_SEGURANCA` já exige do GPT ao listar modalidades/cursos — "Nome - Dias" (ex.:
+ * "Natacao - Ter/Qui/Sex"). Não é um formato novo inventado por esta story, é o formato que o
+ * guardrail já pede; esta função só detecta se o GPT seguiu a regra.
+ */
+function ehLinhaDeItemLista(linha: string): boolean {
+  const l = linha.trim();
+  if (!l || l.endsWith('?') || l.length > 80) return false;
+  return l.includes(' - ');
+}
+
+/**
+ * Item 2 (S-WM-22, TOM-03b): divide uma resposta longa/listável em 2-3 partes lógicas — uma
+ * mensagem de abertura, a lista em si, e um fechamento — em vez de um único bloco de texto
+ * corrido. Critério de "listável": 3 ou mais linhas no formato de item de lista (ver
+ * `ehLinhaDeItemLista`) — abaixo disso, retorna a resposta inteira como 1 única parte
+ * (comportamento atual preservado, AC4). Localiza o bloco CONTÍGUO da 1ª à última linha-item;
+ * texto antes do bloco vira "abertura", o bloco vira a "lista", texto depois vira "fechamento"
+ * — qualquer uma das 3 partes que ficar vazia depois de trim() é descartada, nunca retorna
+ * string vazia como parte. Pura e determinística: chamada só DEPOIS do processamento de tags
+ * (handover/encerrar/encaminhar) no handler, nunca antes (AC5) — recebe sempre o texto final já
+ * limpo dessas tags.
+ */
+export function dividirRespostaEmPartes(texto: string): string[] {
+  const linhas = texto.split('\n');
+  const indicesItem = linhas.map((l, i) => (ehLinhaDeItemLista(l) ? i : -1)).filter((i) => i >= 0);
+
+  if (indicesItem.length < 3) return [texto];
+
+  const primeiroIndice = indicesItem[0];
+  const ultimoIndice = indicesItem[indicesItem.length - 1];
+
+  const abertura = linhas.slice(0, primeiroIndice).join('\n').trim();
+  const lista = linhas.slice(primeiroIndice, ultimoIndice + 1).join('\n').trim();
+  const fechamento = linhas.slice(ultimoIndice + 1).join('\n').trim();
+
+  const partes = [abertura, lista, fechamento].filter((p) => p.length > 0);
+  return partes.length > 0 ? partes : [texto];
+}
+
+/**
  * TOM-05: os textos fixos dos ramos early-return (menu de unidades, "não consegui identificar"
  * etc.) não passam pelo GPT — se o mesmo ramo disparar duas vezes seguidas, o lead recebe
  * literalmente o mesmo texto, palavra por palavra, um dos sinais mais fortes de "isso é um
@@ -1070,12 +1111,23 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       else if (encerrado) resposta = "Tudo certo! Qualquer coisa, é só chamar novamente. 😊";
     }
 
-    // 12. Salvar
-    await salvarMensagemAgente(supabase, conversa.id, lead.id, resposta);
+    // 12. Item 2 (S-WM-22): divide em 2-3 partes se a resposta for longa/listável — SEMPRE
+    // depois das tags acima (handover/encerrar/encaminhar já resolvidas, AC5). `mensagens`
+    // tem sempre >=1 elemento; `resposta` continua igual ao texto único de sempre (join),
+    // pra nenhum consumidor que só lê `resposta` quebrar.
+    const mensagens = dividirRespostaEmPartes(resposta);
+    resposta = mensagens.join("\n\n");
+
+    // 13. Salvar — 1 linha por parte efetivamente gerada, preservando a ordem. Sem isso, o
+    // histórico lido no próximo turno (Passo 4, linha ~645) ficaria com 1 linha concatenada
+    // em vez de refletir exatamente o que foi (ou vai ser) enviado turno por turno.
+    for (const parte of mensagens) {
+      await salvarMensagemAgente(supabase, conversa.id, lead.id, parte);
+    }
     if (handover) await supabase.from("conversas").update({ status: "awaiting_human", updated_at: new Date().toISOString() }).eq("id", conversa.id);
     else if (encerrado) await supabase.from("conversas").update({ status: "encerrada", updated_at: new Date().toISOString() }).eq("id", conversa.id);
 
-    return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover, encerrado, resposta }), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover, encerrado, resposta, mensagens }), { headers: { "Content-Type": "application/json" } });
 
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
