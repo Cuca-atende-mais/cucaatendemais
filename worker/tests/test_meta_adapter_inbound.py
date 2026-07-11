@@ -326,7 +326,8 @@ class TestDispatchMotorAgente:
     # ── _chamar_motor_agente: retorna texto em sucesso ────────────────────
     @pytest.mark.asyncio
     async def test_chamar_motor_agente_retorna_resposta(self):
-        """AC 1: motor-agente respondeu → retorna texto de resposta."""
+        """AC 1: motor-agente respondeu → retorna lista com o texto de resposta (S-WM-22: sem
+        campo `mensagens` no JSON, cai no fallback [resposta] — 1 elemento só)."""
         import sys
         from unittest.mock import AsyncMock, MagicMock, patch
         from meta_adapter_inbound import _chamar_motor_agente
@@ -351,7 +352,34 @@ class TestDispatchMotorAgente:
              patch.dict(sys.modules, {"httpx": mock_httpx}):
             resultado = await _chamar_motor_agente(contrato, "conversa-uuid-123", MagicMock())
 
-        assert resultado == "Olá! Como posso ajudar?"
+        assert resultado == ["Olá! Como posso ajudar?"]
+
+    # ── S-WM-22: _chamar_motor_agente lê o campo `mensagens` (múltiplas partes) quando presente ──
+    @pytest.mark.asyncio
+    async def test_chamar_motor_agente_le_campo_mensagens_multiplas_partes(self):
+        """S-WM-22 (TOM-03b): quando o motor-agente divide a resposta, `mensagens` (lista) tem
+        prioridade sobre `resposta` (string) — retorna a lista completa, na ordem."""
+        import sys
+        from unittest.mock import MagicMock, patch
+        from meta_adapter_inbound import _chamar_motor_agente
+
+        resp_dividida = {
+            **self._MOTOR_AGENTE_RESP_OK,
+            "resposta": "Abertura\n\nLista\n\nFechamento",
+            "mensagens": ["Abertura", "Lista", "Fechamento"],
+        }
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.json.return_value = resp_dividida
+        mock_httpx, _ = self._make_mock_httpx(post_return=mock_resp)
+
+        contrato = {"mensagem": "quais cursos vocês têm?", "telefone": "55", "canal_origem": "id", "agente_tipo": "Institucional"}
+
+        with patch.dict(os.environ, {"SUPABASE_URL": "http://fake", "SUPABASE_SERVICE_ROLE_KEY": "k"}), \
+             patch.dict(sys.modules, {"httpx": mock_httpx}):
+            resultado = await _chamar_motor_agente(contrato, "conversa-uuid-456", MagicMock())
+
+        assert resultado == ["Abertura", "Lista", "Fechamento"]
 
     # ── Resilência: falha HTTP → retorna None sem propagar ────────────────
     @pytest.mark.asyncio
@@ -398,7 +426,7 @@ class TestDispatchMotorAgente:
                 mock_supabase,
             )
 
-        assert resultado == "Transferindo..."
+        assert resultado == ["Transferindo..."]
         mock_supabase.table.assert_called_with("conversas")
         mock_supabase.table.return_value.update.assert_called_once_with(
             {"status": "awaiting_human", "updated_at": "now()"}
@@ -438,7 +466,7 @@ class TestDispatchMotorAgente:
             with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
                  patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
                  patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
-                       return_value="Resposta motor") as mock_motor, \
+                       return_value=["Resposta motor"]) as mock_motor, \
                  patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
                        return_value=True), \
                  patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock,
@@ -447,6 +475,77 @@ class TestDispatchMotorAgente:
 
             mock_motor.assert_called_once(), f"motor-agente não chamado para agente={agente}"
             mock_enviar.assert_called_once(), f"_meta_enviar não chamado para agente={agente}"
+
+    # ── S-WM-22 (TOM-03b): dispatch de múltiplas partes, na ordem, sequencial ─────────────────
+    @pytest.mark.asyncio
+    async def test_dispatch_multiplas_partes_envia_todas_na_ordem(self):
+        """AC3: resposta dividida em N partes → _meta_enviar chamado N vezes, com o texto de
+        cada parte, na ordem certa (não paralelo, não fora de ordem)."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="quais cursos vocês têm?")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-id-1"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"bloqueado": False}
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [{"id": "conv-id-1", "status": "ativa"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        partes = ["Claro! Segue a programação:", "Natacao - Ter/Qui\nJudo - Seg/Qua\nMusica - Sab", "Quer saber mais?"]
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock, return_value=partes), \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        assert mock_enviar.call_count == 3, "esperava _meta_enviar chamado 1 vez por parte (3 partes)"
+        textos_enviados = [call.args[2] for call in mock_enviar.call_args_list]
+        assert textos_enviados == partes, "as partes precisam ser enviadas na MESMA ordem que o motor-agente devolveu"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_falha_na_parte_do_meio_aborta_sem_duplicar_nem_pular(self):
+        """AC3 (comportamento de falha parcial, Escopo IN item 6): se a parte 2 de 3 falhar no
+        envio, a 3ª NÃO pode ser enviada (evita resposta fora de ordem/sem sentido) e a 1ª não
+        pode ser reenviada (evita duplicar) — aborta limpo, loga quantas foram enviadas antes."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="quais cursos vocês têm?")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-id-1"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"bloqueado": False}
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [{"id": "conv-id-1", "status": "ativa"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        partes = ["Abertura", "Lista", "Fechamento"]
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock, return_value=partes), \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, side_effect=[True, False, True]) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        assert mock_enviar.call_count == 2, (
+            "esperava só 2 chamadas: a 1ª (sucesso) e a 2ª (falha) — a 3ª parte NÃO pode ser "
+            "enviada depois de uma falha no meio, e a 1ª não pode ser reenviada (sem retry)"
+        )
+        textos_enviados = [call.args[2] for call in mock_enviar.call_args_list]
+        assert textos_enviados == ["Abertura", "Lista"], "só 'Abertura' e 'Lista' deveriam ter sido tentadas, nessa ordem"
 
     # ── §1 auditoria: motor-agente retorna None → fallback ao lead, nunca silêncio ──
     @pytest.mark.asyncio
@@ -717,7 +816,7 @@ class TestDispatchMotorAgente:
             with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
                  patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
                  patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
-                       return_value="Aguarde...") as mock_motor, \
+                       return_value=["Aguarde..."]) as mock_motor, \
                  patch("meta_adapter_inbound._notificar_transbordo", new_callable=AsyncMock) as mock_notif, \
                  patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
                        return_value=True), \
@@ -1027,7 +1126,7 @@ class TestDebounceDispatch:
         with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
              patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
              patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
-                   return_value="Até mais! 😊") as mock_motor, \
+                   return_value=["Até mais! 😊"]) as mock_motor, \
              patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
              patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
 

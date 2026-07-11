@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes } from "./index.ts";
 
 // ── ehSelecaoMenu ────────────────────────────────────────────────────────────
 Deno.test("ehSelecaoMenu: aceita dígitos 1-5 isolados", () => {
@@ -182,4 +182,58 @@ Deno.test({
     const r = removerTag("Vou te transferir para um atendente humano.", "handover");
     assertEquals(r.encontrada, true);
   },
+});
+
+// ── Item 2 (S-WM-22, TOM-03b): dividirRespostaEmPartes ───────────────────────
+const LISTA_5_CURSOS = [
+  "Natacao - Ter/Qui/Sex",
+  "Judo - Seg/Qua",
+  "Informatica - Ter/Qui",
+  "Reforco Escolar - Seg/Ter/Qua/Qui/Sex",
+  "Musica - Sab",
+].join("\n");
+
+Deno.test("dividirRespostaEmPartes: AC4 — resposta curta/normal (sem formato de lista) não é dividida", () => {
+  const texto = "Claro! Temos aulas de natação às terças e quintas. Quer saber mais algum detalhe?";
+  assertEquals(dividirRespostaEmPartes(texto), [texto]);
+});
+
+Deno.test("dividirRespostaEmPartes: AC4 — menos de 3 linhas-item não é considerado listável", () => {
+  const texto = "Temos 2 opções:\nNatacao - Ter/Qui\nJudo - Seg\nEspero ter ajudado!";
+  assertEquals(dividirRespostaEmPartes(texto), [texto]);
+});
+
+Deno.test("dividirRespostaEmPartes: AC1 — abertura + lista (5 cursos) + fechamento vira 3 partes", () => {
+  const texto = "Claro! Aqui está a programação completa:\n\n" + LISTA_5_CURSOS + "\n\nQuer saber horários de alguma modalidade específica?";
+  const partes = dividirRespostaEmPartes(texto);
+  assertEquals(partes.length, 3, "esperava 3 partes: abertura, lista, fechamento");
+  assertEquals(partes[0], "Claro! Aqui está a programação completa:");
+  assertEquals(partes[1], LISTA_5_CURSOS);
+  assertEquals(partes[2], "Quer saber horários de alguma modalidade específica?");
+});
+
+Deno.test("dividirRespostaEmPartes: resposta sem abertura (começa direto na lista) vira 2 partes", () => {
+  const texto = LISTA_5_CURSOS + "\n\nQuer saber mais?";
+  const partes = dividirRespostaEmPartes(texto);
+  assertEquals(partes.length, 2);
+  assertEquals(partes[0], LISTA_5_CURSOS);
+  assertEquals(partes[1], "Quer saber mais?");
+});
+
+Deno.test("dividirRespostaEmPartes: resposta sem fechamento (termina na lista) vira 2 partes", () => {
+  const texto = "Segue a programação:\n\n" + LISTA_5_CURSOS;
+  const partes = dividirRespostaEmPartes(texto);
+  assertEquals(partes.length, 2);
+  assertEquals(partes[0], "Segue a programação:");
+  assertEquals(partes[1], LISTA_5_CURSOS);
+});
+
+Deno.test("dividirRespostaEmPartes: resposta 100% lista (sem abertura nem fechamento) não força split artificial — 1 parte", () => {
+  const partes = dividirRespostaEmPartes(LISTA_5_CURSOS);
+  assertEquals(partes, [LISTA_5_CURSOS]);
+});
+
+Deno.test("dividirRespostaEmPartes: uma pergunta com hífen não é confundida com item de lista (linha termina em '?')", () => {
+  const texto = "Oi! Você quer saber - de forma rápida - qual o horário de hoje?";
+  assertEquals(dividirRespostaEmPartes(texto), [texto]);
 });

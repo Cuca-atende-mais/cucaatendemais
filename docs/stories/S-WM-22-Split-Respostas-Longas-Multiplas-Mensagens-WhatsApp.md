@@ -1,7 +1,7 @@
 # S-WM-22 — TOM-03b: respostas longas em múltiplas mensagens WhatsApp
 
 ## Status
-Ready
+CONCERNS — aprovado com observações (ver QA Results); validação manual em staging ainda pendente antes de "Done"
 
 ## Complexidade
 **L** (grande) — atravessa 2 sistemas (Deno `motor-agente` + worker Python), muda o contrato entre eles, tem um requisito de integridade não-óbvio (1 linha em `mensagens` por parte efetivamente enviada) e precisa de decisão explícita de comportamento em falha parcial. Maior risco/esforço dos itens desta leva, confirmado pelo Junior e pela investigação de código.
@@ -75,25 +75,25 @@ Ou seja: hoje o "envio" real ao WhatsApp é uma chamada só, de ponta a ponta. F
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Definir critério de "longa/listável" e formato do contrato** (AC: 1, 4, 6)
-  - [ ] Registrar o critério concreto escolhido (tamanho + heurística de lista) e o formato de transporte (array de partes vs. delimitador vs. outro) nesta story antes de codar — decisão visível, não escondida no diff.
-  - [ ] Confirmar que o formato escolhido não quebra o contrato JSON existente (`success`, `agente_usado`, `handover`, `encerrado`) para os consumidores atuais.
-- [ ] **Task 2 — `motor-agente/index.ts`: montar a resposta dividida** (AC: 1, 4, 5, 7)
-  - [ ] Implementar o split **depois** do bloco de tags (linhas 883-917).
-  - [ ] Persistir cada parte em `mensagens` (adaptar/estender `salvarMensagemAgente`, linha 533).
-  - [ ] Testes `deno test`: resposta longa gera N partes + N linhas em `mensagens`; resposta curta não é fatiada; split respeita a ordem pós-tags.
-  - [ ] **Reportar no Dev Agent Record** o resultado do `deno test` desta Task antes de seguir para a Task 3 (AC9).
-- [ ] **Task 3 — Worker: dispatch sequencial** (AC: 2, 3, 7)
-  - [ ] Ajustar `_chamar_motor_agente` (linhas 262-354) para ler o novo formato.
-  - [ ] Ajustar o ponto de dispatch (linhas ~711-745 de `meta_adapter_inbound.py`) para chamar `_meta_enviar` uma vez por parte, na ordem, com o comportamento de falha parcial definido na Task 1.
-  - [ ] Testes `pytest`: múltiplas partes despachadas na ordem certa; falha na parte N não duplica nem perde as demais (cenário definido explicitamente).
-  - [ ] **Reportar no Dev Agent Record** o resultado do `pytest` desta Task antes de seguir para a Task 4 (AC9).
-- [ ] **Task 4 — Fechamento** (AC: 8)
-  - [ ] `deno test` + `pytest worker/tests/` completos, sem regressão.
-  - [ ] `deno check` sem erros.
-  - [ ] Validação manual em cuca-dev/staging com uma resposta real longa (ex.: pedir a programação completa de uma unidade com 5+ cursos).
-  - [ ] Atualizar File List e Change Log da story.
-  - [ ] Anunciar conclusão e recomendar chamar @qa — **não** chamar @qa nem @devops automaticamente.
+- [x] **Task 1 — Definir critério de "longa/listável" e formato do contrato** (AC: 1, 4, 6)
+  - [x] Critério registrado (3+ linhas formato "Nome - Dias" da regra 6) e contrato registrado (`mensagens: string[]` novo, `resposta` mantido como `join`) — ver Dev Notes "Formato do contrato" acima.
+  - [x] Confirmado: campo novo é aditivo (`mensagens` a mais, `resposta`/`success`/`agente_usado`/`handover`/`encerrado` inalterados) — nenhum consumidor existente quebra.
+- [x] **Task 2 — `motor-agente/index.ts`: montar a resposta dividida** (AC: 1, 4, 5, 7)
+  - [x] Implementado o split **depois** do bloco de tags.
+  - [x] Persistida cada parte em `mensagens` (loop de `salvarMensagemAgente`).
+  - [x] Testes `deno test`: resposta longa gera N partes + N linhas em `mensagens`; resposta curta não é fatiada; split respeita a ordem pós-tags.
+  - [x] **Reportado no Dev Agent Record** (AC9) — ver acima.
+- [x] **Task 3 — Worker: dispatch sequencial** (AC: 2, 3, 7)
+  - [x] Ajustado `_chamar_motor_agente` pra ler `mensagens` (novo), fallback `[resposta]`.
+  - [x] Ajustado o ponto de dispatch pra chamar `_meta_enviar` uma vez por parte, na ordem, abortando sem retry na 1ª falha.
+  - [x] Testes `pytest`: múltiplas partes despachadas na ordem certa; falha na parte N não duplica nem perde as demais. 3 testes existentes corrigidos (contrato mudou de string pra lista).
+  - [x] **Reportado no Dev Agent Record** (AC9) — ver acima.
+- [x] **Task 4 — Fechamento** (AC: 8)
+  - [x] `deno test` (89 passed/0 failed/2 ignored) + `pytest worker/tests/` (123 passed/3 skipped) completos, sem regressão.
+  - [x] `deno check`: 67 erros, idêntico ao fim da S-WM-21 — zero erros novos desta story.
+  - [ ] **Validação manual em cuca-dev/staging — NÃO executada** (sem acesso a WhatsApp/staging nesta sessão). Pendência explícita, não escondida — ver Dev Agent Record.
+  - [x] File List e Change Log atualizados.
+  - [x] Conclusão anunciada, recomendando @qa — @qa e @devops **não** foram chamados.
 
 ## Dev Notes
 
@@ -109,11 +109,21 @@ Ou seja: hoje o "envio" real ao WhatsApp é uma chamada só, de ponta a ponta. F
   - Ponto de dispatch real — linhas ~711-745 (`_dispatch_motor_agente_ou_empregabilidade`), chama `_meta_enviar` uma única vez (linha 721).
 - `worker/meta_adapter_outbound.py`: `_meta_enviar` — função de envio real à API oficial da Meta, ponto que precisa ser chamado N vezes em sequência em vez de 1.
 
-### Formato do contrato — **decisão do @dev, registrar aqui antes de codar**
-Duas opções levantadas nesta investigação (não excludentes de uma terceira que o @dev encontre):
-- (a) `motor-agente` retorna `resposta: string[]` (ou campo novo `mensagens: string[]`, mantendo `resposta` como concatenação para não quebrar consumidores que não tratam array) — o worker despacha cada item.
-- (b) `motor-agente` continua retornando `resposta: string` com um separador determinístico entre partes (ex.: um marcador que não apareça em texto normal) — o worker faz o split.
-Tendência: (a) é mais explícito e testável dos dois lados sem depender de um separador frágil, mas cabe ao @dev avaliar overhead de mudança de contrato vs. simplicidade do separador. Preencher a decisão final aqui.
+### Formato do contrato — **decisão registrada pelo @dev antes de codar (Task 1)**
+
+**Escolhida a opção (a):** `motor-agente` ganha um campo novo `mensagens: string[]` na resposta final (Passo 12, depois de handover/encerrar/encaminhamento processados). `resposta: string` é **mantido**, sempre igual a `mensagens.join("\n\n")` — nenhum consumidor existente que só lê `resposta` quebra. `mensagens` tem sempre **1 ou mais** elementos (resposta curta = array de 1 elemento, igual a `[resposta]`).
+
+**Por quê não a opção (b) (separador em string única):** um marcador textual é frágil (risco de colisão com conteúdo real gerado pelo GPT, precisa de escaping) e não é testável sem parsear string em ambos os lados. Array explícito é o contrato mais direto: cada lado só itera, sem parsing.
+
+**Escopo do campo novo:** só a resposta final do Passo 12 (fluxo principal, gerada pelo GPT) ganha `mensagens`. Os early-returns de `handler` que já existem (MENU_UNIDADES, "não consegui identificar a unidade", pergunta de ambiguidade do Item 4/S-WM-21, `menu_boas_vindas` da Sofia) **continuam só com `resposta: string`**, sem `mensagens` — são todos textos curtos/determinísticos que nunca batem no critério de "listável" (não têm o formato "Nome - Dias" da regra 6), então dividi-los não faz sentido e tocar em cada um deles infla o diff sem necessidade. O lado worker trata `mensagens` ausente como equivalente a `[resposta]` (fallback), then cobrindo os dois casos com o mesmo código de dispatch, sem branch especial.
+
+**Critério de "longa/listável" (concreto, testável):** reaproveita o formato que `INSTRUCAO_SEGURANCA` regra 6 já exige do GPT pra listar modalidades — `"Nome - Dias"` (ex.: `"Natacao - Ter/Qui/Sex"`). Uma linha "conta" como item de lista se, depois de `trim()`: não é vazia, não termina em `?`, contém a substring `" - "`, e tem até 80 caracteres. **3 ou mais** dessas linhas na resposta → "listável". Não uso um limiar de tamanho separado (chars) — 3+ linhas nesse formato compacto já implica um texto longo o bastante pra justificar dividir; um limiar de tamanho separado só adicionaria uma segunda variável pra calibrar sem necessidade.
+
+**Como divide:** localiza o bloco contíguo de linhas-item (da 1ª à última linha que bate no critério). Texto ANTES do bloco = "abertura" (se não vazio, vira a 1ª parte). O bloco em si = a lista (sempre vira uma parte, sozinha). Texto DEPOIS do bloco = "fechamento" (se não vazio, ex. a pergunta final que a regra 6 já pede — "Quer saber horários e detalhes de alguma modalidade específica?" — vira a última parte). Resultado: 2 partes (sem abertura ou sem fechamento) ou 3 partes (com os dois), nunca mais que 3. Se por algum motivo o resultado tivesse só 1 parte não-vazia (ex.: resposta é 100% lista, sem abertura nem fechamento), retorna só essa parte — não força split artificial.
+
+**Falha parcial no dispatch (worker, Escopo IN item 6):** decisão = **abortar as partes restantes no 1º erro, sem retry automático, log claro de quantas partes foram enviadas com sucesso antes de parar.** Não retry: `_meta_enviar` não tem idempotência garantida do lado da API da Meta — reenviar sem saber se o request anterior só falhou na RESPOSTA (mas foi entregue) arriscaria duplicar a mensagem pro lead, isso é pior do que a conversa ficar incompleta. Não continuar as partes seguintes depois de uma falha: enviar só a "abertura" e pular a "lista" (ou só a "lista" sem o "fechamento") deixa uma resposta sem sentido — mais confuso pro lead do que parar.
+
+**Limitação documentada, não escondida (ver Riscos):** `mensagens` é persistido em `mensagens` (tabela) no momento em que o `motor-agente` GERA a resposta (Deno, síncrono, antes de qualquer tentativa de envio real). O envio real acontece DEPOIS, numa chamada HTTP separada do worker (Python). Se o worker falhar ao enviar a 2ª ou 3ª parte, as linhas já foram gravadas em `mensagens` mesmo assim — **isso já era verdade hoje pra mensagem única** (nunca houve garantia de que "gravado em `mensagens`" == "chegou no WhatsApp"), então esta story não piora essa característica, só a preserva pro caso de N partes em vez de 1.
 
 ### Testing
 
@@ -138,9 +148,100 @@ Tendência: (a) é mais explícito e testável dos dois lados sem depender de um
 |---|---|---|---|
 | 2026-07-11 | 0.1 | Draft inicial a partir do levantamento de pendências de Junior (item 2 / TOM-03b, separado da S-WM-21 por risco/esforço) | @sm River |
 | 2026-07-11 | 0.2 | Validado (GO). Status Draft → Ready. Adicionado campo Complexidade, AC9 e checklist por Task exigindo relato incremental (não só agregado no fechamento) do resultado de `deno test`/`pytest` no Dev Agent Record, a pedido explícito de Junior | @po Pax |
+| 2026-07-11 | 0.3 | Implementados os 4 Tasks: critério+contrato registrados (Task 1), split+persistência em `index.ts` (Task 2), dispatch sequencial+falha parcial no worker (Task 3), fechamento (Task 4). `deno test`: 89 passed/0 failed/2 ignored. `pytest`: 123 passed/3 skipped (baseline 120, +3 novos). `deno check`: 67 erros, idêntico ao fim da S-WM-21 (zero erros novos). Validação manual em staging NÃO executada (sem acesso nesta sessão) — pendência explícita. Status Ready → InProgress → Ready for Review | @dev Dex |
+| 2026-07-11 | 0.4 | QA gate: **CONCERNS**. Nenhum bug encontrado (AC2/AC5 reproduzidos de forma independente com cenários próprios, mais agressivos que os testes do @dev). 3 achados não-bloqueantes registrados: ordem de insert depende de timestamp (pré-existente, não novo); falha parcial no dispatch pode deixar `mensagens` com mais linhas do que o efetivamente entregue ao lead (log OK, mas não reconcilia — sugerido virar débito técnico); heurística de detecção de item de lista tem falsos positivos possíveis, sem perda/duplicação de dado. Números `deno test`/`deno check`/`pytest` reconfirmados de forma independente, batem com o relato. Validação em staging segue pendente — sugerido acontecer durante a revisão do sócio em homologação | @qa Quinn |
 
 ## Dev Agent Record
-_A ser preenchido pelo @dev durante a implementação — **inclui o resultado de `deno test`/`pytest` reportado ao final de cada Task de código (AC9), não só um resumo agregado no fechamento.**_
+
+### Task 1 — Critério + contrato (concluída)
+Sem código nesta Task (decisão de design, registrada em Dev Notes). Decisões: critério de "listável" = 3+ linhas no formato "Nome - Dias" (regra 6 do guardrail, reaproveitado, não inventado); contrato = campo aditivo `mensagens: string[]`, `resposta` mantido como `join("\n\n")`; falha parcial no worker = abortar sem retry, log de progresso. Detalhes completos na seção "Formato do contrato" acima.
+
+### Task 2 — `motor-agente/index.ts`: split + persistência (concluída)
+
+Implementado `dividirRespostaEmPartes` (função pura, exportada) + `ehLinhaDeItemLista` (helper interno) logo antes de `salvarMensagemAgente`. Aplicado no handler no Passo 12, **depois** de todo o processamento de tags (handover/encerrar/encaminhar) — `resposta` (string) passa a ser `mensagens.join("\n\n")`; `mensagens` (array, novo campo no JSON) é o que efetivamente é persistido, 1 `salvarMensagemAgente` por parte, num loop.
+
+`deno test --no-check --allow-env --allow-read --allow-net .`: **89 passed | 0 failed | 2 ignored** (10 testes novos, zero regressão nos 79 anteriores).
+
+Testes novos:
+- 7 testes puros de `dividirRespostaEmPartes` (AC1, AC4, casos sem abertura/sem fechamento/100% lista, e o caso de borda "pergunta com hífen que termina em '?' não é item de lista").
+- `Item 2 / AC1-AC2` (handler completo): resposta longa vira 3 partes no JSON **e** 3 linhas em `mensagens`, com o conteúdo exato de cada parte conferido.
+- `Item 2 / AC4` (handler completo): resposta curta continua 1 parte/1 linha — regressão explícita.
+- `Item 2 / AC5` (handler completo): resposta com `[[HANDOVER]]` + lista — confirma que a tag é removida ANTES do split (não sobra em nenhuma parte) e que `handover=true` continua funcionando.
+
+### Task 3 — worker: dispatch sequencial + falha parcial (concluída)
+
+`_chamar_motor_agente` (`meta_adapter_inbound.py`) muda de `str | None` pra `list[str] | None`: lê `data.get("mensagens")` primeiro (campo novo), cai pra `[data.get("resposta")]` quando ausente/inválido (cobre todos os early-returns do motor-agente que ainda só devolvem `resposta`, sem precisar tocar neles). O ponto de dispatch (`_executar_dispatch`) itera as partes em sequência, chamando `_meta_enviar` uma vez por parte — na 1ª falha, **aborta as partes restantes, sem retry, com log de quantas foram enviadas antes** (decisão registrada na Task 1: `_meta_enviar` não tem garantia de idempotência do lado da Meta, retry arriscaria duplicar).
+
+**Contrato quebrado nos mocks existentes, corrigido:** 3 testes já existentes mockavam `_chamar_motor_agente` com `return_value="string"` (não lista) — com a mudança de contrato, o novo código de dispatch (`for parte in partes:`) iteraria essas strings CARACTERE POR CARACTERE se eu não corrigisse os mocks. Corrigidos os 3 (`test_processar_webhook_agentes_motor_agente`, o teste de handover, e o de debounce) pra `return_value=["string"]`. 2 testes que chamam a função REAL (não mockada) e comparam o retorno diretamente (`test_chamar_motor_agente_retorna_resposta`, o de handover) também precisaram do ajuste (`== ["texto"]` em vez de `== "texto"`) — consequência direta e esperada da mudança de contrato, não uma correção de bug.
+
+`pytest tests/` (suíte completa do worker): baseline pré-Task-3 = **120 passed, 3 skipped**; pós-Task-3 = **123 passed, 3 skipped, 0 failed** — confirmado via `git stash`/re-run isolado, exatamente +3 (os testes novos), zero regressão.
+
+Testes novos:
+- `test_chamar_motor_agente_le_campo_mensagens_multiplas_partes` — confirma que `mensagens` (lista) tem prioridade sobre `resposta` (string) quando ambos presentes.
+- `test_dispatch_multiplas_partes_envia_todas_na_ordem` (AC3): 3 partes → `_meta_enviar` chamado 3x, com o texto de cada parte, na ordem certa.
+- `test_dispatch_falha_na_parte_do_meio_aborta_sem_duplicar_nem_pular` (AC3, falha parcial): `_meta_enviar` com `side_effect=[True, False, True]` — confirma que só as 2 primeiras partes são tentadas (a 2ª falha) e a 3ª nunca é enviada, sem retry da que falhou.
+
+### Task 4 — Fechamento (concluída)
+
+**`deno test --no-check --allow-env --allow-read --allow-net .` (final):** `ok | 89 passed | 0 failed | 2 ignored`.
+
+**`deno check index.ts` (final):** 67 erros — **idêntico** ao número no fim da S-WM-21 (mesma baseline de 61 + 6 pré-existentes, herdada; esta story não adicionou nenhum erro de tipo novo — `dividirRespostaEmPartes`/`ehLinhaDeItemLista` são funções puras bem tipadas, sem tocar em `conversa`/`lead`).
+
+**`pytest tests/` (worker, final):** `123 passed, 3 skipped` — mesmo resultado já reportado na Task 3 (nenhuma mudança adicional no fechamento).
+
+**Validação manual em cuca-dev/staging — NÃO EXECUTADA por mim.** Não tenho acesso a WhatsApp real nem ao ambiente de staging nesta sessão — só testes automatizados (`deno test`/`pytest`) foram rodados. Isso é uma limitação real, não uma formalidade: os testes automatizados provam a LÓGICA (critério de split, contrato, persistência, dispatch sequencial, falha parcial) com mocks, mas não provam que uma resposta real do GPT (temperatura=0.7, sem garantia de seguir a regra 6 à risca) realmente aciona o critério do jeito esperado, nem que a Graph API da Meta se comporta como o mock assume. **Este é o próximo passo manual obrigatório antes de considerar a story pronta de verdade** (AC do Escopo/Testing já previa isso): pedir a programação completa de uma unidade com 5+ cursos em cuca-dev/staging e confirmar 2-3 mensagens separadas chegando na ordem certa.
+
+**File List:**
+- `supabase/functions/motor-agente/index.ts` — `dividirRespostaEmPartes`/`ehLinhaDeItemLista` (novas), Passo 12 ajustado (split + loop de persistência + campo `mensagens` no JSON).
+- `supabase/functions/motor-agente/index.test.ts` — 7 testes novos de `dividirRespostaEmPartes`.
+- `supabase/functions/motor-agente/index.audit.test.ts` — 3 testes novos de handler completo (AC1/AC2, AC4, AC5).
+- `worker/meta_adapter_inbound.py` — `_chamar_motor_agente` (contrato `list[str] | None`), dispatch sequencial com abort-on-failure.
+- `worker/tests/test_meta_adapter_inbound.py` — 2 testes existentes corrigidos (assert de valor), 3 mocks existentes corrigidos (contrato mudou pra lista), 3 testes novos (leitura de `mensagens`, dispatch múltiplo, falha parcial).
+
+**Próximo passo sugerido (manual, não executado):** validação real em cuca-dev/staging (ver acima) → depois `supabase functions deploy motor-agente` + redeploy do worker, só depois de aprovado.
+
+**Recomendação:** chamar @qa Quinn pra o gate desta story. @qa e @devops não foram acionados por mim.
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+**Revisor:** @qa Quinn · **Data:** 2026-07-11 · **Verdict:** ⚠️ **CONCERNS** — código aprovado, sem achado bloqueante; validação em staging segue pendente e precisa acontecer antes de "Done" de verdade.
+
+### Verificação independente dos números
+- `deno test`: confirmado **89 passed | 0 failed | 2 ignored**.
+- `deno check`: confirmado **67 erros** (17 `TS18047` / 31 `TS2339` / 16 `TS2345` / 3 `TS2353`) — idêntico ao fim da S-WM-21, nenhuma categoria nova.
+- `pytest worker/tests/`: confirmado **123 passed, 3 skipped**.
+
+Todos batem exatamente com o relato do @dev.
+
+### 1. Reprodução independente do AC5 (tag nunca sobrevive em nenhuma parte)
+Não me limitei a reler o código nem a rodar os testes já escritos pelo @dev — escrevi 3 cenários próprios (script isolado, captura real de payload de `.insert()`), incluindo um caso mais agressivo que o do @dev: a tag `[[HANDOVER]]` **colada sem quebra de linha** na última linha da lista (`"Informatica - Ter/Qui [[HANDOVER]]"`), pra forçar `removerTag` + `dividirRespostaEmPartes` a interagir num ponto de costura mais arriscado.
+
+Resultado nos 3 cenários (handover+lista com fechamento, handover+lista sem fechamento, encaminhamento substituindo uma resposta que teria virado lista): tag nunca sobreviveu em nenhuma parte, `handover`/substituição de canal continuaram corretos, e a substituição de encaminhamento (Backlog 4a) não deixou nenhum rastro do texto original. AC5 confirmado.
+
+### 2. Reprodução independente do AC2 (cada parte vira linha própria, sem fragmentar o histórico)
+No mesmo script: para cada cenário, o array `mensagens` do JSON e os inserts reais capturados em `mensagens` (tabela) batem 1:1 em conteúdo, quantidade e ordem. Exemplo (handover + 5 cursos):
+```
+mensagens[] no JSON: 3 elementos
+inserts em `mensagens`: 3, mesmo conteúdo, mesma ordem
+```
+AC2 confirmado.
+
+### 3. Achados adicionais (não bloqueantes, registrados por completude)
+
+**a) Ordem dos inserts depende de `created_at` (timestamp), não de um número de sequência explícito.** `salvarMensagemAgente` não seta `created_at` — confia no `DEFAULT now()` da coluna (`timestamptz`, microssegundos) e no fato de cada `.insert()` ser uma chamada de rede sequencial (`await` em loop), não paralela. Na prática isso é seguro (round-trips de rede levam >1ms, bem acima da resolução do timestamp), mas é uma garantia implícita, não uma ordenação garantida por schema (`.order("created_at")` sem chave de desempate explícita em caso de empate). **Não é um problema introduzido por esta story** — o mesmo padrão já existia pra qualquer sequência de inserts no arquivo antes do Item 2; esta story só aumenta de 1 para até 3 os inserts sequenciais por turno, um pouco mais de exposição ao mesmo risco pré-existente. Não bloqueia, registro como observação de baixo risco.
+
+**b) A pergunta do @dev sobre log/alerta na falha parcial: log está OK, mas não fecha o ciclo sozinho.** O `logger.error` no worker é claro e estruturado (qual parte falhou, quantas antes, total) — suficiente pra investigação manual reativa. O que falta, e não é culpa desta story (é uma característica arquitetural já documentada pelo @dev nos Dev Notes): o `motor-agente` (Deno) persiste as N linhas em `mensagens` ANTES do worker (Python) sequer tentar enviar — se a 2ª de 3 partes falhar, o banco vai ter 3 linhas gravadas mas só 1 efetivamente entregue ao lead. Isso já era verdade pra mensagem única antes desta story (podia falhar depois de persistida), mas agora fica **mais provável** (até 3 chamadas HTTP por turno em vez de 1) e **mais confuso quando acontece** (histórico "completo" no banco, entrega truncada de verdade pro lead — o próximo turno do GPT vai "ver" contexto que o lead nunca recebeu). Log de erro sozinho não reconcilia isso. Não é bloqueante pra este gate (baixa frequência esperada — falha de rede/API não é o caminho comum; corrigir de verdade exigiria inverter quem persiste, escopo maior que esta story) — mas deveria virar um item de backlog registrado, não só uma nota perdida num commit. Sugiro ao @dev/@po registrar como débito técnico explícito antes de fechar Done.
+
+**c) Heurística de `ehLinhaDeItemLista` tem falsos positivos possíveis (não testados, mas não corrompem dado).** Uma linha de fechamento tipo "Precisa de algo mais - é só chamar" (contém " - ", não termina em "?", <80 chars) seria incorretamente contada como item de lista, ou uma linha explicativa intercalada no meio de itens reais fica absorvida dentro do bloco "lista" em vez de descartada. Nenhum dos dois casos perde ou duplica conteúdo (só afeta ONDE a linha cai dentro das partes) — é uma imprecisão de apresentação, não um bug de integridade. Não bloqueia.
+
+### 7 checks
+1. **Code review:** split aplicado no ponto certo (depois das tags), variável `resposta` reatribuída sem deixar nenhum uso posterior do valor antigo — sem o padrão de "referência estática desatualizada" que causou o CRITICAL da S-WM-21. Boa separação de responsabilidade (`ehLinhaDeItemLista`/`dividirRespostaEmPartes` puras e testáveis).
+2. **Testes:** cobertura boa dos dois lados, incluindo o caso de falha parcial (side_effect sequenciado) e a correção necessária dos 3 mocks quebrados pela mudança de contrato — nada escondido.
+3. **Acceptance Criteria:** AC1, AC2, AC4, AC5, AC6, AC7 verificados (incluindo reprodução independente de AC2/AC5, os dois pedidos explicitamente). AC3 (falha parcial testada) confirmado via teste + achado (b) acima registrado como limitação residual conhecida. AC8 (sem deploy) respeitado.
+4. **Regressão:** 89/0/2 (deno) e 123/3 (pytest) sem quebra em nenhum teste pré-existente, confirmado.
+5. **Performance:** nenhuma chamada de LLM extra adicionada; custo de N chamadas HTTP ao WhatsApp em vez de 1 é inerente ao pedido da story, já documentado como risco aceito.
+6. **Segurança:** nada de OWASP básico — texto das partes vem do próprio `resposta` já sanitizado pelas etapas anteriores (guardrail, encaminhamento), nenhuma interpolação nova de dado externo.
+7. **Documentação:** Dev Notes e Dev Agent Record completos e precisos, achados (a)/(b)/(c) acima são complementares, não contradizem nada do que o @dev registrou.
+
+### Caminho sugerido
+Não há motivo pra devolver ao @dev — não encontrei bug. O gate real que falta é a validação manual em staging, que **nem eu nem o @dev conseguimos fazer nesta sessão** (sem acesso a WhatsApp real). Sugiro: seguir pro @devops (push + PR), já que a revisão do sócio João em homologação (mencionada no fluxo combinado) é exatamente a oportunidade de fazer essa validação real — mas o PR/descrição deveria deixar claro que isso ainda está pendente, não fingir que já foi feito. Registrar achado (b) como débito técnico separado é uma sugestão, não bloqueio.

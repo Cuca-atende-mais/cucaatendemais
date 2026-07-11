@@ -673,6 +673,70 @@ Deno.test("Fix CRITICAL: troca semântica de unidade (Item 4) + Item 3 gravando 
   );
 });
 
+// ── Item 2 (S-WM-22, TOM-03b): split de resposta longa/listável em múltiplas mensagens ──────
+const LISTA_5_CURSOS_HANDLER = [
+  "Natacao - Ter/Qui/Sex",
+  "Judo - Seg/Qua",
+  "Informatica - Ter/Qui",
+  "Reforco Escolar - Seg/Ter/Qua/Qui/Sex",
+  "Musica - Sab",
+].join("\n");
+
+Deno.test("Item 2 / AC1-AC2: resposta longa vira N partes no JSON e N linhas em `mensagens` (1 por parte)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ unidade_selecionada: "Cuca Barra" }), chamadas);
+  const respostaLonga = "Claro! Aqui está a programação completa:\n\n" + LISTA_5_CURSOS_HANDLER + "\n\nQuer saber horários de alguma modalidade específica?";
+
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("quem é o professor de natação?"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+    const body = await resp.json();
+    assertEquals(body.mensagens?.length, 3, "AC1: esperava 3 partes (abertura, lista, fechamento) no campo `mensagens` do JSON");
+    assertEquals(body.resposta, body.mensagens.join("\n\n"), "`resposta` precisa continuar sendo o join das partes, pra não quebrar consumidor que só lê esse campo");
+  }, respostaLonga);
+
+  const insertsDeAgente = chamadas.filter((c) =>
+    c.tabela === "mensagens" && c.metodo === "insert" && (c.payload as { remetente?: string } | undefined)?.remetente === "agente"
+  );
+  assertEquals(
+    insertsDeAgente.length,
+    3,
+    "AC2: cada parte efetivamente gerada precisa virar sua própria linha em `mensagens` — não 1 linha só com o texto concatenado, senão o histórico do próximo turno fica incompleto",
+  );
+  const conteudos = insertsDeAgente.map((c) => (c.payload as { conteudo?: string }).conteudo);
+  assertEquals(conteudos[1], LISTA_5_CURSOS_HANDLER, "a 2ª linha gravada precisa ser exatamente a lista, sem concatenar com a abertura/fechamento");
+});
+
+Deno.test("Item 2 / AC4: resposta curta continua indo como 1 única mensagem/1 única linha (comportamento preservado)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ unidade_selecionada: "Cuca Barra" }), chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("quem é o professor de natação?"), supabaseMock);
+    const body = await resp.json();
+    assertEquals(body.mensagens, ["Resposta de teste"], "AC4: resposta curta (texto canned padrão do mock) não pode ser fatiada");
+  });
+  const insertsDeAgente = chamadas.filter((c) =>
+    c.tabela === "mensagens" && c.metodo === "insert" && (c.payload as { remetente?: string } | undefined)?.remetente === "agente"
+  );
+  assertEquals(insertsDeAgente.length, 1, "AC4: resposta curta continua gerando só 1 linha em `mensagens`");
+});
+
+Deno.test("Item 2 / AC5: split acontece DEPOIS da tag [[HANDOVER]] — a tag crua nunca aparece em nenhuma parte", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ unidade_selecionada: "Cuca Barra" }), chamadas);
+  const respostaComHandoverEList = "Vou te passar pra um atendente, mas antes segue a programação:\n\n" + LISTA_5_CURSOS_HANDLER + "\n\nJá te encaminho. [[HANDOVER]]";
+
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("quero falar com atendente"), supabaseMock);
+    const body = await resp.json();
+    assertEquals(body.handover, true, "handover continua sendo detectado normalmente");
+    assertEquals(body.mensagens.length, 3, "a tag removida ainda deixa uma resposta listável de 3 partes");
+    for (const parte of body.mensagens as string[]) {
+      assertEquals(parte.includes("[[HANDOVER]]"), false, "AC5: a tag crua não pode sobreviver em NENHUMA parte — o split só pode acontecer depois da remoção da tag");
+    }
+  }, respostaComHandoverEList);
+});
+
 // ── VAL-02: guardrail anti-alucinação — reforço com exemplo negativo explícito ──────────────
 // Mitigação de prompt, NÃO uma correção comprovada: não é possível testar de forma
 // determinística se o GPT (temperatura=0.7) vai obedecer a um exemplo negativo — isso exigiria
