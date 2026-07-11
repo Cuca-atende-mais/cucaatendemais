@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade } from "./index.ts";
 
 // ── ehSelecaoMenu ────────────────────────────────────────────────────────────
 Deno.test("ehSelecaoMenu: aceita dígitos 1-5 isolados", () => {
@@ -72,6 +72,36 @@ Deno.test({
   },
 });
 
+// ── Item 4 (S-WM-21, VAL-06) — typo-tolerância em detectarTrocaUnidade ──────────────────────
+Deno.test("Item 4: detectarTrocaUnidade tolera erro de digitação de 1 caractere ('mondubi' por 'mondubim')", () => {
+  assertEquals(detectarTrocaUnidade("quero saber da mondubi", "Cuca Pici"), "Cuca Mondubim");
+});
+
+Deno.test("Item 4: detectarTrocaUnidade typo NÃO regride a proteção §4 ('barragem' continua não disparando Cuca Barra)", () => {
+  // "barragem" (8 chars) vs "barra" (5 chars): diferença de tamanho > 1, filtrado antes mesmo
+  // de calcular distância de edição — garante que o fallback de typo não reabre o bug §4.
+  assertEquals(detectarTrocaUnidade("tem barragem perto daqui?", "Cuca Pici"), null);
+});
+
+Deno.test("Item 4: detectarTrocaUnidade typo não dispara pra chave curta (pici, <5 chars) nem composta (com espaço)", () => {
+  // Chaves curtas/compostas ficam de fora do fallback de typo (risco de falso positivo alto
+  // demais) — comportamento seguro documentado, não uma lacuna a fechar nesta story.
+  assertEquals(detectarTrocaUnidade("quero saber da pic", "Cuca Barra"), null);
+});
+
+// ── Item 4 (S-WM-21, VAL-06) — pareceIntencaoTrocaUnidade (pré-filtro de custo) ──────────────
+Deno.test("Item 4: pareceIntencaoTrocaUnidade reconhece menções explícitas a trocar de unidade", () => {
+  for (const texto of ["quero saber de outra unidade", "posso trocar de unidade?", "queria mudar pra outra unidade", "me tira dessa e bota na outra cuca"]) {
+    assertEquals(pareceIntencaoTrocaUnidade(texto), true, `esperava true para "${texto}"`);
+  }
+});
+
+Deno.test("Item 4: pareceIntencaoTrocaUnidade NÃO dispara em mensagens de acompanhamento comuns (evita custo de LLM desnecessário)", () => {
+  for (const texto of ["quem é o professor de natação?", "tem outra atividade além de natação?", "qual o horário de hoje?", "obrigado pela ajuda"]) {
+    assertEquals(pareceIntencaoTrocaUnidade(texto), false, `esperava false para "${texto}" — AC9: sem palavra-chave de troca, não deveria acionar o pré-filtro`);
+  }
+});
+
 // ── parseRetryAfterSegundos (§3) ─────────────────────────────────────────────
 Deno.test("parseRetryAfterSegundos: usa header retry-after quando presente", () => {
   assertEquals(parseRetryAfterSegundos("3", "qualquer corpo"), 3);
@@ -95,27 +125,27 @@ Deno.test("parseRetryAfterSegundos: retorna fallback de 1s sem header nem tempo 
 Deno.test("validarAvaliacaoSelecaoUnidade: aceita unidade válida e sinais true", () => {
   assertEquals(
     validarAvaliacaoSelecaoUnidade({ unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false }),
-    { unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
+    { unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false },
   );
 });
 
 Deno.test("validarAvaliacaoSelecaoUnidade: rejeita unidade fora da lista válida (nunca confia cegamente no LLM)", () => {
   assertEquals(
     validarAvaliacaoSelecaoUnidade({ unidade: "Cuca Inventada", quer_sair: false, mudou_de_assunto: false }),
-    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
+    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false },
   );
 });
 
 Deno.test("validarAvaliacaoSelecaoUnidade: JSON malformado/vazio cai no default seguro", () => {
-  assertEquals(validarAvaliacaoSelecaoUnidade(null), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false });
-  assertEquals(validarAvaliacaoSelecaoUnidade({}), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false });
-  assertEquals(validarAvaliacaoSelecaoUnidade("string solta"), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false });
+  assertEquals(validarAvaliacaoSelecaoUnidade(null), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
+  assertEquals(validarAvaliacaoSelecaoUnidade({}), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
+  assertEquals(validarAvaliacaoSelecaoUnidade("string solta"), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
 });
 
 Deno.test("validarAvaliacaoSelecaoUnidade: só aceita booleano literal true, não truthy genérico", () => {
   assertEquals(
     validarAvaliacaoSelecaoUnidade({ unidade: null, quer_sair: "sim", mudou_de_assunto: 1 }),
-    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
+    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false },
   );
 });
 

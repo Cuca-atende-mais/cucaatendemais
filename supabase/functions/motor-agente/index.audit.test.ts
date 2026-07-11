@@ -17,6 +17,8 @@ import {
   montarMensagemEncaminhamento,
   MENU_UNIDADES,
   SAUDACOES_ABERTURA,
+  INSTRUCAO_SEGURANCA,
+  avaliarSelecaoUnidade,
   handler,
 } from "./index.ts";
 
@@ -31,16 +33,29 @@ import {
 // confirmar QUAIS parâmetros (p_tipos/p_unidade_cuca) foram passados pra buscar_chunks_similares,
 // não só que a RPC foi chamada. Aditivo: nenhum teste existente faz igualdade do array inteiro,
 // só `.some((c) => c.tabela === ...)`, então adicionar o campo não quebra nada.
-type ChamadaRegistrada = { tabela: string; metodo: string; args?: unknown[] };
+// `payload` (opcional, S-WM-21 Task 7 — achado do @qa Quinn): captura o argumento de `update`/
+// `insert`, mesmo espírito de `args` acima, mas para o corpo do write em vez dos argumentos de
+// uma RPC. Sem isso, um teste só sabe QUANTAS vezes `.update()` foi chamado, não o que cada
+// chamada realmente gravou — foi exatamente essa lacuna que deixou passar um bug onde um 2º
+// `.update({metadata:{...}})` no mesmo turno apagava o que um 1º tinha acabado de gravar (o
+// mock nunca guardava o conteúdo pra comparar). Aditivo: nenhum teste existente lê `payload`,
+// então adicionar o campo não quebra nada.
+type ChamadaRegistrada = { tabela: string; metodo: string; args?: unknown[]; payload?: unknown };
 
 // deno-lint-ignore no-explicit-any
 function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>, chamadas: ChamadaRegistrada[]): any {
   function criarChain(tabela: string) {
     // deno-lint-ignore no-explicit-any
     const chain: any = {};
-    for (const metodo of ["select", "insert", "update", "eq", "order", "limit", "single"]) {
+    for (const metodo of ["select", "eq", "order", "limit", "single"]) {
       chain[metodo] = (..._args: unknown[]) => {
         chamadas.push({ tabela, metodo });
+        return chain;
+      };
+    }
+    for (const metodo of ["insert", "update"]) {
+      chain[metodo] = (payload: unknown) => {
+        chamadas.push({ tabela, metodo, payload });
         return chain;
       };
     }
@@ -223,34 +238,49 @@ Deno.test("VAL-12: decidirPrimeiraMensagem com pergunta_geral=true não força o
   assertEquals(decisao.resposta, null, "VAL-12: resposta=null sinaliza 'siga o fluxo normal' — não é pra responder com o menu canned");
 });
 
-// ── Backlog 4b: saudação de abertura no fallback puro de decidirPrimeiraMensagem ────────────
+// ── Item 1 (S-WM-21) / Backlog 4b: saudação de abertura no fallback de decidirPrimeiraMensagem ──
 // Esse branch nunca chama GPT (nem antes, nem depois desta mudança) — a variação vem de um
 // array fixo (SAUDACOES_ABERTURA) sorteado localmente, não gerado por modelo. Escolha aleatória
-// em vez de rotação por índice: mais simples (não exige plumbar um contador/estado por lead
-// através do handler só pra alternar 6 frases fixas) e o teste abaixo prova a variação de forma
-// estatística (100 chamadas sem seed fixo), não determinística — trade-off aceito pela mesma
-// razão de simplicidade.
-Deno.test("Backlog 4b: 1ª mensagem sem unidade nem pergunta geral recebe uma saudação de abertura antes do menu", () => {
-  const avaliacaoDefault = { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false };
+// em vez de rotação por índice: mais simples e os testes abaixo provam a variação de forma
+// estatística (100 chamadas sem seed fixo), não determinística — trade-off aceito.
+//
+// Item 1 dividiu este branch em dois: `pedido_depende_unidade=false` (cortesia pura / mensagem
+// aberta, ex.: "bom dia", "quero saber sobre vocês") não recebe mais o menu — só saudação +
+// pergunta aberta (AC1). `pedido_depende_unidade=true` (ex.: "quais cursos vocês têm") preserva
+// o comportamento antigo: saudação + MENU_UNIDADES (AC2). O teste original ("Backlog 4b") testava
+// só o caso default (pedido_depende_unidade ausente/false) esperando menu — isso é exatamente o
+// "engessamento" que o Item 1 corrige, por isso a expectativa mudou.
+Deno.test("Item 1 / AC1: cortesia pura (pedido_depende_unidade=false) recebe saudação + pergunta aberta, SEM o menu", () => {
+  const avaliacaoCortesia = { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false };
   const respostasObservadas = new Set<string>();
   for (let i = 0; i < 100; i++) {
-    const decisao = decidirPrimeiraMensagem(undefined, avaliacaoDefault);
+    const decisao = decidirPrimeiraMensagem(undefined, avaliacaoCortesia);
     assertEquals(decisao.unidadeSelecionada, null);
-    assertEquals(decisao.aguardandoUnidade, true);
-    assertStringIncludes(decisao.resposta ?? "", MENU_UNIDADES, "a resposta precisa conter o menu de unidades na íntegra");
-    const comecaComSaudacaoConhecida = SAUDACOES_ABERTURA.some((s) => decisao.resposta?.startsWith(s));
+    assertEquals(decisao.aguardandoUnidade, false, "AC1: cortesia pura não pode travar aguardando_unidade — a próxima mensagem precisa ser reavaliada do zero, não cair no reforço do menu (VAL-13)");
     assertEquals(
-      comecaComSaudacaoConhecida,
-      true,
-      "Backlog 4b: a resposta desse branch precisa começar com uma das saudações de SAUDACOES_ABERTURA, antes do menu",
+      (decisao.resposta ?? "").includes(MENU_UNIDADES),
+      false,
+      "AC1: cortesia pura não pode vir com o menu de unidades anexado — era exatamente esse o 'menu engessado' reportado",
     );
+    const comecaComSaudacaoConhecida = SAUDACOES_ABERTURA.some((s) => decisao.resposta?.startsWith(s));
+    assertEquals(comecaComSaudacaoConhecida, true, "AC1: a resposta precisa começar com uma das saudações de SAUDACOES_ABERTURA, seguida de pergunta aberta");
     respostasObservadas.add(decisao.resposta ?? "");
   }
   assertEquals(
     respostasObservadas.size > 1,
     true,
-    "Backlog 4b: em 100 chamadas sem seed fixo, esperava-se mais de uma variação de saudação (probabilidade de sempre sair a mesma, com 6 opções, é (1/6)^99 — praticamente zero); se sempre igual, a escolha aleatória não está funcionando",
+    "em 100 chamadas sem seed fixo, esperava-se mais de uma variação de saudação (probabilidade de sempre sair a mesma, com 6 opções, é (1/6)^99 — praticamente zero); se sempre igual, a escolha aleatória não está funcionando",
   );
+});
+
+Deno.test("Item 1 / AC2: pedido que depende de unidade (pedido_depende_unidade=true) continua recebendo o menu", () => {
+  const avaliacaoPedidoUnidade = { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: true };
+  const decisao = decidirPrimeiraMensagem(undefined, avaliacaoPedidoUnidade);
+  assertEquals(decisao.unidadeSelecionada, null);
+  assertEquals(decisao.aguardandoUnidade, true, "AC2: um pedido que depende de unidade (ex.: 'quais cursos vocês têm') ainda precisa aguardar a escolha");
+  assertStringIncludes(decisao.resposta ?? "", MENU_UNIDADES, "AC2: comportamento preservado — a resposta precisa conter o menu de unidades na íntegra");
+  const comecaComSaudacaoConhecida = SAUDACOES_ABERTURA.some((s) => decisao.resposta?.startsWith(s));
+  assertEquals(comecaComSaudacaoConhecida, true, "AC2: a saudação de abertura continua na frente do menu, comportamento preservado");
 });
 
 Deno.test("VAL-12: decidirAguardandoUnidade (branch mudou_de_assunto) com pergunta_geral=true também segue pro fluxo normal", () => {
@@ -329,6 +359,104 @@ Deno.test("AUD-09: extrairTextoMenu não deveria tratar o nome de uma unidade co
     "",
     "AUD-09: '3' foi resposta ao menu de UNIDADES, não ao de categorias — mas extrairTextoMenu extrai 'Mondubim' como se fosse uma área de programação, contaminando a instrução enviada ao GPT ('Foque APENAS nessa área')",
   );
+});
+
+// ── Item 4 (S-WM-21, VAL-06): fallback semântico de troca de unidade mal formulada + pergunta
+// em ambiguidade, no branch de unidade já selecionada (handler, seção 5b) ───────────────────────
+Deno.test("Item 4 / AC7: mensagem indireta ('unidade que fica pertinho de casa') confirma troca via avaliação semântica", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ unidade_selecionada: "Cuca Barra" }), chamadas);
+  const { linhas } = await comFetchMockado(
+    () => comConsoleLogCapturado(() => handler(requestFake("quero saber de outra unidade, tipo a que fica pertinho da minha casa"), supabaseMock)),
+    JSON.stringify({ unidade: "Cuca José Walter", quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  const logouTroca = linhas.some((l) => l.includes("Troca de unidade (semantica): Cuca Barra -> Cuca José Walter"));
+  assertEquals(
+    logouTroca,
+    true,
+    "AC7: detectarTrocaUnidade não acha nada nessa frase indireta (sem nome de unidade), mas pareceIntencaoTrocaUnidade dispara (contém 'unidade') e a avaliação semântica identifica 'Cuca José Walter' — deveria confirmar a troca, não continuar respondendo pela unidade antiga",
+  );
+});
+
+Deno.test("Item 4 / AC8: intenção de trocar sem unidade identificável pergunta em vez de manter a unidade errada em silêncio", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ unidade_selecionada: "Cuca Barra" }), chamadas);
+  const resp = await comFetchMockado(
+    () => handler(requestFake("acho que quero mudar de unidade, mas não sei bem pra qual ainda"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const body = await resp.json();
+  assertStringIncludes(body.resposta ?? "", "unidade", "AC8: a pergunta de ambiguidade deveria perguntar qual unidade, não silenciosamente manter a unidade antiga");
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(carregouProgramacaoCompleta, false, "AC8: ambiguidade real deveria pausar em uma pergunta de confirmação, sem seguir pro Passo 6 (RAG) na mesma resposta");
+});
+
+Deno.test("Item 4: falha técnica na avaliação semântica (JSON inválido) NÃO gera pergunta de ambiguidade — cai no fallback seguro (mantém a unidade atual, mesmo comportamento de hoje)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ unidade_selecionada: "Cuca Barra" }), chamadas);
+  // comFetchMockado sem 2º argumento devolve "Resposta de teste" (não é JSON válido) para
+  // QUALQUER chamada de chat/completions, incluindo avaliarSelecaoUnidade — simula uma falha
+  // real de parsing/rede sem precisar derrubar o fetch inteiro.
+  const resp = await comFetchMockado(() => handler(requestFake("posso escolher outra unidade?"), supabaseMock));
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const body = await resp.json();
+  assertEquals(
+    (body.resposta ?? "").includes("Só pra confirmar"),
+    false,
+    "uma falha técnica na chamada semântica (fallback AVALIACAO_SELECAO_UNIDADE_DEFAULT, mudou_de_assunto=false) não pode virar uma pergunta de ambiguidade pro lead — precisa cair em silêncio no mesmo comportamento de hoje (manter a unidade atual)",
+  );
+});
+
+// ── Item 5 (S-WM-21, cont. AUD-13): avaliarSelecaoUnidade ganha o mesmo retry/backoff que
+// chamarGPT já tinha — antes, um 429/5xx aqui caía direto no fallback seguro sem tentar de novo ──
+Deno.test("Item 5 / AC10: avaliarSelecaoUnidade tenta de novo após 429 e retorna a classificação real na 2ª tentativa", async () => {
+  let chamadasFetch = 0;
+  const fetchOriginal = globalThis.fetch;
+  // deno-lint-ignore no-explicit-any
+  globalThis.fetch = (() => {
+    chamadasFetch++;
+    if (chamadasFetch === 1) {
+      // retry-after: 0 mantém o teste rápido (sem esperar de verdade) — só prova que o
+      // caminho de retry foi exercitado, não a duração real do backoff (já coberta por
+      // parseRetryAfterSegundos/deveTentarNovamente isoladamente).
+      return Promise.resolve(new Response("rate limited", { status: 429, headers: { "retry-after": "0" } }));
+    }
+    const conteudo = JSON.stringify({ unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
+    return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: conteudo } }] }), { status: 200 }));
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+
+  try {
+    const resultado = await avaliarSelecaoUnidade("quero saber da barra", "fake-key");
+    assertEquals(chamadasFetch, 2, "AC10: esperava-se exatamente 1 nova tentativa após o 429 (2 chamadas fetch no total)");
+    assertEquals(resultado.unidade, "Cuca Barra", "AC10: depois do retry, a classificação real da 2ª tentativa deveria ser retornada — antes desse fix, o 429 já caía direto no fallback seguro (unidade: null) sem tentar de novo");
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+});
+
+Deno.test("Item 5 / AC11: erro não-transitório (400) cai direto no fallback seguro, sem tentar de novo", async () => {
+  let chamadasFetch = 0;
+  const fetchOriginal = globalThis.fetch;
+  // deno-lint-ignore no-explicit-any
+  globalThis.fetch = (() => {
+    chamadasFetch++;
+    return Promise.resolve(new Response("bad request", { status: 400 }));
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+
+  try {
+    const resultado = await avaliarSelecaoUnidade("qualquer mensagem", "fake-key");
+    assertEquals(chamadasFetch, 1, "AC11: um erro não-transitório (400) não deveria acionar nenhuma nova tentativa");
+    assertEquals(
+      resultado,
+      { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false },
+      "AC11: mesmo comportamento de hoje pra erro não-transitório — cai no fallback seguro sem quebrar o fluxo",
+    );
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
 });
 
 // ── AUD-13: retry cobre só 429, não 5xx transitório ─────────────────────────
@@ -439,9 +567,34 @@ Deno.test("VAL-08: dígito respondendo pergunta improvisada do GPT (sem menu num
   );
 });
 
-Deno.test("VAL-08 (regressão): dígito respondendo um menu de categorias numerado de verdade continua recarregando a visão geral", async () => {
+// ── Item 3 (S-WM-21, cont. VAL-08): checagem por ESTADO da conversa (metadata.menu_categoria_
+// ativo), não mais por formato de texto — fecha a lacuna que o próprio VAL-08 original já
+// documentava (GPT pode improvisar algo com CARA de lista numerada sem o código ter convidado
+// nenhuma seleção; texto sozinho não distingue os dois casos, só o estado sabe) ─────────────────
+Deno.test("Item 3 / AC5: dígito respondendo uma lista IMPROVISADA pelo GPT (sem estado de menu real) NÃO recarrega a visão geral", async () => {
   const chamadas: ChamadaRegistrada[] = [];
+  // metadata SEM menu_categoria_ativo — nenhum menu real foi convidado pelo código no turno
+  // anterior, mesmo que o texto do GPT tenha "cara" de lista numerada.
   const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [{ conteudo: "1. Você pode ver os horários\n2. Ou falar com a unidade", remetente: "agente" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("2"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(
+    carregouProgramacaoCompleta,
+    false,
+    "AC5: mesmo com uma lista numerada de aparência real na última mensagem do GPT, sem o ESTADO (metadata.menu_categoria_ativo) confirmando que o código convidou uma seleção, o dígito não pode recarregar a visão geral — essa era a lacuna que a checagem por formato de texto (VAL-08 original) não cobria",
+  );
+});
+
+Deno.test("Item 3 / AC6 (regressão de VAL-08): dígito respondendo um menu de categorias REAL (estado confirmado) continua recarregando a visão geral", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  // metadata COM menu_categoria_ativo=true — representa o código tendo de fato convidado uma
+  // seleção de área no turno anterior (branch precisaVisaoGeral=true).
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra", menu_categoria_ativo: true });
   respostas["mensagens"] = { data: [{ conteudo: "1️⃣ Esportes\n2️⃣ Cursos e Oficinas\n3️⃣ Atividades Culturais\n4️⃣ Tecnologia", remetente: "agente" }] };
   const supabaseMock = criarSupabaseMock(respostas, chamadas);
   await comFetchMockado(async () => {
@@ -452,7 +605,84 @@ Deno.test("VAL-08 (regressão): dígito respondendo um menu de categorias numera
   assertEquals(
     carregouProgramacaoCompleta,
     true,
-    "VAL-08 não pode quebrar o caso legítimo: '2' respondendo um menu de categorias numerado de verdade ainda deve carregar a área selecionada",
+    "AC6: com o estado confirmando um menu de categorias real, '2' ainda deve carregar a área selecionada — não pode regredir o caso legítimo do VAL-08 original",
+  );
+});
+
+Deno.test("Item 3: resposta de visão geral grava o novo estado de menu_categoria_ativo pro próximo turno", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  // Mesmo cenário do AUD-04 (resolução de unidade por NOME dentro de aguardando_unidade, sem
+  // menu_categoria_ativo prévio) — trocouUnidade=true força precisaVisaoGeral=true. Além do
+  // update já esperado pelo AUD-04 (grava unidade_selecionada), o Item 3 deveria gravar um 2º
+  // update só pro novo estado de menu_categoria_ativo (valor mudou de ausente/false pra true).
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ aguardando_unidade: true }), chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("Mondubim"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const updatesDeConversas = chamadas.filter((c) => c.tabela === "conversas" && c.metodo === "update").length;
+  assertEquals(
+    updatesDeConversas >= 2,
+    true,
+    "Item 3: esperava-se pelo menos 2 updates em conversas — 1 pra salvar a unidade escolhida (AUD-04, já existente) e 1 pra registrar o novo estado de menu_categoria_ativo=true (Item 3), já que o valor mudou em relação ao anterior (ausente/false)",
+  );
+});
+
+// ── Fix CRITICAL (S-WM-21, achado do @qa Quinn): 2 writes de metadata no mesmo turno não podem
+// mais se pisar — o 2º (Item 3) precisa MESCLAR sobre o que o 1º (seção 5b) acabou de gravar,
+// não sobre a foto de conversa.metadata de ANTES da requisição. Estes testes checam o CONTEÚDO
+// do último update, não só a contagem — é exatamente a asserção que faltava e deixou o bug
+// original passar despercebido. ────────────────────────────────────────────────────────────────
+Deno.test("Fix CRITICAL: resolver unidade (AUD-04) + Item 3 gravando menu_categoria_ativo no mesmo turno NÃO apaga a unidade escolhida", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ aguardando_unidade: true }), chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("Mondubim"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const updatesDeConversas = chamadas.filter((c) => c.tabela === "conversas" && c.metodo === "update");
+  const ultimoUpdate = updatesDeConversas[updatesDeConversas.length - 1];
+  const metadataFinal = (ultimoUpdate?.payload as { metadata?: Record<string, unknown> } | undefined)?.metadata;
+  assertEquals(
+    metadataFinal?.unidade_selecionada,
+    "Cuca Mondubim",
+    "CRITICAL: o último update de conversas.metadata precisa continuar tendo unidade_selecionada='Cuca Mondubim' — antes do fix, o write do Item 3 (menu_categoria_ativo) mesclava sobre a foto ANTIGA de metadata (sem a unidade recém-escolhida) e apagava esse campo, porque .update({metadata:{...}}) no Supabase substitui a coluna inteira, não faz merge no banco",
+  );
+  assertEquals(
+    metadataFinal?.aguardando_unidade,
+    false,
+    "CRITICAL: aguardando_unidade precisa continuar false (unidade já resolvida) — antes do fix, o write do Item 3 revertia esse campo pra true (valor de ANTES do turno), fazendo a próxima mensagem do lead reabrir o fluxo de espera de unidade por engano",
+  );
+  assertEquals(metadataFinal?.menu_categoria_ativo, true, "o próprio campo que o Item 3 queria gravar também precisa estar presente, claro");
+});
+
+Deno.test("Fix CRITICAL: troca semântica de unidade (Item 4) + Item 3 gravando menu_categoria_ativo no mesmo turno NÃO reverte a troca", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ unidade_selecionada: "Cuca Barra" }), chamadas);
+  await comFetchMockado(
+    () => handler(requestFake("quero saber de outra unidade, tipo a que fica pertinho da minha casa"), supabaseMock),
+    JSON.stringify({ unidade: "Cuca José Walter", quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  const updatesDeConversas = chamadas.filter((c) => c.tabela === "conversas" && c.metodo === "update");
+  const ultimoUpdate = updatesDeConversas[updatesDeConversas.length - 1];
+  const metadataFinal = (ultimoUpdate?.payload as { metadata?: Record<string, unknown> } | undefined)?.metadata;
+  assertEquals(
+    metadataFinal?.unidade_selecionada,
+    "Cuca José Walter",
+    "CRITICAL: o último update precisa continuar com a unidade NOVA (José Walter) — antes do fix, o write do Item 3 revertia pra 'Cuca Barra' (a foto antiga, de antes da troca), silenciosamente desfazendo a troca que acabou de ser confirmada nesta mesma resposta",
+  );
+});
+
+// ── VAL-02: guardrail anti-alucinação — reforço com exemplo negativo explícito ──────────────
+// Mitigação de prompt, NÃO uma correção comprovada: não é possível testar de forma
+// determinística se o GPT (temperatura=0.7) vai obedecer a um exemplo negativo — isso exigiria
+// rodar o modelo de verdade e não seria repetível. Este teste só prova que o texto do guardrail
+// contém o reforço pedido pelo relatório; a eficácia real depende de reteste manual em produção.
+Deno.test("VAL-02: guardrail (regra 1) inclui exemplo negativo explícito contra inventar nome de professor", () => {
+  assertStringIncludes(
+    INSTRUCAO_SEGURANCA.toLowerCase(),
+    "joao silva",
+    "VAL-02: a regra genérica ('NUNCA invente... nomes de professores') não impediu o GPT de inventar 'João Silva' numa pergunta de acompanhamento sobre Natação — o relatório pede reforçar com um exemplo negativo explícito",
   );
 });
 
