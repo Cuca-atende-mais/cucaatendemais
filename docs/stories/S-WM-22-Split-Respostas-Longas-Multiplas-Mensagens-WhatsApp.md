@@ -1,7 +1,7 @@
 # S-WM-22 — TOM-03b: respostas longas em múltiplas mensagens WhatsApp
 
 ## Status
-Ready for Review (validação manual em staging pendente — ver Dev Agent Record)
+CONCERNS — aprovado com observações (ver QA Results); validação manual em staging ainda pendente antes de "Done"
 
 ## Complexidade
 **L** (grande) — atravessa 2 sistemas (Deno `motor-agente` + worker Python), muda o contrato entre eles, tem um requisito de integridade não-óbvio (1 linha em `mensagens` por parte efetivamente enviada) e precisa de decisão explícita de comportamento em falha parcial. Maior risco/esforço dos itens desta leva, confirmado pelo Junior e pela investigação de código.
@@ -149,6 +149,7 @@ Ou seja: hoje o "envio" real ao WhatsApp é uma chamada só, de ponta a ponta. F
 | 2026-07-11 | 0.1 | Draft inicial a partir do levantamento de pendências de Junior (item 2 / TOM-03b, separado da S-WM-21 por risco/esforço) | @sm River |
 | 2026-07-11 | 0.2 | Validado (GO). Status Draft → Ready. Adicionado campo Complexidade, AC9 e checklist por Task exigindo relato incremental (não só agregado no fechamento) do resultado de `deno test`/`pytest` no Dev Agent Record, a pedido explícito de Junior | @po Pax |
 | 2026-07-11 | 0.3 | Implementados os 4 Tasks: critério+contrato registrados (Task 1), split+persistência em `index.ts` (Task 2), dispatch sequencial+falha parcial no worker (Task 3), fechamento (Task 4). `deno test`: 89 passed/0 failed/2 ignored. `pytest`: 123 passed/3 skipped (baseline 120, +3 novos). `deno check`: 67 erros, idêntico ao fim da S-WM-21 (zero erros novos). Validação manual em staging NÃO executada (sem acesso nesta sessão) — pendência explícita. Status Ready → InProgress → Ready for Review | @dev Dex |
+| 2026-07-11 | 0.4 | QA gate: **CONCERNS**. Nenhum bug encontrado (AC2/AC5 reproduzidos de forma independente com cenários próprios, mais agressivos que os testes do @dev). 3 achados não-bloqueantes registrados: ordem de insert depende de timestamp (pré-existente, não novo); falha parcial no dispatch pode deixar `mensagens` com mais linhas do que o efetivamente entregue ao lead (log OK, mas não reconcilia — sugerido virar débito técnico); heurística de detecção de item de lista tem falsos positivos possíveis, sem perda/duplicação de dado. Números `deno test`/`deno check`/`pytest` reconfirmados de forma independente, batem com o relato. Validação em staging segue pendente — sugerido acontecer durante a revisão do sócio em homologação | @qa Quinn |
 
 ## Dev Agent Record
 
@@ -202,4 +203,45 @@ Testes novos:
 **Recomendação:** chamar @qa Quinn pra o gate desta story. @qa e @devops não foram acionados por mim.
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+**Revisor:** @qa Quinn · **Data:** 2026-07-11 · **Verdict:** ⚠️ **CONCERNS** — código aprovado, sem achado bloqueante; validação em staging segue pendente e precisa acontecer antes de "Done" de verdade.
+
+### Verificação independente dos números
+- `deno test`: confirmado **89 passed | 0 failed | 2 ignored**.
+- `deno check`: confirmado **67 erros** (17 `TS18047` / 31 `TS2339` / 16 `TS2345` / 3 `TS2353`) — idêntico ao fim da S-WM-21, nenhuma categoria nova.
+- `pytest worker/tests/`: confirmado **123 passed, 3 skipped**.
+
+Todos batem exatamente com o relato do @dev.
+
+### 1. Reprodução independente do AC5 (tag nunca sobrevive em nenhuma parte)
+Não me limitei a reler o código nem a rodar os testes já escritos pelo @dev — escrevi 3 cenários próprios (script isolado, captura real de payload de `.insert()`), incluindo um caso mais agressivo que o do @dev: a tag `[[HANDOVER]]` **colada sem quebra de linha** na última linha da lista (`"Informatica - Ter/Qui [[HANDOVER]]"`), pra forçar `removerTag` + `dividirRespostaEmPartes` a interagir num ponto de costura mais arriscado.
+
+Resultado nos 3 cenários (handover+lista com fechamento, handover+lista sem fechamento, encaminhamento substituindo uma resposta que teria virado lista): tag nunca sobreviveu em nenhuma parte, `handover`/substituição de canal continuaram corretos, e a substituição de encaminhamento (Backlog 4a) não deixou nenhum rastro do texto original. AC5 confirmado.
+
+### 2. Reprodução independente do AC2 (cada parte vira linha própria, sem fragmentar o histórico)
+No mesmo script: para cada cenário, o array `mensagens` do JSON e os inserts reais capturados em `mensagens` (tabela) batem 1:1 em conteúdo, quantidade e ordem. Exemplo (handover + 5 cursos):
+```
+mensagens[] no JSON: 3 elementos
+inserts em `mensagens`: 3, mesmo conteúdo, mesma ordem
+```
+AC2 confirmado.
+
+### 3. Achados adicionais (não bloqueantes, registrados por completude)
+
+**a) Ordem dos inserts depende de `created_at` (timestamp), não de um número de sequência explícito.** `salvarMensagemAgente` não seta `created_at` — confia no `DEFAULT now()` da coluna (`timestamptz`, microssegundos) e no fato de cada `.insert()` ser uma chamada de rede sequencial (`await` em loop), não paralela. Na prática isso é seguro (round-trips de rede levam >1ms, bem acima da resolução do timestamp), mas é uma garantia implícita, não uma ordenação garantida por schema (`.order("created_at")` sem chave de desempate explícita em caso de empate). **Não é um problema introduzido por esta story** — o mesmo padrão já existia pra qualquer sequência de inserts no arquivo antes do Item 2; esta story só aumenta de 1 para até 3 os inserts sequenciais por turno, um pouco mais de exposição ao mesmo risco pré-existente. Não bloqueia, registro como observação de baixo risco.
+
+**b) A pergunta do @dev sobre log/alerta na falha parcial: log está OK, mas não fecha o ciclo sozinho.** O `logger.error` no worker é claro e estruturado (qual parte falhou, quantas antes, total) — suficiente pra investigação manual reativa. O que falta, e não é culpa desta story (é uma característica arquitetural já documentada pelo @dev nos Dev Notes): o `motor-agente` (Deno) persiste as N linhas em `mensagens` ANTES do worker (Python) sequer tentar enviar — se a 2ª de 3 partes falhar, o banco vai ter 3 linhas gravadas mas só 1 efetivamente entregue ao lead. Isso já era verdade pra mensagem única antes desta story (podia falhar depois de persistida), mas agora fica **mais provável** (até 3 chamadas HTTP por turno em vez de 1) e **mais confuso quando acontece** (histórico "completo" no banco, entrega truncada de verdade pro lead — o próximo turno do GPT vai "ver" contexto que o lead nunca recebeu). Log de erro sozinho não reconcilia isso. Não é bloqueante pra este gate (baixa frequência esperada — falha de rede/API não é o caminho comum; corrigir de verdade exigiria inverter quem persiste, escopo maior que esta story) — mas deveria virar um item de backlog registrado, não só uma nota perdida num commit. Sugiro ao @dev/@po registrar como débito técnico explícito antes de fechar Done.
+
+**c) Heurística de `ehLinhaDeItemLista` tem falsos positivos possíveis (não testados, mas não corrompem dado).** Uma linha de fechamento tipo "Precisa de algo mais - é só chamar" (contém " - ", não termina em "?", <80 chars) seria incorretamente contada como item de lista, ou uma linha explicativa intercalada no meio de itens reais fica absorvida dentro do bloco "lista" em vez de descartada. Nenhum dos dois casos perde ou duplica conteúdo (só afeta ONDE a linha cai dentro das partes) — é uma imprecisão de apresentação, não um bug de integridade. Não bloqueia.
+
+### 7 checks
+1. **Code review:** split aplicado no ponto certo (depois das tags), variável `resposta` reatribuída sem deixar nenhum uso posterior do valor antigo — sem o padrão de "referência estática desatualizada" que causou o CRITICAL da S-WM-21. Boa separação de responsabilidade (`ehLinhaDeItemLista`/`dividirRespostaEmPartes` puras e testáveis).
+2. **Testes:** cobertura boa dos dois lados, incluindo o caso de falha parcial (side_effect sequenciado) e a correção necessária dos 3 mocks quebrados pela mudança de contrato — nada escondido.
+3. **Acceptance Criteria:** AC1, AC2, AC4, AC5, AC6, AC7 verificados (incluindo reprodução independente de AC2/AC5, os dois pedidos explicitamente). AC3 (falha parcial testada) confirmado via teste + achado (b) acima registrado como limitação residual conhecida. AC8 (sem deploy) respeitado.
+4. **Regressão:** 89/0/2 (deno) e 123/3 (pytest) sem quebra em nenhum teste pré-existente, confirmado.
+5. **Performance:** nenhuma chamada de LLM extra adicionada; custo de N chamadas HTTP ao WhatsApp em vez de 1 é inerente ao pedido da story, já documentado como risco aceito.
+6. **Segurança:** nada de OWASP básico — texto das partes vem do próprio `resposta` já sanitizado pelas etapas anteriores (guardrail, encaminhamento), nenhuma interpolação nova de dado externo.
+7. **Documentação:** Dev Notes e Dev Agent Record completos e precisos, achados (a)/(b)/(c) acima são complementares, não contradizem nada do que o @dev registrou.
+
+### Caminho sugerido
+Não há motivo pra devolver ao @dev — não encontrei bug. O gate real que falta é a validação manual em staging, que **nem eu nem o @dev conseguimos fazer nesta sessão** (sem acesso a WhatsApp real). Sugiro: seguir pro @devops (push + PR), já que a revisão do sócio João em homologação (mencionada no fluxo combinado) é exatamente a oportunidade de fazer essa validação real — mas o PR/descrição deveria deixar claro que isso ainda está pendente, não fingir que já foi feito. Registrar achado (b) como débito técnico separado é uma sugestão, não bloqueio.
