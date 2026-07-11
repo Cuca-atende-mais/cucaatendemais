@@ -1,7 +1,7 @@
 # S-WM-21 — 1ª mensagem sem menu engessado + robustez de seleção/troca de unidade
 
 ## Status
-Ready for Review (fix do CRITICAL aplicado — aguardando revalidação da @qa)
+Ready (QA PASS — aguardando @devops: push + PR contra develop)
 
 ## Complexidade
 **M** (médio) — 4 itens independentes entre si, mas 2 deles (1 e 4) dependem de classificação semântica via LLM (maior superfície de teste/ambiguidade que um fix mecânico); 3 dos 4 já têm base implementada, reduzindo o esforço real. Um único arquivo (`index.ts`), sem mudança de schema.
@@ -162,6 +162,7 @@ Quando `unidadeSalva` já existe (linha 671), a troca de unidade hoje só é det
 | 2026-07-11 | 0.3 | Implementados os 4 itens (Tasks 1-4) + fechamento (Task 5). Status Ready → InProgress → Ready for Review. `deno test`: 77 passed/0 failed/2 ignored. `deno check`: achado registrado (61 erros pré-existentes na baseline, +8 da mesma categoria nesta story, nenhuma categoria nova) — AC13 recalibrada para refletir a realidade encontrada. AC15 (relato por Task) cumprido em todas as 4 Tasks | @dev Dex |
 | 2026-07-11 | 0.4 | QA gate: **FAIL**. Achado CRITICAL — o write de `menu_categoria_ativo` do Item 3 (Passo 6) sobrescreve `unidade_selecionada`/`aguardando_unidade` gravados no mesmo turno pela seção 5b, sempre que uma unidade é resolvida/trocada (reproduzido empiricamente). `deno test`/`deno check` confirmados independentemente, batem com o relato do @dev. Status Ready for Review → InProgress (retorno ao @dev) | @qa Quinn |
 | 2026-07-11 | 0.5 | Fix do CRITICAL (Task 6): introduzido tracker `metadataAtual` em memória, único por turno, usado por todos os pontos que escrevem `conversas.metadata` (seção 5b + Item 3 no Passo 6) — elimina a classe inteira de "2º write apaga 1º write no mesmo turno". Reforço de teste (Task 7): `criarSupabaseMock` passou a capturar o payload de `update`/`insert`; 2 testes novos validam o conteúdo do último update nos 2 cenários afetados. `deno test`: 79 passed/0 failed/2 ignored, sem regressão. `deno check`: 67 erros (baseline 61 inalterada, delta caiu de +8 pra +6). Status InProgress → Ready for Review | @dev Dex |
+| 2026-07-11 | 0.6 | RE-GATE: **PASS**. Auditados os 9 pontos que escrevem `conversas.metadata` (todos usam o tracker). Repro empírico em 4 cenários (não só 1) confirma que o write do Item 3 preserva o que a seção 5b gravou. Confirmado que os 2 testes novos falham contra o código pré-fix (não são tautológicos) e passam contra o atual. `deno test`/`deno check` reconfirmados de forma independente, batem com o relato do @dev. Status → Ready (aguardando @devops) | @qa Quinn |
 
 ## Dev Agent Record
 
@@ -304,3 +305,44 @@ Em todos os 4, o lead recebe a resposta certa NESTE turno (a variável em memór
 
 ### Caminho sugerido ao usuário
 (a) chamar @dev Dex de novo pra corrigir o CRITICAL (e de preferência estender o mock de teste pra capturar payload de update, adicionando o teste de regressão sugerido); ou (b) revisar o achado antes de decidir. **Não recomendo seguir pro @devops nesse estado** — o bug corrompe o estado de conversas em produção assim que qualquer lead escolher ou trocar de unidade.
+
+---
+
+## RE-GATE (2026-07-11) — pós-fix do @dev
+
+**Revisor:** @qa Quinn · **Verdict:** ✅ **PASS**
+
+Repeti o mesmo padrão do gate anterior — reproduzi, não só conferi o relato do @dev. Nada foi validado só "no papel".
+
+### 1. Auditoria de todos os pontos que escrevem `conversas.metadata`
+`grep -n "from('conversas').update\|from(\"conversas\").update" index.ts` → 12 ocorrências. Das 9 que escrevem a chave `metadata`, **todas as 9** usam `metadataAtual` (nenhuma sobrou usando `conversa?.metadata` direto ou um literal `{...metadata, ...}` desatualizado). As outras 3 (`status`/`updated_at`, reabertura de conversa + handover/encerrado) não tocam a chave `metadata`, então não têm risco de clobber (update parcial só substitui as chaves que o payload inclui). Não sobrou nenhum ponto fora do tracker.
+
+### 2. Repro empírico (script isolado, captura de payload real, 4 cenários — não só o 1 que eu tinha reproduzido no gate anterior)
+- AUD-04 (resolver unidade por nome dentro de `aguardando_unidade`, "Mondubim")
+- Item 4 troca semântica (unidade indireta, "outra unidade... pertinho de casa")
+- Troca direta por nome (`unidadeSalva` já setada, lead cita outra unidade)
+- 1ª mensagem citando unidade direto
+
+Nos 4, o último `update` de `conversas` preserva corretamente `unidade_selecionada` e `aguardando_unidade` do write anterior, somando `menu_categoria_ativo` por cima — sem apagar nada. Exemplo (AUD-04):
+```
+update #1: {"metadata":{"aguardando_unidade":false,"unidade_selecionada":"Cuca Mondubim"}}
+update #2: {"metadata":{"aguardando_unidade":false,"unidade_selecionada":"Cuca Mondubim","menu_categoria_ativo":true}}
+```
+Compare com o repro do gate anterior (mesmo cenário, código velho) — `update #2` tinha `"aguardando_unidade":true` (revertido) e **sem** `unidade_selecionada` nenhum. Bug confirmado corrigido, não só reformulado.
+
+### 3. Os 2 testes novos realmente pegam o bug (não são tautológicos)
+Extraí o `index.ts` de ANTES do fix (`010f909`) + o `index.audit.test.ts` de DEPOIS do fix (`7d261ea`, com os 2 testes novos) num diretório isolado e rodei só os testes `Fix CRITICAL`. **Os 2 falham** contra o código antigo:
+- `unidade_selecionada` → `undefined` (esperado `"Cuca Mondubim"`)
+- unidade revertida pra `"Cuca Barra"` (esperado `"Cuca José Walter"`)
+
+Contra o código atual (pós-fix), os mesmos 2 testes passam — confirmado na suíte completa abaixo.
+
+### 4. `deno test`/`deno check` reconfirmados de forma independente
+- `deno test --no-check --allow-env --allow-read --allow-net .`: **79 passed | 0 failed | 2 ignored** — bate com o relato.
+- `deno check index.ts` (atual): **67 erros**, categorias `TS18047`(17)/`TS2339`(31)/`TS2345`(16)/`TS2353`(3) — mesmas 4 de sempre, nenhuma nova.
+- `deno check` da baseline (`git show c9fda67:.../index.ts` → arquivo isolado → `deno check`): **61 erros**, batendo com o número já confirmado no gate anterior. Delta desta story: **+6** (era +8 antes do fix — o tracker tipado eliminou 2 erros de tipo que vinham dos casts ad-hoc). Bate exatamente com o relato do @dev.
+
+### Conclusão
+Causa raiz eliminada de forma estrutural (tracker único, não um patch pontual só no cenário que eu tinha reproduzido) — auditei os 9 pontos de escrita, não só os 2 que os testes novos cobrem. Nenhum achado novo. Os 7 checks (code review, testes, ACs, regressão, performance, segurança, docs) do gate anterior continuam válidos — o único bloqueio era este CRITICAL, agora resolvido e verificado de forma independente.
+
+**Próximo passo:** @devops — push da branch + abertura de PR contra `develop` (nunca commit direto em `main`). Sem deploy automático; `supabase functions deploy motor-agente` continua sendo passo manual, só depois de validado em staging e autorizado pelo Junior.
