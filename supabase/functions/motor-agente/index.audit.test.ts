@@ -33,16 +33,29 @@ import {
 // confirmar QUAIS parâmetros (p_tipos/p_unidade_cuca) foram passados pra buscar_chunks_similares,
 // não só que a RPC foi chamada. Aditivo: nenhum teste existente faz igualdade do array inteiro,
 // só `.some((c) => c.tabela === ...)`, então adicionar o campo não quebra nada.
-type ChamadaRegistrada = { tabela: string; metodo: string; args?: unknown[] };
+// `payload` (opcional, S-WM-21 Task 7 — achado do @qa Quinn): captura o argumento de `update`/
+// `insert`, mesmo espírito de `args` acima, mas para o corpo do write em vez dos argumentos de
+// uma RPC. Sem isso, um teste só sabe QUANTAS vezes `.update()` foi chamado, não o que cada
+// chamada realmente gravou — foi exatamente essa lacuna que deixou passar um bug onde um 2º
+// `.update({metadata:{...}})` no mesmo turno apagava o que um 1º tinha acabado de gravar (o
+// mock nunca guardava o conteúdo pra comparar). Aditivo: nenhum teste existente lê `payload`,
+// então adicionar o campo não quebra nada.
+type ChamadaRegistrada = { tabela: string; metodo: string; args?: unknown[]; payload?: unknown };
 
 // deno-lint-ignore no-explicit-any
 function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>, chamadas: ChamadaRegistrada[]): any {
   function criarChain(tabela: string) {
     // deno-lint-ignore no-explicit-any
     const chain: any = {};
-    for (const metodo of ["select", "insert", "update", "eq", "order", "limit", "single"]) {
+    for (const metodo of ["select", "eq", "order", "limit", "single"]) {
       chain[metodo] = (..._args: unknown[]) => {
         chamadas.push({ tabela, metodo });
+        return chain;
+      };
+    }
+    for (const metodo of ["insert", "update"]) {
+      chain[metodo] = (payload: unknown) => {
+        chamadas.push({ tabela, metodo, payload });
         return chain;
       };
     }
@@ -612,6 +625,51 @@ Deno.test("Item 3: resposta de visão geral grava o novo estado de menu_categori
     updatesDeConversas >= 2,
     true,
     "Item 3: esperava-se pelo menos 2 updates em conversas — 1 pra salvar a unidade escolhida (AUD-04, já existente) e 1 pra registrar o novo estado de menu_categoria_ativo=true (Item 3), já que o valor mudou em relação ao anterior (ausente/false)",
+  );
+});
+
+// ── Fix CRITICAL (S-WM-21, achado do @qa Quinn): 2 writes de metadata no mesmo turno não podem
+// mais se pisar — o 2º (Item 3) precisa MESCLAR sobre o que o 1º (seção 5b) acabou de gravar,
+// não sobre a foto de conversa.metadata de ANTES da requisição. Estes testes checam o CONTEÚDO
+// do último update, não só a contagem — é exatamente a asserção que faltava e deixou o bug
+// original passar despercebido. ────────────────────────────────────────────────────────────────
+Deno.test("Fix CRITICAL: resolver unidade (AUD-04) + Item 3 gravando menu_categoria_ativo no mesmo turno NÃO apaga a unidade escolhida", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ aguardando_unidade: true }), chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("Mondubim"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const updatesDeConversas = chamadas.filter((c) => c.tabela === "conversas" && c.metodo === "update");
+  const ultimoUpdate = updatesDeConversas[updatesDeConversas.length - 1];
+  const metadataFinal = (ultimoUpdate?.payload as { metadata?: Record<string, unknown> } | undefined)?.metadata;
+  assertEquals(
+    metadataFinal?.unidade_selecionada,
+    "Cuca Mondubim",
+    "CRITICAL: o último update de conversas.metadata precisa continuar tendo unidade_selecionada='Cuca Mondubim' — antes do fix, o write do Item 3 (menu_categoria_ativo) mesclava sobre a foto ANTIGA de metadata (sem a unidade recém-escolhida) e apagava esse campo, porque .update({metadata:{...}}) no Supabase substitui a coluna inteira, não faz merge no banco",
+  );
+  assertEquals(
+    metadataFinal?.aguardando_unidade,
+    false,
+    "CRITICAL: aguardando_unidade precisa continuar false (unidade já resolvida) — antes do fix, o write do Item 3 revertia esse campo pra true (valor de ANTES do turno), fazendo a próxima mensagem do lead reabrir o fluxo de espera de unidade por engano",
+  );
+  assertEquals(metadataFinal?.menu_categoria_ativo, true, "o próprio campo que o Item 3 queria gravar também precisa estar presente, claro");
+});
+
+Deno.test("Fix CRITICAL: troca semântica de unidade (Item 4) + Item 3 gravando menu_categoria_ativo no mesmo turno NÃO reverte a troca", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ unidade_selecionada: "Cuca Barra" }), chamadas);
+  await comFetchMockado(
+    () => handler(requestFake("quero saber de outra unidade, tipo a que fica pertinho da minha casa"), supabaseMock),
+    JSON.stringify({ unidade: "Cuca José Walter", quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  const updatesDeConversas = chamadas.filter((c) => c.tabela === "conversas" && c.metodo === "update");
+  const ultimoUpdate = updatesDeConversas[updatesDeConversas.length - 1];
+  const metadataFinal = (ultimoUpdate?.payload as { metadata?: Record<string, unknown> } | undefined)?.metadata;
+  assertEquals(
+    metadataFinal?.unidade_selecionada,
+    "Cuca José Walter",
+    "CRITICAL: o último update precisa continuar com a unidade NOVA (José Walter) — antes do fix, o write do Item 3 revertia pra 'Cuca Barra' (a foto antiga, de antes da troca), silenciosamente desfazendo a troca que acabou de ser confirmada nesta mesma resposta",
   );
 });
 

@@ -751,16 +751,27 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // (1ª mensagem ou dentro de aguardando_unidade) — sinaliza pro Passo 6 buscar RAG geral
     // (FAQ isolado) em vez de early-return com o menu.
     let perguntaGeralAtiva = false;
+    // Fix CRITICAL (S-WM-21, achado do @qa Quinn): `conversa.metadata` é a foto de ANTES desta
+    // requisição — nunca é atualizada em memória depois de um `.update()`. `.update({metadata:
+    // {...}})` no Supabase SUBSTITUI a coluna JSONB inteira (não faz merge no banco). Um turno
+    // pode gravar `metadata` mais de uma vez (seção 5b resolve/troca unidade E, no mesmo turno,
+    // o Passo 6 grava `menu_categoria_ativo`) — se o 2º write mesclar sobre a foto ANTIGA, ele
+    // apaga o que o 1º acabou de gravar. `metadataAtual` é o tracker único, em memória, do
+    // estado mais recente: TODO write de metadata neste turno tem que mesclar sobre ele (nunca
+    // sobre `conversa.metadata` direto) e atualizá-lo logo em seguida. Escopo no nível de
+    // `unidadeEfetiva` (fora do `if` abaixo) de propósito — o Passo 6 (fora deste `if`) também
+    // precisa ler/escrever o mesmo tracker.
+    let metadataAtual: Record<string, unknown> = conversa?.metadata || {};
 
     if (unidade_cuca === 'Geral') {
-      const metadata = conversa?.metadata || {};
-      const unidadeSalva = metadata.unidade_selecionada as string | undefined;
-      const aguardando = metadata.aguardando_unidade as boolean | undefined;
+      const unidadeSalva = metadataAtual.unidade_selecionada as string | undefined;
+      const aguardando = metadataAtual.aguardando_unidade as boolean | undefined;
 
       if (unidadeSalva) {
         const novaUnidade = detectarTrocaUnidade(textoFinal, unidadeSalva);
         if (novaUnidade) {
-          await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: novaUnidade, aguardando_unidade: false } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, unidade_selecionada: novaUnidade, aguardando_unidade: false };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           unidadeEfetiva = novaUnidade;
           trocouUnidade = true;
           console.log("[motor-agente v18] Troca de unidade: " + unidadeSalva + " -> " + novaUnidade);
@@ -772,7 +783,8 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // andamento (a maioria delas não menciona nada sobre trocar de unidade).
           const avaliacaoTroca = await avaliarSelecaoUnidade(textoFinal, openaiKey);
           if (avaliacaoTroca.unidade && avaliacaoTroca.unidade !== unidadeSalva) {
-            await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: avaliacaoTroca.unidade, aguardando_unidade: false } }).eq('id', conversa.id);
+            metadataAtual = { ...metadataAtual, unidade_selecionada: avaliacaoTroca.unidade, aguardando_unidade: false };
+            await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
             unidadeEfetiva = avaliacaoTroca.unidade;
             trocouUnidade = true;
             console.log("[motor-agente v18] Troca de unidade (semantica): " + unidadeSalva + " -> " + avaliacaoTroca.unidade);
@@ -803,7 +815,8 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         const decisao = decidirAguardandoUnidade(unidadeDetectadaDireta, avaliacaoSemantica);
 
         if (decisao.unidadeSelecionada) {
-          await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: decisao.unidadeSelecionada, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, unidade_selecionada: decisao.unidadeSelecionada, aguardando_unidade: decisao.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           unidadeEfetiva = decisao.unidadeSelecionada;
           // AUD-04: resolução inicial de unidade dentro de aguardando_unidade (por nome OU
           // dígito) conta como equivalente a trocouUnidade — sem isso, só quem escolhe por
@@ -812,13 +825,15 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
         } else if (decisao.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisao.resposta, historico);
-          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisao.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           // VAL-12: pergunta_geral=true — nem unidade escolhida, nem resposta canned. Grava
           // aguardando_unidade=false e segue pro fluxo normal (Passo 6 responde de verdade).
-          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisao.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           perguntaGeralAtiva = true;
           console.log("[motor-agente v18] Pergunta geral identificada (aguardando_unidade): segue pro RAG geral (FAQ isolado)");
         }
@@ -834,18 +849,21 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         if (decisaoPrimeira.unidadeSelecionada) {
           // AUD-07: unidade já citada na própria 1ª mensagem — resolve direto e segue pro
           // fluxo normal (RAG/GPT) em vez de mandar o menu e forçar uma rodada extra.
-          await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: decisaoPrimeira.unidadeSelecionada, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, unidade_selecionada: decisaoPrimeira.unidadeSelecionada, aguardando_unidade: decisaoPrimeira.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           unidadeEfetiva = decisaoPrimeira.unidadeSelecionada;
           trocouUnidade = true;
           console.log("[motor-agente v18] Unidade salva (1a mensagem): " + unidadeEfetiva);
         } else if (decisaoPrimeira.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoPrimeira.resposta, historico);
-          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoPrimeira.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           // VAL-12: pergunta_geral=true já na 1ª mensagem — segue pro fluxo normal (Passo 6).
-          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoPrimeira.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           perguntaGeralAtiva = true;
           console.log("[motor-agente v18] Pergunta geral identificada (1a mensagem): segue pro RAG geral (FAQ isolado)");
         }
@@ -863,8 +881,11 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // mesmo Passo 6) — não o formato do texto (ultimaMensagemEhMenuNumerado, VAL-08 original),
     // que o GPT pode improvisar (ex.: uma lista numerada respondendo a outra pergunta qualquer)
     // sem o código ter convidado nenhuma seleção. MENU_UNIDADES nunca chega aqui: sempre causa
-    // early-return na seção 5b, antes deste Passo 6.
-    const menuCategoriaAtivoAnterior = (conversa?.metadata as Record<string, unknown> | undefined)?.menu_categoria_ativo === true;
+    // early-return na seção 5b, antes deste Passo 6. Lê de `metadataAtual` (fix CRITICAL, não
+    // de `conversa.metadata` direto) — os writes da seção 5b nunca tocam `menu_categoria_ativo`,
+    // então o valor aqui continua sendo fielmente o do turno ANTERIOR, só que através do tracker
+    // que já reflete corretamente qualquer write que a seção 5b tenha feito neste turno.
+    const menuCategoriaAtivoAnterior = metadataAtual.menu_categoria_ativo === true;
     const isSelecaoMenu = ehSelecaoMenu(textoFinal) && menuCategoriaAtivoAnterior;
 
     const precisaVisaoGeral = calcularPrecisaVisaoGeral({ conversaJustCreated: conversaGenuinamenteNova, trocouUnidade, isSelecaoMenu });
@@ -876,11 +897,15 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
     // Item 3 (S-WM-21): registra pro PRÓXIMO turno se ESTA resposta vai ser um menu de
     // categorias (visão geral / área de programação) — só grava quando o valor muda, pra não
-    // gerar update desnecessário em toda mensagem de acompanhamento comum.
+    // gerar update desnecessário em toda mensagem de acompanhamento comum. Fix CRITICAL: mescla
+    // sobre `metadataAtual` (o tracker), nunca sobre `conversa.metadata` puro — senão este write
+    // apaga `unidade_selecionada`/`aguardando_unidade` que a seção 5b acabou de gravar no mesmo
+    // turno (achado do @qa Quinn, reproduzido: update apagava a unidade recém-escolhida).
     if (isAgenteProgramacao) {
       const menuCategoriaAtivoNovo = Boolean(temUnidadeDefinida) && precisaVisaoGeral;
       if (menuCategoriaAtivoNovo !== menuCategoriaAtivoAnterior) {
-        await supabase.from('conversas').update({ metadata: { ...(conversa?.metadata || {}), menu_categoria_ativo: menuCategoriaAtivoNovo } }).eq('id', conversa.id);
+        metadataAtual = { ...metadataAtual, menu_categoria_ativo: menuCategoriaAtivoNovo };
+        await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
       }
     }
 

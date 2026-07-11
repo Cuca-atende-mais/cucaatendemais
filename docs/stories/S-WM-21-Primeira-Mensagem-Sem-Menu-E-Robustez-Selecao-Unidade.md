@@ -1,7 +1,7 @@
 # S-WM-21 — 1ª mensagem sem menu engessado + robustez de seleção/troca de unidade
 
 ## Status
-Ready for Review
+Ready for Review (fix do CRITICAL aplicado — aguardando revalidação da @qa)
 
 ## Complexidade
 **M** (médio) — 4 itens independentes entre si, mas 2 deles (1 e 4) dependem de classificação semântica via LLM (maior superfície de teste/ambiguidade que um fix mecânico); 3 dos 4 já têm base implementada, reduzindo o esforço real. Um único arquivo (`index.ts`), sem mudança de schema.
@@ -160,6 +160,8 @@ Quando `unidadeSalva` já existe (linha 671), a troca de unidade hoje só é det
 | 2026-07-11 | 0.1 | Draft inicial a partir do levantamento de pendências de Junior (itens 1, 3, 4, 5) | @sm River |
 | 2026-07-11 | 0.2 | Validado (GO). Status Draft → Ready. Adicionado campo Complexidade, AC15 e checklist por Task exigindo relato incremental (não só agregado no fechamento) do resultado de `deno test` no Dev Agent Record, a pedido explícito de Junior | @po Pax |
 | 2026-07-11 | 0.3 | Implementados os 4 itens (Tasks 1-4) + fechamento (Task 5). Status Ready → InProgress → Ready for Review. `deno test`: 77 passed/0 failed/2 ignored. `deno check`: achado registrado (61 erros pré-existentes na baseline, +8 da mesma categoria nesta story, nenhuma categoria nova) — AC13 recalibrada para refletir a realidade encontrada. AC15 (relato por Task) cumprido em todas as 4 Tasks | @dev Dex |
+| 2026-07-11 | 0.4 | QA gate: **FAIL**. Achado CRITICAL — o write de `menu_categoria_ativo` do Item 3 (Passo 6) sobrescreve `unidade_selecionada`/`aguardando_unidade` gravados no mesmo turno pela seção 5b, sempre que uma unidade é resolvida/trocada (reproduzido empiricamente). `deno test`/`deno check` confirmados independentemente, batem com o relato do @dev. Status Ready for Review → InProgress (retorno ao @dev) | @qa Quinn |
+| 2026-07-11 | 0.5 | Fix do CRITICAL (Task 6): introduzido tracker `metadataAtual` em memória, único por turno, usado por todos os pontos que escrevem `conversas.metadata` (seção 5b + Item 3 no Passo 6) — elimina a classe inteira de "2º write apaga 1º write no mesmo turno". Reforço de teste (Task 7): `criarSupabaseMock` passou a capturar o payload de `update`/`insert`; 2 testes novos validam o conteúdo do último update nos 2 cenários afetados. `deno test`: 79 passed/0 failed/2 ignored, sem regressão. `deno check`: 67 erros (baseline 61 inalterada, delta caiu de +8 pra +6). Status InProgress → Ready for Review | @dev Dex |
 
 ## Dev Agent Record
 
@@ -226,5 +228,79 @@ Testes novos, todos verdes:
 
 **Recomendação:** chamar @qa Quinn para o gate desta story. @qa e @devops não foram acionados por mim — aguardando decisão do usuário sobre os próximos passos (`*qa-gate` ou ajustes antes disso).
 
+### Task 6 — Fix CRITICAL: metadata tracker único no turno (concluída)
+
+**Causa raiz confirmada** (igual ao relato da @qa): `conversa.metadata`/`metadata` (const) eram uma foto de ANTES da requisição, nunca atualizada em memória depois de um `.update()`. Como `.update({metadata:{...}})` no Supabase substitui a coluna JSONB inteira, um 2º write no mesmo turno que mesclasse sobre a foto antiga apagava o que o 1º tinha acabado de gravar.
+
+**Fix aplicado:** introduzido `let metadataAtual: Record<string, unknown> = conversa?.metadata || {};`, escopado no mesmo nível de `unidadeEfetiva`/`trocouUnidade` (fora do `if (unidade_cuca === 'Geral')`, visível também no Passo 6). Todos os pontos que hoje escrevem `conversas.metadata` — os 3 branches da seção 5b (`unidadeSalva` direto/typo, `unidadeSalva` semântico [Item 4], `aguardando` [3 sub-casos], `primeira mensagem` [3 sub-casos]) e o write do Item 3 no Passo 6 — agora mesclam sobre `metadataAtual` e reatribuem `metadataAtual` logo em seguida, na mesma linha lógica. Nenhum write deste turno pode mais pisar em outro write do mesmo turno, independente da ordem ou de qual branch dispara.
+
+`deno test --no-check --allow-env --allow-read --allow-net .`: **77 passed | 0 failed | 2 ignored** — sem regressão (o comportamento observável dos cenários já testados não muda; só o cenário combinado, que não tinha asserção de conteúdo, é que estava quebrado e ainda não tinha teste que capturasse isso — ver Task 7).
+
+### Task 7 — Reforço de teste: capturar payload de .update() (concluída)
+
+`criarSupabaseMock` ganhou um campo `payload` em `ChamadaRegistrada` (mesmo padrão que `rpc:*` já usa com `args`) — `update`/`insert` agora registram o argumento recebido, não só a chamada. Adicionado teste de regressão explícito reproduzindo o cenário exato do achado da @qa (resolver unidade dentro de `aguardando_unidade` + Item 3 gravando `menu_categoria_ativo` no mesmo turno) e validando que o **último** `.update()` de `conversas` mescla, não apaga: `unidade_selecionada` e `aguardando_unidade` corretos continuam presentes no payload final, junto com `menu_categoria_ativo`. Também testado o caminho da troca semântica (Item 4) pelo mesmo motivo.
+
+`deno test --no-check --allow-env --allow-read --allow-net .`: **79 passed | 0 failed | 2 ignored**.
+
+### Fechamento pós-fix (Tasks 6+7)
+
+`deno check index.ts` (final, pós-fix): **67 erros** — na verdade MELHOROU em relação aos 69 do gate anterior (não piorou): o tracker `metadataAtual`, por ser tipado como `Record<string, unknown>` desde a declaração, eliminou 2 dos erros `TS2339` que vinham dos casts ad-hoc de `conversa?.metadata` espalhados pelo código antigo. Baseline pré-existente continua 61 (inalterada, confirmada pela @qa no gate anterior); delta desta story caiu de +8 para **+6**, mesmas 4 categorias de sempre, nenhuma nova.
+
+**File List atualizada:**
+- `supabase/functions/motor-agente/index.ts` — fix do tracker `metadataAtual` (seção 5b + Passo 6).
+- `supabase/functions/motor-agente/index.audit.test.ts` — `ChamadaRegistrada` ganhou campo `payload`; `criarSupabaseMock` captura o argumento de `update`/`insert`; 2 testes novos de regressão (`Fix CRITICAL: ...`) validando o conteúdo do último update nos 2 cenários que o bug afetava.
+
+**Recomendação:** chamar @qa Quinn de novo pra revalidar o fix antes de qualquer push/PR. Nenhum push/PR/deploy executado.
+
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+**Revisor:** @qa Quinn · **Data:** 2026-07-11 · **Verdict:** ❌ **FAIL** — 1 achado CRITICAL bloqueante, retorno ao @dev.
+
+### Verificação independente (reproduzida, não só conferida no relato do @dev)
+- `deno test --no-check --allow-env --allow-read --allow-net .`: confirmado **77 passed | 0 failed | 2 ignored**.
+- `deno check index.ts`: confirmado **69 erros**. Isolei a baseline eu mesma via `git show c9fda67:.../index.ts` (commit anterior a esta story) + `deno check` nesse arquivo: **61 erros pré-existentes**, batendo exatamente com o número que o @dev reportou. Achado do @dev confirmado, não é o motivo do FAIL.
+
+### 🔴 CRITICAL — Item 3 apaga `unidade_selecionada`/`aguardando_unidade` gravados no mesmo turno
+
+**Onde:** `supabase/functions/motor-agente/index.ts`, bloco novo do Item 3 (Passo 6, dentro de `if (isAgenteProgramacao) { ... }`, logo após o log de `precisaVisaoGeral`):
+```ts
+if (isAgenteProgramacao) {
+  const menuCategoriaAtivoNovo = Boolean(temUnidadeDefinida) && precisaVisaoGeral;
+  if (menuCategoriaAtivoNovo !== menuCategoriaAtivoAnterior) {
+    await supabase.from('conversas').update({ metadata: { ...(conversa?.metadata || {}), menu_categoria_ativo: menuCategoriaAtivoNovo } }).eq('id', conversa.id);
+  }
+}
+```
+
+**O bug:** `conversa?.metadata` é o objeto buscado no TOPO do handler, antes de qualquer `.update()` desta requisição — a variável `conversa` nunca é reatribuída depois dos updates da seção 5b. `.update({ metadata: {...} })` no Supabase **substitui a coluna JSONB inteira**, não faz merge no banco. Toda vez que a seção 5b resolve/troca a unidade nesse MESMO turno (`trocouUnidade=true` — que é exatamente quando `menuCategoriaAtivoNovo` vira `true` e o `if` dispara), esse 2º update sobrescreve o que o 1º update acabou de gravar, apagando `unidade_selecionada` e revertendo `aguardando_unidade` pro valor de ANTES do turno.
+
+**Reproduzido empiricamente** (script isolado, mock com captura do payload real de `.update()`, cenário AUD-04: `aguardando_unidade:true`, mensagem "Mondubim"):
+```
+update #1: {"metadata":{"aguardando_unidade":false,"unidade_selecionada":"Cuca Mondubim"}}
+update #2: {"metadata":{"aguardando_unidade":true,"menu_categoria_ativo":true}}
+```
+O update #2 (Item 3) apaga `unidade_selecionada` por completo e volta `aguardando_unidade` pra `true` — no mesmo turno em que o bot acabou de responder corretamente sobre Cuca Mondubim. Na próxima mensagem do lead, o banco não sabe mais qual unidade foi escolhida.
+
+**Impacto em produção:** afeta **todo turno em que uma unidade é resolvida ou trocada** — ou seja, o caminho mais comum e mais crítico do arquivo inteiro:
+1. Resolução dentro de `aguardando_unidade` (branch `aguardando`, linha ~805).
+2. Resolução na 1ª mensagem (branch `decidirPrimeiraMensagem`, linha ~837).
+3. Troca direta/typo (`detectarTrocaUnidade`/`contemNomeUnidadeComTypo`, dentro de `unidadeSalva`).
+4. Troca semântica do Item 4 (`avaliacaoTroca.unidade`, dentro de `unidadeSalva`) — mesma classe de bug, não é um 2º achado separado.
+
+Em todos os 4, o lead recebe a resposta certa NESTE turno (a variável em memória `unidadeEfetiva` está correta), mas o estado persistido fica errado — próxima mensagem trata a conversa como se a unidade nunca tivesse sido escolhida (ou reabre `aguardando_unidade`), o que é pior do que o comportamento anterior a esta story.
+
+**Por que os testes não pegaram:** os testes do Item 3 (AC5/AC6) usam `unidade_selecionada` já pré-setada, sem `trocouUnidade` neste turno — cenário onde o 2º update é o ÚNICO update, então nada é sobrescrito. O único teste que exercita o cenário combinado (`Item 3: resposta de visão geral grava o novo estado de menu_categoria_ativo pro próximo turno`) só verificou `updatesDeConversas >= 2` (contagem), não o CONTEÚDO de cada update — por isso não capturou a perda de dado. `criarSupabaseMock` (helper de teste) nem armazena o payload do `.update()`, só conta a chamada — precisa ser estendido pra guardar o argumento (mesmo padrão que os `rpc:*` já usam com o campo `args`).
+
+**Sugestão de correção (não implementada por mim — fora do meu escopo como @qa):** manter um tracker local do estado de metadata mais recente (ex.: `let metadataAtual = metadata;`, atualizado a cada `.update()` da seção 5b) e usar `metadataAtual` em vez de `conversa?.metadata` no write do Item 3 — ou simplesmente reler o array de updates já feitos nesta requisição antes de montar o payload final. Qualquer abordagem que faça o Item 3 nunca sobrescrever campos gravados no mesmo turno resolve.
+
+### Demais checks (informativo, não bloqueiam sozinhos — revisar de novo após o fix)
+1. **Code review:** padrões consistentes com o resto do arquivo, comentários explicam o "porquê". Sem esse bug, a estrutura dos 4 itens é sólida.
+2. **Unit tests:** cobertura boa em quantidade e em variedade de cenário, mas com o gap de asserção (conteúdo do update, não só contagem) que deixou o CRITICAL passar — recomendo estender `criarSupabaseMock` pra capturar `payload` de `update` (idêntico ao que já existe pra `rpc`) e adicionar um teste de regressão explícito: "resolver unidade + já ter menu_categoria_ativo mudando de valor no mesmo turno não pode perder unidade_selecionada".
+3. **Acceptance criteria:** AC1-AC2 (Item 1), AC10-AC11 (Item 5) verificados e corretos. AC5-AC6 (Item 3) e AC7-AC9 (Item 4) tecnicamente passam nos testes escritos, mas o CRITICAL acima invalida a garantia real desses itens em produção — a lógica de decisão está certa, a persistência não.
+4. **Regressão:** suíte completa verde, mas isso não cobre o cenário do bug (ver acima) — não é uma regressão de comportamento JÁ testado, é uma lacuna de cobertura nova.
+5. **Performance:** decisão de custo do Item 4 (`pareceIntencaoTrocaUnidade` como pré-filtro antes do LLM) é boa prática, sem objeção.
+6. **Segurança:** nada de OWASP básico — sem injeção, sem dado sensível exposto, resposta de ambiguidade é texto estático + `MENU_UNIDADES`, sem interpolar dado do lead sem sanitização.
+7. **Documentação:** story e Dev Agent Record bem detalhados e majoritariamente precisos; o achado do `deno check` foi transparente e útil. O único ponto fraco documental é a Task 2 ter reportado "resposta de visão geral grava o novo estado" como prova positiva sem essa prova realmente cobrir o cenário problemático.
+
+### Caminho sugerido ao usuário
+(a) chamar @dev Dex de novo pra corrigir o CRITICAL (e de preferência estender o mock de teste pra capturar payload de update, adicionando o teste de regressão sugerido); ou (b) revisar o achado antes de decidir. **Não recomendo seguir pro @devops nesse estado** — o bug corrompe o estado de conversas em produção assim que qualquer lead escolher ou trocar de unidade.
