@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone, timedelta
 
@@ -121,6 +122,35 @@ def _texto_historico_para_midia_vazia(midia_tipo: str) -> str:
     if midia_tipo in ("voz", "audio", "ptt"):
         return "[Áudio enviado]"
     return "[Mídia enviada]"
+
+
+# AUD-12 (LGPD, S-WM-23): padrões de opt-out deliberadamente ESPECÍFICOS, não uma palavra solta
+# (ex.: \bsair\b bateria em "vou sair de férias" ou "quero sair pra jantar" — falso positivo que
+# registraria opt_in=false por engano). Cada padrão exige a mensagem inteira ser só a
+# palavra-chave, ou uma frase explícita o suficiente de parar/cancelar/não querer mais receber.
+# Detecção determinística (não LLM) de propósito — confiabilidade importa mais que sofisticação
+# aqui, é registro real de opt_in, não só tom de resposta.
+_PADROES_OPT_OUT = [
+    re.compile(r"^\s*(sair|parar|cancelar)\s*[.!]?\s*$", re.IGNORECASE),
+    re.compile(r"\bcancelar\s+(a\s+)?inscri[cç][aã]o\b", re.IGNORECASE),
+    re.compile(r"\bparar\s+de\s+(mandar|enviar|receber)\b", re.IGNORECASE),
+    re.compile(r"\bn[aã]o\s+quero\s+mais\s+receber\b", re.IGNORECASE),
+    re.compile(r"\bquero\s+cancelar\b", re.IGNORECASE),
+    # "quero sair" sozinho é frágil demais ("quero sair pra jantar" bateria) — só conta quando
+    # vem com contexto explícito de sair de uma lista/receber mensagens/o número.
+    re.compile(r"\bquero\s+sair\s+(da\s+lista|das\s+mensagens|de\s+receber|do\s+whatsapp|desse\s+n[uú]mero)\b", re.IGNORECASE),
+    re.compile(r"\bremover\s+(meu\s+)?(numero|n[uú]mero|contato)\b", re.IGNORECASE),
+]
+
+
+def _eh_pedido_opt_out(texto: str) -> bool:
+    """AUD-12: true se a mensagem do lead é um pedido claro de opt-out (SAIR/PARAR/CANCELAR e
+    variações razoáveis) — ver _PADROES_OPT_OUT acima para os critérios exatos e o porquê de
+    serem específicos em vez de uma palavra solta."""
+    if not texto:
+        return False
+    t = texto.strip()
+    return any(padrao.search(t) for padrao in _PADROES_OPT_OUT)
 
 
 # ─── Parser de Mensagem Meta ───────────────────────────────────────────────────
@@ -637,6 +667,42 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         supabase.rpc("increment_nao_lidas", {"conv_id": conversa_id}).execute()
     except Exception as exc:
         logger.error(f"[meta-inbound] Erro ao salvar Mensagem: {exc}")
+
+    # ── Opt-out (AUD-12, LGPD) ────────────────────────────────────────────
+    # Detectado ANTES do dispatch normal — registra opt_in=false via RPC já existente no banco
+    # (registrar_opt_out) e responde direto, sem rotear pro motor-agente/Empregabilidade. Não
+    # bloqueia o lead nem apaga nada — só marca a preferência de não receber campanha em massa
+    # (campanhas_engine.py já filtra por opt_in=True nos 3 pontos de disparo, confirmado nesta
+    # story: nenhum outro ponto do worker faz busca em massa de leads). O caminho de entrada
+    # livre (lead não cadastrado) não é afetado — esta checagem só roda depois que o lead já foi
+    # resolvido (upsert acima), igual a qualquer mensagem normal.
+    if _eh_pedido_opt_out(mensagem):
+        try:
+            supabase.rpc("registrar_opt_out", {"p_telefone": telefone}).execute()
+            logger.info(f"[meta-inbound] Opt-out registrado para telefone={telefone}")
+        except Exception as exc:
+            logger.error(f"[meta-inbound] Erro ao registrar opt-out para telefone={telefone}: {exc}")
+
+        resposta_opt_out = (
+            "Prontinho! Você não vai mais receber nossas campanhas e avisos em massa. 😊 "
+            "Se quiser voltar a receber ou tiver alguma dúvida, é só me chamar por aqui."
+        )
+        try:
+            supabase.table("mensagens").insert({
+                "conversa_id": conversa_id,
+                "lead_id": lead_id,
+                "tipo": "text",
+                "conteudo": resposta_opt_out,
+                "remetente": "agente",
+                "created_at": "now()",
+            }).execute()
+        except Exception as exc:
+            logger.error(f"[meta-inbound] Erro ao salvar confirmação de opt-out: {exc}")
+
+        from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+        token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+        await _meta_enviar(phone_number_id, telefone, resposta_opt_out, token)
+        return
 
     # ── Guard awaiting_human: IA silenciada enquanto colaborador controla ────────
     # Checagem na CHEGADA da mensagem — early exit barato, evita até agendar o debounce à toa.
