@@ -256,16 +256,16 @@ class TestPersistenciaInboundMeta:
         fresh_data = MagicMock()
         fresh_data.data = {"bloqueado": False}
         conv_data = MagicMock()
-        conv_data.data = []
-        new_conv = MagicMock()
-        new_conv.data = [{"id": "conv-uuid-456"}]
+        # S-WM-31: conversa criada/recuperada via upsert(on_conflict="lead_id,origem_id") +
+        # select de confirmação — não há mais branch de insert separado, então a leitura pós-
+        # upsert já retorna a linha (nova ou existente).
+        conv_data.data = [{"id": "conv-uuid-456", "status": "ativa"}]
         rpc_data = MagicMock()
 
         mock_sb.table.return_value.upsert.return_value.execute.return_value = lead_data
         mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = fresh_data
         mock_sb.table.return_value.select.return_value.match.return_value.execute.return_value = conv_data
         mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
-        mock_sb.table.return_value.insert.return_value.execute.return_value = new_conv
         mock_sb.rpc.return_value.execute.return_value = rpc_data
 
         dispatch_mock = AsyncMock()

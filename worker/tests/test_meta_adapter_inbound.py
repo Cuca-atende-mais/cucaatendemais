@@ -476,6 +476,61 @@ class TestDispatchMotorAgente:
             mock_motor.assert_called_once(), f"motor-agente não chamado para agente={agente}"
             mock_enviar.assert_called_once(), f"_meta_enviar não chamado para agente={agente}"
 
+    # ── S-WM-31 Task 2: concorrência na criação de conversa (upsert vs. select-então-insert) ──
+    @pytest.mark.asyncio
+    async def test_concorrencia_duas_chamadas_simultaneas_resolvem_mesma_conversa(self):
+        """AC1: duas requisições quase simultâneas de webhook pro mesmo lead (mesmo telefone,
+        mesmo phone_number_id) devem resolver pra 1 única conversa. A atomicidade real vem da
+        constraint UNIQUE(lead_id, origem_id) aplicada no banco (Task 1, não testável por mock
+        puro) — aqui confirmamos que o get-or-create usa upsert(on_conflict="lead_id,origem_id"),
+        não mais select-então-insert (a corrida original), e que as duas chamadas concorrentes
+        (asyncio.gather, não sequencial) convergem pro MESMO conversa_id. `_agendar_dispatch_
+        debounced` é substituído por um stub aqui pra isolar da lógica de debounce/cancelamento
+        (VAL-05, já coberta em TestDebounceDispatch) e capturar o conversa_id resolvido por
+        chamada."""
+        from unittest.mock import patch, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-race"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-race-shared", "status": "ativa"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+        conversa_ids_recebidos = []
+
+        async def _stub_debounce(chave, dispatch):
+            conversa_ids_recebidos.append(chave)
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._agendar_dispatch_debounced", side_effect=_stub_debounce):
+            await asyncio.gather(
+                processar_webhook_meta(raw),
+                processar_webhook_meta(raw),
+            )
+
+        assert conversa_ids_recebidos == ["conv-race-shared", "conv-race-shared"], (
+            "as duas chamadas quase simultâneas devem resolver pro MESMO conversa_id"
+        )
+
+        chamadas_upsert_conversas = [
+            call for call in mock_supabase.table.return_value.upsert.call_args_list
+            if call.kwargs.get("on_conflict") == "lead_id,origem_id"
+        ]
+        assert len(chamadas_upsert_conversas) == 2, (
+            "esperava 1 upsert(on_conflict='lead_id,origem_id') por chamada — get-or-create "
+            "atômico via constraint UNIQUE, não select-então-insert"
+        )
+
     # ── S-WM-22 (TOM-03b): dispatch de múltiplas partes, na ordem, sequencial ─────────────────
     @pytest.mark.asyncio
     async def test_dispatch_multiplas_partes_envia_todas_na_ordem(self):

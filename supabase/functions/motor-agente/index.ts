@@ -443,20 +443,21 @@ export function decidirAguardandoUnidade(
       resposta: "Sem problemas! Quando quiser saber sobre alguma unidade CUCA, é só chamar. 😊",
     };
   }
-  if (avaliacaoSemantica.mudou_de_assunto) {
-    if (avaliacaoSemantica.pergunta_geral) {
-      // VAL-12: pergunta institucional real (não é só cortesia) — resolve o estado de espera
-      // e segue pro fluxo normal (Passo 6, RAG geral) em vez de reabrir o menu. Preserva a
-      // intenção original do AUD-01: não travar quem genuinamente quer falar de outra coisa.
-      return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
-    }
-    // VAL-13: cortesia pura (ex.: "bom dia") não pode tirar a conversa do estado
-    // aguardando_unidade — o lead ainda não escolheu unidade, e a resposta abaixo já
-    // reapresenta o menu.
+  if (avaliacaoSemantica.pergunta_geral) {
+    // VAL-12: pergunta institucional real — resolve o estado de espera e segue pro fluxo
+    // normal (Passo 6, RAG geral) em vez de reabrir o menu.
+    return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
+  }
+  if (!avaliacaoSemantica.pedido_depende_unidade) {
+    // S-WM-31 Task 3 (AC5): critério unificado com decidirPrimeiraMensagem — só reapresenta o
+    // menu quando pedido_depende_unidade=true. Supera VAL-13 (cortesia pura reapresentava o
+    // menu indefinidamente): decisão revista nesta story após as duas funções decidirem de
+    // forma inconsistente quando pedir a unidade. Tom de CONTINUAÇÃO (item 6 do Escopo) — nunca
+    // SAUDACOES_ABERTURA aqui, a conversa já está em andamento.
     return {
       unidadeSelecionada: null,
-      aguardandoUnidade: true,
-      resposta: "Claro! 😊 Quando quiser saber sobre alguma unidade CUCA, escolha uma:\n\n" + MENU_UNIDADES,
+      aguardandoUnidade: false,
+      resposta: "Em que mais posso te ajudar? 😊",
     };
   }
   return {
@@ -464,6 +465,44 @@ export function decidirAguardandoUnidade(
     aguardandoUnidade: true,
     resposta: "Não consegui identificar a unidade 😊\n\n" + MENU_UNIDADES,
   };
+}
+
+export type DecisaoConversaEngajada = {
+  unidadeSelecionada: string | null;
+  aguardandoUnidade: boolean;
+  perguntaGeralAtiva: boolean;
+  resposta: string | null;
+};
+
+/**
+ * S-WM-31 (item 6 do Escopo, Causa raiz B): 3º branch de roteamento pra conversas com
+ * `conversa_engajada=true` (já passaram por cortesia/pergunta_geral, nem `unidade_selecionada`
+ * nem `aguardando_unidade` bateram). Reavalia a mensagem com a MESMA detecção usada nos outros
+ * branches, mas NUNCA repete `SAUDACOES_ABERTURA` nem o texto de boas-vindas do menu inicial —
+ * a conversa já está em andamento. Desenho novo desta story, não adaptado de nenhuma função
+ * existente: diferente de `decidirAguardandoUnidade`, aqui "nenhum dos dois" (nem unidade, nem
+ * pedido que dependa dela) não devolve uma resposta canned — sinaliza `perguntaGeralAtiva` e
+ * deixa o Passo 6 (RAG geral) responder de verdade, mesmo comportamento que `pergunta_geral=true`
+ * já dispara nos outros 2 branches.
+ */
+export function decidirConversaEngajada(
+  unidadeDetectadaDireta: string | undefined,
+  avaliacaoSemantica: AvaliacaoSelecaoUnidade,
+): DecisaoConversaEngajada {
+  const unidadeDetectada = unidadeDetectadaDireta ?? avaliacaoSemantica.unidade ?? undefined;
+
+  if (unidadeDetectada) {
+    return { unidadeSelecionada: unidadeDetectada, aguardandoUnidade: false, perguntaGeralAtiva: false, resposta: null };
+  }
+  if (avaliacaoSemantica.pedido_depende_unidade) {
+    return {
+      unidadeSelecionada: null,
+      aguardandoUnidade: true,
+      perguntaGeralAtiva: false,
+      resposta: "Pra te ajudar certinho com isso, me diz qual unidade CUCA:\n\n" + MENU_UNIDADES,
+    };
+  }
+  return { unidadeSelecionada: null, aguardandoUnidade: false, perguntaGeralAtiva: true, resposta: null };
 }
 
 /**
@@ -715,7 +754,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
   try {
     const body = await req.json();
-    const { mensagem, midia_url, midia_tipo, telefone, canal_origem, agente_tipo, unidade_cuca } = body;
+    const { mensagem, midia_url, midia_tipo, telefone, canal_origem, agente_tipo, unidade_cuca, conversa_id } = body;
     console.log("[motor-agente v18] Agente: " + agente_tipo + ", Unidade: " + unidade_cuca);
 
     if (!telefone || !agente_tipo) return new Response(JSON.stringify({ error: "telefone e agente_tipo sao obrigatorios" }), { status: 400 });
@@ -747,7 +786,14 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // usado mais abaixo (precisaVisaoGeral, isAgenteProgramacao) pra não tratar reabertura como
     // "primeiro contato" só para Institucional/maria, sem tocar no fluxo de outros agentes.
     let conversaGenuinamenteNova = false;
-    let { data: conversa } = await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
+    // S-WM-31 (Task 3, item 4 do Escopo): quando o caller manda conversa_id (worker já fez o
+    // get-or-create atômico via upsert, Task 2), resolve por PK — evita re-derivar por
+    // lead_id+origem_id e cai fora de qualquer corrida. Fallback pro método antigo quando
+    // ausente (robustez pra qualquer caller futuro que não mande; hoje só existe 1 caller,
+    // worker/meta_adapter_inbound.py).
+    let { data: conversa } = conversa_id
+      ? await supabase.from("conversas").select("id, status, metadata").eq("id", conversa_id).single()
+      : await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
     if (!conversa) {
       const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: canal_origem || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata").single();
       conversa = data; conversaJustCreated = true; conversaGenuinamenteNova = true;
@@ -866,17 +912,58 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
         } else if (decisao.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisao.resposta, historico);
-          metadataAtual = { ...metadataAtual, aguardando_unidade: decisao.aguardandoUnidade };
+          // Ampliação de escopo (S-WM-31, autorizada por Junior na Task 3 — ver Dev Agent
+          // Record): quando este branch resolve SEM aguardar unidade (quer_sair ou cortesia
+          // pura, aguardandoUnidade=false aqui), marca conversa_engajada=true — sem isso, a
+          // PRÓXIMA mensagem cairia no branch de 1ª mensagem e sortearia uma SAUDACOES_ABERTURA
+          // nova (Causa raiz B reaparecendo neste caminho). Quando aguardandoUnidade=true
+          // (pedido_depende_unidade, mostra o menu), o próprio aguardando_unidade já evita cair
+          // no branch de 1ª mensagem de novo — não precisa da flag.
+          metadataAtual = {
+            ...metadataAtual,
+            aguardando_unidade: decisao.aguardandoUnidade,
+            ...(decisao.aguardandoUnidade ? {} : { conversa_engajada: true }),
+          };
           await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           // VAL-12: pergunta_geral=true — nem unidade escolhida, nem resposta canned. Grava
           // aguardando_unidade=false e segue pro fluxo normal (Passo 6 responde de verdade).
-          metadataAtual = { ...metadataAtual, aguardando_unidade: decisao.aguardandoUnidade };
+          // Ampliação (S-WM-31): também marca conversa_engajada=true, mesmo motivo do branch acima.
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisao.aguardandoUnidade, conversa_engajada: true };
           await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           perguntaGeralAtiva = true;
           console.log("[motor-agente v18] Pergunta geral identificada (aguardando_unidade): segue pro RAG geral (FAQ isolado)");
+        }
+      } else if (metadataAtual.conversa_engajada === true) {
+        // S-WM-31 (item 6 do Escopo): 3º branch — conversa já engajada (passou por cortesia ou
+        // pergunta_geral antes), sem unidade_selecionada nem aguardando_unidade pendentes.
+        // Reavalia com a MESMA detecção usada nos outros branches, sem repetir saudação.
+        const unidadeDetectadaDiretaEngajada = detectarUnidadeDireta(textoFinal);
+        let avaliacaoSemanticaEngajada: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
+
+        if (!unidadeDetectadaDiretaEngajada) {
+          avaliacaoSemanticaEngajada = await avaliarSelecaoUnidade(textoFinal, openaiKey);
+        }
+
+        const decisaoEngajada = decidirConversaEngajada(unidadeDetectadaDiretaEngajada, avaliacaoSemanticaEngajada);
+
+        if (decisaoEngajada.unidadeSelecionada) {
+          metadataAtual = { ...metadataAtual, unidade_selecionada: decisaoEngajada.unidadeSelecionada, aguardando_unidade: false };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          unidadeEfetiva = decisaoEngajada.unidadeSelecionada;
+          trocouUnidade = true;
+          console.log("[motor-agente v18] Unidade salva (conversa engajada): " + unidadeEfetiva);
+        } else if (decisaoEngajada.resposta !== null) {
+          const respostaFinal = evitarRepeticaoLiteral(decisaoEngajada.resposta, historico);
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoEngajada.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
+          return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
+        } else {
+          perguntaGeralAtiva = true;
+          console.log("[motor-agente v18] Pergunta geral identificada (conversa engajada): segue pro RAG geral (FAQ isolado)");
         }
       } else {
         const unidadeDetectadaDireta1a = detectarUnidadeDireta(textoFinal);
@@ -897,13 +984,23 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           console.log("[motor-agente v18] Unidade salva (1a mensagem): " + unidadeEfetiva);
         } else if (decisaoPrimeira.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoPrimeira.resposta, historico);
-          metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoPrimeira.aguardandoUnidade };
+          // Item 6 (S-WM-31, Causa raiz B): cortesia pura (aguardandoUnidade=false aqui) marca
+          // conversa_engajada=true — sem isso, a PRÓXIMA mensagem cairia de novo neste mesmo
+          // branch de 1ª mensagem e sortearia outra SAUDACOES_ABERTURA. Quando aguardandoUnidade
+          // =true (pedido_depende_unidade, mostra o menu), o próprio aguardando_unidade já evita
+          // cair aqui de novo — não precisa da flag.
+          metadataAtual = {
+            ...metadataAtual,
+            aguardando_unidade: decisaoPrimeira.aguardandoUnidade,
+            ...(decisaoPrimeira.aguardandoUnidade ? {} : { conversa_engajada: true }),
+          };
           await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           // VAL-12: pergunta_geral=true já na 1ª mensagem — segue pro fluxo normal (Passo 6).
-          metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoPrimeira.aguardandoUnidade };
+          // Item 6: também marca conversa_engajada=true, mesmo motivo do branch acima.
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoPrimeira.aguardandoUnidade, conversa_engajada: true };
           await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           perguntaGeralAtiva = true;
           console.log("[motor-agente v18] Pergunta geral identificada (1a mensagem): segue pro RAG geral (FAQ isolado)");

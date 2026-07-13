@@ -328,6 +328,7 @@ async def _chamar_motor_agente(
         "canal_origem": contrato_v2["canal_origem"],
         "agente_tipo": contrato_v2["agente_tipo"],
         "unidade_cuca": contrato_v2.get("unidade_cuca"),
+        "conversa_id": conversa_id,
     }
 
     try:
@@ -624,25 +625,28 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         return
 
     # ── DB B: recuperar ou criar Conversa por (lead_id, origem_id) ──────
+    # S-WM-31: upsert atômico via constraint UNIQUE(lead_id, origem_id) — elimina a corrida
+    # select-então-insert (dois webhooks quase simultâneos do mesmo lead podiam cada um "não
+    # achar" conversa existente e inserir a sua). "status" fica de fora do payload de propósito:
+    # tem default 'ativa' no banco (usado só na criação) e é gerenciado depois pelo motor-agente
+    # (encerrada/awaiting_human) — incluí-lo aqui sobrescreveria esse estado a cada mensagem.
     try:
-        conv_result = supabase.table("conversas").select("id, status").match(
-            {"lead_id": lead_id, "origem_id": phone_number_id}
-        ).execute()
-
-        if conv_result.data:
-            conversa_id: str = conv_result.data[0]["id"]
-            conversa_status = conv_result.data[0].get("status")
-            supabase.table("conversas").update({"updated_at": "now()"}).eq("id", conversa_id).execute()
-        else:
-            new_conv = supabase.table("conversas").insert({
+        supabase.table("conversas").upsert(
+            {
                 "lead_id":    lead_id,
                 "origem_id":  phone_number_id,
                 "canal_ativo": "meta",
-                "status":     "ativa",
                 "agente_tipo": agente_tipo,
-            }).execute()
-            conversa_id = new_conv.data[0]["id"]
-            conversa_status = "ativa"
+                "updated_at": "now()",
+            },
+            on_conflict="lead_id,origem_id",
+        ).execute()
+
+        conv_fresh = supabase.table("conversas").select("id, status").match(
+            {"lead_id": lead_id, "origem_id": phone_number_id}
+        ).execute()
+        conversa_id: str = conv_fresh.data[0]["id"]
+        conversa_status = conv_fresh.data[0].get("status")
     except Exception as exc:
         logger.error(f"[meta-inbound] Erro ao gerenciar Conversa: {exc}")
         return
