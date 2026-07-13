@@ -729,6 +729,20 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
   return chunks.map((c: { conteudo: string }) => c.conteudo).join("\n");
 }
 
+/**
+ * S-WM-32 (Escopo item 2/5): carrega o `resumo_rede` ativo por INTEIRO, direto de
+ * `documentos_rag.conteudo` — nunca via `chunks_documentos`/`buscar_chunks_similares`
+ * (`resumo_rede` nunca é chunkeado nem embeddado, ver migration
+ * `20260713200000_swm32_resumo_rede_skip_indexacao.sql`). `unidade_cuca=null` por definição
+ * (é um índice de rede inteira, não de 1 unidade) — não recebe parâmetro de unidade.
+ * Retorna "" quando ainda não existe nenhum `resumo_rede` ativo (ex.: antes da 1ª geração via
+ * botão do portal) — o caller trata isso como "sem dado consolidado", nunca como erro.
+ */
+async function carregarResumoRede(supabase: ReturnType<typeof createClient>): Promise<string> {
+  const { data: doc } = await supabase.from("documentos_rag").select("conteudo").eq("tipo", "resumo_rede").eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
+  return doc?.conteudo || "";
+}
+
 // PREMISSA (S-WM-17): esta function espera ser chamada DEPOIS que o lead, a conversa e a
 // mensagem do lead já foram persistidos por quem a invoca (hoje, só o worker Meta —
 // worker/meta_adapter_inbound.py::_chamar_motor_agente). A busca de lead/conversa abaixo
@@ -1099,6 +1113,13 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // (sempre geral), monthly_program é 5/5 SEMPRE atrelado a uma unidade — misturar tipos
       // aqui (como RAG_FONTES_POR_AGENTE faz) vazaria conteúdo de uma unidade aleatória (a mais
       // parecida por embedding) numa resposta que ainda não tem unidade definida.
+      // S-WM-32 (Escopo item 5): também carrega o resumo_rede ativo por inteiro (carregamento
+      // direto, nunca via buscar_chunks_similares — item 6 do Escopo, monthly_program/
+      // eventos_pontuais continuam exigindo unidade exata, sem exceção) — cobre pergunta de
+      // enumeração/agregação ("quais unidades têm X") que busca vetorial de FAQ isolado nunca
+      // respondia com dado real, mesmo unificando os 3 pontos de entrada de perguntaGeralAtiva
+      // (1ª mensagem, aguardando_unidade, conversa_engajada) sem precisar de 3ª classificação.
+      const resumoRede = await carregarResumoRede(supabase);
       const embedding = await gerarEmbedding(textoFinal, openaiKey);
       const { data: chunksFaq } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embedding.join(",") + "]",
@@ -1106,11 +1127,15 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_unidade_cuca: null,
         p_limite: 5,
       });
+      console.log("[motor-agente v18] perguntaGeralAtiva: resumo_rede " + (resumoRede ? "carregado" : "ausente") + ", " + (chunksFaq?.length ?? 0) + " chunks FAQ");
+      const blocosRede: string[] = [];
+      if (resumoRede) blocosRede.push("--- RESUMO DA REDE (atividades por unidade) ---\n" + resumoRede);
       if (chunksFaq && chunksFaq.length > 0) {
-        contextRAG = "\n\n--- CONTEXTO ---\n" + chunksFaq.map((c: { conteudo: string; fonte_tipo?: string }) =>
+        blocosRede.push("--- CONTEXTO (FAQ) ---\n" + chunksFaq.map((c: { conteudo: string; fonte_tipo?: string }) =>
           c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-        ).join("\n");
+        ).join("\n"));
       }
+      if (blocosRede.length > 0) contextRAG = "\n\n" + blocosRede.join("\n\n");
     } else {
       const fontes = RAG_FONTES_POR_AGENTE[agente_tipo] || ["FAQ"];
       const embedding = await gerarEmbedding(textoFinal, openaiKey);
@@ -1158,6 +1183,13 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // conversa retomada minutos depois. Outros agente_tipo (Sofia/Ouvidoria) continuam no
       // conversaJustCreated original, sem mudança — decisão sobre eles fica fora deste escopo.
       (isAgenteProgramacao ? conversaGenuinamenteNova : conversaJustCreated) ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : "",
+      // S-WM-32 (AC8, achado de Junior em teste ao vivo): pergunta de rede inteira sem unidade
+      // ja gerou alucinacao silenciosa antes desta story ("tem curso de natacao?" respondido com
+      // uma lista de modalidades sem fonte real verificavel) — vale tanto enquanto o
+      // resumo_rede ainda nao existe/nao foi gerado quanto depois, se o resumo_rede ativo nao
+      // cobrir a atividade perguntada. Reforco condicional (so quando perguntaGeralAtiva=true),
+      // nao generico em INSTRUCAO_SEGURANCA, pra nao confundir respostas de 1 unidade especifica.
+      perguntaGeralAtiva ? "INSTRUCAO CRITICA: esta pergunta e sobre a rede CUCA inteira, sem unidade especifica. Use APENAS o bloco '--- RESUMO DA REDE ---' (se presente acima) e o '--- CONTEXTO (FAQ) ---' pra responder sobre quais unidades oferecem o que. Se a atividade perguntada NAO aparecer em nenhum desses blocos, NUNCA componha ou invente uma lista de atividades/modalidades — diga com suas proprias palavras que voce nao tem a programacao consolidada da rede toda pra essa pergunta especifica, e sugira ajudar escolhendo uma unidade." : "",
     ].filter(Boolean).join("\n\n");
 
     // TOM-04: o worker já captura e grava lead.nome (push_name do WhatsApp), mas esse dado
