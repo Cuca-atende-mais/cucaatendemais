@@ -7,6 +7,7 @@ import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.
 import {
   contemPalavra,
   decidirAguardandoUnidade,
+  decidirConversaEngajada,
   extrairTextoMenu,
   ultimaMensagemEhMenuNumerado,
   decidirPrimeiraMensagem,
@@ -48,8 +49,8 @@ function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>
     // deno-lint-ignore no-explicit-any
     const chain: any = {};
     for (const metodo of ["select", "eq", "order", "limit", "single"]) {
-      chain[metodo] = (..._args: unknown[]) => {
-        chamadas.push({ tabela, metodo });
+      chain[metodo] = (...args: unknown[]) => {
+        chamadas.push({ tabela, metodo, args });
         return chain;
       };
     }
@@ -128,6 +129,22 @@ function requestFake(mensagem: string): Request {
   });
 }
 
+// S-WM-31 Task 3 (AC6): mesmo requestFake, com conversa_id opcional no body — único caller real
+// hoje (worker/meta_adapter_inbound.py) sempre manda, mas o handler precisa aceitar ausência.
+function requestFakeComConversaId(mensagem: string, conversaId?: string): Request {
+  return new Request("http://localhost/motor-agente", {
+    method: "POST",
+    body: JSON.stringify({
+      mensagem,
+      telefone: "5585999999999",
+      canal_origem: "test",
+      agente_tipo: "Institucional",
+      unidade_cuca: "Geral",
+      ...(conversaId ? { conversa_id: conversaId } : {}),
+    }),
+  });
+}
+
 // ── AUD-01: "aguardando_unidade" é um estado sem saída ──────────────────────
 // Reescrito no E4 (VAL-12): a versão original testava mudou_de_assunto=true isolado, sem o
 // sinal pergunta_geral (que não existia). Isso colidia com VAL-13 (cortesia pura não pode
@@ -142,15 +159,42 @@ Deno.test("AUD-01: pergunta institucional real (mudou de assunto de verdade) sai
   );
 });
 
-// ── VAL-13: cortesia pura (ex.: "bom dia") NÃO pode abandonar o fluxo de escolha de unidade —
-// diferente do AUD-01 acima (pergunta real), aqui não há pergunta_geral nenhuma pra responder.
-Deno.test("VAL-13: cortesia pura (mudou_de_assunto sem pergunta_geral) mantém aguardandoUnidade=true", () => {
-  const decisao = decidirAguardandoUnidade(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false });
+// ── S-WM-31 Task 3 (AC5) supera VAL-13: cortesia pura (ex.: "bom dia") não trava mais
+// aguardando_unidade — critério unificado com decidirPrimeiraMensagem (pedido_depende_unidade).
+Deno.test("S-WM-31 AC5: cortesia pura (pedido_depende_unidade=false) sai do estado de espera de unidade, sem reapresentar o menu", () => {
+  const decisao = decidirAguardandoUnidade(undefined, {
+    unidade: null,
+    quer_sair: false,
+    mudou_de_assunto: true,
+    pergunta_geral: false,
+    pedido_depende_unidade: false,
+  });
+  assertEquals(
+    decisao.aguardandoUnidade,
+    false,
+    "S-WM-31 AC5: pedir a unidade de novo só quando pedido_depende_unidade=true — cortesia pura não deve mais travar/reapresentar o menu (supera VAL-13)",
+  );
+  assertEquals(
+    (decisao.resposta ?? "").includes(MENU_UNIDADES),
+    false,
+    "S-WM-31 AC5: cortesia pura não pode vir com o menu de unidades anexado",
+  );
+});
+
+Deno.test("S-WM-31 AC5: pedido que depende de unidade (pedido_depende_unidade=true) continua recebendo o menu em decidirAguardandoUnidade", () => {
+  const decisao = decidirAguardandoUnidade(undefined, {
+    unidade: null,
+    quer_sair: false,
+    mudou_de_assunto: true,
+    pergunta_geral: false,
+    pedido_depende_unidade: true,
+  });
   assertEquals(
     decisao.aguardandoUnidade,
     true,
-    "VAL-13: um cumprimento/cortesia no meio do fluxo (ex.: 'bom dia') não pode resetar aguardando_unidade — o lead ainda não escolheu unidade nenhuma, e a resposta já reapresenta o menu",
+    "S-WM-31 AC5: um pedido que realmente depende de saber a unidade ainda precisa aguardar a escolha",
   );
+  assertStringIncludes(decisao.resposta ?? "", MENU_UNIDADES, "S-WM-31 AC5: comportamento preservado quando pedido_depende_unidade=true");
 });
 
 Deno.test("AUD-01: quando o lead sinaliza que 'quer sair', a conversa deveria sair do estado de espera de unidade", () => {
@@ -228,6 +272,137 @@ Deno.test("AUD-07: 1ª mensagem que já cita uma unidade deveria resolvê-la dir
     "Cuca Barra",
     "AUD-07: o lead já disse a unidade na própria 1ª mensagem, mas o código ignora o conteúdo e sempre manda o menu de unidades de novo",
   );
+});
+
+// ── S-WM-31 Task 3 (AC6): motor-agente aceita conversa_id opcional no body ──────────────────
+Deno.test("S-WM-31 AC6: conversa_id presente no body → resolve a conversa por PK, não re-deriva por lead_id+origem_id", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({}), chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFakeComConversaId("oi", "conv-especifica-123"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const buscouPorPk = chamadas.some((c) =>
+    c.tabela === "conversas" && c.metodo === "eq" && c.args?.[0] === "id" && c.args?.[1] === "conv-especifica-123"
+  );
+  assertEquals(buscouPorPk, true, "AC6: com conversa_id presente, o handler deveria resolver a conversa por PK (eq('id', conversa_id))");
+  const rederivouPorLeadOrigem = chamadas.some((c) => c.tabela === "conversas" && c.metodo === "eq" && c.args?.[0] === "lead_id");
+  assertEquals(rederivouPorLeadOrigem, false, "AC6: não deveria mais re-derivar por lead_id+origem_id quando conversa_id já veio no body");
+});
+
+Deno.test("S-WM-31 AC6: conversa_id ausente no body → cai no fallback de resolução por telefone+canal_origem (lead_id+origem_id), sem quebrar", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({}), chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFakeComConversaId("oi"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const usouFallbackLeadOrigem = chamadas.some((c) => c.tabela === "conversas" && c.metodo === "eq" && c.args?.[0] === "lead_id");
+  assertEquals(usouFallbackLeadOrigem, true, "AC6: sem conversa_id no body, o handler precisa continuar resolvendo por lead_id+origem_id (fallback pra qualquer caller futuro que não mande)");
+});
+
+// ── S-WM-31 Task 4 (item 6 do Escopo, Causa raiz B): conversa_engajada e 3º branch ──────────
+Deno.test("S-WM-31: decidirConversaEngajada — unidade detectada resolve normalmente", () => {
+  const decisao = decidirConversaEngajada("Cuca Mondubim", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
+  assertEquals(decisao.unidadeSelecionada, "Cuca Mondubim");
+  assertEquals(decisao.aguardandoUnidade, false);
+  assertEquals(decisao.perguntaGeralAtiva, false);
+  assertEquals(decisao.resposta, null);
+});
+
+Deno.test("S-WM-31: decidirConversaEngajada — pedido_depende_unidade=true sem unidade pede a unidade com tom de continuação (sem SAUDACOES_ABERTURA)", () => {
+  const decisao = decidirConversaEngajada(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: true });
+  assertEquals(decisao.unidadeSelecionada, null);
+  assertEquals(decisao.aguardandoUnidade, true);
+  assertEquals(decisao.perguntaGeralAtiva, false);
+  assertStringIncludes(decisao.resposta ?? "", MENU_UNIDADES, "deveria conter o menu de unidades");
+  const comecaComSaudacao = SAUDACOES_ABERTURA.some((s) => decisao.resposta?.startsWith(s));
+  assertEquals(comecaComSaudacao, false, "conversa já engajada — nunca repetir SAUDACOES_ABERTURA");
+});
+
+Deno.test("S-WM-31: decidirConversaEngajada — nenhum dos dois (cortesia/vago) ativa perguntaGeralAtiva, sem resposta canned", () => {
+  const decisao = decidirConversaEngajada(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
+  assertEquals(decisao.unidadeSelecionada, null);
+  assertEquals(decisao.aguardandoUnidade, false);
+  assertEquals(decisao.perguntaGeralAtiva, true, "diferente de decidirAguardandoUnidade: aqui não devolve resposta canned, deixa o Passo 6 (RAG) responder de verdade");
+  assertEquals(decisao.resposta, null);
+});
+
+// Testes de wiring no HANDLER — provam que o 3º branch (conversa_engajada) e a marcação da flag
+// nos outros 2 branches (decidirPrimeiraMensagem, decidirAguardandoUnidade) estão conectados.
+Deno.test("S-WM-31 AC3: conversa_engajada=true + cortesia → NÃO reseta pra saudação, segue pro RAG geral (3º branch)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ conversa_engajada: true }), chamadas);
+  const resp = await comFetchMockado(
+    () => handler(requestFake("tudo bem?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chegouNoRag, true, "AC3: cortesia com conversa_engajada=true deveria seguir pro Passo 6 (RAG geral) em vez de responder com early-return canned/menu");
+  const gravouUnidade = chamadas.some((c) => c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.unidade_selecionada);
+  assertEquals(gravouUnidade, false, "AC3: cortesia não deveria gravar nenhuma unidade_selecionada nova");
+});
+
+Deno.test("S-WM-31: conversa_engajada=true + unidade detectada na mensagem → resolve a unidade, carrega visão geral", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ conversa_engajada: true }), chamadas);
+  await comFetchMockado(async () => {
+    const resp = await handler(requestFake("Mondubim"), supabaseMock);
+    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  });
+  const gravouMondubim = chamadas.some((c) =>
+    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.unidade_selecionada === "Cuca Mondubim"
+  );
+  assertEquals(gravouMondubim, true, "unidade citada durante uma conversa engajada deveria ser resolvida e gravada, igual ao branch aguardando_unidade (AUD-04)");
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(carregouProgramacaoCompleta, true, "resolver a unidade a partir do 3º branch deveria contar como trocouUnidade e carregar a visão geral completa, mesmo tratamento já existente");
+});
+
+Deno.test("S-WM-31: conversa_engajada=true + pedido_depende_unidade=true sem unidade → pede a unidade (aguardando_unidade=true), tom de continuação", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ conversa_engajada: true }), chamadas);
+  const resp = await comFetchMockado(
+    () => handler(requestFake("quais cursos vocês têm?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: true }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const body = await resp.json();
+  assertStringIncludes(body.resposta ?? "", MENU_UNIDADES, "deveria pedir a unidade com o menu");
+  const comecaComSaudacao = SAUDACOES_ABERTURA.some((s) => (body.resposta ?? "").startsWith(s));
+  assertEquals(comecaComSaudacao, false, "conversa já engajada — não pode repetir SAUDACOES_ABERTURA ao pedir a unidade");
+  const gravouAguardando = chamadas.some((c) =>
+    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.aguardando_unidade === true
+  );
+  assertEquals(gravouAguardando, true, "deveria transicionar pro estado aguardando_unidade=true, igual ao branch de 1ª mensagem quando pedido_depende_unidade=true");
+});
+
+Deno.test("S-WM-31 item 6: cortesia pura na 1ª mensagem grava conversa_engajada=true (fecha o branch de decidirPrimeiraMensagem)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({}), chamadas);
+  const resp = await comFetchMockado(
+    () => handler(requestFake("bom dia"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const gravouEngajada = chamadas.some((c) =>
+    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.conversa_engajada === true
+  );
+  assertEquals(gravouEngajada, true, "cortesia pura na 1ª mensagem precisa marcar conversa_engajada=true — sem isso, a PRÓXIMA mensagem reseta pra saudação de novo (Causa raiz B)");
+});
+
+Deno.test("S-WM-31 (ampliação Task 3/4): cortesia resolvida dentro de aguardando_unidade também grava conversa_engajada=true", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({ aguardando_unidade: true }), chamadas);
+  const resp = await comFetchMockado(
+    () => handler(requestFake("valeu!"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const gravouEngajada = chamadas.some((c) =>
+    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.conversa_engajada === true
+  );
+  assertEquals(gravouEngajada, true, "cortesia resolvida dentro de aguardando_unidade (supera VAL-13, Task 3) também precisa marcar conversa_engajada=true — senão a PRÓXIMA mensagem cai no branch de 1ª mensagem e reseta pra saudação (Causa raiz B reaparecendo neste caminho)");
 });
 
 // ── VAL-12: pergunta institucional real já na 1ª mensagem não força o menu ──────────────────
