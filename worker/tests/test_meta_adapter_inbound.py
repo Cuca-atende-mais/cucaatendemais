@@ -326,7 +326,8 @@ class TestDispatchMotorAgente:
     # ── _chamar_motor_agente: retorna texto em sucesso ────────────────────
     @pytest.mark.asyncio
     async def test_chamar_motor_agente_retorna_resposta(self):
-        """AC 1: motor-agente respondeu → retorna texto de resposta."""
+        """AC 1: motor-agente respondeu → retorna lista com o texto de resposta (S-WM-22: sem
+        campo `mensagens` no JSON, cai no fallback [resposta] — 1 elemento só)."""
         import sys
         from unittest.mock import AsyncMock, MagicMock, patch
         from meta_adapter_inbound import _chamar_motor_agente
@@ -351,7 +352,34 @@ class TestDispatchMotorAgente:
              patch.dict(sys.modules, {"httpx": mock_httpx}):
             resultado = await _chamar_motor_agente(contrato, "conversa-uuid-123", MagicMock())
 
-        assert resultado == "Olá! Como posso ajudar?"
+        assert resultado == ["Olá! Como posso ajudar?"]
+
+    # ── S-WM-22: _chamar_motor_agente lê o campo `mensagens` (múltiplas partes) quando presente ──
+    @pytest.mark.asyncio
+    async def test_chamar_motor_agente_le_campo_mensagens_multiplas_partes(self):
+        """S-WM-22 (TOM-03b): quando o motor-agente divide a resposta, `mensagens` (lista) tem
+        prioridade sobre `resposta` (string) — retorna a lista completa, na ordem."""
+        import sys
+        from unittest.mock import MagicMock, patch
+        from meta_adapter_inbound import _chamar_motor_agente
+
+        resp_dividida = {
+            **self._MOTOR_AGENTE_RESP_OK,
+            "resposta": "Abertura\n\nLista\n\nFechamento",
+            "mensagens": ["Abertura", "Lista", "Fechamento"],
+        }
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.json.return_value = resp_dividida
+        mock_httpx, _ = self._make_mock_httpx(post_return=mock_resp)
+
+        contrato = {"mensagem": "quais cursos vocês têm?", "telefone": "55", "canal_origem": "id", "agente_tipo": "Institucional"}
+
+        with patch.dict(os.environ, {"SUPABASE_URL": "http://fake", "SUPABASE_SERVICE_ROLE_KEY": "k"}), \
+             patch.dict(sys.modules, {"httpx": mock_httpx}):
+            resultado = await _chamar_motor_agente(contrato, "conversa-uuid-456", MagicMock())
+
+        assert resultado == ["Abertura", "Lista", "Fechamento"]
 
     # ── Resilência: falha HTTP → retorna None sem propagar ────────────────
     @pytest.mark.asyncio
@@ -398,7 +426,7 @@ class TestDispatchMotorAgente:
                 mock_supabase,
             )
 
-        assert resultado == "Transferindo..."
+        assert resultado == ["Transferindo..."]
         mock_supabase.table.assert_called_with("conversas")
         mock_supabase.table.return_value.update.assert_called_once_with(
             {"status": "awaiting_human", "updated_at": "now()"}
@@ -438,7 +466,7 @@ class TestDispatchMotorAgente:
             with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
                  patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
                  patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
-                       return_value="Resposta motor") as mock_motor, \
+                       return_value=["Resposta motor"]) as mock_motor, \
                  patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
                        return_value=True), \
                  patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock,
@@ -447,6 +475,132 @@ class TestDispatchMotorAgente:
 
             mock_motor.assert_called_once(), f"motor-agente não chamado para agente={agente}"
             mock_enviar.assert_called_once(), f"_meta_enviar não chamado para agente={agente}"
+
+    # ── S-WM-31 Task 2: concorrência na criação de conversa (upsert vs. select-então-insert) ──
+    @pytest.mark.asyncio
+    async def test_concorrencia_duas_chamadas_simultaneas_resolvem_mesma_conversa(self):
+        """AC1: duas requisições quase simultâneas de webhook pro mesmo lead (mesmo telefone,
+        mesmo phone_number_id) devem resolver pra 1 única conversa. A atomicidade real vem da
+        constraint UNIQUE(lead_id, origem_id) aplicada no banco (Task 1, não testável por mock
+        puro) — aqui confirmamos que o get-or-create usa upsert(on_conflict="lead_id,origem_id"),
+        não mais select-então-insert (a corrida original), e que as duas chamadas concorrentes
+        (asyncio.gather, não sequencial) convergem pro MESMO conversa_id. `_agendar_dispatch_
+        debounced` é substituído por um stub aqui pra isolar da lógica de debounce/cancelamento
+        (VAL-05, já coberta em TestDebounceDispatch) e capturar o conversa_id resolvido por
+        chamada."""
+        from unittest.mock import patch, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-race"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-race-shared", "status": "ativa"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+        conversa_ids_recebidos = []
+
+        async def _stub_debounce(chave, dispatch):
+            conversa_ids_recebidos.append(chave)
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._agendar_dispatch_debounced", side_effect=_stub_debounce):
+            await asyncio.gather(
+                processar_webhook_meta(raw),
+                processar_webhook_meta(raw),
+            )
+
+        assert conversa_ids_recebidos == ["conv-race-shared", "conv-race-shared"], (
+            "as duas chamadas quase simultâneas devem resolver pro MESMO conversa_id"
+        )
+
+        chamadas_upsert_conversas = [
+            call for call in mock_supabase.table.return_value.upsert.call_args_list
+            if call.kwargs.get("on_conflict") == "lead_id,origem_id"
+        ]
+        assert len(chamadas_upsert_conversas) == 2, (
+            "esperava 1 upsert(on_conflict='lead_id,origem_id') por chamada — get-or-create "
+            "atômico via constraint UNIQUE, não select-então-insert"
+        )
+
+    # ── S-WM-22 (TOM-03b): dispatch de múltiplas partes, na ordem, sequencial ─────────────────
+    @pytest.mark.asyncio
+    async def test_dispatch_multiplas_partes_envia_todas_na_ordem(self):
+        """AC3: resposta dividida em N partes → _meta_enviar chamado N vezes, com o texto de
+        cada parte, na ordem certa (não paralelo, não fora de ordem)."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="quais cursos vocês têm?")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-id-1"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"bloqueado": False}
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [{"id": "conv-id-1", "status": "ativa"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        partes = ["Claro! Segue a programação:", "Natacao - Ter/Qui\nJudo - Seg/Qua\nMusica - Sab", "Quer saber mais?"]
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock, return_value=partes), \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        assert mock_enviar.call_count == 3, "esperava _meta_enviar chamado 1 vez por parte (3 partes)"
+        textos_enviados = [call.args[2] for call in mock_enviar.call_args_list]
+        assert textos_enviados == partes, "as partes precisam ser enviadas na MESMA ordem que o motor-agente devolveu"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_falha_na_parte_do_meio_aborta_sem_duplicar_nem_pular(self):
+        """AC3 (comportamento de falha parcial, Escopo IN item 6): se a parte 2 de 3 falhar no
+        envio, a 3ª NÃO pode ser enviada (evita resposta fora de ordem/sem sentido) e a 1ª não
+        pode ser reenviada (evita duplicar) — aborta limpo, loga quantas foram enviadas antes."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="quais cursos vocês têm?")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-id-1"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"bloqueado": False}
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [{"id": "conv-id-1", "status": "ativa"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        partes = ["Abertura", "Lista", "Fechamento"]
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock, return_value=partes), \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, side_effect=[True, False, True]) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        assert mock_enviar.call_count == 2, (
+            "esperava só 2 chamadas: a 1ª (sucesso) e a 2ª (falha) — a 3ª parte NÃO pode ser "
+            "enviada depois de uma falha no meio, e a 1ª não pode ser reenviada (sem retry)"
+        )
+        textos_enviados = [call.args[2] for call in mock_enviar.call_args_list]
+        assert textos_enviados == ["Abertura", "Lista"], "só 'Abertura' e 'Lista' deveriam ter sido tentadas, nessa ordem"
 
     # ── §1 auditoria: motor-agente retorna None → fallback ao lead, nunca silêncio ──
     @pytest.mark.asyncio
@@ -717,7 +871,7 @@ class TestDispatchMotorAgente:
             with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
                  patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
                  patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
-                       return_value="Aguarde...") as mock_motor, \
+                       return_value=["Aguarde..."]) as mock_motor, \
                  patch("meta_adapter_inbound._notificar_transbordo", new_callable=AsyncMock) as mock_notif, \
                  patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
                        return_value=True), \
@@ -1027,7 +1181,7 @@ class TestDebounceDispatch:
         with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
              patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
              patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
-                   return_value="Até mais! 😊") as mock_motor, \
+                   return_value=["Até mais! 😊"]) as mock_motor, \
              patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
              patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
 
@@ -1102,3 +1256,77 @@ class TestDebounceDispatch:
             "duas conversas diferentes (chaves distintas) não podem cancelar o dispatch uma da outra"
         )
         assert meta_adapter_inbound._DEBOUNCE_TASKS == {}, "dict de tarefas pendentes deveria ficar vazio após ambas resolverem"
+
+    # ── 4) S-WM-33: valor default da janela ─────────────────────────────────────
+    def test_debounce_segundos_default_e_10s(self, monkeypatch):
+        """S-WM-33: default alterado de 3s pra 7s, e depois pra 10s (decisão atualizada do
+        Junior) — decisão original após o diagnóstico (teste ao vivo de 2026-07-14) confirmar
+        que o debounce de 3s funcionava corretamente por desenho (não era bug), só que a
+        janela era curta demais pro intervalo real observado (6,13s entre duas mensagens do
+        mesmo lead). 10s cobre esse caso com margem ainda maior que os 7s originalmente
+        decididos. Nota: existe só ESTA função/local no código controlando o valor — não há
+        2ª fonte de verdade divergente (achado registrado no Dev Agent Record desta story)."""
+        import meta_adapter_inbound
+
+        monkeypatch.delenv("META_DEBOUNCE_SECONDS", raising=False)
+        assert meta_adapter_inbound._debounce_segundos() == 10.0
+
+    # ── 5) S-WM-33: intervalo real de ~6s cai DENTRO da janela decidida → agrupa ─
+    @pytest.mark.asyncio
+    async def test_mensagens_com_intervalo_de_6s_ficam_dentro_da_janela_de_7s_e_agrupam(self, monkeypatch):
+        """S-WM-33: reproduz, em escala reduzida (fator 100x, sem esperar segundos reais), o
+        cenário exato do incidente de 2026-07-14 ("Não precisa" / "Obrigado", 6,127s de
+        intervalo real) testando contra o ponto de margem mais apertado já decidido pro
+        Junior (7s, escalado pra 0,07s) — a 2ª mensagem chega ANTES do timer da 1ª disparar
+        (6 < 7, escalado 0,06 < 0,07), então cancela e reagenda: resultado esperado é 1 SÓ
+        dispatch, com o conteúdo da última mensagem. Com a janela ANTIGA (3s) esse mesmo
+        intervalo teria gerado 2 dispatches separados — era exatamente o comportamento
+        correto (não-bug) confirmado no diagnóstico prévio. O valor de produção atual é 10s
+        (margem ainda maior que os 7s testados aqui) — este teste usa `_debounce_segundos`
+        monkeypatched direto (não lê o default real), então continua válido independente do
+        valor de produção: prova a margem mínima aceitável, não o valor exato configurado
+        (isso é responsabilidade do teste anterior, `test_debounce_segundos_default_e_10s`).
+        Usa `_dormir_debounce` real (não o stub instantâneo do autouse) sincronizado por um
+        Event pra garantir que o debounce da 1ª mensagem já começou antes de medir o
+        intervalo — preserva a proporção real intervalo/janela sem depender de timing frágil.
+        """
+        import meta_adapter_inbound
+        from unittest.mock import AsyncMock
+
+        sleep_iniciado = asyncio.Event()
+
+        async def _dormir_real_instrumentado(segundos):
+            sleep_iniciado.set()
+            await asyncio.sleep(segundos)
+
+        monkeypatch.setattr(meta_adapter_inbound, "_debounce_segundos", lambda: 0.07)
+        monkeypatch.setattr(meta_adapter_inbound, "_dormir_debounce", _dormir_real_instrumentado)
+
+        mock_sb = self._mock_supabase_conversa_unica("conv-debounce-3")
+        stub = {"canal_origem": "PHONE_DEB3", "agente_tipo": "Institucional", "canal_tipo": "Institucional", "unidade_cuca": None}
+
+        raw1 = json.dumps(self._payload_com_wamid("PHONE_DEB3", "558598887779", "Não precisa", "wamid.deb.5")).encode()
+        raw2 = json.dumps(self._payload_com_wamid("PHONE_DEB3", "558598887779", "Obrigado", "wamid.deb.6")).encode()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
+                   return_value=["Tranquilo, Valmir!"]) as mock_motor, \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
+
+            tarefa1 = asyncio.create_task(processar_webhook_meta(raw1))
+            await sleep_iniciado.wait()
+            await asyncio.sleep(0.06)  # ~6s reais em escala 100x — intervalo real do incidente
+            tarefa2 = asyncio.create_task(processar_webhook_meta(raw2))
+            await asyncio.gather(tarefa1, tarefa2)
+
+        mock_motor.assert_called_once()
+        mock_enviar.assert_called_once()
+        contrato_usado = mock_motor.call_args.args[0]
+        assert contrato_usado["mensagem"] == "Obrigado", (
+            "S-WM-33: com janela de 7s, um intervalo de 6s entre as mensagens deveria ficar "
+            "DENTRO da janela — a 2ª mensagem cancela o dispatch da 1ª e só ela dispara, "
+            "gerando 1 resposta agrupada, não 2 separadas (era o comportamento com a janela "
+            "antiga de 3s, confirmado correto mas insuficiente no diagnóstico prévio)"
+        )

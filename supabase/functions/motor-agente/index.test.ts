@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes } from "./index.ts";
 
 // ── ehSelecaoMenu ────────────────────────────────────────────────────────────
 Deno.test("ehSelecaoMenu: aceita dígitos 1-5 isolados", () => {
@@ -72,6 +72,36 @@ Deno.test({
   },
 });
 
+// ── Item 4 (S-WM-21, VAL-06) — typo-tolerância em detectarTrocaUnidade ──────────────────────
+Deno.test("Item 4: detectarTrocaUnidade tolera erro de digitação de 1 caractere ('mondubi' por 'mondubim')", () => {
+  assertEquals(detectarTrocaUnidade("quero saber da mondubi", "Cuca Pici"), "Cuca Mondubim");
+});
+
+Deno.test("Item 4: detectarTrocaUnidade typo NÃO regride a proteção §4 ('barragem' continua não disparando Cuca Barra)", () => {
+  // "barragem" (8 chars) vs "barra" (5 chars): diferença de tamanho > 1, filtrado antes mesmo
+  // de calcular distância de edição — garante que o fallback de typo não reabre o bug §4.
+  assertEquals(detectarTrocaUnidade("tem barragem perto daqui?", "Cuca Pici"), null);
+});
+
+Deno.test("Item 4: detectarTrocaUnidade typo não dispara pra chave curta (pici, <5 chars) nem composta (com espaço)", () => {
+  // Chaves curtas/compostas ficam de fora do fallback de typo (risco de falso positivo alto
+  // demais) — comportamento seguro documentado, não uma lacuna a fechar nesta story.
+  assertEquals(detectarTrocaUnidade("quero saber da pic", "Cuca Barra"), null);
+});
+
+// ── Item 4 (S-WM-21, VAL-06) — pareceIntencaoTrocaUnidade (pré-filtro de custo) ──────────────
+Deno.test("Item 4: pareceIntencaoTrocaUnidade reconhece menções explícitas a trocar de unidade", () => {
+  for (const texto of ["quero saber de outra unidade", "posso trocar de unidade?", "queria mudar pra outra unidade", "me tira dessa e bota na outra cuca"]) {
+    assertEquals(pareceIntencaoTrocaUnidade(texto), true, `esperava true para "${texto}"`);
+  }
+});
+
+Deno.test("Item 4: pareceIntencaoTrocaUnidade NÃO dispara em mensagens de acompanhamento comuns (evita custo de LLM desnecessário)", () => {
+  for (const texto of ["quem é o professor de natação?", "tem outra atividade além de natação?", "qual o horário de hoje?", "obrigado pela ajuda"]) {
+    assertEquals(pareceIntencaoTrocaUnidade(texto), false, `esperava false para "${texto}" — AC9: sem palavra-chave de troca, não deveria acionar o pré-filtro`);
+  }
+});
+
 // ── parseRetryAfterSegundos (§3) ─────────────────────────────────────────────
 Deno.test("parseRetryAfterSegundos: usa header retry-after quando presente", () => {
   assertEquals(parseRetryAfterSegundos("3", "qualquer corpo"), 3);
@@ -95,27 +125,27 @@ Deno.test("parseRetryAfterSegundos: retorna fallback de 1s sem header nem tempo 
 Deno.test("validarAvaliacaoSelecaoUnidade: aceita unidade válida e sinais true", () => {
   assertEquals(
     validarAvaliacaoSelecaoUnidade({ unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false }),
-    { unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
+    { unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false },
   );
 });
 
 Deno.test("validarAvaliacaoSelecaoUnidade: rejeita unidade fora da lista válida (nunca confia cegamente no LLM)", () => {
   assertEquals(
     validarAvaliacaoSelecaoUnidade({ unidade: "Cuca Inventada", quer_sair: false, mudou_de_assunto: false }),
-    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
+    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false },
   );
 });
 
 Deno.test("validarAvaliacaoSelecaoUnidade: JSON malformado/vazio cai no default seguro", () => {
-  assertEquals(validarAvaliacaoSelecaoUnidade(null), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false });
-  assertEquals(validarAvaliacaoSelecaoUnidade({}), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false });
-  assertEquals(validarAvaliacaoSelecaoUnidade("string solta"), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false });
+  assertEquals(validarAvaliacaoSelecaoUnidade(null), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
+  assertEquals(validarAvaliacaoSelecaoUnidade({}), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
+  assertEquals(validarAvaliacaoSelecaoUnidade("string solta"), { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
 });
 
 Deno.test("validarAvaliacaoSelecaoUnidade: só aceita booleano literal true, não truthy genérico", () => {
   assertEquals(
     validarAvaliacaoSelecaoUnidade({ unidade: null, quer_sair: "sim", mudou_de_assunto: 1 }),
-    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false },
+    { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false },
   );
 });
 
@@ -152,4 +182,58 @@ Deno.test({
     const r = removerTag("Vou te transferir para um atendente humano.", "handover");
     assertEquals(r.encontrada, true);
   },
+});
+
+// ── Item 2 (S-WM-22, TOM-03b): dividirRespostaEmPartes ───────────────────────
+const LISTA_5_CURSOS = [
+  "Natacao - Ter/Qui/Sex",
+  "Judo - Seg/Qua",
+  "Informatica - Ter/Qui",
+  "Reforco Escolar - Seg/Ter/Qua/Qui/Sex",
+  "Musica - Sab",
+].join("\n");
+
+Deno.test("dividirRespostaEmPartes: AC4 — resposta curta/normal (sem formato de lista) não é dividida", () => {
+  const texto = "Claro! Temos aulas de natação às terças e quintas. Quer saber mais algum detalhe?";
+  assertEquals(dividirRespostaEmPartes(texto), [texto]);
+});
+
+Deno.test("dividirRespostaEmPartes: AC4 — menos de 3 linhas-item não é considerado listável", () => {
+  const texto = "Temos 2 opções:\nNatacao - Ter/Qui\nJudo - Seg\nEspero ter ajudado!";
+  assertEquals(dividirRespostaEmPartes(texto), [texto]);
+});
+
+Deno.test("dividirRespostaEmPartes: AC1 — abertura + lista (5 cursos) + fechamento vira 3 partes", () => {
+  const texto = "Claro! Aqui está a programação completa:\n\n" + LISTA_5_CURSOS + "\n\nQuer saber horários de alguma modalidade específica?";
+  const partes = dividirRespostaEmPartes(texto);
+  assertEquals(partes.length, 3, "esperava 3 partes: abertura, lista, fechamento");
+  assertEquals(partes[0], "Claro! Aqui está a programação completa:");
+  assertEquals(partes[1], LISTA_5_CURSOS);
+  assertEquals(partes[2], "Quer saber horários de alguma modalidade específica?");
+});
+
+Deno.test("dividirRespostaEmPartes: resposta sem abertura (começa direto na lista) vira 2 partes", () => {
+  const texto = LISTA_5_CURSOS + "\n\nQuer saber mais?";
+  const partes = dividirRespostaEmPartes(texto);
+  assertEquals(partes.length, 2);
+  assertEquals(partes[0], LISTA_5_CURSOS);
+  assertEquals(partes[1], "Quer saber mais?");
+});
+
+Deno.test("dividirRespostaEmPartes: resposta sem fechamento (termina na lista) vira 2 partes", () => {
+  const texto = "Segue a programação:\n\n" + LISTA_5_CURSOS;
+  const partes = dividirRespostaEmPartes(texto);
+  assertEquals(partes.length, 2);
+  assertEquals(partes[0], "Segue a programação:");
+  assertEquals(partes[1], LISTA_5_CURSOS);
+});
+
+Deno.test("dividirRespostaEmPartes: resposta 100% lista (sem abertura nem fechamento) não força split artificial — 1 parte", () => {
+  const partes = dividirRespostaEmPartes(LISTA_5_CURSOS);
+  assertEquals(partes, [LISTA_5_CURSOS]);
+});
+
+Deno.test("dividirRespostaEmPartes: uma pergunta com hífen não é confundida com item de lista (linha termina em '?')", () => {
+  const texto = "Oi! Você quer saber - de forma rápida - qual o horário de hoje?";
+  assertEquals(dividirRespostaEmPartes(texto), [texto]);
 });

@@ -207,6 +207,47 @@ export function contemPalavra(texto: string, chave: string): boolean {
   return new RegExp("\\b" + escaparRegex(chave) + "\\b").test(texto);
 }
 
+/** Dist\u00e2ncia de edi\u00e7\u00e3o cl\u00e1ssica (Levenshtein) \u2014 usada s\u00f3 por contemNomeUnidadeComTypo abaixo. */
+function distanciaLevenshtein(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+/**
+ * Item 4 (S-WM-21, VAL-06): fallback tolerante a erro de digita\u00e7\u00e3o de UM nome de unidade de
+ * palavra \u00fanica (ex.: "mondubi" por "mondubim") \u2014 nunca para os d\u00edgitos 1-5 (esses continuam s\u00f3
+ * via contemPalavra/ehSelecaoMenu). Compara PALAVRA A PALAVRA (split por n\u00e3o-letra, n\u00e3o
+ * substring livre) com dist\u00e2ncia de edi\u00e7\u00e3o <= 1 \u2014 substring livre quebraria a prote\u00e7\u00e3o \u00a74 j\u00e1
+ * testada ('barragem' n\u00e3o pode disparar Cuca Barra: "barragem".includes("barra") seria true,
+ * mas a palavra inteira tem dist\u00e2ncia 3, n\u00e3o 1). Chaves curtas (<5 chars) e chaves com espa\u00e7o
+ * (nomes compostos, j\u00e1 bem cobertos pelo match exato) ficam de fora do fallback \u2014 risco de
+ * falso positivo alto demais pro ganho.
+ */
+function contemNomeUnidadeComTypo(texto: string, chave: string): boolean {
+  if (chave.length < 5 || chave.includes(' ')) return false;
+  const palavras = texto.split(/[^\p{L}]+/u).filter(Boolean);
+  return palavras.some((p) => Math.abs(p.length - chave.length) <= 1 && distanciaLevenshtein(p, chave) <= 1);
+}
+
+/**
+ * Item 4 (S-WM-21, VAL-06): pr\u00e9-filtro barato (sem custo de LLM) pra decidir quando vale a pena
+ * chamar avaliarSelecaoUnidade dentro do branch de unidade j\u00e1 selecionada (handler, se\u00e7\u00e3o 5b) \u2014
+ * sem isso, toda mensagem de acompanhamento normal (a maioria de uma conversa j\u00e1 em andamento,
+ * com unidade escolhida) pagaria uma chamada extra \u00e0 OpenAI a cada turno. S\u00f3 dispara quando a
+ * mensagem sugere inten\u00e7\u00e3o de trocar de unidade.
+ */
+export function pareceIntencaoTrocaUnidade(texto: string): boolean {
+  const lower = texto.toLowerCase();
+  return /\bunidade\b/.test(lower) || /\btrocar\b|\btroca\b|\bmudar\b/.test(lower) || /\boutra\s+cuca\b|\boutro\s+cuca\b/.test(lower);
+}
+
 /** Detecta se a mensagem menciona uma unidade diferente da atual */
 export function detectarTrocaUnidade(texto: string, unidadeAtual: string): string | null {
   const lower = texto.toLowerCase().trim();
@@ -219,14 +260,74 @@ export function detectarTrocaUnidade(texto: string, unidadeAtual: string): strin
       return unidade;
     }
   }
+  // Item 4 (S-WM-21): s\u00f3 entra se nenhum match exato foi encontrado acima.
+  for (const [chave, unidade] of Object.entries(nomesUnidades)) {
+    if (contemNomeUnidadeComTypo(lower, chave) && unidade !== unidadeAtual) {
+      return unidade;
+    }
+  }
   return null;
 }
 
+/**
+ * VAL-02 (docs/migracao-meta/VALIDACAO-producao-institucional.md): guardrail anti-alucinação
+ * do código. Extraído para módulo (era inline em `handler`) para permitir teste automatizado
+ * do texto exato — sem isso, uma regressão na regra 1 (ex.: perder o exemplo negativo abaixo)
+ * não seria pega por nenhum teste. Regra 1 ganhou um exemplo negativo explícito depois que a
+ * regra genérica ("NUNCA invente... nomes de professores") não impediu o GPT de inventar
+ * "João Silva" como professor de Natação numa pergunta de acompanhamento (contexto vindo só da
+ * busca vetorial de 5 chunks, sem o registro real do professor) — reforço de prompt, não uma
+ * correção comprovada (não é testável se o GPT vai obedecer; ver relatório).
+ */
+export const INSTRUCAO_SEGURANCA = [
+  "REGRAS OBRIGATORIAS (nao negocie estas regras):",
+  "",
+  "1. USE APENAS dados do bloco '--- PROGRAMACAO MENSAL ATUAL ---' ou '--- CONTEXTO ---'.",
+  "   NUNCA invente atividades, horarios, nomes de professores ou modalidades.",
+  "   Exemplo do que NAO fazer: se o contexto nao trouxer o nome do professor de uma",
+  "   modalidade, NUNCA gere um nome plausivel (ex.: 'Joao Silva') so para parecer",
+  "   completo. Nesse caso, siga a regra 2 abaixo (diga que nao encontrou).",
+  "",
+  "2. Se a informacao nao estiver no contexto, diga com suas proprias palavras e no seu",
+  "   tom que nao encontrou essa informacao na programacao atual e sugira falar com a",
+  "   unidade. Nunca invente um dado que nao esteja no contexto.",
+  "",
+  "3. NUNCA peca desculpas por informacoes corretas. Se o usuario disser que uma",
+  "   informacao esta errada, verifique o contexto antes de concordar. Se o contexto",
+  "   confirma sua resposta anterior, mantenha-a com seguranca: diga 'Verificando",
+  "   minha base, [informacao do contexto]'.",
+  "",
+  "4. Use a DATA ATUAL para referencias temporais.",
+  "",
+  "5. NUNCA use [[HANDOVER]] quando o usuario mencionar o nome de uma unidade CUCA",
+  "   (Barra, Jangurussu, Mondubim, Pici, Jose Walter). Isso e sempre uma consulta",
+  "   de programacao, nunca um pedido de atendimento humano.",
+  "",
+  "6. FORMATO DE LISTAGEM — REGRA CRITICA:",
+  "   Quando apresentar TODAS as modalidades/cursos/atividades de uma area, liste",
+  "   APENAS o nome de cada item + dias da semana de forma compacta (ex: 'Natacao - Ter/Qui/Sex').",
+  "   NAO inclua horarios completos, professores ou vagas na listagem geral.",
+  "   Ao final, diga: 'Quer saber horarios e detalhes de alguma modalidade especifica?'",
+  "   So mostre horarios completos quando o usuario perguntar sobre uma modalidade especifica.",
+  "   ISSO GARANTE que TODAS as modalidades aparecem e nenhuma fica de fora.",
+].join("\n");
+
 const UNIDADES_VALIDAS = ['Cuca Barra', 'Cuca Jangurussu', 'Cuca Mondubim', 'Cuca Pici', 'Cuca José Walter'];
 
-export type AvaliacaoSelecaoUnidade = { unidade: string | null; quer_sair: boolean; mudou_de_assunto: boolean; pergunta_geral: boolean };
+export type AvaliacaoSelecaoUnidade = {
+  unidade: string | null;
+  quer_sair: boolean;
+  mudou_de_assunto: boolean;
+  pergunta_geral: boolean;
+  /** Item 1 (S-WM-21): true quando a mensagem pede algo cujo conteúdo real depende de saber
+   * qual unidade CUCA (cursos, horários, programação) — usado só por decidirPrimeiraMensagem
+   * pra decidir entre mostrar o menu ou só uma pergunta aberta. Campo opcional pra não quebrar
+   * os literais de teste já existentes que constroem este tipo sem ele (decidirAguardandoUnidade
+   * não consome este sinal). */
+  pedido_depende_unidade?: boolean;
+};
 
-const AVALIACAO_SELECAO_UNIDADE_DEFAULT: AvaliacaoSelecaoUnidade = { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false };
+const AVALIACAO_SELECAO_UNIDADE_DEFAULT: AvaliacaoSelecaoUnidade = { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false };
 
 /** Valida o JSON retornado pelo GPT contra o contrato esperado — nunca confia cegamente no LLM */
 export function validarAvaliacaoSelecaoUnidade(data: unknown): AvaliacaoSelecaoUnidade {
@@ -239,6 +340,8 @@ export function validarAvaliacaoSelecaoUnidade(data: unknown): AvaliacaoSelecaoU
     // VAL-12: só tem sentido quando mudou_de_assunto=true — diferencia pergunta institucional
     // real ("a rede CUCA é da prefeitura?") de cortesia pura ("bom dia"), ver avaliarSelecaoUnidade.
     pergunta_geral: obj.pergunta_geral === true,
+    // Item 1 (S-WM-21): só tem sentido quando pergunta_geral=false — ver decidirPrimeiraMensagem.
+    pedido_depende_unidade: obj.pedido_depende_unidade === true,
   };
 }
 
@@ -251,7 +354,15 @@ export function validarAvaliacaoSelecaoUnidade(data: unknown): AvaliacaoSelecaoU
  * em cima de uma mensagem tipo "Obrigado pela mensagem".
  * Nunca propaga exceção — qualquer falha cai no default seguro (equivalente a "não identifiquei").
  */
-async function avaliarSelecaoUnidade(texto: string, openaiKey: string): Promise<AvaliacaoSelecaoUnidade> {
+/**
+ * Item 5 (S-WM-21, cont. AUD-13): mesma lógica de retry/backoff de chamarGPT
+ * (deveTentarNovamente/parseRetryAfterSegundos/GPT_MAX_TENTATIVAS/GPT_ESPERA_MAX_SEGUNDOS,
+ * definidas mais abaixo no arquivo — referência tardia é segura aqui porque só é lida em tempo
+ * de chamada, depois do módulo inteiro já ter sido avaliado). Antes, um 429/5xx transitório
+ * aqui caía direto no fallback seguro sem tentar de novo, silenciando a classificação semântica
+ * por uma falha temporária da OpenAI (roteamento de unidade errado sem nenhum sinal de erro).
+ */
+export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, tentativa = 0): Promise<AvaliacaoSelecaoUnidade> {
   try {
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -259,12 +370,13 @@ async function avaliarSelecaoUnidade(texto: string, openaiKey: string): Promise<
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0,
-        max_tokens: 60,
+        max_tokens: 90,
         response_format: { type: "json_object" },
         messages: [{
           role: "user",
           content: [
-            "Um lead da rede CUCA recebeu este menu e está respondendo:",
+            "Um lead da rede CUCA está conversando com a Maria (assistente da Rede CUCA). Ele pode",
+            "estar respondendo a este menu de unidades ou simplesmente mandando uma mensagem livre:",
             MENU_UNIDADES,
             "",
             "Unidades válidas (use o nome EXATO): Cuca Barra, Cuca Jangurussu, Cuca Mondubim, Cuca Pici, Cuca José Walter.",
@@ -274,12 +386,22 @@ async function avaliarSelecaoUnidade(texto: string, openaiKey: string): Promise<
             "- \"quer_sair\": true se o lead claramente não quer continuar / não vai escolher uma unidade agora (ex.: agradecimento de despedida, \"deixa pra lá\", \"depois eu vejo\").",
             "- \"mudou_de_assunto\": true se a mensagem não é uma tentativa de escolher unidade nem de sair (ex.: cortesia como \"obrigado pela mensagem\", pergunta sobre outro assunto).",
             "- \"pergunta_geral\": true SOMENTE se mudou_de_assunto=true E a mensagem for uma pergunta real sobre o CUCA que não depende de saber qual unidade (ex.: \"a rede CUCA é da prefeitura?\", \"tem curso pago?\"). false se for só cortesia/cumprimento sem pergunta de verdade (ex.: \"bom dia\", \"tudo bem?\", \"obrigado\").",
+            "- \"pedido_depende_unidade\": true se a mensagem pede algo cujo conteúdo real depende de saber qual unidade CUCA (ex.: cursos, horários, programação, atividades, vagas em alguma modalidade). false se for só cortesia/saudação, um pedido vago sem conteúdo concreto (ex.: \"quero saber sobre vocês\"), ou já for pergunta_geral=true.",
             "",
             "Mensagem do lead: " + texto,
           ].join("\n"),
         }],
       }),
     });
+
+    if (deveTentarNovamente(resp.status, tentativa)) {
+      const corpoErro = await resp.text();
+      const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
+      console.log("[motor-agente v18] Rate limit OpenAI em avaliarSelecaoUnidade (tentativa " + (tentativa + 1) + "/" + GPT_MAX_TENTATIVAS + "), aguardando " + esperaSegundos + "s antes de tentar de novo");
+      await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
+      return avaliarSelecaoUnidade(texto, openaiKey, tentativa + 1);
+    }
+
     if (!resp.ok) return AVALIACAO_SELECAO_UNIDADE_DEFAULT;
     const body = await resp.json();
     const parsed = JSON.parse(body.choices[0].message.content);
@@ -321,20 +443,21 @@ export function decidirAguardandoUnidade(
       resposta: "Sem problemas! Quando quiser saber sobre alguma unidade CUCA, é só chamar. 😊",
     };
   }
-  if (avaliacaoSemantica.mudou_de_assunto) {
-    if (avaliacaoSemantica.pergunta_geral) {
-      // VAL-12: pergunta institucional real (não é só cortesia) — resolve o estado de espera
-      // e segue pro fluxo normal (Passo 6, RAG geral) em vez de reabrir o menu. Preserva a
-      // intenção original do AUD-01: não travar quem genuinamente quer falar de outra coisa.
-      return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
-    }
-    // VAL-13: cortesia pura (ex.: "bom dia") não pode tirar a conversa do estado
-    // aguardando_unidade — o lead ainda não escolheu unidade, e a resposta abaixo já
-    // reapresenta o menu.
+  if (avaliacaoSemantica.pergunta_geral) {
+    // VAL-12: pergunta institucional real — resolve o estado de espera e segue pro fluxo
+    // normal (Passo 6, RAG geral) em vez de reabrir o menu.
+    return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
+  }
+  if (!avaliacaoSemantica.pedido_depende_unidade) {
+    // S-WM-31 Task 3 (AC5): critério unificado com decidirPrimeiraMensagem — só reapresenta o
+    // menu quando pedido_depende_unidade=true. Supera VAL-13 (cortesia pura reapresentava o
+    // menu indefinidamente): decisão revista nesta story após as duas funções decidirem de
+    // forma inconsistente quando pedir a unidade. Tom de CONTINUAÇÃO (item 6 do Escopo) — nunca
+    // SAUDACOES_ABERTURA aqui, a conversa já está em andamento.
     return {
       unidadeSelecionada: null,
-      aguardandoUnidade: true,
-      resposta: "Claro! 😊 Quando quiser saber sobre alguma unidade CUCA, escolha uma:\n\n" + MENU_UNIDADES,
+      aguardandoUnidade: false,
+      resposta: "Em que mais posso te ajudar? 😊",
     };
   }
   return {
@@ -342,6 +465,44 @@ export function decidirAguardandoUnidade(
     aguardandoUnidade: true,
     resposta: "Não consegui identificar a unidade 😊\n\n" + MENU_UNIDADES,
   };
+}
+
+export type DecisaoConversaEngajada = {
+  unidadeSelecionada: string | null;
+  aguardandoUnidade: boolean;
+  perguntaGeralAtiva: boolean;
+  resposta: string | null;
+};
+
+/**
+ * S-WM-31 (item 6 do Escopo, Causa raiz B): 3º branch de roteamento pra conversas com
+ * `conversa_engajada=true` (já passaram por cortesia/pergunta_geral, nem `unidade_selecionada`
+ * nem `aguardando_unidade` bateram). Reavalia a mensagem com a MESMA detecção usada nos outros
+ * branches, mas NUNCA repete `SAUDACOES_ABERTURA` nem o texto de boas-vindas do menu inicial —
+ * a conversa já está em andamento. Desenho novo desta story, não adaptado de nenhuma função
+ * existente: diferente de `decidirAguardandoUnidade`, aqui "nenhum dos dois" (nem unidade, nem
+ * pedido que dependa dela) não devolve uma resposta canned — sinaliza `perguntaGeralAtiva` e
+ * deixa o Passo 6 (RAG geral) responder de verdade, mesmo comportamento que `pergunta_geral=true`
+ * já dispara nos outros 2 branches.
+ */
+export function decidirConversaEngajada(
+  unidadeDetectadaDireta: string | undefined,
+  avaliacaoSemantica: AvaliacaoSelecaoUnidade,
+): DecisaoConversaEngajada {
+  const unidadeDetectada = unidadeDetectadaDireta ?? avaliacaoSemantica.unidade ?? undefined;
+
+  if (unidadeDetectada) {
+    return { unidadeSelecionada: unidadeDetectada, aguardandoUnidade: false, perguntaGeralAtiva: false, resposta: null };
+  }
+  if (avaliacaoSemantica.pedido_depende_unidade) {
+    return {
+      unidadeSelecionada: null,
+      aguardandoUnidade: true,
+      perguntaGeralAtiva: false,
+      resposta: "Pra te ajudar certinho com isso, me diz qual unidade CUCA:\n\n" + MENU_UNIDADES,
+    };
+  }
+  return { unidadeSelecionada: null, aguardandoUnidade: false, perguntaGeralAtiva: true, resposta: null };
 }
 
 /**
@@ -410,11 +571,21 @@ export function decidirPrimeiraMensagem(
     // fluxo normal (Passo 6, RAG geral) pra responder de verdade.
     return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
   }
-  // Backlog 4b: nem nome de unidade, nem pergunta geral — é a 1ª mensagem "crua" (ex.: "oi",
-  // "quero saber sobre vocês"). Prefixa uma saudação de abertura rotativa antes do menu; NÃO
-  // mexe no branch de unidadeDetectadaDireta acima, que já cai no fluxo de GPT (que já combina
-  // saudação e menu sozinho, ver prompt_sistema "PRIMEIRA INTERAÇÃO").
   const saudacao = SAUDACOES_ABERTURA[Math.floor(Math.random() * SAUDACOES_ABERTURA.length)];
+  if (!avaliacaoSemantica.pedido_depende_unidade) {
+    // Item 1 (S-WM-21): nem unidade direta, nem pergunta_geral, nem um pedido que realmente
+    // dependa de saber a unidade (cursos/horários/programação) — é cortesia pura ou mensagem
+    // aberta ("oi", "quero saber sobre vocês"). Responde só com saudação + pergunta aberta,
+    // SEM o menu — o menu engessado em cima de toda saudação era exatamente o comportamento
+    // reportado em produção. aguardandoUnidade=false: a próxima mensagem volta a cair neste
+    // mesmo branch (não trava esperando dígito de menu) e é reavaliada do zero — pode virar
+    // pedido unit-dependente, pergunta_geral ou unidade direta a qualquer momento.
+    return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: saudacao + "\n\nEm que posso te ajudar? 😊" };
+  }
+  // Backlog 4b / Item 1: pedido que depende de unidade (ex.: "quais cursos vocês têm"), sem
+  // dizer qual — aí sim mostra o menu, comportamento já existente preservado. NÃO mexe no
+  // branch de unidadeDetectadaDireta acima, que já cai no fluxo de GPT (que já combina saudação
+  // e menu sozinho, ver prompt_sistema "PRIMEIRA INTERAÇÃO").
   return { unidadeSelecionada: null, aguardandoUnidade: true, resposta: saudacao + "\n\n" + MENU_UNIDADES };
 }
 
@@ -492,6 +663,47 @@ async function salvarMensagemAgente(supabase: ReturnType<typeof createClient>, c
 }
 
 /**
+ * Item 2 (S-WM-22, TOM-03b): reconhece uma linha no formato compacto que a regra 6 de
+ * `INSTRUCAO_SEGURANCA` já exige do GPT ao listar modalidades/cursos — "Nome - Dias" (ex.:
+ * "Natacao - Ter/Qui/Sex"). Não é um formato novo inventado por esta story, é o formato que o
+ * guardrail já pede; esta função só detecta se o GPT seguiu a regra.
+ */
+function ehLinhaDeItemLista(linha: string): boolean {
+  const l = linha.trim();
+  if (!l || l.endsWith('?') || l.length > 80) return false;
+  return l.includes(' - ');
+}
+
+/**
+ * Item 2 (S-WM-22, TOM-03b): divide uma resposta longa/listável em 2-3 partes lógicas — uma
+ * mensagem de abertura, a lista em si, e um fechamento — em vez de um único bloco de texto
+ * corrido. Critério de "listável": 3 ou mais linhas no formato de item de lista (ver
+ * `ehLinhaDeItemLista`) — abaixo disso, retorna a resposta inteira como 1 única parte
+ * (comportamento atual preservado, AC4). Localiza o bloco CONTÍGUO da 1ª à última linha-item;
+ * texto antes do bloco vira "abertura", o bloco vira a "lista", texto depois vira "fechamento"
+ * — qualquer uma das 3 partes que ficar vazia depois de trim() é descartada, nunca retorna
+ * string vazia como parte. Pura e determinística: chamada só DEPOIS do processamento de tags
+ * (handover/encerrar/encaminhar) no handler, nunca antes (AC5) — recebe sempre o texto final já
+ * limpo dessas tags.
+ */
+export function dividirRespostaEmPartes(texto: string): string[] {
+  const linhas = texto.split('\n');
+  const indicesItem = linhas.map((l, i) => (ehLinhaDeItemLista(l) ? i : -1)).filter((i) => i >= 0);
+
+  if (indicesItem.length < 3) return [texto];
+
+  const primeiroIndice = indicesItem[0];
+  const ultimoIndice = indicesItem[indicesItem.length - 1];
+
+  const abertura = linhas.slice(0, primeiroIndice).join('\n').trim();
+  const lista = linhas.slice(primeiroIndice, ultimoIndice + 1).join('\n').trim();
+  const fechamento = linhas.slice(ultimoIndice + 1).join('\n').trim();
+
+  const partes = [abertura, lista, fechamento].filter((p) => p.length > 0);
+  return partes.length > 0 ? partes : [texto];
+}
+
+/**
  * TOM-05: os textos fixos dos ramos early-return (menu de unidades, "não consegui identificar"
  * etc.) não passam pelo GPT — se o mesmo ramo disparar duas vezes seguidas, o lead recebe
  * literalmente o mesmo texto, palavra por palavra, um dos sinais mais fortes de "isso é um
@@ -515,6 +727,20 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
   if (!chunks || chunks.length === 0) return "";
   console.log("[motor-agente v18] Chunks diretos monthly_program: " + chunks.length + " para " + unidade);
   return chunks.map((c: { conteudo: string }) => c.conteudo).join("\n");
+}
+
+/**
+ * S-WM-32 (Escopo item 2/5): carrega o `resumo_rede` ativo por INTEIRO, direto de
+ * `documentos_rag.conteudo` — nunca via `chunks_documentos`/`buscar_chunks_similares`
+ * (`resumo_rede` nunca é chunkeado nem embeddado, ver migration
+ * `20260713200000_swm32_resumo_rede_skip_indexacao.sql`). `unidade_cuca=null` por definição
+ * (é um índice de rede inteira, não de 1 unidade) — não recebe parâmetro de unidade.
+ * Retorna "" quando ainda não existe nenhum `resumo_rede` ativo (ex.: antes da 1ª geração via
+ * botão do portal) — o caller trata isso como "sem dado consolidado", nunca como erro.
+ */
+async function carregarResumoRede(supabase: ReturnType<typeof createClient>): Promise<string> {
+  const { data: doc } = await supabase.from("documentos_rag").select("conteudo").eq("tipo", "resumo_rede").eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
+  return doc?.conteudo || "";
 }
 
 // PREMISSA (S-WM-17): esta function espera ser chamada DEPOIS que o lead, a conversa e a
@@ -542,7 +768,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
   try {
     const body = await req.json();
-    const { mensagem, midia_url, midia_tipo, telefone, canal_origem, agente_tipo, unidade_cuca } = body;
+    const { mensagem, midia_url, midia_tipo, telefone, canal_origem, agente_tipo, unidade_cuca, conversa_id } = body;
     console.log("[motor-agente v18] Agente: " + agente_tipo + ", Unidade: " + unidade_cuca);
 
     if (!telefone || !agente_tipo) return new Response(JSON.stringify({ error: "telefone e agente_tipo sao obrigatorios" }), { status: 400 });
@@ -574,7 +800,14 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // usado mais abaixo (precisaVisaoGeral, isAgenteProgramacao) pra não tratar reabertura como
     // "primeiro contato" só para Institucional/maria, sem tocar no fluxo de outros agentes.
     let conversaGenuinamenteNova = false;
-    let { data: conversa } = await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
+    // S-WM-31 (Task 3, item 4 do Escopo): quando o caller manda conversa_id (worker já fez o
+    // get-or-create atômico via upsert, Task 2), resolve por PK — evita re-derivar por
+    // lead_id+origem_id e cai fora de qualquer corrida. Fallback pro método antigo quando
+    // ausente (robustez pra qualquer caller futuro que não mande; hoje só existe 1 caller,
+    // worker/meta_adapter_inbound.py).
+    let { data: conversa } = conversa_id
+      ? await supabase.from("conversas").select("id, status, metadata").eq("id", conversa_id).single()
+      : await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
     if (!conversa) {
       const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: canal_origem || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata").single();
       conversa = data; conversaJustCreated = true; conversaGenuinamenteNova = true;
@@ -619,19 +852,56 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // (1ª mensagem ou dentro de aguardando_unidade) — sinaliza pro Passo 6 buscar RAG geral
     // (FAQ isolado) em vez de early-return com o menu.
     let perguntaGeralAtiva = false;
+    // Fix CRITICAL (S-WM-21, achado do @qa Quinn): `conversa.metadata` é a foto de ANTES desta
+    // requisição — nunca é atualizada em memória depois de um `.update()`. `.update({metadata:
+    // {...}})` no Supabase SUBSTITUI a coluna JSONB inteira (não faz merge no banco). Um turno
+    // pode gravar `metadata` mais de uma vez (seção 5b resolve/troca unidade E, no mesmo turno,
+    // o Passo 6 grava `menu_categoria_ativo`) — se o 2º write mesclar sobre a foto ANTIGA, ele
+    // apaga o que o 1º acabou de gravar. `metadataAtual` é o tracker único, em memória, do
+    // estado mais recente: TODO write de metadata neste turno tem que mesclar sobre ele (nunca
+    // sobre `conversa.metadata` direto) e atualizá-lo logo em seguida. Escopo no nível de
+    // `unidadeEfetiva` (fora do `if` abaixo) de propósito — o Passo 6 (fora deste `if`) também
+    // precisa ler/escrever o mesmo tracker.
+    let metadataAtual: Record<string, unknown> = conversa?.metadata || {};
 
     if (unidade_cuca === 'Geral') {
-      const metadata = conversa?.metadata || {};
-      const unidadeSalva = metadata.unidade_selecionada as string | undefined;
-      const aguardando = metadata.aguardando_unidade as boolean | undefined;
+      const unidadeSalva = metadataAtual.unidade_selecionada as string | undefined;
+      const aguardando = metadataAtual.aguardando_unidade as boolean | undefined;
 
       if (unidadeSalva) {
         const novaUnidade = detectarTrocaUnidade(textoFinal, unidadeSalva);
         if (novaUnidade) {
-          await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: novaUnidade, aguardando_unidade: false } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, unidade_selecionada: novaUnidade, aguardando_unidade: false };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           unidadeEfetiva = novaUnidade;
           trocouUnidade = true;
           console.log("[motor-agente v18] Troca de unidade: " + unidadeSalva + " -> " + novaUnidade);
+        } else if (pareceIntencaoTrocaUnidade(textoFinal)) {
+          // Item 4 (S-WM-21, VAL-06): detectarTrocaUnidade (match exato/typo) não achou nada,
+          // mas a mensagem sugere intenção de trocar ("unidade", "trocar", "mudar" etc.) — só
+          // AQUI vale a chamada semântica (avaliarSelecaoUnidade), pra não pagar uma chamada
+          // extra de LLM em toda mensagem de acompanhamento comum de uma conversa já em
+          // andamento (a maioria delas não menciona nada sobre trocar de unidade).
+          const avaliacaoTroca = await avaliarSelecaoUnidade(textoFinal, openaiKey);
+          if (avaliacaoTroca.unidade && avaliacaoTroca.unidade !== unidadeSalva) {
+            metadataAtual = { ...metadataAtual, unidade_selecionada: avaliacaoTroca.unidade, aguardando_unidade: false };
+            await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+            unidadeEfetiva = avaliacaoTroca.unidade;
+            trocouUnidade = true;
+            console.log("[motor-agente v18] Troca de unidade (semantica): " + unidadeSalva + " -> " + avaliacaoTroca.unidade);
+          } else if (avaliacaoTroca.mudou_de_assunto && !avaliacaoTroca.pergunta_geral && !avaliacaoTroca.quer_sair) {
+            // Ambiguidade real: o sinal semântico indica que o lead mudou de assunto (não é
+            // cortesia, nem pergunta geral, nem despedida) mas não deu pra identificar qual
+            // unidade — pergunta em vez de continuar respondendo pela unidade antiga em
+            // silêncio. Qualquer falha técnica da chamada (rate limit esgotado, JSON inválido,
+            // erro de rede) cai no fallback seguro (mudou_de_assunto=false) e NÃO entra aqui —
+            // mantém a unidade atual, mesmo comportamento de hoje pra erros transitórios.
+            const respostaAmbiguidade = "Só pra confirmar: você quer saber sobre outra unidade CUCA? Me diz qual! 😊\n\n" + MENU_UNIDADES;
+            await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaAmbiguidade);
+            return new Response(JSON.stringify({ success: true, resposta: respostaAmbiguidade, handover: false }), { headers: { "Content-Type": "application/json" } });
+          } else {
+            unidadeEfetiva = unidadeSalva;
+          }
         } else {
           unidadeEfetiva = unidadeSalva;
         }
@@ -646,7 +916,8 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         const decisao = decidirAguardandoUnidade(unidadeDetectadaDireta, avaliacaoSemantica);
 
         if (decisao.unidadeSelecionada) {
-          await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: decisao.unidadeSelecionada, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, unidade_selecionada: decisao.unidadeSelecionada, aguardando_unidade: decisao.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           unidadeEfetiva = decisao.unidadeSelecionada;
           // AUD-04: resolução inicial de unidade dentro de aguardando_unidade (por nome OU
           // dígito) conta como equivalente a trocouUnidade — sem isso, só quem escolhe por
@@ -655,15 +926,58 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
         } else if (decisao.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisao.resposta, historico);
-          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
+          // Ampliação de escopo (S-WM-31, autorizada por Junior na Task 3 — ver Dev Agent
+          // Record): quando este branch resolve SEM aguardar unidade (quer_sair ou cortesia
+          // pura, aguardandoUnidade=false aqui), marca conversa_engajada=true — sem isso, a
+          // PRÓXIMA mensagem cairia no branch de 1ª mensagem e sortearia uma SAUDACOES_ABERTURA
+          // nova (Causa raiz B reaparecendo neste caminho). Quando aguardandoUnidade=true
+          // (pedido_depende_unidade, mostra o menu), o próprio aguardando_unidade já evita cair
+          // no branch de 1ª mensagem de novo — não precisa da flag.
+          metadataAtual = {
+            ...metadataAtual,
+            aguardando_unidade: decisao.aguardandoUnidade,
+            ...(decisao.aguardandoUnidade ? {} : { conversa_engajada: true }),
+          };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           // VAL-12: pergunta_geral=true — nem unidade escolhida, nem resposta canned. Grava
           // aguardando_unidade=false e segue pro fluxo normal (Passo 6 responde de verdade).
-          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisao.aguardandoUnidade } }).eq('id', conversa.id);
+          // Ampliação (S-WM-31): também marca conversa_engajada=true, mesmo motivo do branch acima.
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisao.aguardandoUnidade, conversa_engajada: true };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           perguntaGeralAtiva = true;
           console.log("[motor-agente v18] Pergunta geral identificada (aguardando_unidade): segue pro RAG geral (FAQ isolado)");
+        }
+      } else if (metadataAtual.conversa_engajada === true) {
+        // S-WM-31 (item 6 do Escopo): 3º branch — conversa já engajada (passou por cortesia ou
+        // pergunta_geral antes), sem unidade_selecionada nem aguardando_unidade pendentes.
+        // Reavalia com a MESMA detecção usada nos outros branches, sem repetir saudação.
+        const unidadeDetectadaDiretaEngajada = detectarUnidadeDireta(textoFinal);
+        let avaliacaoSemanticaEngajada: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
+
+        if (!unidadeDetectadaDiretaEngajada) {
+          avaliacaoSemanticaEngajada = await avaliarSelecaoUnidade(textoFinal, openaiKey);
+        }
+
+        const decisaoEngajada = decidirConversaEngajada(unidadeDetectadaDiretaEngajada, avaliacaoSemanticaEngajada);
+
+        if (decisaoEngajada.unidadeSelecionada) {
+          metadataAtual = { ...metadataAtual, unidade_selecionada: decisaoEngajada.unidadeSelecionada, aguardando_unidade: false };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          unidadeEfetiva = decisaoEngajada.unidadeSelecionada;
+          trocouUnidade = true;
+          console.log("[motor-agente v18] Unidade salva (conversa engajada): " + unidadeEfetiva);
+        } else if (decisaoEngajada.resposta !== null) {
+          const respostaFinal = evitarRepeticaoLiteral(decisaoEngajada.resposta, historico);
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoEngajada.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
+          return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
+        } else {
+          perguntaGeralAtiva = true;
+          console.log("[motor-agente v18] Pergunta geral identificada (conversa engajada): segue pro RAG geral (FAQ isolado)");
         }
       } else {
         const unidadeDetectadaDireta1a = detectarUnidadeDireta(textoFinal);
@@ -677,18 +991,31 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         if (decisaoPrimeira.unidadeSelecionada) {
           // AUD-07: unidade já citada na própria 1ª mensagem — resolve direto e segue pro
           // fluxo normal (RAG/GPT) em vez de mandar o menu e forçar uma rodada extra.
-          await supabase.from('conversas').update({ metadata: { ...metadata, unidade_selecionada: decisaoPrimeira.unidadeSelecionada, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+          metadataAtual = { ...metadataAtual, unidade_selecionada: decisaoPrimeira.unidadeSelecionada, aguardando_unidade: decisaoPrimeira.aguardandoUnidade };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           unidadeEfetiva = decisaoPrimeira.unidadeSelecionada;
           trocouUnidade = true;
           console.log("[motor-agente v18] Unidade salva (1a mensagem): " + unidadeEfetiva);
         } else if (decisaoPrimeira.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoPrimeira.resposta, historico);
-          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+          // Item 6 (S-WM-31, Causa raiz B): cortesia pura (aguardandoUnidade=false aqui) marca
+          // conversa_engajada=true — sem isso, a PRÓXIMA mensagem cairia de novo neste mesmo
+          // branch de 1ª mensagem e sortearia outra SAUDACOES_ABERTURA. Quando aguardandoUnidade
+          // =true (pedido_depende_unidade, mostra o menu), o próprio aguardando_unidade já evita
+          // cair aqui de novo — não precisa da flag.
+          metadataAtual = {
+            ...metadataAtual,
+            aguardando_unidade: decisaoPrimeira.aguardandoUnidade,
+            ...(decisaoPrimeira.aguardandoUnidade ? {} : { conversa_engajada: true }),
+          };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           // VAL-12: pergunta_geral=true já na 1ª mensagem — segue pro fluxo normal (Passo 6).
-          await supabase.from('conversas').update({ metadata: { ...metadata, aguardando_unidade: decisaoPrimeira.aguardandoUnidade } }).eq('id', conversa.id);
+          // Item 6: também marca conversa_engajada=true, mesmo motivo do branch acima.
+          metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoPrimeira.aguardandoUnidade, conversa_engajada: true };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           perguntaGeralAtiva = true;
           console.log("[motor-agente v18] Pergunta geral identificada (1a mensagem): segue pro RAG geral (FAQ isolado)");
         }
@@ -700,10 +1027,18 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     const temUnidadeDefinida = unidadeEfetiva && unidadeEfetiva !== 'Geral';
     const isAgenteProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
     const ultimaMsgAgente = [...historico].reverse().find((m) => m.role === 'assistant');
-    // VAL-08: um dígito solto só conta como seleção de menu se a última mensagem do agente
-    // REALMENTE foi um menu numerado (MENU_UNIDADES ou categorias numeradas) — não qualquer
-    // pergunta que o GPT tenha improvisado em texto livre (ver ultimaMensagemEhMenuNumerado).
-    const isSelecaoMenu = ehSelecaoMenu(textoFinal) && (ultimaMsgAgente ? ultimaMensagemEhMenuNumerado(ultimaMsgAgente.content) : false);
+    // Item 3 (S-WM-21, cont. VAL-08): dígito solto só conta como seleção de menu de categorias
+    // se o ESTADO da conversa confirma que a resposta anterior do agente foi de fato um menu de
+    // categorias (metadata.menu_categoria_ativo, setado pelo próprio código mais abaixo neste
+    // mesmo Passo 6) — não o formato do texto (ultimaMensagemEhMenuNumerado, VAL-08 original),
+    // que o GPT pode improvisar (ex.: uma lista numerada respondendo a outra pergunta qualquer)
+    // sem o código ter convidado nenhuma seleção. MENU_UNIDADES nunca chega aqui: sempre causa
+    // early-return na seção 5b, antes deste Passo 6. Lê de `metadataAtual` (fix CRITICAL, não
+    // de `conversa.metadata` direto) — os writes da seção 5b nunca tocam `menu_categoria_ativo`,
+    // então o valor aqui continua sendo fielmente o do turno ANTERIOR, só que através do tracker
+    // que já reflete corretamente qualquer write que a seção 5b tenha feito neste turno.
+    const menuCategoriaAtivoAnterior = metadataAtual.menu_categoria_ativo === true;
+    const isSelecaoMenu = ehSelecaoMenu(textoFinal) && menuCategoriaAtivoAnterior;
 
     const precisaVisaoGeral = calcularPrecisaVisaoGeral({ conversaJustCreated: conversaGenuinamenteNova, trocouUnidade, isSelecaoMenu });
     // VAL-04: sem esta linha não dava para saber, pelo log, se a visão geral completa
@@ -711,6 +1046,20 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // busca vetorial de acompanhamento — confirmar isso exigia cruzar ausência de log com
     // query manual no banco (ver VAL-01/VAL-02 no relatório).
     console.log("[motor-agente v18] precisaVisaoGeral=" + precisaVisaoGeral + " (unidade=" + unidadeEfetiva + ", conversaGenuinamenteNova=" + conversaGenuinamenteNova + ", trocouUnidade=" + trocouUnidade + ", isSelecaoMenu=" + isSelecaoMenu + ")");
+
+    // Item 3 (S-WM-21): registra pro PRÓXIMO turno se ESTA resposta vai ser um menu de
+    // categorias (visão geral / área de programação) — só grava quando o valor muda, pra não
+    // gerar update desnecessário em toda mensagem de acompanhamento comum. Fix CRITICAL: mescla
+    // sobre `metadataAtual` (o tracker), nunca sobre `conversa.metadata` puro — senão este write
+    // apaga `unidade_selecionada`/`aguardando_unidade` que a seção 5b acabou de gravar no mesmo
+    // turno (achado do @qa Quinn, reproduzido: update apagava a unidade recém-escolhida).
+    if (isAgenteProgramacao) {
+      const menuCategoriaAtivoNovo = Boolean(temUnidadeDefinida) && precisaVisaoGeral;
+      if (menuCategoriaAtivoNovo !== menuCategoriaAtivoAnterior) {
+        metadataAtual = { ...metadataAtual, menu_categoria_ativo: menuCategoriaAtivoNovo };
+        await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+      }
+    }
 
     if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
       const conteudoPrograma = await carregarProgramacaoMensal(supabase, unidadeEfetiva);
@@ -764,6 +1113,13 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // (sempre geral), monthly_program é 5/5 SEMPRE atrelado a uma unidade — misturar tipos
       // aqui (como RAG_FONTES_POR_AGENTE faz) vazaria conteúdo de uma unidade aleatória (a mais
       // parecida por embedding) numa resposta que ainda não tem unidade definida.
+      // S-WM-32 (Escopo item 5): também carrega o resumo_rede ativo por inteiro (carregamento
+      // direto, nunca via buscar_chunks_similares — item 6 do Escopo, monthly_program/
+      // eventos_pontuais continuam exigindo unidade exata, sem exceção) — cobre pergunta de
+      // enumeração/agregação ("quais unidades têm X") que busca vetorial de FAQ isolado nunca
+      // respondia com dado real, mesmo unificando os 3 pontos de entrada de perguntaGeralAtiva
+      // (1ª mensagem, aguardando_unidade, conversa_engajada) sem precisar de 3ª classificação.
+      const resumoRede = await carregarResumoRede(supabase);
       const embedding = await gerarEmbedding(textoFinal, openaiKey);
       const { data: chunksFaq } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embedding.join(",") + "]",
@@ -771,11 +1127,15 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_unidade_cuca: null,
         p_limite: 5,
       });
+      console.log("[motor-agente v18] perguntaGeralAtiva: resumo_rede " + (resumoRede ? "carregado" : "ausente") + ", " + (chunksFaq?.length ?? 0) + " chunks FAQ");
+      const blocosRede: string[] = [];
+      if (resumoRede) blocosRede.push("--- RESUMO DA REDE (atividades por unidade) ---\n" + resumoRede);
       if (chunksFaq && chunksFaq.length > 0) {
-        contextRAG = "\n\n--- CONTEXTO ---\n" + chunksFaq.map((c: { conteudo: string; fonte_tipo?: string }) =>
+        blocosRede.push("--- CONTEXTO (FAQ) ---\n" + chunksFaq.map((c: { conteudo: string; fonte_tipo?: string }) =>
           c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-        ).join("\n");
+        ).join("\n"));
       }
+      if (blocosRede.length > 0) contextRAG = "\n\n" + blocosRede.join("\n\n");
     } else {
       const fontes = RAG_FONTES_POR_AGENTE[agente_tipo] || ["FAQ"];
       const embedding = await gerarEmbedding(textoFinal, openaiKey);
@@ -796,36 +1156,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     const agora = new Date();
     const DATA_ATUAL = "DATA E HORA ATUAL: " + agora.toLocaleDateString("pt-BR", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/Fortaleza" }) + ", " + agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Fortaleza" }) + " (Fortaleza/CE).";
 
-    // 8. Guardrail
-    const INSTRUCAO_SEGURANCA = [
-      "REGRAS OBRIGATORIAS (nao negocie estas regras):",
-      "",
-      "1. USE APENAS dados do bloco '--- PROGRAMACAO MENSAL ATUAL ---' ou '--- CONTEXTO ---'.",
-      "   NUNCA invente atividades, horarios, nomes de professores ou modalidades.",
-      "",
-      "2. Se a informacao nao estiver no contexto, diga com suas proprias palavras e no seu",
-      "   tom que nao encontrou essa informacao na programacao atual e sugira falar com a",
-      "   unidade. Nunca invente um dado que nao esteja no contexto.",
-      "",
-      "3. NUNCA peca desculpas por informacoes corretas. Se o usuario disser que uma",
-      "   informacao esta errada, verifique o contexto antes de concordar. Se o contexto",
-      "   confirma sua resposta anterior, mantenha-a com seguranca: diga 'Verificando",
-      "   minha base, [informacao do contexto]'.",
-      "",
-      "4. Use a DATA ATUAL para referencias temporais.",
-      "",
-      "5. NUNCA use [[HANDOVER]] quando o usuario mencionar o nome de uma unidade CUCA",
-      "   (Barra, Jangurussu, Mondubim, Pici, Jose Walter). Isso e sempre uma consulta",
-      "   de programacao, nunca um pedido de atendimento humano.",
-      "",
-      "6. FORMATO DE LISTAGEM — REGRA CRITICA:",
-      "   Quando apresentar TODAS as modalidades/cursos/atividades de uma area, liste",
-      "   APENAS o nome de cada item + dias da semana de forma compacta (ex: 'Natacao - Ter/Qui/Sex').",
-      "   NAO inclua horarios completos, professores ou vagas na listagem geral.",
-      "   Ao final, diga: 'Quer saber horarios e detalhes de alguma modalidade especifica?'",
-      "   So mostre horarios completos quando o usuario perguntar sobre uma modalidade especifica.",
-      "   ISSO GARANTE que TODAS as modalidades aparecem e nenhuma fica de fora.",
-    ].join("\n");
+    // 8. Guardrail (definido em nível de módulo — ver INSTRUCAO_SEGURANCA acima)
 
     // 9. Breadcrumb
     let CONTEXTO_DISPARO = "";
@@ -852,6 +1183,13 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // conversa retomada minutos depois. Outros agente_tipo (Sofia/Ouvidoria) continuam no
       // conversaJustCreated original, sem mudança — decisão sobre eles fica fora deste escopo.
       (isAgenteProgramacao ? conversaGenuinamenteNova : conversaJustCreated) ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : "",
+      // S-WM-32 (AC8, achado de Junior em teste ao vivo): pergunta de rede inteira sem unidade
+      // ja gerou alucinacao silenciosa antes desta story ("tem curso de natacao?" respondido com
+      // uma lista de modalidades sem fonte real verificavel) — vale tanto enquanto o
+      // resumo_rede ainda nao existe/nao foi gerado quanto depois, se o resumo_rede ativo nao
+      // cobrir a atividade perguntada. Reforco condicional (so quando perguntaGeralAtiva=true),
+      // nao generico em INSTRUCAO_SEGURANCA, pra nao confundir respostas de 1 unidade especifica.
+      perguntaGeralAtiva ? "INSTRUCAO CRITICA: esta pergunta e sobre a rede CUCA inteira, sem unidade especifica. Use APENAS o bloco '--- RESUMO DA REDE ---' (se presente acima) e o '--- CONTEXTO (FAQ) ---' pra responder sobre quais unidades oferecem o que. Se a atividade perguntada NAO aparecer em nenhum desses blocos, NUNCA componha ou invente uma lista de atividades/modalidades — diga com suas proprias palavras que voce nao tem a programacao consolidada da rede toda pra essa pergunta especifica, e sugira ajudar escolhendo uma unidade." : "",
     ].filter(Boolean).join("\n\n");
 
     // TOM-04: o worker já captura e grava lead.nome (push_name do WhatsApp), mas esse dado
@@ -902,12 +1240,23 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       else if (encerrado) resposta = "Tudo certo! Qualquer coisa, é só chamar novamente. 😊";
     }
 
-    // 12. Salvar
-    await salvarMensagemAgente(supabase, conversa.id, lead.id, resposta);
+    // 12. Item 2 (S-WM-22): divide em 2-3 partes se a resposta for longa/listável — SEMPRE
+    // depois das tags acima (handover/encerrar/encaminhar já resolvidas, AC5). `mensagens`
+    // tem sempre >=1 elemento; `resposta` continua igual ao texto único de sempre (join),
+    // pra nenhum consumidor que só lê `resposta` quebrar.
+    const mensagens = dividirRespostaEmPartes(resposta);
+    resposta = mensagens.join("\n\n");
+
+    // 13. Salvar — 1 linha por parte efetivamente gerada, preservando a ordem. Sem isso, o
+    // histórico lido no próximo turno (Passo 4, linha ~645) ficaria com 1 linha concatenada
+    // em vez de refletir exatamente o que foi (ou vai ser) enviado turno por turno.
+    for (const parte of mensagens) {
+      await salvarMensagemAgente(supabase, conversa.id, lead.id, parte);
+    }
     if (handover) await supabase.from("conversas").update({ status: "awaiting_human", updated_at: new Date().toISOString() }).eq("id", conversa.id);
     else if (encerrado) await supabase.from("conversas").update({ status: "encerrada", updated_at: new Date().toISOString() }).eq("id", conversa.id);
 
-    return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover, encerrado, resposta }), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover, encerrado, resposta, mensagens }), { headers: { "Content-Type": "application/json" } });
 
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);

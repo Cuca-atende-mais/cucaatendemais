@@ -264,9 +264,17 @@ async def _chamar_motor_agente(
     conversa_id: str,
     supabase,
     phone_number_id_origem: str = "",
-) -> str | None:
+) -> list[str] | None:
     """
-    Chama o motor-agente (Supabase Edge Function) e retorna o texto de resposta.
+    Chama o motor-agente (Supabase Edge Function) e retorna a resposta como uma lista de
+    1+ partes, já na ordem em que devem ser despachadas.
+
+    S-WM-22 (TOM-03b): o motor-agente pode dividir uma resposta longa/listável em 2-3 partes,
+    devolvidas no campo novo `mensagens` (lista) — campo aditivo, não substitui `resposta`
+    (string, mantida por compat). Lê `mensagens` primeiro; se ausente/vazio/mal formado (ex.:
+    early-returns do motor-agente que ainda só devolvem `resposta`, como o menu de unidades ou
+    a pergunta de ambiguidade), cai pra `[resposta]` — o dispatch trata os dois casos com o
+    MESMO caminho de código (lista de 1 elemento é indistinguível de "não dividiu").
 
     Atualiza conversas.status se handover ou encerrado (a motor-agente também
     faz isso internamente, mas o inbound atualiza o mesmo registro por origem_id).
@@ -290,6 +298,7 @@ async def _chamar_motor_agente(
         "canal_origem": contrato_v2["canal_origem"],
         "agente_tipo": contrato_v2["agente_tipo"],
         "unidade_cuca": contrato_v2.get("unidade_cuca"),
+        "conversa_id": conversa_id,
     }
 
     try:
@@ -351,7 +360,12 @@ async def _chamar_motor_agente(
         except Exception as exc:
             logger.warning("[meta-inbound] Erro ao setar encerrada: %s", exc)
 
-    return data.get("resposta") or None
+    mensagens = data.get("mensagens")
+    if isinstance(mensagens, list) and all(isinstance(m, str) and m for m in mensagens) and mensagens:
+        return mensagens
+
+    resposta = data.get("resposta")
+    return [resposta] if resposta else None
 
 
 async def _notificar_transbordo(
@@ -446,7 +460,7 @@ _DEBOUNCE_TASKS: dict[str, asyncio.Task] = {}
 def _debounce_segundos() -> float:
     """Lido a cada chamada (não cacheado em import) para permitir override em teste via
     monkeypatch de variável de ambiente sem precisar recarregar o módulo."""
-    return float(os.getenv("META_DEBOUNCE_SECONDS", "3"))
+    return float(os.getenv("META_DEBOUNCE_SECONDS", "10"))
 
 
 async def _dormir_debounce(segundos: float) -> None:
@@ -581,25 +595,28 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         return
 
     # ── DB B: recuperar ou criar Conversa por (lead_id, origem_id) ──────
+    # S-WM-31: upsert atômico via constraint UNIQUE(lead_id, origem_id) — elimina a corrida
+    # select-então-insert (dois webhooks quase simultâneos do mesmo lead podiam cada um "não
+    # achar" conversa existente e inserir a sua). "status" fica de fora do payload de propósito:
+    # tem default 'ativa' no banco (usado só na criação) e é gerenciado depois pelo motor-agente
+    # (encerrada/awaiting_human) — incluí-lo aqui sobrescreveria esse estado a cada mensagem.
     try:
-        conv_result = supabase.table("conversas").select("id, status").match(
-            {"lead_id": lead_id, "origem_id": phone_number_id}
-        ).execute()
-
-        if conv_result.data:
-            conversa_id: str = conv_result.data[0]["id"]
-            conversa_status = conv_result.data[0].get("status")
-            supabase.table("conversas").update({"updated_at": "now()"}).eq("id", conversa_id).execute()
-        else:
-            new_conv = supabase.table("conversas").insert({
+        supabase.table("conversas").upsert(
+            {
                 "lead_id":    lead_id,
                 "origem_id":  phone_number_id,
                 "canal_ativo": "meta",
-                "status":     "ativa",
                 "agente_tipo": agente_tipo,
-            }).execute()
-            conversa_id = new_conv.data[0]["id"]
-            conversa_status = "ativa"
+                "updated_at": "now()",
+            },
+            on_conflict="lead_id,origem_id",
+        ).execute()
+
+        conv_fresh = supabase.table("conversas").select("id, status").match(
+            {"lead_id": lead_id, "origem_id": phone_number_id}
+        ).execute()
+        conversa_id: str = conv_fresh.data[0]["id"]
+        conversa_status = conv_fresh.data[0].get("status")
     except Exception as exc:
         logger.error(f"[meta-inbound] Erro ao gerenciar Conversa: {exc}")
         return
@@ -716,9 +733,27 @@ async def _executar_dispatch(
             # ~20s no pior caso do retry de rate limit) — reduz a percepção de "bot travado".
             # Best-effort, não bloqueia o dispatch se falhar.
             await _meta_marcar_lida_e_digitando(phone_number_id, wamid, token)
-            resposta = await _chamar_motor_agente(contrato_v2, conversa_id, supabase, phone_number_id)
-            if resposta:
-                await _meta_enviar(phone_number_id, telefone, resposta, token)
+            partes = await _chamar_motor_agente(contrato_v2, conversa_id, supabase, phone_number_id)
+            if partes:
+                # S-WM-22 (TOM-03b): 1 ou mais partes, despachadas em sequência, na ordem. Falha
+                # parcial (comportamento definido e documentado na story, não implícito): aborta
+                # as partes restantes no 1º erro, SEM retry automático — _meta_enviar não tem
+                # garantia de idempotência do lado da API da Meta, reenviar sem saber se o
+                # request anterior só falhou na resposta (mas foi entregue) arriscaria duplicar
+                # a mensagem pro lead. Enviar as partes seguintes fora de ordem (ex.: pular a
+                # que falhou e mandar só o fechamento) deixaria uma resposta sem sentido — pior
+                # do que a conversa ficar incompleta.
+                for indice, parte in enumerate(partes):
+                    sucesso = await _meta_enviar(phone_number_id, telefone, parte, token)
+                    if not sucesso:
+                        logger.error(
+                            "[meta-inbound] Falha ao enviar parte %d/%d da resposta — abortando as partes "
+                            "restantes (sem retry, sem duplicar). %d parte(s) enviada(s) com sucesso antes da falha.",
+                            indice + 1,
+                            len(partes),
+                            indice,
+                        )
+                        break
             else:
                 # TOM-01: tom neutro-amigável único pros 4 agente_tipo que passam por aqui
                 # (Institucional, maria, sofia, ana — não "julia", que despacha por
