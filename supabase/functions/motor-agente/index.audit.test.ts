@@ -1069,3 +1069,118 @@ Deno.test("backlog 4a (handler): canal inválido/alucinado pelo GPT não gera en
   const body = await resp.json();
   assertEquals(body.resposta, "Resposta normal do GPT.", "canal fora da lista fechada não pode gerar mensagem de encaminhamento — só remove a tag mal-formada e mantém o texto do GPT");
 });
+
+// ── S-WM-32: consumo do resumo_rede nos 3 pontos de perguntaGeralAtiva=true ─────────────────
+// Helper de fetch que, além de responder chat/completions, GRAVA o body de cada requisição —
+// necessário pra inspecionar o prompt final (AC8: instrução de honestidade) e não só a
+// resposta, diferente de comFetchMockado (que só intercepta/responde, não registra o pedido).
+function comFetchMockadoCapturandoBody(
+  fn: () => Promise<Response>,
+  respostaChatCompletions = "Resposta de teste",
+): Promise<{ resp: Response; bodiesEnviados: string[] }> {
+  const fetchOriginal = globalThis.fetch;
+  const bodiesEnviados: string[] = [];
+  globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+    const urlStr = String(url instanceof Request ? url.url : url);
+    if (urlStr.includes("api.openai.com/v1/embeddings")) {
+      return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [0, 0, 0] }] }), { status: 200 }));
+    }
+    if (urlStr.includes("api.openai.com/v1/chat/completions")) {
+      if (init?.body) bodiesEnviados.push(String(init.body));
+      return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: respostaChatCompletions } }] }), { status: 200 }));
+    }
+    throw new Error("fetch não-mockado nesse teste: " + urlStr);
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+  return fn().then((resp) => ({ resp, bodiesEnviados })).finally(() => { globalThis.fetch = fetchOriginal; });
+}
+
+Deno.test("S-WM-32 AC2/AC3: pergunta de rede na 1ª mensagem carrega resumo_rede + FAQ, nunca monthly_program/eventos_pontuais sem unidade", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({});
+  respostas["documentos_rag"] = { data: { id: "doc-resumo-rede", conteudo: "Natação: Cuca Barra, Cuca Mondubim" } };
+  // FAQ precisa vir com conteúdo real no mock — senão a asserção de "FAQ combinado" passaria
+  // por acidente batendo só no texto da instrução de honestidade (que também cita o nome do
+  // bloco "CONTEXTO (FAQ)"), não no bloco de fato. Achado durante mutation testing desta Task.
+  respostas["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "O CUCA funciona de seg a sáb.", fonte_tipo: "FAQ" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("quais unidades têm natação?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("RESUMO DA REDE"));
+  assertStringIncludes(promptFinal ?? "", "Natação: Cuca Barra, Cuca Mondubim", "AC2: o resumo_rede ativo deveria ser carregado por inteiro e ir pro prompt final");
+  assertStringIncludes(promptFinal ?? "", "O CUCA funciona de seg a sáb.", "AC2: FAQ isolado deveria continuar sendo combinado junto com o resumo_rede (conteúdo real do chunk, não só o nome do bloco), sem 3ª classificação");
+
+  const chamouBuscaVetorialSemUnidadeParaProgramacao = chamadas.some((c) =>
+    c.tabela === "rpc:buscar_chunks_similares" &&
+    (c.args?.[1] as { p_unidade_cuca?: unknown; p_tipos?: string[] })?.p_unidade_cuca === null &&
+    ((c.args?.[1] as { p_tipos?: string[] })?.p_tipos ?? []).some((t) => t === "monthly_program" || t === "eventos_pontuais")
+  );
+  assertEquals(chamouBuscaVetorialSemUnidadeParaProgramacao, false, "AC3: buscar_chunks_similares NUNCA pode ser chamado com p_unidade_cuca:null para monthly_program/eventos_pontuais — só resumo_rede (carregamento direto) cobre pergunta de rede");
+});
+
+Deno.test("S-WM-32 AC2: pergunta de rede dentro de aguardando_unidade também carrega resumo_rede + FAQ", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ aguardando_unidade: true });
+  respostas["documentos_rag"] = { data: { id: "doc-resumo-rede", conteudo: "Judô: Cuca Pici, Cuca José Walter" } };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("onde tem judô?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const promptFinal = bodiesEnviados.find((b) => b.includes("RESUMO DA REDE"));
+  assertStringIncludes(promptFinal ?? "", "Judô: Cuca Pici, Cuca José Walter", "resumo_rede deveria ser carregado também quando perguntaGeralAtiva vem do branch aguardando_unidade");
+});
+
+Deno.test("S-WM-32 AC2: pergunta de rede dentro de conversa_engajada (3º branch) também carrega resumo_rede + FAQ", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ conversa_engajada: true });
+  respostas["documentos_rag"] = { data: { id: "doc-resumo-rede", conteudo: "Karatê: Cuca Barra, Cuca Jangurussu" } };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("quais unidades ensinam karatê?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const promptFinal = bodiesEnviados.find((b) => b.includes("RESUMO DA REDE"));
+  assertStringIncludes(promptFinal ?? "", "Karatê: Cuca Barra, Cuca Jangurussu", "resumo_rede deveria ser carregado também quando perguntaGeralAtiva vem do 3º branch conversa_engajada (S-WM-31)");
+});
+
+Deno.test("S-WM-32 AC8: sem resumo_rede disponível, o prompt reforça honestidade sobre a limitação (não compor lista sem fonte)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({});
+  respostas["documentos_rag"] = { data: { id: "doc-1" } }; // sem campo `conteudo` — resumo_rede ainda não existe/não foi gerado
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem curso de natação?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const promptFinal = bodiesEnviados.find((b) => b.includes("INSTRUCAO CRITICA"));
+  assertStringIncludes(
+    promptFinal ?? "",
+    "nao tem a programacao consolidada da rede toda",
+    "AC8: sem resumo_rede (ou sem cobertura da atividade perguntada), o prompt precisa instruir o GPT a admitir a limitação honestamente, em vez de compor uma lista de atividades sem fonte real — achado de Junior em teste ao vivo (alucinação silenciosa)",
+  );
+});
+
+Deno.test("S-WM-32: pergunta de UNIDADE ESPECÍFICA (não perguntaGeralAtiva) não recebe a instrução de honestidade de rede nem tenta carregar resumo_rede", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação essa semana?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const contemInstrucaoDeRede = bodiesEnviados.some((b) => b.includes("INSTRUCAO CRITICA"));
+  assertEquals(contemInstrucaoDeRede, false, "pergunta de acompanhamento com unidade já escolhida não é perguntaGeralAtiva — não deveria receber a instrução de honestidade de rede (só relevante pra pergunta de rede inteira)");
+});
