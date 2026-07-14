@@ -240,11 +240,17 @@ Deno.test("AUD-04 (guarda-costas): pergunta de acompanhamento com unidade já sa
     const resp = await handler(requestFake("Tem natação essa semana?"), supabaseMock);
     assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   });
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  // S-WM-34 (VAL-09): a partir desta story, o branch de acompanhamento também consulta
+  // documentos_rag/chunks_documentos — busca determinística por atividade, ANTES da busca
+  // vetorial (index.ts:1092+). O proxy antigo (qualquer chamada a documentos_rag) não distingue
+  // mais isso de carregarProgramacaoMensal (a real fonte de RAG token bloat que este guard
+  // protege) — a fingerprint precisa é o `.limit(40)` em chunks_documentos, exclusivo de
+  // carregarProgramacaoMensal (buscarAtividadeEspecifica nunca chama .limit() nessa tabela).
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
   assertEquals(
     carregouProgramacaoCompleta,
     false,
-    "uma pergunta de acompanhamento (unidade já salva, sem seleção nova) não pode recarregar os ~40 chunks da programação completa — isso reintroduziria o RAG token bloat que o commit 168e8d2 corrigiu; deveria usar busca vetorial de poucos chunks",
+    "uma pergunta de acompanhamento (unidade já salva, sem seleção nova) não pode recarregar os ~40 chunks da programação completa — isso reintroduziria o RAG token bloat que o commit 168e8d2 corrigiu; deveria usar busca determinística por atividade ou busca vetorial de poucos chunks",
   );
 });
 
@@ -690,7 +696,8 @@ Deno.test("VAL-07: reabrir conversa encerrada com unidade já selecionada NÃO d
     const resp = await handler(requestFake("posso escolher outra unidade?"), supabaseMock);
     assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   });
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  // S-WM-34 (VAL-09): fingerprint precisa, ver comentário equivalente no guard AUD-04 acima.
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
   assertEquals(
     carregouProgramacaoCompleta,
     false,
@@ -734,7 +741,8 @@ Deno.test("VAL-08: dígito respondendo pergunta improvisada do GPT (sem menu num
     const resp = await handler(requestFake("2"), supabaseMock);
     assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   });
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  // S-WM-34 (VAL-09): fingerprint precisa, ver comentário equivalente no guard AUD-04 acima.
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
   assertEquals(
     carregouProgramacaoCompleta,
     false,
@@ -757,7 +765,8 @@ Deno.test("Item 3 / AC5: dígito respondendo uma lista IMPROVISADA pelo GPT (sem
     const resp = await handler(requestFake("2"), supabaseMock);
     assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   });
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
+  // S-WM-34 (VAL-09): fingerprint precisa, ver comentário equivalente no guard AUD-04 acima.
+  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
   assertEquals(
     carregouProgramacaoCompleta,
     false,
@@ -1183,4 +1192,100 @@ Deno.test("S-WM-32: pergunta de UNIDADE ESPECÍFICA (não perguntaGeralAtiva) n�
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   const contemInstrucaoDeRede = bodiesEnviados.some((b) => b.includes("INSTRUCAO CRITICA"));
   assertEquals(contemInstrucaoDeRede, false, "pergunta de acompanhamento com unidade já escolhida não é perguntaGeralAtiva — não deveria receber a instrução de honestidade de rede (só relevante pra pergunta de rede inteira)");
+});
+
+// ── S-WM-34 (VAL-23): troca de unidade com pedido específico embutido não pode suprimir o dado ──
+// Cenário reproduzido ao vivo: unidade A já selecionada (turno anterior), mensagem cita a
+// unidade B E já traz um pedido específico junto — cai no branch detectarTrocaUnidade
+// (unidadeSalva, index.ts:1002+), o caminho sem avaliação semântica que o teste ao vivo
+// reproduziu. AC3 (caso reproduzido) e AC4 (caso são, não pode regredir) são testados
+// isoladamente — dono único de cada um, sem duplicar entre si (ajuste do @po na validação).
+Deno.test("S-WM-34 AC3: troca de unidade citada dentro de um pedido específico NÃO dispara a instrução de resumo geral (caso reproduzido ao vivo)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("e no Mondubim, tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertStringIncludes(
+    promptFinal,
+    "responda DIRETAMENTE ao pedido especifico",
+    "AC3: mensagem com pedido específico embutido na troca de unidade deveria receber a instrução de resposta direta, não a de resumo geral",
+  );
+  assertEquals(
+    promptFinal.includes("Apresente um resumo geral"),
+    false,
+    "AC3: NÃO pode disparar a instrução de resumo geral quando a mensagem já tem um pedido específico embutido — essa é a causa raiz do VAL-23 (dado certo carregado, resposta suprimida pela instrução genérica)",
+  );
+});
+
+Deno.test("S-WM-34 AC4 (caso são, não pode regredir): troca de unidade SEM pedido específico continua disparando o resumo geral", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("Mondubim"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertStringIncludes(
+    promptFinal,
+    "Apresente um resumo geral",
+    "AC4: troca de unidade sem pedido específico (só o nome, sem '?' nem conteúdo extra) deveria continuar recebendo o resumo geral — comportamento atual preservado, sem regressão do fix de VAL-23",
+  );
+});
+
+// ── S-WM-34 (VAL-23): as 3 rotas que já chamam avaliarSelecaoUnidade também reaproveitam
+// pedido_depende_unidade (Task 2) — testado direto nas funções puras, sem precisar do handler.
+Deno.test("S-WM-34 Task 2: decidirAguardandoUnidade propaga pedidoEspecifico=true quando pedido_depende_unidade=true (resolução via avaliarSelecaoUnidade)", () => {
+  const decisao = decidirAguardandoUnidade(undefined, {
+    unidade: "Cuca Mondubim",
+    quer_sair: false,
+    mudou_de_assunto: false,
+    pergunta_geral: false,
+    pedido_depende_unidade: true,
+  });
+  assertEquals(decisao.unidadeSelecionada, "Cuca Mondubim");
+  assertEquals(decisao.pedidoEspecifico, true);
+});
+
+Deno.test("S-WM-34 Task 2: decidirAguardandoUnidade propaga pedidoEspecifico=false quando pedido_depende_unidade=false", () => {
+  const decisao = decidirAguardandoUnidade(undefined, {
+    unidade: "Cuca Mondubim",
+    quer_sair: false,
+    mudou_de_assunto: false,
+    pergunta_geral: false,
+    pedido_depende_unidade: false,
+  });
+  assertEquals(decisao.pedidoEspecifico, false);
+});
+
+Deno.test("S-WM-34 Task 2: decidirAguardandoUnidade usa mensagemTemPedidoEspecifico (heurística) quando a unidade resolve por match DIRETO, não por avaliarSelecaoUnidade", () => {
+  const decisaoComPergunta = decidirAguardandoUnidade("Cuca Mondubim", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }, "Mondubim, tem natação de noite?");
+  assertEquals(decisaoComPergunta.pedidoEspecifico, true, "match direto + '?' na mensagem deveria contar como pedido específico, mesmo sem avaliarSelecaoUnidade ter rodado");
+
+  const decisaoSemPergunta = decidirAguardandoUnidade("Cuca Mondubim", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }, "Mondubim");
+  assertEquals(decisaoSemPergunta.pedidoEspecifico, false, "match direto sem conteúdo extra não deveria contar como pedido específico");
+});
+
+Deno.test("S-WM-34 Task 2: decidirConversaEngajada propaga pedidoEspecifico nos dois caminhos (semântico e direto)", () => {
+  const viaSemantica = decidirConversaEngajada(undefined, { unidade: "Cuca Pici", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: true });
+  assertEquals(viaSemantica.pedidoEspecifico, true);
+
+  const viaDireta = decidirConversaEngajada("Cuca Pici", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }, "tem judô no Pici?");
+  assertEquals(viaDireta.pedidoEspecifico, true);
+});
+
+Deno.test("S-WM-34 Task 2: decidirPrimeiraMensagem usa mensagemTemPedidoEspecifico (único caminho — nunca resolve via avaliarSelecaoUnidade.unidade)", () => {
+  const comPedido = decidirPrimeiraMensagem("Cuca Barra", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }, "quero saber da Barra, tem natação de manhã?");
+  assertEquals(comPedido.pedidoEspecifico, true);
+
+  const semPedido = decidirPrimeiraMensagem("Cuca Barra", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }, "quero saber da Barra");
+  assertEquals(semPedido.pedidoEspecifico, false);
 });

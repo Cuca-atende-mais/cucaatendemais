@@ -270,6 +270,74 @@ export function detectarTrocaUnidade(texto: string, unidadeAtual: string): strin
 }
 
 /**
+ * S-WM-34 (VAL-09): normaliza acento e caixa pra compara\u00e7\u00e3o determin\u00edstica de texto \u2014 Postgres
+ * n\u00e3o tem a extens\u00e3o `unaccent` instalada neste banco (confirmado via `pg_extension` antes desta
+ * story) e `ilike` n\u00e3o trata acento sozinho, ent\u00e3o "natacao" (sem cedilha) n\u00e3o bateria com
+ * "Nata\u00e7\u00e3o" sem essa normaliza\u00e7\u00e3o acontecer aqui, em TS.
+ */
+export function normalizarTexto(texto: string): string {
+  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/**
+ * S-WM-34 (VAL-09): extrai os nomes de modalidade j\u00e1 presentes no texto indexado do
+ * `monthly_program` \u2014 padr\u00e3o "Modalidade: X - Turma", confirmado em produ\u00e7\u00e3o como o formato
+ * usado em toda a se\u00e7\u00e3o "== ESPORTES ==" (ex.: "Esporte Modalidade: Nata\u00e7\u00e3o - Turma Turma 11").
+ * N\u00e3o inventa nem hardcoda nomes de atividade \u2014 o vocabul\u00e1rio vem inteiramente do texto real j\u00e1
+ * indexado pra aquela unidade (Constitution Art. IV, No Invention).
+ */
+export function extrairModalidades(chunks: string[]): string[] {
+  const nomes = new Set<string>();
+  const regex = /Modalidade:\s*([^-]+?)\s*-\s*Turma/g;
+  for (const conteudo of chunks) {
+    for (const match of conteudo.matchAll(regex)) {
+      const nome = match[1].trim();
+      if (nome) nomes.add(nome);
+    }
+  }
+  return [...nomes];
+}
+
+/**
+ * S-WM-34 (VAL-09): detecta se a mensagem do lead cita alguma modalidade conhecida do
+ * `monthly_program` ativo da unidade. Ordena por tamanho decrescente antes de comparar pra
+ * nomes mais espec\u00edficos ("Futsal Sesc") n\u00e3o perderem pra um prefixo mais gen\u00e9rico que tamb\u00e9m
+ * seja um nome v\u00e1lido ("Futsal") quando ambos aparecem na lista de modalidades.
+ */
+export function detectarAtividadeMencionada(mensagem: string, modalidades: string[]): string | null {
+  const msgNorm = normalizarTexto(mensagem);
+  const ordenadas = [...modalidades].sort((a, b) => b.length - a.length);
+  for (const modalidade of ordenadas) {
+    if (msgNorm.includes(normalizarTexto(modalidade))) return modalidade;
+  }
+  return null;
+}
+
+/**
+ * S-WM-34 (VAL-23): sinal barato (sem chamada de LLM) de que a mensagem que citou o nome de uma
+ * unidade CUCA tambem carrega um pedido especifico junto - nao e so o nome da unidade sozinho
+ * nem uma frase vaga tipo "quero saber do Mondubim agora". Usado no caminho detectarTrocaUnidade
+ * (branch unidadeSalva, sem avaliacao semantica por design/custo, mesmo espirito de
+ * pareceIntencaoTrocaUnidade) e em qualquer resolucao de unidade por match DIRETO (nome/digito)
+ * nas outras 3 rotas de decisao - nesses casos avaliarSelecaoUnidade nunca roda, entao
+ * pedido_depende_unidade nunca e calculado de verdade, e este e o "sinal equivalente" que
+ * substitui ele.
+ * Decisao registrada no Dev Agent Record da S-WM-34 (Task 3): heuristica deliberadamente
+ * conservadora - so a presenca de "?" conta como pedido especifico. Um limiar por tamanho de
+ * texto sobrando (depois de remover o nome da unidade) foi tentado durante a implementacao e
+ * descartado: classificava incorretamente frases vagas e longas ("quero saber do Mondubim
+ * agora") como pedido especifico - falso positivo, o pior tipo de erro aqui, porque troca o
+ * comportamento so (resumo geral) por um pior (resumo suprimido sem pedido real pra responder).
+ * "?" sozinho cobre o cenario reproduzido ao vivo sem esse risco. Mensagens sem "?" mas com
+ * pedido especifico de verdade (ex.: "manda os horarios de natacao no Mondubim") continuam
+ * recebendo o resumo geral atual - sem regressao em relacao a hoje, so ainda sem a melhoria
+ * (limitacao conhecida, registrada, nao um bug desta story).
+ */
+export function mensagemTemPedidoEspecifico(texto: string): boolean {
+  return /\?/.test(texto);
+}
+
+/**
  * VAL-02 (docs/migracao-meta/VALIDACAO-producao-institucional.md): guardrail anti-alucinação
  * do código. Extraído para módulo (era inline em `handler`) para permitir teste automatizado
  * do texto exato — sem isso, uma regressão na regra 1 (ex.: perder o exemplo negativo abaixo)
@@ -416,6 +484,13 @@ export type DecisaoAguardandoUnidade = {
   unidadeSelecionada: string | null;
   aguardandoUnidade: boolean;
   resposta: string | null;
+  /** S-WM-34 (VAL-23): true quando a mensagem que resolveu a unidade já trazia um pedido
+   * específico junto (ex.: "e no Mondubim, tem natação de noite?") — o caller usa isso pra NÃO
+   * disparar a instrução de "resumo geral" quando trocouUnidade=true, que hoje suprime o dado
+   * específico mesmo com o contexto certo carregado. Ver mensagemTemPedidoEspecifico. Opcional
+   * (default implícito false no caller) — só é setado nos branches que resolvem unidadeSelecionada;
+   * irrelevante nos demais (nenhuma troca de unidade acontece, nada pra suprimir). */
+  pedidoEspecifico?: boolean;
 };
 
 /**
@@ -426,15 +501,26 @@ export type DecisaoAguardandoUnidade = {
  * Extraído do handler só para permitir teste automatizado (auditoria AUD-01 em
  * docs/qa/AUDITORIA-motor-agente-institucional-2026-07-07.md) — comportamento idêntico ao
  * inline anterior, nenhuma correção aplicada nesta extração.
+ * `textoOriginal` (S-WM-34, VAL-23, opcional/default "" pra não quebrar chamadas de teste
+ * existentes que não exercitam pedidoEspecifico): necessário porque quando a unidade resolve via
+ * `unidadeDetectadaDireta` (match direto de nome/dígito), `avaliacaoSemantica` nunca foi
+ * calculada de verdade pelo caller (avaliarSelecaoUnidade só roda quando não há match direto) —
+ * `pedido_depende_unidade` não é um sinal confiável nesse caso, por isso cai pro sinal
+ * equivalente (mensagemTemPedidoEspecifico) em vez de reaproveitar um campo que nunca foi
+ * avaliado de verdade.
  */
 export function decidirAguardandoUnidade(
   unidadeDetectadaDireta: string | undefined,
   avaliacaoSemantica: AvaliacaoSelecaoUnidade,
+  textoOriginal = "",
 ): DecisaoAguardandoUnidade {
   const unidadeDetectada = unidadeDetectadaDireta ?? avaliacaoSemantica.unidade ?? undefined;
 
   if (unidadeDetectada) {
-    return { unidadeSelecionada: unidadeDetectada, aguardandoUnidade: false, resposta: null };
+    const pedidoEspecifico = unidadeDetectadaDireta
+      ? mensagemTemPedidoEspecifico(textoOriginal)
+      : avaliacaoSemantica.pedido_depende_unidade === true;
+    return { unidadeSelecionada: unidadeDetectada, aguardandoUnidade: false, resposta: null, pedidoEspecifico };
   }
   if (avaliacaoSemantica.quer_sair) {
     return {
@@ -472,6 +558,8 @@ export type DecisaoConversaEngajada = {
   aguardandoUnidade: boolean;
   perguntaGeralAtiva: boolean;
   resposta: string | null;
+  /** S-WM-34 (VAL-23): ver DecisaoAguardandoUnidade.pedidoEspecifico — mesmo contrato. */
+  pedidoEspecifico?: boolean;
 };
 
 /**
@@ -488,11 +576,15 @@ export type DecisaoConversaEngajada = {
 export function decidirConversaEngajada(
   unidadeDetectadaDireta: string | undefined,
   avaliacaoSemantica: AvaliacaoSelecaoUnidade,
+  textoOriginal = "",
 ): DecisaoConversaEngajada {
   const unidadeDetectada = unidadeDetectadaDireta ?? avaliacaoSemantica.unidade ?? undefined;
 
   if (unidadeDetectada) {
-    return { unidadeSelecionada: unidadeDetectada, aguardandoUnidade: false, perguntaGeralAtiva: false, resposta: null };
+    const pedidoEspecifico = unidadeDetectadaDireta
+      ? mensagemTemPedidoEspecifico(textoOriginal)
+      : avaliacaoSemantica.pedido_depende_unidade === true;
+    return { unidadeSelecionada: unidadeDetectada, aguardandoUnidade: false, perguntaGeralAtiva: false, resposta: null, pedidoEspecifico };
   }
   if (avaliacaoSemantica.pedido_depende_unidade) {
     return {
@@ -529,6 +621,8 @@ export type DecisaoPrimeiraMensagem = {
   /** null significa "unidade resolvida, siga o fluxo normal" — mesma convenção de
    * DecisaoAguardandoUnidade.resposta. */
   resposta: string | null;
+  /** S-WM-34 (VAL-23): ver DecisaoAguardandoUnidade.pedidoEspecifico — mesmo contrato. */
+  pedidoEspecifico?: boolean;
 };
 
 /**
@@ -562,9 +656,10 @@ export const SAUDACOES_ABERTURA: string[] = [
 export function decidirPrimeiraMensagem(
   unidadeDetectadaDireta: string | undefined,
   avaliacaoSemantica: AvaliacaoSelecaoUnidade,
+  textoOriginal = "",
 ): DecisaoPrimeiraMensagem {
   if (unidadeDetectadaDireta) {
-    return { unidadeSelecionada: unidadeDetectadaDireta, aguardandoUnidade: false, resposta: null };
+    return { unidadeSelecionada: unidadeDetectadaDireta, aguardandoUnidade: false, resposta: null, pedidoEspecifico: mensagemTemPedidoEspecifico(textoOriginal) };
   }
   if (avaliacaoSemantica.pergunta_geral) {
     // VAL-12: pergunta institucional real já na 1ª mensagem — não força o menu, segue pro
@@ -730,6 +825,41 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
 }
 
 /**
+ * S-WM-34 (VAL-09): busca determinística por nome de atividade no `monthly_program` ativo da
+ * unidade — evita o limite de `p_limite: 5` chunks da busca vetorial (`buscar_chunks_similares`)
+ * no branch de acompanhamento, quando uma atividade está dispersa em muitos chunks
+ * não-contíguos (confirmado em produção: natação no Jangurussu aparece em 14 chunks
+ * não-contíguos, intercalados com outras modalidades, porque a seção "== ESPORTES ==" é
+ * indexada por horário do dia, não por modalidade — busca por similaridade nunca teria como
+ * trazer as 14 de uma vez).
+ * Busca todos os chunks do documento (não usa `.limit(40)` de `carregarProgramacaoMensal` —
+ * aqui o filtro relevante já reduz o volume antes de compor o contexto, então não há o mesmo
+ * risco de truncar a lista final).
+ * Retorna `null` quando a mensagem não cita nenhuma modalidade conhecida do `monthly_program`
+ * ativo — o caller cai de volta pra busca vetorial (rede de segurança, comportamento hoje
+ * existente preservado).
+ */
+async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string): Promise<string | null> {
+  const { data } = await supabase.from("documentos_rag").select("id").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
+  const doc = data as { id: string } | null;
+  if (!doc) return null;
+  const { data: chunks } = await supabase.from("chunks_documentos").select("conteudo").eq("documento_id", doc.id).order("chunk_index", { ascending: true });
+  if (!chunks || chunks.length === 0) return null;
+
+  const conteudos = chunks.map((c: { conteudo: string }) => c.conteudo);
+  const modalidades = extrairModalidades(conteudos);
+  const atividade = detectarAtividadeMencionada(mensagem, modalidades);
+  if (!atividade) return null;
+
+  const atividadeNorm = normalizarTexto(atividade);
+  const relevantes = conteudos.filter((c) => normalizarTexto(c).includes(atividadeNorm));
+  if (relevantes.length === 0) return null;
+
+  console.log("[motor-agente v18] Busca deterministica de atividade: \"" + atividade + "\" (" + relevantes.length + " chunks, unidade=" + unidade + ")");
+  return relevantes.join("\n");
+}
+
+/**
  * S-WM-32 (Escopo item 2/5): carrega o `resumo_rede` ativo por INTEIRO, direto de
  * `documentos_rag.conteudo` — nunca via `chunks_documentos`/`buscar_chunks_similares`
  * (`resumo_rede` nunca é chunkeado nem embeddado, ver migration
@@ -848,6 +978,12 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // 5b. Seleção / troca de unidade (instância Geral)
     let unidadeEfetiva = unidade_cuca;
     let trocouUnidade = false;
+    // S-WM-34 (VAL-23): true quando a mensagem que causou trocouUnidade=true JÁ trazia um pedido
+    // específico junto (ex.: "e no Mondubim, tem natação de noite?") — usado no Passo 6 pra NÃO
+    // disparar a instrução de "resumo geral", que hoje suprime esse dado específico mesmo com o
+    // contexto certo carregado (achado ao vivo, causa raiz confirmada em código). Setado em cada
+    // um dos 4 pontos que podem levar trocouUnidade a true, logo abaixo.
+    let trocaComPedidoEspecifico = false;
     // VAL-12: true quando o lead fez uma pergunta institucional real sem unidade escolhida
     // (1ª mensagem ou dentro de aguardando_unidade) — sinaliza pro Passo 6 buscar RAG geral
     // (FAQ isolado) em vez de early-return com o menu.
@@ -875,6 +1011,10 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           unidadeEfetiva = novaUnidade;
           trocouUnidade = true;
+          // S-WM-34 (VAL-23, Task 3): este é o caminho reproduzido ao vivo — detectarTrocaUnidade
+          // é match direto de nome, sem avaliação semântica (nunca chama avaliarSelecaoUnidade),
+          // por isso usa o sinal equivalente (heurística "?", ver mensagemTemPedidoEspecifico).
+          trocaComPedidoEspecifico = mensagemTemPedidoEspecifico(textoFinal);
           console.log("[motor-agente v18] Troca de unidade: " + unidadeSalva + " -> " + novaUnidade);
         } else if (pareceIntencaoTrocaUnidade(textoFinal)) {
           // Item 4 (S-WM-21, VAL-06): detectarTrocaUnidade (match exato/typo) não achou nada,
@@ -888,6 +1028,11 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
             await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
             unidadeEfetiva = avaliacaoTroca.unidade;
             trocouUnidade = true;
+            // S-WM-34 (VAL-23): este caminho JÁ chama avaliarSelecaoUnidade — reaproveita
+            // pedido_depende_unidade direto, mesmo achado/mesma correção dos outros 3 pontos de
+            // entrada que usam essa função (não estava no escopo original da story, mas é a
+            // mesma classe de bug: trocouUnidade=true aqui também dispara "resumo geral" hoje).
+            trocaComPedidoEspecifico = avaliacaoTroca.pedido_depende_unidade === true;
             console.log("[motor-agente v18] Troca de unidade (semantica): " + unidadeSalva + " -> " + avaliacaoTroca.unidade);
           } else if (avaliacaoTroca.mudou_de_assunto && !avaliacaoTroca.pergunta_geral && !avaliacaoTroca.quer_sair) {
             // Ambiguidade real: o sinal semântico indica que o lead mudou de assunto (não é
@@ -913,7 +1058,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           avaliacaoSemantica = await avaliarSelecaoUnidade(textoFinal, openaiKey);
         }
 
-        const decisao = decidirAguardandoUnidade(unidadeDetectadaDireta, avaliacaoSemantica);
+        const decisao = decidirAguardandoUnidade(unidadeDetectadaDireta, avaliacaoSemantica, textoFinal);
 
         if (decisao.unidadeSelecionada) {
           metadataAtual = { ...metadataAtual, unidade_selecionada: decisao.unidadeSelecionada, aguardando_unidade: decisao.aguardandoUnidade };
@@ -923,6 +1068,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // dígito) conta como equivalente a trocouUnidade — sem isso, só quem escolhe por
           // dígito (isSelecaoMenu) recebia a visão geral completa da programação.
           trocouUnidade = true;
+          trocaComPedidoEspecifico = decisao.pedidoEspecifico === true; // S-WM-34 (VAL-23)
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
         } else if (decisao.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisao.resposta, historico);
@@ -961,13 +1107,14 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           avaliacaoSemanticaEngajada = await avaliarSelecaoUnidade(textoFinal, openaiKey);
         }
 
-        const decisaoEngajada = decidirConversaEngajada(unidadeDetectadaDiretaEngajada, avaliacaoSemanticaEngajada);
+        const decisaoEngajada = decidirConversaEngajada(unidadeDetectadaDiretaEngajada, avaliacaoSemanticaEngajada, textoFinal);
 
         if (decisaoEngajada.unidadeSelecionada) {
           metadataAtual = { ...metadataAtual, unidade_selecionada: decisaoEngajada.unidadeSelecionada, aguardando_unidade: false };
           await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           unidadeEfetiva = decisaoEngajada.unidadeSelecionada;
           trocouUnidade = true;
+          trocaComPedidoEspecifico = decisaoEngajada.pedidoEspecifico === true; // S-WM-34 (VAL-23)
           console.log("[motor-agente v18] Unidade salva (conversa engajada): " + unidadeEfetiva);
         } else if (decisaoEngajada.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoEngajada.resposta, historico);
@@ -987,7 +1134,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           avaliacaoSemantica1a = await avaliarSelecaoUnidade(textoFinal, openaiKey);
         }
 
-        const decisaoPrimeira = decidirPrimeiraMensagem(unidadeDetectadaDireta1a, avaliacaoSemantica1a);
+        const decisaoPrimeira = decidirPrimeiraMensagem(unidadeDetectadaDireta1a, avaliacaoSemantica1a, textoFinal);
         if (decisaoPrimeira.unidadeSelecionada) {
           // AUD-07: unidade já citada na própria 1ª mensagem — resolve direto e segue pro
           // fluxo normal (RAG/GPT) em vez de mandar o menu e forçar uma rodada extra.
@@ -995,6 +1142,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
           unidadeEfetiva = decisaoPrimeira.unidadeSelecionada;
           trocouUnidade = true;
+          trocaComPedidoEspecifico = decisaoPrimeira.pedidoEspecifico === true; // S-WM-34 (VAL-23)
           console.log("[motor-agente v18] Unidade salva (1a mensagem): " + unidadeEfetiva);
         } else if (decisaoPrimeira.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoPrimeira.resposta, historico);
@@ -1065,7 +1213,12 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       const conteudoPrograma = await carregarProgramacaoMensal(supabase, unidadeEfetiva);
 
       let instrucaoArea = "";
-      if (trocouUnidade) {
+      // S-WM-34 (VAL-23): trocouUnidade sozinho n\u00e3o basta mais \u2014 quando a mensagem que causou a
+      // troca j\u00e1 trazia um pedido espec\u00edfico junto (ex.: "e no Mondubim, tem nata\u00e7\u00e3o de noite?"),
+      // a instru\u00e7\u00e3o de "resumo geral" suprimia esse pedido mesmo com o dado certo carregado logo
+      // abaixo (conteudoPrograma). Sem trocaComPedidoEspecifico, o GPT segue livre pra responder
+      // ao pedido usando o contexto completo que j\u00e1 foi carregado de qualquer forma.
+      if (trocouUnidade && !trocaComPedidoEspecifico) {
         instrucaoArea = "\nO usu\u00e1rio acabou de trocar para esta unidade. Apresente um resumo geral do que tem na programa\u00e7\u00e3o.";
       } else if (isSelecaoMenu) {
         const textoOpcao = ultimaMsgAgente ? extrairTextoMenu(textoFinal.trim(), ultimaMsgAgente.content) : '';
@@ -1090,22 +1243,30 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         ).join("\n");
       }
     } else if (temUnidadeDefinida && isAgenteProgramacao) {
-      // Pergunta de acompanhamento (conversa em andamento, mesma unidade, sem sele\u00e7\u00e3o de menu):
-      // busca vetorial de poucos chunks em vez de carregar toda a programa\u00e7\u00e3o mensal (~40 chunks).
-      const embedding = await gerarEmbedding(textoFinal, openaiKey);
-      const { data: chunksPrograma } = await supabase.rpc("buscar_chunks_similares", {
-        query_embedding: "[" + embedding.join(",") + "]",
-        p_tipos: ["monthly_program", "eventos_pontuais", "FAQ"],
-        p_unidade_cuca: unidadeEfetiva,
-        p_limite: 5,
-      });
-      // VAL-02/VAL-04: quantos chunks a busca de acompanhamento realmente trouxe — sem isso,
-      // "o GPT respondeu errado" e "a busca não trouxe o chunk certo" eram indistinguíveis no log.
-      console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
-      if (chunksPrograma && chunksPrograma.length > 0) {
-        contextRAG = "\n\n--- CONTEXTO ---\n" + chunksPrograma.map((c: { conteudo: string; fonte_tipo?: string }) =>
-          c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-        ).join("\n");
+      // Pergunta de acompanhamento (conversa em andamento, mesma unidade, sem selecao de menu):
+      // S-WM-34 (VAL-09) - primeiro tenta busca deterministica por nome de atividade (evita o
+      // limite de 5 chunks da busca vetorial quando a atividade esta dispersa em muitos chunks
+      // nao-contiguos). So cai pra busca vetorial (comportamento anterior, rede de seguranca)
+      // quando a mensagem nao cita nenhuma modalidade conhecida do monthly_program ativo.
+      const conteudoAtividade = await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal);
+      if (conteudoAtividade) {
+        contextRAG = "\n\n--- CONTEXTO (atividade especifica) ---\n" + conteudoAtividade;
+      } else {
+        const embedding = await gerarEmbedding(textoFinal, openaiKey);
+        const { data: chunksPrograma } = await supabase.rpc("buscar_chunks_similares", {
+          query_embedding: "[" + embedding.join(",") + "]",
+          p_tipos: ["monthly_program", "eventos_pontuais", "FAQ"],
+          p_unidade_cuca: unidadeEfetiva,
+          p_limite: 5,
+        });
+        // VAL-02/VAL-04: quantos chunks a busca de acompanhamento realmente trouxe - sem isso,
+        // "o GPT respondeu errado" e "a busca nao trouxe o chunk certo" eram indistinguiveis no log.
+        console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
+        if (chunksPrograma && chunksPrograma.length > 0) {
+          contextRAG = "\n\n--- CONTEXTO ---\n" + chunksPrograma.map((c: { conteudo: string; fonte_tipo?: string }) =>
+            c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
+          ).join("\n");
+        }
       }
     } else if (isAgenteProgramacao && perguntaGeralAtiva) {
       // VAL-12: pergunta institucional real sem unidade escolhida ainda — busca só em FAQ.
@@ -1177,7 +1338,17 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // instrução de moderação num turno "user" antecipado, longe do ponto de geração, é
       // seguida com muito menos confiabilidade.
       "Se o contexto informar o nome do lead, use-o com moderacao (1-2x, em momentos naturais da conversa).",
-      trocouUnidade ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade. Inicie com uma mensagem de transicao amigavel (ex: 'Claro! Vou te mostrar o que tem no [unidade] 😊') e apresente um resumo geral da programacao usando formato compacto." : "",
+      // S-WM-34 (VAL-23): trocaComPedidoEspecifico bifurca a instrução — resumo geral (comportamento
+      // atual preservado, AC4) quando a troca foi "pelada" (só o nome da unidade ou pedido vago);
+      // resposta direta ao pedido (sem resumo geral) quando a mensagem que trocou de unidade já
+      // trazia um pedido específico junto (AC3) — o contexto de programação já foi carregado de
+      // qualquer forma (conteudoPrograma, acima), então a resposta direta tem o dado disponível.
+      trocouUnidade && !trocaComPedidoEspecifico
+        ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade. Inicie com uma mensagem de transicao amigavel (ex: 'Claro! Vou te mostrar o que tem no [unidade] 😊') e apresente um resumo geral da programacao usando formato compacto."
+        : "",
+      trocouUnidade && trocaComPedidoEspecifico
+        ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade E ja fez um pedido especifico na mesma mensagem. Inicie com uma mensagem de transicao amigavel curta (ex: 'Claro! Vou verificar isso no [unidade] 😊') e responda DIRETAMENTE ao pedido especifico usando os dados da programacao carregada acima — NAO apresente um resumo geral da programacao."
+        : "",
       // VAL-07: para Institucional/maria, só dizer "primeira mensagem" quando for de fato
       // conversaGenuinamenteNova (não reabertura) — evita mandar essa instrução pro GPT numa
       // conversa retomada minutos depois. Outros agente_tipo (Sofia/Ouvidoria) continuam no

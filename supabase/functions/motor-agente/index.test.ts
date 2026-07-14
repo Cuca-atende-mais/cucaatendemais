@@ -1,5 +1,71 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico } from "./index.ts";
+
+// ── S-WM-34 (VAL-09) — normalizarTexto ──────────────────────────────────────
+Deno.test("normalizarTexto: remove acento e lowercase", () => {
+  assertEquals(normalizarTexto("Natação"), "natacao");
+  assertEquals(normalizarTexto("JOSÉ WALTER"), "jose walter");
+});
+
+Deno.test("normalizarTexto: texto sem acento fica só lowercase", () => {
+  assertEquals(normalizarTexto("Futsal Sesc"), "futsal sesc");
+});
+
+// ── S-WM-34 (VAL-09) — extrairModalidades ───────────────────────────────────
+Deno.test("extrairModalidades: extrai nomes únicos do padrão 'Modalidade: X - Turma'", () => {
+  const chunks = [
+    "• Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 11 . Professor: Daniel Reis.",
+    "• Futsal Sesc Detalhes: Esporte Modalidade: Futsal Sesc - Turma 01 (sub 9) . Professor: Bruno.",
+    "continuação sem match Modalidade nenhuma aqui",
+    "• Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 1 . Professor: Daniel Reis.",
+  ];
+  const modalidades = extrairModalidades(chunks);
+  assertEquals(modalidades.sort(), ["Futsal Sesc", "Natação"].sort());
+});
+
+Deno.test("extrairModalidades: retorna vazio quando não há nenhum padrão no texto", () => {
+  assertEquals(extrairModalidades(["texto qualquer sem o padrão esperado"]), []);
+});
+
+// ── S-WM-34 (VAL-09) — detectarAtividadeMencionada ──────────────────────────
+Deno.test("detectarAtividadeMencionada: detecta com acento igual ao original", () => {
+  assertEquals(detectarAtividadeMencionada("tem natação de noite?", ["Natação", "Judô"]), "Natação");
+});
+
+Deno.test("detectarAtividadeMencionada: detecta mensagem sem acento contra modalidade com acento", () => {
+  assertEquals(detectarAtividadeMencionada("tem natacao de noite?", ["Natação", "Judô"]), "Natação");
+});
+
+Deno.test("detectarAtividadeMencionada: prefere nome mais específico (Futsal Sesc) sobre prefixo genérico (Futsal)", () => {
+  assertEquals(detectarAtividadeMencionada("tem futsal sesc de manhã?", ["Futsal", "Futsal Sesc"]), "Futsal Sesc");
+});
+
+Deno.test("detectarAtividadeMencionada: retorna null quando nenhuma modalidade é citada", () => {
+  assertEquals(detectarAtividadeMencionada("qual o horário de hoje?", ["Natação", "Judô"]), null);
+});
+
+// ── S-WM-34 (VAL-23) — mensagemTemPedidoEspecifico ──────────────────────────
+// Heurística deliberadamente conservadora (só "?") — ver Dev Notes/docblock da função sobre por
+// que um limiar de tamanho de texto foi tentado e descartado (falso positivo no caso são/AC4).
+Deno.test("mensagemTemPedidoEspecifico: mensagem só com o nome da unidade não tem pedido específico", () => {
+  assertEquals(mensagemTemPedidoEspecifico("Mondubim"), false);
+});
+
+Deno.test("mensagemTemPedidoEspecifico: AC4 (caso são) — frase vaga sem '?' não conta como pedido específico, mesmo mencionando a unidade", () => {
+  assertEquals(mensagemTemPedidoEspecifico("quero saber do Mondubim agora"), false);
+});
+
+Deno.test("mensagemTemPedidoEspecifico: AC3 (caso reproduzido ao vivo) — pergunta com conteúdo específico embutido é detectada", () => {
+  assertEquals(mensagemTemPedidoEspecifico("e no Mondubim, tem natação de noite?"), true);
+});
+
+Deno.test("mensagemTemPedidoEspecifico: '?' sozinho já basta, mesmo com pouco texto extra", () => {
+  assertEquals(mensagemTemPedidoEspecifico("Mondubim tem vaga?"), true);
+});
+
+Deno.test("mensagemTemPedidoEspecifico: limitação conhecida — pedido específico real sem '?' não é detectado (documentado, não é regressão)", () => {
+  assertEquals(mensagemTemPedidoEspecifico("manda os horarios de natacao no Mondubim"), false);
+});
 
 // ── ehSelecaoMenu ────────────────────────────────────────────────────────────
 Deno.test("ehSelecaoMenu: aceita dígitos 1-5 isolados", () => {
