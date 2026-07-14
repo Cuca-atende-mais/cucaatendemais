@@ -460,7 +460,7 @@ _DEBOUNCE_TASKS: dict[str, asyncio.Task] = {}
 def _debounce_segundos() -> float:
     """Lido a cada chamada (não cacheado em import) para permitir override em teste via
     monkeypatch de variável de ambiente sem precisar recarregar o módulo."""
-    return float(os.getenv("META_DEBOUNCE_SECONDS", "3"))
+    return float(os.getenv("META_DEBOUNCE_SECONDS", "7"))
 
 
 async def _dormir_debounce(segundos: float) -> None:
