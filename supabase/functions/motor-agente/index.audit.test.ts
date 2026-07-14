@@ -1289,3 +1289,69 @@ Deno.test("S-WM-34 Task 2: decidirPrimeiraMensagem usa mensagemTemPedidoEspecifi
   const semPedido = decidirPrimeiraMensagem("Cuca Barra", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }, "quero saber da Barra");
   assertEquals(semPedido.pedidoEspecifico, false);
 });
+
+// ── S-WM-34 (VAL-09) — cobertura end-to-end faltante apontada pelo gate do @qa (CONCERNS) ──────
+// Diferente dos testes de extrairModalidades/detectarAtividadeMencionada (index.test.ts, funções
+// puras), estes exercitam buscarAtividadeEspecifica de verdade via handler + mock do Supabase —
+// miniatura do cenário real do Jangurussu (natação espalhada em chunks não-contíguos, intercalada
+// com outras modalidades), provando o fix ponta a ponta, não só a lógica isolada.
+Deno.test("S-WM-34 AC1/AC2: branch de acompanhamento recupera TODAS as menções de uma atividade dispersa em chunks não-contíguos (miniatura do Jangurussu)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" }); // sem troca neste turno -> cai no branch de acompanhamento
+  respostas["chunks_documentos"] = {
+    data: [
+      { conteudo: "== ESPORTES == • Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 1 . Professor: Daniel Reis. Dias: Ter e Qui. Horário: 7h às 8h." },
+      { conteudo: "• Futsal Detalhes: Esporte Modalidade: Futsal - Turma A . Professor: Bruno Santos. Dias: Qua e Sex. Horário: 8h às 9h." },
+      { conteudo: "• Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 2 . Professor: Daniel Reis. Dias: Qua e Sex. Horário: 18h às 19h." },
+      { conteudo: "• Judô Detalhes: Esporte Modalidade: Judô - Turma B . Professor: Vanessa Andrade. Dias: Ter e Qui. Horário: 15h às 16h." },
+      { conteudo: "• Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 3 . Professor: Daniel Reis. Dias: Ter e Qui. Horário: 20h às 21h." },
+    ],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("atividade especifica")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 1", "AC1: deveria incluir a Turma 1 de natação (chunk não-contíguo)");
+  assertStringIncludes(promptFinal, "Turma 2", "AC1: deveria incluir a Turma 2 de natação (chunk não-contíguo)");
+  assertStringIncludes(promptFinal, "Turma 3", "AC1: deveria incluir a Turma 3 de natação (chunk não-contíguo) — as 3 juntas provam que a busca não para no 1º match, recupera TODAS as menções");
+
+  const chamouBuscaVetorial = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chamouBuscaVetorial, false, "AC1: quando a busca determinística encontra a atividade, não deveria cair no fallback vetorial");
+});
+
+Deno.test("S-WM-34 AC2: branch de acompanhamento cai no fallback vetorial quando a mensagem não cita nenhuma modalidade conhecida", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["chunks_documentos"] = {
+    data: [
+      { conteudo: "== ESPORTES == • Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 1 . Professor: Daniel Reis." },
+      { conteudo: "• Futsal Detalhes: Esporte Modalidade: Futsal - Turma A . Professor: Bruno Santos." },
+    ],
+  };
+  respostas["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "Horário de funcionamento: seg a sáb, 8h às 21h.", fonte_tipo: "FAQ" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("qual o horário de funcionamento?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  // Nota (achado durante esta correção): o mock de rpc() empilha os args como `[opcoes]` (nome vai
+  // separado) — o índice correto do objeto de opções é `args[0]`, não `args[1]`. Um teste
+  // pré-existente (S-WM-32, "AC3: buscar_chunks_similares NUNCA pode ser chamado...") usa
+  // `args?.[1]`, que é sempre `undefined` — o teste passa hoje mas não testa de fato o que diz
+  // testar (vacuamente verdadeiro). Não corrigido aqui (fora do escopo desta correção de CONCERNS,
+  // pertence a outra story) — registrado no Dev Agent Record como achado adjacente.
+  const chamouBuscaVetorial = chamadas.some((c) =>
+    c.tabela === "rpc:buscar_chunks_similares" &&
+    ((c.args?.[0] as { p_tipos?: string[] })?.p_tipos ?? []).includes("monthly_program")
+  );
+  assertEquals(chamouBuscaVetorial, true, "AC2 (rede de segurança): sem match de atividade, o fallback pro buscar_chunks_similares precisa disparar — comportamento anterior preservado");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("Horário de funcionamento")) ?? "";
+  assertStringIncludes(promptFinal, "Horário de funcionamento", "AC2: o conteúdo do fallback vetorial deveria chegar no prompt final");
+});
