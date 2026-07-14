@@ -1384,3 +1384,69 @@ class TestDebounceDispatch:
             "duas conversas diferentes (chaves distintas) não podem cancelar o dispatch uma da outra"
         )
         assert meta_adapter_inbound._DEBOUNCE_TASKS == {}, "dict de tarefas pendentes deveria ficar vazio após ambas resolverem"
+
+    # ── 4) S-WM-33: valor default da janela ─────────────────────────────────────
+    def test_debounce_segundos_default_e_7s(self, monkeypatch):
+        """S-WM-33: default alterado de 3s pra 7s — decisão do Junior após o diagnóstico
+        (teste ao vivo de 2026-07-14) confirmar que o debounce de 3s funcionava corretamente
+        por desenho (não era bug), só que a janela era curta demais pro intervalo real
+        observado (6,13s entre duas mensagens do mesmo lead). Cobre esse caso com margem."""
+        import meta_adapter_inbound
+
+        monkeypatch.delenv("META_DEBOUNCE_SECONDS", raising=False)
+        assert meta_adapter_inbound._debounce_segundos() == 7.0
+
+    # ── 5) S-WM-33: intervalo real de ~6s cai DENTRO da janela de 7s → agrupa ───
+    @pytest.mark.asyncio
+    async def test_mensagens_com_intervalo_de_6s_ficam_dentro_da_janela_de_7s_e_agrupam(self, monkeypatch):
+        """S-WM-33: reproduz, em escala reduzida (fator 100x, sem esperar segundos reais), o
+        cenário exato do incidente de 2026-07-14 ("Não precisa" / "Obrigado", 6,127s de
+        intervalo real) com a janela NOVA (7s, escalada pra 0,07s) — a 2ª mensagem chega
+        ANTES do timer da 1ª disparar (6 < 7, escalado 0,06 < 0,07), então cancela e
+        reagenda: resultado esperado é 1 SÓ dispatch, com o conteúdo da última mensagem. Com
+        a janela ANTIGA (3s) esse mesmo intervalo teria gerado 2 dispatches separados — era
+        exatamente o comportamento correto (não-bug) confirmado no diagnóstico prévio.
+        Usa `_dormir_debounce` real (não o stub instantâneo do autouse) sincronizado por um
+        Event pra garantir que o debounce da 1ª mensagem já começou antes de medir o
+        intervalo — preserva a proporção real intervalo/janela sem depender de timing frágil.
+        """
+        import meta_adapter_inbound
+        from unittest.mock import AsyncMock
+
+        sleep_iniciado = asyncio.Event()
+
+        async def _dormir_real_instrumentado(segundos):
+            sleep_iniciado.set()
+            await asyncio.sleep(segundos)
+
+        monkeypatch.setattr(meta_adapter_inbound, "_debounce_segundos", lambda: 0.07)
+        monkeypatch.setattr(meta_adapter_inbound, "_dormir_debounce", _dormir_real_instrumentado)
+
+        mock_sb = self._mock_supabase_conversa_unica("conv-debounce-3")
+        stub = {"canal_origem": "PHONE_DEB3", "agente_tipo": "Institucional", "canal_tipo": "Institucional", "unidade_cuca": None}
+
+        raw1 = json.dumps(self._payload_com_wamid("PHONE_DEB3", "558598887779", "Não precisa", "wamid.deb.5")).encode()
+        raw2 = json.dumps(self._payload_com_wamid("PHONE_DEB3", "558598887779", "Obrigado", "wamid.deb.6")).encode()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
+                   return_value=["Tranquilo, Valmir!"]) as mock_motor, \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
+
+            tarefa1 = asyncio.create_task(processar_webhook_meta(raw1))
+            await sleep_iniciado.wait()
+            await asyncio.sleep(0.06)  # ~6s reais em escala 100x — intervalo real do incidente
+            tarefa2 = asyncio.create_task(processar_webhook_meta(raw2))
+            await asyncio.gather(tarefa1, tarefa2)
+
+        mock_motor.assert_called_once()
+        mock_enviar.assert_called_once()
+        contrato_usado = mock_motor.call_args.args[0]
+        assert contrato_usado["mensagem"] == "Obrigado", (
+            "S-WM-33: com janela de 7s, um intervalo de 6s entre as mensagens deveria ficar "
+            "DENTRO da janela — a 2ª mensagem cancela o dispatch da 1ª e só ela dispara, "
+            "gerando 1 resposta agrupada, não 2 separadas (era o comportamento com a janela "
+            "antiga de 3s, confirmado correto mas insuficiente no diagnóstico prévio)"
+        )
