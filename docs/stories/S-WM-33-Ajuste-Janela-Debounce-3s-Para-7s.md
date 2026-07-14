@@ -1,7 +1,7 @@
 # S-WM-33 — Ajuste da janela de debounce de dispatch (3s → 7s)
 
 ## Status
-Ready for Review
+InReview
 
 ## Complexidade
 **PP** (muito pequena) — 1 valor de configuração + testes. Sem mudança no mecanismo de debounce em si (`_agendar_dispatch_debounced` continua igual).
@@ -82,6 +82,7 @@ Testar a proporção intervalo/janela sem esperar segundos reais: `_debounce_seg
 |---|---|---|---|
 | 2026-07-14 | 0.1 | Story criada diretamente pelo @dev a pedido do Junior (incidente ao vivo + diagnóstico + decisão de ampliar a janela) — formato leve, sem ciclo completo @sm/@po dado o tamanho da mudança e a urgência; validação de conteúdo feita pelo próprio Junior ao longo da conversa. Status Draft → InProgress. | @dev Dex |
 | 2026-07-14 | 0.2 | Implementação completa (Tasks 1-4): valor default alterado de 3s para 7s, nenhum teste dependia do valor antigo, 2 testes novos cobrindo o cenário real (6s dentro da janela de 7s → 1 dispatch agrupado), mutation testing confirmou o teste distingue corretamente janela antiga (3s, reproduz o bug) de janela nova (7s, agrupa). Suíte completa verde (131 passed, 0 failed, 3 skipped). Nenhum commit feito ainda nesta sessão — a seguir. Status InProgress → Ready for Review. | @dev Dex |
+| 2026-07-14 | 0.3 | QA Gate: **PASS**. Reproduzido independentemente: diff mínimo confirmado, suíte completa (131/0/3-skip), mutation testing #1 (janela do teste revertida pra 3s equivalente, falha corretamente) e mutation testing #2 adicional (valor de produção revertido pra 3, teste de configuração falha corretamente) — confirma que os 2 testes novos, juntos, protegem AC1 e AC2 de forma complementar. Achado não-bloqueante registrado: esta story muda `worker/`, não Edge Function — deploy correspondente é redeploy do worker no EasyPanel, não `supabase functions deploy`; sinalizado para @devops confirmar antes de considerar o fix "no ar". Status Ready for Review → InReview. | @qa Quinn |
 
 ## Dev Agent Record
 
@@ -111,4 +112,28 @@ Testar a proporção intervalo/janela sem esperar segundos reais: `_debounce_seg
 Nenhum commit/push/deploy executado ainda nesta sessão de story — aguardando @qa.
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+**Revisor:** @qa Quinn · **Data:** 2026-07-14 · **Verdict: PASS**
+
+Reprodução independente (não confiei no relato do @dev):
+
+- **Code review:** `git show ba0615a` — diff mínimo e exatamente como descrito: 1 caractere trocado em `meta_adapter_inbound.py:493` (`"3"` → `"7"`), 1 comentário corrigido em `conftest.py:18`, 2 testes novos em `test_meta_adapter_inbound.py`. Nenhuma mudança fora do escopo declarado (mecanismo de `_agendar_dispatch_debounced`/`_DEBOUNCE_TASKS` intocado, confirmado por leitura).
+- **Suíte completa, rodada do zero:** `pytest worker/tests/` → **131 passed, 0 failed, 3 skipped** (baseline 129/0/3-skip + 2 testes novos, sem regressão). Confirmei também que `META_DEBOUNCE_SECONDS` não está setada no ambiente de teste (evita falso-positivo por override mascarando o default).
+- **Mutation testing #1 (reproduzido independentemente):** troquei a janela hardcoded do teste de cenário (`0.07` → `0.03`, equivalente ao valor antigo de 3s) mantendo o intervalo em `0.06` (6s) — teste falhou corretamente, `_chamar_motor_agente` chamado 2 vezes (uma com "Não precisa", outra com "Obrigado") — reproduz exatamente o sintoma do incidente original. Restaurado, suíte volta ao verde.
+- **Mutation testing #2 (adicional, não reportado pelo @dev — fiz por conta própria):** reverti o valor de produção em `meta_adapter_inbound.py` (`"7"` → `"3"`) mantendo os testes intactos — `test_debounce_segundos_default_e_7s` falhou corretamente (`assert 3.0 == 7.0`). Isso prova que os 2 testes novos, juntos, protegem tanto o valor de configuração real (AC1) quanto o comportamento de agrupamento na proporção 6s/7s (AC2) — nenhum dos dois sozinho cobriria as duas coisas (o teste de cenário usa uma janela hardcoded independente do valor de produção).
+- **AC1:** confirmado — `_debounce_segundos()` retorna `7.0` sem override de ambiente.
+- **AC2:** confirmado — cenário do incidente (6s dentro de janela de 7s) gera exatamente 1 dispatch, com o conteúdo da última mensagem.
+- **AC3:** confirmado — suíte completa sem regressão (129→131, só os 2 testes novos a mais).
+- **AC4 (trade-off):** documentado explicitamente na story, não escondido — conferido que o texto está presente e correto.
+- **Segurança/OWASP:** não aplicável — mudança é só um valor numérico de configuração interna, sem superfície nova de entrada/saída, sem dado sensível envolvido.
+- **Documentação:** story completa e consistente com o diff real (Status, Dev Agent Record por Task, File List, Change Log) — nada divergente entre o que a story diz e o que o código mostra.
+
+### Achado adicional (não-bloqueante, mas importante para @devops)
+
+Diferente da S-WM-31/S-WM-32 (que tocaram Edge Functions no Supabase), **esta story só muda código em `worker/`** — o deploy correspondente é **redeploy do worker no EasyPanel** (`cuca-worker-staging` em `develop`, `cuca-worker` em `main` após promoção), não `supabase functions deploy`. Sem esse redeploy, o valor novo (7s) não entra em vigor em nenhum ambiente real — a mudança fica só no código até o próximo deploy do worker. Vale confirmar com @devops que esse redeploy específico (worker, não Edge Function) está no radar antes de considerar o fix "no ar".
+
+### Veredito
+
+**PASS.** Mudança mínima, bem contida, com testes que provadamente (mutation-tested em ambas as direções) protegem tanto o valor de configuração quanto o comportamento de agrupamento na proporção real do incidente. Sem regressão, sem risco de segurança, trade-off documentado como pedido. Próximo passo: @devops — commit já feito (`ba0615a`), branch limpa a partir de `origin/develop`, push + PR. Lembrar do redeploy do **worker** (não Edge Function) no EasyPanel como próximo passo pós-merge.
+
+**Status:** Ready for Review → InReview.
