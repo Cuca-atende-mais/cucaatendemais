@@ -1,7 +1,7 @@
-# S-WM-33 — Ajuste da janela de debounce de dispatch (3s → 7s)
+# S-WM-33 — Ajuste da janela de debounce de dispatch (3s → 7s → 10s)
 
 ## Status
-InReview
+Ready for Review (follow-up)
 
 ## Complexidade
 **PP** (muito pequena) — 1 valor de configuração + testes. Sem mudança no mecanismo de debounce em si (`_agendar_dispatch_debounced` continua igual).
@@ -83,6 +83,7 @@ Testar a proporção intervalo/janela sem esperar segundos reais: `_debounce_seg
 | 2026-07-14 | 0.1 | Story criada diretamente pelo @dev a pedido do Junior (incidente ao vivo + diagnóstico + decisão de ampliar a janela) — formato leve, sem ciclo completo @sm/@po dado o tamanho da mudança e a urgência; validação de conteúdo feita pelo próprio Junior ao longo da conversa. Status Draft → InProgress. | @dev Dex |
 | 2026-07-14 | 0.2 | Implementação completa (Tasks 1-4): valor default alterado de 3s para 7s, nenhum teste dependia do valor antigo, 2 testes novos cobrindo o cenário real (6s dentro da janela de 7s → 1 dispatch agrupado), mutation testing confirmou o teste distingue corretamente janela antiga (3s, reproduz o bug) de janela nova (7s, agrupa). Suíte completa verde (131 passed, 0 failed, 3 skipped). Nenhum commit feito ainda nesta sessão — a seguir. Status InProgress → Ready for Review. | @dev Dex |
 | 2026-07-14 | 0.3 | QA Gate: **PASS**. Reproduzido independentemente: diff mínimo confirmado, suíte completa (131/0/3-skip), mutation testing #1 (janela do teste revertida pra 3s equivalente, falha corretamente) e mutation testing #2 adicional (valor de produção revertido pra 3, teste de configuração falha corretamente) — confirma que os 2 testes novos, juntos, protegem AC1 e AC2 de forma complementar. Achado não-bloqueante registrado: esta story muda `worker/`, não Edge Function — deploy correspondente é redeploy do worker no EasyPanel, não `supabase functions deploy`; sinalizado para @devops confirmar antes de considerar o fix "no ar". Status Ready for Review → InReview. | @qa Quinn |
+| 2026-07-14 | 0.4 | Merge (PR #37). Follow-up do Junior após inspeção do código em produção: achado de possível "2 fontes de verdade" (fallback ainda "3" nas linhas 446-451). Diagnóstico (Task 5): **não há bug** — é a mesma única função em 3 pontos do pipeline (`main` ainda não promovido = "3"; `develop` já mergeado = "7"; local = "7"), staleness de branch esperada, não divergência de código. Task 6: valor atualizado direto pra **10s** (nova decisão do Junior), testes renomeados/ajustados, suíte verde (131/0/3-skip), mutation testing reconfirmado nas 2 direções. Diagnóstico do escopo ampliado (agrupamento de mensagens) reportado, NÃO implementado: mecanismo atual já entrega o resultado funcional (GPT vê todas as mensagens do burst via histórico persistido, não via buffer explícito) — gap real é ausência de teste de integração cross-sistema, não funcionalidade quebrada. Status → Ready for Review (follow-up), aguardando novo gate do @qa. | @dev Dex |
 
 ## Dev Agent Record
 
@@ -110,6 +111,53 @@ Testar a proporção intervalo/janela sem esperar segundos reais: `_debounce_seg
 - `docs/stories/S-WM-33-Ajuste-Janela-Debounce-3s-Para-7s.md` (novo)
 
 Nenhum commit/push/deploy executado ainda nesta sessão de story — aguardando @qa.
+
+---
+
+## Follow-up (2026-07-14, pós-merge da v0.1) — investigação de "2 fontes de verdade" + escopo de agrupamento
+
+Depois do merge (PR #37) e do PASS do @qa, o Junior inspecionou o código e reportou um achado aparente: uma função `_debounce_segundos()` com fallback ainda `"3"` nas linhas 446-451 — sugerindo que o commit `ba0615a` teria mudado o valor no lugar errado (2 fontes de verdade divergentes), e que a `META_DEBOUNCE_SECONDS` talvez nunca tivesse sido setada no EasyPanel.
+
+### Task 5 — Diagnóstico dos itens 1-3 (grep completo + investigação da divergência)
+
+**Investigação, nesta ordem:**
+1. `grep -rn "_debounce_segundos\|META_DEBOUNCE_SECONDS" worker/` (todo o diretório, todos os arquivos `.py`): **confirma que existe só 1 definição em todo o repositório** — `worker/meta_adapter_inbound.py:490-493`. Não há segunda função, segundo arquivo, nem constante duplicada. `worker/main.py` importa `processar_webhook_meta` de `meta_adapter_inbound` uma única vez — não há um 2º worker/entrypoint com lógica própria de debounce.
+2. `META_DEBOUNCE_SECONDS` **não aparece em nenhum lugar** de `worker/.env`, `worker/.env.example`, `worker/docker-compose.yml` nem `worker/Dockerfile` — não há override hardcoded no repo. Não tenho acesso ao painel do EasyPanel pra confirmar se a env var está setada lá; **pedido ao Junior:** confirmar isso no painel do serviço `cuca-worker`/`cuca-worker-staging`, se ainda for relevante depois do achado abaixo.
+3. **Causa raiz real do que o Junior viu (não é bug, é staleness de branch/promoção esperada):** comparei o arquivo em 3 pontos do pipeline:
+   - `origin/main` (produção, o que está de fato rodando hoje): função nas **linhas 446-451**, fallback `"3"` — bate exatamente com o que o Junior reportou.
+   - `origin/develop` (staging, depois do merge da PR #37): função nas **linhas 460-463**, fallback `"7"` — já corrigido.
+   - Local (antes deste follow-up): `worker/meta_adapter_inbound.py:490-493`, fallback `"7"`.
+
+   **Não existem 2 fontes de verdade no código** — é a MESMA função, no MESMO único arquivo, em 3 estados diferentes do pipeline `feat/* → develop → main`. `main` ainda não recebeu a promoção da S-WM-33 (exige aprovação humana explícita do Junior, por design — `.claude/rules/cuca-deploy-environments.md`). O deslocamento de linha (446 vs. 460 vs. 490) é só reflexo de outras mudanças acumuladas em cada branch, não de arquivos diferentes. **Conclusão: o achado do Junior é 100% explicado por produção ainda não ter recebido o merge/promoção — não há bug de "lugar errado" a corrigir.**
+
+### Task 6 — Aplicar a decisão atualizada (10s) no único local real
+
+- `worker/meta_adapter_inbound.py:493`: fallback `"7"` → `"10"` (decisão atualizada do Junior, direto pra 10s).
+- `worker/tests/conftest.py`: comentário atualizado ("default 7s" → "default 10s").
+- `worker/tests/test_meta_adapter_inbound.py`: `test_debounce_segundos_default_e_7s` renomeado pra `test_debounce_segundos_default_e_10s`, assert atualizado pra `10.0`. Teste de cenário (`test_mensagens_com_intervalo_de_6s_ficam_dentro_da_janela_de_7s_e_agrupam`) **mantido sem mudança de valor** — continua testando a margem 6s-dentro-de-7s (o ponto mais apertado já decidido), que continua uma verdade válida e útil independente do valor de produção ser agora 10s (esse teste usa `_debounce_segundos` monkeypatched direto, não lê o default real — docstring atualizada pra deixar isso explícito).
+- **Suíte completa:** 131 passed, 0 failed, 3 skipped — sem regressão.
+- **Mutation testing (2 direções, reconfirmado):**
+  1. Janela do teste de cenário revertida pra equivalente a 3s (`0.03`) — falha corretamente com 2 dispatches.
+  2. Valor de produção revertido pra 3 (mantendo os testes) — `test_debounce_segundos_default_e_10s` pegou a regressão (`assert 3.0 == 10.0`).
+
+### Diagnóstico do escopo ampliado (agrupamento de mensagens) — REPORTADO, NÃO IMPLEMENTADO
+
+**Pergunta do Junior:** `_agendar_dispatch_debounced` acumula as mensagens do lead numa estrutura (buffer) antes de disparar, ou só reagenda o timer e processa a mensagem mais recente sozinha?
+
+**Resposta, com evidência do código (não é suposição):**
+
+O comportamento syntaticamente É a 2ª opção — cada mensagem cria seu próprio closure `_dispatch` (capturando só o `contrato_v2`/`mensagem` daquela mensagem específica); quando uma mensagem nova chega pro mesmo `conversa_id`, `_agendar_dispatch_debounced` CANCELA a tarefa pendente da mensagem anterior (linhas 516-518) e cria uma nova — só o closure da ÚLTIMA mensagem do burst efetivamente executa `_executar_dispatch(...)`.
+
+**Mas isso NÃO significa que as mensagens anteriores são perdidas/ignoradas — e isso já está documentado no próprio código (comentário linhas 469-478, S-WM-17):**
+- A persistência (INSERT em `mensagens`) acontece **imediatamente**, pra CADA mensagem, **antes** da seção de debounce/dispatch (`processar_webhook_meta`, bloco "DB C: inserir Mensagem inbound") — isso NÃO é adiado pelo debounce, só o DISPATCH (a chamada ao motor-agente) é adiado.
+- Quando o dispatch da ÚLTIMA mensagem finalmente dispara (depois da janela), o `motor-agente` (Deno, `index.ts`, "Passo 4 — Histórico") lê os últimos `MAX_HISTORICO=10` registros de `mensagens` **direto do banco, no momento da chamada** — isso inclui TODAS as mensagens do burst que já foram persistidas nesse meio-tempo (a 1ª, a 2ª, etc.), não só a que disparou o dispatch.
+- Ou seja: o GPT recebe TODAS as mensagens do burst como turnos sequenciais de `historico` (role: "user"), e gera UMA resposta considerando o conjunto completo — não é "processado o fragmento mais recente isoladamente". A mensagem que efetivamente disparou o dispatch é a última entrada de `historico` (já que foi persistida antes do dispatch rodar); não há uma "mensagem perdida" nem uma reprocessada 2x.
+
+**Conclusão do diagnóstico:** o mecanismo já cumpre o objetivo de fundo do pedido do Junior (bot responde de forma coerente considerando o burst inteiro, não um fragmento isolado) — só que via persistência-imediata-mais-histórico-fresco, não via um buffer/array explícito acumulado em memória antes do dispatch. Funcionalmente equivalente ao resultado desejado, mas **não é literalmente** "agrupar numa estrutura única (array) antes de mandar pro motor-agente", como o pedido descreveu.
+
+**Gap real identificado (não é bug, é lacuna de teste):** não encontrei um teste de INTEGRAÇÃO ponta-a-ponta (worker Python + leitura de `historico` no motor-agente Deno) provando explicitamente esse comportamento cross-sistema — os testes hoje cobrem cada lado separadamente (o lado worker prova que só 1 dispatch dispara; o lado Deno prova que `historico` é lido do banco, mas não há um teste que amarre os dois: "burst de N mensagens → motor-agente realmente recebe as N no histórico"). Registro isso como pendência de teste, não como funcionalidade quebrada.
+
+**Recomendação:** não implementar nenhuma mudança de agrupamento explícito (array/buffer) — o mecanismo atual já entrega o resultado funcional pedido, via um caminho diferente do que a pergunta presumia. Se o Junior quiser, o único item de valor real aqui seria um teste de integração cobrindo esse cross-system explicitamente (fora do escopo desta story de ajuste de valor — sugiro registrar como item de backlog separado, não codar agora).
 
 ## QA Results
 
