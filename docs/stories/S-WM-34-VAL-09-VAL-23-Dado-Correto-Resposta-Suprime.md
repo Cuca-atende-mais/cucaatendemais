@@ -150,6 +150,7 @@ Reaproveitar os logs de VAL-04 (S-WM-25) já presentes no Passo 6, mesmo princí
 | 2026-07-14 | 0.1 | Draft inicial — fusão de VAL-09 (RELATORIO-6) e VAL-23 (achado ao vivo adicional), diagnóstico de causa raiz de ambos já confirmado (query direta em produção + leitura de código cruzada com teste ao vivo, ver conversa com @dev Dex) antes da criação desta story | @sm River |
 | 2026-07-14 | 0.2 | Validado (GO, 9/10 → 10/10 após ajuste). Ajuste aplicado: Task 2 referenciava AC4 por engano (AC4 é o caso são do branch `detectarTrocaUnidade`, escopo da Task 3 — a própria Task 3 já tem subtask dedicada a esse teste; Task 2 cobre só AC5/AC7) — corrigido pra evitar ambiguidade sobre onde mora o teste de regressão do AC4. Confirmado: diferença de nível de evidência entre VAL-09 (query direta em prod) e VAL-23 (rastreio de código + teste ao vivo, sem log bruto) está clara e não é conflada em nenhuma seção. Confirmado: AC4 é testável de forma independente (Task 3 já isola o teste do caso são do teste do caso reproduzido, AC3). Status Draft → Ready | @po Pax |
 | 2026-07-14 | 0.3 | Implementação completa (Tasks 1-4). Suíte local 125 passed/0 failed/2 ignored (baseline 105); `deno check` mantido em 75 erros (baseline, débito pré-existente da S-WM-28, sem regressão). Validado contra produção via `execute_sql` (read-only). Deploy da edge function **NÃO executado nesta sessão** — instrução explícita do usuário foi "nenhum push/PR/deploy, só commit local". Status Ready → Ready for Review | @dev Dex |
+| 2026-07-14 | 0.4 | Gate do @qa: **CONCERNS** (não-bloqueante) — ver QA Results. 2 itens endereçados a pedido do usuário: (1) adicionados 2 testes de integração via `handler` pra VAL-09 (AC1/AC2), mesmo rigor já aplicado ao VAL-23; achado adjacente de um teste pré-existente (S-WM-32) com índice de array errado, sempre `undefined`, cobertura vacuamente verdadeira — registrado, não corrigido (fora do arquivo/escopo desta correção); (2) performance investigada via `execute_sql` (32-44KB por unidade) — decisão registrada de não mitigar agora (nenhuma mitigação segura sem comprometer a correção do fix), monitorar pós-deploy. Suíte final: 127 passed/0 failed/2 ignored. Novo commit local, sem push | @dev Dex |
 
 ## Dev Agent Record
 
@@ -180,7 +181,64 @@ Claude Sonnet 5 (claude-sonnet-5), via Claude Code — persona @dev (Dex).
 ### File List
 - `supabase/functions/motor-agente/index.ts` — modificado (VAL-09: `normalizarTexto`, `extrairModalidades`, `detectarAtividadeMencionada`, `buscarAtividadeEspecifica`, integração no branch de acompanhamento; VAL-23: `mensagemTemPedidoEspecifico`, `pedidoEspecifico` em 3 tipos/funções de decisão, `trocaComPedidoEspecifico` no handler, condicional em `instrucaoArea` e no `promptFinal`)
 - `supabase/functions/motor-agente/index.test.ts` — modificado (13 testes novos: `normalizarTexto`, `extrairModalidades`, `detectarAtividadeMencionada`, `mensagemTemPedidoEspecifico`)
-- `supabase/functions/motor-agente/index.audit.test.ts` — modificado (4 testes de guarda pré-existentes corrigidos com fingerprint precisa; 7 testes novos: 2 de integração via `handler` para AC3/AC4, 5 unitários para `pedidoEspecifico` nas 3 rotas de decisão)
+- `supabase/functions/motor-agente/index.audit.test.ts` — modificado (4 testes de guarda pré-existentes corrigidos com fingerprint precisa; 9 testes novos: 2 de integração via `handler` para AC3/AC4, 5 unitários para `pedidoEspecifico` nas 3 rotas de decisão, 2 de integração via `handler` para AC1/AC2 do VAL-09 — adicionados na resposta ao gate CONCERNS do @qa, ver entrada de Change Log 0.4)
+
+### Resposta ao gate CONCERNS do @qa (2026-07-14, pós-gate)
+
+**Item 1 — lacuna de teste (AC1/AC2/AC7, VAL-09):** adicionados 2 testes de integração via `handler` em `index.audit.test.ts`, no mesmo estilo dos já existentes para AC3/AC4 — mockando `chunks_documentos` com uma atividade (natação) dispersa em 3 chunks não-contíguos, intercalados com outras modalidades (Futsal, Judô), miniatura fiel do padrão real confirmado em produção (Jangurussu).
+- 1º teste prova que as 3 menções (Turma 1, 2 e 3) chegam TODAS no prompt final e que o fallback vetorial NÃO dispara quando a busca determinística encontra a atividade.
+- 2º teste prova o inverso: sem nenhuma modalidade citada na mensagem, o fallback pro `buscar_chunks_similares` dispara com `p_tipos` incluindo `monthly_program` (comportamento anterior preservado).
+- **Achado adjacente durante a escrita do 2º teste:** o mock de `.rpc(nome, opcoes)` empilha os argumentos como `args = [opcoes]` — o índice correto do objeto de opções é `args[0]`, não `args[1]`. Um teste pré-existente, não desta story (`S-WM-32 AC3: "buscar_chunks_similares NUNCA pode ser chamado com p_unidade_cuca:null..."`), usa `args?.[1]`, que é sempre `undefined` — o teste passa hoje, mas não testa de fato o que o nome promete (falso positivo de cobertura, silencioso). Não corrigido aqui — pertence a outra story/arquivo que esta correção não deveria tocar sem pedido explícito. Registrado como achado, recomendo item de backlog pro @po avaliar.
+
+**Item 2 — performance não quantificada:** investigado via `execute_sql` (prod, read-only). Tamanho real do `monthly_program` por unidade:
+
+| Unidade | Chunks | Total chars |
+|---|---|---|
+| Cuca José Walter | 55 | 43.853 |
+| Cuca Pici | 55 | 43.864 |
+| Cuca Jangurussu | 47 | 37.345 |
+| Cuca Mondubim | 47 | 37.108 |
+| Cuca Barra | 42 | 32.858 |
+
+**Decisão: registrar como aceitável agora, sem mudar código, monitorar pós-deploy.** Motivo: o payload extra por chamada é pequeno em termos absolutos (32-44KB de texto, já filtrado só pra coluna `conteudo`) — não é um problema de volume de dado. O custo real é 1 round-trip a mais ao Postgres por mensagem de acompanhamento (mesmo quando cai no fallback), não o tamanho do payload em si. Não existe mitigação segura que não comprometa a correção do fix: limitar `.limit()` em `chunks_documentos` reintroduziria exatamente o problema que a story corrige (perder menções não-contíguas); cachear `extrairModalidades` por unidade dentro do processo ajudaria só se o processo for de longa duração entre requisições — não é o caso de uma Edge Function (cold start por invocação, sem estado garantido entre chamadas), então o cache não teria efeito real na prática. Sem dado de produção real de latência/custo ainda (função não deployada), a decisão responsável é medir depois do deploy antes de otimizar às cegas — otimização prematura sem medição real seria pior que aceitar o custo conhecido e pequeno agora.
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+**Revisor:** @qa Quinn | **Data:** 2026-07-14 | **Commit avaliado:** `08a53ae` (branch `develop`, não pushado)
+
+### Veredito: **CONCERNS** (não-bloqueante)
+
+Aprovado para seguir — nenhum problema crítico ou de segurança encontrado, causa raiz de ambos os bugs corrigida corretamente e evidenciada. Duas lacunas de cobertura de teste e a pendência conhecida do AC8 (deploy) impedem um PASS limpo; nenhuma delas exige devolver a story ao @dev antes de prosseguir.
+
+### 7 Quality Checks
+
+1. **Code review — OK.** Reli o diff completo do commit. Lógica correta nos dois fixes; reuso limpo de `pedido_depende_unidade` onde já calculado; heurística de `mensagemTemPedidoEspecifico` (só `"?"`) é deliberadamente conservadora e o docblock explica por que a alternativa por tamanho de texto foi descartada (achado real do próprio @dev durante a escrita dos testes — bom sinal de rigor). Achei 2 pontos menores, não-bloqueantes:
+   - `extrairModalidades` (regex `Modalidade:\s*([^-]+?)\s*-\s*Turma`) para no primeiro `-` — se um nome de modalidade real algum dia tiver hífen (ex.: "Cross-Fit"), o nome extraído ficaria truncado. Nenhuma modalidade atual no dado real tem hífen (confirmei contra os 47 chunks do Jangurussu), então não é um bug hoje — registro como limitação a observar se a base de dados mudar.
+   - `buscarAtividadeEspecifica` não usa `.limit()` em `chunks_documentos` — busca o documento inteiro em toda mensagem de acompanhamento, mesmo quando acaba caindo no fallback vetorial (nenhuma modalidade citada). Isso é uma chamada extra ao Supabase que não existia antes nesse branch, sempre, não só quando há match. Ver item de Performance abaixo.
+
+2. **Testes — CONCERNS.** Reproduzi os números independentemente (não confiei só no relato do @dev): `deno check` = 75 erros (bate com a baseline pré-story, confirmada via `git diff 08a53ae~1 08a53ae` — nenhum erro novo introduzido). `deno test --no-check` = 125 passed / 0 failed / 2 ignored (baseline 105 + 20 novos, confirmei a contagem via `git diff --stat` nos 2 arquivos de teste: 13 em `index.test.ts`, 7 em `index.audit.test.ts`). `deno lint` = 3 problemas, idêntico antes/depois do commit (confirmei via checkout do arquivo em ambos os lados) — nenhum lint novo.
+   **Lacuna real:** AC7 promete cobertura pro "fallback do AC2", mas só existe teste unitário de `detectarAtividadeMencionada` retornando `null` — não existe nenhum teste que exercite `buscarAtividadeEspecifica` (mockando Supabase) nem o branch de acompanhamento inteiro (via `handler`, no estilo dos testes de AC3/AC4 que o VAL-23 ganhou). VAL-09 nunca foi testado de ponta a ponta como VAL-23 foi — só as funções puras auxiliares. Isso é uma assimetria de rigor entre as duas metades da story. Recomendo (não-bloqueante): 1 teste de `handler` mockando `chunks_documentos` com atividade dispersa em chunks não-contíguos (reproduzindo o cenário real do Jangurussu em miniatura) provando que o contexto final inclui todas as menções, e 1 teste provando o fallback vetorial dispara quando nenhuma modalidade bate.
+
+3. **Acceptance Criteria — 6/8 plenamente atendidos, 2 parciais (não-bloqueantes).**
+   - AC1: parcialmente atendido — a contagem real (13 chunks de natação, confirmei eu mesma via `execute_sql`) bate com o que o @dev relatou, e a lógica foi validada contra amostras reais, mas não há teste automatizado end-to-end provando isso (mesma lacuna do item 2).
+   - AC2: parcialmente atendido — mesma lacuna, fallback não tem teste de integração dedicado.
+   - AC3, AC4, AC5: atendidos, com teste dedicado e isolado cada um — confirmei rodando a suíte.
+   - AC6: atendido — decisão de design bem documentada no Dev Agent Record, com o porquê.
+   - AC7: parcialmente atendido — o texto do AC promete cobertura do fallback que não existe de fato (ver item 2).
+   - AC8: **não atendido, deliberadamente** — deploy não executado, por instrução explícita do usuário. Disclosure clara no Dev Agent Record e no File List/Tasks. Não é uma falha de qualidade, é um escopo reduzido conscientemente — mas o AC continua tecnicamente em aberto até o deploy acontecer.
+
+4. **Regressão — OK, e bem tratada.** O fix de VAL-09 quebrou 4 testes de guarda pré-existentes (proxy antigo de "carregou visão geral completa" ficou obsoleto porque a nova busca determinística também toca `documentos_rag`). O @dev não enfraqueceu a asserção original pra fazer passar — trocou por uma fingerprint mais precisa (`chunks_documentos` com `.limit(40)`, exclusiva de `carregarProgramacaoMensal`). Conferi a lógica: é correta, continua protegendo contra o mesmo risco original (RAG token bloat), sem abrir uma brecha pro código novo passar despercebido. Zero regressão real na suíte.
+
+5. **Performance — CONCERNS, registrado, não-bloqueante.** `buscarAtividadeEspecifica` adiciona uma consulta completa a `chunks_documentos` (sem `.limit()`) em **toda** mensagem de acompanhamento do canal Institucional, mesmo nas que não citam nenhuma atividade (maioria, provavelmente) — antes, essas mensagens só pagavam 1 embedding + 1 RPC. Pra unidades com `monthly_program` grande (Jangurussu já tem 47 chunks), isso é uma leitura não-trivial em toda mensagem de acompanhamento, incluindo tráfego que nunca vai usar o resultado (cai no fallback mesmo assim). Não é um bug — é um trade-off real de custo que não foi quantificado nem discutido explicitamente no Dev Notes/Dev Agent Record. Recomendo registrar como item de monitoramento pós-deploy (latência/custo do branch de acompanhamento antes/depois), não bloquear a story por isso.
+
+6. **Segurança — OK.** Sem SQL injection (query builder parametrizado, nunca concatenação de string do usuário em SQL). `mensagemTemPedidoEspecifico` final (só `/\?/.test`) não usa regex construída a partir de input do usuário — o risco de ReDoS que uma versão anterior (com `escaparRegex` sobre o texto do usuário) poderia ter foi eliminado ao trocar pra heurística mais simples. Nenhum dado sensível novo exposto em log (os `console.log` novos só citam nome de atividade/unidade, mesmo padrão já usado no arquivo).
+
+7. **Documentação — OK, aliás exemplar.** Dev Agent Record documenta as 4 Tasks incrementalmente (não só um resumo agregado), inclui a autocrítica real do @dev sobre a 1ª versão descartada da heurística, o achado adjacente do `.limit(40)` em `carregarProgramacaoMensal` (fora de escopo, registrado pra virar backlog), e a 4ª rota de `avaliacaoTroca` que a story original não previa. File List completo e preciso — validei que bate com o `git show --stat`.
+
+### Achados adjacentes confirmados (não desta story, registrar como backlog)
+- `carregarProgramacaoMensal` (branch de visão geral) usa `.limit(40)` e o Jangurussu já tem 47 chunks reais — mesma hipótese 1 da investigação [[S-WM-26]], agora com evidência direta de que se aplica. Já registrado pelo @dev; reforço aqui como achado confirmado por mim também.
+
+### Recomendação
+Prosseguir. Sugiro ao Junior: (a) autorizar o deploy quando conveniente (AC8 fica pendente até lá — nada no código impede), (b) considerar os 2 itens de teste faltantes (AC1/AC2/AC7) e o item de performance como trabalho de acompanhamento, não repescagem desta story.
+
+— Quinn, guardião da qualidade 🛡️
