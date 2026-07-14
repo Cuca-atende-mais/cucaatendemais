@@ -1258,26 +1258,34 @@ class TestDebounceDispatch:
         assert meta_adapter_inbound._DEBOUNCE_TASKS == {}, "dict de tarefas pendentes deveria ficar vazio após ambas resolverem"
 
     # ── 4) S-WM-33: valor default da janela ─────────────────────────────────────
-    def test_debounce_segundos_default_e_7s(self, monkeypatch):
-        """S-WM-33: default alterado de 3s pra 7s — decisão do Junior após o diagnóstico
-        (teste ao vivo de 2026-07-14) confirmar que o debounce de 3s funcionava corretamente
-        por desenho (não era bug), só que a janela era curta demais pro intervalo real
-        observado (6,13s entre duas mensagens do mesmo lead). Cobre esse caso com margem."""
+    def test_debounce_segundos_default_e_10s(self, monkeypatch):
+        """S-WM-33: default alterado de 3s pra 7s, e depois pra 10s (decisão atualizada do
+        Junior) — decisão original após o diagnóstico (teste ao vivo de 2026-07-14) confirmar
+        que o debounce de 3s funcionava corretamente por desenho (não era bug), só que a
+        janela era curta demais pro intervalo real observado (6,13s entre duas mensagens do
+        mesmo lead). 10s cobre esse caso com margem ainda maior que os 7s originalmente
+        decididos. Nota: existe só ESTA função/local no código controlando o valor — não há
+        2ª fonte de verdade divergente (achado registrado no Dev Agent Record desta story)."""
         import meta_adapter_inbound
 
         monkeypatch.delenv("META_DEBOUNCE_SECONDS", raising=False)
-        assert meta_adapter_inbound._debounce_segundos() == 7.0
+        assert meta_adapter_inbound._debounce_segundos() == 10.0
 
-    # ── 5) S-WM-33: intervalo real de ~6s cai DENTRO da janela de 7s → agrupa ───
+    # ── 5) S-WM-33: intervalo real de ~6s cai DENTRO da janela decidida → agrupa ─
     @pytest.mark.asyncio
     async def test_mensagens_com_intervalo_de_6s_ficam_dentro_da_janela_de_7s_e_agrupam(self, monkeypatch):
         """S-WM-33: reproduz, em escala reduzida (fator 100x, sem esperar segundos reais), o
         cenário exato do incidente de 2026-07-14 ("Não precisa" / "Obrigado", 6,127s de
-        intervalo real) com a janela NOVA (7s, escalada pra 0,07s) — a 2ª mensagem chega
-        ANTES do timer da 1ª disparar (6 < 7, escalado 0,06 < 0,07), então cancela e
-        reagenda: resultado esperado é 1 SÓ dispatch, com o conteúdo da última mensagem. Com
-        a janela ANTIGA (3s) esse mesmo intervalo teria gerado 2 dispatches separados — era
-        exatamente o comportamento correto (não-bug) confirmado no diagnóstico prévio.
+        intervalo real) testando contra o ponto de margem mais apertado já decidido pro
+        Junior (7s, escalado pra 0,07s) — a 2ª mensagem chega ANTES do timer da 1ª disparar
+        (6 < 7, escalado 0,06 < 0,07), então cancela e reagenda: resultado esperado é 1 SÓ
+        dispatch, com o conteúdo da última mensagem. Com a janela ANTIGA (3s) esse mesmo
+        intervalo teria gerado 2 dispatches separados — era exatamente o comportamento
+        correto (não-bug) confirmado no diagnóstico prévio. O valor de produção atual é 10s
+        (margem ainda maior que os 7s testados aqui) — este teste usa `_debounce_segundos`
+        monkeypatched direto (não lê o default real), então continua válido independente do
+        valor de produção: prova a margem mínima aceitável, não o valor exato configurado
+        (isso é responsabilidade do teste anterior, `test_debounce_segundos_default_e_10s`).
         Usa `_dormir_debounce` real (não o stub instantâneo do autouse) sincronizado por um
         Event pra garantir que o debounce da 1ª mensagem já começou antes de medir o
         intervalo — preserva a proporção real intervalo/janela sem depender de timing frágil.
