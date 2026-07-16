@@ -110,16 +110,21 @@ function comFetchMockado<T>(fn: () => Promise<T>, respostaChatCompletions = "Res
   return fn().finally(() => { globalThis.fetch = fetchOriginal; });
 }
 
-/** Captura as chamadas de console.log durante `fn`, restaurando o original ao final (mesmo
- * espírito de comFetchMockado acima) — usado pelos testes VAL-04 (observabilidade) abaixo. */
+/** Captura as chamadas de console.log/console.warn durante `fn`, restaurando os originais ao
+ * final (mesmo espírito de comFetchMockado acima) — usado pelos testes VAL-04 (observabilidade)
+ * abaixo e pelo alerta de monthly_program grande demais (ambos os níveis vão pra `linhas`, sem
+ * distinção — os testes filtram pelo texto da mensagem, que já é único por caso). */
 function comConsoleLogCapturado<T>(fn: () => Promise<T>): Promise<{ resultado: T; linhas: string[] }> {
   const originalLog = console.log;
+  const originalWarn = console.warn;
   const linhas: string[] = [];
   // deno-lint-ignore no-explicit-any
   console.log = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as any;
+  // deno-lint-ignore no-explicit-any
+  console.warn = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as any;
   return fn()
     .then((resultado) => ({ resultado, linhas }))
-    .finally(() => { console.log = originalLog; });
+    .finally(() => { console.log = originalLog; console.warn = originalWarn; });
 }
 
 function requestFake(mensagem: string): Request {
@@ -236,21 +241,21 @@ Deno.test("AUD-04 (guarda-costas): pergunta de acompanhamento com unidade já sa
     respostasBaseHandler({ unidade_selecionada: "Cuca Mondubim" }), // unidade já resolvida antes, sem troca nesta mensagem
     chamadas,
   );
-  await comFetchMockado(async () => {
-    const resp = await handler(requestFake("Tem natação essa semana?"), supabaseMock);
-    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  });
-  // S-WM-34 (VAL-09): a partir desta story, o branch de acompanhamento também consulta
-  // documentos_rag/chunks_documentos — busca determinística por atividade, ANTES da busca
-  // vetorial (index.ts:1092+). O proxy antigo (qualquer chamada a documentos_rag) não distingue
-  // mais isso de carregarProgramacaoMensal (a real fonte de RAG token bloat que este guard
-  // protege) — a fingerprint precisa é o `.limit(40)` em chunks_documentos, exclusivo de
-  // carregarProgramacaoMensal (buscarAtividadeEspecifica nunca chama .limit() nessa tabela).
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
+  // Tarefa "remover .limit(40)" (2026-07-16): a fingerprint antiga (`.limit(40)` em
+  // chunks_documentos, exclusiva de carregarProgramacaoMensal) deixou de existir — a função não
+  // usa mais `.limit()` nenhum (ver comentário em index.ts sobre por que remover o teto fixo é
+  // seguro dado o contexto de 128k do gpt-4o). A nova fingerprint precisa é o texto do log
+  // exclusivo de carregarProgramacaoMensal ("Chunks diretos monthly_program:") — buscarAtividadeEspecifica
+  // loga um texto diferente ("Busca deterministica de atividade:").
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("Tem natação essa semana?"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const carregouProgramacaoCompleta = linhas.some((l) => l.includes("Chunks diretos monthly_program:"));
   assertEquals(
     carregouProgramacaoCompleta,
     false,
-    "uma pergunta de acompanhamento (unidade já salva, sem seleção nova) não pode recarregar os ~40 chunks da programação completa — isso reintroduziria o RAG token bloat que o commit 168e8d2 corrigiu; deveria usar busca determinística por atividade ou busca vetorial de poucos chunks",
+    "uma pergunta de acompanhamento (unidade já salva, sem seleção nova) não pode recarregar a programação completa via carregarProgramacaoMensal — isso reintroduziria o RAG token bloat que o commit 168e8d2 corrigiu; deveria usar busca determinística por atividade ou busca vetorial de poucos chunks",
   );
 });
 
@@ -692,16 +697,17 @@ Deno.test("VAL-07: reabrir conversa encerrada com unidade já selecionada NÃO d
   const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
   respostas["conversas"] = { data: { id: "conv-1", status: "encerrada", metadata: { unidade_selecionada: "Cuca Barra" } } };
   const supabaseMock = criarSupabaseMock(respostas, chamadas);
-  await comFetchMockado(async () => {
-    const resp = await handler(requestFake("posso escolher outra unidade?"), supabaseMock);
-    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  });
-  // S-WM-34 (VAL-09): fingerprint precisa, ver comentário equivalente no guard AUD-04 acima.
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
+  // Tarefa "remover .limit(40)" (2026-07-16): fingerprint via log, ver comentário no guard
+  // AUD-04 acima (`.limit(40)` deixou de existir em carregarProgramacaoMensal).
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("posso escolher outra unidade?"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const carregouProgramacaoCompleta = linhas.some((l) => l.includes("Chunks diretos monthly_program:"));
   assertEquals(
     carregouProgramacaoCompleta,
     false,
-    "VAL-07/AUD-15: reabrir uma conversa encerrada que já tinha unidade selecionada não deveria recarregar os ~40 chunks da programação completa nem tratar a mensagem como 'primeira mensagem' — é uma continuação, não um primeiro contato",
+    "VAL-07/AUD-15: reabrir uma conversa encerrada que já tinha unidade selecionada não deveria recarregar a programação completa via carregarProgramacaoMensal nem tratar a mensagem como 'primeira mensagem' — é uma continuação, não um primeiro contato",
   );
 });
 
@@ -737,12 +743,13 @@ Deno.test("VAL-08: dígito respondendo pergunta improvisada do GPT (sem menu num
   const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
   respostas["mensagens"] = { data: [{ conteudo: "Qual unidade você quer saber mais?", remetente: "agente" }] };
   const supabaseMock = criarSupabaseMock(respostas, chamadas);
-  await comFetchMockado(async () => {
-    const resp = await handler(requestFake("2"), supabaseMock);
-    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  });
-  // S-WM-34 (VAL-09): fingerprint precisa, ver comentário equivalente no guard AUD-04 acima.
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
+  // Tarefa "remover .limit(40)" (2026-07-16): fingerprint via log, ver comentário no guard
+  // AUD-04 acima (`.limit(40)` deixou de existir em carregarProgramacaoMensal).
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("2"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const carregouProgramacaoCompleta = linhas.some((l) => l.includes("Chunks diretos monthly_program:"));
   assertEquals(
     carregouProgramacaoCompleta,
     false,
@@ -761,12 +768,13 @@ Deno.test("Item 3 / AC5: dígito respondendo uma lista IMPROVISADA pelo GPT (sem
   const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
   respostas["mensagens"] = { data: [{ conteudo: "1. Você pode ver os horários\n2. Ou falar com a unidade", remetente: "agente" }] };
   const supabaseMock = criarSupabaseMock(respostas, chamadas);
-  await comFetchMockado(async () => {
-    const resp = await handler(requestFake("2"), supabaseMock);
-    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  });
-  // S-WM-34 (VAL-09): fingerprint precisa, ver comentário equivalente no guard AUD-04 acima.
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
+  // Tarefa "remover .limit(40)" (2026-07-16): fingerprint via log, ver comentário no guard
+  // AUD-04 acima (`.limit(40)` deixou de existir em carregarProgramacaoMensal).
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("2"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const carregouProgramacaoCompleta = linhas.some((l) => l.includes("Chunks diretos monthly_program:"));
   assertEquals(
     carregouProgramacaoCompleta,
     false,
@@ -791,6 +799,74 @@ Deno.test("Item 3 / AC6 (regressão de VAL-08): dígito respondendo um menu de c
     true,
     "AC6: com o estado confirmando um menu de categorias real, '2' ainda deve carregar a área selecionada — não pode regredir o caso legítimo do VAL-08 original",
   );
+});
+
+// ── Tarefa "remover .limit(40)" (2026-07-16): carregarProgramacaoMensal deixou de truncar a
+// visão geral completa — José Walter e Pici já têm 55 chunks reais em produção hoje (146 e 124
+// atividades na campanha ativa, respectivamente), e o teto antigo cortava 15 desses. Sem
+// substituir por outro número fixo (nenhuma constante prevê o crescimento real, que variou
+// 89-146 atividades nos últimos 3 meses) — só um alerta (console.warn) bem acima de qualquer
+// volume já observado, pra sinalizar import duplicado/corrompido sem depender de monitoração
+// ativa (o projeto não tem nenhuma hoje). ──────────────────────────────────────────────────────
+
+Deno.test("Tarefa 'remover limit(40)': carregarProgramacaoMensal carrega TODOS os chunks, sem truncar em 40 (José Walter/Pici já têm 55 hoje)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  const N_CHUNKS = 55; // contagem real de José Walter/Pici hoje — o antigo .limit(40) cortaria 15
+  respostas["chunks_documentos"] = {
+    data: Array.from({ length: N_CHUNKS }, (_, i) => ({ conteudo: `TURMA_MARCADOR_${i + 1}` })),
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("Mondubim"), supabaseMock), // nome de outra unidade -> trocouUnidade=true -> carregarProgramacaoMensal
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  const faltando = Array.from({ length: N_CHUNKS }, (_, i) => `TURMA_MARCADOR_${i + 1}`)
+    .filter((marcador) => !promptFinal.includes(marcador));
+  assertEquals(
+    faltando,
+    [],
+    `carregarProgramacaoMensal precisa carregar os ${N_CHUNKS} chunks inteiros, sem .limit(40) — marcadores ausentes do prompt final: ${faltando.join(", ")}`,
+  );
+});
+
+Deno.test("Tarefa 'remover limit(40)': NÃO loga alerta com volume normal (90 chunks, abaixo do teto de 100)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["chunks_documentos"] = { data: Array.from({ length: 90 }, () => ({ conteudo: "x" })) };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("Mondubim"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  assertEquals(
+    linhas.some((l) => l.includes("ALERTA")),
+    false,
+    "90 chunks é dentro do maior volume real já visto em produção (55) com folga — não deveria disparar alerta, só faz mais sentido ficar de olho acima de 100",
+  );
+});
+
+Deno.test("Tarefa 'remover limit(40)': loga alerta (console.warn) quando o monthly_program passa de 100 chunks", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["chunks_documentos"] = { data: Array.from({ length: 150 }, () => ({ conteudo: "x" })) };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("Mondubim"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const linhaAlerta = linhas.find((l) => l.includes("ALERTA"));
+  assertEquals(
+    linhaAlerta !== undefined,
+    true,
+    "150 chunks é quase 3x o maior volume real já visto (55) — sem monitoração ativa no projeto hoje, precisa de um sinal que não dependa de alguém checar o log no momento certo",
+  );
+  assertStringIncludes(linhaAlerta ?? "", "150", "o alerta deveria citar a contagem real de chunks, não só um texto genérico");
 });
 
 Deno.test("Item 3: resposta de visão geral grava o novo estado de menu_categoria_ativo pro próximo turno", async () => {

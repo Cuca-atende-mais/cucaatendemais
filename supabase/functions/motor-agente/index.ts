@@ -821,13 +821,39 @@ export function evitarRepeticaoLiteral(respostaCandidata: string, historico: { r
   return respostaCandidata;
 }
 
-/** Carrega todos os chunks do monthly_program ativo para uma unidade diretamente (sem embedding) */
+// Acima deste número de chunks, algo mudou de forma anormal (import duplicado, bug) — não é
+// mais só "o mês teve mais atividade que o normal". 100 chunks equivale a ~200+ atividades no
+// mês (medido em produção: proporção real de ~2,2-2,65 atividades por chunk nas 5 unidades,
+// José Walter hoje com 146 atividades = 55 chunks, o maior já visto). Não trunca nada — só torna
+// visível um caso que hoje passaria batido em `console.log`, já que este projeto não tem
+// nenhuma monitoração ativa (tudo checagem manual no EasyPanel) e um `warn` pelo menos aparece
+// destacado no dashboard de logs do Supabase.
+const CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA = 100;
+
+/**
+ * Carrega todos os chunks do monthly_program ativo para uma unidade diretamente (sem embedding).
+ * Sem `.limit()` — o teto fixo de 40 truncava a visão geral completa das 5 unidades (todas já
+ * ultrapassam 40 chunks hoje: José Walter/Pici em 55, Jangurussu/Mondubim em 47, Barra em 42).
+ * Removido sem substituir por outro número fixo: qualquer chute (80, 100...) sofre do mesmo
+ * problema — não há tendência estável de quantas atividades um mês vai ter (varia 89-146 nas 5
+ * unidades, sem teto prático). Seguro sem limite: `gpt-4o` (GPT_MODEL) tem janela de 128k
+ * tokens; o pior caso real hoje (~64k caracteres somando prompt_sistema + guardrail +
+ * prompt_contexto + este documento + histórico) fica em ~16k tokens — folga de >100k tokens
+ * antes de qualquer risco de estourar o contexto, mesmo com o dado crescendo várias vezes o
+ * teto já observado.
+ * IMPORTANTE: remover o limite sozinho não corrige o bug de rótulo trocado (VAL-09, José
+ * Walter) documentado em S-WM-35 — é complementar, não substituto. Sem o fix do rótulo, mais
+ * dado chega ao prompt, mas o dado errado (idade lida como horário etc.) continua errado.
+ */
 async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClient>, unidade: string): Promise<string> {
   const { data: doc } = await supabase.from("documentos_rag").select("id").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   if (!doc) return "";
-  const { data: chunks } = await supabase.from("chunks_documentos").select("conteudo").eq("documento_id", doc.id).order("chunk_index", { ascending: true }).limit(40);
+  const { data: chunks } = await supabase.from("chunks_documentos").select("conteudo").eq("documento_id", doc.id).order("chunk_index", { ascending: true });
   if (!chunks || chunks.length === 0) return "";
   console.log("[motor-agente v18] Chunks diretos monthly_program: " + chunks.length + " para " + unidade);
+  if (chunks.length > CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA) {
+    console.warn("[motor-agente v18] ALERTA: monthly_program de " + unidade + " tem " + chunks.length + " chunks (> " + CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA + ") — checar se não é import duplicado/corrompido antes de assumir que é só crescimento normal.");
+  }
   return chunks.map((c: { conteudo: string }) => c.conteudo).join("\n");
 }
 
