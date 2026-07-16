@@ -1,7 +1,7 @@
 # S-WM-35 — VAL-24 (guardrail geográfico) + auditoria de campos trocados (VAL-09, família "programação incompleta")
 
 ## Status
-InProgress — Frente A concluída, tarefa "remover .limit(40)" concluída, Frente B1 (auditoria) concluída, Frente B2 (parser barulhento) concluída. B3/C aguardando checkpoint do usuário.
+InProgress — Frente A concluída, tarefa "remover .limit(40)" concluída, Frente B1 (auditoria) concluída, Frente B2 (parser barulhento) concluída, Frente B3 (José Walter) concluída e aplicada em produção. Investigação pendente (tela de criação manual "Criar Programação Mensal") concluída. Frente C aguardando checkpoint do usuário.
 
 ## Origem
 `docs/migracao-meta/PENDENCIAS-institucional-2026-07-15(2).md` (reteste pós-S-WM-34) + investigação de diagnóstico desta sessão (turno anterior a esta story) + instrução direta do usuário pra implementar em 3 frentes (A, B, C), com B dividida em B1 (auditoria) → B2 (parser) → B3 (correção do dado já importado).
@@ -148,11 +148,53 @@ Achado adjacente da S-WM-34 (branch de "visão geral completa" truncava em 40 ch
 
 **Regressão:** `deno test` do `motor-agente` inalterado (131/0/2, não tocado nesta frente). `tsc --noEmit` no `cuca-portal`: 0 erros novos (1 erro pré-existente não relacionado, confirmado via `git stash`). `eslint` no `import-planilha-modal.tsx`: mesma contagem de 17 problemas pré-existentes (14 erros, 3 warnings — todos `no-explicit-any`/`prefer-const`/`no-unescaped-entities` já presentes antes desta mudança, confirmado via `git stash`), zero novos.
 
+## Correção 1 do usuário (pós-B1) — reavaliação da recuperabilidade das 4 unidades
+
+O Junior informou que nenhuma planilha `.xlsx` vai ser buscada de volta com o sócio (as 5 já estão no banco e aprovadas). Isso exigiu reavaliar minha conclusão anterior ("só José Walter é recuperável, as outras 4 precisam do arquivo original"):
+
+- **Reconfirmado com evidência, não só repetido:** contei `faixa_etaria ≠ titulo` em TODO o histórico (não só a campanha ativa) das 4 unidades — **0 em 558 linhas**, atravessando múltiplos meses/campanhas já importados. Não há nenhum outro campo da linha (`local`, `hora_inicio`, `hora_fim`, `descricao`) guardando esse dado por acidente.
+- **Achado mais preciso que a resposta anterior:** dado que o padrão se repete de forma 100% idêntica em todo mês já importado (não só uma vez), a explicação mais provável não é "o parser perdeu o dado" (caso José Walter, onde os valores reais existem sob rótulo errado) — é que **a planilha de origem provavelmente nunca teve uma coluna de Faixa Etária genuinamente distinta pra essas 4 unidades** (célula mesclada repetindo o nome da modalidade, ou coluna inexistente no template). Ou seja: mesmo que o `.xlsx` estivesse disponível, é bem provável que ele não teria essa informação — o buraco pode estar na planilha de origem, não seguro que seja (só) recuperável reimportando.
+- **Conclusão prática:** esse gap passa de "pendente, aguardando arquivo" pra **gap aceito permanentemente por ora** — não bloqueia o VAL-09 relatado.
+- **Achado bônus sobre Jangurussu:** as 66 linhas corrompidas (`categoria='ESPORTE'`, sem S) são **dado duplicado, não perda única** — os mesmos nomes de professor aparecem com contagens quase idênticas na aba correta (`ESPORTES`, 62 linhas: Daniel Reis 19/19, Bruno Santos 7/7, Carlos Frota 8/6). O dado real de Jangurussu já está intacto. Limpeza (desativar as 66 linhas) fica pendente de autorização separada — **não fazer ainda**, conforme instrução do usuário.
+
+## Frente B3 — Correção de José Walter (CONCLUÍDA, aplicada em produção)
+
+**Escopo confirmado:** só José Walter (rotação completa, 100% recuperável via SQL). As 4 unidades sem faixa etária e as 66 linhas de Jangurussu ficam como estão.
+
+**Migration:** `supabase/migrations/20260716000000_swm35_corrige_rotacao_metadata_jose_walter.sql` — remapeia os 5 campos rotacionados (`sexo`↔`vagas`↔`dias_semana`↔`horario`↔`faixa_etaria`, cíclico) e reconstrói `descricao` com o mesmo template de `import-planilha-modal.tsx`. Idempotente por construção: guard `metadata->>'sexo' ~ '^[0-9]+$'` (a assinatura do estado quebrado) — confirmado empiricamente rodando a mesma UPDATE duas vezes: 214 linhas afetadas na 1ª, **0 linhas na 2ª**.
+
+**Verificação antes de aplicar:** simulei a transformação com um SELECT read-only nas 5 turmas noturnas do caso original (09, 10, 19, 20, 23) e conferi visualmente que os valores batiam antes de qualquer escrita.
+
+**Aplicado via `apply_migration`.** Resultado: 214/214 linhas corrigidas, 0 ainda quebradas.
+
+**Pipeline reacionado e confirmado ponta a ponta** (não só a tabela-fonte): `UPDATE campanhas_mensais SET updated_at = NOW()` na campanha ativa de José Walter (`6502b8c5-...`) re-disparou `trigger_indexar_campanha_mensal` (confirmado: `documentos_rag.updated_at` mudou), que em cascata disparou `trigger_indexar_documento` (assíncrono via `pg_net`) → `processar-documento` re-chunkou e re-embedou (confirmado: `chunks_documentos` com `created_at` novo, 38 chunks — contagem diferente de 55 porque o `processar-documento` atual usa um tamanho de chunk diferente do que gerou o índice original em 2026-07-06, mesmo conteúdo, ~43,8K caracteres antes e depois). **Conferido no `chunks_documentos` real, não só no banco de origem:** as 5 turmas noturnas agora aparecem com rótulos batendo os valores (ex.: "NATAÇÃO - Turma 09... Vagas: 25. Público: MISTO (Idade: 15 á 29+ anos). Dias: TER/QUI. Horário: 18h ás 19h.").
+
+**Nota:** `hora_inicio`/`hora_fim` (colunas `time` estruturadas) permanecem `NULL` — já eram nulas antes desta migration (não regressão), não são lidas pelo motor-agente hoje (só `chunks_documentos.conteudo`), e parsear os formatos de horário livre direto em SQL seria mais arriscado que a lógica já testada em TypeScript. Registrado como gap conhecido, fora do escopo desta frente.
+
+**Reteste ao vivo pendente** (mesma pergunta de natação noturna do José Walter) fica pra depois da Frente C, conforme já planejado — mas o dado que o bot lê já está corrigido agora.
+
+## Correção 2 do usuário — investigação da tela de criação manual "Criar Programação Mensal"
+
+**Achado crítico: minha investigação anterior (Correção 2, turno passado) estava incompleta.** Eu tinha concluído "só 3 arquivos tocam `atividades_mensais`, nenhuma criação manual" — buscando literalmente a string `"atividades_mensais"` no código. Isso não encontrou `criar-programacao-modal.tsx` porque esse componente **nunca menciona o nome da tabela** — ele só faz `POST` pra `/api/programacao/importar` (a MESMA rota de API que `import-planilha-modal.tsx` usa), que é quem de fato grava na tabela. Um grep por nome de tabela não pega quem escreve só via uma rota de API compartilhada — exatamente o que o usuário avisou que poderia ter acontecido.
+
+**Localização:** `cuca-portal/src/components/programacao/criar-programacao-modal.tsx` (story `SQS-44`, comentário no topo do arquivo: "Modal de criação interna guiada da Programação Mensal — Coexiste com o upload de planilha, não substitui"). UI wizard de 3 passos (Cabeçalho → Atividades → Revisão), com sub-formulários por categoria (`FormCursos`, `FormEsportes`, `FormDiaDia`), abas CURSOS/ESPORTES/DIA A DIA/ESPECIAIS.
+
+**1. Mesmos campos estruturados?** Sim, exatamente os mesmos — confirmado campo a campo:
+- ESPORTES: `professor`, `turma`, `faixa_etaria` (montado como `` `${faixa_de} a ${faixa_ate} anos` ``), `sexo`, `vagas`, `dias_semana`, `horario` — as mesmas 7 chaves do import de planilha.
+- CURSOS: `ementa`, `educador`, `vagas`, `carga_horaria`, `requisitos`, `periodo`, `horario`, `dias_semana` — idem.
+- O `descricao` é montado com o **mesmo template literal**, comentário no próprio código confirma a intenção: *"Descricao no mesmo formato que o trigger usa para montar o RAG"*.
+
+**2. Mesmo risco de rótulo trocado (B2)?** **Não.** É formulário estruturado 1:1 — cada campo tem seu próprio estado (`set(key, val)`/`setRoot(key, val)`), sem nenhum parsing de texto livre, sem `find()`/regex de header, sem índice de coluna. "Faixa Etária De/Até" são 2 inputs numéricos separados combinados por template literal — determinístico. "Sexo" é um `<Select>` com opções fixas (Misto/Masculino/Feminino) — não dá pra digitar errado. "Dias da Semana" são botões de toggle, não texto. **A classe de bug da B2 (header não reconhecido → fallback silencioso por posição) não tem onde acontecer aqui** — não existe etapa de parsing pra dar errado. Mesma conclusão de `eventos_pontuais` (turno anterior), mas desta vez confirmada para um caminho que REALMENTE grava em `atividades_mensais`.
+
+**3. Frente C precisa cobrir os dois caminhos?** Sim, mas **não precisa de nenhum ajuste extra** — porque os dois caminhos (planilha via B2, formulário manual) escrevem exatamente as mesmas chaves de `metadata` na mesma tabela, através da mesma rota de API. A consulta determinística da Frente C lê `atividades_mensais.metadata` por nome de chave, sem saber (nem precisar saber) qual UI criou a linha. Como o caminho manual é estruturalmente seguro (sem risco de rótulo trocado), o dado que ele produz já chega correto — a Frente C não precisa de lógica condicional por origem.
+
+**Observação menor, não bloqueante:** o formulário salva a campanha com `status: "rascunho"` (não `"aprovado"` direto) — precisa da aprovação manual de sempre (`/programacao/mensal/[id]`) antes de entrar no RAG, mesmo fluxo de qualquer campanha. Sem impacto na conclusão acima.
+
 ## Change Log
 
 | Data | Mudança |
 |---|---|
-| 2026-07-16 | Frente A implementada e commitada (`93e8377`). Frente B1 (auditoria) concluída — 5 achados documentados, 3 deles mudam o escopo original de B3/C. Tarefa `.limit(40)` implementada e commitada (`34d4089`). Frente B2 (parser barulhento) implementada — Vitest introduzido, módulo puro `planilha-parser.ts` extraído, 3 pontos frágeis (categoria, ESPORTES, CURSOS/DIA-A-DIA) cobertos com detecção por nome + abort ruidoso. |
+| 2026-07-16 | Frente A implementada e commitada (`93e8377`). Frente B1 (auditoria) concluída — 5 achados documentados, 3 deles mudam o escopo original de B3/C. Tarefa `.limit(40)` implementada e commitada (`34d4089`). Frente B2 (parser barulhento) implementada — Vitest introduzido, módulo puro `planilha-parser.ts` extraído, 3 pontos frágeis (categoria, ESPORTES, CURSOS/DIA-A-DIA) cobertos com detecção por nome + abort ruidoso. Correção 1 do usuário reavaliada (gap das 4 unidades e Jangurussu são permanentes, não "aguardando arquivo"). Frente B3 (José Walter) aplicada em produção via migration idempotente, confirmada ponta a ponta em `chunks_documentos`. Correção 2 do usuário investigada — achado que minha varredura anterior tinha perdido `criar-programacao-modal.tsx` (escreve via API compartilhada, mesmo risco zero de rótulo trocado). |
 
 ## Dev Agent Record
 
@@ -160,14 +202,17 @@ Achado adjacente da S-WM-34 (branch de "visão geral completa" truncava em 40 ch
 Claude Sonnet 5 (Claude Code)
 
 ### Debug Log References
-Queries de auditoria (B1) rodadas direto contra produção (`cuca`, `svzkrkfzpiqcesloukgb`) via MCP Supabase, todas read-only. Investigação do `.limit(40)` também via `execute_sql` read-only + medição direta de `INSTRUCAO_SEGURANCA.length` via `deno eval`. B2: `npx vitest run`, `npx tsc --noEmit`, `npx eslint` — todos rodados localmente no `cuca-portal`, sem tocar produção.
+Queries de auditoria (B1) rodadas direto contra produção (`cuca`, `svzkrkfzpiqcesloukgb`) via MCP Supabase, todas read-only. Investigação do `.limit(40)` também via `execute_sql` read-only + medição direta de `INSTRUCAO_SEGURANCA.length` via `deno eval`. B2: `npx vitest run`, `npx tsc --noEmit`, `npx eslint` — todos rodados localmente no `cuca-portal`, sem tocar produção. B3: simulação via SELECT read-only antes de aplicar, migration aplicada via `apply_migration`, verificação pós-aplicação via `execute_sql` (idempotência, contagens, conteúdo real de `chunks_documentos`).
 
 ### Completion Notes List
 - Frente A: guardrail geográfico implementado, testado, commitado isoladamente. Suíte 128/0/2, zero regressão.
 - Frente B1: auditoria completa das 5 unidades feita por classificação de padrão (sem acesso às planilhas originais). 2 padrões de rotação distintos (José Walter recuperável; as outras 4 não). 2 achados extras: Jangurussu/ESPORTE corrompido; pipeline de trigger de 3 estágios ligando `atividades_mensais` → `documentos_rag` → `chunks_documentos`.
 - Tarefa `.limit(40)`: removido sem substituir por número fixo, com `console.warn` acima de 100 chunks como rede de segurança visível. 131/0/2.
 - Frente B2: Vitest introduzido (autorizado), lógica de detecção extraída pra módulo puro, 3 pontos frágeis cobertos (categoria/ESPORTES/CURSOS/DIA-A-DIA), abort ruidoso em vez de fallback silencioso. 22 testes novos (Vitest), zero regressão no `motor-agente` (Deno) nem no typecheck/lint do portal.
-- B3/C: aguardando decisão do usuário sobre o escopo revisado antes de prosseguir.
+- Correção 1: reavaliação com evidência (558 linhas, 0 exceções) mudou o entendimento de "aguardando arquivo" pra "gap permanente, provavelmente nunca existiu na fonte". Jangurussu confirmado como duplicata, não perda.
+- Frente B3: José Walter corrigido (metadata + descricao), migration idempotente aplicada e confirmada, pipeline completo reacionado e verificado ponta a ponta em `chunks_documentos`.
+- Correção 2: achado que minha varredura de "3 arquivos tocam atividades_mensais" (turno anterior) estava incompleta — `criar-programacao-modal.tsx` escreve via `/api/programacao/importar` (rota compartilhada), sem menção literal ao nome da tabela, por isso passou despercebido no grep anterior. Confirmado que usa os mesmos campos de metadata e é estruturalmente seguro (sem parsing de texto livre).
+- Frente C: aguardando decisão do usuário — nenhum trabalho iniciado ainda.
 
 ### File List
 - `supabase/functions/motor-agente/index.ts` (Frente A; tarefa `.limit(40)`)
@@ -178,3 +223,4 @@ Queries de auditoria (B1) rodadas direto contra produção (`cuca`, `svzkrkfzpiq
 - `cuca-portal/src/lib/programacao/planilha-parser.ts` (novo) — Frente B2
 - `cuca-portal/src/lib/programacao/planilha-parser.test.ts` (novo) — Frente B2
 - `cuca-portal/src/components/programacao/import-planilha-modal.tsx` — Frente B2
+- `supabase/migrations/20260716000000_swm35_corrige_rotacao_metadata_jose_walter.sql` (novo) — Frente B3, aplicado em produção
