@@ -378,6 +378,13 @@ export const INSTRUCAO_SEGURANCA = [
   "   Ao final, diga: 'Quer saber horarios e detalhes de alguma modalidade especifica?'",
   "   So mostre horarios completos quando o usuario perguntar sobre uma modalidade especifica.",
   "   ISSO GARANTE que TODAS as modalidades aparecem e nenhuma fica de fora.",
+  "",
+  "7. NUNCA invente proximidade geografica, distancia ou tempo de deslocamento entre um bairro",
+  "   e uma unidade CUCA. Isso inclui responder qual unidade e 'mais perto' ou 'mais proxima' de",
+  "   um bairro/endereco informado pelo usuario. So afirme isso se o CONTEXTO trouxer, de forma",
+  "   explicita, dado real de bairro/endereco/distancia das unidades. Sem esse dado no contexto,",
+  "   diga com suas proprias palavras que nao tem essa informacao pra comparar e sugira que a",
+  "   pessoa informe qual unidade prefere, ou confirme a distancia direto com a unidade.",
 ].join("\n");
 
 const UNIDADES_VALIDAS = ['Cuca Barra', 'Cuca Jangurussu', 'Cuca Mondubim', 'Cuca Pici', 'Cuca José Walter'];
