@@ -4,6 +4,7 @@
 !README.md
 !SCHEMA_BANCO_DADOS.md
 !docs/**/*.md
+!plans/*.md
 *.xlsx
 
 # SQS-51 (A7): MCP config contém token Supabase — nunca versionar
