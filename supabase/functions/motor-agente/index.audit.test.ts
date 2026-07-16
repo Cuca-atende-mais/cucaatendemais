@@ -934,6 +934,24 @@ Deno.test("VAL-02: guardrail (regra 1) inclui exemplo negativo explícito contra
   );
 });
 
+// ── VAL-24 (achado geo, PENDENCIAS-institucional-2026-07-15): guardrail contra alucinar ────
+// proximidade geografica. Mesma limitacao do teste VAL-02 acima: so prova que o texto do
+// guardrail contem a proibicao explicita — a eficacia real (o GPT de fato obedecer) depende de
+// reteste manual em producao, nao e testavel de forma deterministica com temperatura > 0.
+Deno.test("VAL-24 (geo): guardrail (regra 7) proibe explicitamente inventar proximidade geografica sem dado real no contexto", () => {
+  const texto = INSTRUCAO_SEGURANCA.toLowerCase();
+  assertStringIncludes(
+    texto,
+    "proximidade geografica",
+    "achado 2026-07-15: bot respondeu 'CUCA José Walter' e depois 'CUCA Pici' pra mesma pergunta de proximidade (Bom Jardim), com o MESMO contexto carregado (resumo_rede + FAQ, nenhum dos dois com dado de bairro/distancia) — regra 7 precisa proibir isso explicitamente, regras 1-2 (atividade/horario/professor/modalidade) nao cobrem geografia",
+  );
+  assertStringIncludes(
+    texto,
+    "mais perto",
+    "a regra precisa cobrir o fraseado real que causou o achado ('qual CUCA fica mais perto'), nao so um termo tecnico generico",
+  );
+});
+
 // ── Backlog 4a: fallback para outros canais da Rede CUCA ────────────────────────────────────
 // Regra de segurança inegociável: o número de WhatsApp de outro canal NUNCA vem do texto que
 // o GPT gerou — só a INTENÇÃO, via tag [[ENCAMINHAR:canal]]. O código busca o número real em
