@@ -1449,3 +1449,161 @@ Deno.test("S-WM-34 AC2: branch de acompanhamento cai no fallback vetorial quando
   const promptFinal = bodiesEnviados.find((b) => b.includes("Horário de funcionamento")) ?? "";
   assertStringIncludes(promptFinal, "Horário de funcionamento", "AC2: o conteúdo do fallback vetorial deveria chegar no prompt final");
 });
+
+// ── S-WM-35 (Frente C) — busca determinística em atividades_mensais.metadata ────────────────────
+// 6 cenários planejados: dado correto pós-B3, gap conhecido → "nao informado", modalidade não
+// reconhecida → cai pro fallback S-WM-34, visão geral com/sem trocaComPedidoEspecifico, e
+// documentos_rag sem doc ativo. Mesmo padrão de integração via `handler` + mock já usado nos
+// testes S-WM-34 AC1-AC4 acima — exercita as 3 camadas (Frente C → S-WM-34 → vetorial) de
+// ponta a ponta, não só a função pura (já coberta em index.test.ts).
+
+Deno.test("S-WM-35: dado correto pós-B3 (José Walter) — busca determinística em atividades_mensais recupera TODAS as turmas, sem cair nos fallbacks", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca José Walter" }); // sem troca neste turno -> branch de acompanhamento
+  respostas["documentos_rag"] = { data: { id: "doc-1", metadados: { campanha_id: "camp-jw" } } };
+  respostas["atividades_mensais"] = {
+    data: [
+      { titulo: "NATAÇÃO", metadata: { turma: "Turma 09", professor: "CIRILLO", vagas: "25", sexo: "MISTO", dias_semana: "TER/QUI", horario: "18h ás 19h", faixa_etaria: "15 á 29+ anos" } },
+      { titulo: "NATAÇÃO", metadata: { turma: "Turma 10", professor: "CIRILLO", vagas: "25", sexo: "MISTO", dias_semana: "TER/QUI", horario: "19h ás 20h", faixa_etaria: "15 á 29+ anos" } },
+      { titulo: "JUDÔ", metadata: { turma: "Turma 01", professor: "Outro Professor", vagas: "20", sexo: "MISTO", dias_semana: "SEG/QUA", horario: "17h ás 18h", faixa_etaria: "10 á 14 anos" } },
+    ],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("atividade especifica")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 09", "deveria incluir a Turma 09 de natação");
+  assertStringIncludes(promptFinal, "Turma 10", "deveria incluir a Turma 10 de natação — as 2 juntas provam que não para no 1º match");
+  assertStringIncludes(promptFinal, "Idade: 15 á 29+ anos", "dado corrigido pela B3 (José Walter) deveria chegar correto, não 'nao informado'");
+  assertEquals(promptFinal.includes("JUDÔ"), false, "não deveria misturar outra modalidade na resposta de natação");
+
+  const chamouFallbackTexto = chamadas.some((c) => c.tabela === "chunks_documentos");
+  assertEquals(chamouFallbackTexto, false, "quando a busca determinística (metadata) encontra a atividade, não deveria cair no fallback de texto (S-WM-34)");
+  const chamouBuscaVetorial = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chamouBuscaVetorial, false, "nem no fallback vetorial — a 1ª camada já resolveu");
+});
+
+Deno.test("S-WM-35: gap conhecido (Barra/Jangurussu/Mondubim/Pici) — faixa_etaria idêntica ao título vira 'nao informado' na resposta, nunca repete o dado errado", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["documentos_rag"] = { data: { id: "doc-2", metadados: { campanha_id: "camp-barra" } } };
+  respostas["atividades_mensais"] = {
+    data: [
+      { titulo: "Natação", metadata: { turma: "Turma 11", professor: "CIRILLO", vagas: "25", sexo: "Misto", dias_semana: "Qua e Sex", horario: "07:00 ás 08:00", faixa_etaria: "NATAÇÃO" } },
+    ],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de manhã?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("atividade especifica")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 11", "deveria incluir a turma encontrada mesmo com o gap conhecido no campo faixa_etaria");
+  assertStringIncludes(promptFinal, "Idade: nao informado", "gap conhecido (S-WM-35 Achado 2, Frente B1) deveria virar 'nao informado', não repetir o título como se fosse a faixa etária real");
+  assertEquals(promptFinal.includes("Idade: Natação") || promptFinal.includes("Idade: NATAÇÃO"), false, "nunca deveria expor o dado corrompido pro lead");
+});
+
+Deno.test("S-WM-35: modalidade não reconhecida em atividades_mensais cai pro fallback S-WM-34 (busca de texto), sem erro", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: { id: "doc-3", metadados: { campanha_id: "camp-jg" } } };
+  // atividades_mensais só tem Futsal -> detectarAtividadeMencionada não encontra "natação" nessa
+  // camada, precisa cair pro fallback de texto (chunks_documentos), que tem a modalidade certa.
+  respostas["atividades_mensais"] = { data: [{ titulo: "Futsal", metadata: { turma: "A", professor: "Bruno Santos" } }] };
+  respostas["chunks_documentos"] = {
+    data: [
+      { conteudo: "== ESPORTES == • Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 1 . Professor: Daniel Reis. Dias: Ter e Qui. Horário: 7h às 8h." },
+      { conteudo: "• Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 2 . Professor: Daniel Reis. Dias: Qua e Sex. Horário: 18h às 19h." },
+    ],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const tentouCamada1 = chamadas.some((c) => c.tabela === "atividades_mensais");
+  assertEquals(tentouCamada1, true, "a 1ª camada (metadata) precisa ser tentada antes de cair pro fallback, não pulada");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("atividade especifica")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 1", "sem match na 1ª camada, o fallback S-WM-34 (texto) deveria recuperar a atividade normalmente");
+  assertStringIncludes(promptFinal, "Turma 2", "as 2 juntas provam que o fallback funcionou por completo, não só parcialmente");
+
+  const chamouBuscaVetorial = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chamouBuscaVetorial, false, "a 2ª camada (S-WM-34) já resolveu — não deveria precisar da 3ª (vetorial)");
+});
+
+Deno.test("S-WM-35: visão geral COM trocaComPedidoEspecifico soma o bloco 'ATIVIDADE ESPECIFICA' ao resumo geral, sem substituí-lo", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  // Mesmo cenário do S-WM-34 AC3 (troca de unidade com pedido específico embutido, caso
+  // reproduzido ao vivo) — reaproveitado aqui pra provar que a Frente C soma dado exato ao
+  // resumo geral quando trocaComPedidoEspecifico=true.
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: { id: "doc-4", metadados: { campanha_id: "camp-mb" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", metadata: { turma: "Turma 05", professor: "Vanessa Andrade", vagas: "30", sexo: "Misto", dias_semana: "Seg/Qua/Sex", horario: "19h às 20h", faixa_etaria: "6 a 12 anos" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("e no Mondubim, tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertStringIncludes(promptFinal, "PROGRAMACAO MENSAL ATUAL", "o resumo geral continua sendo carregado — a Frente C SOMA, não substitui");
+  assertStringIncludes(promptFinal, "ATIVIDADE ESPECIFICA (dado exato)", "quando há pedido específico embutido na troca, deveria somar o bloco de dado exato");
+  assertStringIncludes(promptFinal, "Turma 05", "o bloco somado deveria conter o dado real da atividade pedida");
+});
+
+Deno.test("S-WM-35: visão geral SEM trocaComPedidoEspecifico NÃO soma o bloco 'ATIVIDADE ESPECIFICA' (comportamento são, sem regressão do AC4/S-WM-34)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  // Mesmo cenário do S-WM-34 AC4 (troca de unidade sem pedido específico, só o nome).
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: { id: "doc-5", metadados: { campanha_id: "camp-mb" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", metadata: { turma: "Turma 05", professor: "Vanessa Andrade" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("Mondubim"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertStringIncludes(promptFinal, "Apresente um resumo geral", "sem pedido específico, o comportamento são (resumo geral) precisa continuar intacto");
+  assertEquals(promptFinal.includes("ATIVIDADE ESPECIFICA (dado exato)"), false, "sem trocaComPedidoEspecifico, a Frente C não deveria disparar — nem consultar atividades_mensais à toa");
+
+  const consultouAtividadesMensais = chamadas.some((c) => c.tabela === "atividades_mensais");
+  assertEquals(consultouAtividadesMensais, false, "confirma que buscarAtividadeDeterministica nem chegou a ser chamada nesse caminho — a condição trocaComPedidoEspecifico é checada antes");
+});
+
+Deno.test("S-WM-35: documentos_rag sem doc ativo — as 2 camadas determinísticas retornam null com segurança, cai pro fallback vetorial sem quebrar", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: null }; // sem monthly_program ativo pra essa unidade
+  respostas["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "Horário de funcionamento: seg a sáb, 8h às 21h.", fonte_tipo: "FAQ" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500) — sem doc ativo, tem que degradar com segurança, não quebrar");
+
+  const consultouAtividadesMensais = chamadas.some((c) => c.tabela === "atividades_mensais");
+  assertEquals(consultouAtividadesMensais, false, "sem documento ativo (sem campanha_id pra correlacionar), nem deveria tentar consultar atividades_mensais");
+
+  const chamouBuscaVetorial = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chamouBuscaVetorial, true, "as 2 camadas determinísticas (metadata e texto) precisam degradar com segurança pro fallback vetorial, já que nenhuma tem documento ativo pra consultar");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("Horário de funcionamento")) ?? "";
+  assertStringIncludes(promptFinal, "Horário de funcionamento", "o conteúdo do fallback vetorial deveria chegar no prompt final mesmo nesse cenário degradado");
+});

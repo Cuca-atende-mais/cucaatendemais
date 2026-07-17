@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica } from "./index.ts";
 
 // ── S-WM-34 (VAL-09) — normalizarTexto ──────────────────────────────────────
 Deno.test("normalizarTexto: remove acento e lowercase", () => {
@@ -302,4 +302,41 @@ Deno.test("dividirRespostaEmPartes: resposta 100% lista (sem abertura nem fecham
 Deno.test("dividirRespostaEmPartes: uma pergunta com hífen não é confundida com item de lista (linha termina em '?')", () => {
   const texto = "Oi! Você quer saber - de forma rápida - qual o horário de hoje?";
   assertEquals(dividirRespostaEmPartes(texto), [texto]);
+});
+
+// ── S-WM-35 (Frente C) — formatarLinhaAtividadeDeterministica ──────────────────
+Deno.test("formatarLinhaAtividadeDeterministica: campos completos (dado correto pós-B3, José Walter) formatam no template esperado", () => {
+  const linha = formatarLinhaAtividadeDeterministica("NATAÇÃO", {
+    turma: "Turma 09", professor: "CIRILLO", vagas: "25", sexo: "MISTO",
+    dias_semana: "TER/QUI", horario: "18h ás 19h", faixa_etaria: "15 á 29+ anos",
+  });
+  assertEquals(
+    linha,
+    "Esporte Modalidade: NATAÇÃO - Turma Turma 09. Professor: CIRILLO. Vagas: 25. Publico: MISTO (Idade: 15 á 29+ anos). Dias: TER/QUI. Horario: 18h ás 19h.",
+  );
+});
+
+Deno.test("formatarLinhaAtividadeDeterministica: gap conhecido (S-WM-35 Achado 2) — faixa_etaria igual ao título vira 'nao informado', não repete o dado errado", () => {
+  const linha = formatarLinhaAtividadeDeterministica("Natação", {
+    turma: "Turma 11", professor: "CIRILLO", vagas: "25", sexo: "Misto",
+    dias_semana: "Qua e Sex", horario: "07:00 ás 08:00", faixa_etaria: "NATAÇÃO", // gap: idêntico ao título (case/acento variando, normalizarTexto dos dois lados)
+  });
+  assertEquals(linha.includes("Idade: nao informado"), true, "faixa_etaria repetindo o título (assinatura do gap conhecido) deveria virar 'nao informado', não ser exibida como se fosse um dado real");
+  assertEquals(linha.includes("Idade: Natação") || linha.includes("Idade: NATAÇÃO"), false, "nunca deveria repetir o valor corrompido no texto final");
+});
+
+Deno.test("formatarLinhaAtividadeDeterministica: campos ausentes/vazios viram 'nao informado', nunca quebra nem inventa", () => {
+  const linha = formatarLinhaAtividadeDeterministica("Judô", { turma: "B", professor: undefined, vagas: null, sexo: "", dias_semana: "Ter e Qui" });
+  assertEquals(
+    linha,
+    "Esporte Modalidade: Judô - Turma B. Professor: nao informado. Vagas: nao informado. Publico: nao informado (Idade: nao informado). Dias: Ter e Qui. Horario: nao informado.",
+  );
+});
+
+Deno.test("formatarLinhaAtividadeDeterministica: metadata null (linha sem nenhum campo estruturado) não quebra, tudo vira 'nao informado'", () => {
+  const linha = formatarLinhaAtividadeDeterministica("Futsal", null);
+  assertEquals(
+    linha,
+    "Esporte Modalidade: Futsal - Turma nao informado. Professor: nao informado. Vagas: nao informado. Publico: nao informado (Idade: nao informado). Dias: nao informado. Horario: nao informado.",
+  );
 });

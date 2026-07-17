@@ -338,6 +338,37 @@ export function mensagemTemPedidoEspecifico(texto: string): boolean {
 }
 
 /**
+ * S-WM-35 (Frente C): formata uma linha de `atividades_mensais.metadata` (categoria ESPORTES)
+ * no mesmo template usado na importação/criação (`import-planilha-modal.tsx`/
+ * `criar-programacao-modal.tsx`: "Esporte Modalidade: X - Turma Y. Professor: ...") — dado
+ * estruturado direto da tabela-fonte, sem depender do texto já chunkeado/embeddado.
+ * Guarda o gap conhecido (S-WM-35, Achado 2, Frente B1): em 4 das 5 unidades (Barra,
+ * Jangurussu, Mondubim, Pici), `faixa_etaria` está sistematicamente gravado como o próprio
+ * `titulo` da modalidade (nunca uma faixa etária real) — confirmado 558/558 linhas, gap
+ * permanente na planilha de origem, não um bug do parser recuperável por remap. Repetir esse
+ * valor pro usuário seria pior que omitir (dado obviamente errado, não só ausente). José
+ * Walter não bate nessa condição depois da correção da Frente B3 (migration
+ * `20260716000000_swm35_corrige_rotacao_metadata_jose_walter.sql`).
+ * Qualquer outro campo ausente/vazio também vira "nao informado" — nunca quebra (undefined
+ * vazando pro prompt) nem inventa (Constitution Art. IV).
+ */
+export function formatarLinhaAtividadeDeterministica(titulo: string, metadata: Record<string, unknown> | null): string {
+  const campo = (valor: unknown): string => (typeof valor === "string" && valor.trim() !== "" ? valor : "nao informado");
+  const meta = metadata ?? {};
+  const turma = campo(meta.turma);
+  const professor = campo(meta.professor);
+  const vagas = campo(meta.vagas);
+  const sexo = campo(meta.sexo);
+  const diasSemana = campo(meta.dias_semana);
+  const horario = campo(meta.horario);
+  const faixaEtariaBruta = meta.faixa_etaria;
+  const faixaEtaria = typeof faixaEtariaBruta === "string" && faixaEtariaBruta.trim() !== "" && normalizarTexto(faixaEtariaBruta) !== normalizarTexto(titulo)
+    ? faixaEtariaBruta
+    : "nao informado";
+  return "Esporte Modalidade: " + titulo + " - Turma " + turma + ". Professor: " + professor + ". Vagas: " + vagas + ". Publico: " + sexo + " (Idade: " + faixaEtaria + "). Dias: " + diasSemana + ". Horario: " + horario + ".";
+}
+
+/**
  * VAL-02 (docs/migracao-meta/VALIDACAO-producao-institucional.md): guardrail anti-alucinação
  * do código. Extraído para módulo (era inline em `handler`) para permitir teste automatizado
  * do texto exato — sem isso, uma regressão na regra 1 (ex.: perder o exemplo negativo abaixo)
@@ -893,6 +924,52 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
 }
 
 /**
+ * S-WM-35 (Frente C): busca determinística por atividade direto em `atividades_mensais.metadata`
+ * (categoria ESPORTES) — dado estruturado na tabela-fonte, sem depender do texto já
+ * chunkeado/embeddado (`buscarAtividadeEspecifica`, S-WM-34, continua existindo como 2ª camada
+ * de fallback). Correlação com o `monthly_program` ativo da unidade via
+ * `documentos_rag.metadados->>'campanha_id'` — mesmo campo que `trigger_indexar_campanha_mensal`
+ * grava (`supabase/migrations`, confirmado via `execute_sql` contra o `pg_proc` real em
+ * produção nesta sessão); o trigger também desativa o `monthly_program` de campanhas antigas da
+ * mesma unidade ao aprovar uma nova, então "documento ativo" já garante "campanha aprovada mais
+ * recente", sem filtro de status adicional aqui.
+ * Escopo desta frente: só categoria ESPORTES (mesmo escopo que `buscarAtividadeEspecifica` já
+ * tinha) — CURSOS/DIA A DIA ficam de fora.
+ * Reconhecimento de modalidade reusa `detectarAtividadeMencionada` (S-WM-34, já validado contra
+ * erro de digitação — retorna `null` com segurança, nunca confunde modalidades parecidas, ver
+ * Dev Agent Record) contra os `titulo`s distintos da própria tabela (não do texto chunkeado).
+ * Comparação de igualdade usa `normalizarTexto` dos dois lados (não `===` sobre string crua) —
+ * protege contra variação de caixa/acento entre linhas da MESMA modalidade (planilhas de origem
+ * não são 100% consistentes, confirmado na auditoria B1).
+ * Retorna `null` quando não há documento ativo, não há `campanha_id` no `documentos_rag`, não há
+ * nenhuma linha ESPORTES pra essa campanha, ou a modalidade não é reconhecida — em todos os
+ * casos o caller cai pra próxima camada (rede de segurança preservada, mesmo padrão do S-WM-34).
+ */
+async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string): Promise<string | null> {
+  const { data } = await supabase.from("documentos_rag").select("id, metadados").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
+  const doc = data as { id: string; metadados: Record<string, unknown> | null } | null;
+  if (!doc) return null;
+
+  const campanhaId = doc.metadados && typeof doc.metadados === "object" ? doc.metadados["campanha_id"] : null;
+  if (typeof campanhaId !== "string" || !campanhaId) return null;
+
+  const { data: atividades } = await supabase.from("atividades_mensais").select("titulo, metadata").eq("campanha_id", campanhaId).eq("categoria", "ESPORTES");
+  const linhas = atividades as { titulo: string; metadata: Record<string, unknown> | null }[] | null;
+  if (!linhas || linhas.length === 0) return null;
+
+  const titulosDistintos = [...new Set(linhas.map((l) => l.titulo).filter((t): t is string => typeof t === "string" && t.trim() !== ""))];
+  const atividade = detectarAtividadeMencionada(mensagem, titulosDistintos);
+  if (!atividade) return null;
+
+  const atividadeNorm = normalizarTexto(atividade);
+  const linhasRelevantes = linhas.filter((l) => typeof l.titulo === "string" && normalizarTexto(l.titulo) === atividadeNorm);
+  if (linhasRelevantes.length === 0) return null;
+
+  console.log("[motor-agente v18] Busca deterministica (metadata) de atividade: \"" + atividade + "\" (" + linhasRelevantes.length + " turmas, unidade=" + unidade + ")");
+  return linhasRelevantes.map((l) => formatarLinhaAtividadeDeterministica(l.titulo, l.metadata)).join("\n");
+}
+
+/**
  * S-WM-32 (Escopo item 2/5): carrega o `resumo_rede` ativo por INTEIRO, direto de
  * `documentos_rag.conteudo` — nunca via `chunks_documentos`/`buscar_chunks_similares`
  * (`resumo_rede` nunca é chunkeado nem embeddado, ver migration
@@ -1262,6 +1339,20 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         contextRAG = "\n\n--- PROGRAMACAO MENSAL ATUAL (" + unidadeEfetiva + ") ---" + instrucaoArea + "\n" + conteudoPrograma;
       }
 
+      // S-WM-35 (Frente C): quando a mensagem que causou a troca de unidade ja trazia um pedido
+      // especifico junto (trocaComPedidoEspecifico), SOMA um bloco de dado exato
+      // (atividades_mensais.metadata) ao resumo geral acima - nao substitui. O resumo geral
+      // continua sendo a base da resposta (a bifurcacao de instrucao do S-WM-34, mais abaixo no
+      // promptFinal, ja cuida de pedir uma resposta direta ao pedido quando esse bloco existe);
+      // este bloco so garante que o dado exato da atividade pedida esta disponivel com certeza,
+      // em vez de depender so do que sobrar nos ~40+ chunks do resumo geral.
+      if (trocaComPedidoEspecifico) {
+        const conteudoAtividadeEspecifica = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal);
+        if (conteudoAtividadeEspecifica) {
+          contextRAG += "\n\n--- ATIVIDADE ESPECIFICA (dado exato) ---\n" + conteudoAtividadeEspecifica;
+        }
+      }
+
       // Complementa com eventos pontuais via busca vetorial
       const embedding = await gerarEmbedding(textoFinal, openaiKey);
       const { data: chunksEventos } = await supabase.rpc("buscar_chunks_similares", {
@@ -1277,11 +1368,18 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       }
     } else if (temUnidadeDefinida && isAgenteProgramacao) {
       // Pergunta de acompanhamento (conversa em andamento, mesma unidade, sem selecao de menu):
-      // S-WM-34 (VAL-09) - primeiro tenta busca deterministica por nome de atividade (evita o
-      // limite de 5 chunks da busca vetorial quando a atividade esta dispersa em muitos chunks
-      // nao-contiguos). So cai pra busca vetorial (comportamento anterior, rede de seguranca)
-      // quando a mensagem nao cita nenhuma modalidade conhecida do monthly_program ativo.
-      const conteudoAtividade = await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal);
+      // 3 camadas, cada uma cai pra proxima automaticamente quando retorna null (mesmo padrao
+      // if/else que o S-WM-34 ja usava pra cair da busca deterministica por texto pra busca
+      // vetorial - nenhuma condicao extra foi adicionada aqui):
+      // 1) S-WM-35 (Frente C) - busca deterministica em atividades_mensais.metadata (dado
+      //    estruturado na tabela-fonte, categoria ESPORTES).
+      // 2) S-WM-34 (VAL-09) - busca deterministica por texto nos chunks do monthly_program
+      //    (evita o limite de 5 chunks da busca vetorial quando a atividade esta dispersa em
+      //    muitos chunks nao-contiguos).
+      // 3) Busca vetorial (comportamento original, rede de seguranca) - so quando a mensagem
+      //    nao cita nenhuma modalidade conhecida em nenhuma das duas camadas deterministicas.
+      const conteudoAtividade = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal)
+        ?? await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal);
       if (conteudoAtividade) {
         contextRAG = "\n\n--- CONTEXTO (atividade especifica) ---\n" + conteudoAtividade;
       } else {
