@@ -147,6 +147,17 @@ describe("detectarColunas — DIA A DIA / ESPECIAIS", () => {
     }
   })
 
+  it("fixture 'horário fim antes de horário início': não mapeia início e fim para a mesma coluna", () => {
+    const headerHorariosCompostos = ["Nº", "Sessão", "Data", "Dia da Semana", "Programa", "Atividade", "Horário Fim", "Horário Início", "Local", "Informações"]
+    const r = detectarColunas(headerHorariosCompostos, COLUNAS_DIA_A_DIA)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.indices.hora_fim).toBe(6)
+      expect(r.indices.hora_inicio).toBe(7)
+      expect(r.indices.hora_inicio).not.toBe(r.indices.hora_fim)
+    }
+  })
+
   it("fixture 'coluna ausente': sem 'Local', aborta identificando a chave", () => {
     const headerSemLocal = ["Nº", "Sessão", "Data", "Dia da Semana", "Programa", "Atividade", "Início", "Fim", "Informações"]
     const r = detectarColunas(headerSemLocal, COLUNAS_DIA_A_DIA)
@@ -161,6 +172,18 @@ describe("detectarColunas — DIA A DIA / ESPECIAIS", () => {
       expect(r.indices.titulo).toBe(4) // "Programa"
       expect(r.indices.atividade).toBe(5) // "Atividade"
       expect(r.indices.titulo).not.toBe(r.indices.atividade)
+    }
+  })
+
+  it("aborta quando duas chaves esperadas apontam para a mesma coluna detectada", () => {
+    const r = detectarColunas(["Horário"], [
+      { chave: "hora_inicio", regex: /hor[aá]rio/ },
+      { chave: "hora_fim", regex: /hor[aá]rio/ },
+    ])
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.faltando).toEqual([])
+      expect(r.colisoes).toEqual([{ indice: 0, chaves: ["hora_inicio", "hora_fim"], header: "horário" }])
     }
   })
 })
