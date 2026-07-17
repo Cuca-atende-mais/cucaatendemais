@@ -1,7 +1,7 @@
 # S-WM-35 — VAL-24 (guardrail geográfico) + auditoria de campos trocados (VAL-09, família "programação incompleta")
 
 ## Status
-InProgress — Frente A concluída, tarefa "remover .limit(40)" concluída, Frente B1 (auditoria) concluída, Frente B2 (parser barulhento) concluída, Frente B3 (José Walter) concluída e aplicada em produção. Investigação pendente (tela de criação manual "Criar Programação Mensal") concluída. Frente C aguardando checkpoint do usuário.
+Ready for Review — Frente A concluída, tarefa "remover .limit(40)" concluída, Frente B1 (auditoria) concluída, Frente B2 (parser barulhento) concluída, Frente B3 (José Walter) concluída e aplicada em produção. Investigação pendente (tela de criação manual "Criar Programação Mensal") concluída. Frente C (consulta determinística em `atividades_mensais.metadata`) implementada, testada, commit local — deploy pendente de autorização (nenhum push/PR/deploy nesta sessão, instrução explícita do usuário).
 
 ## Origem
 `docs/migracao-meta/PENDENCIAS-institucional-2026-07-15(2).md` (reteste pós-S-WM-34) + investigação de diagnóstico desta sessão (turno anterior a esta story) + instrução direta do usuário pra implementar em 3 frentes (A, B, C), com B dividida em B1 (auditoria) → B2 (parser) → B3 (correção do dado já importado).
@@ -190,11 +190,41 @@ O Junior informou que nenhuma planilha `.xlsx` vai ser buscada de volta com o s�
 
 **Observação menor, não bloqueante:** o formulário salva a campanha com `status: "rascunho"` (não `"aprovado"` direto) — precisa da aprovação manual de sempre (`/programacao/mensal/[id]`) antes de entrar no RAG, mesmo fluxo de qualquer campanha. Sem impacto na conclusão acima.
 
+## Frente C — Consulta determinística em `atividades_mensais.metadata` (CONCLUÍDA)
+
+**Contexto:** o Achado 5 (Frente B1) tinha deixado em aberto se a Frente C ainda seria necessária depois da B3 corrigir o `descricao`/pipeline de reindexação de José Walter — a hipótese era que o problema real pudesse ser só dado sujo, não uma limitação da busca por texto. Retestado ao vivo (checkpoint do usuário) e confirmado: a busca ainda tem valor mesmo com o dado limpo, porque `buscarAtividadeEspecifica` (S-WM-34) depende do texto já chunkeado/embeddado — a Frente C lê direto da tabela-fonte estruturada, mais confiável e imune a qualquer variação futura de chunking.
+
+### Desenho confirmado pelo usuário antes da implementação
+1. **Escopo:** só categoria ESPORTES (mesmo escopo que `buscarAtividadeEspecifica` já tinha) — CURSOS/DIA A DIA ficam de fora desta frente.
+2. **Correlação unidade → campanha:** `atividades_mensais.campanha_id` filtrado pelo `campanha_id` extraído de `documentos_rag.metadados->>'campanha_id'` do documento `monthly_program` ativo mais recente da unidade — mesmo campo que `trigger_indexar_campanha_mensal` grava (confirmado via `execute_sql` contra `pg_proc` em produção, read-only, nesta sessão). Como o trigger desativa o `monthly_program` de campanhas antigas da mesma unidade ao aprovar uma nova, "documento ativo" já garante "campanha aprovada mais recente", sem filtro de status adicional.
+3. **Comparação de modalidade:** `normalizarTexto()` dos dois lados (nunca `===` sobre string crua) — protege contra variação de caixa/acento entre linhas da MESMA modalidade (planilhas de origem não são 100% consistentes, confirmado na auditoria B1).
+4. **Reconhecimento de modalidade:** reusa `detectarAtividadeMencionada` (S-WM-34) contra os `titulo`s distintos da própria tabela — já validado nesta sessão contra erro de digitação real (`"randebol"` → `null`, cai no fallback com segurança) e contra os pares de nomes parecidos que existem de fato no banco (Cuca Pici: "FUTSAL ( INTEGRAÇÃO )"/"FUTSAL (SESC)"; Cuca José Walter: "JIU JITSU "/"JIU JITSU INFANTIL") — nenhum cenário real encontrado onde a busca devolve a modalidade ERRADA; o pior caso observado é `null` (cai pro fallback), nunca uma resposta confiantemente errada.
+5. **Guarda do gap conhecido (Achado 2, Frente B1):** `faixa_etaria === titulo` (comparado via `normalizarTexto`) vira `"nao informado"` em vez de repetir o dado corrompido — José Walter (corrigido na B3) nunca bate nessa condição. Qualquer outro campo ausente/vazio também vira `"nao informado"`, nunca quebra nem inventa.
+6. **Integração — 2 branches:**
+   - Branch de acompanhamento: `buscarAtividadeDeterministica` primeiro → se `null`, `buscarAtividadeEspecifica` (S-WM-34) → se `null`, busca vetorial original. 3 camadas, cascata automática via `??`, sem condição extra.
+   - Branch de visão geral: só ativa quando `trocaComPedidoEspecifico=true` (S-WM-34/VAL-23); quando encontra dado, SOMA um bloco `--- ATIVIDADE ESPECIFICA (dado exato) ---` ao `conteudoPrograma` — não substitui o resumo geral.
+7. **Mutuamente exclusivo com `resumo_rede`:** garantido por estrutura de controle de fluxo (cadeia `if`/`else if`/`else if` do Passo 6, `index.ts`) — a Frente C só roda dentro dos 2 primeiros branches (ambos exigem `temUnidadeDefinida`); o branch de `perguntaGeralAtiva` só é alcançável quando os 2 primeiros são falsos. Não depende de coincidência de dado, verificado lendo o código, não retestado em runtime (não é necessário — é garantia estrutural).
+
+### Implementação
+- `formatarLinhaAtividadeDeterministica(titulo, metadata)` — função pura, formata uma linha no mesmo template usado em `import-planilha-modal.tsx`/`criar-programacao-modal.tsx` ("Esporte Modalidade: X - Turma Y. Professor: ..."), com a guarda do gap conhecido e o fallback `"nao informado"` por campo.
+- `buscarAtividadeDeterministica(supabase, unidade, mensagem)` — função assíncrona: doc ativo → `campanha_id` → linhas ESPORTES da campanha → detecção de modalidade pelos títulos reais da tabela → filtro por igualdade normalizada → formata todas as linhas relevantes (todas as turmas da modalidade, não só a 1ª).
+- Integrada nos 2 branches conforme desenho acima (`index.ts`).
+
+### Testes
+10 testes novos, 0 regressão:
+- **4 testes puros** (`index.test.ts`, `formatarLinhaAtividadeDeterministica`): campos completos (dado correto pós-B3), gap conhecido → `"nao informado"`, campos ausentes/vazios → `"nao informado"`, `metadata` nulo não quebra.
+- **6 testes de integração via `handler`** (`index.audit.test.ts`, mesmo padrão dos testes S-WM-34 AC1-AC4): dado correto pós-B3 (recupera todas as turmas, não cai em nenhum fallback), gap conhecido (idade não repete o título corrompido), modalidade não reconhecida (cai pro fallback S-WM-34 de texto, que por sua vez resolve), visão geral COM `trocaComPedidoEspecifico` (soma o bloco, não substitui), visão geral SEM `trocaComPedidoEspecifico` (não soma, nem consulta `atividades_mensais` à toa), `documentos_rag` sem doc ativo (degrada com segurança até o fallback vetorial, sem quebrar).
+
+**Suíte:** `deno test --no-check --allow-env --allow-read --allow-net .` → **141 passed / 0 failed / 2 ignored** (131 anteriores + 10 novos). `deno check index.ts` → **75 erros** (baseline pré-existente, confirmado idêntico via `git stash`/`git stash pop` rodando a mesma checagem antes do diff). `deno lint` → **7 problemas** (idêntico antes/depois, confirmado via `git stash`).
+
+**Deploy:** NÃO executado nesta sessão — instrução explícita do usuário foi "nenhum push/PR/deploy — commit local, aguardando @qa". Pendente de autorização futura (por @devops ou instrução direta), mesmo padrão já usado nas frentes anteriores desta story e na S-WM-34.
+
 ## Change Log
 
 | Data | Mudança |
 |---|---|
 | 2026-07-16 | Frente A implementada e commitada (`93e8377`). Frente B1 (auditoria) concluída — 5 achados documentados, 3 deles mudam o escopo original de B3/C. Tarefa `.limit(40)` implementada e commitada (`34d4089`). Frente B2 (parser barulhento) implementada — Vitest introduzido, módulo puro `planilha-parser.ts` extraído, 3 pontos frágeis (categoria, ESPORTES, CURSOS/DIA-A-DIA) cobertos com detecção por nome + abort ruidoso. Correção 1 do usuário reavaliada (gap das 4 unidades e Jangurussu são permanentes, não "aguardando arquivo"). Frente B3 (José Walter) aplicada em produção via migration idempotente, confirmada ponta a ponta em `chunks_documentos`. Correção 2 do usuário investigada — achado que minha varredura anterior tinha perdido `criar-programacao-modal.tsx` (escreve via API compartilhada, mesmo risco zero de rótulo trocado). |
+| 2026-07-17 | Frente C implementada: `buscarAtividadeDeterministica` (consulta em `atividades_mensais.metadata`, categoria ESPORTES, correlacionada via `campanha_id` do `documentos_rag` ativo) + `formatarLinhaAtividadeDeterministica` (com guarda do gap conhecido `faixa_etaria === titulo` → "nao informado"), integrados nos 2 branches (acompanhamento: 3ª camada antes de S-WM-34/vetorial; visão geral: soma bloco quando `trocaComPedidoEspecifico`). 10 testes novos (4 puros + 6 de integração via `handler`), suíte 141/0/2, `deno check`/`deno lint` sem regressão (75 erros / 7 problemas, baseline). Commit local, sem push/deploy. Status Draft/InProgress → Ready for Review. |
 
 ## Dev Agent Record
 
@@ -203,6 +233,7 @@ Claude Sonnet 5 (Claude Code)
 
 ### Debug Log References
 Queries de auditoria (B1) rodadas direto contra produção (`cuca`, `svzkrkfzpiqcesloukgb`) via MCP Supabase, todas read-only. Investigação do `.limit(40)` também via `execute_sql` read-only + medição direta de `INSTRUCAO_SEGURANCA.length` via `deno eval`. B2: `npx vitest run`, `npx tsc --noEmit`, `npx eslint` — todos rodados localmente no `cuca-portal`, sem tocar produção. B3: simulação via SELECT read-only antes de aplicar, migration aplicada via `apply_migration`, verificação pós-aplicação via `execute_sql` (idempotência, contagens, conteúdo real de `chunks_documentos`).
+Frente C: `execute_sql` (read-only) contra `information_schema.columns` (confirmar colunas reais de `atividades_mensais`/`campanhas_mensais`/`documentos_rag`) e contra `pg_proc` (ler o corpo de `trigger_indexar_campanha_mensal` e confirmar que `documentos_rag.metadados->>'campanha_id'` é de fato o campo de correlação, antes de escrever qualquer código). `deno eval` contra `detectarAtividadeMencionada` pra confirmar o comportamento com erro de digitação real ("randebol") e com os pares de nomes parecidos existentes no banco (Cuca Pici, Cuca José Walter), antes de decidir reusar a função sem alteração. `deno test`/`deno check`/`deno lint` locais, com baseline reconfirmada via `git stash`/`git stash pop` antes de comparar.
 
 ### Completion Notes List
 - Frente A: guardrail geográfico implementado, testado, commitado isoladamente. Suíte 128/0/2, zero regressão.
@@ -212,11 +243,12 @@ Queries de auditoria (B1) rodadas direto contra produção (`cuca`, `svzkrkfzpiq
 - Correção 1: reavaliação com evidência (558 linhas, 0 exceções) mudou o entendimento de "aguardando arquivo" pra "gap permanente, provavelmente nunca existiu na fonte". Jangurussu confirmado como duplicata, não perda.
 - Frente B3: José Walter corrigido (metadata + descricao), migration idempotente aplicada e confirmada, pipeline completo reacionado e verificado ponta a ponta em `chunks_documentos`.
 - Correção 2: achado que minha varredura de "3 arquivos tocam atividades_mensais" (turno anterior) estava incompleta — `criar-programacao-modal.tsx` escreve via `/api/programacao/importar` (rota compartilhada), sem menção literal ao nome da tabela, por isso passou despercebido no grep anterior. Confirmado que usa os mesmos campos de metadata e é estruturalmente seguro (sem parsing de texto livre).
-- Frente C: aguardando decisão do usuário — nenhum trabalho iniciado ainda.
+- Frente C: implementada — `buscarAtividadeDeterministica` (consulta estruturada em `atividades_mensais.metadata`, categoria ESPORTES) + `formatarLinhaAtividadeDeterministica` (formatação com guarda do gap conhecido), integradas como 3ª camada no branch de acompanhamento e como bloco somado (condicional a `trocaComPedidoEspecifico`) no branch de visão geral. Desenho confirmado explicitamente pelo usuário (7 pontos, ver seção Frente C) antes da implementação — reconhecimento de modalidade e correlação campanha/unidade validados contra dado real de produção (read-only) antes de codar. 10 testes novos, zero regressão (141/0/2). Deploy pendente de autorização, mesmo padrão das frentes anteriores.
 
 ### File List
-- `supabase/functions/motor-agente/index.ts` (Frente A; tarefa `.limit(40)`)
-- `supabase/functions/motor-agente/index.audit.test.ts` (Frente A; tarefa `.limit(40)`)
+- `supabase/functions/motor-agente/index.ts` (Frente A; tarefa `.limit(40)`; Frente C: `formatarLinhaAtividadeDeterministica`, `buscarAtividadeDeterministica`, integração nos 2 branches)
+- `supabase/functions/motor-agente/index.test.ts` (Frente C: 4 testes puros de `formatarLinhaAtividadeDeterministica`)
+- `supabase/functions/motor-agente/index.audit.test.ts` (Frente A; tarefa `.limit(40)`; Frente C: 6 testes de integração via `handler`)
 - `docs/stories/S-WM-35-VAL-24-VAL-09-Guardrail-Geo-Auditoria-Metadata.md` (este arquivo)
 - `cuca-portal/package.json` (script `test`, devDependency `vitest`) — Frente B2
 - `cuca-portal/vitest.config.ts` (novo) — Frente B2
