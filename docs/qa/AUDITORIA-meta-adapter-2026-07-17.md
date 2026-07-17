@@ -28,6 +28,34 @@ Mesmo padrão já achado nas três rodadas anteriores (`empregabilidade_engine.p
 - **Risco do fix:** MÉDIO — mesmo padrão de risco das rodadas anteriores.
 - **Confiança:** HIGH.
 
+**Sugestão de fix (mesmo padrão já usado no repo, não é ideia nova):** `campanhas_engine.py` já resolve exatamente esse problema em outro arquivo do mesmo worker — extrai cada chamada síncrona numa função `_xxx_sync` (ou, pra chamadas mais simples, um lambda inline) e envolve com `await asyncio.to_thread(...)`. Exemplo real desse arquivo (`campanhas_engine.py:529-535`):
+
+```python
+_tpl_div = await asyncio.to_thread(
+    lambda: supabase.table("meta_templates").select("nome, corpo_texto, variaveis")
+    .eq("automacoes", '{"Institucional"}')
+    .eq("ativo", True).eq("status", "aprovado")
+    .limit(1).maybe_single().execute()
+)
+```
+
+Aplicado a este arquivo, por exemplo o upsert de lead (`meta_adapter_inbound.py:582-585`) ficaria:
+
+```python
+lead_result = await asyncio.to_thread(
+    lambda: supabase.table("leads").upsert(
+        {"telefone": telefone, "nome": push_name, "updated_at": "now()"},
+        on_conflict="telefone",
+    ).execute()
+)
+```
+
+Repetir isso nos 14 pontos listados acima. Três cuidados pra quem for aplicar:
+
+1. **Fazer na mesma passada que o PERF-02** (as 2 selects redundantes logo abaixo) — é a mesma região de código (`:582-618`), evita mexer duas vezes no mesmo bloco.
+2. **Preservar a ordem exata das chamadas com `await` sequencial** — não trocar por `asyncio.gather`. Os passos são dependentes entre si (upsert de lead precisa terminar antes do upsert de conversa, que precisa do `lead_id` resultante); `asyncio.to_thread` só tira o bloqueio do event loop durante a espera, não muda a ordem.
+3. **Rodar a suíte inteira depois** (`pytest worker/tests/test_meta_adapter_inbound.py -v`) — os mocks de `supabase.table(...)` na suíte existente (1332 linhas) podem precisar de ajuste pra aceitar ser chamados de dentro de uma thread via `asyncio.to_thread`, não só via `await` direto.
+
 #### CORRECTNESS-01 — Falha real na gravação da mensagem é indistinguível de "duplicata pega pela trava do banco" no log
 
 **Arquivo:** `meta_adapter_inbound.py:625-643` (insert), `:550-557` (dedupe check), `supabase/migrations/20260704200000_wm20_wamid_dedupe_mensagens.sql` (índice único, confirmei que existe)
