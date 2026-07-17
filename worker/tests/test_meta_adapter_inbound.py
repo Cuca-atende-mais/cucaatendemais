@@ -916,6 +916,134 @@ class TestDispatchMotorAgente:
         mock_processar.assert_called_once()
 
 
+# ─── AUD-12 (LGPD, S-WM-23): opt-out real ────────────────────────────────────
+class TestOptOutAud12:
+    """AUD-12: detecção de opt-out (_eh_pedido_opt_out) + wiring no dispatch (registrar_opt_out
+    chamado, dispatch normal pulado, confirmação enviada direto ao lead)."""
+
+    _CASOS_POSITIVOS = [
+        "sair", "Sair", "SAIR", "parar", "cancelar",
+        "pode parar de mandar mensagem", "quero cancelar", "cancelar inscrição",
+        "nao quero mais receber", "não quero mais receber mensagens",
+        "remover meu numero", "quero sair da lista", "quero sair das mensagens",
+    ]
+    _CASOS_NEGATIVOS = [
+        "vou sair de férias semana que vem", "quero saber os horários", "obrigado",
+        "quero sair pra jantar hoje", "quais cursos vocês têm", "bom dia",
+        "quero sair mais cedo do trabalho", "", None,
+    ]
+
+    # ── _eh_pedido_opt_out: função pura ────────────────────────────────────
+    def test_detecta_pedidos_claros_de_opt_out(self):
+        from meta_adapter_inbound import _eh_pedido_opt_out
+        for texto in self._CASOS_POSITIVOS:
+            assert _eh_pedido_opt_out(texto) is True, f"esperava True para {texto!r}"
+
+    def test_nao_confunde_mensagens_comuns_com_opt_out(self):
+        """Risco documentado na story: 'vou sair de férias'/'quero sair pra jantar' não podem
+        virar opt-out por engano — os padrões são específicos de propósito, não uma palavra
+        solta tipo \\bsair\\b."""
+        from meta_adapter_inbound import _eh_pedido_opt_out
+        for texto in self._CASOS_NEGATIVOS:
+            assert _eh_pedido_opt_out(texto) is False, f"esperava False para {texto!r}"
+
+    # ── Wiring completo via processar_webhook_meta ─────────────────────────
+    def _mock_supabase_base(self, dados_conversa=None):
+        from unittest.mock import MagicMock
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-optout-1"}]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"bloqueado": False}
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = (
+            [dados_conversa] if dados_conversa else [{"id": "conv-optout-1", "status": "ativa"}]
+        )
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+        return mock_supabase
+
+    @pytest.mark.asyncio
+    async def test_mensagem_de_opt_out_chama_rpc_e_nao_despacha_pro_motor_agente(self):
+        """AC1/AC3 da S-WM-23: pedido de opt-out chama registrar_opt_out com o telefone certo,
+        NÃO chama _chamar_motor_agente (não roteia pro fluxo normal)."""
+        from unittest.mock import AsyncMock, patch
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = {"canal_origem": "TEST_ID", "agente_tipo": "Institucional", "canal_tipo": "Institucional", "unidade_cuca": None}
+        payload = _payload_texto(phone_number_id="TEST_ID", telefone="558599990000", texto="quero cancelar")
+        raw = json.dumps(payload).encode()
+        mock_supabase = self._mock_supabase_base()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock) as mock_motor, \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        mock_motor.assert_not_called()
+        chamadas_rpc_optout = [c for c in mock_supabase.rpc.call_args_list if c.args and c.args[0] == "registrar_opt_out"]
+        assert len(chamadas_rpc_optout) == 1, "esperava exatamente 1 chamada a registrar_opt_out"
+        assert chamadas_rpc_optout[0].args[1] == {"p_telefone": "558599990000"}
+        mock_enviar.assert_called_once()
+        texto_enviado = mock_enviar.call_args.args[2]
+        assert "não vai mais receber" in texto_enviado.lower() or "nao vai mais receber" in texto_enviado.lower()
+
+    @pytest.mark.asyncio
+    async def test_mensagem_comum_nao_chama_registrar_opt_out_e_segue_dispatch_normal(self):
+        """AC3 da S-WM-23 (sem falso positivo) + regressão: mensagem comum continua indo pro
+        motor-agente normalmente, sem registrar opt-out."""
+        from unittest.mock import AsyncMock, patch
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = {"canal_origem": "TEST_ID", "agente_tipo": "Institucional", "canal_tipo": "Institucional", "unidade_cuca": None}
+        payload = _payload_texto(phone_number_id="TEST_ID", telefone="558599990000", texto="quais cursos vocês têm?")
+        raw = json.dumps(payload).encode()
+        mock_supabase = self._mock_supabase_base()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock, return_value=["Resposta motor"]) as mock_motor, \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        chamadas_rpc_optout = [c for c in mock_supabase.rpc.call_args_list if c.args and c.args[0] == "registrar_opt_out"]
+        assert len(chamadas_rpc_optout) == 0, "mensagem comum não pode chamar registrar_opt_out"
+        mock_motor.assert_called_once()
+        mock_enviar.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_falha_ao_registrar_opt_out_nao_quebra_o_fluxo(self):
+        """Nunca propaga exceção — se a RPC falhar, ainda assim confirma pro lead (best-effort na
+        gravação, mas a resposta não pode travar por causa disso)."""
+        from unittest.mock import AsyncMock, patch
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = {"canal_origem": "TEST_ID", "agente_tipo": "Institucional", "canal_tipo": "Institucional", "unidade_cuca": None}
+        payload = _payload_texto(phone_number_id="TEST_ID", telefone="558599990000", texto="parar")
+        raw = json.dumps(payload).encode()
+        from unittest.mock import MagicMock
+        mock_supabase = self._mock_supabase_base()
+
+        def _rpc_side_effect(nome, *args, **kwargs):
+            if nome == "registrar_opt_out":
+                raise Exception("erro simulado de rede")
+            m = MagicMock()
+            m.execute.return_value = MagicMock()
+            return m
+
+        mock_supabase.rpc.side_effect = _rpc_side_effect
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock) as mock_motor, \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        mock_motor.assert_not_called()
+        mock_enviar.assert_called_once()
+
+
 # ─── S-WM-09: _notificar_transbordo ──────────────────────────────────────────
 class TestNotificarTransbordo:
     """_notificar_transbordo — ACs 2, 4, 5 (S-WM-09)."""

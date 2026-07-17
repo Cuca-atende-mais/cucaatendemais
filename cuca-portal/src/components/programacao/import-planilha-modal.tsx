@@ -12,6 +12,15 @@ import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Upload, AlertTrian
 import { useRouter } from "next/navigation"
 import toast from "react-hot-toast"
 import * as XLSX from "xlsx"
+import {
+    CATEGORIAS_VALIDAS,
+    COLUNAS_CURSOS,
+    COLUNAS_DIA_A_DIA,
+    COLUNAS_ESPORTES,
+    detectarCategoria,
+    detectarColunas,
+    lerColuna,
+} from "@/lib/programacao/planilha-parser"
 
 interface ImportPlanilhaModalProps {
     open: boolean
@@ -185,11 +194,12 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                         continue
                     }
 
-                    // Encontrou a aba correta pro mês M. Extrai a categoria antes do traço.
-                    let categoriaVal = "Diversos"
-                    if (snUpper.includes("-")) {
-                        categoriaVal = snUpper.split("-")[0].trim()
-                    }
+                    // Encontrou a aba correta pro mês M. Categoria por NOME (nunca "Diversos"
+                    // tratado como válido) — nome não reconhecido aborta a importação inteira
+                    // logo abaixo, depois de confirmar que a aba não está simplesmente vazia.
+                    // Achado Jangurussu (S-WM-35): "ESPORTE - JUNHO" (sem o S) virava "Diversos"
+                    // e caía num parser genérico que gravou nome de professor como título.
+                    const categoriaVal = detectarCategoria(sheetName)
 
                     // Processa o conteúdo
                     const ws = wb.Sheets[sheetName]
@@ -197,7 +207,54 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                     const data: any[] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: "dd/mm/yyyy" })
 
                     // FIX2: dados começam na linha 3 (índice 2), header na linha 2 (índice 1)
-                    const rows = data.slice(2)
+                    const rows: any[][] = data.slice(2)
+                    const headerRow: any[] = data[1] || []
+
+                    // Aba genuinamente vazia (sem nenhuma célula preenchida em nenhuma linha de
+                    // dado) continua só um aviso, não aborta o arquivo inteiro — comportamento
+                    // preservado. Diferente de "tem dado mas a estrutura não bate", queABORTA
+                    // logo abaixo (essa é a distinção que importa: nada pra ler vs. algo pra ler
+                    // que não dá pra confiar).
+                    const sheetTemDados = rows.some((row) => (row || []).some((cel) => String(cel ?? "").trim() !== ""))
+                    if (!sheetTemDados) {
+                        appendLog("warning", sheetName, "Aba encontrada, porém vazia ou em formatação incompatível com a leitura.")
+                        continue
+                    }
+
+                    if (!categoriaVal) {
+                        throw new Error(
+                            `Aba "${sheetName}": categoria não reconhecida (esperado uma das: ${CATEGORIAS_VALIDAS.join(", ")}, no formato "CATEGORIA - MÊS"). ` +
+                            `Corrija o nome da aba na planilha e tente novamente — nenhuma atividade foi importada deste arquivo.`
+                        )
+                    }
+
+                    const colunasEsperadas =
+                        categoriaVal === "ESPORTES" ? COLUNAS_ESPORTES :
+                        categoriaVal === "CURSOS" ? COLUNAS_CURSOS :
+                        COLUNAS_DIA_A_DIA // única opção restante (DIA A DIA | ESPECIAIS) — categoriaVal já validado acima
+
+                    // Detecção de colunas por NOME, nunca por posição fixa assumida — quando uma
+                    // coluna esperada não é encontrada com confiança, ABORTA a importação
+                    // inteira (nunca cai num índice fixo de fallback). Foi exatamente o fallback
+                    // silencioso por posição que embaralhou os campos de José Walter (S-WM-35).
+                    const deteccao = detectarColunas(headerRow, colunasEsperadas)
+                    if (!deteccao.ok) {
+                        const detalhes = [
+                            deteccao.faltando.length > 0
+                                ? `coluna(s) ausente(s) [${deteccao.faltando.join(", ")}]`
+                                : null,
+                            deteccao.colisoes.length > 0
+                                ? `coluna(s) ambígua(s) [${deteccao.colisoes.map((c) => `${c.chaves.join(" + ")} -> "${c.header}" (índice ${c.indice})`).join("; ")}]`
+                                : null,
+                        ].filter(Boolean).join("; ")
+
+                        throw new Error(
+                            `Aba "${sheetName}" (categoria ${categoriaVal}): não foi possível identificar as colunas com segurança pelo nome do header: ${detalhes}. ` +
+                            `Header lido na linha 2: [${deteccao.headerEncontrado.join(" | ")}]. ` +
+                            `Corrija o nome da(s) coluna(s) na planilha (ou ajuste o reconhecimento em planilha-parser.ts) e tente novamente — nenhuma atividade foi importada deste arquivo.`
+                        )
+                    }
+                    const idx = deteccao.indices
 
                     let countNaAba = 0
                     const fallbackDate = new Date(anoAtual, mesInt - 1, 1).toISOString().split('T')[0]
@@ -228,23 +285,6 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                         return null;
                     }
 
-                    // FIX3: mapeamento dinâmico de colunas ESPORTES por nome de header
-                    const esportesIdx = (() => {
-                        if (categoriaVal !== "ESPORTES") return null;
-                        const headerRow: any[] = data[1] || [];
-                        const find = (re: RegExp) => headerRow.findIndex((h: any) => re.test(String(h || '').toLowerCase()));
-                        return {
-                            titulo:      find(/modalidade/),
-                            professor:   find(/professor/),
-                            turma:       find(/turma/),
-                            faixaEtaria: find(/faixa|idade/),
-                            sexo:        find(/sexo|naipe/),
-                            vagas:       find(/vagas/),
-                            dias:        find(/dias/),
-                            horario:     find(/hor[aá]rio/),
-                        };
-                    })();
-
                     rows.forEach(row => {
                         let titulo = ""
                         let descricao = ""
@@ -254,51 +294,46 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                         let meta: any = {}
 
                         if (categoriaVal === "CURSOS") {
-                            titulo = row[2]
+                            titulo = lerColuna(row, idx, "titulo")
                             meta = {
-                                ementa: row[5] || "",
-                                requisitos: row[6] || "",
-                                periodo: row[7] || "",
-                                horario: row[8] || "",
-                                carga_horaria: row[3] || "",
-                                vagas: row[4] || "",
-                                educador: row[9] || ""
+                                ementa: lerColuna(row, idx, "ementa"),
+                                requisitos: lerColuna(row, idx, "requisitos"),
+                                periodo: lerColuna(row, idx, "periodo"),
+                                horario: lerColuna(row, idx, "horario"),
+                                carga_horaria: lerColuna(row, idx, "carga_horaria"),
+                                vagas: lerColuna(row, idx, "vagas"),
+                                educador: lerColuna(row, idx, "educador"),
                             }
 
                             descricao = `Curso: ${titulo}. Educador: ${meta.educador}. Vagas: ${meta.vagas}. Carga Horária: ${meta.carga_horaria}h. Período: ${meta.periodo}. Horário: ${meta.horario}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}`
                             local = "Não informado"
 
-                            if (row[8] && typeof row[8] === 'string') {
+                            if (meta.horario) {
                                 // FIX4: normaliza maiúsculos antes do split
-                                const rawH = row[8].toLowerCase().replace(/\bás\b/g, 'às')
+                                const rawH = meta.horario.toLowerCase().replace(/\bás\b/g, 'às')
                                 const parts = rawH.split("às")
                                 if (parts.length === 2) {
                                     horaInicioStr = parts[0].trim()
                                     horaFimStr = parts[1].trim()
                                 }
                             }
-                        } else if (categoriaVal === "ESPORTES" && esportesIdx) {
-                            // FIX3: usa índices detectados dinamicamente pelo header
-                            const gi = (k: keyof typeof esportesIdx, fb: number) => {
-                                const i = esportesIdx[k];
-                                return (i >= 0 ? row[i] : row[fb]) || "";
-                            };
-                            titulo = gi('titulo', 1)
-                            const horarioRaw = gi('horario', 8)
+                        } else if (categoriaVal === "ESPORTES") {
+                            titulo = lerColuna(row, idx, "titulo")
+                            const horarioRaw = lerColuna(row, idx, "horario")
                             meta = {
-                                professor:   gi('professor', 2),
-                                turma:       gi('turma', 3),
-                                faixa_etaria: gi('faixaEtaria', 4),
-                                sexo:        gi('sexo', 5),
-                                vagas:       gi('vagas', 6),
-                                dias_semana: gi('dias', 7),
-                                horario:     horarioRaw
+                                professor: lerColuna(row, idx, "professor"),
+                                turma: lerColuna(row, idx, "turma"),
+                                faixa_etaria: lerColuna(row, idx, "faixaEtaria"),
+                                sexo: lerColuna(row, idx, "sexo"),
+                                vagas: lerColuna(row, idx, "vagas"),
+                                dias_semana: lerColuna(row, idx, "dias"),
+                                horario: horarioRaw
                             }
 
                             descricao = `Esporte Modalidade: ${titulo} - Turma ${meta.turma}. Professor: ${meta.professor}. Vagas: ${meta.vagas}. Público: ${meta.sexo} (Idade: ${meta.faixa_etaria}). Dias: ${meta.dias_semana}. Horário: ${meta.horario}.`
                             local = "Não informado"
 
-                            if (horarioRaw && typeof horarioRaw === 'string') {
+                            if (horarioRaw) {
                                 // FIX4: normaliza variações de acentuação e maiúsculos
                                 const rawH = horarioRaw.toLowerCase().replace(/\bás\b/g, 'às').replace(/\bàs\b/g, 'às')
                                 const parts = rawH.split("às")
@@ -307,45 +342,47 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                                     horaFimStr = parts[1].trim()
                                 }
                             }
-                        } else if (categoriaVal === "DIA A DIA" || categoriaVal === "ESPECIAIS") {
-                            titulo = row[4] || row[3]
-                            const horaInicioRaw = row[6] || row[5] || ""
-                            const horaFimRaw = row[7] || ""
+                        } else {
+                            // DIA A DIA / ESPECIAIS — única categoria restante (categoriaVal já
+                            // validado contra CATEGORIAS_VALIDAS por detectarCategoria acima).
+                            titulo = lerColuna(row, idx, "titulo")
+                            const horaInicioRaw = lerColuna(row, idx, "hora_inicio")
+                            const horaFimRaw = lerColuna(row, idx, "hora_fim")
 
                             // FIX4: detecta se hora_inicio contém horário composto (ex: "19:00 ÀS 20:30")
-                            const horaInicioNorm = String(horaInicioRaw).toLowerCase().replace(/\bás\b/g, 'às').replace(/\bàs\b/g, 'às')
+                            const horaInicioNorm = horaInicioRaw.toLowerCase().replace(/\bás\b/g, 'às').replace(/\bàs\b/g, 'às')
                             if (horaInicioNorm.includes('às')) {
                                 const parts = horaInicioNorm.split('às')
                                 horaInicioStr = parts[0].trim()
                                 horaFimStr = parts[1].trim()
                             } else {
                                 horaInicioStr = horaInicioNorm.trim()
-                                horaFimStr = String(horaFimRaw).toLowerCase().trim()
+                                horaFimStr = horaFimRaw.toLowerCase().trim()
                             }
 
-                            // FIX5: usa a data real do evento (row[2]) em vez do fallback de 1º do mês
+                            // FIX5: usa a data real do evento em vez do fallback de 1º do mês
+                            const dataRealRaw = lerColuna(row, idx, "data")
                             let dataAtividade = fallbackDate
-                            if (row[2]) {
-                                const rawDate = String(row[2])
-                                if (/\d{2}\/\d{2}\/\d{4}/.test(rawDate)) {
-                                    const parts = rawDate.split('/')
+                            if (dataRealRaw) {
+                                if (/\d{2}\/\d{2}\/\d{4}/.test(dataRealRaw)) {
+                                    const parts = dataRealRaw.split('/')
                                     const d = parts[0].replace(/\D/g, '').padStart(2, '0')
                                     const m = parts[1].replace(/\D/g, '').padStart(2, '0')
                                     const y = (parts[2] || '').match(/\d{4}/)?.[0] || String(anoAtual)
                                     const candidate = `${y}-${m}-${d}`
                                     if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) dataAtividade = candidate
-                                } else if (/\d{4}-\d{2}-\d{2}/.test(rawDate)) {
-                                    dataAtividade = rawDate.match(/\d{4}-\d{2}-\d{2}/)![0]
+                                } else if (/\d{4}-\d{2}-\d{2}/.test(dataRealRaw)) {
+                                    dataAtividade = dataRealRaw.match(/\d{4}-\d{2}-\d{2}/)![0]
                                 }
                             }
 
                             meta = {
-                                sessao: row[1] || "",
-                                data_real: row[2] || "",
-                                dia_semana: row[3] || "",
-                                atividade: row[5] || row[4] || "",
-                                local: row[8] || row[6] || "",
-                                informacoes: row[9] || row[7] || "",
+                                sessao: lerColuna(row, idx, "sessao"),
+                                data_real: dataRealRaw,
+                                dia_semana: lerColuna(row, idx, "dia_semana"),
+                                atividade: lerColuna(row, idx, "atividade"),
+                                local: lerColuna(row, idx, "local"),
+                                informacoes: lerColuna(row, idx, "informacoes"),
                                 hora_inicio: horaInicioStr,
                                 hora_fim: horaFimStr
                             }
@@ -354,7 +391,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                             local = meta.local || "Não informado"
 
                             // Usa dataAtividade calculada acima
-                            if (titulo && typeof titulo === 'string' && titulo.trim() !== "") {
+                            if (titulo && titulo.trim() !== "") {
                                 atividadesToInsert.push({
                                     unidade_cuca: unidadeCuca,
                                     titulo: titulo.substring(0, 100),
@@ -369,16 +406,10 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                                 countNaAba++
                             }
                             return // Evita o push duplicado abaixo
-                        } else {
-                            // Fallback Genérico
-                            titulo = row[2] || row[1] || row[4]
-                            descricao = String(row[5] || row[9] || "")
-                            local = row[8] || "Não informado"
-                            meta = { info_bruta: descricao }
                         }
 
                         // Validação: Atividade só é válida se tiver um título válido escrito
-                        if (titulo && typeof titulo === 'string' && titulo.trim() !== "") {
+                        if (titulo && titulo.trim() !== "") {
                             atividadesToInsert.push({
                                 unidade_cuca: unidadeCuca,
                                 titulo: titulo.substring(0, 100),
@@ -398,7 +429,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                         appendLog("success", sheetName, `Concluído (${countNaAba} tarefas encontradas e validadas). Categoria mapeada: ${categoriaVal}`)
                         abasImportadasSucesso++
                     } else {
-                        appendLog("warning", sheetName, "Aba encontrada, porém vazia ou em formatação incompatível com a leitura.")
+                        appendLog("warning", sheetName, "Aba encontrada, porém nenhuma linha com título válido.")
                     }
                 }
 

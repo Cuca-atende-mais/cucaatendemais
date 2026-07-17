@@ -110,16 +110,21 @@ function comFetchMockado<T>(fn: () => Promise<T>, respostaChatCompletions = "Res
   return fn().finally(() => { globalThis.fetch = fetchOriginal; });
 }
 
-/** Captura as chamadas de console.log durante `fn`, restaurando o original ao final (mesmo
- * espírito de comFetchMockado acima) — usado pelos testes VAL-04 (observabilidade) abaixo. */
+/** Captura as chamadas de console.log/console.warn durante `fn`, restaurando os originais ao
+ * final (mesmo espírito de comFetchMockado acima) — usado pelos testes VAL-04 (observabilidade)
+ * abaixo e pelo alerta de monthly_program grande demais (ambos os níveis vão pra `linhas`, sem
+ * distinção — os testes filtram pelo texto da mensagem, que já é único por caso). */
 function comConsoleLogCapturado<T>(fn: () => Promise<T>): Promise<{ resultado: T; linhas: string[] }> {
   const originalLog = console.log;
+  const originalWarn = console.warn;
   const linhas: string[] = [];
   // deno-lint-ignore no-explicit-any
   console.log = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as any;
+  // deno-lint-ignore no-explicit-any
+  console.warn = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as any;
   return fn()
     .then((resultado) => ({ resultado, linhas }))
-    .finally(() => { console.log = originalLog; });
+    .finally(() => { console.log = originalLog; console.warn = originalWarn; });
 }
 
 function requestFake(mensagem: string): Request {
@@ -236,21 +241,21 @@ Deno.test("AUD-04 (guarda-costas): pergunta de acompanhamento com unidade já sa
     respostasBaseHandler({ unidade_selecionada: "Cuca Mondubim" }), // unidade já resolvida antes, sem troca nesta mensagem
     chamadas,
   );
-  await comFetchMockado(async () => {
-    const resp = await handler(requestFake("Tem natação essa semana?"), supabaseMock);
-    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  });
-  // S-WM-34 (VAL-09): a partir desta story, o branch de acompanhamento também consulta
-  // documentos_rag/chunks_documentos — busca determinística por atividade, ANTES da busca
-  // vetorial (index.ts:1092+). O proxy antigo (qualquer chamada a documentos_rag) não distingue
-  // mais isso de carregarProgramacaoMensal (a real fonte de RAG token bloat que este guard
-  // protege) — a fingerprint precisa é o `.limit(40)` em chunks_documentos, exclusivo de
-  // carregarProgramacaoMensal (buscarAtividadeEspecifica nunca chama .limit() nessa tabela).
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
+  // Tarefa "remover .limit(40)" (2026-07-16): a fingerprint antiga (`.limit(40)` em
+  // chunks_documentos, exclusiva de carregarProgramacaoMensal) deixou de existir — a função não
+  // usa mais `.limit()` nenhum (ver comentário em index.ts sobre por que remover o teto fixo é
+  // seguro dado o contexto de 128k do gpt-4o). A nova fingerprint precisa é o texto do log
+  // exclusivo de carregarProgramacaoMensal ("Chunks diretos monthly_program:") — buscarAtividadeEspecifica
+  // loga um texto diferente ("Busca deterministica de atividade:").
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("Tem natação essa semana?"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const carregouProgramacaoCompleta = linhas.some((l) => l.includes("Chunks diretos monthly_program:"));
   assertEquals(
     carregouProgramacaoCompleta,
     false,
-    "uma pergunta de acompanhamento (unidade já salva, sem seleção nova) não pode recarregar os ~40 chunks da programação completa — isso reintroduziria o RAG token bloat que o commit 168e8d2 corrigiu; deveria usar busca determinística por atividade ou busca vetorial de poucos chunks",
+    "uma pergunta de acompanhamento (unidade já salva, sem seleção nova) não pode recarregar a programação completa via carregarProgramacaoMensal — isso reintroduziria o RAG token bloat que o commit 168e8d2 corrigiu; deveria usar busca determinística por atividade ou busca vetorial de poucos chunks",
   );
 });
 
@@ -692,16 +697,17 @@ Deno.test("VAL-07: reabrir conversa encerrada com unidade já selecionada NÃO d
   const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
   respostas["conversas"] = { data: { id: "conv-1", status: "encerrada", metadata: { unidade_selecionada: "Cuca Barra" } } };
   const supabaseMock = criarSupabaseMock(respostas, chamadas);
-  await comFetchMockado(async () => {
-    const resp = await handler(requestFake("posso escolher outra unidade?"), supabaseMock);
-    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  });
-  // S-WM-34 (VAL-09): fingerprint precisa, ver comentário equivalente no guard AUD-04 acima.
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
+  // Tarefa "remover .limit(40)" (2026-07-16): fingerprint via log, ver comentário no guard
+  // AUD-04 acima (`.limit(40)` deixou de existir em carregarProgramacaoMensal).
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("posso escolher outra unidade?"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const carregouProgramacaoCompleta = linhas.some((l) => l.includes("Chunks diretos monthly_program:"));
   assertEquals(
     carregouProgramacaoCompleta,
     false,
-    "VAL-07/AUD-15: reabrir uma conversa encerrada que já tinha unidade selecionada não deveria recarregar os ~40 chunks da programação completa nem tratar a mensagem como 'primeira mensagem' — é uma continuação, não um primeiro contato",
+    "VAL-07/AUD-15: reabrir uma conversa encerrada que já tinha unidade selecionada não deveria recarregar a programação completa via carregarProgramacaoMensal nem tratar a mensagem como 'primeira mensagem' — é uma continuação, não um primeiro contato",
   );
 });
 
@@ -737,12 +743,13 @@ Deno.test("VAL-08: dígito respondendo pergunta improvisada do GPT (sem menu num
   const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
   respostas["mensagens"] = { data: [{ conteudo: "Qual unidade você quer saber mais?", remetente: "agente" }] };
   const supabaseMock = criarSupabaseMock(respostas, chamadas);
-  await comFetchMockado(async () => {
-    const resp = await handler(requestFake("2"), supabaseMock);
-    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  });
-  // S-WM-34 (VAL-09): fingerprint precisa, ver comentário equivalente no guard AUD-04 acima.
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
+  // Tarefa "remover .limit(40)" (2026-07-16): fingerprint via log, ver comentário no guard
+  // AUD-04 acima (`.limit(40)` deixou de existir em carregarProgramacaoMensal).
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("2"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const carregouProgramacaoCompleta = linhas.some((l) => l.includes("Chunks diretos monthly_program:"));
   assertEquals(
     carregouProgramacaoCompleta,
     false,
@@ -761,12 +768,13 @@ Deno.test("Item 3 / AC5: dígito respondendo uma lista IMPROVISADA pelo GPT (sem
   const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
   respostas["mensagens"] = { data: [{ conteudo: "1. Você pode ver os horários\n2. Ou falar com a unidade", remetente: "agente" }] };
   const supabaseMock = criarSupabaseMock(respostas, chamadas);
-  await comFetchMockado(async () => {
-    const resp = await handler(requestFake("2"), supabaseMock);
-    assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  });
-  // S-WM-34 (VAL-09): fingerprint precisa, ver comentário equivalente no guard AUD-04 acima.
-  const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "chunks_documentos" && c.metodo === "limit" && c.args?.[0] === 40);
+  // Tarefa "remover .limit(40)" (2026-07-16): fingerprint via log, ver comentário no guard
+  // AUD-04 acima (`.limit(40)` deixou de existir em carregarProgramacaoMensal).
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("2"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const carregouProgramacaoCompleta = linhas.some((l) => l.includes("Chunks diretos monthly_program:"));
   assertEquals(
     carregouProgramacaoCompleta,
     false,
@@ -791,6 +799,74 @@ Deno.test("Item 3 / AC6 (regressão de VAL-08): dígito respondendo um menu de c
     true,
     "AC6: com o estado confirmando um menu de categorias real, '2' ainda deve carregar a área selecionada — não pode regredir o caso legítimo do VAL-08 original",
   );
+});
+
+// ── Tarefa "remover .limit(40)" (2026-07-16): carregarProgramacaoMensal deixou de truncar a
+// visão geral completa — José Walter e Pici já têm 55 chunks reais em produção hoje (146 e 124
+// atividades na campanha ativa, respectivamente), e o teto antigo cortava 15 desses. Sem
+// substituir por outro número fixo (nenhuma constante prevê o crescimento real, que variou
+// 89-146 atividades nos últimos 3 meses) — só um alerta (console.warn) bem acima de qualquer
+// volume já observado, pra sinalizar import duplicado/corrompido sem depender de monitoração
+// ativa (o projeto não tem nenhuma hoje). ──────────────────────────────────────────────────────
+
+Deno.test("Tarefa 'remover limit(40)': carregarProgramacaoMensal carrega TODOS os chunks, sem truncar em 40 (José Walter/Pici já têm 55 hoje)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  const N_CHUNKS = 55; // contagem real de José Walter/Pici hoje — o antigo .limit(40) cortaria 15
+  respostas["chunks_documentos"] = {
+    data: Array.from({ length: N_CHUNKS }, (_, i) => ({ conteudo: `TURMA_MARCADOR_${i + 1}` })),
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("Mondubim"), supabaseMock), // nome de outra unidade -> trocouUnidade=true -> carregarProgramacaoMensal
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  const faltando = Array.from({ length: N_CHUNKS }, (_, i) => `TURMA_MARCADOR_${i + 1}`)
+    .filter((marcador) => !promptFinal.includes(marcador));
+  assertEquals(
+    faltando,
+    [],
+    `carregarProgramacaoMensal precisa carregar os ${N_CHUNKS} chunks inteiros, sem .limit(40) — marcadores ausentes do prompt final: ${faltando.join(", ")}`,
+  );
+});
+
+Deno.test("Tarefa 'remover limit(40)': NÃO loga alerta com volume normal (90 chunks, abaixo do teto de 100)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["chunks_documentos"] = { data: Array.from({ length: 90 }, () => ({ conteudo: "x" })) };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("Mondubim"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  assertEquals(
+    linhas.some((l) => l.includes("ALERTA")),
+    false,
+    "90 chunks é dentro do maior volume real já visto em produção (55) com folga — não deveria disparar alerta, só faz mais sentido ficar de olho acima de 100",
+  );
+});
+
+Deno.test("Tarefa 'remover limit(40)': loga alerta (console.warn) quando o monthly_program passa de 100 chunks", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["chunks_documentos"] = { data: Array.from({ length: 150 }, () => ({ conteudo: "x" })) };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resultado, linhas } = await comFetchMockado(() =>
+    comConsoleLogCapturado(() => handler(requestFake("Mondubim"), supabaseMock))
+  );
+  assertEquals(resultado.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const linhaAlerta = linhas.find((l) => l.includes("ALERTA"));
+  assertEquals(
+    linhaAlerta !== undefined,
+    true,
+    "150 chunks é quase 3x o maior volume real já visto (55) — sem monitoração ativa no projeto hoje, precisa de um sinal que não dependa de alguém checar o log no momento certo",
+  );
+  assertStringIncludes(linhaAlerta ?? "", "150", "o alerta deveria citar a contagem real de chunks, não só um texto genérico");
 });
 
 Deno.test("Item 3: resposta de visão geral grava o novo estado de menu_categoria_ativo pro próximo turno", async () => {
@@ -931,6 +1007,24 @@ Deno.test("VAL-02: guardrail (regra 1) inclui exemplo negativo explícito contra
     INSTRUCAO_SEGURANCA.toLowerCase(),
     "joao silva",
     "VAL-02: a regra genérica ('NUNCA invente... nomes de professores') não impediu o GPT de inventar 'João Silva' numa pergunta de acompanhamento sobre Natação — o relatório pede reforçar com um exemplo negativo explícito",
+  );
+});
+
+// ── VAL-24 (achado geo, PENDENCIAS-institucional-2026-07-15): guardrail contra alucinar ────
+// proximidade geografica. Mesma limitacao do teste VAL-02 acima: so prova que o texto do
+// guardrail contem a proibicao explicita — a eficacia real (o GPT de fato obedecer) depende de
+// reteste manual em producao, nao e testavel de forma deterministica com temperatura > 0.
+Deno.test("VAL-24 (geo): guardrail (regra 7) proibe explicitamente inventar proximidade geografica sem dado real no contexto", () => {
+  const texto = INSTRUCAO_SEGURANCA.toLowerCase();
+  assertStringIncludes(
+    texto,
+    "proximidade geografica",
+    "achado 2026-07-15: bot respondeu 'CUCA José Walter' e depois 'CUCA Pici' pra mesma pergunta de proximidade (Bom Jardim), com o MESMO contexto carregado (resumo_rede + FAQ, nenhum dos dois com dado de bairro/distancia) — regra 7 precisa proibir isso explicitamente, regras 1-2 (atividade/horario/professor/modalidade) nao cobrem geografia",
+  );
+  assertStringIncludes(
+    texto,
+    "mais perto",
+    "a regra precisa cobrir o fraseado real que causou o achado ('qual CUCA fica mais perto'), nao so um termo tecnico generico",
   );
 });
 
@@ -1354,4 +1448,162 @@ Deno.test("S-WM-34 AC2: branch de acompanhamento cai no fallback vetorial quando
 
   const promptFinal = bodiesEnviados.find((b) => b.includes("Horário de funcionamento")) ?? "";
   assertStringIncludes(promptFinal, "Horário de funcionamento", "AC2: o conteúdo do fallback vetorial deveria chegar no prompt final");
+});
+
+// ── S-WM-35 (Frente C) — busca determinística em atividades_mensais.metadata ────────────────────
+// 6 cenários planejados: dado correto pós-B3, gap conhecido → "nao informado", modalidade não
+// reconhecida → cai pro fallback S-WM-34, visão geral com/sem trocaComPedidoEspecifico, e
+// documentos_rag sem doc ativo. Mesmo padrão de integração via `handler` + mock já usado nos
+// testes S-WM-34 AC1-AC4 acima — exercita as 3 camadas (Frente C → S-WM-34 → vetorial) de
+// ponta a ponta, não só a função pura (já coberta em index.test.ts).
+
+Deno.test("S-WM-35: dado correto pós-B3 (José Walter) — busca determinística em atividades_mensais recupera TODAS as turmas, sem cair nos fallbacks", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca José Walter" }); // sem troca neste turno -> branch de acompanhamento
+  respostas["documentos_rag"] = { data: { id: "doc-1", metadados: { campanha_id: "camp-jw" } } };
+  respostas["atividades_mensais"] = {
+    data: [
+      { titulo: "NATAÇÃO", metadata: { turma: "Turma 09", professor: "CIRILLO", vagas: "25", sexo: "MISTO", dias_semana: "TER/QUI", horario: "18h ás 19h", faixa_etaria: "15 á 29+ anos" } },
+      { titulo: "NATAÇÃO", metadata: { turma: "Turma 10", professor: "CIRILLO", vagas: "25", sexo: "MISTO", dias_semana: "TER/QUI", horario: "19h ás 20h", faixa_etaria: "15 á 29+ anos" } },
+      { titulo: "JUDÔ", metadata: { turma: "Turma 01", professor: "Outro Professor", vagas: "20", sexo: "MISTO", dias_semana: "SEG/QUA", horario: "17h ás 18h", faixa_etaria: "10 á 14 anos" } },
+    ],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("atividade especifica")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 09", "deveria incluir a Turma 09 de natação");
+  assertStringIncludes(promptFinal, "Turma 10", "deveria incluir a Turma 10 de natação — as 2 juntas provam que não para no 1º match");
+  assertStringIncludes(promptFinal, "Idade: 15 á 29+ anos", "dado corrigido pela B3 (José Walter) deveria chegar correto, não 'nao informado'");
+  assertEquals(promptFinal.includes("JUDÔ"), false, "não deveria misturar outra modalidade na resposta de natação");
+
+  const chamouFallbackTexto = chamadas.some((c) => c.tabela === "chunks_documentos");
+  assertEquals(chamouFallbackTexto, false, "quando a busca determinística (metadata) encontra a atividade, não deveria cair no fallback de texto (S-WM-34)");
+  const chamouBuscaVetorial = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chamouBuscaVetorial, false, "nem no fallback vetorial — a 1ª camada já resolveu");
+});
+
+Deno.test("S-WM-35: gap conhecido (Barra/Jangurussu/Mondubim/Pici) — faixa_etaria idêntica ao título vira 'nao informado' na resposta, nunca repete o dado errado", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["documentos_rag"] = { data: { id: "doc-2", metadados: { campanha_id: "camp-barra" } } };
+  respostas["atividades_mensais"] = {
+    data: [
+      { titulo: "Natação", metadata: { turma: "Turma 11", professor: "CIRILLO", vagas: "25", sexo: "Misto", dias_semana: "Qua e Sex", horario: "07:00 ás 08:00", faixa_etaria: "NATAÇÃO" } },
+    ],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de manhã?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("atividade especifica")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 11", "deveria incluir a turma encontrada mesmo com o gap conhecido no campo faixa_etaria");
+  assertStringIncludes(promptFinal, "Idade: nao informado", "gap conhecido (S-WM-35 Achado 2, Frente B1) deveria virar 'nao informado', não repetir o título como se fosse a faixa etária real");
+  assertEquals(promptFinal.includes("Idade: Natação") || promptFinal.includes("Idade: NATAÇÃO"), false, "nunca deveria expor o dado corrompido pro lead");
+});
+
+Deno.test("S-WM-35: modalidade não reconhecida em atividades_mensais cai pro fallback S-WM-34 (busca de texto), sem erro", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: { id: "doc-3", metadados: { campanha_id: "camp-jg" } } };
+  // atividades_mensais só tem Futsal -> detectarAtividadeMencionada não encontra "natação" nessa
+  // camada, precisa cair pro fallback de texto (chunks_documentos), que tem a modalidade certa.
+  respostas["atividades_mensais"] = { data: [{ titulo: "Futsal", metadata: { turma: "A", professor: "Bruno Santos" } }] };
+  respostas["chunks_documentos"] = {
+    data: [
+      { conteudo: "== ESPORTES == • Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 1 . Professor: Daniel Reis. Dias: Ter e Qui. Horário: 7h às 8h." },
+      { conteudo: "• Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 2 . Professor: Daniel Reis. Dias: Qua e Sex. Horário: 18h às 19h." },
+    ],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const tentouCamada1 = chamadas.some((c) => c.tabela === "atividades_mensais");
+  assertEquals(tentouCamada1, true, "a 1ª camada (metadata) precisa ser tentada antes de cair pro fallback, não pulada");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("atividade especifica")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 1", "sem match na 1ª camada, o fallback S-WM-34 (texto) deveria recuperar a atividade normalmente");
+  assertStringIncludes(promptFinal, "Turma 2", "as 2 juntas provam que o fallback funcionou por completo, não só parcialmente");
+
+  const chamouBuscaVetorial = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chamouBuscaVetorial, false, "a 2ª camada (S-WM-34) já resolveu — não deveria precisar da 3ª (vetorial)");
+});
+
+Deno.test("S-WM-35: visão geral COM trocaComPedidoEspecifico soma o bloco 'ATIVIDADE ESPECIFICA' ao resumo geral, sem substituí-lo", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  // Mesmo cenário do S-WM-34 AC3 (troca de unidade com pedido específico embutido, caso
+  // reproduzido ao vivo) — reaproveitado aqui pra provar que a Frente C soma dado exato ao
+  // resumo geral quando trocaComPedidoEspecifico=true.
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: { id: "doc-4", metadados: { campanha_id: "camp-mb" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", metadata: { turma: "Turma 05", professor: "Vanessa Andrade", vagas: "30", sexo: "Misto", dias_semana: "Seg/Qua/Sex", horario: "19h às 20h", faixa_etaria: "6 a 12 anos" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("e no Mondubim, tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertStringIncludes(promptFinal, "PROGRAMACAO MENSAL ATUAL", "o resumo geral continua sendo carregado — a Frente C SOMA, não substitui");
+  assertStringIncludes(promptFinal, "ATIVIDADE ESPECIFICA (dado exato)", "quando há pedido específico embutido na troca, deveria somar o bloco de dado exato");
+  assertStringIncludes(promptFinal, "Turma 05", "o bloco somado deveria conter o dado real da atividade pedida");
+});
+
+Deno.test("S-WM-35: visão geral SEM trocaComPedidoEspecifico NÃO soma o bloco 'ATIVIDADE ESPECIFICA' (comportamento são, sem regressão do AC4/S-WM-34)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  // Mesmo cenário do S-WM-34 AC4 (troca de unidade sem pedido específico, só o nome).
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: { id: "doc-5", metadados: { campanha_id: "camp-mb" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", metadata: { turma: "Turma 05", professor: "Vanessa Andrade" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("Mondubim"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertStringIncludes(promptFinal, "Apresente um resumo geral", "sem pedido específico, o comportamento são (resumo geral) precisa continuar intacto");
+  assertEquals(promptFinal.includes("ATIVIDADE ESPECIFICA (dado exato)"), false, "sem trocaComPedidoEspecifico, a Frente C não deveria disparar — nem consultar atividades_mensais à toa");
+
+  const consultouAtividadesMensais = chamadas.some((c) => c.tabela === "atividades_mensais");
+  assertEquals(consultouAtividadesMensais, false, "confirma que buscarAtividadeDeterministica nem chegou a ser chamada nesse caminho — a condição trocaComPedidoEspecifico é checada antes");
+});
+
+Deno.test("S-WM-35: documentos_rag sem doc ativo — as 2 camadas determinísticas retornam null com segurança, cai pro fallback vetorial sem quebrar", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: null }; // sem monthly_program ativo pra essa unidade
+  respostas["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "Horário de funcionamento: seg a sáb, 8h às 21h.", fonte_tipo: "FAQ" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de noite?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500) — sem doc ativo, tem que degradar com segurança, não quebrar");
+
+  const consultouAtividadesMensais = chamadas.some((c) => c.tabela === "atividades_mensais");
+  assertEquals(consultouAtividadesMensais, false, "sem documento ativo (sem campanha_id pra correlacionar), nem deveria tentar consultar atividades_mensais");
+
+  const chamouBuscaVetorial = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chamouBuscaVetorial, true, "as 2 camadas determinísticas (metadata e texto) precisam degradar com segurança pro fallback vetorial, já que nenhuma tem documento ativo pra consultar");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("Horário de funcionamento")) ?? "";
+  assertStringIncludes(promptFinal, "Horário de funcionamento", "o conteúdo do fallback vetorial deveria chegar no prompt final mesmo nesse cenário degradado");
 });
