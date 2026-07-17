@@ -22,7 +22,12 @@ export type ColunaDefinicao = { chave: string; regex: RegExp }
 
 export type DeteccaoColunas =
   | { ok: true; indices: Record<string, number> }
-  | { ok: false; faltando: string[]; headerEncontrado: string[] }
+  | {
+      ok: false
+      faltando: string[]
+      colisoes: Array<{ indice: number; chaves: string[]; header: string }>
+      headerEncontrado: string[]
+    }
 
 /** Normaliza uma célula de header pra comparação (string, minúsculo, sem espaço nas pontas). */
 function normalizarHeader(valor: unknown): string {
@@ -43,8 +48,20 @@ export function detectarColunas(headerRow: unknown[], colunas: ColunaDefinicao[]
     if (idx === -1) faltando.push(chave)
     else indices[chave] = idx
   }
-  if (faltando.length > 0) {
-    return { ok: false, faltando, headerEncontrado: normalizada }
+
+  const chavesPorIndice = Object.entries(indices).reduce<Record<number, string[]>>((acc, [chave, indice]) => {
+    acc[indice] = [...(acc[indice] || []), chave]
+    return acc
+  }, {})
+  const colisoes = Object.entries(chavesPorIndice)
+    .filter(([, chaves]) => chaves.length > 1)
+    .map(([indice, chaves]) => {
+      const indiceNumerico = Number(indice)
+      return { indice: indiceNumerico, chaves, header: normalizada[indiceNumerico] ?? "" }
+    })
+
+  if (faltando.length > 0 || colisoes.length > 0) {
+    return { ok: false, faltando, colisoes, headerEncontrado: normalizada }
   }
   return { ok: true, indices }
 }
@@ -104,7 +121,7 @@ export const COLUNAS_DIA_A_DIA: ColunaDefinicao[] = [
   // Atividade: {atividade}."). Perder essa distinção junta 2 conceitos reais num só.
   { chave: "titulo", regex: /programa|projeto|[aá]rea/ },
   { chave: "atividade", regex: /atividade/ },
-  { chave: "hora_inicio", regex: /in[ií]cio|hor[aá]rio/ },
+  { chave: "hora_inicio", regex: /in[ií]cio/ },
   { chave: "hora_fim", regex: /fim|t[ée]rmino/ },
   { chave: "local", regex: /local/ },
   { chave: "informacoes", regex: /informa[cç]|obs/ },

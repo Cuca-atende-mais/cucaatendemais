@@ -239,8 +239,17 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                     // silencioso por posição que embaralhou os campos de José Walter (S-WM-35).
                     const deteccao = detectarColunas(headerRow, colunasEsperadas)
                     if (!deteccao.ok) {
+                        const detalhes = [
+                            deteccao.faltando.length > 0
+                                ? `coluna(s) ausente(s) [${deteccao.faltando.join(", ")}]`
+                                : null,
+                            deteccao.colisoes.length > 0
+                                ? `coluna(s) ambígua(s) [${deteccao.colisoes.map((c) => `${c.chaves.join(" + ")} -> "${c.header}" (índice ${c.indice})`).join("; ")}]`
+                                : null,
+                        ].filter(Boolean).join("; ")
+
                         throw new Error(
-                            `Aba "${sheetName}" (categoria ${categoriaVal}): não foi possível identificar a(s) coluna(s) [${deteccao.faltando.join(", ")}] pelo nome do header. ` +
+                            `Aba "${sheetName}" (categoria ${categoriaVal}): não foi possível identificar as colunas com segurança pelo nome do header: ${detalhes}. ` +
                             `Header lido na linha 2: [${deteccao.headerEncontrado.join(" | ")}]. ` +
                             `Corrija o nome da(s) coluna(s) na planilha (ou ajuste o reconhecimento em planilha-parser.ts) e tente novamente — nenhuma atividade foi importada deste arquivo.`
                         )
