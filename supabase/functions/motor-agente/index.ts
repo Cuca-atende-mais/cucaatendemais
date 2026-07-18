@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import type { Database } from "./database.types.ts";
 
 const GPT_MODEL = "gpt-4o";
 const EMBEDDING_MODEL = "text-embedding-3-small";
@@ -180,7 +181,7 @@ export function montarMensagemEncaminhamento(canal: CanalEncaminhamento, numero:
  * Nunca propaga exceção — linha ausente, JSON malformado ou erro de rede caem no default
  * seguro (todos os canais null), que `montarMensagemEncaminhamento` já trata sem número. */
 async function buscarNumeroCanal(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createClient<Database>>,
   canal: CanalEncaminhamento,
 ): Promise<string | null> {
   try {
@@ -767,7 +768,7 @@ export function decidirPrimeiraMensagem(
   return { unidadeSelecionada: null, aguardandoUnidade: true, resposta: saudacao + "\n\n" + MENU_UNIDADES };
 }
 
-async function getOpenAIKey(supabase: ReturnType<typeof createClient>): Promise<string> {
+async function getOpenAIKey(supabase: ReturnType<typeof createClient<Database>>): Promise<string> {
   const { data } = await supabase.rpc("get_openai_key");
   return data || Deno.env.get("OPENAI_API_KEY") || "";
 }
@@ -836,7 +837,7 @@ async function chamarGPT(prompt_sistema: string, historico: { role: string; cont
   return { texto: (await resp.json()).choices[0].message.content };
 }
 
-async function salvarMensagemAgente(supabase: ReturnType<typeof createClient>, conversa_id: string, lead_id: string, conteudo: string) {
+async function salvarMensagemAgente(supabase: ReturnType<typeof createClient<Database>>, conversa_id: string, lead_id: string, conteudo: string) {
   await supabase.from("mensagens").insert({ conversa_id, lead_id, tipo: "text", conteudo, remetente: "agente" });
 }
 
@@ -921,7 +922,7 @@ const CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA = 100;
  * Walter) documentado em S-WM-35 — é complementar, não substituto. Sem o fix do rótulo, mais
  * dado chega ao prompt, mas o dado errado (idade lida como horário etc.) continua errado.
  */
-async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClient>, unidade: string): Promise<string> {
+async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClient<Database>>, unidade: string): Promise<string> {
   const { data: doc } = await supabase.from("documentos_rag").select("id").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   if (!doc) return "";
   const { data: chunks } = await supabase.from("chunks_documentos").select("conteudo").eq("documento_id", doc.id).order("chunk_index", { ascending: true });
@@ -948,7 +949,7 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
  * ativo — o caller cai de volta pra busca vetorial (rede de segurança, comportamento hoje
  * existente preservado).
  */
-async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
+async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClient<Database>>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
   const { data } = await supabase.from("documentos_rag").select("id").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   const doc = data as { id: string } | null;
   if (!doc) return null;
@@ -992,7 +993,7 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
  * nenhuma linha ESPORTES pra essa campanha, ou a modalidade não é reconhecida — em todos os
  * casos o caller cai pra próxima camada (rede de segurança preservada, mesmo padrão do S-WM-34).
  */
-async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
+async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createClient<Database>>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
   const { data } = await supabase.from("documentos_rag").select("id, metadados").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   const doc = data as { id: string; metadados: Record<string, unknown> | null } | null;
   if (!doc) return null;
@@ -1026,7 +1027,7 @@ async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createC
  * Retorna "" quando ainda não existe nenhum `resumo_rede` ativo (ex.: antes da 1ª geração via
  * botão do portal) — o caller trata isso como "sem dado consolidado", nunca como erro.
  */
-async function carregarResumoRede(supabase: ReturnType<typeof createClient>): Promise<string> {
+async function carregarResumoRede(supabase: ReturnType<typeof createClient<Database>>): Promise<string> {
   const { data: doc } = await supabase.from("documentos_rag").select("conteudo").eq("tipo", "resumo_rede").eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   return doc?.conteudo || "";
 }
@@ -1050,7 +1051,7 @@ if (import.meta.main) {
 // prova que a resolução de unidade por nome/dígito, na wiring real do call-site, gera o
 // precisaVisaoGeral correto). Comportamento em produção idêntico: Deno.serve(handler) nunca
 // passa esse 2º argumento, então o client real é sempre criado normalmente.
-export async function handler(req: Request, supabaseOverride?: ReturnType<typeof createClient>): Promise<Response> {
+export async function handler(req: Request, supabaseOverride?: ReturnType<typeof createClient<Database>>): Promise<Response> {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   console.log("[motor-agente v18] Recebendo requisicao...");
 
@@ -1061,7 +1062,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
     if (!telefone || !agente_tipo) return new Response(JSON.stringify({ error: "telefone e agente_tipo sao obrigatorios" }), { status: 400 });
 
-    const supabase = supabaseOverride ?? createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const supabase = supabaseOverride ?? createClient<Database>(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const openaiKey = await getOpenAIKey(supabase);
     if (!openaiKey) throw new Error("OPENAI_API_KEY nao encontrada");
 
