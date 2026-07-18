@@ -1193,7 +1193,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
             // silêncio. Qualquer falha técnica da chamada (rate limit esgotado, JSON inválido,
             // erro de rede) cai no fallback seguro (mudou_de_assunto=false) e NÃO entra aqui —
             // mantém a unidade atual, mesmo comportamento de hoje pra erros transitórios.
-            const respostaAmbiguidade = "Só pra confirmar: você quer saber sobre outra unidade CUCA? Me diz qual! 😊\n\n" + MENU_UNIDADES;
+            const respostaAmbiguidade = evitarRepeticaoLiteral("Só pra confirmar: você quer saber sobre outra unidade CUCA? Me diz qual! 😊\n\n" + MENU_UNIDADES, historico);
             await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaAmbiguidade);
             return new Response(JSON.stringify({ success: true, resposta: respostaAmbiguidade, handover: false }), { headers: { "Content-Type": "application/json" } });
           } else {

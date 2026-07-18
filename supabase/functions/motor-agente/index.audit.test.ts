@@ -1861,3 +1861,46 @@ Deno.test("S-WM-39: lead novo, insert funciona (não regride)", async () => {
 
   assertEquals(resp.status, 200);
 });
+
+// ── S-WM-38 (BUG-01): resposta de ambiguidade de unidade também usa evitarRepeticaoLiteral ──
+// Teste e2e via handler() (não o unit test mais simples de evitarRepeticaoLiteral isolada —
+// esse não provaria que o wrapper foi de fato aplicado no branch de ambiguidade, já que a
+// função em si já existia e já funcionava antes desta story).
+
+const TEXTO_AMBIGUIDADE_S_WM_38 = "Só pra confirmar: você quer saber sobre outra unidade CUCA? Me diz qual! 😊\n\n" + MENU_UNIDADES;
+
+Deno.test("S-WM-38: ambiguidade repetida (mesma mensagem que a última do agente) recebe prefixo anti-repetição", async () => {
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [
+    { conteudo: "tem natação?", remetente: "lead" },
+    { conteudo: TEXTO_AMBIGUIDADE_S_WM_38, remetente: "agente" },
+  ] };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("quero trocar de unidade"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false }),
+  );
+
+  assertEquals(resp.status, 200);
+  const body = await resp.json();
+  assertStringIncludes(body.resposta, "De novo, foi mal! 😅");
+});
+
+Deno.test("S-WM-38: ambiguidade sem repetição prévia não recebe o prefixo (não regride)", async () => {
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [
+    { conteudo: "oi", remetente: "lead" },
+    { conteudo: "Bem-vindo!", remetente: "agente" },
+  ] };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("quero trocar de unidade"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false }),
+  );
+
+  assertEquals(resp.status, 200);
+  const body = await resp.json();
+  assertEquals(body.resposta, TEXTO_AMBIGUIDADE_S_WM_38);
+});
