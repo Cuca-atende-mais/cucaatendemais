@@ -1069,14 +1069,21 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     if (!telefone || !agente_tipo) return new Response(JSON.stringify({ error: "telefone e agente_tipo sao obrigatorios" }), { status: 400 });
 
     const supabase = supabaseOverride ?? createClient<Database>(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const openaiKey = await getOpenAIKey(supabase);
+    // S-WM-43 (PERF-02, Par 1): getOpenAIKey e o select de lead não têm dependência de dado
+    // entre si (depois da S-WM-44 remover transcreverAudio, não sobra nenhuma chamada
+    // assíncrona entre os dois que precisasse de openaiKey antes do lead) — paralelizados
+    // para reduzir 1 round-trip de latência por mensagem.
+    const [openaiKey, leadSelectResult] = await Promise.all([
+      getOpenAIKey(supabase),
+      supabase.from("leads").select("id,nome,opt_in,bloqueado").eq("telefone", telefone).single(),
+    ]);
     if (!openaiKey) throw new Error("OPENAI_API_KEY nao encontrada");
 
     const textoFinal = mensagem || "";
     if (!textoFinal) return new Response(JSON.stringify({ error: "Nenhuma mensagem" }), { status: 400 });
 
     // 1. Lead
-    let { data: lead, error: leadSelectError } = await supabase.from("leads").select("id,nome,opt_in,bloqueado").eq("telefone", telefone).single();
+    let { data: lead, error: leadSelectError } = leadSelectResult;
     if (!lead) {
       const { data, error: leadInsertError } = await supabase.from("leads").insert({ telefone, unidade_cuca, origem: "whatsapp", opt_in: true }).select("id,nome,opt_in,bloqueado").single();
       lead = data;
@@ -1133,12 +1140,13 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // dobrados no canal Institucional/Ouvidoria/Acesso CUCA. O histórico (passo 4 abaixo)
     // já encontra a mensagem, gravada pelo chamador, sem precisar reinseri-la.
 
-    // 4. Histórico
-    const { data: hist } = await supabase.from("mensagens").select("conteudo,remetente").eq("conversa_id", conversa.id).order("created_at", { ascending: false }).limit(MAX_HISTORICO);
+    // 4. Histórico + 5. Prompt — S-WM-43 (PERF-02, Par 2): sem dependência de dado entre si,
+    // paralelizados.
+    const [{ data: hist }, { data: prompt }] = await Promise.all([
+      supabase.from("mensagens").select("conteudo,remetente").eq("conversa_id", conversa.id).order("created_at", { ascending: false }).limit(MAX_HISTORICO),
+      supabase.from("prompts_agentes").select("prompt_sistema,prompt_contexto,temperatura,max_tokens,menu_boas_vindas").eq("agente_tipo", agente_tipo).eq("ativo", true).single(),
+    ]);
     const historico = (hist || []).reverse().map((m: { conteudo: string; remetente: string }) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
-
-    // 5. Prompt
-    const { data: prompt } = await supabase.from("prompts_agentes").select("prompt_sistema,prompt_contexto,temperatura,max_tokens,menu_boas_vindas").eq("agente_tipo", agente_tipo).eq("ativo", true).single();
     if (!prompt) throw new Error("Prompt nao encontrado para: " + agente_tipo);
 
     const isSofia = agente_tipo === "sofia" || agente_tipo === "sofia_global" || agente_tipo === "sofia_unidade";
@@ -1382,7 +1390,17 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     }
 
     if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
-      const conteudoPrograma = await carregarProgramacaoMensal(supabase, unidadeEfetiva);
+      // S-WM-43 (PERF-02, Par 3): carregarProgramacaoMensal e gerarEmbedding não dependem de
+      // dado um do outro (o embedding usa textoFinal, não conteudoPrograma) — paralelizados.
+      // `buscarAtividadeDeterministica` (abaixo, condicional a trocaComPedidoEspecifico ||
+      // trocouUnidade) foi deliberadamente deixado FORA deste Promise.all: é uma chamada
+      // condicional (nem sempre roda) e a S-WM-35 a introduziu depois do plano original desta
+      // story — incluí-la aumentaria a superfície de risco (mais uma chamada de rede concorrente
+      // no mesmo trecho) para um ganho marginal, já que ela só dispara numa fração dos turnos.
+      const [conteudoPrograma, embedding] = await Promise.all([
+        carregarProgramacaoMensal(supabase, unidadeEfetiva),
+        gerarEmbedding(textoFinal, openaiKey),
+      ]);
 
       let instrucaoArea = "";
       // S-WM-34 (VAL-23): trocouUnidade sozinho n\u00e3o basta mais \u2014 quando a mensagem que causou a
@@ -1415,8 +1433,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         }
       }
 
-      // Complementa com eventos pontuais via busca vetorial
-      const embedding = await gerarEmbedding(textoFinal, openaiKey);
+      // Complementa com eventos pontuais via busca vetorial (embedding já resolvido acima, no Promise.all do Par 3)
       const { data: chunksEventos } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embedding.join(",") + "]",
         p_tipos: ["eventos_pontuais", "FAQ"],
