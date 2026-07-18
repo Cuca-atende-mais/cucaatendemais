@@ -1979,3 +1979,18 @@ Deno.test("S-WM-41: esgota as tentativas em 429 persistente e rejeita com 'Embed
     globalThis.fetch = fetchOriginal;
   }
 });
+
+// ── S-WM-42 (SEC-04): catch top-level não repassa texto de erro upstream cru na resposta ────
+
+Deno.test("S-WM-42: catch top-level retorna Erro interno sem o campo details", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["prompts_agentes"] = { data: null };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 500);
+  const body = await resp.json();
+  assertEquals(body.error, "Erro interno");
+  assertEquals("details" in body, false, "a resposta HTTP não deve mais expor o texto de erro cru (details)");
+});

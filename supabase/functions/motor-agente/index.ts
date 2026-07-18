@@ -1619,6 +1619,6 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error("[motor-agente v18]", errMsg);
-    return new Response(JSON.stringify({ error: "Erro interno", details: errMsg }), { status: 500 });
+    return new Response(JSON.stringify({ error: "Erro interno" }), { status: 500 });
   }
 }
