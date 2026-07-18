@@ -1666,7 +1666,7 @@ Deno.test("S-WM-35 follow-up: aguardando_unidade via classificador olha através
 Deno.test("S-WM-35 follow-up: conversa_engajada via classificador recupera modalidade do histórico", async () => {
   const respostas = respostasBaseHandler({ conversa_engajada: true });
   respostas["mensagens"] = { data: [
-    { conteudo: "e na unidade que fica perto da lagoa?", remetente: "lead" },
+    { conteudo: "e na unidade quatro?", remetente: "lead" },
     { conteudo: "Posso te ajudar escolhendo uma unidade.", remetente: "agente" },
     { conteudo: "tem natação?", remetente: "lead" },
   ] };
@@ -1677,7 +1677,7 @@ Deno.test("S-WM-35 follow-up: conversa_engajada via classificador recupera modal
   const supabaseMock = criarSupabaseMock(respostas, []);
 
   const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
-    () => handler(requestFake("e na unidade que fica perto da lagoa?"), supabaseMock),
+    () => handler(requestFake("e na unidade quatro?"), supabaseMock),
     JSON.stringify({ unidade: "Cuca Pici", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: true }),
   );
   assertEquals(resp.status, 200);
@@ -1730,6 +1730,29 @@ Deno.test("S-WM-35 follow-up: pedido amplo não reaproveita modalidade antiga e 
 
   const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
   assertEquals(promptFinal.includes("ATIVIDADE ESPECIFICA"), false, "pergunta ampla deve cair no comportamento genérico seguro, sem herdar Natação do histórico");
+});
+
+Deno.test("S-WM-35 follow-up: pergunta de localização com unidade nova não injeta atividade antiga do histórico", async () => {
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [
+    { conteudo: "ah entendi, e o Pici, fica longe daqui?", remetente: "lead" },
+    { conteudo: "Tem natação na Barra.", remetente: "agente" },
+    { conteudo: "tem natação na Barra?", remetente: "lead" },
+  ] };
+  respostas["documentos_rag"] = { data: { id: "doc-pici-distancia", metadados: { campanha_id: "camp-pici-distancia" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", categoria: "ESPORTES", metadata: { turma: "Turma 01", professor: "CIRILLO" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("ah entendi, e o Pici, fica longe daqui?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200);
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertEquals(promptFinal.includes("ATIVIDADE ESPECIFICA"), false, "pergunta sobre distância/localização não deve receber bloco exato de Natação só porque Natação apareceu antes");
+  assertEquals(promptFinal.includes("liste TODAS as turmas"), false, "sem bloco exato, não deve entrar a instrução de enumeração de turmas");
 });
 
 Deno.test("S-WM-35 follow-up: busca determinística cobre DIA A DIA/Direitos Humanos e instrução manda listar todas as linhas", async () => {

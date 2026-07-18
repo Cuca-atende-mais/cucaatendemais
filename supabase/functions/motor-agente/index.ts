@@ -324,9 +324,9 @@ export function mensagemPareceContinuacaoDeAtividade(texto: string): boolean {
   const norm = normalizarTexto(texto).trim();
   if (!norm) return false;
   if (/\b(quais|qual|lista|listar|mostra|mostrar|manda|enviar|ver)\b.*\b(atividades|programacao|cursos|oficinas|modalidades|opcoes)\b/.test(norm)) return false;
-  if (/^(e\s+)?(no|na|em|do|da)\s+/.test(norm)) return true;
+  if (/\b(longe|perto|proxim[ao]s?|distancia|distante|bairro|endereco|localizacao|chegar|fica)\b/.test(norm)) return false;
   if (/^(e\s+)?(la|ai|nessa unidade|nessa cuca|nesse cuca)\??$/.test(norm)) return true;
-  if (detectarUnidadeDireta(texto)) return true;
+  if (/^(e\s+)?(no|na|em|do|da|o|a)\s+[\p{L}\s0-9]+[?!.\s]*$/u.test(norm) && norm.split(/\s+/).length <= 6) return true;
   return false;
 }
 

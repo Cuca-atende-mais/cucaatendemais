@@ -74,6 +74,13 @@ Deno.test("resolverAtividadeMencionadaComHistorico: pedido amplo não herda moda
   assertEquals(resolucao, { atividade: null, origem: null });
 });
 
+Deno.test("resolverAtividadeMencionadaComHistorico: pergunta de localização com unidade não herda modalidade antiga", () => {
+  const resolucao = resolverAtividadeMencionadaComHistorico("ah entendi, e o Pici, fica longe daqui?", ["Natação", "Judô"], [
+    { role: "user", content: "tem natação na Barra?" },
+  ]);
+  assertEquals(resolucao, { atividade: null, origem: null });
+});
+
 // ── S-WM-34 (VAL-23) — mensagemTemPedidoEspecifico ──────────────────────────
 // Heurística deliberadamente conservadora (só "?") — ver Dev Notes/docblock da função sobre por
 // que um limiar de tamanho de texto foi tentado e descartado (falso positivo no caso são/AC4).

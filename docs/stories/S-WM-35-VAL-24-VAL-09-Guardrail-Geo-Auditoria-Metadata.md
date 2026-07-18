@@ -231,6 +231,16 @@ O Junior informou que nenhuma planilha `.xlsx` vai ser buscada de volta com o s�
 
 **Suíte:** `deno test --no-check --allow-env --allow-read --allow-net .` em `supabase/functions/motor-agente` → **151 passed / 0 failed / 2 ignored**.
 
+### Follow-up PR #47 — falso positivo em pergunta de localização (CONCLUÍDO)
+
+**Achado do sócio:** `mensagemPareceContinuacaoDeAtividade` tratava qualquer menção direta a unidade como continuação de atividade. Caso confirmado: histórico com "tem natação na Barra?" e mensagem atual "ah entendi, e o Pici, fica longe daqui?" retornava `{ atividade: "Natação", origem: "historico" }`, injetando bloco `ATIVIDADE ESPECIFICA` e instrução para listar turmas numa pergunta de localização.
+
+**Correção:** a herança por histórico agora exige mensagem curta/elíptica. Removida a regra ampla baseada apenas em `detectarUnidadeDireta(texto)`. Mensagens com termos de localização/distância (`longe`, `perto`, `distância`, `bairro`, `endereço`, `chegar`, `fica` etc.) retornam `false` e preservam o fallback seguro.
+
+**Testes:** adicionado teste puro reproduzindo exatamente "ah entendi, e o Pici, fica longe daqui?" e teste de integração garantindo que esse turno não injeta `ATIVIDADE ESPECIFICA` nem a instrução "liste TODAS as turmas". Ajustado o teste positivo de `conversa_engajada` para uma elipse curta válida.
+
+**Suíte:** `deno test --no-check --allow-env --allow-read --allow-net .` em `supabase/functions/motor-agente` → **153 passed / 0 failed / 2 ignored**.
+
 ## Change Log
 
 | Data | Mudança |
@@ -239,6 +249,7 @@ O Junior informou que nenhuma planilha `.xlsx` vai ser buscada de volta com o s�
 | 2026-07-17 | Frente C implementada: `buscarAtividadeDeterministica` (consulta em `atividades_mensais.metadata`, categoria ESPORTES, correlacionada via `campanha_id` do `documentos_rag` ativo) + `formatarLinhaAtividadeDeterministica` (com guarda do gap conhecido `faixa_etaria === titulo` → "nao informado"), integrados nos 2 branches (acompanhamento: 3ª camada antes de S-WM-34/vetorial; visão geral: soma bloco quando `trocaComPedidoEspecifico`). 10 testes novos (4 puros + 6 de integração via `handler`), suíte 141/0/2, `deno check`/`deno lint` sem regressão (75 erros / 7 problemas, baseline). Commit local, sem push/deploy. Status Draft/InProgress → Ready for Review. |
 | 2026-07-17 | Remediação pós-validação da PR #42: `detectarColunas` agora aborta também quando duas chaves esperadas resolvem para o mesmo índice de header (`colisoes`), `hora_inicio` em DIA A DIA/ESPECIAIS deixou de aceitar `horário` genérico para não capturar "Horário Fim", e o modal de importação mostra erro distinto para colunas ausentes versus ambíguas. Adicionados testes para "Horário Fim" antes de "Horário Início" e para colisão genérica de header. |
 | 2026-07-18 | Follow-up pós-validação do sócio: recuperação de atividade citada no histórico em perguntas elípticas de unidade, cobertura dos 4 caminhos de resolução de unidade, `decidirPrimeiraMensagem` passa a usar unidade semântica, busca determinística remove o filtro hardcoded de `ESPORTES` e passa a cobrir todas as categorias, incluindo teste `DIA A DIA / Direitos Humanos` com 9 linhas. Prompt reforçado para listar todas as turmas/linhas do bloco exato. Suíte Deno da Edge Function: 151/0/2. |
+| 2026-07-18 | Remediação do achado novo na PR #47: `mensagemPareceContinuacaoDeAtividade` deixou de tratar qualquer menção a unidade como continuação; agora exige elipse curta e bloqueia perguntas de localização/distância. Adicionados testes puro + integração para "ah entendi, e o Pici, fica longe daqui?". Suíte Deno da Edge Function: 153/0/2. |
 
 ## Dev Agent Record
 
@@ -250,6 +261,7 @@ Queries de auditoria (B1) rodadas direto contra produção (`cuca`, `svzkrkfzpiq
 Frente C: `execute_sql` (read-only) contra `information_schema.columns` (confirmar colunas reais de `atividades_mensais`/`campanhas_mensais`/`documentos_rag`) e contra `pg_proc` (ler o corpo de `trigger_indexar_campanha_mensal` e confirmar que `documentos_rag.metadados->>'campanha_id'` é de fato o campo de correlação, antes de escrever qualquer código). `deno eval` contra `detectarAtividadeMencionada` pra confirmar o comportamento com erro de digitação real ("randebol") e com os pares de nomes parecidos existentes no banco (Cuca Pici, Cuca José Walter), antes de decidir reusar a função sem alteração. `deno test`/`deno check`/`deno lint` locais, com baseline reconfirmada via `git stash`/`git stash pop` antes de comparar.
 Remediação PR #42: `npm test -- src/lib/programacao/planilha-parser.test.ts` e `npm test` no `cuca-portal` passaram (24/0). `deno test --no-check --allow-env --allow-read --allow-net .` em `supabase/functions/motor-agente` passou (141/0/2). `npx tsc --noEmit` no `cuca-portal` falhou em baseline fora do patch (`tests/divulgacao-disparar-logic.test.ts`: import com extensão `.ts` sem `allowImportingTsExtensions`); `npx tsc --noEmit --allowImportingTsExtensions` passou, confirmando que o patch não introduziu erro de tipo. `npx eslint` focado nos arquivos alterados mostrou somente os 17 problemas já conhecidos de `import-planilha-modal.tsx` (14 erros/3 warnings: `any`, `prefer-const`, unused, unescaped entities), sem erro novo nos arquivos do parser/teste. `npm run lint` global e `npm run build` ficaram silenciosos por mais de 2-3 minutos e foram interrompidos para não deixar processo pendurado; precisam ser rerodados pelo gate de release após saneamento/ambiente.
 Follow-up 2026-07-18: `deno test --no-check --allow-env --allow-read --allow-net .` em `supabase/functions/motor-agente` passou (151/0/2). `deno lint` falhou com 7 problemas baseline já conhecidos (imports remotos/JSR inline e 2 `ban-unused-ignore` antigos em `index.audit.test.ts`). `deno check index.ts` falhou com 75 erros baseline de tipagem Supabase sem generic `Database`, mesma causa raiz já registrada na auditoria de 2026-07-16; não é regressão deste patch.
+Remediação PR #47: `deno test --no-check --allow-env --allow-read --allow-net .` em `supabase/functions/motor-agente` passou (153/0/2).
 
 ### Completion Notes List
 - Frente A: guardrail geográfico implementado, testado, commitado isoladamente. Suíte 128/0/2, zero regressão.
@@ -262,11 +274,12 @@ Follow-up 2026-07-18: `deno test --no-check --allow-env --allow-read --allow-net
 - Frente C: implementada — `buscarAtividadeDeterministica` (consulta estruturada em `atividades_mensais.metadata`, categoria ESPORTES) + `formatarLinhaAtividadeDeterministica` (formatação com guarda do gap conhecido), integradas como 3ª camada no branch de acompanhamento e como bloco somado (condicional a `trocaComPedidoEspecifico`) no branch de visão geral. Desenho confirmado explicitamente pelo usuário (7 pontos, ver seção Frente C) antes da implementação — reconhecimento de modalidade e correlação campanha/unidade validados contra dado real de produção (read-only) antes de codar. 10 testes novos, zero regressão (141/0/2). Deploy pendente de autorização, mesmo padrão das frentes anteriores.
 - Remediação PR #42: corrigida a lacuna defensiva do parser que permitia duas chaves apontarem para a mesma coluna detectada. Importações ambíguas agora abortam ruidosamente com detalhes da colisão; casos válidos com "Horário Fim" antes de "Horário Início" continuam aceitos e mapeiam índices distintos.
 - Follow-up pós-validação do sócio: perguntas elípticas de unidade agora recuperam a atividade pelo histórico recente do lead quando seguro; ambiguidade cai no fallback genérico atual; janela atravessa menu/mensagens do agente; os 4 caminhos de resolução de unidade estão cobertos por teste; busca determinística deixou de ser limitada a ESPORTES e cobre também DIA A DIA; prompt exige listar todas as turmas/linhas do bloco exato.
+- Remediação PR #47: falso positivo de localização corrigido — unidade citada em pergunta não relacionada ("Pici fica longe?") não herda atividade antiga nem injeta bloco exato.
 
 ### File List
 - `supabase/functions/motor-agente/index.ts` (Frente A; tarefa `.limit(40)`; Frente C + follow-up: `formatarLinhaAtividadeDeterministica`, `buscarAtividadeDeterministica`, recuperação de atividade por histórico, uso de unidade semântica em `decidirPrimeiraMensagem`, prompt de enumeração completa)
-- `supabase/functions/motor-agente/index.test.ts` (Frente C: 4 testes puros de `formatarLinhaAtividadeDeterministica`; follow-up: 4 testes puros de resolução de atividade por histórico)
-- `supabase/functions/motor-agente/index.audit.test.ts` (Frente A; tarefa `.limit(40)`; Frente C: 6 testes de integração via `handler`; follow-up: 6 testes de integração dos 4 caminhos de unidade + anti-stale + DIA A DIA)
+- `supabase/functions/motor-agente/index.test.ts` (Frente C: 4 testes puros de `formatarLinhaAtividadeDeterministica`; follow-up: 5 testes puros de resolução de atividade por histórico)
+- `supabase/functions/motor-agente/index.audit.test.ts` (Frente A; tarefa `.limit(40)`; Frente C: 6 testes de integração via `handler`; follow-up: 7 testes de integração dos 4 caminhos de unidade + anti-stale + localização + DIA A DIA)
 - `docs/stories/S-WM-35-VAL-24-VAL-09-Guardrail-Geo-Auditoria-Metadata.md` (este arquivo)
 - `cuca-portal/package.json` (script `test`, devDependency `vitest`) — Frente B2
 - `cuca-portal/vitest.config.ts` (novo) — Frente B2
@@ -274,50 +287,3 @@ Follow-up 2026-07-18: `deno test --no-check --allow-env --allow-read --allow-net
 - `cuca-portal/src/lib/programacao/planilha-parser.test.ts` (novo) — Frente B2
 - `cuca-portal/src/components/programacao/import-planilha-modal.tsx` — Frente B2
 - `supabase/migrations/20260716000000_swm35_corrige_rotacao_metadata_jose_walter.sql` (novo) — Frente B3, aplicado em produção
-
-## QA Results
-
-**Revisor:** @qa Quinn | **Data:** 2026-07-17 | **Commit avaliado:** `608a366` (branch `develop`, não pushado)
-
-### Veredito: **CONCERNS** (não-bloqueante)
-
-Gate completo das 6 frentes (A, B1, B2, B3, investigação SQS-44, C). Nenhum problema crítico, de segurança ou de correção lógica encontrado — todos os 7 pontos pedidos pelo Dex foram reproduzidos de forma independente, contra dado real de produção quando aplicável, não só relato. CONCERNS por 3 motivos não-bloqueantes: deploy pendente (mesma pendência já assumida conscientemente em todas as frentes anteriores), custo de leitura composto que já vinha registrado como CONCERNS na S-WM-34 e agora aumenta mais um degrau, e 1 achado de dado pré-existente (não desta story) que vale registrar.
-
-### Verificação independente dos 7 pontos pedidos
-
-**1. José Walter em produção — CONFIRMADO com dado real, não só relato.** Rastreei a cadeia completa contra o banco (`execute_sql`, read-only): documento `monthly_program` ativo de José Walter → `metadados->>'campanha_id'` = `6502b8c5-...` → `atividades_mensais` filtradas por esse `campanha_id` + `categoria='ESPORTES'` → as 5 turmas noturnas do caso original (turmas `09`, `10`, `19`, `20`, `23`, título `NATAÇÃO`) aparecem com `faixa_etaria = "15 á 29+ anos"` (não o gap), professor, horário e dias reais — nenhuma bate a assinatura do bug de rotação. A correlação `documentos_rag.metadados->>'campanha_id'` → `atividades_mensais.campanha_id` que o código usa resolve corretamente contra produção real, não só contra o mock dos testes.
-Nota de processo: minha 1ª tentativa dessa query falhou (retornou vazio) porque eu assumi o formato errado pro valor de `turma` (`'Turma 09'`) — o valor real armazenado pra José Walter é só o número (`'09'`). Corrigido e não é um achado sobre o código, é um erro da minha própria query.
-
-**2. Gap conhecido → "nao informado" — CONFIRMADO com dado real (Cuca Barra).** Consultei `atividades_mensais` de Barra pela mesma cadeia de correlação e confirmei linhas reais com `faixa_etaria = titulo` (ex.: título `"NATAÇÃO"`, `faixa_etaria: "NATAÇÃO"`) — exatamente a condição que a guarda de `formatarLinhaAtividadeDeterministica` intercepta. Achado extra, não-bloqueante, registrado na seção "Achados adjacentes" abaixo.
-
-**3. Erro de digitação — RECONFIRMADO independentemente, não reaproveitei o número do Dex.** Rodei `deno eval` eu mesma contra `detectarAtividadeMencionada` usando nomes reais de modalidade do banco (`HANDEBOL`, existe em Barra/Jangurussu/Pici): `"randebol"` → `null`, `"handbol"` → `null`, `"handebol"` (correto) → `"HANDEBOL"`. Cai pro fallback com segurança, sem erro nem confusão.
-
-**4. Mutation testing — CONFIRMADO, 3 mutações aplicadas em cópia isolada (`/tmp`, working tree real nunca tocada), suíte real rodada a cada uma, revertida ao final:**
-   - Guarda do gap desligada (`faixaEtariaBruta !== titulo` → sempre `true`): os 2 testes do gap (puro + integração) falharam corretamente.
-   - Cascata de 3 camadas quebrada (removido o `?? buscarAtividadeEspecifica(...)` do branch de acompanhamento): o teste "modalidade não reconhecida cai pro fallback S-WM-34" falhou corretamente.
-   - Condição `trocaComPedidoEspecifico` removida (bloco sempre soma): o teste "visão geral SEM trocaComPedidoEspecifico" falhou corretamente.
-   Os 3 testes-alvo não são vacuamente verdadeiros — pegam regressão real nos 3 pontos mais sensíveis da lógica.
-
-**5. Exclusividade com `resumo_rede` — CONFIRMADO por leitura de código.** `index.ts:1322/1369/1402` — cadeia `if`/`else if`/`else if`; os 2 primeiros branches (onde a Frente C roda) exigem `temUnidadeDefinida`; o branch de `perguntaGeralAtiva` só é alcançável quando os 2 primeiros são falsos. Garantia estrutural, independente de qualquer combinação de dado — concordo que não precisa de teste de runtime adicional.
-
-**6. Baseline isolada independentemente — CONFIRMADO, com um ajuste de método.** Em vez de `git stash` (que já causou um incidente de git hygiene no gate anterior desta família, S-WM-34), usei `git worktree add --detach <tmp> 608a366~1` — isola o commit pai numa pasta separada sem tocar a working tree real em nenhum momento. Baseline: **131 passed/0 failed/2 ignored**, `deno check` 75 erros, `deno lint` 7 problemas — idêntico ao commit atual (141/0/2, 75, 7) menos os 10 testes novos. Zero regressão confirmada.
-
-**7. Jangurussu e as 4 unidades com gap — CONFIRMADO intocadas.** `atividades_mensais`: Jangurussu ainda com `categoria='ESPORTE'` (sem S) = 66 linhas / `categoria='ESPORTES'` = 62 linhas, split idêntico ao achado original da B1. As 4 unidades (Barra/Jangurussu/Mondubim/Pici) somam 558/558 linhas com `faixa_etaria = titulo` — mesma contagem exata da auditoria B1, nenhuma migration tocou esse dado. Confirma também, como efeito colateral esperado (não um bug): o filtro estrito `categoria='ESPORTES'` da Frente C não alcança as 66 linhas corrompidas de Jangurussu — pra essas turmas a Frente C é um no-op seguro (cai pro fallback), não uma correção — consistente com o escopo declarado da story (Jangurussu/ESPORTE fica fora).
-
-### Achados adjacentes (não-bloqueantes)
-
-**A. "Turma Turma X" — dado pré-existente, NÃO introduzido por esta story.** Em Barra (e o mesmo padrão provavelmente vale pras outras 3 unidades com gap), `atividades_mensais.metadata->>'turma'` já vem armazenado com o prefixo incluído (ex.: `"Turma 1"`), enquanto José Walter guarda só o número (`"09"`). O template de `formatarLinhaAtividadeDeterministica` (`"... - Turma " + turma + ..."`) sempre concatena o literal `"Turma "` — pra Barra isso produz `"Turma Turma 1"`. **Confirmei que isso NÃO é uma regressão da Frente C**: consultei o `descricao` real já gravado em produção pra essa mesma linha e ele já mostra `"Esporte Modalidade: NATAÇÃO - Turma Turma 1..."` hoje — o mesmo template em `import-planilha-modal.tsx` gera exatamente o mesmo artefato desde antes desta story. A Frente C herda fielmente o comportamento existente, não cria um novo. Registro como achado de qualidade de dado (fora do escopo desta story) — sugiro item de backlog pro @po avaliar normalização de `turma` na origem.
-
-**B. Custo de leitura composto — reforça, não repete, o CONCERNS já registrado no gate da S-WM-34.** Uma mensagem de acompanhamento sem nenhuma modalidade reconhecida agora paga: `documentos_rag` (Frente C) + `atividades_mensais` + `documentos_rag` (S-WM-34) + `chunks_documentos` completo (S-WM-34) + embedding + RPC vetorial — 2 buscas determinísticas em série antes do fallback vetorial, cada uma pagando sua própria consulta a `documentos_rag`. Em termos absolutos o payload é pequeno (~19-35KB de `metadata`+`titulo` por unidade, medido via `execute_sql`, mesma ordem de grandeza que os 32-44KB de chunks já aceitos no gate anterior) — não mudo a recomendação já registrada (medir latência real pós-deploy antes de otimizar), só reforço que o efeito agora é cumulativo, não pontual, e vale entrar no mesmo item de monitoramento pós-deploy já aberto.
-
-**C. Obediência do modelo ao bloco `--- ATIVIDADE ESPECIFICA ---`** não é testável de forma determinística (mesma ressalva já registrada pra REGRA 6 e pra `trocaComPedidoEspecifico` desde a S-WM-34) — os testes provam que o dado chega certo no prompt, não que o GPT vai obrigatoriamente usá-lo em vez do resumo geral.
-
-**D. AC8-equivalente (deploy) — não atendido, deliberadamente**, mesma disclosure clara já usada nas frentes anteriores. Não é falha de qualidade.
-
-### Regressão, segurança, documentação — OK
-Regressão: zero, confirmada independentemente (ver ponto 6). Segurança: sem SQL injection (query builder parametrizado em toda a Frente C, nenhuma concatenação de input do usuário em SQL); nenhum dado sensível novo em log. Documentação: Dev Agent Record e seção "Frente C" da story documentam o desenho, a decisão e os números com precisão — validei que File List bate com `git show --stat 608a366`.
-
-### Recomendação
-Prosseguir para @devops — **mas esta story tem 2 alvos de deploy diferentes** (Edge Function `motor-agente`, Frentes A e C; serviço `portal` no EasyPanel, Frente B2) e precisa dos dois sequenciados, não só um. Depois do deploy do `motor-agente`, fechar o equivalente do AC8 com `get_edge_function` (mesma prática já usada nas stories anteriores desta família). Itens não-bloqueantes pro backlog: (a) normalização de `turma` na origem (achado A), (b) monitorar custo de leitura composto pós-deploy (achado B).
-
-— Quinn, guardião da qualidade 🛡️
