@@ -905,6 +905,15 @@ export function evitarRepeticaoLiteral(respostaCandidata: string, historico: { r
 const CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA = 100;
 
 /**
+ * S-WM-46 (TD-03): formatação de chunk RAG (prefixo de fonte, se houver) — extraída porque a
+ * mesma expressão aparecia verbatim em 4 pontos do Passo 6 (visão geral, acompanhamento,
+ * pergunta geral, genérico), com drift já observável entre eles (só 1 dos 4 logava contagem).
+ */
+function formatarChunks(chunks: { conteudo: string; fonte_tipo?: string }[]): string {
+  return chunks.map((c) => c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo).join("\n");
+}
+
+/**
  * Carrega todos os chunks do monthly_program ativo para uma unidade diretamente (sem embedding).
  * Sem `.limit()` — o teto fixo de 40 truncava a visão geral completa das 5 unidades (todas já
  * ultrapassam 40 chunks hoje: José Walter/Pici em 55, Jangurussu/Mondubim em 47, Barra em 42).
@@ -1415,9 +1424,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_limite: 3,
       });
       if (chunksEventos && chunksEventos.length > 0) {
-        contextRAG += "\n\n--- EVENTOS E FAQ ---\n" + chunksEventos.map((c: { conteudo: string; fonte_tipo?: string }) =>
-          c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-        ).join("\n");
+        contextRAG += "\n\n--- EVENTOS E FAQ ---\n" + formatarChunks(chunksEventos);
       }
     } else if (temUnidadeDefinida && isAgenteProgramacao) {
       // Pergunta de acompanhamento (conversa em andamento, mesma unidade, sem selecao de menu):
@@ -1447,9 +1454,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         // "o GPT respondeu errado" e "a busca nao trouxe o chunk certo" eram indistinguiveis no log.
         console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
         if (chunksPrograma && chunksPrograma.length > 0) {
-          contextRAG = "\n\n--- CONTEXTO ---\n" + chunksPrograma.map((c: { conteudo: string; fonte_tipo?: string }) =>
-            c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-          ).join("\n");
+          contextRAG = "\n\n--- CONTEXTO ---\n" + formatarChunks(chunksPrograma);
         }
       }
     } else if (isAgenteProgramacao && perguntaGeralAtiva) {
@@ -1476,9 +1481,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       const blocosRede: string[] = [];
       if (resumoRede) blocosRede.push("--- RESUMO DA REDE (atividades por unidade) ---\n" + resumoRede);
       if (chunksFaq && chunksFaq.length > 0) {
-        blocosRede.push("--- CONTEXTO (FAQ) ---\n" + chunksFaq.map((c: { conteudo: string; fonte_tipo?: string }) =>
-          c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-        ).join("\n"));
+        blocosRede.push("--- CONTEXTO (FAQ) ---\n" + formatarChunks(chunksFaq));
       }
       if (blocosRede.length > 0) contextRAG = "\n\n" + blocosRede.join("\n\n");
     } else {
@@ -1491,9 +1494,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_limite: 5,
       });
       if (chunks && chunks.length > 0) {
-        contextRAG = "\n\n--- CONTEXTO ---\n" + chunks.map((c: { conteudo: string; fonte_tipo?: string }) =>
-          c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-        ).join("\n");
+        contextRAG = "\n\n--- CONTEXTO ---\n" + formatarChunks(chunks);
       }
     }
 
