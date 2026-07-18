@@ -1609,6 +1609,12 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // 13. Salvar — 1 linha por parte efetivamente gerada, preservando a ordem. Sem isso, o
     // histórico lido no próximo turno (Passo 4, linha ~645) ficaria com 1 linha concatenada
     // em vez de refletir exatamente o que foi (ou vai ser) enviado turno por turno.
+    // S-WM-47 (PERF-03): Sequencial de propósito: a ordem das partes (abertura/lista/fechamento)
+    // precisa bater com created_at na leitura de histórico (linha ~1123) — um Promise.all aqui
+    // arriscaria embaralhar a ordem lógica. Não há coluna de sequência explícita em `mensagens`
+    // (confirmado em supabase/migrations/, 2026-07-18) que garantisse ordem determinística num
+    // insert em lote. Custo aceito: até 2 round-trips extras por resposta dividida (máx. 3
+    // partes, dividirRespostaEmPartes). Ver docs/stories/S-WM-47-*.md para o raciocínio completo.
     for (const parte of mensagens) {
       await salvarMensagemAgente(supabase, conversa.id, lead.id, parte);
     }
