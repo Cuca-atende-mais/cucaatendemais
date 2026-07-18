@@ -1376,12 +1376,16 @@ Deno.test("S-WM-34 Task 2: decidirConversaEngajada propaga pedidoEspecifico nos 
   assertEquals(viaDireta.pedidoEspecifico, true);
 });
 
-Deno.test("S-WM-34 Task 2: decidirPrimeiraMensagem usa mensagemTemPedidoEspecifico (único caminho — nunca resolve via avaliarSelecaoUnidade.unidade)", () => {
+Deno.test("S-WM-34/S-WM-35: decidirPrimeiraMensagem usa heurística no match direto e pedido_depende_unidade no match semântico", () => {
   const comPedido = decidirPrimeiraMensagem("Cuca Barra", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }, "quero saber da Barra, tem natação de manhã?");
   assertEquals(comPedido.pedidoEspecifico, true);
 
   const semPedido = decidirPrimeiraMensagem("Cuca Barra", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }, "quero saber da Barra");
   assertEquals(semPedido.pedidoEspecifico, false);
+
+  const semanticoComPedido = decidirPrimeiraMensagem(undefined, { unidade: "Cuca Pici", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: true }, "e na unidade quatro?");
+  assertEquals(semanticoComPedido.unidadeSelecionada, "Cuca Pici");
+  assertEquals(semanticoComPedido.pedidoEspecifico, true);
 });
 
 // ── S-WM-34 (VAL-09) — cobertura end-to-end faltante apontada pelo gate do @qa (CONCERNS) ──────
@@ -1580,10 +1584,7 @@ Deno.test("S-WM-35: visão geral SEM trocaComPedidoEspecifico NÃO soma o bloco 
 
   const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
   assertStringIncludes(promptFinal, "Apresente um resumo geral", "sem pedido específico, o comportamento são (resumo geral) precisa continuar intacto");
-  assertEquals(promptFinal.includes("ATIVIDADE ESPECIFICA (dado exato)"), false, "sem trocaComPedidoEspecifico, a Frente C não deveria disparar — nem consultar atividades_mensais à toa");
-
-  const consultouAtividadesMensais = chamadas.some((c) => c.tabela === "atividades_mensais");
-  assertEquals(consultouAtividadesMensais, false, "confirma que buscarAtividadeDeterministica nem chegou a ser chamada nesse caminho — a condição trocaComPedidoEspecifico é checada antes");
+  assertEquals(promptFinal.includes("ATIVIDADE ESPECIFICA (dado exato)"), false, "sem pedido específico atual nem modalidade recuperável do histórico, a Frente C pode consultar mas não deve somar bloco específico");
 });
 
 Deno.test("S-WM-35: documentos_rag sem doc ativo — as 2 camadas determinísticas retornam null com segurança, cai pro fallback vetorial sem quebrar", async () => {
@@ -1606,4 +1607,179 @@ Deno.test("S-WM-35: documentos_rag sem doc ativo — as 2 camadas determinístic
 
   const promptFinal = bodiesEnviados.find((b) => b.includes("Horário de funcionamento")) ?? "";
   assertStringIncludes(promptFinal, "Horário de funcionamento", "o conteúdo do fallback vetorial deveria chegar no prompt final mesmo nesse cenário degradado");
+});
+
+Deno.test("S-WM-35 follow-up: unidade salva + detectarTrocaUnidade recupera modalidade do histórico ao trocar unidade", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [
+    { conteudo: "e no Jangurussu?", remetente: "lead" },
+    { conteudo: "Tem sim. Quer ver em outra unidade?", remetente: "agente" },
+    { conteudo: "tem natação na Barra?", remetente: "lead" },
+  ] };
+  respostas["documentos_rag"] = { data: { id: "doc-jg", metadados: { campanha_id: "camp-jg" } } };
+  respostas["atividades_mensais"] = {
+    data: [
+      { titulo: "Natação", categoria: "ESPORTES", metadata: { turma: "Turma 01", professor: "Daniel", vagas: "20", sexo: "Misto", dias_semana: "Ter/Qui", horario: "18h às 19h", faixa_etaria: "15 a 29 anos" } },
+      { titulo: "Judô", categoria: "ESPORTES", metadata: { turma: "Turma 02", professor: "Vanessa" } },
+    ],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("e no Jangurussu?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200);
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("ATIVIDADE ESPECIFICA")) ?? "";
+  assertStringIncludes(promptFinal, "ATIVIDADE ESPECIFICA (dado exato)", "deveria somar bloco exato mesmo sem repetir 'natação' na mensagem atual");
+  assertStringIncludes(promptFinal, "Turma 01", "deveria recuperar Natação do histórico recente");
+  assertStringIncludes(promptFinal, "liste TODAS as turmas", "prompt precisa instruir enumeração completa quando há dado exato");
+  assertEquals(promptFinal.includes("Judô"), false, "não deveria misturar outra modalidade");
+});
+
+Deno.test("S-WM-35 follow-up: aguardando_unidade via classificador olha através do menu e recupera atividade anterior", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ aguardando_unidade: true });
+  respostas["mensagens"] = { data: [
+    { conteudo: "e na unidade quatro?", remetente: "lead" },
+    { conteudo: MENU_UNIDADES, remetente: "agente" },
+    { conteudo: "tem natação?", remetente: "lead" },
+  ] };
+  respostas["documentos_rag"] = { data: { id: "doc-pici", metadados: { campanha_id: "camp-pici" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", categoria: "ESPORTES", metadata: { turma: "Turma 04", professor: "CIRILLO", dias_semana: "Seg/Qua", horario: "19h às 20h" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("e na unidade quatro?"), supabaseMock),
+    JSON.stringify({ unidade: "Cuca Pici", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: true }),
+  );
+  assertEquals(resp.status, 200);
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("ATIVIDADE ESPECIFICA")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 04", "janela de histórico deve atravessar a mensagem do agente/menu de unidades");
+  assertStringIncludes(promptFinal, "UNIDADE: Cuca Pici", "unidade resolvida pelo classificador precisa ser preservada");
+});
+
+Deno.test("S-WM-35 follow-up: conversa_engajada via classificador recupera modalidade do histórico", async () => {
+  const respostas = respostasBaseHandler({ conversa_engajada: true });
+  respostas["mensagens"] = { data: [
+    { conteudo: "e na unidade quatro?", remetente: "lead" },
+    { conteudo: "Posso te ajudar escolhendo uma unidade.", remetente: "agente" },
+    { conteudo: "tem natação?", remetente: "lead" },
+  ] };
+  respostas["documentos_rag"] = { data: { id: "doc-pici-2", metadados: { campanha_id: "camp-pici-2" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", categoria: "ESPORTES", metadata: { turma: "Turma 07", professor: "CIRILLO", dias_semana: "Ter/Qui", horario: "20h às 21h" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("e na unidade quatro?"), supabaseMock),
+    JSON.stringify({ unidade: "Cuca Pici", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: true }),
+  );
+  assertEquals(resp.status, 200);
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("ATIVIDADE ESPECIFICA")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 07", "conversa_engajada também deve usar a mesma recuperação de modalidade do histórico");
+});
+
+Deno.test("S-WM-35 follow-up: primeira_mensagem via classificador recupera modalidade do histórico quando a conversa ainda não tem estado salvo", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["mensagens"] = { data: [
+    { conteudo: "e na unidade quatro?", remetente: "lead" },
+    { conteudo: "Sobre qual unidade você quer saber?", remetente: "agente" },
+    { conteudo: "tem natação?", remetente: "lead" },
+  ] };
+  respostas["documentos_rag"] = { data: { id: "doc-pici-3", metadados: { campanha_id: "camp-pici-3" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", categoria: "ESPORTES", metadata: { turma: "Turma 08", professor: "CIRILLO", dias_semana: "Sex", horario: "18h às 19h" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("e na unidade quatro?"), supabaseMock),
+    JSON.stringify({ unidade: "Cuca Pici", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: true }),
+  );
+  assertEquals(resp.status, 200);
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("ATIVIDADE ESPECIFICA")) ?? "";
+  assertStringIncludes(promptFinal, "Turma 08", "primeira_mensagem/classificador também deve passar pelo fix compartilhado");
+});
+
+Deno.test("S-WM-35 follow-up: pedido amplo não reaproveita modalidade antiga e mantém fallback seguro", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [
+    { conteudo: "quais atividades tem no Jangurussu?", remetente: "lead" },
+    { conteudo: "Tem natação na Barra.", remetente: "agente" },
+    { conteudo: "tem natação na Barra?", remetente: "lead" },
+  ] };
+  respostas["documentos_rag"] = { data: { id: "doc-jg-neg", metadados: { campanha_id: "camp-jg-neg" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", categoria: "ESPORTES", metadata: { turma: "Turma 99", professor: "Daniel" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("quais atividades tem no Jangurussu?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200);
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertEquals(promptFinal.includes("ATIVIDADE ESPECIFICA"), false, "pergunta ampla deve cair no comportamento genérico seguro, sem herdar Natação do histórico");
+});
+
+Deno.test("S-WM-35 follow-up: pergunta de localização com unidade nova não injeta atividade antiga do histórico", async () => {
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [
+    { conteudo: "ah entendi, e o Pici, fica longe daqui?", remetente: "lead" },
+    { conteudo: "Tem natação na Barra.", remetente: "agente" },
+    { conteudo: "tem natação na Barra?", remetente: "lead" },
+  ] };
+  respostas["documentos_rag"] = { data: { id: "doc-pici-distancia", metadados: { campanha_id: "camp-pici-distancia" } } };
+  respostas["atividades_mensais"] = {
+    data: [{ titulo: "Natação", categoria: "ESPORTES", metadata: { turma: "Turma 01", professor: "CIRILLO" } }],
+  };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("ah entendi, e o Pici, fica longe daqui?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200);
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertEquals(promptFinal.includes("ATIVIDADE ESPECIFICA"), false, "pergunta sobre distância/localização não deve receber bloco exato de Natação só porque Natação apareceu antes");
+  assertEquals(promptFinal.includes("liste TODAS as turmas"), false, "sem bloco exato, não deve entrar a instrução de enumeração de turmas");
+});
+
+Deno.test("S-WM-35 follow-up: busca determinística cobre DIA A DIA/Direitos Humanos e instrução manda listar todas as linhas", async () => {
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [
+    { conteudo: "e no José Walter?", remetente: "lead" },
+    { conteudo: "Na Barra encontrei opções de Direitos Humanos.", remetente: "agente" },
+    { conteudo: "tem Direitos Humanos na Barra?", remetente: "lead" },
+  ] };
+  respostas["documentos_rag"] = { data: { id: "doc-jw-dia", metadados: { campanha_id: "camp-jw-dia" } } };
+  respostas["atividades_mensais"] = {
+    data: Array.from({ length: 9 }, (_, i) => ({
+      titulo: "Direitos Humanos",
+      categoria: "DIA A DIA",
+      metadata: { turma: "Turma " + String(i + 1).padStart(2, "0"), professor: "Educador " + (i + 1), vagas: "25", sexo: "Misto", dias_semana: "Seg/Qua", horario: (8 + i) + "h às " + (9 + i) + "h", faixa_etaria: "15 a 29 anos" },
+    })),
+  };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("e no José Walter?"), supabaseMock),
+  );
+  assertEquals(resp.status, 200);
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("ATIVIDADE ESPECIFICA")) ?? "";
+  assertStringIncludes(promptFinal, "Categoria DIA A DIA - Atividade: Direitos Humanos", "categoria fora de ESPORTES precisa chegar pela busca determinística");
+  assertStringIncludes(promptFinal, "Turma 01", "deveria incluir a primeira linha de Direitos Humanos");
+  assertStringIncludes(promptFinal, "Turma 09", "deveria incluir a nona linha de Direitos Humanos, provando que não cortou volume");
+  assertStringIncludes(promptFinal, "liste TODAS as turmas", "prompt precisa generalizar a enumeração completa para fora de Esportes");
 });

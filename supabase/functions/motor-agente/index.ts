@@ -314,6 +314,47 @@ export function detectarAtividadeMencionada(mensagem: string, modalidades: strin
 }
 
 /**
+ * S-WM-35 follow-up: perguntas elípticas de troca/resolução de unidade ("e no Jangurussu?",
+ * "Pici", "e lá?") podem carregar a modalidade no histórico, não na mensagem atual. O motor
+ * tenta a mensagem atual primeiro; só usa histórico recente de LEAD quando a atual parece uma
+ * continuação curta. Se encontrar mais de uma atividade distinta no histórico, não chuta:
+ * retorna null e preserva o fallback seguro atual (visão geral/busca vetorial).
+ */
+export function mensagemPareceContinuacaoDeAtividade(texto: string): boolean {
+  const norm = normalizarTexto(texto).trim();
+  if (!norm) return false;
+  if (/\b(quais|qual|lista|listar|mostra|mostrar|manda|enviar|ver)\b.*\b(atividades|programacao|cursos|oficinas|modalidades|opcoes)\b/.test(norm)) return false;
+  if (/\b(longe|perto|proxim[ao]s?|distancia|distante|bairro|endereco|localizacao|chegar|fica)\b/.test(norm)) return false;
+  if (/^(e\s+)?(la|ai|nessa unidade|nessa cuca|nesse cuca)\??$/.test(norm)) return true;
+  if (/^(e\s+)?(no|na|em|do|da|o|a)\s+[\p{L}\s0-9]+[?!.\s]*$/u.test(norm) && norm.split(/\s+/).length <= 6) return true;
+  return false;
+}
+
+export function resolverAtividadeMencionadaComHistorico(
+  mensagemAtual: string,
+  atividadesConhecidas: string[],
+  historico: { role: string; content: string }[] = [],
+): { atividade: string | null; origem: "mensagem_atual" | "historico" | null } {
+  const atividadeAtual = detectarAtividadeMencionada(mensagemAtual, atividadesConhecidas);
+  if (atividadeAtual) return { atividade: atividadeAtual, origem: "mensagem_atual" };
+  if (!mensagemPareceContinuacaoDeAtividade(mensagemAtual)) return { atividade: null, origem: null };
+
+  const encontradas = new Map<string, string>();
+  const mensagensUsuarioRecentes = [...historico]
+    .reverse()
+    .filter((m) => m.role === "user" && m.content.trim() !== "" && m.content.trim() !== mensagemAtual.trim())
+    .slice(0, 5);
+
+  for (const msg of mensagensUsuarioRecentes) {
+    const atividade = detectarAtividadeMencionada(msg.content, atividadesConhecidas);
+    if (atividade) encontradas.set(normalizarTexto(atividade), atividade);
+  }
+
+  if (encontradas.size === 1) return { atividade: [...encontradas.values()][0], origem: "historico" };
+  return { atividade: null, origem: null };
+}
+
+/**
  * S-WM-34 (VAL-23): sinal barato (sem chamada de LLM) de que a mensagem que citou o nome de uma
  * unidade CUCA tambem carrega um pedido especifico junto - nao e so o nome da unidade sozinho
  * nem uma frase vaga tipo "quero saber do Mondubim agora". Usado no caminho detectarTrocaUnidade
@@ -338,7 +379,7 @@ export function mensagemTemPedidoEspecifico(texto: string): boolean {
 }
 
 /**
- * S-WM-35 (Frente C): formata uma linha de `atividades_mensais.metadata` (categoria ESPORTES)
+ * S-WM-35 (Frente C): formata uma linha de `atividades_mensais.metadata`
  * no mesmo template usado na importação/criação (`import-planilha-modal.tsx`/
  * `criar-programacao-modal.tsx`: "Esporte Modalidade: X - Turma Y. Professor: ...") — dado
  * estruturado direto da tabela-fonte, sem depender do texto já chunkeado/embeddado.
@@ -352,7 +393,7 @@ export function mensagemTemPedidoEspecifico(texto: string): boolean {
  * Qualquer outro campo ausente/vazio também vira "nao informado" — nunca quebra (undefined
  * vazando pro prompt) nem inventa (Constitution Art. IV).
  */
-export function formatarLinhaAtividadeDeterministica(titulo: string, metadata: Record<string, unknown> | null): string {
+export function formatarLinhaAtividadeDeterministica(titulo: string, metadata: Record<string, unknown> | null, categoria = "ESPORTES"): string {
   const campo = (valor: unknown): string => (typeof valor === "string" && valor.trim() !== "" ? valor : "nao informado");
   const meta = metadata ?? {};
   const turma = campo(meta.turma);
@@ -365,7 +406,8 @@ export function formatarLinhaAtividadeDeterministica(titulo: string, metadata: R
   const faixaEtaria = typeof faixaEtariaBruta === "string" && faixaEtariaBruta.trim() !== "" && normalizarTexto(faixaEtariaBruta) !== normalizarTexto(titulo)
     ? faixaEtariaBruta
     : "nao informado";
-  return "Esporte Modalidade: " + titulo + " - Turma " + turma + ". Professor: " + professor + ". Vagas: " + vagas + ". Publico: " + sexo + " (Idade: " + faixaEtaria + "). Dias: " + diasSemana + ". Horario: " + horario + ".";
+  const prefixo = normalizarTexto(categoria) === "esportes" ? "Esporte Modalidade" : "Categoria " + categoria + " - Atividade";
+  return prefixo + ": " + titulo + " - Turma " + turma + ". Professor: " + professor + ". Vagas: " + vagas + ". Publico: " + sexo + " (Idade: " + faixaEtaria + "). Dias: " + diasSemana + ". Horario: " + horario + ".";
 }
 
 /**
@@ -699,6 +741,9 @@ export function decidirPrimeiraMensagem(
   if (unidadeDetectadaDireta) {
     return { unidadeSelecionada: unidadeDetectadaDireta, aguardandoUnidade: false, resposta: null, pedidoEspecifico: mensagemTemPedidoEspecifico(textoOriginal) };
   }
+  if (avaliacaoSemantica.unidade) {
+    return { unidadeSelecionada: avaliacaoSemantica.unidade, aguardandoUnidade: false, resposta: null, pedidoEspecifico: avaliacaoSemantica.pedido_depende_unidade === true };
+  }
   if (avaliacaoSemantica.pergunta_geral) {
     // VAL-12: pergunta institucional real já na 1ª mensagem — não força o menu, segue pro
     // fluxo normal (Passo 6, RAG geral) pra responder de verdade.
@@ -903,7 +948,7 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
  * ativo — o caller cai de volta pra busca vetorial (rede de segurança, comportamento hoje
  * existente preservado).
  */
-async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string): Promise<string | null> {
+async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
   const { data } = await supabase.from("documentos_rag").select("id").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   const doc = data as { id: string } | null;
   if (!doc) return null;
@@ -912,14 +957,15 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
 
   const conteudos = chunks.map((c: { conteudo: string }) => c.conteudo);
   const modalidades = extrairModalidades(conteudos);
-  const atividade = detectarAtividadeMencionada(mensagem, modalidades);
+  const resolucao = resolverAtividadeMencionadaComHistorico(mensagem, modalidades, historico);
+  const atividade = resolucao.atividade;
   if (!atividade) return null;
 
   const atividadeNorm = normalizarTexto(atividade);
   const relevantes = conteudos.filter((c) => normalizarTexto(c).includes(atividadeNorm));
   if (relevantes.length === 0) return null;
 
-  console.log("[motor-agente v18] Busca deterministica de atividade: \"" + atividade + "\" (" + relevantes.length + " chunks, unidade=" + unidade + ")");
+  console.log("[motor-agente v18] Busca deterministica de atividade: \"" + atividade + "\" (" + relevantes.length + " chunks, unidade=" + unidade + ", origem=" + resolucao.origem + ")");
   return relevantes.join("\n");
 }
 
@@ -933,8 +979,9 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
  * produção nesta sessão); o trigger também desativa o `monthly_program` de campanhas antigas da
  * mesma unidade ao aprovar uma nova, então "documento ativo" já garante "campanha aprovada mais
  * recente", sem filtro de status adicional aqui.
- * Escopo desta frente: só categoria ESPORTES (mesmo escopo que `buscarAtividadeEspecifica` já
- * tinha) — CURSOS/DIA A DIA ficam de fora.
+ * Escopo follow-up S-WM-35: todas as categorias da campanha em `atividades_mensais` — a
+ * limitação anterior a ESPORTES deixava atividades volumosas de DIA A DIA (ex.: Direitos
+ * Humanos) fora da camada determinística.
  * Reconhecimento de modalidade reusa `detectarAtividadeMencionada` (S-WM-34, já validado contra
  * erro de digitação — retorna `null` com segurança, nunca confunde modalidades parecidas, ver
  * Dev Agent Record) contra os `titulo`s distintos da própria tabela (não do texto chunkeado).
@@ -945,7 +992,7 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
  * nenhuma linha ESPORTES pra essa campanha, ou a modalidade não é reconhecida — em todos os
  * casos o caller cai pra próxima camada (rede de segurança preservada, mesmo padrão do S-WM-34).
  */
-async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string): Promise<string | null> {
+async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
   const { data } = await supabase.from("documentos_rag").select("id, metadados").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   const doc = data as { id: string; metadados: Record<string, unknown> | null } | null;
   if (!doc) return null;
@@ -953,20 +1000,21 @@ async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createC
   const campanhaId = doc.metadados && typeof doc.metadados === "object" ? doc.metadados["campanha_id"] : null;
   if (typeof campanhaId !== "string" || !campanhaId) return null;
 
-  const { data: atividades } = await supabase.from("atividades_mensais").select("titulo, metadata").eq("campanha_id", campanhaId).eq("categoria", "ESPORTES");
-  const linhas = atividades as { titulo: string; metadata: Record<string, unknown> | null }[] | null;
+  const { data: atividades } = await supabase.from("atividades_mensais").select("titulo, categoria, metadata").eq("campanha_id", campanhaId);
+  const linhas = atividades as { titulo: string; categoria?: string | null; metadata: Record<string, unknown> | null }[] | null;
   if (!linhas || linhas.length === 0) return null;
 
   const titulosDistintos = [...new Set(linhas.map((l) => l.titulo).filter((t): t is string => typeof t === "string" && t.trim() !== ""))];
-  const atividade = detectarAtividadeMencionada(mensagem, titulosDistintos);
+  const resolucao = resolverAtividadeMencionadaComHistorico(mensagem, titulosDistintos, historico);
+  const atividade = resolucao.atividade;
   if (!atividade) return null;
 
   const atividadeNorm = normalizarTexto(atividade);
   const linhasRelevantes = linhas.filter((l) => typeof l.titulo === "string" && normalizarTexto(l.titulo) === atividadeNorm);
   if (linhasRelevantes.length === 0) return null;
 
-  console.log("[motor-agente v18] Busca deterministica (metadata) de atividade: \"" + atividade + "\" (" + linhasRelevantes.length + " turmas, unidade=" + unidade + ")");
-  return linhasRelevantes.map((l) => formatarLinhaAtividadeDeterministica(l.titulo, l.metadata)).join("\n");
+  console.log("[motor-agente v18] Busca deterministica (metadata) de atividade: \"" + atividade + "\" (" + linhasRelevantes.length + " turmas, unidade=" + unidade + ", origem=" + resolucao.origem + ")");
+  return linhasRelevantes.map((l) => formatarLinhaAtividadeDeterministica(l.titulo, l.metadata, l.categoria || "nao informado")).join("\n");
 }
 
 /**
@@ -1346,8 +1394,8 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // promptFinal, ja cuida de pedir uma resposta direta ao pedido quando esse bloco existe);
       // este bloco so garante que o dado exato da atividade pedida esta disponivel com certeza,
       // em vez de depender so do que sobrar nos ~40+ chunks do resumo geral.
-      if (trocaComPedidoEspecifico) {
-        const conteudoAtividadeEspecifica = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal);
+      if (trocaComPedidoEspecifico || trocouUnidade) {
+        const conteudoAtividadeEspecifica = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
         if (conteudoAtividadeEspecifica) {
           contextRAG += "\n\n--- ATIVIDADE ESPECIFICA (dado exato) ---\n" + conteudoAtividadeEspecifica;
         }
@@ -1378,8 +1426,8 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       //    muitos chunks nao-contiguos).
       // 3) Busca vetorial (comportamento original, rede de seguranca) - so quando a mensagem
       //    nao cita nenhuma modalidade conhecida em nenhuma das duas camadas deterministicas.
-      const conteudoAtividade = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal)
-        ?? await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal);
+      const conteudoAtividade = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico)
+        ?? await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal, historico);
       if (conteudoAtividade) {
         contextRAG = "\n\n--- CONTEXTO (atividade especifica) ---\n" + conteudoAtividade;
       } else {
@@ -1479,6 +1527,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         : "",
       trocouUnidade && trocaComPedidoEspecifico
         ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade E ja fez um pedido especifico na mesma mensagem. Inicie com uma mensagem de transicao amigavel curta (ex: 'Claro! Vou verificar isso no [unidade] 😊') e responda DIRETAMENTE ao pedido especifico usando os dados da programacao carregada acima — NAO apresente um resumo geral da programacao."
+        : "",
+      contextRAG.includes("ATIVIDADE ESPECIFICA") || contextRAG.includes("atividade especifica")
+        ? "INSTRUCAO CRITICA: existe um bloco de atividade especifica com dado exato no contexto. Use esse bloco como fonte principal e liste TODAS as turmas/linhas compatíveis presentes nele. Nao resuma, nao escolha só algumas e nao omita opcoes. Preserve quando existir: categoria, titulo/modalidade, turma, professor/responsavel, dias, horario, vagas, sexo, faixa etaria/idade e local."
         : "",
       // VAL-07: para Institucional/maria, só dizer "primeira mensagem" quando for de fato
       // conversaGenuinamenteNova (não reabertura) — evita mandar essa instrução pro GPT numa
