@@ -1109,12 +1109,19 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // lead_id+origem_id e cai fora de qualquer corrida. Fallback pro método antigo quando
     // ausente (robustez pra qualquer caller futuro que não mande; hoje só existe 1 caller,
     // worker/meta_adapter_inbound.py).
-    let { data: conversa } = conversa_id
+    let { data: conversa, error: conversaSelectError } = conversa_id
       ? await supabase.from("conversas").select("id, status, metadata, lead_id").eq("id", conversa_id).single()
       : await supabase.from("conversas").select("id, status, metadata, lead_id").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
 
     if (conversa_id && conversa && conversa.lead_id !== lead.id) {
       return new Response(JSON.stringify({ error: "conversa_id nao pertence ao lead informado" }), { status: 403 });
+    }
+
+    // S-WM-45 (BUG-03): erro real na busca de conversa_id não pode cair silenciosamente em criar
+    // conversa nova (órfã) — só quando conversa_id foi explicitamente informado (o caller estava
+    // confiante de que essa conversa existe) E há um error real (não "não encontrado").
+    if (conversa_id && !conversa && conversaSelectError) {
+      throw new Error("Falha ao buscar conversa_id=" + conversa_id + ": " + conversaSelectError.message);
     }
 
     if (!conversa) {

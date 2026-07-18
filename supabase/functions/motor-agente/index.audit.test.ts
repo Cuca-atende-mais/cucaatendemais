@@ -1994,3 +1994,58 @@ Deno.test("S-WM-42: catch top-level retorna Erro interno sem o campo details", a
   assertEquals(body.error, "Erro interno");
   assertEquals("details" in body, false, "a resposta HTTP não deve mais expor o texto de erro cru (details)");
 });
+
+// ── S-WM-45 (BUG-03): erro no lookup de conversa_id não deve criar conversa órfã ────────────
+
+Deno.test("S-WM-45: conversa_id informado, select retorna erro real → 500, sem criar conversa nova", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: null, error: { message: "erro simulado de conexao" } };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-999"), supabaseMock));
+
+  assertEquals(resp.status, 500);
+  assertEquals(chamadas.some((c) => c.tabela === "conversas" && c.metodo === "insert"), false, "não deveria inserir conversa nova quando o select falhou com erro real");
+});
+
+Deno.test("S-WM-45: conversa_id informado, não encontrado sem erro → cria conversa nova (não regride)", async () => {
+  // criarSupabaseMock compartilha a mesma resposta configurada por tabela entre select/insert —
+  // não consegue expressar "select não encontra, insert cria com sucesso" nesse cenário
+  // específico (select e insert de "conversas" precisam de respostas DIFERENTES aqui). Mock
+  // inline diferenciado por contagem de chamada, só para este teste, em vez de forçar o mock
+  // genérico ou arriscar quebrar outros testes que dependem do comportamento compartilhado.
+  const respostas = respostasBaseHandler({});
+  let chamadasConversas = 0;
+  const supabaseMock = criarSupabaseMock(respostas, []);
+  const fromOriginal = supabaseMock.from.bind(supabaseMock);
+  // deno-lint-ignore no-explicit-any
+  supabaseMock.from = (tabela: string): any => {
+    if (tabela !== "conversas") return fromOriginal(tabela);
+    chamadasConversas++;
+    const respostaConversa = chamadasConversas === 1
+      ? { data: null, error: null } // 1ª chamada: select, não encontrado, sem erro
+      : { data: { id: "conv-nova", status: "ativa", metadata: {}, lead_id: "lead-1" }, error: null }; // 2ª: insert, sucesso
+    // deno-lint-ignore no-explicit-any
+    const chain: any = {};
+    for (const metodo of ["select", "eq", "order", "limit", "single", "insert", "update"]) {
+      chain[metodo] = () => chain;
+    }
+    chain.then = (resolve: (v: { data: unknown; error: unknown }) => unknown) => resolve(respostaConversa);
+    return chain;
+  };
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-999"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+});
+
+Deno.test("S-WM-45: conversa_id informado, encontrado com sucesso (não regride)", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: { id: "conv-1", status: "ativa", metadata: {}, lead_id: "lead-1" }, error: null };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-1"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+});
