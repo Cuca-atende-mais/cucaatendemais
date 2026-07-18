@@ -100,6 +100,7 @@ Esta story toca a mesma região (linhas 1073-1078) que a **S-WM-43** (paraleliza
 | 2026-07-18 | 0.1 | Story criada a partir do Plano 005 da auditoria motor-agente (2026-07-16), aprovado pelo sócio. Base: origin/main. Impacto real no worker verificado: sem mudança para o lead, ganho é só observabilidade de backend. | @sm River |
 | 2026-07-18 | 0.2 | @po validate-story-draft: **GO com ajuste aplicado**. Achado de sequenciamento: mesma região de código que a S-WM-43 (Par 1) — nota de dependência adicionada (mergear esta antes). Status Draft → Ready. | @po Pax |
 | 2026-07-18 | 0.3 | Implementada em branch `fix/motor-agente-auditoria-2026-07-16`, sobre S-WM-37. Mutation testing confirmou a proteção. Suíte: 159/0/2. Status Ready → Ready for Review. | @dev Dex |
+| 2026-07-18 | 0.4 | Fix do achado CONCERNS do @qa aplicado: `respostasBaseHandler` agora declara `error?` no tipo de retorno, eliminando os 4 `TS2353` que essa story introduziu no arquivo de teste. Verificado: `deno check index.audit.test.ts` 41→37 erros (só os TS2353 saíram, `index.ts` intocado, 36 erros lá continuam). Suíte: 168/0/2, sem mudança de comportamento (fix é só anotação de tipo). | @dev Dex |
 
 ## Dev Agent Record
 
@@ -110,10 +111,33 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `deno test`: 159 passed, 0 failed, 2 ignored (156 baseline S-WM-37 + 3 novos).
 - Mutation testing: fix revertido → cenário 1 falhou como esperado; restaurado → verde.
 - `deno check`: 36 erros, idêntico à baseline (nenhum novo).
+- **Follow-up (achado CONCERNS do @qa):** `deno check index.audit.test.ts` mostrava 4 `TS2353` novos ("'error' does not exist in type '{ data: unknown; }'") — causa: `respostasBaseHandler` não tinha `error?` no tipo de retorno, apesar de `criarSupabaseMock` já aceitar. Corrigido: `Record<string, { data: unknown }>` → `Record<string, { data: unknown; error?: { message: string } | null }>`. Reverificado: `index.audit.test.ts` 41→37 erros (só os 4 TS2353 saíram); `index.ts` permanece 36 (arquivo não tocado); suíte 168/0/2 (zero mudança de comportamento, era só anotação de tipo).
 
 ### Completion Notes List
 - Implementado exatamente como especificado. `criarSupabaseMock` estendido com `error` opcional por tabela (aditivo).
+- **Follow-up:** tipo de retorno de `respostasBaseHandler` corrigido para combinar com `criarSupabaseMock` (achado do @qa, ver QA Results). Mudança de anotação de tipo apenas — nenhum comportamento de teste ou produção mudou, confirmado pela suíte idêntica antes/depois.
 
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: captura e checagem de `error` na resolução do lead)
-- `supabase/functions/motor-agente/index.audit.test.ts` (modificado: `criarSupabaseMock` ganhou suporte a `error`; 3 testes novos S-WM-39 adicionados ao final)
+- `supabase/functions/motor-agente/index.audit.test.ts` (modificado: `criarSupabaseMock` ganhou suporte a `error`; 3 testes novos S-WM-39 adicionados ao final; follow-up: tipo de retorno de `respostasBaseHandler` corrigido)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva.
+
+**Achado não reportado pelo @dev — verificado de forma independente:** o @dev sempre rodou `deno check index.ts` (que não mudou, 36 erros) e `deno test --no-check` (que passa). Eu rodei adicionalmente `deno check index.audit.test.ts` (o próprio arquivo de teste) e `deno test` **sem** `--no-check` — e encontrei **4 erros de tipo novos** (`TS2353`, "Object literal may only specify known properties, and 'error' does not exist in type '{ data: unknown; }'"), nas linhas onde os testes desta story e da S-WM-45 fazem `respostas["leads"] = { data: ..., error: {...} }` / `respostas["conversas"] = { data: ..., error: {...} }`.
+
+**Causa raiz:** esta story estendeu a assinatura de `criarSupabaseMock` para aceitar `error?` por tabela (`Record<string, { data: unknown; error?: {...} | null }>`), mas **não atualizou o tipo de retorno de `respostasBaseHandler`**, que continua declarado como `Record<string, { data: unknown }>` (sem `error`). Toda vez que um teste faz `respostas["leads"] = { data: X, error: Y }`, o TypeScript acusa propriedade excedente — porque `respostas` (retorno de `respostasBaseHandler`) não sabe que `error` existe.
+
+**Por que isso importa:** não afeta a execução real dos testes hoje (o comando padrão do projeto é `deno test --no-check`, e os 168 testes passam). Mas é uma regressão real e verificável contra o próprio objetivo da S-WM-36 (restaurar o typecheck como sinal confiável) — ironicamente, 2 stories desta mesma leva reintroduzem ruído de tipo no arquivo de teste, seguindo direto atrás da story que existia pra eliminar esse ruído.
+
+**Recomendação (fix trivial, 1 linha):**
+```ts
+function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record<string, { data: unknown; error?: { message: string } | null }> {
+```
+
+**AC funcionais (1-7):** todos atendidos — o achado acima não invalida o comportamento correto do fix em produção, é uma lacuna de type-safety no arquivo de teste.
+
+**Veredito: CONCERNS** — aprovado, mas com correção recomendada antes ou logo depois do merge (não bloqueante: não afeta produção nem a execução real da suíte, mas mina o propósito da S-WM-36). Recomendo @dev aplicar o fix de 1 linha acima nesta mesma branch antes do @devops seguir, já que é trivial.
+
+— Quinn, guardião da qualidade 🛡️

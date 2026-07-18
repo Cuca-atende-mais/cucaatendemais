@@ -81,7 +81,7 @@ function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown; e
 
 /** Base comum aos cenários de handler (AUD-04, AUD-07) abaixo — só muda `conversas.metadata` e
  * a mensagem do lead. */
-function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record<string, { data: unknown }> {
+function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record<string, { data: unknown; error?: { message: string } | null }> {
   return {
     "rpc:get_openai_key": { data: "fake-openai-key" },
     "leads": { data: { id: "lead-1", nome: "Fulano", opt_in: true, bloqueado: false } },

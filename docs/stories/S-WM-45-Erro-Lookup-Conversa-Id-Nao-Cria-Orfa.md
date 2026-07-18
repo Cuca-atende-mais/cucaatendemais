@@ -96,6 +96,7 @@ if (!conversa) {
 | 2026-07-18 | 0.1 | Story criada a partir do Plano 013 da auditoria motor-agente (2026-07-16), aprovado pelo sócio. Base: origin/main. Dependência de sequenciamento com S-WM-37 documentada explicitamente. | @sm River |
 | 2026-07-18 | 0.2 | @po validate-story-draft: **GO**. Dependência com S-WM-37 já bem documentada pelo @sm. Status Draft → Ready. | @po Pax |
 | 2026-07-18 | 0.3 | Implementada em branch `fix/motor-agente-auditoria-2026-07-16`, sobre S-WM-43 (última das 12 stories desta leva). Mock inline necessário pro cenário 2 (limitação do mock genérico compartilhado). Mutation testing confirmou. Suíte: 168/0/2. Status Ready → Ready for Review. | @dev Dex |
+| 2026-07-18 | 0.4 | Fix do achado CONCERNS do @qa aplicado (mesma causa raiz da S-WM-39, corrigida lá — esta story só herdava o problema por reusar o mock estendido). Nenhuma mudança adicional necessária nesta story especificamente. Suíte: 168/0/2, sem mudança. | @dev Dex |
 
 ## Dev Agent Record
 
@@ -106,11 +107,29 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `deno test`: 168 passed, 0 failed, 2 ignored (165 baseline S-WM-43 + 3 novos).
 - Mutation testing: fix revertido → cenário 1 falhou como esperado; restaurado → verde.
 - `deno check`: 36 erros, idêntico à baseline.
+- **Follow-up (achado CONCERNS do @qa):** os 4 `TS2353` que o @qa encontrou tinham causa raiz na S-WM-39 (`respostasBaseHandler` sem `error?` no tipo de retorno) — esta story só herdava o sintoma por reusar o mesmo mock estendido. Fix aplicado uma única vez, na S-WM-39 (ver lá). Reverifiquei aqui: `deno check index.audit.test.ts` limpo de `TS2353`, suíte 168/0/2 inalterada.
 
 ### Completion Notes List
 - Implementado exatamente como especificado, sobre o código já modificado pela S-WM-37 (select com `lead_id`, checagem de ownership já presente).
 - Limitação do mock genérico encontrada e documentada: `criarSupabaseMock` não diferencia select de insert na mesma tabela — para o cenário "não encontrado sem erro, insert cria com sucesso", precisei de um mock inline pontual (só nesse teste) em vez de arriscar estender o mock global.
+- **Follow-up:** achado CONCERNS do @qa (tipo de retorno de `respostasBaseHandler`) resolvido na S-WM-39, de onde a causa raiz vinha — nenhuma mudança de código adicional nesta story.
 
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: captura e checagem de `error` na resolução de `conversa` via `conversa_id`)
 - `supabase/functions/motor-agente/index.audit.test.ts` (modificado: 3 testes novos S-WM-45 adicionados ao final)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva.
+
+**Mesmo achado transversal da S-WM-39 (ver detalhes lá):** os 2 testes desta story que fazem `respostas["conversas"] = { data: null, error: {...} }` também disparam o erro `TS2353` no arquivo de teste (herdado da mesma causa: `respostasBaseHandler` sem `error` no tipo de retorno). Não é um achado novo desta story especificamente — é a mesma lacuna, só mais um consumidor dela.
+
+**Achado à parte, positivo:** o mock inline diferenciado por contagem de chamada (teste "não encontrado sem erro → cria conversa nova") é uma solução correta e bem documentada para uma limitação real do mock genérico (`criarSupabaseMock` não diferencia select/insert na mesma tabela). Revisei a lógica: `chamadasConversas === 1` (select) retorna `null`/sem erro, `> 1` (insert) retorna sucesso — captura exatamente o cenário pretendido. Escopo do hack é local ao teste (não vaza pra outros), risco de fragilidade aceitável.
+
+**Verificação independente:** revertei o fix (`if (conversa_id && !conversa && conversaSelectError)`) e confirmei que o teste do cenário 1 falha (`500` esperado, `200`/crash obtido) — mutation testing do @dev reproduzido com sucesso.
+
+**AC1-7:** todos atendidos. Composição com a S-WM-37 (aplicada antes, mesma região) confirmada correta no diff — nenhum conflito, a checagem de ownership (403) e a checagem de erro-real (500) são mutuamente exclusivas por construção.
+
+**Veredito: CONCERNS** — mesmo motivo da S-WM-39 (herdado, não novo aqui): o gap de tipo em `respostasBaseHandler` também afeta os testes desta story. Mesma recomendação: 1 correção de tipo (ver S-WM-39) resolve para as duas de uma vez.
+
+— Quinn, guardião da qualidade 🛡️
