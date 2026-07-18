@@ -1071,10 +1071,13 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     if (!textoFinal) return new Response(JSON.stringify({ error: "Nenhuma mensagem" }), { status: 400 });
 
     // 1. Lead
-    let { data: lead } = await supabase.from("leads").select("id,nome,opt_in,bloqueado").eq("telefone", telefone).single();
+    let { data: lead, error: leadSelectError } = await supabase.from("leads").select("id,nome,opt_in,bloqueado").eq("telefone", telefone).single();
     if (!lead) {
-      const { data } = await supabase.from("leads").insert({ telefone, unidade_cuca, origem: "whatsapp", opt_in: true }).select("id,nome,opt_in,bloqueado").single();
+      const { data, error: leadInsertError } = await supabase.from("leads").insert({ telefone, unidade_cuca, origem: "whatsapp", opt_in: true }).select("id,nome,opt_in,bloqueado").single();
       lead = data;
+      if (!lead && leadInsertError) {
+        throw new Error("Falha ao resolver lead (select: " + (leadSelectError?.message ?? "sem linha") + "; insert: " + leadInsertError.message + ")");
+      }
     }
     if (!lead || lead.bloqueado) return new Response(JSON.stringify({ blocked: true }), { status: 200 });
 

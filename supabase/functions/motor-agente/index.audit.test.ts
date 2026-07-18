@@ -43,8 +43,12 @@ import {
 // então adicionar o campo não quebra nada.
 type ChamadaRegistrada = { tabela: string; metodo: string; args?: unknown[]; payload?: unknown };
 
+// S-WM-39: `error` opcional por tabela — aditivo (default null, preserva todo call-site
+// existente que só configura `data`). Simula uma query real do supabase-js falhando
+// (select/insert na mesma tabela resolvem o mesmo `error` configurado — suficiente pros
+// cenários testados, que não precisam diferenciar select de insert na mesma tabela).
 // deno-lint-ignore no-explicit-any
-function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>, chamadas: ChamadaRegistrada[]): any {
+function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown; error?: { message: string } | null }>, chamadas: ChamadaRegistrada[]): any {
   function criarChain(tabela: string) {
     // deno-lint-ignore no-explicit-any
     const chain: any = {};
@@ -60,8 +64,8 @@ function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>
         return chain;
       };
     }
-    chain.then = (resolve: (v: { data: unknown; error: null }) => unknown) =>
-      resolve({ data: respostasPorTabela[tabela]?.data ?? null, error: null });
+    chain.then = (resolve: (v: { data: unknown; error: { message: string } | null }) => unknown) =>
+      resolve({ data: respostasPorTabela[tabela]?.data ?? null, error: respostasPorTabela[tabela]?.error ?? null });
     return chain;
   }
   return {
@@ -1818,6 +1822,40 @@ Deno.test("S-WM-37: sem conversa_id (branch else) continua funcionando sem checa
   const respostas = respostasBaseHandler({});
   respostas["conversas"] = { data: { id: "conv-1", status: "ativa", metadata: {}, lead_id: "lead-1" } };
   const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+});
+
+// ── S-WM-39 (BUG-02): erro técnico no lookup do lead não pode virar "blocked" silencioso ────
+
+Deno.test("S-WM-39: select e insert de leads falhando com erro real → 500, não blocked:true", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["leads"] = { data: null, error: { message: "erro simulado de conexao" } };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 500);
+  const body = await resp.json();
+  assertEquals(body.error, "Erro interno");
+});
+
+Deno.test("S-WM-39: lead genuinamente bloqueado (sem erro) continua blocked:true (não regride)", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["leads"] = { data: { id: "lead-1", nome: "Fulano", opt_in: true, bloqueado: true }, error: null };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+  const body = await resp.json();
+  assertEquals(body.blocked, true);
+});
+
+Deno.test("S-WM-39: lead novo, insert funciona (não regride)", async () => {
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({}), []);
 
   const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
 
