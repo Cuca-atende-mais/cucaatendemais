@@ -1095,10 +1095,15 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // ausente (robustez pra qualquer caller futuro que não mande; hoje só existe 1 caller,
     // worker/meta_adapter_inbound.py).
     let { data: conversa } = conversa_id
-      ? await supabase.from("conversas").select("id, status, metadata").eq("id", conversa_id).single()
-      : await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
+      ? await supabase.from("conversas").select("id, status, metadata, lead_id").eq("id", conversa_id).single()
+      : await supabase.from("conversas").select("id, status, metadata, lead_id").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
+
+    if (conversa_id && conversa && conversa.lead_id !== lead.id) {
+      return new Response(JSON.stringify({ error: "conversa_id nao pertence ao lead informado" }), { status: 403 });
+    }
+
     if (!conversa) {
-      const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: canal_origem || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata").single();
+      const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: canal_origem || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata, lead_id").single();
       conversa = data; conversaJustCreated = true; conversaGenuinamenteNova = true;
     } else if (conversa.status === "encerrada") {
       // AUD-15/VAL-07: reabrir uma conversa encerrada tratava o lead como contato novo

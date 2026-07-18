@@ -80,7 +80,10 @@ function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record
   return {
     "rpc:get_openai_key": { data: "fake-openai-key" },
     "leads": { data: { id: "lead-1", nome: "Fulano", opt_in: true, bloqueado: false } },
-    "conversas": { data: { id: "conv-1", status: "ativa", metadata: metadataConversa } },
+    // S-WM-37: lead_id incluído por padrão (mesmo lead-1 do mock de "leads" abaixo) — testes que
+    // precisam simular ownership mismatch (conversa de outro lead) sobrescrevem "conversas"
+    // explicitamente com um lead_id diferente.
+    "conversas": { data: { id: "conv-1", status: "ativa", metadata: metadataConversa, lead_id: "lead-1" } },
     "mensagens": { data: [] },
     "prompts_agentes": { data: { prompt_sistema: "sistema", prompt_contexto: "", temperatura: 0.7, max_tokens: 500, menu_boas_vindas: null } },
     "documentos_rag": { data: { id: "doc-1" } },
@@ -1782,4 +1785,41 @@ Deno.test("S-WM-35 follow-up: busca determinística cobre DIA A DIA/Direitos Hum
   assertStringIncludes(promptFinal, "Turma 01", "deveria incluir a primeira linha de Direitos Humanos");
   assertStringIncludes(promptFinal, "Turma 09", "deveria incluir a nona linha de Direitos Humanos, provando que não cortou volume");
   assertStringIncludes(promptFinal, "liste TODAS as turmas", "prompt precisa generalizar a enumeração completa para fora de Esportes");
+});
+
+// ── S-WM-37 (SEC-01): conversa_id não pode pertencer a outro lead ──────────────────────────
+
+Deno.test("S-WM-37: conversa_id de outro lead é rejeitado com 403, sem gravar nada", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: { id: "conv-999", status: "ativa", metadata: {}, lead_id: "lead-OUTRO" } };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-999"), supabaseMock));
+
+  assertEquals(resp.status, 403);
+  const body = await resp.json();
+  assertStringIncludes(body.error, "conversa_id");
+  assertEquals(chamadas.some((c) => c.tabela === "mensagens" && (c.metodo === "insert" || c.metodo === "update")), false, "não deveria gravar mensagem nenhuma");
+  assertEquals(chamadas.some((c) => c.tabela === "conversas" && (c.metodo === "insert" || c.metodo === "update")), false, "não deveria inserir/atualizar conversa");
+});
+
+Deno.test("S-WM-37: conversa_id do mesmo lead segue o fluxo normal (não regride)", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: { id: "conv-1", status: "ativa", metadata: {}, lead_id: "lead-1" } };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-1"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+});
+
+Deno.test("S-WM-37: sem conversa_id (branch else) continua funcionando sem checagem de ownership (não regride)", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: { id: "conv-1", status: "ativa", metadata: {}, lead_id: "lead-1" } };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 200);
 });
