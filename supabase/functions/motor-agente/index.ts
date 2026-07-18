@@ -774,11 +774,20 @@ async function getOpenAIKey(supabase: ReturnType<typeof createClient<Database>>)
   return data || Deno.env.get("OPENAI_API_KEY") || "";
 }
 
-async function gerarEmbedding(texto: string, apiKey: string): Promise<number[]> {
+export async function gerarEmbedding(texto: string, apiKey: string, tentativa = 0): Promise<number[]> {
   const resp = await fetch("https://api.openai.com/v1/embeddings", {
     method: "POST", headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ model: EMBEDDING_MODEL, input: texto.slice(0, 8000) }),
   });
+
+  if (deveTentarNovamente(resp.status, tentativa)) {
+    const corpoErro = await resp.text();
+    const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
+    console.log("[motor-agente v18] Rate limit OpenAI/embeddings (tentativa " + (tentativa + 1) + "/" + GPT_MAX_TENTATIVAS + "), aguardando " + esperaSegundos + "s antes de tentar de novo");
+    await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
+    return gerarEmbedding(texto, apiKey, tentativa + 1);
+  }
+
   if (!resp.ok) throw new Error("Embedding error: " + await resp.text());
   return (await resp.json()).data[0].embedding;
 }

@@ -20,6 +20,7 @@ import {
   SAUDACOES_ABERTURA,
   INSTRUCAO_SEGURANCA,
   avaliarSelecaoUnidade,
+  gerarEmbedding,
   handler,
 } from "./index.ts";
 
@@ -1903,4 +1904,78 @@ Deno.test("S-WM-38: ambiguidade sem repetição prévia não recebe o prefixo (n
   assertEquals(resp.status, 200);
   const body = await resp.json();
   assertEquals(body.resposta, TEXTO_AMBIGUIDADE_S_WM_38);
+});
+
+// ── S-WM-41 (BUG-04): retry/backoff em gerarEmbedding (mesma proteção que chamarGPT/avaliarSelecaoUnidade já têm) ──
+
+Deno.test("S-WM-41: gerarEmbedding tenta de novo após 429 e retorna o embedding da 2ª tentativa", async () => {
+  let chamadasFetch = 0;
+  const fetchOriginal = globalThis.fetch;
+  // deno-lint-ignore no-explicit-any
+  globalThis.fetch = (() => {
+    chamadasFetch++;
+    if (chamadasFetch === 1) {
+      return Promise.resolve(new Response("rate limited", { status: 429, headers: { "retry-after": "0" } }));
+    }
+    return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [1, 2, 3] }] }), { status: 200 }));
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+
+  try {
+    const resultado = await gerarEmbedding("texto de teste", "fake-key");
+    assertEquals(chamadasFetch, 2, "esperava-se exatamente 1 nova tentativa após o 429");
+    assertEquals(resultado, [1, 2, 3], "depois do retry, o embedding real da 2ª tentativa deveria ser retornado");
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+});
+
+Deno.test("S-WM-41: erro não-transitório (400) rejeita imediatamente, sem retry", async () => {
+  let chamadasFetch = 0;
+  const fetchOriginal = globalThis.fetch;
+  // deno-lint-ignore no-explicit-any
+  globalThis.fetch = (() => {
+    chamadasFetch++;
+    return Promise.resolve(new Response("bad request", { status: 400 }));
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+
+  try {
+    let erro: unknown = null;
+    try {
+      await gerarEmbedding("texto de teste", "fake-key");
+    } catch (e) {
+      erro = e;
+    }
+    assertEquals(chamadasFetch, 1, "um erro não-transitório (400) não deveria acionar nenhuma nova tentativa");
+    assertEquals(erro instanceof Error, true);
+    assertStringIncludes((erro as Error).message, "Embedding error");
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+});
+
+Deno.test("S-WM-41: esgota as tentativas em 429 persistente e rejeita com 'Embedding error'", async () => {
+  let chamadasFetch = 0;
+  const fetchOriginal = globalThis.fetch;
+  // deno-lint-ignore no-explicit-any
+  globalThis.fetch = (() => {
+    chamadasFetch++;
+    return Promise.resolve(new Response("rate limited", { status: 429, headers: { "retry-after": "0" } }));
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+
+  try {
+    let erro: unknown = null;
+    try {
+      await gerarEmbedding("texto de teste", "fake-key");
+    } catch (e) {
+      erro = e;
+    }
+    assertEquals(chamadasFetch, 3, "GPT_MAX_TENTATIVAS=2 → 1ª chamada + 2 retries = 3 chamadas no total antes de desistir");
+    assertEquals(erro instanceof Error, true);
+    assertStringIncludes((erro as Error).message, "Embedding error");
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
 });
