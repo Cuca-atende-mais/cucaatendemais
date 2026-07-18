@@ -21,6 +21,12 @@ const UNIDADES_MAP: Record<string, string> = {
   '1': 'Cuca Barra', '2': 'Cuca Jangurussu', '3': 'Cuca Mondubim', '4': 'Cuca Pici', '5': 'Cuca Jos\u00e9 Walter',
 };
 
+// S-WM-40: derivado de UNIDADES_MAP (filtra as chaves de d\u00edgito) \u2014 elimina a duplica\u00e7\u00e3o que
+// existia em detectarTrocaUnidade (literal local id\u00eantico, exceto pelas chaves num\u00e9ricas).
+const NOMES_UNIDADES_POR_PALAVRA: Record<string, string> = Object.fromEntries(
+  Object.entries(UNIDADES_MAP).filter(([chave]) => !/^\d$/.test(chave))
+);
+
 export const MENU_UNIDADES = "Sobre qual unidade CUCA voc\u00ea quer saber? \ud83d\ude0a\n\n1\ufe0f\u20e3 Barra\n2\ufe0f\u20e3 Jangurussu\n3\ufe0f\u20e3 Mondubim\n4\ufe0f\u20e3 Pici\n5\ufe0f\u20e3 Jos\u00e9 Walter";
 
 export function ehSelecaoMenu(texto: string): boolean {
@@ -251,17 +257,13 @@ export function pareceIntencaoTrocaUnidade(texto: string): boolean {
 /** Detecta se a mensagem menciona uma unidade diferente da atual */
 export function detectarTrocaUnidade(texto: string, unidadeAtual: string): string | null {
   const lower = texto.toLowerCase().trim();
-  const nomesUnidades: Record<string, string> = {
-    'barra': 'Cuca Barra', 'jangurussu': 'Cuca Jangurussu', 'mondubim': 'Cuca Mondubim',
-    'pici': 'Cuca Pici', 'jos\u00e9 walter': 'Cuca Jos\u00e9 Walter', 'jose walter': 'Cuca Jos\u00e9 Walter', 'walter': 'Cuca Jos\u00e9 Walter',
-  };
-  for (const [chave, unidade] of Object.entries(nomesUnidades)) {
+  for (const [chave, unidade] of Object.entries(NOMES_UNIDADES_POR_PALAVRA)) {
     if (contemPalavra(lower, chave) && unidade !== unidadeAtual) {
       return unidade;
     }
   }
   // Item 4 (S-WM-21): s\u00f3 entra se nenhum match exato foi encontrado acima.
-  for (const [chave, unidade] of Object.entries(nomesUnidades)) {
+  for (const [chave, unidade] of Object.entries(NOMES_UNIDADES_POR_PALAVRA)) {
     if (contemNomeUnidadeComTypo(lower, chave) && unidade !== unidadeAtual) {
       return unidade;
     }
