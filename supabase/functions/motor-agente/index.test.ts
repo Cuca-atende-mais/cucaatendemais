@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico } from "./index.ts";
 
 // ── S-WM-34 (VAL-09) — normalizarTexto ──────────────────────────────────────
 Deno.test("normalizarTexto: remove acento e lowercase", () => {
@@ -42,6 +42,36 @@ Deno.test("detectarAtividadeMencionada: prefere nome mais específico (Futsal Se
 
 Deno.test("detectarAtividadeMencionada: retorna null quando nenhuma modalidade é citada", () => {
   assertEquals(detectarAtividadeMencionada("qual o horário de hoje?", ["Natação", "Judô"]), null);
+});
+
+Deno.test("resolverAtividadeMencionadaComHistorico: mensagem atual vence o histórico", () => {
+  const resolucao = resolverAtividadeMencionadaComHistorico("e no Pici, tem judô?", ["Natação", "Judô"], [
+    { role: "user", content: "tem natação na Barra?" },
+  ]);
+  assertEquals(resolucao, { atividade: "Judô", origem: "mensagem_atual" });
+});
+
+Deno.test("resolverAtividadeMencionadaComHistorico: pergunta elíptica usa histórico recente do lead", () => {
+  const resolucao = resolverAtividadeMencionadaComHistorico("e no Jangurussu?", ["Natação", "Judô"], [
+    { role: "user", content: "tem natação na Barra?" },
+    { role: "assistant", content: "Sobre qual unidade?" },
+  ]);
+  assertEquals(resolucao, { atividade: "Natação", origem: "historico" });
+});
+
+Deno.test("resolverAtividadeMencionadaComHistorico: ambiguidade no histórico não chuta", () => {
+  const resolucao = resolverAtividadeMencionadaComHistorico("e no Jangurussu?", ["Natação", "Judô"], [
+    { role: "user", content: "tem natação na Barra?" },
+    { role: "user", content: "e judô também?" },
+  ]);
+  assertEquals(resolucao, { atividade: null, origem: null });
+});
+
+Deno.test("resolverAtividadeMencionadaComHistorico: pedido amplo não herda modalidade antiga", () => {
+  const resolucao = resolverAtividadeMencionadaComHistorico("quais atividades tem no Jangurussu?", ["Natação", "Judô"], [
+    { role: "user", content: "tem natação na Barra?" },
+  ]);
+  assertEquals(resolucao, { atividade: null, origem: null });
 });
 
 // ── S-WM-34 (VAL-23) — mensagemTemPedidoEspecifico ──────────────────────────
