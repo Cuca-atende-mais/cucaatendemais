@@ -138,6 +138,20 @@ function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record
 
 **AC funcionais (1-7):** todos atendidos — o achado acima não invalida o comportamento correto do fix em produção, é uma lacuna de type-safety no arquivo de teste.
 
-**Veredito: CONCERNS** — aprovado, mas com correção recomendada antes ou logo depois do merge (não bloqueante: não afeta produção nem a execução real da suíte, mas mina o propósito da S-WM-36). Recomendo @dev aplicar o fix de 1 linha acima nesta mesma branch antes do @devops seguir, já que é trivial.
+**Veredito (revisão original): CONCERNS** — aprovado, mas com correção recomendada antes ou logo depois do merge (não bloqueante: não afeta produção nem a execução real da suíte, mas mina o propósito da S-WM-36). Recomendo @dev aplicar o fix de 1 linha acima nesta mesma branch antes do @devops seguir, já que é trivial.
+
+---
+
+### Revalidação — @qa Quinn, 2026-07-18 (pós-fix do @dev, commit `a9d606c`)
+
+Reproduzi de forma independente, sem confiar no relato do @dev:
+- Diff do commit `a9d606c` confirmado mínimo: só a linha da assinatura de `respostasBaseHandler` mudou (`Record<string, { data: unknown }>` → `Record<string, { data: unknown; error?: { message: string } | null }>`), exatamente a recomendação.
+- `deno test --no-check ...`: **168 passed, 0 failed, 2 ignored** — idêntico à pré-fix.
+- `deno check index.ts`: **36 erros**, inalterado — confirma que o arquivo de produção não foi tocado.
+- `deno check index.audit.test.ts`: **41 → 37 erros**. Categorizei os 37 restantes: 20 `TS18047` + 13 `TS2322` + 1 `TS2339` + 3 `TS2345` = 37 — batem exatamente com os erros já documentados (herdados da S-WM-36 + 1 pré-existente não relacionado, `AUD-01`). **Zero `TS2353` restante.**
+
+Achado resolvido, sem efeito colateral em produção nem em comportamento de teste (mudança de anotação de tipo pura).
+
+**Veredito final: PASS**
 
 — Quinn, guardião da qualidade 🛡️

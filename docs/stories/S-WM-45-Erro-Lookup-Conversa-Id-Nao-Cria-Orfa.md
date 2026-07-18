@@ -130,6 +130,14 @@ Claude Sonnet 5 (claude-sonnet-5)
 
 **AC1-7:** todos atendidos. Composição com a S-WM-37 (aplicada antes, mesma região) confirmada correta no diff — nenhum conflito, a checagem de ownership (403) e a checagem de erro-real (500) são mutuamente exclusivas por construção.
 
-**Veredito: CONCERNS** — mesmo motivo da S-WM-39 (herdado, não novo aqui): o gap de tipo em `respostasBaseHandler` também afeta os testes desta story. Mesma recomendação: 1 correção de tipo (ver S-WM-39) resolve para as duas de uma vez.
+**Veredito (revisão original): CONCERNS** — mesmo motivo da S-WM-39 (herdado, não novo aqui): o gap de tipo em `respostasBaseHandler` também afeta os testes desta story. Mesma recomendação: 1 correção de tipo (ver S-WM-39) resolve para as duas de uma vez.
+
+---
+
+### Revalidação — @qa Quinn, 2026-07-18 (pós-fix do @dev, commit `a9d606c`)
+
+Fix aplicado uma única vez na S-WM-39 (causa raiz de lá) resolve também esta story, que só herdava o sintoma. Reproduzi de forma independente: `deno check index.audit.test.ts` → 37 erros, zero `TS2353` (os 2 testes desta story que usavam `error` no mock de `conversas` não geram mais erro de tipo). `deno test`: 168/0/2, inalterado. `index.ts`: 36 erros, intocado.
+
+**Veredito final: PASS**
 
 — Quinn, guardião da qualidade 🛡️
