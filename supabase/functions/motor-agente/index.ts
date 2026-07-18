@@ -4,7 +4,6 @@ import type { Database } from "./database.types.ts";
 
 const GPT_MODEL = "gpt-4o";
 const EMBEDDING_MODEL = "text-embedding-3-small";
-const WHISPER_MODEL = "whisper-1";
 const MAX_HISTORICO = 10;
 
 const RAG_FONTES_POR_AGENTE: Record<string, string[]> = {
@@ -773,19 +772,6 @@ async function getOpenAIKey(supabase: ReturnType<typeof createClient<Database>>)
   return data || Deno.env.get("OPENAI_API_KEY") || "";
 }
 
-async function transcreverAudio(audioUrl: string, apiKey: string): Promise<string> {
-  const audioResp = await fetch(audioUrl);
-  if (!audioResp.ok) throw new Error("Falha ao baixar audio");
-  const audioBlob = await audioResp.blob();
-  const formData = new FormData();
-  formData.append("file", audioBlob, "audio.ogg");
-  formData.append("model", WHISPER_MODEL);
-  formData.append("language", "pt");
-  const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { "Authorization": "Bearer " + apiKey }, body: formData });
-  if (!resp.ok) throw new Error("Whisper error: " + await resp.text());
-  return (await resp.json()).text;
-}
-
 async function gerarEmbedding(texto: string, apiKey: string): Promise<number[]> {
   const resp = await fetch("https://api.openai.com/v1/embeddings", {
     method: "POST", headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
@@ -1066,8 +1052,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     const openaiKey = await getOpenAIKey(supabase);
     if (!openaiKey) throw new Error("OPENAI_API_KEY nao encontrada");
 
-    let textoFinal = mensagem || "";
-    if (midia_url && (midia_tipo === "audio" || midia_tipo === "ptt")) textoFinal = await transcreverAudio(midia_url, openaiKey);
+    const textoFinal = mensagem || "";
     if (!textoFinal) return new Response(JSON.stringify({ error: "Nenhuma mensagem" }), { status: 400 });
 
     // 1. Lead
