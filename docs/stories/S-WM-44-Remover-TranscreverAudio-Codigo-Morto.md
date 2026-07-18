@@ -98,3 +98,17 @@ Claude Sonnet 5 (claude-sonnet-5)
 
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: removidos `transcreverAudio`, `WHISPER_MODEL`, branch de mídia)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva.
+
+Confirmei eu mesmo, de forma independente: `grep -n "transcreverAudio\|WHISPER_MODEL" index.ts` → vazio. `grep -rn "midia_tipo" worker/` reconfirmado → só o helper defensivo de texto (`_texto_historico_para_midia_vazia`), nenhuma atribuição real de `"audio"`/`"ptt"`. Decisão de remoção (vs. allowlist) é a correta dado que não há caller real — reduz superfície de ataque a zero em vez de proteger um caminho morto.
+
+Nenhuma regressão (suíte idêntica antes/depois, como esperado — nenhum teste referenciava a função removida).
+
+AC1-4 atendidos.
+
+**Veredito: PASS**
+
+— Quinn, guardião da qualidade 🛡️

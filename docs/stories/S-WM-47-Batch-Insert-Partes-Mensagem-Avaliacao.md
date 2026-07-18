@@ -102,3 +102,15 @@ Claude Sonnet 5 (claude-sonnet-5)
 
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: comentário explicando a decisão de manter o insert sequencial)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva.
+
+Mudança puramente documental confirmada no diff (só comentário adicionado, nenhuma linha de código executável mudou). Raciocínio do comentário é consistente com a checagem de schema já feita no diagnóstico (ausência de coluna de sequência em `mensagens`). Decisão de não implementar batch é a correta dado o risco de embaralhar ordem sem essa garantia.
+
+AC1-3 atendidos.
+
+**Veredito: PASS**
+
+— Quinn, guardião da qualidade 🛡️

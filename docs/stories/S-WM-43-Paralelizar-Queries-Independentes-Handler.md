@@ -119,3 +119,19 @@ Claude Sonnet 5 (claude-sonnet-5)
 
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: 3 pares de queries paralelizadas — resolução de lead+openaiKey, histórico+prompt, programação+embedding)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva. **Story mais arriscada tecnicamente do lote** (mexe na sequência de resolução do handler), analisada com atenção extra.
+
+**Verificação independente:**
+- Reproduzi a suíte após o merge desta story no branch: 168/0/2, `deno check` 36 erros — consistente.
+- Revisei o Par 1 linha a linha no diff: o bug de `const`/`let` que o próprio @dev encontrou e corrigiu (destructuring direto do `Promise.all` tornaria `lead` imutável, quebrando a reatribuição da S-WM-39) está de fato corrigido corretamente — `leadSelectResult` intermediário, desestruturado depois com `let`. Boa pega.
+- Par 3: concordo com a decisão de deixar `buscarAtividadeDeterministica` fora do `Promise.all` (é condicional, ganho marginal não justifica mais uma chamada de rede concorrente no mesmo trecho) — decisão documentada tanto no código quanto na story, rastreável.
+- Conferi que a checagem `if (!textoFinal) return ...400` agora roda **depois** do `Promise.all` do Par 1 — ou seja, uma mensagem vazia ainda dispara 1 select de `leads` desnecessário antes do 400. É um trade-off aceito implicitamente (também estava no snippet original da story), impacto desprezível (1 query a mais só no caso de mensagem vazia, que já é raro). Não bloqueia, registro como observação.
+
+**AC1-4:** atendidos.
+
+**Veredito: PASS** (com a observação acima registrada, não bloqueante)
+
+— Quinn, guardião da qualidade 🛡️

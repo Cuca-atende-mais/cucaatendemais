@@ -96,3 +96,22 @@ Claude Sonnet 5 (claude-sonnet-5)
 
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: `formatarChunks` adicionada, 4 sites trocados para usá-la)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva.
+
+**AC5 (comparação manual do `promptFinal`, explicitamente atribuída a mim nesta story) — feita agora:** comparei as 4 expressões originais (via `git show origin/main:...`) contra o corpo de `formatarChunks` caractere por caractere:
+
+```
+Original (4x): c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo   (join "\n")
+formatarChunks: c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo   (join "\n")
+```
+
+Idênticas — não é uma amostra de cenários testados, é a mesma expressão movida para uma função nomeada. Garantia mais forte que um teste de cenário (vale para qualquer input, não só os testados). Cabeçalhos e lógica condicional de cada um dos 4 branches não foram tocados, confirmado no diff.
+
+AC1-6 atendidos, incluindo o AC5 que era pendência minha.
+
+**Veredito: PASS**
+
+— Quinn, guardião da qualidade 🛡️

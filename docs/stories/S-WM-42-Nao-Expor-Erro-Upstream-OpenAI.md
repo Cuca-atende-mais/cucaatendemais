@@ -108,3 +108,15 @@ Claude Sonnet 5 (claude-sonnet-5)
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: catch top-level não inclui mais `details`)
 - `supabase/functions/motor-agente/index.audit.test.ts` (modificado: 1 teste novo S-WM-42 adicionado ao final)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva.
+
+Mudança mínima e cirúrgica confirmada no diff: só o corpo da `Response` do catch top-level perdeu `details`; `console.error("[motor-agente v18]", errMsg)` continua intacto (detalhe completo preservado nos logs do Supabase). Confirmei eu mesmo `grep -rn "details" worker/meta_adapter_inbound.py` → vazio, consistente com o que o @dev reportou.
+
+AC1-6 atendidos.
+
+**Veredito: PASS**
+
+— Quinn, guardião da qualidade 🛡️

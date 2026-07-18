@@ -114,3 +114,19 @@ Claude Sonnet 5 (claude-sonnet-5)
 ### File List
 - `supabase/functions/motor-agente/database.types.ts` (novo, gerado via MCP)
 - `supabase/functions/motor-agente/index.ts` (modificado: import do tipo `Database`, 8x `ReturnType<typeof createClient<Database>>`, `createClient<Database>(...)`)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva (`fix/motor-agente-auditoria-2026-07-16`).
+
+**Verificação independente (não confiei apenas no relato do @dev):**
+- Reproduzi `deno test --no-check ...` e `deno check index.ts` do zero no branch: **168 passed, 0 failed, 2 ignored**; **36 erros residuais**, mesma categorização do Dev Agent Record.
+- Confirmei o diff real (`git diff origin/main..HEAD`): escopo bate exatamente com o declarado (import do tipo, 8x generic, `createClient<Database>`).
+
+**AC1-6:** todos atendidos. AC2 satisfeito pela via alternativa explicitamente permitida (erros reais documentados, não corrigidos).
+
+**Achado transversal (não específico desta story, ver S-WM-39/S-WM-45):** o arquivo de teste (`index.audit.test.ts`), quando checado com typecheck ligado (`deno check index.audit.test.ts` ou `deno test` sem `--no-check`), mostra **41 erros**, não 36 — 4 deles (`TS2353`) são novos, introduzidos por uma story posterior desta mesma leva (S-WM-39), não por esta. Não afeta o veredito desta story.
+
+**Veredito: PASS**
+
+— Quinn, guardião da qualidade 🛡️

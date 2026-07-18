@@ -110,3 +110,17 @@ Claude Sonnet 5 (claude-sonnet-5)
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: `gerarEmbedding` ganhou retry/backoff + `export`)
 - `supabase/functions/motor-agente/index.audit.test.ts` (modificado: import de `gerarEmbedding`; 3 testes novos S-WM-41 adicionados ao final)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva.
+
+Padrão de retry idêntico ao já usado em `chamarGPT`/`avaliarSelecaoUnidade` (reaproveita `GPT_MAX_TENTATIVAS`/`GPT_ESPERA_MAX_SEGUNDOS`/`deveTentarNovamente`/`parseRetryAfterSegundos` — nenhuma constante renomeada ou duplicada). Recursão com `tentativa+1` correta, mesma forma dos 2 call sites existentes. Export de `gerarEmbedding` é consistente com o padrão do arquivo (outras funções de teste também são exportadas só para permitir teste direto, sem mudar comportamento em produção).
+
+3 testes cobrem os 3 cenários certos (retry+sucesso, erro não-transitório sem retry, esgotamento de tentativas). Mutation testing do @dev consistente com o padrão do resto da leva.
+
+AC1-7 atendidos.
+
+**Veredito: PASS**
+
+— Quinn, guardião da qualidade 🛡️

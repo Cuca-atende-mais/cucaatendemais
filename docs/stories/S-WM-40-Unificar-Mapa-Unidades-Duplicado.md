@@ -91,3 +91,15 @@ Claude Sonnet 5 (claude-sonnet-5)
 
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: `NOMES_UNIDADES_POR_PALAVRA` adicionada, `detectarTrocaUnidade` usa a constante derivada)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva.
+
+Refactor puro confirmado por inspeção: `NOMES_UNIDADES_POR_PALAVRA` é derivada de `UNIDADES_MAP` filtrando chaves de 1 dígito (`/^\d$/`) — as 6 chaves de texto remanescentes batem exatamente com o literal antigo removido de `detectarTrocaUnidade`. `detectarUnidadeDireta` (outro consumidor de `UNIDADES_MAP`) não foi tocado, continua recebendo as chaves numéricas normalmente. Zero teste novo necessário, corretamente — a suíte existente já fixa o comportamento.
+
+AC1-5 atendidos.
+
+**Veredito: PASS**
+
+— Quinn, guardião da qualidade 🛡️

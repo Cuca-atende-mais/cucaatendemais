@@ -131,3 +131,20 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `supabase/functions/motor-agente/index.ts` (modificado: checagem de ownership)
 - `supabase/functions/motor-agente/index.audit.test.ts` (modificado: `respostasBaseHandler` ganhou `lead_id` padrão; 3 testes novos S-WM-37 adicionados ao final)
 | 2026-07-18 | 0.2 | @po validate-story-draft: **GO**. Escopo, AC e testes claros; reachability e comportamento do worker já verificados na origem. Dependência com S-WM-45 (mesma região) já documentada — mergear esta primeiro. Status Draft → Ready. | @po Pax |
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva (`fix/motor-agente-auditoria-2026-07-16`).
+
+**Verificação independente:**
+- Reproduzi mutation testing eu mesmo (sem confiar só no relato do @dev): revertei o `if` de ownership no branch, rodei `deno test --filter "S-WM-37: conversa_id de outro lead"` → falhou como esperado; restaurei → 168/0/2 de novo.
+- Confirmei no diff (`git diff origin/main..HEAD`) que a checagem 403 está posicionada **antes** de qualquer leitura/escrita adicional usando `conversa.id` — nenhuma gravação acontece no caminho de ataque.
+- Confirmei que a composição com a S-WM-45 (aplicada depois, mesma região) não introduziu conflito: os dois `if`s (ownership 403, depois erro-real-500) são mutuamente exclusivos por construção (`conversa` truthy vs. falsy).
+
+**AC1-7:** todos atendidos, incluindo o teste "não regride" pro branch sem `conversa_id`.
+
+**Segurança:** este é o fix mais crítico da leva (fecha a única superfície conhecida de escrita cross-lead via anon key pública). Revisão de código confirma: sem SQL injection (query builder do supabase-js em todo lugar), sem novo vazamento de dado na resposta 403 (mensagem genérica, não ecoa dado do outro lead).
+
+**Veredito: PASS**
+
+— Quinn, guardião da qualidade 🛡️

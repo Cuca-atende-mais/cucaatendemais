@@ -104,3 +104,15 @@ Claude Sonnet 5 (claude-sonnet-5)
 ### File List
 - `supabase/functions/motor-agente/index.ts` (modificado: wrapper `evitarRepeticaoLiteral` na resposta de ambiguidade)
 - `supabase/functions/motor-agente/index.audit.test.ts` (modificado: 2 testes novos e2e S-WM-38 adicionados ao final)
+
+## QA Results
+
+**Revisão:** @qa Quinn, 2026-07-18 — review em lote das 12 stories da leva.
+
+Confirmei no diff que o wrapper `evitarRepeticaoLiteral` foi aplicado exatamente no ponto certo (branch de ambiguidade, `mudou_de_assunto && !pergunta_geral && !quer_sair`), preservando as duas linhas seguintes (salvar + retornar) usando a variável já processada. Boa decisão do @dev abandonar o teste unitário isolado (que não provava a integração) e ir para e2e via `handler()` — vi o raciocínio documentado no Dev Agent Record e concordo: um teste que passa com e sem o fix não vale nada como regressão.
+
+AC1-6 atendidos. Suíte e mutation testing consistentes com o restante da leva (verificação agregada em batch, ver S-WM-36).
+
+**Veredito: PASS**
+
+— Quinn, guardião da qualidade 🛡️
