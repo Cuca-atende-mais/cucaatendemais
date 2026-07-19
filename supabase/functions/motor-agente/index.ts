@@ -1,9 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import type { Database } from "./database.types.ts";
 
 const GPT_MODEL = "gpt-4o";
 const EMBEDDING_MODEL = "text-embedding-3-small";
-const WHISPER_MODEL = "whisper-1";
 const MAX_HISTORICO = 10;
 
 const RAG_FONTES_POR_AGENTE: Record<string, string[]> = {
@@ -20,6 +20,12 @@ const UNIDADES_MAP: Record<string, string> = {
   'jose walter': 'Cuca Jos\u00e9 Walter', 'walter': 'Cuca Jos\u00e9 Walter',
   '1': 'Cuca Barra', '2': 'Cuca Jangurussu', '3': 'Cuca Mondubim', '4': 'Cuca Pici', '5': 'Cuca Jos\u00e9 Walter',
 };
+
+// S-WM-40: derivado de UNIDADES_MAP (filtra as chaves de d\u00edgito) \u2014 elimina a duplica\u00e7\u00e3o que
+// existia em detectarTrocaUnidade (literal local id\u00eantico, exceto pelas chaves num\u00e9ricas).
+const NOMES_UNIDADES_POR_PALAVRA: Record<string, string> = Object.fromEntries(
+  Object.entries(UNIDADES_MAP).filter(([chave]) => !/^\d$/.test(chave))
+);
 
 export const MENU_UNIDADES = "Sobre qual unidade CUCA voc\u00ea quer saber? \ud83d\ude0a\n\n1\ufe0f\u20e3 Barra\n2\ufe0f\u20e3 Jangurussu\n3\ufe0f\u20e3 Mondubim\n4\ufe0f\u20e3 Pici\n5\ufe0f\u20e3 Jos\u00e9 Walter";
 
@@ -180,7 +186,7 @@ export function montarMensagemEncaminhamento(canal: CanalEncaminhamento, numero:
  * Nunca propaga exceção — linha ausente, JSON malformado ou erro de rede caem no default
  * seguro (todos os canais null), que `montarMensagemEncaminhamento` já trata sem número. */
 async function buscarNumeroCanal(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createClient<Database>>,
   canal: CanalEncaminhamento,
 ): Promise<string | null> {
   try {
@@ -251,17 +257,13 @@ export function pareceIntencaoTrocaUnidade(texto: string): boolean {
 /** Detecta se a mensagem menciona uma unidade diferente da atual */
 export function detectarTrocaUnidade(texto: string, unidadeAtual: string): string | null {
   const lower = texto.toLowerCase().trim();
-  const nomesUnidades: Record<string, string> = {
-    'barra': 'Cuca Barra', 'jangurussu': 'Cuca Jangurussu', 'mondubim': 'Cuca Mondubim',
-    'pici': 'Cuca Pici', 'jos\u00e9 walter': 'Cuca Jos\u00e9 Walter', 'jose walter': 'Cuca Jos\u00e9 Walter', 'walter': 'Cuca Jos\u00e9 Walter',
-  };
-  for (const [chave, unidade] of Object.entries(nomesUnidades)) {
+  for (const [chave, unidade] of Object.entries(NOMES_UNIDADES_POR_PALAVRA)) {
     if (contemPalavra(lower, chave) && unidade !== unidadeAtual) {
       return unidade;
     }
   }
   // Item 4 (S-WM-21): s\u00f3 entra se nenhum match exato foi encontrado acima.
-  for (const [chave, unidade] of Object.entries(nomesUnidades)) {
+  for (const [chave, unidade] of Object.entries(NOMES_UNIDADES_POR_PALAVRA)) {
     if (contemNomeUnidadeComTypo(lower, chave) && unidade !== unidadeAtual) {
       return unidade;
     }
@@ -767,29 +769,25 @@ export function decidirPrimeiraMensagem(
   return { unidadeSelecionada: null, aguardandoUnidade: true, resposta: saudacao + "\n\n" + MENU_UNIDADES };
 }
 
-async function getOpenAIKey(supabase: ReturnType<typeof createClient>): Promise<string> {
+async function getOpenAIKey(supabase: ReturnType<typeof createClient<Database>>): Promise<string> {
   const { data } = await supabase.rpc("get_openai_key");
   return data || Deno.env.get("OPENAI_API_KEY") || "";
 }
 
-async function transcreverAudio(audioUrl: string, apiKey: string): Promise<string> {
-  const audioResp = await fetch(audioUrl);
-  if (!audioResp.ok) throw new Error("Falha ao baixar audio");
-  const audioBlob = await audioResp.blob();
-  const formData = new FormData();
-  formData.append("file", audioBlob, "audio.ogg");
-  formData.append("model", WHISPER_MODEL);
-  formData.append("language", "pt");
-  const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { "Authorization": "Bearer " + apiKey }, body: formData });
-  if (!resp.ok) throw new Error("Whisper error: " + await resp.text());
-  return (await resp.json()).text;
-}
-
-async function gerarEmbedding(texto: string, apiKey: string): Promise<number[]> {
+export async function gerarEmbedding(texto: string, apiKey: string, tentativa = 0): Promise<number[]> {
   const resp = await fetch("https://api.openai.com/v1/embeddings", {
     method: "POST", headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ model: EMBEDDING_MODEL, input: texto.slice(0, 8000) }),
   });
+
+  if (deveTentarNovamente(resp.status, tentativa)) {
+    const corpoErro = await resp.text();
+    const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
+    console.log("[motor-agente v18] Rate limit OpenAI/embeddings (tentativa " + (tentativa + 1) + "/" + GPT_MAX_TENTATIVAS + "), aguardando " + esperaSegundos + "s antes de tentar de novo");
+    await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
+    return gerarEmbedding(texto, apiKey, tentativa + 1);
+  }
+
   if (!resp.ok) throw new Error("Embedding error: " + await resp.text());
   return (await resp.json()).data[0].embedding;
 }
@@ -836,7 +834,7 @@ async function chamarGPT(prompt_sistema: string, historico: { role: string; cont
   return { texto: (await resp.json()).choices[0].message.content };
 }
 
-async function salvarMensagemAgente(supabase: ReturnType<typeof createClient>, conversa_id: string, lead_id: string, conteudo: string) {
+async function salvarMensagemAgente(supabase: ReturnType<typeof createClient<Database>>, conversa_id: string, lead_id: string, conteudo: string) {
   await supabase.from("mensagens").insert({ conversa_id, lead_id, tipo: "text", conteudo, remetente: "agente" });
 }
 
@@ -907,6 +905,15 @@ export function evitarRepeticaoLiteral(respostaCandidata: string, historico: { r
 const CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA = 100;
 
 /**
+ * S-WM-46 (TD-03): formatação de chunk RAG (prefixo de fonte, se houver) — extraída porque a
+ * mesma expressão aparecia verbatim em 4 pontos do Passo 6 (visão geral, acompanhamento,
+ * pergunta geral, genérico), com drift já observável entre eles (só 1 dos 4 logava contagem).
+ */
+function formatarChunks(chunks: { conteudo: string; fonte_tipo?: string }[]): string {
+  return chunks.map((c) => c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo).join("\n");
+}
+
+/**
  * Carrega todos os chunks do monthly_program ativo para uma unidade diretamente (sem embedding).
  * Sem `.limit()` — o teto fixo de 40 truncava a visão geral completa das 5 unidades (todas já
  * ultrapassam 40 chunks hoje: José Walter/Pici em 55, Jangurussu/Mondubim em 47, Barra em 42).
@@ -921,7 +928,7 @@ const CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA = 100;
  * Walter) documentado em S-WM-35 — é complementar, não substituto. Sem o fix do rótulo, mais
  * dado chega ao prompt, mas o dado errado (idade lida como horário etc.) continua errado.
  */
-async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClient>, unidade: string): Promise<string> {
+async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClient<Database>>, unidade: string): Promise<string> {
   const { data: doc } = await supabase.from("documentos_rag").select("id").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   if (!doc) return "";
   const { data: chunks } = await supabase.from("chunks_documentos").select("conteudo").eq("documento_id", doc.id).order("chunk_index", { ascending: true });
@@ -948,7 +955,7 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
  * ativo — o caller cai de volta pra busca vetorial (rede de segurança, comportamento hoje
  * existente preservado).
  */
-async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
+async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClient<Database>>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
   const { data } = await supabase.from("documentos_rag").select("id").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   const doc = data as { id: string } | null;
   if (!doc) return null;
@@ -992,7 +999,7 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
  * nenhuma linha ESPORTES pra essa campanha, ou a modalidade não é reconhecida — em todos os
  * casos o caller cai pra próxima camada (rede de segurança preservada, mesmo padrão do S-WM-34).
  */
-async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createClient>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
+async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createClient<Database>>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
   const { data } = await supabase.from("documentos_rag").select("id, metadados").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   const doc = data as { id: string; metadados: Record<string, unknown> | null } | null;
   if (!doc) return null;
@@ -1026,7 +1033,7 @@ async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createC
  * Retorna "" quando ainda não existe nenhum `resumo_rede` ativo (ex.: antes da 1ª geração via
  * botão do portal) — o caller trata isso como "sem dado consolidado", nunca como erro.
  */
-async function carregarResumoRede(supabase: ReturnType<typeof createClient>): Promise<string> {
+async function carregarResumoRede(supabase: ReturnType<typeof createClient<Database>>): Promise<string> {
   const { data: doc } = await supabase.from("documentos_rag").select("conteudo").eq("tipo", "resumo_rede").eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   return doc?.conteudo || "";
 }
@@ -1050,7 +1057,7 @@ if (import.meta.main) {
 // prova que a resolução de unidade por nome/dígito, na wiring real do call-site, gera o
 // precisaVisaoGeral correto). Comportamento em produção idêntico: Deno.serve(handler) nunca
 // passa esse 2º argumento, então o client real é sempre criado normalmente.
-export async function handler(req: Request, supabaseOverride?: ReturnType<typeof createClient>): Promise<Response> {
+export async function handler(req: Request, supabaseOverride?: ReturnType<typeof createClient<Database>>): Promise<Response> {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   console.log("[motor-agente v18] Recebendo requisicao...");
 
@@ -1061,19 +1068,28 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
     if (!telefone || !agente_tipo) return new Response(JSON.stringify({ error: "telefone e agente_tipo sao obrigatorios" }), { status: 400 });
 
-    const supabase = supabaseOverride ?? createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const openaiKey = await getOpenAIKey(supabase);
+    const supabase = supabaseOverride ?? createClient<Database>(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // S-WM-43 (PERF-02, Par 1): getOpenAIKey e o select de lead não têm dependência de dado
+    // entre si (depois da S-WM-44 remover transcreverAudio, não sobra nenhuma chamada
+    // assíncrona entre os dois que precisasse de openaiKey antes do lead) — paralelizados
+    // para reduzir 1 round-trip de latência por mensagem.
+    const [openaiKey, leadSelectResult] = await Promise.all([
+      getOpenAIKey(supabase),
+      supabase.from("leads").select("id,nome,opt_in,bloqueado").eq("telefone", telefone).single(),
+    ]);
     if (!openaiKey) throw new Error("OPENAI_API_KEY nao encontrada");
 
-    let textoFinal = mensagem || "";
-    if (midia_url && (midia_tipo === "audio" || midia_tipo === "ptt")) textoFinal = await transcreverAudio(midia_url, openaiKey);
+    const textoFinal = mensagem || "";
     if (!textoFinal) return new Response(JSON.stringify({ error: "Nenhuma mensagem" }), { status: 400 });
 
     // 1. Lead
-    let { data: lead } = await supabase.from("leads").select("id,nome,opt_in,bloqueado").eq("telefone", telefone).single();
+    let { data: lead, error: leadSelectError } = leadSelectResult;
     if (!lead) {
-      const { data } = await supabase.from("leads").insert({ telefone, unidade_cuca, origem: "whatsapp", opt_in: true }).select("id,nome,opt_in,bloqueado").single();
+      const { data, error: leadInsertError } = await supabase.from("leads").insert({ telefone, unidade_cuca, origem: "whatsapp", opt_in: true }).select("id,nome,opt_in,bloqueado").single();
       lead = data;
+      if (!lead && leadInsertError) {
+        throw new Error("Falha ao resolver lead (select: " + (leadSelectError?.message ?? "sem linha") + "; insert: " + leadInsertError.message + ")");
+      }
     }
     if (!lead || lead.bloqueado) return new Response(JSON.stringify({ blocked: true }), { status: 200 });
 
@@ -1093,11 +1109,23 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // lead_id+origem_id e cai fora de qualquer corrida. Fallback pro método antigo quando
     // ausente (robustez pra qualquer caller futuro que não mande; hoje só existe 1 caller,
     // worker/meta_adapter_inbound.py).
-    let { data: conversa } = conversa_id
-      ? await supabase.from("conversas").select("id, status, metadata").eq("id", conversa_id).single()
-      : await supabase.from("conversas").select("id, status, metadata").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
+    let { data: conversa, error: conversaSelectError } = conversa_id
+      ? await supabase.from("conversas").select("id, status, metadata, lead_id").eq("id", conversa_id).single()
+      : await supabase.from("conversas").select("id, status, metadata, lead_id").eq("lead_id", lead.id).eq("origem_id", canal_origem || "test").single();
+
+    if (conversa_id && conversa && conversa.lead_id !== lead.id) {
+      return new Response(JSON.stringify({ error: "conversa_id nao pertence ao lead informado" }), { status: 403 });
+    }
+
+    // S-WM-45 (BUG-03): erro real na busca de conversa_id não pode cair silenciosamente em criar
+    // conversa nova (órfã) — só quando conversa_id foi explicitamente informado (o caller estava
+    // confiante de que essa conversa existe) E há um error real (não "não encontrado").
+    if (conversa_id && !conversa && conversaSelectError) {
+      throw new Error("Falha ao buscar conversa_id=" + conversa_id + ": " + conversaSelectError.message);
+    }
+
     if (!conversa) {
-      const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: canal_origem || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata").single();
+      const { data } = await supabase.from("conversas").insert({ lead_id: lead.id, origem_id: canal_origem || "test", agente_tipo, canal_ativo: "meta", status: "ativa" }).select("id, status, metadata, lead_id").single();
       conversa = data; conversaJustCreated = true; conversaGenuinamenteNova = true;
     } else if (conversa.status === "encerrada") {
       // AUD-15/VAL-07: reabrir uma conversa encerrada tratava o lead como contato novo
@@ -1119,12 +1147,13 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // dobrados no canal Institucional/Ouvidoria/Acesso CUCA. O histórico (passo 4 abaixo)
     // já encontra a mensagem, gravada pelo chamador, sem precisar reinseri-la.
 
-    // 4. Histórico
-    const { data: hist } = await supabase.from("mensagens").select("conteudo,remetente").eq("conversa_id", conversa.id).order("created_at", { ascending: false }).limit(MAX_HISTORICO);
+    // 4. Histórico + 5. Prompt — S-WM-43 (PERF-02, Par 2): sem dependência de dado entre si,
+    // paralelizados.
+    const [{ data: hist }, { data: prompt }] = await Promise.all([
+      supabase.from("mensagens").select("conteudo,remetente").eq("conversa_id", conversa.id).order("created_at", { ascending: false }).limit(MAX_HISTORICO),
+      supabase.from("prompts_agentes").select("prompt_sistema,prompt_contexto,temperatura,max_tokens,menu_boas_vindas").eq("agente_tipo", agente_tipo).eq("ativo", true).single(),
+    ]);
     const historico = (hist || []).reverse().map((m: { conteudo: string; remetente: string }) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
-
-    // 5. Prompt
-    const { data: prompt } = await supabase.from("prompts_agentes").select("prompt_sistema,prompt_contexto,temperatura,max_tokens,menu_boas_vindas").eq("agente_tipo", agente_tipo).eq("ativo", true).single();
     if (!prompt) throw new Error("Prompt nao encontrado para: " + agente_tipo);
 
     const isSofia = agente_tipo === "sofia" || agente_tipo === "sofia_global" || agente_tipo === "sofia_unidade";
@@ -1199,7 +1228,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
             // silêncio. Qualquer falha técnica da chamada (rate limit esgotado, JSON inválido,
             // erro de rede) cai no fallback seguro (mudou_de_assunto=false) e NÃO entra aqui —
             // mantém a unidade atual, mesmo comportamento de hoje pra erros transitórios.
-            const respostaAmbiguidade = "Só pra confirmar: você quer saber sobre outra unidade CUCA? Me diz qual! 😊\n\n" + MENU_UNIDADES;
+            const respostaAmbiguidade = evitarRepeticaoLiteral("Só pra confirmar: você quer saber sobre outra unidade CUCA? Me diz qual! 😊\n\n" + MENU_UNIDADES, historico);
             await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaAmbiguidade);
             return new Response(JSON.stringify({ success: true, resposta: respostaAmbiguidade, handover: false }), { headers: { "Content-Type": "application/json" } });
           } else {
@@ -1368,7 +1397,17 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     }
 
     if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
-      const conteudoPrograma = await carregarProgramacaoMensal(supabase, unidadeEfetiva);
+      // S-WM-43 (PERF-02, Par 3): carregarProgramacaoMensal e gerarEmbedding não dependem de
+      // dado um do outro (o embedding usa textoFinal, não conteudoPrograma) — paralelizados.
+      // `buscarAtividadeDeterministica` (abaixo, condicional a trocaComPedidoEspecifico ||
+      // trocouUnidade) foi deliberadamente deixado FORA deste Promise.all: é uma chamada
+      // condicional (nem sempre roda) e a S-WM-35 a introduziu depois do plano original desta
+      // story — incluí-la aumentaria a superfície de risco (mais uma chamada de rede concorrente
+      // no mesmo trecho) para um ganho marginal, já que ela só dispara numa fração dos turnos.
+      const [conteudoPrograma, embedding] = await Promise.all([
+        carregarProgramacaoMensal(supabase, unidadeEfetiva),
+        gerarEmbedding(textoFinal, openaiKey),
+      ]);
 
       let instrucaoArea = "";
       // S-WM-34 (VAL-23): trocouUnidade sozinho n\u00e3o basta mais \u2014 quando a mensagem que causou a
@@ -1401,8 +1440,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         }
       }
 
-      // Complementa com eventos pontuais via busca vetorial
-      const embedding = await gerarEmbedding(textoFinal, openaiKey);
+      // Complementa com eventos pontuais via busca vetorial (embedding já resolvido acima, no Promise.all do Par 3)
       const { data: chunksEventos } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embedding.join(",") + "]",
         p_tipos: ["eventos_pontuais", "FAQ"],
@@ -1410,9 +1448,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_limite: 3,
       });
       if (chunksEventos && chunksEventos.length > 0) {
-        contextRAG += "\n\n--- EVENTOS E FAQ ---\n" + chunksEventos.map((c: { conteudo: string; fonte_tipo?: string }) =>
-          c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-        ).join("\n");
+        contextRAG += "\n\n--- EVENTOS E FAQ ---\n" + formatarChunks(chunksEventos);
       }
     } else if (temUnidadeDefinida && isAgenteProgramacao) {
       // Pergunta de acompanhamento (conversa em andamento, mesma unidade, sem selecao de menu):
@@ -1442,9 +1478,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         // "o GPT respondeu errado" e "a busca nao trouxe o chunk certo" eram indistinguiveis no log.
         console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
         if (chunksPrograma && chunksPrograma.length > 0) {
-          contextRAG = "\n\n--- CONTEXTO ---\n" + chunksPrograma.map((c: { conteudo: string; fonte_tipo?: string }) =>
-            c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-          ).join("\n");
+          contextRAG = "\n\n--- CONTEXTO ---\n" + formatarChunks(chunksPrograma);
         }
       }
     } else if (isAgenteProgramacao && perguntaGeralAtiva) {
@@ -1471,9 +1505,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       const blocosRede: string[] = [];
       if (resumoRede) blocosRede.push("--- RESUMO DA REDE (atividades por unidade) ---\n" + resumoRede);
       if (chunksFaq && chunksFaq.length > 0) {
-        blocosRede.push("--- CONTEXTO (FAQ) ---\n" + chunksFaq.map((c: { conteudo: string; fonte_tipo?: string }) =>
-          c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-        ).join("\n"));
+        blocosRede.push("--- CONTEXTO (FAQ) ---\n" + formatarChunks(chunksFaq));
       }
       if (blocosRede.length > 0) contextRAG = "\n\n" + blocosRede.join("\n\n");
     } else {
@@ -1486,9 +1518,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_limite: 5,
       });
       if (chunks && chunks.length > 0) {
-        contextRAG = "\n\n--- CONTEXTO ---\n" + chunks.map((c: { conteudo: string; fonte_tipo?: string }) =>
-          c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo
-        ).join("\n");
+        contextRAG = "\n\n--- CONTEXTO ---\n" + formatarChunks(chunks);
       }
     }
 
@@ -1603,6 +1633,12 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // 13. Salvar — 1 linha por parte efetivamente gerada, preservando a ordem. Sem isso, o
     // histórico lido no próximo turno (Passo 4, linha ~645) ficaria com 1 linha concatenada
     // em vez de refletir exatamente o que foi (ou vai ser) enviado turno por turno.
+    // S-WM-47 (PERF-03): Sequencial de propósito: a ordem das partes (abertura/lista/fechamento)
+    // precisa bater com created_at na leitura de histórico (linha ~1123) — um Promise.all aqui
+    // arriscaria embaralhar a ordem lógica. Não há coluna de sequência explícita em `mensagens`
+    // (confirmado em supabase/migrations/, 2026-07-18) que garantisse ordem determinística num
+    // insert em lote. Custo aceito: até 2 round-trips extras por resposta dividida (máx. 3
+    // partes, dividirRespostaEmPartes). Ver docs/stories/S-WM-47-*.md para o raciocínio completo.
     for (const parte of mensagens) {
       await salvarMensagemAgente(supabase, conversa.id, lead.id, parte);
     }
@@ -1614,6 +1650,6 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error("[motor-agente v18]", errMsg);
-    return new Response(JSON.stringify({ error: "Erro interno", details: errMsg }), { status: 500 });
+    return new Response(JSON.stringify({ error: "Erro interno" }), { status: 500 });
   }
 }

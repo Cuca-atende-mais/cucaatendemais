@@ -20,6 +20,7 @@ import {
   SAUDACOES_ABERTURA,
   INSTRUCAO_SEGURANCA,
   avaliarSelecaoUnidade,
+  gerarEmbedding,
   handler,
 } from "./index.ts";
 
@@ -43,8 +44,12 @@ import {
 // então adicionar o campo não quebra nada.
 type ChamadaRegistrada = { tabela: string; metodo: string; args?: unknown[]; payload?: unknown };
 
+// S-WM-39: `error` opcional por tabela — aditivo (default null, preserva todo call-site
+// existente que só configura `data`). Simula uma query real do supabase-js falhando
+// (select/insert na mesma tabela resolvem o mesmo `error` configurado — suficiente pros
+// cenários testados, que não precisam diferenciar select de insert na mesma tabela).
 // deno-lint-ignore no-explicit-any
-function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>, chamadas: ChamadaRegistrada[]): any {
+function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown; error?: { message: string } | null }>, chamadas: ChamadaRegistrada[]): any {
   function criarChain(tabela: string) {
     // deno-lint-ignore no-explicit-any
     const chain: any = {};
@@ -60,8 +65,8 @@ function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>
         return chain;
       };
     }
-    chain.then = (resolve: (v: { data: unknown; error: null }) => unknown) =>
-      resolve({ data: respostasPorTabela[tabela]?.data ?? null, error: null });
+    chain.then = (resolve: (v: { data: unknown; error: { message: string } | null }) => unknown) =>
+      resolve({ data: respostasPorTabela[tabela]?.data ?? null, error: respostasPorTabela[tabela]?.error ?? null });
     return chain;
   }
   return {
@@ -76,11 +81,14 @@ function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown }>
 
 /** Base comum aos cenários de handler (AUD-04, AUD-07) abaixo — só muda `conversas.metadata` e
  * a mensagem do lead. */
-function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record<string, { data: unknown }> {
+function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record<string, { data: unknown; error?: { message: string } | null }> {
   return {
     "rpc:get_openai_key": { data: "fake-openai-key" },
     "leads": { data: { id: "lead-1", nome: "Fulano", opt_in: true, bloqueado: false } },
-    "conversas": { data: { id: "conv-1", status: "ativa", metadata: metadataConversa } },
+    // S-WM-37: lead_id incluído por padrão (mesmo lead-1 do mock de "leads" abaixo) — testes que
+    // precisam simular ownership mismatch (conversa de outro lead) sobrescrevem "conversas"
+    // explicitamente com um lead_id diferente.
+    "conversas": { data: { id: "conv-1", status: "ativa", metadata: metadataConversa, lead_id: "lead-1" } },
     "mensagens": { data: [] },
     "prompts_agentes": { data: { prompt_sistema: "sistema", prompt_contexto: "", temperatura: 0.7, max_tokens: 500, menu_boas_vindas: null } },
     "documentos_rag": { data: { id: "doc-1" } },
@@ -1782,4 +1790,262 @@ Deno.test("S-WM-35 follow-up: busca determinística cobre DIA A DIA/Direitos Hum
   assertStringIncludes(promptFinal, "Turma 01", "deveria incluir a primeira linha de Direitos Humanos");
   assertStringIncludes(promptFinal, "Turma 09", "deveria incluir a nona linha de Direitos Humanos, provando que não cortou volume");
   assertStringIncludes(promptFinal, "liste TODAS as turmas", "prompt precisa generalizar a enumeração completa para fora de Esportes");
+});
+
+// ── S-WM-37 (SEC-01): conversa_id não pode pertencer a outro lead ──────────────────────────
+
+Deno.test("S-WM-37: conversa_id de outro lead é rejeitado com 403, sem gravar nada", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: { id: "conv-999", status: "ativa", metadata: {}, lead_id: "lead-OUTRO" } };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-999"), supabaseMock));
+
+  assertEquals(resp.status, 403);
+  const body = await resp.json();
+  assertStringIncludes(body.error, "conversa_id");
+  assertEquals(chamadas.some((c) => c.tabela === "mensagens" && (c.metodo === "insert" || c.metodo === "update")), false, "não deveria gravar mensagem nenhuma");
+  assertEquals(chamadas.some((c) => c.tabela === "conversas" && (c.metodo === "insert" || c.metodo === "update")), false, "não deveria inserir/atualizar conversa");
+});
+
+Deno.test("S-WM-37: conversa_id do mesmo lead segue o fluxo normal (não regride)", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: { id: "conv-1", status: "ativa", metadata: {}, lead_id: "lead-1" } };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-1"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+});
+
+Deno.test("S-WM-37: sem conversa_id (branch else) continua funcionando sem checagem de ownership (não regride)", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: { id: "conv-1", status: "ativa", metadata: {}, lead_id: "lead-1" } };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+});
+
+// ── S-WM-39 (BUG-02): erro técnico no lookup do lead não pode virar "blocked" silencioso ────
+
+Deno.test("S-WM-39: select e insert de leads falhando com erro real → 500, não blocked:true", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["leads"] = { data: null, error: { message: "erro simulado de conexao" } };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 500);
+  const body = await resp.json();
+  assertEquals(body.error, "Erro interno");
+});
+
+Deno.test("S-WM-39: lead genuinamente bloqueado (sem erro) continua blocked:true (não regride)", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["leads"] = { data: { id: "lead-1", nome: "Fulano", opt_in: true, bloqueado: true }, error: null };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+  const body = await resp.json();
+  assertEquals(body.blocked, true);
+});
+
+Deno.test("S-WM-39: lead novo, insert funciona (não regride)", async () => {
+  const supabaseMock = criarSupabaseMock(respostasBaseHandler({}), []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+});
+
+// ── S-WM-38 (BUG-01): resposta de ambiguidade de unidade também usa evitarRepeticaoLiteral ──
+// Teste e2e via handler() (não o unit test mais simples de evitarRepeticaoLiteral isolada —
+// esse não provaria que o wrapper foi de fato aplicado no branch de ambiguidade, já que a
+// função em si já existia e já funcionava antes desta story).
+
+const TEXTO_AMBIGUIDADE_S_WM_38 = "Só pra confirmar: você quer saber sobre outra unidade CUCA? Me diz qual! 😊\n\n" + MENU_UNIDADES;
+
+Deno.test("S-WM-38: ambiguidade repetida (mesma mensagem que a última do agente) recebe prefixo anti-repetição", async () => {
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [
+    { conteudo: "tem natação?", remetente: "lead" },
+    { conteudo: TEXTO_AMBIGUIDADE_S_WM_38, remetente: "agente" },
+  ] };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("quero trocar de unidade"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false }),
+  );
+
+  assertEquals(resp.status, 200);
+  const body = await resp.json();
+  assertStringIncludes(body.resposta, "De novo, foi mal! 😅");
+});
+
+Deno.test("S-WM-38: ambiguidade sem repetição prévia não recebe o prefixo (não regride)", async () => {
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = { data: [
+    { conteudo: "oi", remetente: "lead" },
+    { conteudo: "Bem-vindo!", remetente: "agente" },
+  ] };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("quero trocar de unidade"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false }),
+  );
+
+  assertEquals(resp.status, 200);
+  const body = await resp.json();
+  assertEquals(body.resposta, TEXTO_AMBIGUIDADE_S_WM_38);
+});
+
+// ── S-WM-41 (BUG-04): retry/backoff em gerarEmbedding (mesma proteção que chamarGPT/avaliarSelecaoUnidade já têm) ──
+
+Deno.test("S-WM-41: gerarEmbedding tenta de novo após 429 e retorna o embedding da 2ª tentativa", async () => {
+  let chamadasFetch = 0;
+  const fetchOriginal = globalThis.fetch;
+  // deno-lint-ignore no-explicit-any
+  globalThis.fetch = (() => {
+    chamadasFetch++;
+    if (chamadasFetch === 1) {
+      return Promise.resolve(new Response("rate limited", { status: 429, headers: { "retry-after": "0" } }));
+    }
+    return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [1, 2, 3] }] }), { status: 200 }));
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+
+  try {
+    const resultado = await gerarEmbedding("texto de teste", "fake-key");
+    assertEquals(chamadasFetch, 2, "esperava-se exatamente 1 nova tentativa após o 429");
+    assertEquals(resultado, [1, 2, 3], "depois do retry, o embedding real da 2ª tentativa deveria ser retornado");
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+});
+
+Deno.test("S-WM-41: erro não-transitório (400) rejeita imediatamente, sem retry", async () => {
+  let chamadasFetch = 0;
+  const fetchOriginal = globalThis.fetch;
+  // deno-lint-ignore no-explicit-any
+  globalThis.fetch = (() => {
+    chamadasFetch++;
+    return Promise.resolve(new Response("bad request", { status: 400 }));
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+
+  try {
+    let erro: unknown = null;
+    try {
+      await gerarEmbedding("texto de teste", "fake-key");
+    } catch (e) {
+      erro = e;
+    }
+    assertEquals(chamadasFetch, 1, "um erro não-transitório (400) não deveria acionar nenhuma nova tentativa");
+    assertEquals(erro instanceof Error, true);
+    assertStringIncludes((erro as Error).message, "Embedding error");
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+});
+
+Deno.test("S-WM-41: esgota as tentativas em 429 persistente e rejeita com 'Embedding error'", async () => {
+  let chamadasFetch = 0;
+  const fetchOriginal = globalThis.fetch;
+  // deno-lint-ignore no-explicit-any
+  globalThis.fetch = (() => {
+    chamadasFetch++;
+    return Promise.resolve(new Response("rate limited", { status: 429, headers: { "retry-after": "0" } }));
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+
+  try {
+    let erro: unknown = null;
+    try {
+      await gerarEmbedding("texto de teste", "fake-key");
+    } catch (e) {
+      erro = e;
+    }
+    assertEquals(chamadasFetch, 3, "GPT_MAX_TENTATIVAS=2 → 1ª chamada + 2 retries = 3 chamadas no total antes de desistir");
+    assertEquals(erro instanceof Error, true);
+    assertStringIncludes((erro as Error).message, "Embedding error");
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+});
+
+// ── S-WM-42 (SEC-04): catch top-level não repassa texto de erro upstream cru na resposta ────
+
+Deno.test("S-WM-42: catch top-level retorna Erro interno sem o campo details", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["prompts_agentes"] = { data: null };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFake("oi"), supabaseMock));
+
+  assertEquals(resp.status, 500);
+  const body = await resp.json();
+  assertEquals(body.error, "Erro interno");
+  assertEquals("details" in body, false, "a resposta HTTP não deve mais expor o texto de erro cru (details)");
+});
+
+// ── S-WM-45 (BUG-03): erro no lookup de conversa_id não deve criar conversa órfã ────────────
+
+Deno.test("S-WM-45: conversa_id informado, select retorna erro real → 500, sem criar conversa nova", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: null, error: { message: "erro simulado de conexao" } };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-999"), supabaseMock));
+
+  assertEquals(resp.status, 500);
+  assertEquals(chamadas.some((c) => c.tabela === "conversas" && c.metodo === "insert"), false, "não deveria inserir conversa nova quando o select falhou com erro real");
+});
+
+Deno.test("S-WM-45: conversa_id informado, não encontrado sem erro → cria conversa nova (não regride)", async () => {
+  // criarSupabaseMock compartilha a mesma resposta configurada por tabela entre select/insert —
+  // não consegue expressar "select não encontra, insert cria com sucesso" nesse cenário
+  // específico (select e insert de "conversas" precisam de respostas DIFERENTES aqui). Mock
+  // inline diferenciado por contagem de chamada, só para este teste, em vez de forçar o mock
+  // genérico ou arriscar quebrar outros testes que dependem do comportamento compartilhado.
+  const respostas = respostasBaseHandler({});
+  let chamadasConversas = 0;
+  const supabaseMock = criarSupabaseMock(respostas, []);
+  const fromOriginal = supabaseMock.from.bind(supabaseMock);
+  // deno-lint-ignore no-explicit-any
+  supabaseMock.from = (tabela: string): any => {
+    if (tabela !== "conversas") return fromOriginal(tabela);
+    chamadasConversas++;
+    const respostaConversa = chamadasConversas === 1
+      ? { data: null, error: null } // 1ª chamada: select, não encontrado, sem erro
+      : { data: { id: "conv-nova", status: "ativa", metadata: {}, lead_id: "lead-1" }, error: null }; // 2ª: insert, sucesso
+    // deno-lint-ignore no-explicit-any
+    const chain: any = {};
+    for (const metodo of ["select", "eq", "order", "limit", "single", "insert", "update"]) {
+      chain[metodo] = () => chain;
+    }
+    chain.then = (resolve: (v: { data: unknown; error: unknown }) => unknown) => resolve(respostaConversa);
+    return chain;
+  };
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-999"), supabaseMock));
+
+  assertEquals(resp.status, 200);
+});
+
+Deno.test("S-WM-45: conversa_id informado, encontrado com sucesso (não regride)", async () => {
+  const respostas = respostasBaseHandler({});
+  respostas["conversas"] = { data: { id: "conv-1", status: "ativa", metadata: {}, lead_id: "lead-1" }, error: null };
+  const supabaseMock = criarSupabaseMock(respostas, []);
+
+  const resp = await comFetchMockado(() => handler(requestFakeComConversaId("oi", "conv-1"), supabaseMock));
+
+  assertEquals(resp.status, 200);
 });
