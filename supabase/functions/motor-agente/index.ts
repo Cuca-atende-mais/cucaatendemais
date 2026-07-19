@@ -512,8 +512,25 @@ export function validarAvaliacaoSelecaoUnidade(data: unknown): AvaliacaoSelecaoU
  * aqui caía direto no fallback seguro sem tentar de novo, silenciando a classificação semântica
  * por uma falha temporária da OpenAI (roteamento de unidade errado sem nenhum sinal de erro).
  */
-export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, tentativa = 0): Promise<AvaliacaoSelecaoUnidade> {
+export function montarContextoHistoricoSelecaoUnidade(historico: { role: string; content: string }[] = [], textoAtual = ""): string {
+  const textoAtualTrim = textoAtual.trim();
+  const mensagensRecentes = [...historico]
+    .reverse()
+    .filter((m) => {
+      const content = m.content.trim();
+      return (m.role === "assistant" || m.role === "user") && content !== "" && content !== textoAtualTrim;
+    })
+    .slice(0, 2)
+    .reverse()
+    .map((m) => (m.role === "assistant" ? "Maria" : "Lead") + ": " + m.content.replace(/[\r\n]+/g, " ").trim());
+
+  if (mensagensRecentes.length === 0) return "Historico recente: nenhum.";
+  return "Historico recente (use apenas para entender respostas curtas/elipticas):\n" + mensagensRecentes.join("\n");
+}
+
+export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, historico: { role: string; content: string }[] = [], tentativa = 0): Promise<AvaliacaoSelecaoUnidade> {
   try {
+    const contextoHistorico = montarContextoHistoricoSelecaoUnidade(historico, texto);
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Authorization": "Bearer " + openaiKey, "Content-Type": "application/json" },
@@ -536,7 +553,13 @@ export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, te
             "- \"quer_sair\": true se o lead claramente não quer continuar / não vai escolher uma unidade agora (ex.: agradecimento de despedida, \"deixa pra lá\", \"depois eu vejo\").",
             "- \"mudou_de_assunto\": true se a mensagem não é uma tentativa de escolher unidade nem de sair (ex.: cortesia como \"obrigado pela mensagem\", pergunta sobre outro assunto).",
             "- \"pergunta_geral\": true SOMENTE se mudou_de_assunto=true E a mensagem for uma pergunta real sobre o CUCA que não depende de saber qual unidade (ex.: \"a rede CUCA é da prefeitura?\", \"tem curso pago?\"). false se for só cortesia/cumprimento sem pergunta de verdade (ex.: \"bom dia\", \"tudo bem?\", \"obrigado\").",
-            "- \"pedido_depende_unidade\": true se a mensagem pede algo cujo conteúdo real depende de saber qual unidade CUCA (ex.: cursos, horários, programação, atividades, vagas em alguma modalidade). false se for só cortesia/saudação, um pedido vago sem conteúdo concreto (ex.: \"quero saber sobre vocês\"), ou já for pergunta_geral=true.",
+            "- \"pedido_depende_unidade\": true se a mensagem pede algo cujo conteúdo real depende de saber qual unidade CUCA (ex.: \"tem natação na Barra?\", cursos, horários, programação, atividades, vagas em alguma modalidade numa unidade específica). false se for só cortesia/saudação, um pedido vago sem conteúdo concreto (ex.: \"quero saber sobre vocês\"), ou já for pergunta_geral=true.",
+            "",
+            "Exemplos importantes:",
+            "- \"tem natação na Barra?\" => unidade=\"Cuca Barra\", pedido_depende_unidade=true, pergunta_geral=false.",
+            "- \"qual unidade tem natação?\" ou \"onde tem natação?\" => unidade=null, mudou_de_assunto=true, pergunta_geral=true, pedido_depende_unidade=false.",
+            "",
+            contextoHistorico,
             "",
             "Mensagem do lead: " + texto,
           ].join("\n"),
@@ -549,7 +572,7 @@ export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, te
       const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
       console.log("[motor-agente v18] Rate limit OpenAI em avaliarSelecaoUnidade (tentativa " + (tentativa + 1) + "/" + GPT_MAX_TENTATIVAS + "), aguardando " + esperaSegundos + "s antes de tentar de novo");
       await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
-      return avaliarSelecaoUnidade(texto, openaiKey, tentativa + 1);
+      return avaliarSelecaoUnidade(texto, openaiKey, historico, tentativa + 1);
     }
 
     if (!resp.ok) return AVALIACAO_SELECAO_UNIDADE_DEFAULT;
@@ -560,6 +583,16 @@ export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, te
     console.error("[motor-agente v18] avaliarSelecaoUnidade erro, fallback seguro:", exc);
     return AVALIACAO_SELECAO_UNIDADE_DEFAULT;
   }
+}
+
+export function sanitizarNomeLead(nome: string | null | undefined): string {
+  if (!nome) return "Nao informado";
+  const sanitizado = nome
+    .replace(/[\[\]]/g, "")
+    .replace(/[\r\n]+/g, " ")
+    .trim()
+    .slice(0, 80);
+  return sanitizado || "Nao informado";
 }
 
 export type DecisaoAguardandoUnidade = {
@@ -1209,7 +1242,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // AQUI vale a chamada semântica (avaliarSelecaoUnidade), pra não pagar uma chamada
           // extra de LLM em toda mensagem de acompanhamento comum de uma conversa já em
           // andamento (a maioria delas não menciona nada sobre trocar de unidade).
-          const avaliacaoTroca = await avaliarSelecaoUnidade(textoFinal, openaiKey);
+          const avaliacaoTroca = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico);
           if (avaliacaoTroca.unidade && avaliacaoTroca.unidade !== unidadeSalva) {
             metadataAtual = { ...metadataAtual, unidade_selecionada: avaliacaoTroca.unidade, aguardando_unidade: false };
             await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
@@ -1242,7 +1275,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         let avaliacaoSemantica: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDireta) {
-          avaliacaoSemantica = await avaliarSelecaoUnidade(textoFinal, openaiKey);
+          avaliacaoSemantica = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico);
         }
 
         const decisao = decidirAguardandoUnidade(unidadeDetectadaDireta, avaliacaoSemantica, textoFinal);
@@ -1291,7 +1324,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         let avaliacaoSemanticaEngajada: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDiretaEngajada) {
-          avaliacaoSemanticaEngajada = await avaliarSelecaoUnidade(textoFinal, openaiKey);
+          avaliacaoSemanticaEngajada = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico);
         }
 
         const decisaoEngajada = decidirConversaEngajada(unidadeDetectadaDiretaEngajada, avaliacaoSemanticaEngajada, textoFinal);
@@ -1318,7 +1351,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         let avaliacaoSemantica1a: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDireta1a) {
-          avaliacaoSemantica1a = await avaliarSelecaoUnidade(textoFinal, openaiKey);
+          avaliacaoSemantica1a = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico);
         }
 
         const decisaoPrimeira = decidirPrimeiraMensagem(unidadeDetectadaDireta1a, avaliacaoSemantica1a, textoFinal);
@@ -1582,7 +1615,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // ser lido como fala do lead.
     const contextoNomeLead = {
       role: "user",
-      content: "[CONTEXTO INTERNO — nao e mensagem do lead] NOME DO LEAD: " + (lead.nome || "Nao informado"),
+      content: "[CONTEXTO INTERNO — nao e mensagem do lead] NOME DO LEAD: " + sanitizarNomeLead(lead.nome),
     };
 
     // 11. GPT
