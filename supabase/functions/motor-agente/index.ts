@@ -1084,6 +1084,21 @@ async function carregarResumoRede(supabase: ReturnType<typeof createClient<Datab
   return doc?.conteudo || "";
 }
 
+/**
+ * S-WM-51: carrega o documento de servicos institucionais ("servicos_rede") ativo por INTEIRO,
+ * mesmo padrão de `carregarResumoRede` acima — nunca via `chunks_documentos`/
+ * `buscar_chunks_similares` (ver migration `20260720000000_swm51_servicos_rede_skip_indexacao.sql`,
+ * que estende no trigger `tr_indexar_documento` a mesma exceção já aplicada ao `resumo_rede`,
+ * evitando chunk/embedding à toa). `unidade_cuca=null` por definição — é um documento único com o
+ * padrão comum a todas as unidades + exceções já nomeando qual unidade tem cada uma, não um
+ * documento por unidade. Retorna "" quando ainda não existe nenhum documento ativo desse tipo — o
+ * caller trata isso como "sem dado", nunca como erro.
+ */
+async function carregarServicosRede(supabase: ReturnType<typeof createClient<Database>>): Promise<string> {
+  const { data: doc } = await supabase.from("documentos_rag").select("conteudo").eq("tipo", "servicos_rede").eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
+  return doc?.conteudo || "";
+}
+
 // PREMISSA (S-WM-17): esta function espera ser chamada DEPOIS que o lead, a conversa e a
 // mensagem do lead já foram persistidos por quem a invoca (hoje, só o worker Meta —
 // worker/meta_adapter_inbound.py::_chamar_motor_agente). A busca de lead/conversa abaixo
@@ -1407,6 +1422,18 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     let contextRAG = "";
     const temUnidadeDefinida = unidadeEfetiva && unidadeEfetiva !== 'Geral';
     const isAgenteProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
+    // S-WM-51: gateado em isAgenteProgramacao (não literal 'Institucional') por consistência com
+    // todos os outros gates deste Passo 6 — 'maria' não tem número WhatsApp ativo hoje
+    // (meta_phone_numbers só tem 'Institucional' e 'Empregabilidade'), então a diferença é um
+    // no-op no tráfego real. Carregado 1x, ANTES da cadeia if/else abaixo, porque é pequeno
+    // (algumas linhas — padrão comum + exceções por unidade) e relevante com ou sem unidade
+    // conhecida, ao contrário de monthly_program/resumo_rede que são mutuamente exclusivos entre
+    // si. Cada branch da cadeia abaixo inicializa contextRAG com este valor (nunca "") antes de
+    // somar seu próprio conteúdo — nenhum branch pode usar "contextRAG = ..." direto sem antes
+    // passar por "contextRAG = contextServicos", senão sobrescreve este bloco em silêncio (a
+    // primeira escrita de cada branch sempre foi atribuição, não concatenação).
+    const servicosRedeConteudo = isAgenteProgramacao ? await carregarServicosRede(supabase) : "";
+    const contextServicos = servicosRedeConteudo ? "\n\n--- SERVICOS DA REDE (comuns + excecoes por unidade) ---\n" + servicosRedeConteudo : "";
     const ultimaMsgAgente = [...historico].reverse().find((m) => m.role === 'assistant');
     // Item 3 (S-WM-21, cont. VAL-08): dígito solto só conta como seleção de menu de categorias
     // se o ESTADO da conversa confirma que a resposta anterior do agente foi de fato um menu de
@@ -1468,8 +1495,12 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         if (textoOpcao) instrucaoArea = "\nO usu\u00e1rio selecionou a \u00e1rea: " + textoOpcao + ". Foque APENAS nessa \u00e1rea.";
       }
 
+      // S-WM-51: contextRAG inicializado com contextServicos (nunca "" direto) — ver comentário
+      // na declaração de contextServicos, acima. Sem isso, "if (conteudoPrograma)" falso (mês sem
+      // programação carregada) deixaria contextRAG em "" de novo, perdendo o bloco de serviços.
+      contextRAG = contextServicos;
       if (conteudoPrograma) {
-        contextRAG = "\n\n--- PROGRAMACAO MENSAL ATUAL (" + unidadeEfetiva + ") ---" + instrucaoArea + "\n" + conteudoPrograma;
+        contextRAG += "\n\n--- PROGRAMACAO MENSAL ATUAL (" + unidadeEfetiva + ") ---" + instrucaoArea + "\n" + conteudoPrograma;
       }
 
       // S-WM-35 (Frente C): quando a mensagem que causou a troca de unidade ja trazia um pedido
@@ -1510,8 +1541,11 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       //    nao cita nenhuma modalidade conhecida em nenhuma das duas camadas deterministicas.
       const conteudoAtividade = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico)
         ?? await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal, historico);
+      // S-WM-51: mesma inicialização com contextServicos que o branch anterior — ver comentário
+      // na declaração de contextServicos.
+      contextRAG = contextServicos;
       if (conteudoAtividade) {
-        contextRAG = "\n\n--- CONTEXTO (atividade especifica) ---\n" + conteudoAtividade;
+        contextRAG += "\n\n--- CONTEXTO (atividade especifica) ---\n" + conteudoAtividade;
       } else {
         const embedding = await gerarEmbedding(textoFinal, openaiKey);
         const { data: chunksPrograma } = await supabase.rpc("buscar_chunks_similares", {
@@ -1524,7 +1558,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         // "o GPT respondeu errado" e "a busca nao trouxe o chunk certo" eram indistinguiveis no log.
         console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
         if (chunksPrograma && chunksPrograma.length > 0) {
-          contextRAG = "\n\n--- CONTEXTO ---\n" + formatarChunks(chunksPrograma);
+          contextRAG += "\n\n--- CONTEXTO ---\n" + formatarChunks(chunksPrograma);
         }
       }
     } else if (isAgenteProgramacao && perguntaGeralAtiva) {
@@ -1553,7 +1587,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       if (chunksFaq && chunksFaq.length > 0) {
         blocosRede.push("--- CONTEXTO (FAQ) ---\n" + formatarChunks(chunksFaq));
       }
-      if (blocosRede.length > 0) contextRAG = "\n\n" + blocosRede.join("\n\n");
+      // S-WM-51: mesma inicialização com contextServicos dos outros 2 branches.
+      contextRAG = contextServicos;
+      if (blocosRede.length > 0) contextRAG += "\n\n" + blocosRede.join("\n\n");
     } else {
       const fontes = RAG_FONTES_POR_AGENTE[agente_tipo] || ["FAQ"];
       const embedding = await gerarEmbedding(textoFinal, openaiKey);
@@ -1602,7 +1638,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade. Inicie com uma mensagem de transicao amigavel (ex: 'Claro! Vou te mostrar o que tem no [unidade] 😊') e apresente um resumo geral da programacao usando formato compacto."
         : "",
       trocouUnidade && trocaComPedidoEspecifico
-        ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade E ja fez um pedido especifico na mesma mensagem. Inicie com uma mensagem de transicao amigavel curta (ex: 'Claro! Vou verificar isso no [unidade] 😊') e responda DIRETAMENTE ao pedido especifico usando os dados da programacao carregada acima — NAO apresente um resumo geral da programacao."
+        ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade E ja fez um pedido especifico na mesma mensagem. Inicie com uma mensagem de transicao amigavel curta (ex: 'Claro! Vou verificar isso no [unidade] 😊') e responda DIRETAMENTE ao pedido especifico usando os dados disponiveis acima — programacao mensal e/ou o bloco '--- SERVICOS DA REDE (comuns + excecoes por unidade) ---' (se presente) — NAO apresente um resumo geral da programacao."
         : "",
       contextRAG.includes("ATIVIDADE ESPECIFICA") || contextRAG.includes("atividade especifica")
         ? "INSTRUCAO CRITICA: existe um bloco de atividade especifica com dado exato no contexto. Use esse bloco como fonte principal e liste TODAS as turmas/linhas compatíveis presentes nele. Nao resuma, nao escolha só algumas e nao omita opcoes. Preserve quando existir: categoria, titulo/modalidade, turma, professor/responsavel, dias, horario, vagas, sexo, faixa etaria/idade e local."

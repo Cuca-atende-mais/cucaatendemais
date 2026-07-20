@@ -39,7 +39,13 @@ type Documento = {
     created_at: string
 }
 
-const TIPOS = ["Institucional", "Endereços", "Programas", "Horários", "Contatos", "FAQ", "Outro"]
+// S-WM-51: "servicos_rede" é o valor técnico consumido por carregarServicosRede
+// (supabase/functions/motor-agente/index.ts) — mesma convenção snake_case de "resumo_rede"/
+// "monthly_program"/etc., não um rótulo em português como os demais (mesmo precedente já
+// existente com "FAQ" nesta lista). O Select abaixo usa o mesmo valor como rótulo exibido —
+// aparece como "servicos_rede" no dropdown, não "Serviços da Rede"; mudar isso exigiria separar
+// valor de rótulo no componente, fora do escopo desta story (registrado no Dev Agent Record).
+const TIPOS = ["Institucional", "Endereços", "Programas", "Horários", "Contatos", "FAQ", "servicos_rede", "Outro"]
 
 const EMPTY_FORM = {
     titulo: "",
