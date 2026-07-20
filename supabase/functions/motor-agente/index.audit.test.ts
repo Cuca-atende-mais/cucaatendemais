@@ -338,17 +338,25 @@ Deno.test("S-WM-31: decidirConversaEngajada — pedido_depende_unidade=true sem 
   assertEquals(comecaComSaudacao, false, "conversa já engajada — nunca repetir SAUDACOES_ABERTURA");
 });
 
-Deno.test("S-WM-31: decidirConversaEngajada — nenhum dos dois (cortesia/vago) ativa perguntaGeralAtiva, sem resposta canned", () => {
+Deno.test("VAL-19 (S-WM-50): decidirConversaEngajada — cortesia pura (pergunta_geral=false) recebe resposta canned, NÃO ativa perguntaGeralAtiva", () => {
   const decisao = decidirConversaEngajada(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
   assertEquals(decisao.unidadeSelecionada, null);
   assertEquals(decisao.aguardandoUnidade, false);
-  assertEquals(decisao.perguntaGeralAtiva, true, "diferente de decidirAguardandoUnidade: aqui não devolve resposta canned, deixa o Passo 6 (RAG) responder de verdade");
+  assertEquals(decisao.perguntaGeralAtiva, false, "VAL-19: cortesia pura não pode mais disparar o RAG geral (resumo_rede+FAQ) à toa — mesmo padrão de decidirAguardandoUnidade");
+  assertEquals(decisao.resposta, "Em que mais posso te ajudar? 😊");
+});
+
+Deno.test("VAL-19 (S-WM-50): decidirConversaEngajada — pergunta_geral=true real continua ativando perguntaGeralAtiva (regressão)", () => {
+  const decisao = decidirConversaEngajada(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true, pedido_depende_unidade: false });
+  assertEquals(decisao.unidadeSelecionada, null);
+  assertEquals(decisao.aguardandoUnidade, false);
+  assertEquals(decisao.perguntaGeralAtiva, true, "pergunta institucional real continua seguindo pro Passo 6 (RAG geral) — comportamento preservado");
   assertEquals(decisao.resposta, null);
 });
 
 // Testes de wiring no HANDLER — provam que o 3º branch (conversa_engajada) e a marcação da flag
 // nos outros 2 branches (decidirPrimeiraMensagem, decidirAguardandoUnidade) estão conectados.
-Deno.test("S-WM-31 AC3: conversa_engajada=true + cortesia → NÃO reseta pra saudação, segue pro RAG geral (3º branch)", async () => {
+Deno.test("VAL-19 (S-WM-50): conversa_engajada=true + cortesia pura → early-return canned, NÃO chega no RAG geral (resumo_rede/FAQ)", async () => {
   const chamadas: ChamadaRegistrada[] = [];
   const supabaseMock = criarSupabaseMock(respostasBaseHandler({ conversa_engajada: true }), chamadas);
   const resp = await comFetchMockado(
@@ -357,9 +365,13 @@ Deno.test("S-WM-31 AC3: conversa_engajada=true + cortesia → NÃO reseta pra sa
   );
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
-  assertEquals(chegouNoRag, true, "AC3: cortesia com conversa_engajada=true deveria seguir pro Passo 6 (RAG geral) em vez de responder com early-return canned/menu");
+  assertEquals(chegouNoRag, false, "VAL-19: cortesia pura com conversa_engajada=true não pode mais chamar busca vetorial (RAG) à toa");
+  const leuDocumentosRag = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(leuDocumentosRag, false, "VAL-19: cortesia pura não pode mais carregar resumo_rede (documentos_rag) à toa");
   const gravouUnidade = chamadas.some((c) => c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.unidade_selecionada);
-  assertEquals(gravouUnidade, false, "AC3: cortesia não deveria gravar nenhuma unidade_selecionada nova");
+  assertEquals(gravouUnidade, false, "cortesia não deveria gravar nenhuma unidade_selecionada nova");
+  const body = await resp.json();
+  assertEquals(body.resposta, "Em que mais posso te ajudar? 😊", "VAL-19: cortesia pura deveria responder com o canned de continuação, igual a decidirAguardandoUnidade");
 });
 
 Deno.test("S-WM-31: conversa_engajada=true + unidade detectada na mensagem → resolve a unidade, carrega visão geral", async () => {
@@ -1274,7 +1286,13 @@ Deno.test("S-WM-32 AC2: pergunta de rede dentro de conversa_engajada (3º branch
 
   const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
     () => handler(requestFake("quais unidades ensinam karatê?"), supabaseMock),
-    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+    // VAL-19 (S-WM-50, achado @po): pergunta_geral precisa ser true aqui — "quais unidades
+    // ensinam karatê?" é pergunta de rede de verdade, mesmo padrão dos 2 testes irmãos desta
+    // S-WM-32 (branches "1ª mensagem" e "aguardando_unidade", que já usam pergunta_geral:true).
+    // Antes do fix do VAL-19, este mock com pergunta_geral:false "passava" só porque o
+    // catch-all buggy de decidirConversaEngajada ativava perguntaGeralAtiva=true de qualquer
+    // jeito — não era um comportamento real pretendido, e sim o bug mascarando o mock errado.
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true, pedido_depende_unidade: false }),
   );
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   const promptFinal = bodiesEnviados.find((b) => b.includes("RESUMO DA REDE"));
