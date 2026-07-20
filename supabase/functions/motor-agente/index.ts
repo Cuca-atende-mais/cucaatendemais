@@ -709,6 +709,19 @@ export function decidirConversaEngajada(
       resposta: "Pra te ajudar certinho com isso, me diz qual unidade CUCA:\n\n" + MENU_UNIDADES,
     };
   }
+  if (!avaliacaoSemantica.pergunta_geral) {
+    // VAL-19 (S-WM-50): sem esta checagem, cortesia pura ("tudo bem?", pergunta_geral=false) caía
+    // no mesmo catch-all abaixo que uma pergunta_geral=true real — gastava uma chamada de GPT
+    // (resumo_rede + FAQ carregados no prompt) à toa. Mesmo padrão/mesmo texto que
+    // decidirAguardandoUnidade já usa pra esse caso (linha 658-663) — tom de continuação, nunca
+    // SAUDACOES_ABERTURA aqui (a conversa já está engajada).
+    return {
+      unidadeSelecionada: null,
+      aguardandoUnidade: false,
+      perguntaGeralAtiva: false,
+      resposta: "Em que mais posso te ajudar? 😊",
+    };
+  }
   return { unidadeSelecionada: null, aguardandoUnidade: false, perguntaGeralAtiva: true, resposta: null };
 }
 
