@@ -190,4 +190,62 @@ Se o documento de serviços for somado a `contextRAG` **antes** do `if/else` de 
 - `docs/stories/S-WM-51-RAG-Servicos-Institucionais-Por-Unidade.md`
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+### Review Date: 2026-07-20
+
+### Reviewed By: @qa Quinn
+
+### Gate Decision
+
+**PASS** — implementação aprovada para seguir para @devops.
+
+### Requirements Traceability
+
+- AC1 (sem documento → `""` seguro): coberto por `S-WM-51 AC1` — validado, `deno test` isolado.
+- AC2 (pergunta sem unidade → bloco aparece): coberto por `S-WM-51 AC2` — validado, e reutilizado como prova de concatenação do branch C (ver Verificação independente).
+- AC3 (branch A, visão geral): coberto por `S-WM-51 AC3/AC5` — validado.
+- AC4 (branch B, acompanhamento): coberto por `S-WM-51 AC4/AC5` — validado.
+- AC5 (concatenação, obrigatório): coberto pelos 3 testes acima (um por branch) + **mutation test independente meu** nos branches B e C (o Dev só tinha mutado o A) — os 3 branches têm cobertura real comprovada, não só de forma.
+- AC6 (outros agentes não carregam o documento): coberto por `S-WM-51 AC6` — validado; reconfirmei também que o gate `isAgenteProgramacao` (`index.ts:1424`) não foi alterado por esta story e que Empregabilidade tem zero referência cruzada a `motor-agente` (`grep` em `empregabilidade_engine.py`).
+- AC7 (instrução de prompt menciona os 2 blocos): coberto por `S-WM-51 AC7` — validado, e confirmei que o texto original ("responda DIRETAMENTE ao pedido especifico") permanece intacto (regressão da S-WM-34/VAL-23 preservada).
+- AC8 (dropdown do portal): validado por inspeção de código — `"servicos_rede"` presente em `TIPOS` (`rag-global/page.tsx:48`); `unidade_cuca: null` continua hardcoded no submit (`page.tsx:126`, não tocado por esta story).
+- AC9 (migration do trigger, bloqueante): **validado de forma independente em produção**, não apenas conferindo o relato do @dev — ver seção abaixo.
+- AC10/AC11 (deno test/check sem piora): validado, `deno test` 183 passed/0 failed/2 ignored, `deno check` 36 erros — isolei a suíte eu mesma, não reaproveitei números do Dev Agent Record.
+- AC12 (sem deploy): confirmado — branch local não pushada, 1 commit à frente de `origin/main`.
+
+### Verificação independente (pedidos específicos do Junior, todos executados por mim, não conferidos de segunda mão)
+
+1. **Migration do trigger — reproduzida do zero, mais abrangente que o teste do Dev.** Reli `pg_get_functiondef('trigger_indexar_documento')` direto em produção (confirmei `IN ('resumo_rede', 'servicos_rede')`), inseri meu próprio documento de teste (`tipo='servicos_rede'`), e testei **3 cenários** (o Dev só testou 2): 0 chunks em `chunks_documentos` após INSERT, após UPDATE de `conteudo`, **e após UPDATE de `titulo`** (o trigger dispara em `UPDATE OF titulo, conteudo` — testar só `conteudo` deixava metade da condição do gatilho sem cobertura). Registro de teste apagado depois.
+2. **Mutation test — reproduzido em branches diferentes do que o Dev testou.** O Dev mutou o branch A (visão geral); eu mutei o branch C (`perguntaGeralAtiva`) e o branch B (acompanhamento) independentemente, removendo a inicialização `contextRAG = contextServicos` de cada um. Os testes `S-WM-51 AC2` (branch C) e `S-WM-51 AC4/AC5` (branch B) falharam exatamente como esperado nos dois casos — restaurei o código original em seguida, suíte voltou a 183/0/2 confirmado. Com o teste do próprio Dev (branch A), **os 3 branches têm mutation test confirmado**, não só 1.
+3. **Sobreposição com Frente C (S-WM-35) e VAL-19 (S-WM-50)**: conferido via diff completo do commit — `decidirConversaEngajada` (S-WM-50) tem **zero** ocorrências no diff desta story (função intocada, região de código completamente separada). Para a Frente C (`buscarAtividadeDeterministica`/`buscarAtividadeEspecifica`), confirmei a ordem exata no código atual: em ambos os branches A e B, a chamada da Frente C ou já vinha depois de `contextRAG = contextServicos` (branch A, linha 1501 antes de 1514) ou seu resultado fica num `const` local computado antes, sem tocar `contextRAG` até a atribuição/soma já corrigida (branch B) — sem race, sem sobrescrita, sem necessidade de mudança na Frente C.
+4. **Gate `isAgenteProgramacao`**: confirmei que a condição (`index.ts:1424`) não foi alterada por esta story — mesma constante que já gateava tudo no Passo 6. Rodei o teste `S-WM-51 AC6` isolado (agente `sofia`) e confirmei zero chamada a `documentos_rag`. Confirmei também que Empregabilidade tem zero referência cruzada a `motor-agente` no worker Python — não é uma escolha desta story, é um limite estrutural (motor separado).
+5. **Baseline isolada por mim**: `deno test` (183/0/2), `deno check` (36 erros, `grep` confirmando nenhum menciona `contextServicos`/`carregarServicosRede`), `deno lint` (7 problemas) — todos rodados diretamente, não copiados do relato do Dev.
+
+### Verificação adicional (além do pedido, achado durante a revisão)
+
+- Rodei `eslint` no arquivo do portal alterado (`rag-global/page.tsx`) — 2 erros + 1 warning (`no-explicit-any` em 2 pontos, `exhaustive-deps` no `useEffect`). Comparei contra a versão do arquivo **antes** desta story (`git show 35cf85d:...`) — os mesmos 3 problemas já existiam, só as linhas mudaram (comentário novo deslocou tudo). **Não é regressão desta story**, é baseline pré-existente do arquivo.
+
+### Risk Assessment
+
+- Risco funcional: baixo. Mudança aditiva num arquivo já bem coberto por suíte; os 3 pontos de escrita de `contextRAG` mais sensíveis (onde o bug de sobrescrita silenciosa poderia se esconder) têm mutation test confirmado, não só teste verde.
+- Risco de regressão cruzada: baixo, confirmado por diff completo — sem sobreposição de código com S-WM-35/S-WM-50, apesar dos 3 tocarem a mesma região do arquivo em sessões próximas.
+- Segurança/custo: o achado mais crítico da story (trigger de indexação) foi verificado 2x de forma independente (Dev e QA, cada um com seu próprio insert/update de teste) — risco de repetir o incidente do `resumo_rede` está coberto.
+- Banco/produção: migration aplicada e validada (2x, por 2 pessoas diferentes) antes deste commit. Sem `CHECK constraint`/schema alterado além da função do trigger.
+- Escopo (Sofia/Ana/Julia/Empregabilidade): confirmado que nenhum desses recebe o documento de serviços, nem por engano.
+
+### Evidence
+
+- `pg_get_functiondef('trigger_indexar_documento'::regproc)` → `IN ('resumo_rede', 'servicos_rede')` confirmado em produção.
+- Insert + 2 updates de teste próprios (`documentos_rag`, `tipo='servicos_rede'`) → 0 linhas em `chunks_documentos` nos 3 casos; registro apagado depois.
+- Mutation test próprio nos branches B e C → 2 testes falham como esperado, restaurado, suíte volta a 183/0/2.
+- `deno test --no-check --allow-env --allow-read --allow-net .` → 183 passed / 0 failed / 2 ignored.
+- `deno check index.ts` → 36 erros, idêntico ao baseline; `grep` confirma nenhum erro novo relacionado ao código desta story.
+- `deno lint` → 7 problemas, idêntico ao baseline.
+- `eslint` no arquivo do portal → 3 problemas, idênticos ao baseline (comparado antes/depois via `git show`).
+- `git log origin/main..HEAD` → 1 commit local, sem push.
+
+### Notes
+
+- Não há bloqueio para PR.
+- **Deploy tem 2 alvos nesta story** (sinalizar pro @devops): `supabase/functions/motor-agente/index.ts` exige redeploy da Edge Function `motor-agente` (mesmo fluxo já usado nas stories anteriores); `cuca-portal/.../rag-global/page.tsx` exige redeploy do serviço **portal** no EasyPanel (frontend Next.js) — os dois precisam ser promovidos, não só um.
+- A migration do trigger já foi aplicada em produção pelo @dev (e revalidada por mim) — não é uma ação pendente pro @devops, já está em produção antes mesmo do merge do código (mudança de banco, ciclo próprio do @dev conforme `aiox-pipeline-enforcement.md`).
