@@ -146,4 +146,53 @@ As duas funções irmãs (`decidirAguardandoUnidade`, linha 627-669; `decidirPri
 - `docs/stories/S-WM-50-VAL-19-DecidirConversaEngajada-Pergunta-Geral.md`
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+### Review Date: 2026-07-20
+
+### Reviewed By: @qa Quinn
+
+### Gate Decision
+
+**PASS** — implementação aprovada para seguir para @devops.
+
+### Requirements Traceability
+
+- AC1 (cortesia pura → `perguntaGeralAtiva=false` + canned): coberto por `VAL-19 (S-WM-50): decidirConversaEngajada — cortesia pura (pergunta_geral=false) recebe resposta canned, NÃO ativa perguntaGeralAtiva` — validado.
+- AC2 (`pergunta_geral=true` real → comportamento preservado): coberto por `VAL-19 (S-WM-50): decidirConversaEngajada — pergunta_geral=true real continua ativando perguntaGeralAtiva (regressão)` — validado.
+- AC3 (`pedido_depende_unidade`/`unidadeDetectada` inalterados): os 2 testes já existentes (`S-WM-31: decidirConversaEngajada — unidade detectada...` e `...pedido_depende_unidade=true...`) continuam passando sem alteração — validado por inspeção + execução.
+- AC4 (handler + cortesia pura → não chama RAG/`documentos_rag`): coberto por `VAL-19 (S-WM-50): conversa_engajada=true + cortesia pura → early-return canned...` — validado, inclusive com asserção nova (`leuDocumentosRag=false`) que o teste anterior não tinha.
+- AC5 (handler + `pergunta_geral=true` real → RAG geral funciona): coberto pelo teste corrigido da S-WM-32 (`pergunta de rede dentro de conversa_engajada... também carrega resumo_rede + FAQ`) — validado.
+- AC6 (3 testes atualizados, não deixados contraditórios): conferido via `git show` do diff — os 2 testes da S-WM-31 foram reescritos no lugar (não duplicados) e o mock da S-WM-32 foi corrigido inline. Nenhum teste contraditório na suíte.
+- AC7 (deno test sem failed novo): validado, **177 passed / 0 failed / 2 ignored** (baseline era 176/0/2 — net +1: 2 reescritos no lugar + 1 unitário genuinamente novo).
+- AC8 (deno check não piora): validado, **36 erros**, idêntico ao baseline pré-existente (mesmo count registrado na S-WM-49).
+- AC9 (sem deploy): confirmado — `git status -sb` mostra branch local 1 commit à frente de `origin`, nenhum push executado.
+
+### Verificação independente (não apenas conferência do relatado pelo @dev)
+
+- **Mutation test**: revertei temporariamente `decidirConversaEngajada` pra versão anterior (`git show HEAD~1:...index.ts`) e rodei a suíte — os 2 testes que deveriam pegar a regressão **falharam exatamente como esperado** (`VAL-19 ... cortesia pura ... recebe resposta canned` e `VAL-19 ... conversa_engajada=true + cortesia pura ...`), enquanto o teste de regressão (`pergunta_geral=true`) e o teste corrigido da S-WM-32 continuaram passando (não dependem do fix, só do mock correto). Restaurei a versão corrigida em seguida — suíte voltou a 177/0/2. Prova que os testes novos/reescritos não são tautológicos.
+- Conferi `git diff` linha a linha de `index.ts`: só a função `decidirConversaEngajada` foi tocada (13 linhas adicionadas), nenhuma mudança em `handler()` — consistente com o Escopo OUT da story.
+- `grep` por todos os consumidores de `decidirConversaEngajada` no repo (worker Python incluso): só `handler()` (linha 1343, não alterada) e o próprio arquivo de teste — nenhum consumidor externo à Edge Function.
+- Reconferi a string do canned response caractere-por-caractere contra `decidirAguardandoUnidade:661` — idênticas.
+- Rodei eu mesmo `deno test`, `deno check` e `deno lint` (não confiei só no Dev Agent Record) — todos batem com o reportado.
+
+### Risk Assessment
+
+- Risco funcional: baixo. Mudança isolada numa função pura já coberta por suíte extensa; mutation test confirma cobertura real, não só de forma.
+- Risco de regressão cruzada: baixo. Único consumidor é `handler()`, não alterado; único outro achado de acoplamento (teste da S-WM-32) já identificado e corrigido antes da implementação (achado do @po), não durante o QA.
+- Segurança: N/A — nenhuma entrada de usuário nova, nenhuma interpolação de string, resposta canned é literal estático.
+- Performance: melhora (remove 1 chamada de GPT + carregamento de `resumo_rede`/FAQ por mensagem de cortesia pura em conversa engajada) — consistente com o objetivo da story.
+- Banco/produção: nenhuma mudança de schema, migration ou RLS — fix é 100% código de aplicação (Edge Function).
+
+### Evidence
+
+- `deno test --no-check --allow-env --allow-read --allow-net .` → 177 passed / 0 failed / 2 ignored.
+- `deno check index.ts` → 36 erros (idêntico ao baseline).
+- `deno lint index.ts index.test.ts index.audit.test.ts` → 7 problemas (idêntico ao baseline).
+- Mutation test (reversão temporária de `index.ts` para `HEAD~1`): 2 testes falham como esperado, suíte volta a 175/2/2; restaurado, suíte volta a 177/0/2.
+- `git status -sb`: branch local 1 commit à frente de `origin`, sem push.
+
+### Notes
+
+- Não há bloqueio para PR.
+- `supabase/functions/motor-agente/index.ts` foi alterado — @devops deve redeployar a Edge Function `motor-agente` ao promover, conforme já observado na S-WM-49.
+- Nenhuma ação de banco/migration necessária nesta story.
