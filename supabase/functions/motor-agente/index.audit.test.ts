@@ -113,8 +113,7 @@ function comFetchMockado<T>(fn: () => Promise<T>, respostaChatCompletions = "Res
       return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: respostaChatCompletions } }] }), { status: 200 }));
     }
     throw new Error("fetch não-mockado nesse teste: " + urlStr);
-    // deno-lint-ignore no-explicit-any
-  }) as any;
+  }) as typeof fetch;
   return fn().finally(() => { globalThis.fetch = fetchOriginal; });
 }
 
@@ -127,9 +126,9 @@ function comConsoleLogCapturado<T>(fn: () => Promise<T>): Promise<{ resultado: T
   const originalWarn = console.warn;
   const linhas: string[] = [];
   // deno-lint-ignore no-explicit-any
-  console.log = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as any;
+  console.log = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as typeof console.log;
   // deno-lint-ignore no-explicit-any
-  console.warn = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as any;
+  console.warn = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as typeof console.warn;
   return fn()
     .then((resultado) => ({ resultado, linhas }))
     .finally(() => { console.log = originalLog; console.warn = originalWarn; });
@@ -607,7 +606,6 @@ Deno.test("Item 4: falha técnica na avaliação semântica (JSON inválido) NÃ
 Deno.test("Item 5 / AC10: avaliarSelecaoUnidade tenta de novo após 429 e retorna a classificação real na 2ª tentativa", async () => {
   let chamadasFetch = 0;
   const fetchOriginal = globalThis.fetch;
-  // deno-lint-ignore no-explicit-any
   globalThis.fetch = (() => {
     chamadasFetch++;
     if (chamadasFetch === 1) {
@@ -618,8 +616,7 @@ Deno.test("Item 5 / AC10: avaliarSelecaoUnidade tenta de novo após 429 e retorn
     }
     const conteudo = JSON.stringify({ unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
     return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: conteudo } }] }), { status: 200 }));
-    // deno-lint-ignore no-explicit-any
-  }) as any;
+  }) as typeof fetch;
 
   try {
     const resultado = await avaliarSelecaoUnidade("quero saber da barra", "fake-key");
@@ -633,12 +630,10 @@ Deno.test("Item 5 / AC10: avaliarSelecaoUnidade tenta de novo após 429 e retorn
 Deno.test("Item 5 / AC11: erro não-transitório (400) cai direto no fallback seguro, sem tentar de novo", async () => {
   let chamadasFetch = 0;
   const fetchOriginal = globalThis.fetch;
-  // deno-lint-ignore no-explicit-any
   globalThis.fetch = (() => {
     chamadasFetch++;
     return Promise.resolve(new Response("bad request", { status: 400 }));
-    // deno-lint-ignore no-explicit-any
-  }) as any;
+  }) as typeof fetch;
 
   try {
     const resultado = await avaliarSelecaoUnidade("qualquer mensagem", "fake-key");
@@ -1201,10 +1196,32 @@ function comFetchMockadoCapturandoBody(
       return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: respostaChatCompletions } }] }), { status: 200 }));
     }
     throw new Error("fetch não-mockado nesse teste: " + urlStr);
-    // deno-lint-ignore no-explicit-any
-  }) as any;
+  }) as typeof fetch;
   return fn().then((resp) => ({ resp, bodiesEnviados })).finally(() => { globalThis.fetch = fetchOriginal; });
 }
+
+Deno.test("S-WM-49 VAL-20: handler repassa histórico ao avaliarSelecaoUnidade em aguardando_unidade", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ aguardando_unidade: true });
+  respostas["mensagens"] = { data: [
+    { conteudo: "é sim", remetente: "lead" },
+    { conteudo: "Você quer saber de qual unidade CUCA?", remetente: "agente" },
+    { conteudo: "quero saber sobre natação", remetente: "lead" },
+  ] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("é sim"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: true }),
+  );
+
+  assertEquals(resp.status, 200);
+  const promptClassificador = bodiesEnviados.find((body) => body.includes("Retorne SOMENTE JSON com as chaves:")) ?? "";
+  assertStringIncludes(promptClassificador, "Historico recente");
+  assertStringIncludes(promptClassificador, "Lead: quero saber sobre natação");
+  assertStringIncludes(promptClassificador, "Maria: Você quer saber de qual unidade CUCA?");
+  assertStringIncludes(promptClassificador, "Mensagem do lead: é sim");
+});
 
 Deno.test("S-WM-32 AC2/AC3: pergunta de rede na 1ª mensagem carrega resumo_rede + FAQ, nunca monthly_program/eventos_pontuais sem unidade", async () => {
   const chamadas: ChamadaRegistrada[] = [];
@@ -1911,15 +1928,13 @@ Deno.test("S-WM-38: ambiguidade sem repetição prévia não recebe o prefixo (n
 Deno.test("S-WM-41: gerarEmbedding tenta de novo após 429 e retorna o embedding da 2ª tentativa", async () => {
   let chamadasFetch = 0;
   const fetchOriginal = globalThis.fetch;
-  // deno-lint-ignore no-explicit-any
   globalThis.fetch = (() => {
     chamadasFetch++;
     if (chamadasFetch === 1) {
       return Promise.resolve(new Response("rate limited", { status: 429, headers: { "retry-after": "0" } }));
     }
     return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [1, 2, 3] }] }), { status: 200 }));
-    // deno-lint-ignore no-explicit-any
-  }) as any;
+  }) as typeof fetch;
 
   try {
     const resultado = await gerarEmbedding("texto de teste", "fake-key");
@@ -1933,12 +1948,10 @@ Deno.test("S-WM-41: gerarEmbedding tenta de novo após 429 e retorna o embedding
 Deno.test("S-WM-41: erro não-transitório (400) rejeita imediatamente, sem retry", async () => {
   let chamadasFetch = 0;
   const fetchOriginal = globalThis.fetch;
-  // deno-lint-ignore no-explicit-any
   globalThis.fetch = (() => {
     chamadasFetch++;
     return Promise.resolve(new Response("bad request", { status: 400 }));
-    // deno-lint-ignore no-explicit-any
-  }) as any;
+  }) as typeof fetch;
 
   try {
     let erro: unknown = null;
@@ -1958,12 +1971,10 @@ Deno.test("S-WM-41: erro não-transitório (400) rejeita imediatamente, sem retr
 Deno.test("S-WM-41: esgota as tentativas em 429 persistente e rejeita com 'Embedding error'", async () => {
   let chamadasFetch = 0;
   const fetchOriginal = globalThis.fetch;
-  // deno-lint-ignore no-explicit-any
   globalThis.fetch = (() => {
     chamadasFetch++;
     return Promise.resolve(new Response("rate limited", { status: 429, headers: { "retry-after": "0" } }));
-    // deno-lint-ignore no-explicit-any
-  }) as any;
+  }) as typeof fetch;
 
   try {
     let erro: unknown = null;
@@ -1978,6 +1989,83 @@ Deno.test("S-WM-41: esgota as tentativas em 429 persistente e rejeita com 'Embed
   } finally {
     globalThis.fetch = fetchOriginal;
   }
+});
+
+// ── S-WM-49 (VAL-20/VAL-22): histórico e roteamento no classificador de unidade ───────────
+
+Deno.test("S-WM-49 VAL-20: avaliarSelecaoUnidade inclui histórico recente no prompt do classificador", async () => {
+  const bodiesEnviados: string[] = [];
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+    if (init?.body) bodiesEnviados.push(String(init.body));
+    return Promise.resolve(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: true }) } }],
+    }), { status: 200 }));
+  }) as typeof fetch;
+
+  try {
+    await avaliarSelecaoUnidade("é sim", "fake-key", [
+      { role: "user", content: "quero saber sobre natação" },
+      { role: "assistant", content: "Você quer saber de qual unidade CUCA?" },
+    ]);
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+
+  const prompt = JSON.parse(bodiesEnviados[0]).messages[0].content;
+  assertStringIncludes(prompt, "Historico recente");
+  assertStringIncludes(prompt, "Lead: quero saber sobre natação");
+  assertStringIncludes(prompt, "Maria: Você quer saber de qual unidade CUCA?");
+  assertStringIncludes(prompt, "Mensagem do lead: é sim");
+});
+
+Deno.test("S-WM-49 VAL-22: prompt diferencia pergunta de rede 'qual unidade tem X' de pedido numa unidade", async () => {
+  const bodiesEnviados: string[] = [];
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+    if (init?.body) bodiesEnviados.push(String(init.body));
+    return Promise.resolve(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true, pedido_depende_unidade: false }) } }],
+    }), { status: 200 }));
+  }) as typeof fetch;
+
+  try {
+    const resultado = await avaliarSelecaoUnidade("qual unidade tem natação?", "fake-key");
+    assertEquals(resultado.pergunta_geral, true);
+    assertEquals(resultado.pedido_depende_unidade, false);
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+
+  const prompt = JSON.parse(bodiesEnviados[0]).messages[0].content;
+  assertStringIncludes(prompt, "\"qual unidade tem natação?\" ou \"onde tem natação?\"");
+  assertStringIncludes(prompt, "pergunta_geral=true");
+  assertStringIncludes(prompt, "pedido_depende_unidade=false");
+});
+
+Deno.test("S-WM-49 VAL-22: regressão 'tem natação na Barra?' continua pedido dependente de unidade", async () => {
+  const bodiesEnviados: string[] = [];
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+    if (init?.body) bodiesEnviados.push(String(init.body));
+    return Promise.resolve(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ unidade: "Cuca Barra", quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: true }) } }],
+    }), { status: 200 }));
+  }) as typeof fetch;
+
+  try {
+    const resultado = await avaliarSelecaoUnidade("tem natação na Barra?", "fake-key");
+    assertEquals(resultado.unidade, "Cuca Barra");
+    assertEquals(resultado.pergunta_geral, false);
+    assertEquals(resultado.pedido_depende_unidade, true);
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+
+  const prompt = JSON.parse(bodiesEnviados[0]).messages[0].content;
+  assertStringIncludes(prompt, "\"tem natação na Barra?\"");
+  assertStringIncludes(prompt, "unidade=\"Cuca Barra\"");
+  assertStringIncludes(prompt, "pedido_depende_unidade=true");
 });
 
 // ── S-WM-42 (SEC-04): catch top-level não repassa texto de erro upstream cru na resposta ────
