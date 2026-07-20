@@ -2155,3 +2155,129 @@ Deno.test("S-WM-45: conversa_id informado, encontrado com sucesso (não regride)
 
   assertEquals(resp.status, 200);
 });
+
+// ── S-WM-51: RAG de serviços institucionais por unidade (documento único, sempre carregado) ──
+// carregarServicosRede não é exportada (mesmo padrão de carregarResumoRede) — testada via wiring
+// no handler, igual aos testes de resumo_rede da S-WM-32. AC5 (concatenação) é o critério mais
+// importante desta leva: prova que contextServicos sobrevive à atribuição "=" de cada branch.
+
+Deno.test("S-WM-51 AC1: sem documento de serviços ativo ainda, contextServicos fica vazio com segurança — sem bloco no prompt, sem erro", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: { id: "doc-1" } }; // sem `conteudo` — documento de serviços ainda não existe
+  respostas["chunks_documentos"] = { data: [{ conteudo: "Natacao - Ter/Qui/Sex" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("Mondubim"), supabaseMock), // troca de unidade -> precisaVisaoGeral=true -> branch A
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar mesmo sem documento de serviços ainda cadastrado");
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertEquals(promptFinal.includes("SERVICOS DA REDE"), false, "AC1: sem documento ativo, o bloco de serviços não deveria aparecer no prompt (contextServicos='' com segurança, sem erro)");
+});
+
+Deno.test("S-WM-51 AC2: pergunta sobre serviço SEM unidade escolhida (branch perguntaGeralAtiva) — bloco de serviços aparece (caso que motivou a correção de percurso)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({});
+  respostas["documentos_rag"] = { data: { id: "doc-1", conteudo: "Defensoria Publica so no CUCA Barra." } };
+  respostas["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "O CUCA funciona de seg a sáb.", fonte_tipo: "FAQ" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem defensoria publica no CUCA?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("SERVICOS DA REDE")) ?? "";
+  assertStringIncludes(
+    promptFinal,
+    "--- SERVICOS DA REDE (comuns + excecoes por unidade) ---",
+    "AC2: caso motivador da correção de percurso — pergunta de serviço sem unidade escolhida precisa ter o bloco de serviços no prompt, mesmo sem nenhuma unidade definida",
+  );
+});
+
+Deno.test("S-WM-51 AC3/AC5: branch A (visão geral, precisaVisaoGeral=true) — bloco de serviços sobrevive junto com a programação mensal (prova de concatenação)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: { id: "doc-1", conteudo: "Defensoria Publica so no CUCA Barra." } };
+  respostas["chunks_documentos"] = { data: [{ conteudo: "Natacao - Ter/Qui/Sex" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("Mondubim"), supabaseMock), // troca de unidade -> precisaVisaoGeral=true -> branch A
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertStringIncludes(promptFinal, "Natacao - Ter/Qui/Sex", "programação mensal (conteúdo próprio do branch A) precisa continuar presente");
+  assertStringIncludes(
+    promptFinal,
+    "Defensoria Publica so no CUCA Barra",
+    "AC3/AC5: bloco de serviços precisa sobreviver junto com a programação — prova que 'contextRAG = \"...\"' (atribuição, não concatenação) não sobrescreveu o pré-carregamento de contextServicos",
+  );
+});
+
+Deno.test("S-WM-51 AC4/AC5: branch B (acompanhamento, sem precisaVisaoGeral) — bloco de serviços sobrevive junto com o conteúdo próprio do branch (prova de concatenação)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  respostas["documentos_rag"] = { data: { id: "doc-1", conteudo: "Defensoria Publica so no CUCA Barra." } };
+  respostas["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "Natação disponível terça e quinta às 19h.", fonte_tipo: "FAQ" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("tem natação de noite?"), supabaseMock), // sem troca de unidade -> acompanhamento -> branch B
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("Natação disponível")) ?? "";
+  assertStringIncludes(promptFinal, "Natação disponível", "conteúdo próprio do branch B (fallback vetorial) precisa continuar presente");
+  assertStringIncludes(
+    promptFinal,
+    "Defensoria Publica so no CUCA Barra",
+    "AC4/AC5: bloco de serviços precisa sobreviver junto com o conteúdo de acompanhamento — mesma prova de concatenação do branch A, agora no branch B",
+  );
+});
+
+Deno.test("S-WM-51 AC6: agente_tipo diferente de Institucional/maria (sofia) não consulta documentos_rag em nenhum momento — contextServicos nem é buscado", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({});
+  respostas["documentos_rag"] = { data: { id: "doc-1", conteudo: "SERVICOS DA REDE: nao deveria aparecer aqui." } };
+  respostas["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "FAQ generico da Sofia.", fonte_tipo: "FAQ" }] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const req = new Request("http://localhost/motor-agente", {
+    method: "POST",
+    body: JSON.stringify({ mensagem: "oi, tudo bem?", telefone: "5585999999999", canal_origem: "test", agente_tipo: "sofia", unidade_cuca: "Cuca Barra" }),
+  });
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(() => handler(req, supabaseMock));
+  assertEquals(resp.status, 200, "handler não deveria falhar pro agente Sofia");
+  const consultouDocumentosRag = chamadas.some((c) => c.tabela === "documentos_rag");
+  assertEquals(consultouDocumentosRag, false, "AC6: agente_tipo diferente de Institucional/maria não deveria consultar documentos_rag em nenhum momento (nem servicos_rede, nem resumo_rede/monthly_program)");
+  const promptFinal = bodiesEnviados.find((b) => b.includes("FAQ generico")) ?? "";
+  assertEquals((promptFinal ?? "").includes("SERVICOS DA REDE"), false, "AC6: bloco de serviços não deveria aparecer no prompt de outro agente");
+});
+
+Deno.test("S-WM-51 AC7: instrução de trocaComPedidoEspecifico menciona o bloco de serviços, não só 'dados da programação'", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Jangurussu" });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("e no Mondubim, tem natação de noite?"), supabaseMock), // trocaComPedidoEspecifico=true (VAL-23)
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO MENSAL ATUAL")) ?? "";
+  assertStringIncludes(
+    promptFinal,
+    "SERVICOS DA REDE",
+    "AC7: a instrução de trocaComPedidoEspecifico precisa mencionar o bloco de serviços como fonte possível, não só 'dados da programação'",
+  );
+  assertStringIncludes(
+    promptFinal,
+    "responda DIRETAMENTE ao pedido especifico",
+    "regressão: o texto original (S-WM-34/VAL-23) precisa continuar presente, só ganhando a menção nova",
+  );
+});
