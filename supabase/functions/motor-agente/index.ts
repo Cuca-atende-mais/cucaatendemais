@@ -609,6 +609,34 @@ export type DecisaoAguardandoUnidade = {
 };
 
 /**
+ * Achado 2026-07-24 (INVESTIGACAO-breadcrumb-nao-usado-primeira-mensagem): as 3 funções de
+ * roteamento (decidirAguardandoUnidade, decidirConversaEngajada, decidirPrimeiraMensagem) têm
+ * um branch de "cortesia pura" que devolve uma resposta pronta (sem chamar GPT) e o caller
+ * retorna imediatamente — antes mesmo de CONTEXTO_DISPARO (breadcrumb do disparo institucional,
+ * ver seção 9 do handler) ser montado. Resultado: um lead que acabou de receber um disparo e
+ * responde só "ok"/"obrigado" nunca tem o disparo reconhecido, mesmo com o dado correto em
+ * metadata (achado isolado do bug do PR #53/#54, que era o dado nunca chegar a ser gravado).
+ * Esta função decide se essa resposta canned deve ser IGNORADA (deixando `resposta` virar null
+ * no caller, mesmo padrão que pergunta_geral já usa pra cair no fluxo normal de GPT):
+ * - `ehOptOut=true` nunca é sobrescrito: o lead só quer parar de receber mensagem, reconhecer o
+ *   disparo não ajuda em nada e ainda gastaria uma chamada de GPT à toa.
+ * - Janela de 24h: `ultimo_disparo` nunca é limpo depois de reconhecido (nenhum mecanismo grava
+ *   isso) — sem o corte de tempo, o campo ficaria "ativo" pra sempre, forçando o fluxo de GPT em
+ *   toda cortesia futura do lead, não só na mensagem seguinte ao disparo.
+ */
+export function deveReconhecerDisparoRecente(
+  ultimoDisparo: { enviado_em?: string } | null | undefined,
+  ehOptOut: boolean,
+): boolean {
+  if (ehOptOut) return false;
+  const enviadoEmStr = ultimoDisparo?.enviado_em;
+  if (!enviadoEmStr) return false;
+  const enviadoEm = new Date(enviadoEmStr).getTime();
+  if (Number.isNaN(enviadoEm)) return false;
+  return (Date.now() - enviadoEm) < 24 * 60 * 60 * 1000;
+}
+
+/**
  * Decide o que fazer quando a conversa está em `aguardando_unidade=true` e chega uma nova
  * mensagem. `resposta !== null` significa "responda isto e encerre a requisição agora";
  * `resposta === null` significa "resolvido, siga o fluxo normal" — cobre tanto unidade
@@ -1318,6 +1346,19 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           trocouUnidade = true;
           trocaComPedidoEspecifico = decisao.pedidoEspecifico === true; // S-WM-34 (VAL-23)
           console.log("[motor-agente v18] Unidade salva: " + unidadeEfetiva);
+        } else if (
+          decisao.resposta !== null && !decisao.aguardandoUnidade &&
+          deveReconhecerDisparoRecente(metadataAtual.ultimo_disparo as { enviado_em?: string } | undefined, avaliacaoSemantica.quer_sair === true)
+        ) {
+          // Achado 2026-07-24: cortesia pura (aguardandoUnidade=false aqui, não é o caso de
+          // "não consegui identificar a unidade" que mostra o menu de novo) com disparo
+          // institucional recente ainda não reconhecido — ignora a resposta canned e cai pro
+          // fluxo normal (GPT + CONTEXTO_DISPARO, seção 9), mesmo padrão que pergunta_geral já
+          // usa no branch abaixo. quer_sair fica de fora via deveReconhecerDisparoRecente — lead
+          // só quer parar, reconhecer o disparo não ajuda.
+          metadataAtual = { ...metadataAtual, aguardando_unidade: false, conversa_engajada: true };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          console.log("[motor-agente v18] Disparo recente não reconhecido (aguardando_unidade) — ignora resposta canned, segue pro GPT");
         } else if (decisao.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisao.resposta, historico);
           // Ampliação de escopo (S-WM-31, autorizada por Junior na Task 3 — ver Dev Agent
@@ -1364,6 +1405,17 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           trocouUnidade = true;
           trocaComPedidoEspecifico = decisaoEngajada.pedidoEspecifico === true; // S-WM-34 (VAL-23)
           console.log("[motor-agente v18] Unidade salva (conversa engajada): " + unidadeEfetiva);
+        } else if (
+          decisaoEngajada.resposta !== null && !decisaoEngajada.aguardandoUnidade &&
+          deveReconhecerDisparoRecente(metadataAtual.ultimo_disparo as { enviado_em?: string } | undefined, avaliacaoSemanticaEngajada.quer_sair === true)
+        ) {
+          // Achado 2026-07-24: mesmo ajuste do branch aguardando_unidade — cortesia pura numa
+          // conversa já engajada, com disparo recente não reconhecido. decidirConversaEngajada
+          // não distingue quer_sair internamente (cai no mesmo canned de continuação hoje) — a
+          // exclusão de opt-out acontece aqui, via avaliacaoSemanticaEngajada.quer_sair.
+          metadataAtual = { ...metadataAtual, aguardando_unidade: false };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          console.log("[motor-agente v18] Disparo recente não reconhecido (conversa engajada) — ignora resposta canned, segue pro GPT");
         } else if (decisaoEngajada.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoEngajada.resposta, historico);
           metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoEngajada.aguardandoUnidade };
@@ -1392,6 +1444,22 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           trocouUnidade = true;
           trocaComPedidoEspecifico = decisaoPrimeira.pedidoEspecifico === true; // S-WM-34 (VAL-23)
           console.log("[motor-agente v18] Unidade salva (1a mensagem): " + unidadeEfetiva);
+        } else if (
+          decisaoPrimeira.resposta !== null && !decisaoPrimeira.aguardandoUnidade &&
+          deveReconhecerDisparoRecente(metadataAtual.ultimo_disparo as { enviado_em?: string } | undefined, avaliacaoSemantica1a.quer_sair === true)
+        ) {
+          // Achado 2026-07-24: 1ª mensagem real do lead (nenhuma flag de engajamento gravada
+          // ainda), cortesia pura, mas com disparo institucional recente ainda não reconhecido —
+          // mesmo ajuste dos outros 2 branches. Note que `ultimo_disparo` só existe em metadata
+          // quando o worker (_gravar_breadcrumb_disparo) já criou esta linha de `conversas` antes
+          // desta mensagem chegar — ou seja, na prática este branch nunca coincide com
+          // conversaGenuinamenteNova=true (a linha já existia), então não há conflito com a
+          // INSTRUCAO "Esta e a primeira mensagem" (seção 10, gated em conversaGenuinamenteNova).
+          // decidirPrimeiraMensagem não distingue quer_sair (não faz sentido pedir pra sair na
+          // 1ª mensagem) — a exclusão de opt-out acontece aqui, via avaliacaoSemantica1a.quer_sair.
+          metadataAtual = { ...metadataAtual, aguardando_unidade: false, conversa_engajada: true };
+          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          console.log("[motor-agente v18] Disparo recente não reconhecido (1a mensagem) — ignora resposta canned, segue pro GPT");
         } else if (decisaoPrimeira.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoPrimeira.resposta, historico);
           // Item 6 (S-WM-31, Causa raiz B): cortesia pura (aguardandoUnidade=false aqui) marca
@@ -1648,6 +1716,17 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // conversa retomada minutos depois. Outros agente_tipo (Sofia/Ouvidoria) continuam no
       // conversaJustCreated original, sem mudança — decisão sobre eles fica fora deste escopo.
       (isAgenteProgramacao ? conversaGenuinamenteNova : conversaJustCreated) ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : "",
+      // Achado 2026-07-24: CONTEXTO_DISPARO (acima) era só um fato passivo no meio do prompt,
+      // sem nenhuma diretiva de uso — diferente dos outros blocos deste array, que sempre vêm
+      // com uma INSTRUCAO explícita dizendo como reagir. Gated no mesmo `ultimoDisparo` de
+      // CONTEXTO_DISPARO (nunca aparece sem o fato correspondente). Não conflita com a INSTRUCAO
+      // de "primeira mensagem" acima: `ultimo_disparo` só existe quando o worker já criou a linha
+      // de `conversas` antes desta mensagem chegar (breadcrumb do disparo) — nesse caso
+      // conversaGenuinamenteNova/conversaJustCreated já são false, então as duas nunca disparam
+      // juntas pro mesmo turno.
+      ultimoDisparo
+        ? "INSTRUCAO: O lead recebeu recentemente o aviso institucional citado em ULTIMO DISPARO. Reconheca isso de forma natural e breve na resposta (ex: 'Vi que voce recebeu nosso aviso sobre...') antes de seguir com o resto — NAO trate esta mensagem como se fosse a primeira interacao da conversa, mesmo que pareca uma saudacao."
+        : "",
       // S-WM-32 (AC8, achado de Junior em teste ao vivo): pergunta de rede inteira sem unidade
       // ja gerou alucinacao silenciosa antes desta story ("tem curso de natacao?" respondido com
       // uma lista de modalidades sem fonte real verificavel) — vale tanto enquanto o
