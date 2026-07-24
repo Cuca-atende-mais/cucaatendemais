@@ -60,6 +60,35 @@ def _claim_ouvidoria_evento_sync():
     return supabase.rpc("claim_ouvidoria_evento").execute()
 
 
+def _gravar_breadcrumb_disparo(lead_id: str, origem_id: str, breadcrumb: dict) -> None:
+    """
+    Grava o breadcrumb do disparo na conversa do lead sem apagar o estado que o
+    motor-agente gerencia em metadata (conversa_engajada, unidade_selecionada,
+    aguardando_unidade — S-WM-31). Um upsert com "metadata" completo substitui a
+    coluna inteira (Postgrest não faz merge de jsonb) — por isso lê o metadata
+    atual e mescla em memória antes de escrever.
+    """
+    existente = supabase.table("conversas").select("id, metadata").eq(
+        "lead_id", lead_id
+    ).eq("origem_id", origem_id).maybe_single().execute()
+
+    if existente.data:
+        metadata = existente.data.get("metadata") or {}
+        metadata.update(breadcrumb)
+        supabase.table("conversas").update(
+            {"metadata": metadata}
+        ).eq("id", existente.data["id"]).execute()
+    else:
+        supabase.table("conversas").insert({
+            "lead_id": lead_id,
+            "origem_id": origem_id,
+            "agente_tipo": "Institucional",
+            "canal_ativo": "meta",
+            "status": "ativa",
+            "metadata": breadcrumb,
+        }).execute()
+
+
 def _claim_disparo_divulgacao_sync():
     return supabase.rpc("claim_disparo_divulgacao").execute()
 
@@ -384,14 +413,7 @@ async def _processar_item_disparo_interno(
                     "enviado_em": datetime.now(tz_fortaleza).isoformat(),
                 }}
                 try:
-                    supabase.table("conversas").upsert({
-                        "lead_id": lead_id,
-                        "origem_id": phone_number_id,
-                        "agente_tipo": "Institucional",
-                        "canal_ativo": "meta",
-                        "status": "ativa",
-                        "metadata": breadcrumb,
-                    }, on_conflict="lead_id,origem_id").execute()
+                    _gravar_breadcrumb_disparo(lead_id, phone_number_id, breadcrumb)
                 except Exception as bc_err:
                     logger.warning(f"[Breadcrumb] Erro ao gravar contexto: {bc_err}")
         else:
