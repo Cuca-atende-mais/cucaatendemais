@@ -22,6 +22,7 @@ import {
   avaliarSelecaoUnidade,
   gerarEmbedding,
   handler,
+  deveReconhecerDisparoRecente,
 } from "./index.ts";
 
 // ── Mock mínimo e encadeável do client Supabase, usado pelos testes AUD-04 abaixo ───────────
@@ -2280,4 +2281,190 @@ Deno.test("S-WM-51 AC7: instrução de trocaComPedidoEspecifico menciona o bloco
     "responda DIRETAMENTE ao pedido especifico",
     "regressão: o texto original (S-WM-34/VAL-23) precisa continuar presente, só ganhando a menção nova",
   );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Achado 2026-07-24 (INVESTIGACAO-breadcrumb-nao-usado-primeira-mensagem-2026-07-24): o PR
+// #54 corrigiu o dado (ultimo_disparo agora É gravado em metadata), mas os 3 branches de
+// roteamento (decidirPrimeiraMensagem, decidirAguardandoUnidade, decidirConversaEngajada) têm
+// um caminho de "cortesia pura" que devolve uma resposta canned e retorna imediatamente —
+// ANTES de CONTEXTO_DISPARO ser montado. Um lead que recebeu um disparo institucional e
+// responde só "ok"/"obrigado" nunca tinha o disparo reconhecido, mesmo com o dado certo em
+// metadata. Ver deveReconhecerDisparoRecente + os 3 pontos de wiring no handler.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+function disparoRecente(minutosAtras = 5): { titulo: string; enviado_em: string } {
+  return { titulo: "Corrida da Juventude", enviado_em: new Date(Date.now() - minutosAtras * 60 * 1000).toISOString() };
+}
+
+function disparoAntigo(): { titulo: string; enviado_em: string } {
+  // 25h atrás — fora da janela de 24h usada por deveReconhecerDisparoRecente
+  return { titulo: "Corrida da Juventude", enviado_em: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() };
+}
+
+// ── deveReconhecerDisparoRecente (função pura) ────────────────────────────────────────────
+
+Deno.test("deveReconhecerDisparoRecente: disparo de poucos minutos atrás, não opt-out → true", () => {
+  assertEquals(deveReconhecerDisparoRecente(disparoRecente(5), false), true);
+});
+
+Deno.test("deveReconhecerDisparoRecente: disparo de 25h atrás (fora da janela de 24h) → false", () => {
+  assertEquals(deveReconhecerDisparoRecente(disparoAntigo(), false), false);
+});
+
+Deno.test("deveReconhecerDisparoRecente: disparo recente, mas ehOptOut=true → false (opt-out nunca é sobrescrito, mesmo motivo de decidirAguardandoUnidade/quer_sair)", () => {
+  assertEquals(deveReconhecerDisparoRecente(disparoRecente(5), true), false);
+});
+
+Deno.test("deveReconhecerDisparoRecente: sem ultimo_disparo (undefined/null) → false", () => {
+  assertEquals(deveReconhecerDisparoRecente(undefined, false), false);
+  assertEquals(deveReconhecerDisparoRecente(null, false), false);
+});
+
+Deno.test("deveReconhecerDisparoRecente: enviado_em ausente ou malformado → false (defensivo, nunca quebra)", () => {
+  assertEquals(deveReconhecerDisparoRecente({}, false), false);
+  assertEquals(deveReconhecerDisparoRecente({ enviado_em: "data-invalida" }, false), false);
+});
+
+// ── Wiring no handler — 1ª mensagem (decidirPrimeiraMensagem) ────────────────────────────
+
+Deno.test("Achado 2026-07-24: cortesia pura na 1ª mensagem + disparo recente → NÃO devolve SAUDACOES_ABERTURA, segue pro GPT com CONTEXTO_DISPARO + INSTRUCAO", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ ultimo_disparo: disparoRecente() });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("okk"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chegouNoRag, true, "disparo recente deveria ignorar a resposta canned e seguir pro fluxo normal (GPT)");
+
+  const body = await resp.json();
+  const eraCanned = SAUDACOES_ABERTURA.some((s) => (body.resposta ?? "").startsWith(s));
+  assertEquals(eraCanned, false, "não deveria devolver uma saudação sorteada de SAUDACOES_ABERTURA");
+
+  const gravouEngajada = chamadas.some((c) =>
+    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.conversa_engajada === true
+  );
+  assertEquals(gravouEngajada, true, "mesmo ignorando a resposta canned, ainda precisa marcar conversa_engajada=true — senão a PRÓXIMA mensagem cairia de novo neste branch");
+
+  const promptFinal = bodiesEnviados.find((b) => b.includes("ULTIMO DISPARO")) ?? "";
+  assertStringIncludes(promptFinal, "ULTIMO DISPARO: Lead recebeu 'Corrida da Juventude'", "CONTEXTO_DISPARO precisa estar no prompt final enviado ao GPT");
+  assertStringIncludes(promptFinal, "Reconheca isso de forma natural", "a INSTRUCAO explícita de reconhecer o disparo precisa estar no prompt final, não só o fato passivo");
+});
+
+Deno.test("Achado 2026-07-24: cortesia pura na 1ª mensagem + disparo ANTIGO (>24h) → comportamento inalterado, ainda devolve SAUDACOES_ABERTURA", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ ultimo_disparo: disparoAntigo() });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("okk"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chegouNoRag, false, "disparo com mais de 24h não deveria ignorar a resposta canned — janela expirada, comportamento original preservado");
+
+  const body = await resp.json();
+  const eraCanned = SAUDACOES_ABERTURA.some((s) => (body.resposta ?? "").startsWith(s));
+  assertEquals(eraCanned, true, "sem disparo dentro da janela de 24h, o comportamento original (resposta canned) precisa continuar valendo");
+});
+
+Deno.test("Achado 2026-07-24: cortesia pura na 1ª mensagem SEM ultimo_disparo → comportamento inalterado (regressão do caso comum)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({});
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("bom dia"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chegouNoRag, false, "sem ultimo_disparo, comportamento original (resposta canned) precisa continuar valendo — não é regressão do caso comum, VAL-19/S-WM-31");
+});
+
+// ── Wiring no handler — aguardando_unidade (decidirAguardandoUnidade) ────────────────────
+
+Deno.test("Achado 2026-07-24: cortesia pura em aguardando_unidade + disparo recente → ignora canned, segue pro GPT", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ aguardando_unidade: true, ultimo_disparo: disparoRecente() });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("valeu!"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chegouNoRag, true, "disparo recente deveria ignorar a resposta canned de continuação e seguir pro GPT");
+});
+
+Deno.test("Achado 2026-07-24: quer_sair=true em aguardando_unidade + disparo recente → AINDA devolve a despedida canned (opt-out nunca é sobrescrito)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ aguardando_unidade: true, ultimo_disparo: disparoRecente() });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("pode sair, obrigado"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: true, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chegouNoRag, false, "quer_sair precisa continuar indo direto pra despedida canned, mesmo com disparo recente — reconhecer o disparo não ajuda quem só quer parar");
+  const body = await resp.json();
+  assertEquals(body.resposta, "Sem problemas! Quando quiser saber sobre alguma unidade CUCA, é só chamar. 😊");
+});
+
+Deno.test("Achado 2026-07-24: pedido_depende_unidade=true em aguardando_unidade + disparo recente → AINDA mostra o menu (não é cortesia pura, override não dispara)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ aguardando_unidade: true, ultimo_disparo: disparoRecente() });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("quais cursos vocês têm?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: true }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chegouNoRag, false, "pedido que depende de unidade (aguardandoUnidade=true resultante) não é cortesia pura — o override não deveria disparar, o menu continua sendo mostrado");
+  const body = await resp.json();
+  assertStringIncludes(body.resposta ?? "", MENU_UNIDADES);
+});
+
+// ── Wiring no handler — conversa_engajada (decidirConversaEngajada) ──────────────────────
+
+Deno.test("Achado 2026-07-24: cortesia pura em conversa_engajada + disparo recente → ignora canned, segue pro GPT", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ conversa_engajada: true, ultimo_disparo: disparoRecente() });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("tudo bem?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chegouNoRag, true, "disparo recente deveria ignorar o canned 'Em que mais posso te ajudar?' e seguir pro GPT — este é o cenário mais comum na prática (lead já engajado recebendo um novo disparo)");
+});
+
+Deno.test("Achado 2026-07-24: conversa_engajada + disparo antigo (>24h) → comportamento inalterado (regressão VAL-19)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ conversa_engajada: true, ultimo_disparo: disparoAntigo() });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("tudo bem?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+  const chegouNoRag = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares");
+  assertEquals(chegouNoRag, false, "disparo fora da janela de 24h não deveria mudar o comportamento original (VAL-19)");
+  const body = await resp.json();
+  assertEquals(body.resposta, "Em que mais posso te ajudar? 😊");
 });
