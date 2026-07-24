@@ -20,6 +20,8 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 if "supabase" not in sys.modules:
@@ -142,9 +144,9 @@ def test_breadcrumb_preserva_metadata_existente_da_conversa_engajada(monkeypatch
     conversa_engajada/unidade_selecionada gravados pelo motor-agente (S-WM-31)."""
     mock_sb = MagicMock()
     metadata_existente = {"conversa_engajada": True, "unidade_selecionada": "Pici"}
-    mock_select_result = MagicMock(data={"id": "conversa-123", "metadata": metadata_existente})
+    mock_select_result = MagicMock(data=[{"id": "conversa-123", "metadata": metadata_existente}])
     (mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value
-        .maybe_single.return_value.execute.return_value) = mock_select_result
+        .limit.return_value.execute.return_value) = mock_select_result
     monkeypatch.setattr(camp, "supabase", mock_sb)
 
     camp._gravar_breadcrumb_disparo(
@@ -161,10 +163,15 @@ def test_breadcrumb_preserva_metadata_existente_da_conversa_engajada(monkeypatch
 
 
 def test_breadcrumb_cria_conversa_nova_quando_lead_nunca_falou_com_o_bot(monkeypatch):
+    """Achado 2026-07-24: com .maybe_single(), 0 linhas fazia .execute() devolver
+    None como o próprio retorno (não um objeto com .data=None) — o mock abaixo
+    (.data=[] numa cadeia .limit(1).execute()) reproduz o formato real da resposta
+    da lib para 0 linhas, ao contrário do mock antigo MagicMock(data=None) que deu
+    falso positivo no PR #53."""
     mock_sb = MagicMock()
-    mock_select_result = MagicMock(data=None)
+    mock_select_result = MagicMock(data=[])
     (mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value
-        .maybe_single.return_value.execute.return_value) = mock_select_result
+        .limit.return_value.execute.return_value) = mock_select_result
     monkeypatch.setattr(camp, "supabase", mock_sb)
 
     camp._gravar_breadcrumb_disparo(
@@ -176,3 +183,29 @@ def test_breadcrumb_cria_conversa_nova_quando_lead_nunca_falou_com_o_bot(monkeyp
     assert payload["status"] == "ativa"
     assert payload["metadata"] == {"ultimo_disparo": {"tipo": "eventos_pontuais", "id": "evt-1"}}
     assert payload["lead_id"] == "lead-2"
+
+
+# ---------------------------------------------------------------------------
+# Trava de regressão — nenhuma das 3 funções corrigidas em 2026-07-24 pode
+# voltar a usar .maybe_single() sem proteção. Um mock de biblioteca não
+# reproduz com confiança o comportamento real de 0-linhas do postgrest-py
+# (foi exatamente esse tipo de mock que deu o falso positivo original) — a
+# forma robusta de travar isso é inspecionar o código-fonte real da função.
+# ---------------------------------------------------------------------------
+
+import inspect  # noqa: E402
+
+
+@pytest.mark.parametrize("funcao", [
+    camp._gravar_breadcrumb_disparo,
+    camp._processar_item_disparo_interno,
+    camp._processar_disparo_divulgacao_interno,
+])
+def test_funcoes_de_disparo_nao_usam_maybe_single_sem_protecao(funcao):
+    codigo_fonte = inspect.getsource(funcao)
+    assert ".maybe_single(" not in codigo_fonte, (
+        f"{funcao.__name__} voltou a usar .maybe_single() — com 0 linhas isso devolve "
+        "None como o próprio retorno de .execute() (não um objeto com .data=None), "
+        "quebrando com AttributeError (achado 2026-07-24). Use .limit(1).execute() "
+        "e acesse .data[0]."
+    )

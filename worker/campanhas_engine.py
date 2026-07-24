@@ -67,17 +67,24 @@ def _gravar_breadcrumb_disparo(lead_id: str, origem_id: str, breadcrumb: dict) -
     aguardando_unidade — S-WM-31). Um upsert com "metadata" completo substitui a
     coluna inteira (Postgrest não faz merge de jsonb) — por isso lê o metadata
     atual e mescla em memória antes de escrever.
+
+    Usa .limit(1) em vez do modo "single object" do Postgrest: com 0 linhas, esse
+    modo devolve None como o próprio retorno de .execute() (não um objeto com
+    .data=None) — acessar .data quebra com AttributeError, silenciosamente
+    engolido pelo try/except do chamador. .limit(1).execute() sempre devolve um
+    objeto com .data como lista.
     """
     existente = supabase.table("conversas").select("id, metadata").eq(
         "lead_id", lead_id
-    ).eq("origem_id", origem_id).maybe_single().execute()
+    ).eq("origem_id", origem_id).limit(1).execute()
 
     if existente.data:
-        metadata = existente.data.get("metadata") or {}
+        row = existente.data[0]
+        metadata = row.get("metadata") or {}
         metadata.update(breadcrumb)
         supabase.table("conversas").update(
             {"metadata": metadata}
-        ).eq("id", existente.data["id"]).execute()
+        ).eq("id", row["id"]).execute()
     else:
         supabase.table("conversas").insert({
             "lead_id": lead_id,
@@ -301,7 +308,7 @@ async def _processar_item_disparo_interno(
         .eq("automacoes", automacao_filtro) \
         .contains("phone_number_ids", [phone_number_id]) \
         .eq("ativo", True).eq("status", "aprovado") \
-        .limit(1).maybe_single().execute()
+        .limit(1).execute()
     if not _tpl_res.data:
         logger.warning(
             f"[campanhas] Nenhum template aprovado para automação={automacao_tags!r} "
@@ -309,8 +316,9 @@ async def _processar_item_disparo_interno(
         )
         await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
         return
-    template_name = _tpl_res.data["nome"]
-    variaveis_item = _tpl_res.data.get("variaveis")
+    _tpl_row = _tpl_res.data[0]
+    template_name = _tpl_row["nome"]
+    variaveis_item = _tpl_row.get("variaveis")
 
     categorias_alvo = item.get("categorias_alvo") or None
     if isinstance(categorias_alvo, list) and len(categorias_alvo) == 0:
@@ -553,14 +561,15 @@ async def _processar_disparo_divulgacao_interno(
         .eq("automacoes", '{"Institucional"}')
         .contains("phone_number_ids", [phone_number_id])
         .eq("ativo", True).eq("status", "aprovado")
-        .limit(1).maybe_single().execute()
+        .limit(1).execute()
     )
     if not _tpl_div.data:
         logger.warning(f"[Divulgação] Nenhum template aprovado para Institucional/{phone_number_id} — disparo {disparo_id} cancelado")
         await asyncio.to_thread(_update_metricas_sync, disparo_id, 0, 0, 0, "pausado")
         return
-    template_divulgacao = _tpl_div.data["nome"]
-    variaveis_divulgacao = _tpl_div.data.get("variaveis")
+    _tpl_div_row = _tpl_div.data[0]
+    template_divulgacao = _tpl_div_row["nome"]
+    variaveis_divulgacao = _tpl_div_row.get("variaveis")
 
     leads_res = await asyncio.to_thread(_query_leads_divulgacao_sync)
     leads = leads_res.data or []
