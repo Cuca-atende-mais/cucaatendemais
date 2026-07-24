@@ -28,7 +28,7 @@ if "supabase" not in sys.modules:
     _fake_supabase_pkg.Client = MagicMock
     sys.modules["supabase"] = _fake_supabase_pkg
 
-from campanhas_engine import _montar_parametros_named  # noqa: E402
+from campanhas_engine import _montar_parametros_named, _gravar_breadcrumb_disparo  # noqa: E402
 
 
 def test_ordena_por_posicao_independente_da_ordem_de_entrada():
@@ -126,3 +126,53 @@ def test_variaveis_a_mais_que_valores_trunca_no_menor():
     parametros = _montar_parametros_named(variaveis, valores)
 
     assert parametros == [{"type": "text", "parameter_name": "nome", "text": "Ana"}]
+
+
+# ---------------------------------------------------------------------------
+# _gravar_breadcrumb_disparo (achado 2026-07-22 — breadcrumb de disparo
+# sobrescrevia a coluna metadata inteira via upsert, apagando conversa_engajada/
+# unidade_selecionada/aguardando_unidade gravados pelo motor-agente na S-WM-31)
+# ---------------------------------------------------------------------------
+
+import campanhas_engine as camp  # noqa: E402
+
+
+def test_breadcrumb_preserva_metadata_existente_da_conversa_engajada(monkeypatch):
+    """Reproduz o bug real de 2026-07-21: disparo de campanha não pode apagar
+    conversa_engajada/unidade_selecionada gravados pelo motor-agente (S-WM-31)."""
+    mock_sb = MagicMock()
+    metadata_existente = {"conversa_engajada": True, "unidade_selecionada": "Pici"}
+    mock_select_result = MagicMock(data={"id": "conversa-123", "metadata": metadata_existente})
+    (mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value
+        .maybe_single.return_value.execute.return_value) = mock_select_result
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    camp._gravar_breadcrumb_disparo(
+        "lead-1", "phone-1", {"ultimo_disparo": {"tipo": "eventos_pontuais", "id": "evt-1"}}
+    )
+
+    update_call = mock_sb.table.return_value.update.call_args
+    metadata_gravado = update_call.args[0]["metadata"]
+    assert metadata_gravado["conversa_engajada"] is True
+    assert metadata_gravado["unidade_selecionada"] == "Pici"
+    assert metadata_gravado["ultimo_disparo"]["id"] == "evt-1"
+    # status não deve ser tocado quando a conversa já existe
+    assert "status" not in update_call.args[0]
+
+
+def test_breadcrumb_cria_conversa_nova_quando_lead_nunca_falou_com_o_bot(monkeypatch):
+    mock_sb = MagicMock()
+    mock_select_result = MagicMock(data=None)
+    (mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value
+        .maybe_single.return_value.execute.return_value) = mock_select_result
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    camp._gravar_breadcrumb_disparo(
+        "lead-2", "phone-1", {"ultimo_disparo": {"tipo": "eventos_pontuais", "id": "evt-1"}}
+    )
+
+    insert_call = mock_sb.table.return_value.insert.call_args
+    payload = insert_call.args[0]
+    assert payload["status"] == "ativa"
+    assert payload["metadata"] == {"ultimo_disparo": {"tipo": "eventos_pontuais", "id": "evt-1"}}
+    assert payload["lead_id"] == "lead-2"
