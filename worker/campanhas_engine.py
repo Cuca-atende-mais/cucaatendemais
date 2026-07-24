@@ -101,32 +101,28 @@ def _claim_disparo_divulgacao_sync():
 
 
 def _query_leads_sync(unidade: str | None = None, categorias_alvo: list | None = None):
+    """
+    Achado 2026-07-24: a versão anterior buscava lead_id em lead_interesses e montava um
+    filtro .in_("id", lead_ids) com TODOS os ids num único GET — com uma categoria de
+    centenas de leads (ex.: 722, planilha Corrida da Juventude) a URL resultante passa do
+    limite do gateway/PostgREST, a API devolve corpo vazio/inválido e o parse de JSON quebra
+    no cliente, derrubando o disparo inteiro (status vira "pausada", sem nenhum envio).
+    A RPC buscar_leads_por_categoria (migration 20260724200000) faz o join no Postgres — o
+    corpo da requisição (POST) só carrega os UUIDs de categoria (sempre poucos), nunca a
+    lista de leads que fizer match, então o volume de leads elegíveis nunca mais afeta o
+    tamanho da requisição.
+    """
     if categorias_alvo:
-        interesses_res = (
-            supabase.table("lead_interesses")
-            .select("lead_id")
-            .in_("categoria_id", categorias_alvo)
-            .execute()
-        )
-        lead_ids = list(set(r["lead_id"] for r in (interesses_res.data or [])))
-        if not lead_ids:
-            class _EmptyResult:
-                data = []
-            return _EmptyResult()
-        query = (
-            supabase.table("leads")
-            .select("id, telefone, nome")
-            .eq("opt_in", True)
-            .eq("bloqueado", False)
-            .in_("id", lead_ids)
-        )
-    else:
-        query = (
-            supabase.table("leads")
-            .select("id, telefone, nome")
-            .eq("opt_in", True)
-            .eq("bloqueado", False)
-        )
+        return supabase.rpc("buscar_leads_por_categoria", {
+            "p_categorias": categorias_alvo,
+            "p_unidade": unidade,
+        }).execute()
+    query = (
+        supabase.table("leads")
+        .select("id, telefone, nome")
+        .eq("opt_in", True)
+        .eq("bloqueado", False)
+    )
     if unidade:
         query = query.eq("unidade_cuca", unidade)
     return query.execute()

@@ -209,3 +209,57 @@ def test_funcoes_de_disparo_nao_usam_maybe_single_sem_protecao(funcao):
         "quebrando com AttributeError (achado 2026-07-24). Use .limit(1).execute() "
         "e acesse .data[0]."
     )
+
+
+# ---------------------------------------------------------------------------
+# _query_leads_sync (achado 2026-07-24 — disparo real pra categoria "Teste Interno"
+# com 722 leads quebrava: .in_("id", lead_ids) montava um GET com todos os UUIDs na
+# URL, passava do limite do gateway/PostgREST, API devolvia corpo inválido e o
+# disparo inteiro caía em "pausada" sem enviar nada. Corrigido com a RPC
+# buscar_leads_por_categoria — join feito no Postgres, corpo da requisição (POST)
+# só carrega os UUIDs de categoria, nunca a lista de leads que fizer match.)
+# ---------------------------------------------------------------------------
+
+def test_query_leads_com_categorias_alvo_usa_rpc_nao_monta_lista_de_ids(monkeypatch):
+    mock_sb = MagicMock()
+    mock_rpc_result = MagicMock(data=[{"id": "lead-1", "telefone": "5585999999999", "nome": "Fulano"}])
+    mock_sb.rpc.return_value.execute.return_value = mock_rpc_result
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    resultado = camp._query_leads_sync(unidade=None, categorias_alvo=["cat-1", "cat-2"])
+
+    mock_sb.rpc.assert_called_once_with("buscar_leads_por_categoria", {
+        "p_categorias": ["cat-1", "cat-2"],
+        "p_unidade": None,
+    })
+    # achado 2026-07-24: nunca mais pode montar a lista de leads client-side
+    mock_sb.table.assert_not_called()
+    assert resultado.data == [{"id": "lead-1", "telefone": "5585999999999", "nome": "Fulano"}]
+
+
+def test_query_leads_com_categorias_alvo_e_unidade_repassa_p_unidade(monkeypatch):
+    mock_sb = MagicMock()
+    mock_sb.rpc.return_value.execute.return_value = MagicMock(data=[])
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    camp._query_leads_sync(unidade="Cuca Barra", categorias_alvo=["cat-1"])
+
+    mock_sb.rpc.assert_called_once_with("buscar_leads_por_categoria", {
+        "p_categorias": ["cat-1"],
+        "p_unidade": "Cuca Barra",
+    })
+
+
+def test_query_leads_sem_categorias_alvo_usa_tabela_leads_direto(monkeypatch):
+    """Regressão: sem categorias_alvo, comportamento original (query direta em leads
+    com opt_in/bloqueado) precisa continuar valendo — não é afetado pelo achado."""
+    mock_sb = MagicMock()
+    mock_query = mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value
+    mock_query.execute.return_value = MagicMock(data=[{"id": "lead-2", "telefone": "5585988888888", "nome": "Ciclana"}])
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    resultado = camp._query_leads_sync(unidade=None, categorias_alvo=None)
+
+    mock_sb.rpc.assert_not_called()
+    mock_sb.table.assert_called_with("leads")
+    assert resultado.data == [{"id": "lead-2", "telefone": "5585988888888", "nome": "Ciclana"}]
