@@ -401,6 +401,38 @@ class TestDispatchMotorAgente:
 
         assert resultado is None
 
+    # ── S-WM-53 (Plano 002, achado #1): log de falha 400 inclui telefone/conversa_id ──
+    @pytest.mark.asyncio
+    async def test_log_de_falha_400_inclui_telefone_e_conversa_id(self, caplog):
+        """Achado 2026-07-25: 46% das chamadas ao motor-agente falharam com HTTP 400
+        ("telefone e agente_tipo sao obrigatorios") durante um disparo em massa, e não
+        havia como saber qual telefone foi enviado — este teste trava que o campo
+        aparece no log de erro a partir de agora."""
+        import logging
+        import sys
+        from unittest.mock import MagicMock, patch
+        from meta_adapter_inbound import _chamar_motor_agente
+
+        mock_resp = MagicMock()
+        mock_resp.is_success = False
+        mock_resp.status_code = 400
+        mock_resp.text = '{"error": "telefone e agente_tipo sao obrigatorios"}'
+        mock_httpx, _ = self._make_mock_httpx(post_return=mock_resp)
+
+        contrato_v2 = {
+            "mensagem": "oi", "telefone": "", "canal_origem": "123",
+            "agente_tipo": "Institucional", "midia_url": None, "midia_tipo": "text",
+        }
+
+        with patch.dict(os.environ, {"SUPABASE_URL": "http://fake", "SUPABASE_SERVICE_ROLE_KEY": "k"}), \
+             patch.dict(sys.modules, {"httpx": mock_httpx}):
+            with caplog.at_level(logging.ERROR):
+                resultado = await _chamar_motor_agente(contrato_v2, "conversa-teste-123", MagicMock())
+
+        assert resultado is None
+        assert "conversa-teste-123" in caplog.text
+        assert "telefone=" in caplog.text
+
     # ── Handover: atualiza conversas.status ───────────────────────────────
     @pytest.mark.asyncio
     async def test_chamar_motor_agente_handover_atualiza_status(self):
@@ -475,6 +507,51 @@ class TestDispatchMotorAgente:
 
             mock_motor.assert_called_once(), f"motor-agente não chamado para agente={agente}"
             mock_enviar.assert_called_once(), f"_meta_enviar não chamado para agente={agente}"
+
+    # ── S-WM-53 (Plano 002, achado #1): log DIAG-achado1 indica lead/conversa novos ───
+    @pytest.mark.asyncio
+    async def test_log_diagnostico_indica_lead_novo(self, caplog):
+        """Achado 2026-07-25/26: 27 de 32 falhas do achado #1 aconteceram ~11-12s após
+        o lead ser criado — este log deixa explícito se o lead/conversa eram novos,
+        pra correlacionar com o log de falha do Step 1 na próxima ocorrência real."""
+        import logging
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        # lead novo: created_at == updated_at (mesmo INSERT)
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [
+            {"id": "lead-novo-1", "created_at": "2026-07-27T10:00:00Z", "updated_at": "2026-07-27T10:00:00Z"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        # conversa nova: created_at == updated_at também
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-novo-1", "status": "ativa", "created_at": "2026-07-27T10:00:01Z", "updated_at": "2026-07-27T10:00:01Z"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
+                   return_value=["Resposta motor"]), \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
+                   return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True):
+            with caplog.at_level(logging.INFO):
+                await processar_webhook_meta(raw)
+
+        assert "DIAG-achado1" in caplog.text
+        assert "lead_novo=True" in caplog.text
+        assert "conversa_nova=True" in caplog.text
 
     # ── S-WM-31 Task 2: concorrência na criação de conversa (upsert vs. select-então-insert) ──
     @pytest.mark.asyncio

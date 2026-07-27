@@ -1,7 +1,7 @@
 # S-WM-53 — Logar `telefone`/`conversa_id` e se lead/conversa são novos, quando `motor-agente` rejeita com HTTP 400
 
 ## Status
-Draft
+Ready for Review
 
 ## Origem
 Investigação "Corrida da Juventude" (disparo de 724 leads, 24/07/2026) — `docs/qa/DIAGNOSTICO-disparo-corrida-juventude-2026-07-27.md`, achado #1. Plano técnico completo, com trechos de código antes/depois e comandos de verificação, preservado integralmente em `docs/qa/planos-corrida-juventude/002-log-telefone-vazio-motor-agente-400.md` — usar esse arquivo como referência técnica primária, não este resumo. Elaborado em 2026-07-25/26 (commit base `256d547`). Formalizada em story por @sm em 2026-07-27, setup de teste ("Equipe Interna — QA") já criado e confirmado.
@@ -60,17 +60,17 @@ Achados que já restringem a busca, mas não fecham a causa: 27 de 32 casos têm
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Log de falha com telefone/conversa_id** (AC: 1, 3)
-  - [ ] Adicionar os 2 campos ao log existente em `_chamar_motor_agente`.
-  - [ ] Teste + mutation check (reverter → falha; restaurar → passa).
-- [ ] **Task 2 — Log de diagnóstico lead_novo/conversa_nova** (AC: 2, 3, 4)
-  - [ ] Adicionar `created_at, updated_at` ao select de `conv_fresh`.
-  - [ ] Adicionar o bloco `[DIAG-achado1]` com try/except.
-  - [ ] Teste + mutation check.
-- [ ] **Task 3 — Fechamento** (AC: 5, 6)
-  - [ ] Suíte completa (`pytest tests/`) sem regressão.
-  - [ ] File List e Change Log atualizados.
-  - [ ] Anunciar conclusão e recomendar @qa.
+- [x] **Task 1 — Log de falha com telefone/conversa_id** (AC: 1, 3)
+  - [x] Adicionados os 2 campos ao log existente em `_chamar_motor_agente` (linha 350).
+  - [x] Teste + mutation check (revertido → falhou corretamente; restaurado → passou).
+- [x] **Task 2 — Log de diagnóstico lead_novo/conversa_nova** (AC: 2, 3, 4)
+  - [x] Adicionado `created_at, updated_at` ao select de `conv_fresh`.
+  - [x] Adicionado o bloco `[DIAG-achado1]` com try/except.
+  - [x] Teste + mutation check (revertido → falhou corretamente; restaurado → passou).
+- [x] **Task 3 — Fechamento** (AC: 5, 6)
+  - [x] Suíte completa (`pytest tests/`) sem regressão: 141 passed (139 baseline + 2 novos), as 3 falhas pré-existentes de `test_meta_adapter_outbound.py` (`ModuleNotFoundError: No module named 'worker'`, arquivo fora de escopo, ambiente de import, não código) continuam idênticas, não são desta story.
+  - [x] File List e Change Log atualizados.
+  - [x] Anunciado conclusão e recomendado @qa.
 
 ## Dev Notes
 
@@ -94,9 +94,31 @@ Branch: `fix/log-telefone-vazio-motor-agente-400`. Commit único: `fix(worker): 
 | Date | Version | Description | Author |
 |---|---|---|---|
 | 2026-07-27 | 0.1 | Story criada a partir do Plano 002 (investigação "Corrida da Juventude", 2026-07-25/26). 2ª story da leva — sem dependência técnica, mas sequenciada antes da S-WM-54 (mesmo arquivo). | @sm River |
+| 2026-07-27 | 0.2 | Implementada em branch isolada `fix/log-telefone-vazio-motor-agente-400` (a partir de `origin/main`, já com a S-WM-52 mergeada). Sem drift contra o plano (`git diff --stat 256d547..HEAD` vazio). 2 blocos de log + 2 testes novos, mutation check em ambos. Suíte: 141/0/2 novos (3 falhas pré-existentes, arquivo/módulo fora de escopo, inalteradas). Status Draft → Ready for Review. | @dev Dex |
 
 ## Dev Agent Record
-_A ser preenchido pelo @dev durante a implementação._
+
+### Agent Model Used
+Claude Sonnet 5 (claude-sonnet-5)
+
+### Debug Log References
+- Drift check (`git diff --stat 256d547..HEAD -- worker/meta_adapter_inbound.py worker/tests/test_meta_adapter_inbound.py`): vazio — sem drift.
+- Baseline: `pytest tests/test_meta_adapter_inbound.py -q` → 45 passed. `pytest tests/ -q` (suíte completa) → 139 passed, 3 failed (pré-existente: `test_meta_adapter_outbound.py::TestSendMessageEndpoint::{test_envia_via_meta_com_contrato_novo, test_rejeita_contrato_antigo_phone_message, test_rejeita_token_invalido}`, todas com `ModuleNotFoundError: No module named 'worker'` — falha de import do módulo `worker.main`, reproduzida idêntica rodando tanto de dentro de `worker/` quanto da raiz do repo com `python3 -m pytest worker/tests/`; não é código desta story, arquivo fora de escopo, não introduzida por mim).
+- Step 1: `logger.error` em `_chamar_motor_agente` ganhou `conversa_id=%s telefone=%r`.
+- Step 2: select de `conv_fresh` ganhou `created_at, updated_at`; bloco `[DIAG-achado1]` adicionado com `try/except (IndexError, KeyError, AttributeError)`.
+- 2 testes novos: `test_log_de_falha_400_inclui_telefone_e_conversa_id` (mock de `httpx.AsyncClient` via `_make_mock_httpx`, já existente na classe `TestDispatchMotorAgente`) e `test_log_diagnostico_indica_lead_novo` (webhook completo, mock de `supabase` no mesmo padrão de `test_processar_webhook_agentes_motor_agente`, `created_at == updated_at` pra simular lead/conversa novos).
+- Suíte pós-mudança: `pytest tests/test_meta_adapter_inbound.py -q` → 47 passed (45 baseline + 2 novos). `pytest tests/ -q` → 141 passed, mesmas 3 falhas pré-existentes.
+- Mutation check: Step 1 revertido isoladamente → `test_log_de_falha_400_inclui_telefone_e_conversa_id` falhou (`assert "conversa-teste-123" in caplog.text` — não achou, log no formato antigo). Restaurado → passou. Step 2 revertido isoladamente → `test_log_diagnostico_indica_lead_novo` falhou (`assert "DIAG-achado1" in caplog.text` — não achou, bloco removido). Restaurado → passou. Suíte completa reconfirmada 141/3(pré-existentes)/0(novas) após restaurar ambos.
+- `grep -n "telefone=" meta_adapter_inbound.py` → linha 350 (dentro de `_chamar_motor_agente`). `grep -n "DIAG-achado1"` → linhas 666 e 670 (log de sucesso + log do `except`).
+
+### Completion Notes List
+- Implementado exatamente como especificado no plano preservado (`docs/qa/planos-corrida-juventude/002-log-telefone-vazio-motor-agente-400.md`), sem drift — trechos "Estado atual" conferidos linha a linha contra o código ao vivo antes de editar.
+- As 3 falhas pré-existentes em `test_meta_adapter_outbound.py` são um problema de import de ambiente (`worker.main`), não relacionado a este arquivo/story — confirmadas idênticas antes e depois da mudança, em 2 formas de invocação diferentes (de dentro de `worker/` e da raiz do repo via `python3 -m pytest`). Não corrigidas aqui (fora de escopo desta story).
+- Nenhum arquivo fora de `worker/meta_adapter_inbound.py` e `worker/tests/test_meta_adapter_inbound.py` foi modificado.
+
+### File List
+- `worker/meta_adapter_inbound.py` (modificado: 2 blocos de log de instrumentação)
+- `worker/tests/test_meta_adapter_inbound.py` (modificado: 2 testes novos, dentro de `TestDispatchMotorAgente`)
 
 ## QA Results
 _A ser preenchido pelo @qa após a implementação._
