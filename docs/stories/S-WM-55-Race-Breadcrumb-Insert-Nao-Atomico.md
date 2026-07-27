@@ -131,4 +131,26 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `worker/tests/test_campanhas_engine.py` (modificado: stub de `postgrest.exceptions.APIError` + 2 testes novos)
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+**Revisão:** @qa Quinn, 2026-07-27 — branch `fix/race-breadcrumb-insert-nao-atomico`, commit `2fed320`.
+
+**Verificação independente (não me baseei só no relato do @dev):**
+
+1. **Ponto crítico pedido pela Junior — versão real do `postgrest-py` em produção:** o @dev confirmou a forma de `APIError` lendo o source de um pacote instalado em **outro projeto local** (`postgrest==2.27.2`), não no ambiente real deste projeto. Investiguei isso a fundo:
+   - `worker/requirements.txt` fixa só `supabase==2.7.4`, **sem lock file** — não há pin exato de `postgrest-py`.
+   - Resolvi a árvore de dependências real via `pip install supabase==2.7.4 --dry-run --report` (sem instalar nada) — confirmado: `supabase==2.7.4` exige `postgrest<0.17.0,>=0.14`, e o resolver escolheria **`postgrest==0.16.11` hoje** — uma versão bem diferente (0.16.x, não 2.27.x) da que o @dev inspecionou.
+   - Baixei (sem instalar, `pip download --no-deps`) o wheel exato de `postgrest==0.16.11` e extraí `postgrest/exceptions.py` — **`APIError` tem exatamente a mesma forma**: `.code`/`.message`/`.hint`/`.details`, construtor recebe um dict. Confirmei também em `_sync/request_builder.py` desta versão exata que `raise APIError(r.json())` só acontece no branch `else` de `r.is_success` — nunca em erro de rede.
+   - Testei também o **limite inferior** da faixa (`postgrest==0.14.0`, o mínimo que `supabase==2.7.4` aceita) — mesma forma de `APIError`, idêntica.
+   - **Conclusão: a API é estável em toda a faixa de versão que `supabase==2.7.4` pode resolver** (`0.14.x` a `0.16.11`), incluindo a versão que o resolver real escolheria hoje. Isso é uma evidência mais forte que a checagem original do @dev (que usou uma versão de outro projeto, não necessariamente a que este projeto resolveria).
+   - **Limitação que registro com transparência:** sem lock file, não posso confirmar 100% qual versão exata está de fato instalada no container `cuca-worker` em produção agora mesmo (poderia ter sido instalada em outro momento, dentro dessa mesma faixa) — não tenho acesso a esse container nesta sessão. Dado que toda a faixa aceita (`0.14`-`0.16.11`) tem a mesma API, isso não muda o veredito, mas fica registrado como recomendação: um lock file (`pip freeze` ou similar) eliminaria essa incerteza residual para o futuro.
+2. **Suíte — rodei eu mesma**: `pytest tests/test_campanhas_engine.py -q` → 19 passed. `pytest tests/ -q` (completa) → 144 passed, 3 failed (mesmas pré-existentes, já documentadas nas stories anteriores). Bate com o relatado.
+3. **Mutation check 1 reproduzido por mim** — removi o retry inteiro (voltei ao `INSERT` simples): `test_breadcrumb_recupera_de_corrida_quando_insert_falha_por_conflito` falhou (exceção sobe sem tratamento). Restaurei → passou.
+4. **Mutation check 2 reproduzido por mim** — troquei `except APIError as exc: if exc.code != "23505": raise` por `except Exception:` genérico: `test_breadcrumb_nao_mascara_erro_que_nao_e_violacao_de_unique` falhou com `DID NOT RAISE`, exatamente como o @dev relatou — confirma que a checagem de `.code` não é decorativa. Restaurei → passou.
+5. **Escopo** — `git show 2fed320 --stat` confirma só `worker/campanhas_engine.py` e `worker/tests/test_campanhas_engine.py` (fora a story) modificados. Confirmei também que os 2 testes pré-existentes de `_gravar_breadcrumb_disparo` (`test_breadcrumb_preserva_metadata_existente_da_conversa_engajada`, `test_breadcrumb_cria_conversa_nova_quando_lead_nunca_falou_com_o_bot`) não tiveram nenhuma linha removida/alterada no diff.
+6. **Revisão do diff** — o `except` tipado está corretamente restrito a `_gravar_breadcrumb_disparo`; outras funções do mesmo arquivo continuam com `except Exception` genérico onde já era assim antes (fora de escopo desta story, não regredido).
+
+**AC1-7:** todos atendidos, com verificação independente de cada um — incluindo o ponto que a Junior marcou como obrigatório (item 1), que era o mais frágil do relato original.
+
+**Veredict: PASS**
+
+— Quinn, guardiã da qualidade 🛡️
