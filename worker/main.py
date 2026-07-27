@@ -327,7 +327,7 @@ async def send_manual_message(token: str, request: Request):
                 meta_token = os.getenv("META_SYSTEM_USER_TOKEN", "")
                 if template_name:
                     from campanhas_engine import _enviar_template_meta  # noqa: PLC0415
-                    ok = await _enviar_template_meta(
+                    ok, _wamid = await _enviar_template_meta(
                         origem_id, number, meta_token, template_name, template_components
                     )
                     if ok:

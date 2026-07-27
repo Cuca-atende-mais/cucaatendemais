@@ -456,7 +456,7 @@ async def _notificar_transbordo(
             if corpo_texto:
                 preview = _render_template(corpo_texto, {1: nome, 2: lead_identificacao, 3: modulo})
                 logger.debug("[transbordo] preview: %s", preview[:120])
-            ok = await _enviar_template_meta(
+            ok, _wamid = await _enviar_template_meta(
                 phone_number_id_origem, telefone_destino, token,
                 template_name, components,
             )
@@ -557,9 +557,37 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         value = payload["entry"][0]["changes"][0]["value"]
         phone_number_id: str = value["metadata"]["phone_number_id"]
         messages = value.get("messages", [])
+        statuses = value.get("statuses", [])
     except (KeyError, IndexError):
         logger.warning("[meta-inbound] Estrutura entry/changes/value inesperada — descartado")
         return
+
+    # S-WM-57: consome os eventos statuses[] (entregue/lido/falhou) que a Meta manda
+    # depois de cada envio — antes descartados sem leitura junto com o early-return de
+    # "sem messages[]" abaixo. Best-effort: nunca deixa uma falha de lookup/update
+    # propagar da background task (o 200 pro webhook da Meta já foi respondido antes
+    # deste ponto, ver main.py).
+    if statuses:
+        supabase_status = _get_supabase()
+        _STATUS_MAP = {"sent": "enviado", "delivered": "entregue", "read": "lido", "failed": "falhou"}
+        for status_evt in statuses:
+            wamid_status = status_evt.get("id")
+            status_meta = status_evt.get("status")
+            if not wamid_status or status_meta not in _STATUS_MAP:
+                continue
+            erro_codigo = None
+            if status_meta == "failed":
+                erros_lista = status_evt.get("errors") or []
+                if erros_lista:
+                    erro_codigo = str(erros_lista[0].get("code", ""))
+            try:
+                supabase_status.table("logs_disparo").update({
+                    "status": _STATUS_MAP[status_meta],
+                    "erro": erro_codigo,
+                    "atualizado_em": datetime.now(timezone.utc).isoformat(),
+                }).eq("wamid", wamid_status).execute()
+            except Exception as exc:
+                logger.warning(f"[meta-inbound] Erro ao atualizar status de wamid={wamid_status!r}: {exc}")
 
     # Ignorar eventos de status (delivery, read) sem messages[]
     if not messages:

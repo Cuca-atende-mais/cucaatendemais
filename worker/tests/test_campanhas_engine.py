@@ -410,7 +410,7 @@ async def test_disparo_divulgacao_grava_breadcrumb_apos_envio_com_sucesso(monkey
         camp, "_query_leads_divulgacao_sync",
         lambda: MagicMock(data=[{"id": "lead-div-1", "telefone": "5585999999999", "nome": "Fulano"}]),
     )
-    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=True))
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.TESTE123")))
     mock_breadcrumb = MagicMock()
     monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", mock_breadcrumb)
     monkeypatch.setattr(camp, "_update_metricas_sync", MagicMock())
@@ -439,7 +439,7 @@ async def test_disparo_divulgacao_nao_grava_breadcrumb_quando_envio_falha(monkey
         camp, "_query_leads_divulgacao_sync",
         lambda: MagicMock(data=[{"id": "lead-div-2", "telefone": "5585988888888", "nome": "Beltrana"}]),
     )
-    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=False))
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(False, None)))
     mock_breadcrumb = MagicMock()
     monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", mock_breadcrumb)
     mock_metricas = MagicMock()
@@ -454,3 +454,174 @@ async def test_disparo_divulgacao_nao_grava_breadcrumb_quando_envio_falha(monkey
     # _update_metricas_sync(disparo_id, enviados, erros, stop, status) — erros=1
     metricas_call = mock_metricas.call_args
     assert metricas_call.args[2] == 1, "erro do envio falho precisa continuar contado normalmente"
+
+
+# ---------------------------------------------------------------------------
+# S-WM-57 (Plano 007): ledger por destinatário (logs_disparo) + captura de wamid.
+# Fecha o loop com o PR #55 (deveReconhecerDisparoRecente) e dá visibilidade real
+# de entrega (HTTP aceito != entregue/lido pelo destinatário).
+# ---------------------------------------------------------------------------
+
+def _mock_httpx_async_client(mock_resp=None, side_effect=None):
+    """Mock de httpx.AsyncClient (pacote real, instalado neste ambiente — ao
+    contrário de supabase/postgrest) pro contexto `async with ... as client`."""
+    mock_client_instance = AsyncMock()
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+    if side_effect:
+        mock_client_instance.post = AsyncMock(side_effect=side_effect)
+    else:
+        mock_client_instance.post = AsyncMock(return_value=mock_resp)
+    return MagicMock(return_value=mock_client_instance)
+
+
+@pytest.mark.asyncio
+async def test_enviar_template_meta_retorna_wamid_em_sucesso(monkeypatch):
+    """Achado B (diagnóstico arquitetural): hoje _enviar_template_meta só sabe se o
+    HTTP foi aceito, nunca captura o wamid — sem ele não dá pra casar com os
+    statuses[] que a Meta manda depois (entregue/lido/falhou)."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"messages": [{"id": "wamid.ABC123"}]}
+    monkeypatch.setattr(camp.httpx, "AsyncClient", _mock_httpx_async_client(mock_resp=mock_resp))
+
+    resultado = await camp._enviar_template_meta("phone-1", "5585999999999", "token-1", "tpl", [])
+
+    assert resultado == (True, "wamid.ABC123")
+
+
+@pytest.mark.asyncio
+async def test_enviar_template_meta_retorna_none_em_falha(monkeypatch):
+    """Falha HTTP (não 200/201) → (False, None), sem wamid nenhum pra correlacionar."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 400
+    mock_resp.text = '{"error": "template nao aprovado"}'
+    monkeypatch.setattr(camp.httpx, "AsyncClient", _mock_httpx_async_client(mock_resp=mock_resp))
+
+    resultado = await camp._enviar_template_meta("phone-1", "5585999999999", "token-1", "tpl", [])
+
+    assert resultado == (False, None)
+
+
+def _mock_supabase_disparo_pontual(template_data, disparo_id_criado="disparo-pontual-1"):
+    """Mock de supabase com tabelas independentes por nome (via side_effect em
+    .table()) — necessário porque este fluxo grava em 2 tabelas diferentes
+    (disparos, logs_disparo) e os testes precisam inspecionar cada uma
+    separadamente, não um único .table.return_value compartilhado."""
+    mock_sb = MagicMock()
+    tabelas: dict[str, MagicMock] = {}
+
+    def _table(nome):
+        if nome not in tabelas:
+            tabelas[nome] = MagicMock()
+        return tabelas[nome]
+
+    mock_sb.table = MagicMock(side_effect=_table)
+    (tabelas.setdefault("meta_templates", MagicMock()).select.return_value.eq.return_value
+        .contains.return_value.eq.return_value.eq.return_value.limit.return_value
+        .execute.return_value.data) = template_data
+    tabelas.setdefault("disparos", MagicMock()).insert.return_value.execute.return_value.data = [
+        {"id": disparo_id_criado}
+    ]
+    return mock_sb, tabelas
+
+
+@pytest.mark.asyncio
+async def test_disparo_pontual_grava_ledger_por_destinatario(monkeypatch):
+    """Achado B: cada envio (eventos_pontuais/ouvidoria) precisa deixar um rastro
+    por destinatário — quem recebeu o quê, com o wamid pra casar com o status
+    real de entrega que chega depois pelo webhook."""
+    mock_sb, tabelas = _mock_supabase_disparo_pontual(
+        [{"nome": "tpl_pontual", "corpo_texto": "...", "variaveis": []}]
+    )
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-pontual-1", "token-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_sync",
+        lambda unidade, categorias_alvo: MagicMock(
+            data=[{"id": "lead-pontual-1", "telefone": "5585999999999", "nome": "Fulano"}]
+        ),
+    )
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.XYZ")))
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+
+    item = {"id": "evento-1", "titulo": "Evento Teste", "descricao": "desc"}
+    await camp._processar_item_disparo_interno(item, "eventos_pontuais", 0, 0, 10, 100)
+
+    logs_disparo_insert = tabelas["logs_disparo"].insert.call_args
+    assert logs_disparo_insert is not None, "logs_disparo.insert nunca foi chamado"
+    payload = logs_disparo_insert.args[0]
+    assert payload["disparo_id"] == "disparo-pontual-1"
+    assert payload["lead_id"] == "lead-pontual-1"
+    assert payload["wamid"] == "wamid.XYZ"
+    assert payload["status"] == "enviado"
+
+
+@pytest.mark.asyncio
+async def test_disparo_pontual_cria_disparo_antes_do_loop_nao_depois(monkeypatch):
+    """Achado C (pré-requisito estrutural): o disparo_id precisa existir ANTES do
+    1º envio (não só no fim), senão o ledger não tem o que referenciar se o loop
+    pausar/truncar no meio. A linha 'disparos' é criada 1x (INSERT, status
+    em_andamento) e finalizada 1x (UPDATE, status concluida) — nunca um 2º INSERT."""
+    mock_sb, tabelas = _mock_supabase_disparo_pontual(
+        [{"nome": "tpl_pontual", "corpo_texto": "...", "variaveis": []}]
+    )
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-pontual-1", "token-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_sync",
+        lambda unidade, categorias_alvo: MagicMock(
+            data=[{"id": "lead-pontual-1", "telefone": "5585999999999", "nome": "Fulano"}]
+        ),
+    )
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.XYZ")))
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+
+    item = {"id": "evento-1", "titulo": "Evento Teste", "descricao": "desc"}
+    await camp._processar_item_disparo_interno(item, "eventos_pontuais", 0, 0, 10, 100)
+
+    # ordem: "disparos" precisa aparecer em .table() antes de "logs_disparo"
+    nomes_tabela_em_ordem = [c.args[0] for c in mock_sb.table.call_args_list]
+    assert "disparos" in nomes_tabela_em_ordem and "logs_disparo" in nomes_tabela_em_ordem
+    assert nomes_tabela_em_ordem.index("disparos") < nomes_tabela_em_ordem.index("logs_disparo"), (
+        "disparo_id precisa ser criado ANTES do 1º envio, não depois"
+    )
+
+    disparo_inserts = tabelas["disparos"].insert.call_args_list
+    assert len(disparo_inserts) == 1, "disparos só pode ser criado (INSERT) 1 vez, antes do loop"
+    assert disparo_inserts[0].args[0]["status"] == "em_andamento"
+
+    disparo_updates = tabelas["disparos"].update.call_args_list
+    assert len(disparo_updates) == 1, "finalização precisa ser UPDATE (não um 2º INSERT)"
+    assert disparo_updates[0].args[0]["status"] == "concluida"
+    assert disparo_updates[0].args[0]["total_enviados"] == 1
+    assert disparo_updates[0].args[0]["total_erros"] == 0
+
+
+@pytest.mark.asyncio
+async def test_disparo_divulgacao_grava_ledger_por_destinatario(monkeypatch):
+    """Mesmo achado B, motor de divulgação mensal — disparo_id já é parâmetro
+    (S-WM-56), então aqui só precisa gravar o ledger por envio, sem mover nada."""
+    mock_sb = _mock_supabase_com_template_divulgacao()
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-div-1", "token-div-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_sync",
+        lambda: MagicMock(data=[{"id": "lead-div-ledger-1", "telefone": "5585999999999", "nome": "Fulano"}]),
+    )
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.DIV1")))
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+    monkeypatch.setattr(camp, "_update_metricas_sync", MagicMock())
+
+    await camp._processar_disparo_divulgacao_interno(
+        disparo_id="disparo-div-ledger-1", mes_nome="Agosto",
+        delay_min=0, delay_max=0, daily_limit=10, error_threshold=100,
+    )
+
+    insert_call = mock_sb.table.return_value.insert.call_args
+    assert insert_call is not None, "logs_disparo.insert nunca foi chamado"
+    payload = insert_call.args[0]
+    assert payload["disparo_divulgacao_id"] == "disparo-div-ledger-1"
+    assert payload["lead_id"] == "lead-div-ledger-1"
+    assert payload["wamid"] == "wamid.DIV1"
+    assert payload["status"] == "enviado"
