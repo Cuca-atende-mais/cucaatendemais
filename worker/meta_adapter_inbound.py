@@ -688,7 +688,12 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         }).execute()
         supabase.rpc("increment_nao_lidas", {"conv_id": conversa_id}).execute()
     except Exception as exc:
-        logger.error(f"[meta-inbound] Erro ao salvar Mensagem: {exc}")
+        logger.critical(
+            "[meta-inbound][DATA-LOSS] Falha ao salvar Mensagem do lead — conteudo perdido do "
+            "historico, dispatch vai continuar mesmo assim. conversa_id=%s lead_id=%s "
+            "midia_tipo=%s mensagem=%r erro=%s",
+            conversa_id, lead_id, midia_tipo, mensagem, exc,
+        )
 
     # ── Opt-out (AUD-12, LGPD) ────────────────────────────────────────────
     # Detectado ANTES do dispatch normal — registra opt_in=false via RPC já existente no banco

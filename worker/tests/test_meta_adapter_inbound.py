@@ -553,6 +553,52 @@ class TestDispatchMotorAgente:
         assert "lead_novo=True" in caplog.text
         assert "conversa_nova=True" in caplog.text
 
+    # ── S-WM-54 (Plano 003, achado #2): falha ao salvar Mensagem continua o dispatch, log CRITICAL ──
+    @pytest.mark.asyncio
+    async def test_falha_ao_salvar_mensagem_continua_processamento_com_log_critico(self, caplog):
+        """Achado #2 (2026-07-25): insert de mensagens falhando não pode ser 100% silencioso —
+        trava que, quando falha, sobe pra CRITICAL com conversa_id/lead_id pra dar pra rastrear
+        manualmente, mesmo sem interromper o dispatch."""
+        import logging
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [
+            {"id": "lead-id-critico", "created_at": "T", "updated_at": "T"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-id-critico", "status": "ativa", "created_at": "T", "updated_at": "T"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        # DB C: insert de mensagens falha — só esse .insert().execute(), não afeta upsert (leads/conversas)
+        mock_supabase.table.return_value.insert.return_value.execute.side_effect = Exception("insert falhou (simulado)")
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
+                   return_value=["Resposta motor"]) as mock_motor, \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
+                   return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True):
+            with caplog.at_level(logging.CRITICAL):
+                await processar_webhook_meta(raw)
+
+        # processamento continua — dispatch pro motor-agente ainda é chamado, sem return antecipado
+        mock_motor.assert_called_once()
+        assert any(r.levelname == "CRITICAL" for r in caplog.records)
+        assert "DATA-LOSS" in caplog.text
+        assert "conv-id-critico" in caplog.text
+        assert "lead-id-critico" in caplog.text
+
     # ── S-WM-31 Task 2: concorrência na criação de conversa (upsert vs. select-então-insert) ──
     @pytest.mark.asyncio
     async def test_concorrencia_duas_chamadas_simultaneas_resolvem_mesma_conversa(self):
