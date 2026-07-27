@@ -14,6 +14,14 @@ mesmo stub de sys.modules já usado lá, em vez de instalar o pacote real: uma
 tentativa de instalar `supabase==2.7.4` durante esta task rebaixou `httpx`
 (dependência compartilhada) e quebrou a coleta de test_empregabilidade_engine.py
 (create_client real exige SUPABASE_URL, ausente neste ambiente) — revertido.
+
+S-WM-55 (Plano 004): campanhas_engine.py também faz
+`from postgrest.exceptions import APIError` — mesma limitação, `postgrest` não
+está instalado aqui (transitivo de `supabase`). Stub abaixo replica a forma real
+de `postgrest.exceptions.APIError` (construtor recebe um dict e expõe
+`.code`/`.message`/`.hint`/`.details`, confirmado contra o pacote real
+instalado em outro projeto local, postgrest 2.27.2) — suficiente pros testes
+que checam `exc.code`, sem precisar do pacote real.
 """
 import os
 import sys
@@ -30,7 +38,26 @@ if "supabase" not in sys.modules:
     _fake_supabase_pkg.Client = MagicMock
     sys.modules["supabase"] = _fake_supabase_pkg
 
+if "postgrest" not in sys.modules:
+    class _FakeAPIError(Exception):
+        """Stub de postgrest.exceptions.APIError — mesma forma da classe real."""
+
+        def __init__(self, error: dict):
+            self.code = error.get("code")
+            self.message = error.get("message")
+            self.hint = error.get("hint")
+            self.details = error.get("details")
+            super().__init__(self.message or self.code)
+
+    _fake_postgrest_pkg = types.ModuleType("postgrest")
+    _fake_postgrest_exceptions_mod = types.ModuleType("postgrest.exceptions")
+    _fake_postgrest_exceptions_mod.APIError = _FakeAPIError
+    _fake_postgrest_pkg.exceptions = _fake_postgrest_exceptions_mod
+    sys.modules["postgrest"] = _fake_postgrest_pkg
+    sys.modules["postgrest.exceptions"] = _fake_postgrest_exceptions_mod
+
 from campanhas_engine import _montar_parametros_named, _gravar_breadcrumb_disparo  # noqa: E402
+from postgrest.exceptions import APIError  # noqa: E402
 
 
 def test_ordena_por_posicao_independente_da_ordem_de_entrada():
@@ -183,6 +210,80 @@ def test_breadcrumb_cria_conversa_nova_quando_lead_nunca_falou_com_o_bot(monkeyp
     assert payload["status"] == "ativa"
     assert payload["metadata"] == {"ultimo_disparo": {"tipo": "eventos_pontuais", "id": "evt-1"}}
     assert payload["lead_id"] == "lead-2"
+
+
+def test_breadcrumb_recupera_de_corrida_quando_insert_falha_por_conflito(monkeypatch):
+    """Achado 2026-07-25 (S-WM-55, Plano 004): se o INSERT falhar (linha criada por
+    outra escrita entre o SELECT e o INSERT — corrida real com o fluxo inbound,
+    caso real da Glauwênya), o breadcrumb precisa ser salvo via retry (update),
+    não perdido silenciosamente. Simula a exceção real que o postgrest-py levanta
+    (APIError com code=23505, SQLSTATE de unique_violation), não uma Exception
+    genérica — é exatamente essa distinção que o retry usa pra decidir se é
+    corrida ou erro real."""
+    mock_sb = MagicMock()
+
+    # 1º select: não encontra a conversa (decide ir pro ramo de INSERT)
+    primeiro_select = MagicMock(data=[])
+    # INSERT falha com APIError(code=23505) — violação real de UNIQUE(lead_id, origem_id)
+    mock_sb.table.return_value.insert.return_value.execute.side_effect = APIError({
+        "code": "23505",
+        "message": 'duplicate key value violates unique constraint "conversas_lead_id_origem_id_key"',
+    })
+    # 2º select (retry): agora encontra a linha, criada pela "outra escrita"
+    segundo_select = MagicMock(data=[{"id": "conversa-race-1", "metadata": {"conversa_engajada": True}}])
+
+    (mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value
+        .limit.return_value.execute.side_effect) = [primeiro_select, segundo_select]
+
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    camp._gravar_breadcrumb_disparo(
+        "lead-race", "phone-1", {"ultimo_disparo": {"tipo": "eventos_pontuais", "id": "evt-race"}}
+    )
+
+    update_call = mock_sb.table.return_value.update.call_args
+    metadata_gravado = update_call.args[0]["metadata"]
+    assert metadata_gravado["conversa_engajada"] is True
+    assert metadata_gravado["ultimo_disparo"]["id"] == "evt-race"
+
+
+def test_breadcrumb_nao_mascara_erro_que_nao_e_violacao_de_unique(monkeypatch):
+    """S-WM-55 (Plano 004), resolução do STOP condition original: um `except
+    Exception:` genérico mascararia QUALQUER erro do INSERT como se fosse a
+    corrida esperada — inclusive um erro real do Postgres que não é violação de
+    UNIQUE (ex.: NOT NULL, FK, permissão). Cenário adversarial: o retry encontra
+    uma linha (por qualquer motivo, não necessariamente a corrida) — um
+    `except Exception:` genérico prosseguiria e mesclaria metadata nela mesmo
+    assim, mascarando o erro real; a checagem de `APIError.code` tem que
+    interromper ANTES disso, sem nunca chegar a olhar o retry."""
+    mock_sb = MagicMock()
+
+    # 1º select: não encontra a conversa (decide ir pro ramo de INSERT)
+    primeiro_select = MagicMock(data=[])
+    # INSERT falha com um código de erro Postgres DIFERENTE de unique_violation
+    # (23502 = not_null_violation) — não é a corrida esperada, tem que propagar.
+    mock_sb.table.return_value.insert.return_value.execute.side_effect = APIError({
+        "code": "23502",
+        "message": 'null value in column "agente_tipo" violates not-null constraint',
+    })
+    # 2º select (retry): encontra uma linha — adversarial de propósito (existe por
+    # qualquer motivo, não pela corrida); um except genérico usaria isso pra
+    # "recuperar" silenciosamente do erro real, que é o comportamento errado.
+    segundo_select = MagicMock(data=[{"id": "conversa-nao-relacionada", "metadata": {}}])
+
+    (mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value
+        .limit.return_value.execute.side_effect) = [primeiro_select, segundo_select]
+
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    with pytest.raises(APIError) as exc_info:
+        camp._gravar_breadcrumb_disparo(
+            "lead-erro-real", "phone-1", {"ultimo_disparo": {"tipo": "eventos_pontuais", "id": "evt-x"}}
+        )
+    assert exc_info.value.code == "23502"
+    # não deve ter tentado nenhum update — o erro real precisa subir antes de
+    # sequer olhar o resultado do retry select
+    mock_sb.table.return_value.update.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
