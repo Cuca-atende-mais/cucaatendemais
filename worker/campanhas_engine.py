@@ -5,6 +5,7 @@ import asyncio
 import logging
 import httpx
 from datetime import datetime, timezone, timedelta
+from postgrest.exceptions import APIError
 from supabase import create_client, Client
 
 
@@ -73,6 +74,21 @@ def _gravar_breadcrumb_disparo(lead_id: str, origem_id: str, breadcrumb: dict) -
     .data=None) — acessar .data quebra com AttributeError, silenciosamente
     engolido pelo try/except do chamador. .limit(1).execute() sempre devolve um
     objeto com .data como lista.
+
+    Achado 2026-07-25: o ramo de criação (abaixo) usava INSERT simples, não
+    atômico — se o fluxo inbound (upsert atômico, meta_adapter_inbound.py:604-613)
+    criasse a mesma linha entre o SELECT acima e o INSERT deste ramo (corrida real:
+    resposta automática de WhatsApp Business do lead chegando quase junto do
+    disparo), o INSERT falhava por violação de UNIQUE(lead_id, origem_id), a
+    exceção era engolida pelo try/except do chamador, e o breadcrumb nunca era
+    gravado — visto em produção (lead real sem `ultimo_disparo` na metadata,
+    apesar de ter recebido o disparo).
+    Corrigido: se o INSERT falhar, tenta de novo como update — mas só quando a
+    causa for de fato uma violação de UNIQUE (SQLSTATE 23505, via
+    `postgrest.exceptions.APIError.code`), não um `except Exception:` genérico —
+    erro de rede/timeout do supabase-py levanta uma exceção do httpx, não
+    `APIError`, e por isso nunca cai neste except; sobe direto pro try/except do
+    chamador, sem ser mascarado como "corrida" indevidamente.
     """
     existente = supabase.table("conversas").select("id, metadata").eq(
         "lead_id", lead_id
@@ -85,7 +101,9 @@ def _gravar_breadcrumb_disparo(lead_id: str, origem_id: str, breadcrumb: dict) -
         supabase.table("conversas").update(
             {"metadata": metadata}
         ).eq("id", row["id"]).execute()
-    else:
+        return
+
+    try:
         supabase.table("conversas").insert({
             "lead_id": lead_id,
             "origem_id": origem_id,
@@ -94,6 +112,22 @@ def _gravar_breadcrumb_disparo(lead_id: str, origem_id: str, breadcrumb: dict) -
             "status": "ativa",
             "metadata": breadcrumb,
         }).execute()
+    except APIError as exc:
+        if exc.code != "23505":
+            raise  # não é violação de UNIQUE — erro real, propaga sem mascarar
+        # Corrida: outra escrita (fluxo inbound) criou a linha entre o SELECT
+        # acima e este INSERT. Re-busca e mescla em vez de perder o breadcrumb.
+        existente_retry = supabase.table("conversas").select("id, metadata").eq(
+            "lead_id", lead_id
+        ).eq("origem_id", origem_id).limit(1).execute()
+        if not existente_retry.data:
+            raise  # não era uma corrida de verdade — propaga o erro original
+        row = existente_retry.data[0]
+        metadata = row.get("metadata") or {}
+        metadata.update(breadcrumb)
+        supabase.table("conversas").update(
+            {"metadata": metadata}
+        ).eq("id", row["id"]).execute()
 
 
 def _claim_disparo_divulgacao_sync():
