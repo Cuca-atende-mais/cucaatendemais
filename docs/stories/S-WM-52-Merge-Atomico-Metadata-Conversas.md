@@ -143,4 +143,25 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `supabase/functions/motor-agente/index.audit.test.ts` (modificado: 9 assertions migradas pro formato RPC)
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+**Revisão:** @qa Quinn, 2026-07-27 — branch `fix/merge-atomico-metadata-conversas`, commit `97042ac`.
+
+**Verificação independente (não me baseei só no relato do @dev):**
+
+1. **Migration/RPC, ao vivo em produção** — confirmei via `execute_sql` (read-only): `merge_conversa_metadata(uuid, jsonb)` existe, `prosecdef=false` (sem `SECURITY DEFINER`, como o plano pedia), e `service_role`/`authenticated`/`anon` têm `EXECUTE` (mesmo padrão de `claim_evento_pontual`). Rodei minha própria transação (`BEGIN; SET LOCAL ROLE service_role; SELECT merge_conversa_metadata(...); ROLLBACK;`) contra uma linha `conversas` descartável — confirmei merge real de 2 chaves distintas coexistindo, e `ROLLBACK` efetivo (zero linhas remanescentes). `list_migrations` confirma a migration registrada no histórico oficial (`20260727142229_merge_atomico_metadata_conversas`), não foi só um `execute_sql` avulso.
+2. **RLS** — `conversas` tem RLS habilitada; a policy de `UPDATE` exige `service_role`/`is_developer()`/`has_permission(...)`. Como a função não é `SECURITY DEFINER`, ela roda com o papel de quem chama — `anon`/`authenticated` sem permissão real continuam bloqueados pela RLS mesmo tendo `EXECUTE` na função. O `GRANT EXECUTE` amplo não é uma brecha nova.
+3. **Diff do código** — revisei `git show 97042ac` linha a linha. Os 14 call-sites são substituições mecânicas idênticas, nenhuma lógica de montagem de `metadataAtual` foi tocada. As 9 assertions migradas seguem exatamente o padrão do plano (`c.tabela === "rpc:merge_conversa_metadata"` + `c.args?.[0]?.p_patch`).
+4. **Suíte de testes** — rodei eu mesmo: `196 passed | 0 failed | 2 ignored`, batendo com o relatado.
+5. **Mutation check reproduzido por mim** (não confiei só no relato) — revertei `index.ts` pro `.update()` antigo, mantendo os testes já migrados: os **mesmos 8 testes** falharam (nomes idênticos aos reportados pelo @dev). Restaurei → 196/0/2 de novo.
+6. **AC5 (nenhum 15º call-site)** — confirmei via grep próprio: `grep -n "update({ metadata" index.ts` não retorna nada remanescente; as únicas `.update()` que sobram no arquivo são só de `status` (linhas 1228, 1806, 1807), fora do escopo do bug. Nenhum site perdido.
+7. **Escopo** — `grep -c "conversas" index.test.ts` → 0, confirmando o arquivo fora de escopo intocado. Só os 3 arquivos previstos (migration, `index.ts`, `index.audit.test.ts`) + a story foram modificados.
+8. **Advisors (`get_advisors`)** — 1 achado `WARN` (`function_search_path_mutable`) na função nova. Verifiquei que **não é uma regressão introduzida por esta story**: as ~35 outras funções do projeto (incluindo os exemplares que o próprio plano mandou copiar — `claim_evento_pontual`, `claim_ouvidoria_evento`, `claim_disparo_divulgacao`) têm o mesmo achado. É convenção/débito técnico pré-existente do projeto, corretamente não expandido de escopo aqui. Nenhum achado de `performance` menciona a função nova.
+9. **Deploy** — a migration já está live em produção (efeito imediato: a função existe, mas nada a chama ainda). O código do `motor-agente` (edge function) que passa a usá-la **ainda não foi deployado** — está só committed nesta branch, aguardando merge/push pelo `@devops`. Isso é esperado nesta etapa do pipeline, não é uma pendência desta story.
+
+**Observação não-bloqueante:** `COALESCE(metadata, '{}'::jsonb) || p_patch` retorna `NULL` se `p_patch` for `NULL` (comportamento do operador `||` do jsonb). Não é explorável hoje — `metadataAtual` em `index.ts` é sempre um objeto (nunca `null`/`undefined`) nos 14 call-sites — mas é um footgun latente pra um futuro chamador que não garanta isso. Não bloqueia esta story (fora do escopo verificado), registro para eventual hardening futuro.
+
+**AC1-6:** todos atendidos, com verificação independente de cada um (não apenas conferência do relato).
+
+**Veredito: PASS**
+
+— Quinn, guardiã da qualidade 🛡️
