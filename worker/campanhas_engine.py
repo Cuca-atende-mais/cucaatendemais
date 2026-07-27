@@ -170,7 +170,7 @@ def _criar_disparo_sync(dados: dict) -> str:
 def _query_leads_divulgacao_sync():
     return (
         supabase.table("leads")
-        .select("telefone, nome")
+        .select("id, telefone, nome")
         .eq("opt_in", True)
         .eq("bloqueado", False)
         .execute()
@@ -637,6 +637,22 @@ async def _processar_disparo_divulgacao_interno(
         )
         if ok:
             enviados += 1
+            # S-WM-56 (Plano 005): paridade com eventos_pontuais/ouvidoria_eventos — sem este
+            # breadcrumb, deveReconhecerDisparoRecente (motor-agente) não tem como reconhecer
+            # que o lead acabou de receber este disparo, e ele cai na cortesia canned genérica.
+            lead_id = lead.get("id")
+            if lead_id:
+                tz_fortaleza = timezone(timedelta(hours=-3))
+                breadcrumb = {"ultimo_disparo": {
+                    "tipo": "divulgacao_mensal",
+                    "id": str(disparo_id),
+                    "titulo": f"Programação de {mes_nome}",
+                    "enviado_em": datetime.now(tz_fortaleza).isoformat(),
+                }}
+                try:
+                    _gravar_breadcrumb_disparo(lead_id, phone_number_id, breadcrumb)
+                except Exception as bc_err:
+                    logger.warning(f"[Breadcrumb] Erro ao gravar contexto (divulgacao): {bc_err}")
         else:
             erros += 1
 

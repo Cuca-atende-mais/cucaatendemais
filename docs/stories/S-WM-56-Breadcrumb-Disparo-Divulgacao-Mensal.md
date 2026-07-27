@@ -1,7 +1,7 @@
 # S-WM-56 — Disparo de divulgação/programação mensal também grava o breadcrumb `ultimo_disparo`
 
 ## Status
-Draft — **BLOQUEADA até a S-WM-55 (Plano 004) estar DONE.** Não iniciar Task 1 antes disso — ver Dependências.
+Ready for Review
 
 ## Origem
 Investigação "Corrida da Juventude" (disparo de 724 leads, 24/07/2026) — `docs/qa/DIAGNOSTICO-disparo-corrida-juventude-2026-07-27.md`, achado #3b + diagnóstico arquitetural (seção 4). Plano técnico completo, com o diff exato dos 2 pontos de mudança, preservado integralmente em `docs/qa/planos-corrida-juventude/005-breadcrumb-disparo-divulgacao-mensal.md` — usar esse arquivo como referência técnica primária, não este resumo. Elaborado em 2026-07-26 (commit base `256d547`), retomando uma pergunta direta do Junior sobre paridade entre os 3 motores de disparo que compartilham o número Institucional. Formalizada em story por @sm em 2026-07-27, setup de teste ("Equipe Interna — QA") já criado e confirmado.
@@ -60,19 +60,20 @@ Três mecanismos mandam WhatsApp pelo mesmo número Institucional e leem/escreve
 
 ## Tasks / Subtasks
 
-- [ ] **Task 0 — Confirmar pré-requisito** (bloqueante)
-  - [ ] Confirmar que a S-WM-55 (Plano 004) está com Status `Done` antes de iniciar qualquer código. Se não estiver, HALT e reportar — não seguir mesmo que pareça simples adicionar o 3º chamador antes.
-- [ ] **Task 1 — Query com `id`** (AC: 1)
-  - [ ] Adicionar `id` ao select de `_query_leads_divulgacao_sync`.
-- [ ] **Task 2 — Breadcrumb no disparo mensal** (AC: 2, 3)
-  - [ ] Adicionar a gravação do breadcrumb no branch `if ok:`, em `try/except` próprio.
-- [ ] **Task 3 — Testes** (AC: 2, 3, 5)
-  - [ ] 3 testes: select com `id`, breadcrumb gravado em sucesso, breadcrumb não gravado em falha.
-- [ ] **Task 4 — Fechamento** (AC: 4, 5, 6)
-  - [ ] Suíte completa sem regressão.
-  - [ ] Se houver validação com envio real, confirmar categoria "Equipe Interna — QA" exclusivamente.
-  - [ ] File List e Change Log atualizados.
-  - [ ] Anunciar conclusão e recomendar @qa.
+- [x] **Task 0 — Confirmar pré-requisito** (bloqueante)
+  - [x] Confirmado que a S-WM-55 (Plano 004) está `Done` (mergeada em `main`, `cuca-worker` redeployado) antes de iniciar qualquer código.
+- [x] **Task 1 — Query com `id`** (AC: 1)
+  - [x] Adicionado `id` ao select de `_query_leads_divulgacao_sync`.
+- [x] **Task 2 — Breadcrumb no disparo mensal** (AC: 2, 3)
+  - [x] Adicionada a gravação do breadcrumb no branch `if ok:`, em `try/except` próprio (mesmo padrão do `eventos_pontuais`).
+- [x] **Task 3 — Testes + mutation check** (AC: 2, 3, 5)
+  - [x] 3 testes: select com `id`, breadcrumb gravado em sucesso, breadcrumb não gravado em falha.
+  - [x] Mutation check: Step 1 revertido → teste de select falhou; restaurado → passou. Step 2 revertido → teste de sucesso falhou (0 chamadas); restaurado → passou.
+- [x] **Task 4 — Fechamento** (AC: 4, 5, 6)
+  - [x] Suíte completa sem regressão: 147 passed (144 baseline + 3 novos), 3 falhas pré-existentes (fora de escopo) inalteradas.
+  - [x] Validação com envio real fica para etapa posterior ao @qa, exclusivamente contra "Equipe Interna — QA" — não faz parte do trabalho de implementação (confirmado com a Junior).
+  - [x] File List e Change Log atualizados.
+  - [x] Anunciado conclusão e recomendado @qa.
 
 ## Dev Notes
 
@@ -96,9 +97,32 @@ Branch: `fix/breadcrumb-divulgacao-mensal`. Commit único, ex.: `feat(campanhas)
 | Date | Version | Description | Author |
 |---|---|---|---|
 | 2026-07-27 | 0.1 | Story criada a partir do Plano 005 (investigação "Corrida da Juventude", 2026-07-26). 5ª story da leva — BLOQUEADA até a S-WM-55 fechar (adiciona 3º chamador à função cuja corrida aquela story corrige). | @sm River |
+| 2026-07-27 | 0.2 | Implementada em branch isolada `fix/breadcrumb-divulgacao-mensal` (a partir de `origin/main`, já com S-WM-52 a S-WM-55). Sem drift. 3 testes novos + mutation check duplo. Suíte: 147/0/3(pré-existentes). Status Draft → Ready for Review. | @dev Dex |
 
 ## Dev Agent Record
-_A ser preenchido pelo @dev durante a implementação._
+
+### Agent Model Used
+Claude Sonnet 5 (claude-sonnet-5)
+
+### Debug Log References
+- Pré-requisito confirmado: S-WM-55 mergeada em `main`, `cuca-worker` redeployado (comunicado pela Junior antes de iniciar).
+- Drift check (`git diff --stat 256d547..HEAD -- worker/campanhas_engine.py worker/tests/test_campanhas_engine.py`): mostra as S-WM-52/53/55 (esperado — S-WM-53/54 não tocam este arquivo). `_query_leads_divulgacao_sync` e `_processar_disparo_divulgacao_interno` conferidos linha a linha contra o "Current state" do plano — idênticos.
+- Baseline: `pytest tests/test_campanhas_engine.py -q` → 19 passed. `pytest tests/ -q` → 144 passed, 3 failed (pré-existentes).
+- Implementado: `id` adicionado ao select de `_query_leads_divulgacao_sync`; bloco de breadcrumb adicionado ao branch `if ok:` de `_processar_disparo_divulgacao_interno`, com `try/except` próprio (`logger.warning`), nunca afetando `enviados`/`erros`.
+- 3 testes novos: `test_query_leads_divulgacao_seleciona_id`, `test_disparo_divulgacao_grava_breadcrumb_apos_envio_com_sucesso`, `test_disparo_divulgacao_nao_grava_breadcrumb_quando_envio_falha` — monkeypatch direto de `_gravar_breadcrumb_disparo` (não mock do `supabase` interno dela), conforme os Dev Notes pediam; `supabase` mockado só pro lookup de `meta_templates` que a função faz antes do loop.
+- Suíte pós-mudança: `pytest tests/test_campanhas_engine.py -q` → 22 passed (19 + 3 novos). `pytest tests/ -q` → 147 passed, mesmas 3 falhas pré-existentes.
+- Mutation check: Step 1 revertido (removido `id` do select, isolando só essa função — `_query_leads_sync` tem a mesma string de select coincidentemente, tomei cuidado de reverter só o bloco certo) → `test_query_leads_divulgacao_seleciona_id` falhou (`select('telefone, nome')` != esperado `select('id, telefone, nome')`). Restaurado → passou. Step 2 revertido (bloco de breadcrumb inteiro removido) → `test_disparo_divulgacao_grava_breadcrumb_apos_envio_com_sucesso` falhou ("Called 0 times"); o teste de falha continuou passando (esperado, é uma asserção negativa que também é verdade sem o bloco). Restaurado → ambos passaram.
+- `grep -n '"id, telefone, nome"'` → 2 ocorrências (linha 156 pré-existente de `_query_leads_sync`, linha 173 desta story em `_query_leads_divulgacao_sync`). `grep -n "divulgacao_mensal"` → 1 ocorrência, o `tipo` do breadcrumb novo.
+
+### Completion Notes List
+- Implementado exatamente como especificado no plano preservado (`docs/qa/planos-corrida-juventude/005-breadcrumb-disparo-divulgacao-mensal.md`), sem drift real.
+- `motor-agente/index.ts` não precisou de nenhuma mudança, confirmando a premissa do plano.
+- Nenhuma validação com envio real foi feita nesta etapa — é posterior ao gate do @qa, exclusivamente contra "Equipe Interna — QA", conforme instruído. Esta implementação não abriu nenhum ponto de disparo novo além do já existente (mesmo `phone_number_id`/template institucional dos outros 2 motores) — nada adicional a considerar nesse teste posterior.
+- Nenhum arquivo fora de `worker/campanhas_engine.py` e `worker/tests/test_campanhas_engine.py` foi modificado.
+
+### File List
+- `worker/campanhas_engine.py` (modificado: `id` no select de `_query_leads_divulgacao_sync`; bloco de breadcrumb em `_processar_disparo_divulgacao_interno`)
+- `worker/tests/test_campanhas_engine.py` (modificado: 3 testes novos + helper `_mock_supabase_com_template_divulgacao`, import de `AsyncMock`)
 
 ## QA Results
 _A ser preenchido pelo @qa após a implementação._

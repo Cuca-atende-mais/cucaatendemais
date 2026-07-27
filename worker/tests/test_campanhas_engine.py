@@ -26,7 +26,7 @@ que checam `exc.code`, sem precisar do pacote real.
 import os
 import sys
 import types
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -364,3 +364,93 @@ def test_query_leads_sem_categorias_alvo_usa_tabela_leads_direto(monkeypatch):
     mock_sb.rpc.assert_not_called()
     mock_sb.table.assert_called_with("leads")
     assert resultado.data == [{"id": "lead-2", "telefone": "5585988888888", "nome": "Ciclana"}]
+
+
+# ---------------------------------------------------------------------------
+# S-WM-56 (Plano 005): disparo de divulgação mensal ganha paridade com
+# eventos_pontuais/ouvidoria_eventos — passa a gravar o breadcrumb
+# `ultimo_disparo` após envio bem-sucedido, mesmo mecanismo que a S-WM-55 já
+# corrigiu (retry atômico via APIError.code em _gravar_breadcrumb_disparo).
+# ---------------------------------------------------------------------------
+
+def test_query_leads_divulgacao_seleciona_id(monkeypatch):
+    """Sem `id` no select, não há lead_id disponível no loop do disparo de
+    divulgação mensal pra gravar o breadcrumb."""
+    mock_sb = MagicMock()
+    mock_query = mock_sb.table.return_value.select.return_value.eq.return_value.eq.return_value
+    mock_query.execute.return_value = MagicMock(data=[])
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    camp._query_leads_divulgacao_sync()
+
+    mock_sb.table.return_value.select.assert_called_with("id, telefone, nome")
+
+
+def _mock_supabase_com_template_divulgacao():
+    """Mock de supabase configurado só pra resolver o lookup de meta_templates que
+    _processar_disparo_divulgacao_interno faz antes do loop de envio — comum aos
+    3 testes async abaixo."""
+    mock_sb = MagicMock()
+    (mock_sb.table.return_value.select.return_value.eq.return_value.contains.return_value
+        .eq.return_value.eq.return_value.limit.return_value.execute.return_value.data) = [
+        {"nome": "tpl_divulgacao", "corpo_texto": "Oi {{nome}}, programação de {{mes}}: {{link}}", "variaveis": []}
+    ]
+    return mock_sb
+
+
+@pytest.mark.asyncio
+async def test_disparo_divulgacao_grava_breadcrumb_apos_envio_com_sucesso(monkeypatch):
+    """Achado 2026-07-26: paridade com eventos_pontuais/ouvidoria_eventos — após um
+    envio bem-sucedido, o breadcrumb ultimo_disparo precisa ser gravado com
+    tipo='divulgacao_mensal', sem o qual deveReconhecerDisparoRecente
+    (motor-agente) não tem como reconhecer o disparo recente."""
+    monkeypatch.setattr(camp, "supabase", _mock_supabase_com_template_divulgacao())
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-div-1", "token-div-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_sync",
+        lambda: MagicMock(data=[{"id": "lead-div-1", "telefone": "5585999999999", "nome": "Fulano"}]),
+    )
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=True))
+    mock_breadcrumb = MagicMock()
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", mock_breadcrumb)
+    monkeypatch.setattr(camp, "_update_metricas_sync", MagicMock())
+
+    await camp._processar_disparo_divulgacao_interno(
+        disparo_id="disparo-div-1", mes_nome="Agosto",
+        delay_min=0, delay_max=0, daily_limit=10, error_threshold=100,
+    )
+
+    mock_breadcrumb.assert_called_once()
+    lead_id_arg, phone_arg, breadcrumb_arg = mock_breadcrumb.call_args.args
+    assert lead_id_arg == "lead-div-1"
+    assert phone_arg == "phone-div-1"
+    assert breadcrumb_arg["ultimo_disparo"]["tipo"] == "divulgacao_mensal"
+    assert breadcrumb_arg["ultimo_disparo"]["id"] == "disparo-div-1"
+
+
+@pytest.mark.asyncio
+async def test_disparo_divulgacao_nao_grava_breadcrumb_quando_envio_falha(monkeypatch):
+    """Uma falha de envio não pode gravar breadcrumb nenhum (o lead não recebeu
+    nada), e o bookkeeping de erros continua incrementando normalmente — a
+    gravação do breadcrumb nunca deve afetar o que já é contado hoje."""
+    monkeypatch.setattr(camp, "supabase", _mock_supabase_com_template_divulgacao())
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-div-1", "token-div-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_sync",
+        lambda: MagicMock(data=[{"id": "lead-div-2", "telefone": "5585988888888", "nome": "Beltrana"}]),
+    )
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=False))
+    mock_breadcrumb = MagicMock()
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", mock_breadcrumb)
+    mock_metricas = MagicMock()
+    monkeypatch.setattr(camp, "_update_metricas_sync", mock_metricas)
+
+    await camp._processar_disparo_divulgacao_interno(
+        disparo_id="disparo-div-2", mes_nome="Agosto",
+        delay_min=0, delay_max=0, daily_limit=10, error_threshold=100,
+    )
+
+    mock_breadcrumb.assert_not_called()
+    # _update_metricas_sync(disparo_id, enviados, erros, stop, status) — erros=1
+    metricas_call = mock_metricas.call_args
+    assert metricas_call.args[2] == 1, "erro do envio falho precisa continuar contado normalmente"
