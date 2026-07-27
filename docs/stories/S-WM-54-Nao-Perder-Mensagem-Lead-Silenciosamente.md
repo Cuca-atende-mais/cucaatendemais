@@ -120,4 +120,30 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `worker/tests/test_meta_adapter_inbound.py` (modificado: 1 teste novo, dentro de `TestDispatchMotorAgente`)
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+### Review Date: 2026-07-27
+
+### Reviewed By: @qa Quinn
+
+### Gate Decision: PASS
+
+### Summary
+
+Gate aprovado. A implementação atende a intenção da S-WM-54: falha no insert da mensagem do lead deixa de ser silenciosa, passa a emitir log `CRITICAL` com marcador `[DATA-LOSS]` e contexto suficiente para reconstrução manual, sem interromper o dispatch para o `motor-agente`.
+
+### Evidence
+
+- Código revisado em `worker/meta_adapter_inbound.py`: bloco "DB C" usa `logger.critical(...)` com `[DATA-LOSS]`, `conversa_id`, `lead_id`, `midia_tipo`, `mensagem` e `erro`.
+- Confirmado que não foi adicionado `return` no `except` do insert de `mensagens`; o fluxo continua para preservar a tentativa de resposta ao lead.
+- Teste novo revisado em `worker/tests/test_meta_adapter_inbound.py`: força exceção no insert de `mensagens`, valida log `CRITICAL` com `[DATA-LOSS]` e confirma `mock_motor.assert_called_once()`.
+- Escopo de arquivos conferido nos caminhos da story.
+
+### Tests Executed by QA
+
+- `cd worker && pytest tests/test_meta_adapter_inbound.py::TestDispatchMotorAgente::test_falha_ao_salvar_mensagem_continua_processamento_com_log_critico -q` → `1 passed`.
+- `cd worker && pytest tests/ -q` → `142 passed, 3 failed, 1 warning`.
+  - As 3 falhas são as mesmas falhas pré-existentes fora do escopo, em `tests/test_meta_adapter_outbound.py::TestSendMessageEndpoint`, por `ModuleNotFoundError: No module named 'worker'`.
+
+### Risk / Notes
+
+- Sem bloqueio para PR. A mudança aumenta observabilidade e severidade de alerta sem alterar o contrato funcional do atendimento.
+- Como a alteração é em `worker/meta_adapter_inbound.py`, após merge em `main` o serviço impactado para redeploy é o backend/worker (`cuca-worker`) no EasyPanel; não há alteração de Supabase Edge Function nesta story.
