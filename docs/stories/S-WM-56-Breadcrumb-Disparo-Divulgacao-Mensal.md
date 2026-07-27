@@ -125,4 +125,22 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `worker/tests/test_campanhas_engine.py` (modificado: 3 testes novos + helper `_mock_supabase_com_template_divulgacao`, import de `AsyncMock`)
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+**Revisão:** @qa Quinn, 2026-07-27 — branch `fix/breadcrumb-divulgacao-mensal`, commit `dc8253b`.
+
+**Nota de registro pedida pela Junior:** o "19/144" do gate da S-WM-55 não foi typo — 19 é a suíte do arquivo (`test_campanhas_engine.py`), 144 é a suíte completa do worker; ambos corretos pra aquela story. Neste relatório uso os números por extenso, sem abreviação, pra não gerar a mesma dúvida.
+
+**Verificação independente (não me baseei só no relato do @dev):**
+
+1. **Suíte — rodei eu mesma**: `pytest tests/test_campanhas_engine.py -q` → **22 passed**. `pytest tests/ -q` (completa) → **147 passed, 3 failed** (mesmas 3 falhas pré-existentes, já documentadas e investigadas nas stories anteriores). Bate exatamente com o esperado (144 baseline + 3 novos = 147).
+2. **Mutation check 1 reproduzido por mim** — revertei só `_query_leads_divulgacao_sync` (removi o `id` do select, tomando cuidado de não mexer em `_query_leads_sync`, que tem a mesma string de select por coincidência): `test_query_leads_divulgacao_seleciona_id` falhou (`select('telefone, nome')` != esperado). Restaurei → passou.
+3. **Mutation check 2 reproduzido por mim** — removi o bloco de breadcrumb inteiro do branch `if ok:`: `test_disparo_divulgacao_grava_breadcrumb_apos_envio_com_sucesso` falhou ("Called 0 times"), exatamente como o @dev relatou. Restaurei → passou.
+4. **Escopo** — `git show dc8253b --stat` confirma só `worker/campanhas_engine.py` e `worker/tests/test_campanhas_engine.py` (fora a story) modificados. Confirmei explicitamente via `git diff --stat 662d091..dc8253b -- supabase/functions/motor-agente/index.ts` → vazio, nenhuma mudança nesse arquivo.
+5. **Mesmo `phone_number_id`/template institucional, sem ponto de disparo novo** — confirmei lendo o código: `_processar_item_disparo_interno` (eventos_pontuais/ouvidoria_eventos) resolve `canal_tipo = "Institucional"` para os 3 `origem`s possíveis (`eventos_pontuais`, `ouvidoria_eventos`, e o `else` — divulgação/campanhas mensais) e chama `_get_phone_by_canal_tipo_sync(canal_tipo)`. `_processar_disparo_divulgacao_interno` chama a mesma função com o mesmo literal `_get_phone_by_canal_tipo_sync("Institucional")`. **Confirmado: é o mesmo número/canal, nenhum ponto de disparo novo** — relevante pra validação com envio real que vem depois (exclusivamente "Equipe Interna — QA").
+6. **Revisão do diff** — mecânico e mínimo, exatamente como especificado no plano; o `try/except` da gravação do breadcrumb está corretamente dentro do `if ok:` (nunca dispara em envio falho) e não toca `enviados`/`erros`.
+
+**AC1-6:** todos atendidos, com verificação independente de cada um.
+
+**Veredict: PASS**
+
+— Quinn, guardiã da qualidade 🛡️
