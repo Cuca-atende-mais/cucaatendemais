@@ -347,9 +347,11 @@ async def _chamar_motor_agente(
 
     if not resp.is_success:
         logger.error(
-            "[meta-inbound] motor-agente HTTP %s para agente=%s: %s",
+            "[meta-inbound] motor-agente HTTP %s para agente=%s conversa_id=%s telefone=%r: %s",
             resp.status_code,
             contrato_v2.get("agente_tipo"),
+            conversa_id,
+            contrato_v2.get("telefone"),
             resp.text[:200],
         )
         return None
@@ -642,7 +644,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             on_conflict="lead_id,origem_id",
         ).execute()
 
-        conv_fresh = supabase.table("conversas").select("id, status").match(
+        conv_fresh = supabase.table("conversas").select("id, status, created_at, updated_at").match(
             {"lead_id": lead_id, "origem_id": phone_number_id}
         ).execute()
         conversa_id: str = conv_fresh.data[0]["id"]
@@ -650,6 +652,22 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
     except Exception as exc:
         logger.error(f"[meta-inbound] Erro ao gerenciar Conversa: {exc}")
         return
+
+    # Achado 2026-07-25/26: 27 de 32 casos de HTTP 400 do motor-agente (telefone
+    # vazio) aconteceram entre 11-12,5s da criação do lead — correlação forte com
+    # "1ª mensagem de lead novo", mas não 100% determinística (alguns leads novos
+    # não falharam). Log temporário pra fechar a causa exata na próxima ocorrência
+    # real — remover quando o achado #1 (docs/qa/INVESTIGACAO-comportamento-
+    # conversas-disparo-corrida-2026-07-25.md) estiver resolvido.
+    try:
+        lead_criado_agora = lead_result.data[0].get("created_at") == lead_result.data[0].get("updated_at")
+        conversa_criada_agora = conv_fresh.data[0].get("created_at") == conv_fresh.data[0].get("updated_at")
+        logger.info(
+            "[meta-inbound][DIAG-achado1] conversa_id=%s lead_id=%s lead_novo=%s conversa_nova=%s",
+            conversa_id, lead_id, lead_criado_agora, conversa_criada_agora,
+        )
+    except (IndexError, KeyError, AttributeError) as exc:
+        logger.warning("[meta-inbound][DIAG-achado1] Erro ao calcular lead_novo/conversa_nova: %s", exc)
 
     # ── DB C: inserir Mensagem inbound e incrementar não lidas ──────────
     try:
