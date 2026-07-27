@@ -369,7 +369,7 @@ Deno.test("VAL-19 (S-WM-50): conversa_engajada=true + cortesia pura → early-re
   assertEquals(chegouNoRag, false, "VAL-19: cortesia pura com conversa_engajada=true não pode mais chamar busca vetorial (RAG) à toa");
   const leuDocumentosRag = chamadas.some((c) => c.tabela === "documentos_rag");
   assertEquals(leuDocumentosRag, false, "VAL-19: cortesia pura não pode mais carregar resumo_rede (documentos_rag) à toa");
-  const gravouUnidade = chamadas.some((c) => c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.unidade_selecionada);
+  const gravouUnidade = chamadas.some((c) => c.tabela === "rpc:merge_conversa_metadata" && (c.args?.[0] as { p_patch?: Record<string, unknown> })?.p_patch?.unidade_selecionada);
   assertEquals(gravouUnidade, false, "cortesia não deveria gravar nenhuma unidade_selecionada nova");
   const body = await resp.json();
   assertEquals(body.resposta, "Em que mais posso te ajudar? 😊", "VAL-19: cortesia pura deveria responder com o canned de continuação, igual a decidirAguardandoUnidade");
@@ -383,7 +383,7 @@ Deno.test("S-WM-31: conversa_engajada=true + unidade detectada na mensagem → r
     assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   });
   const gravouMondubim = chamadas.some((c) =>
-    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.unidade_selecionada === "Cuca Mondubim"
+    c.tabela === "rpc:merge_conversa_metadata" && (c.args?.[0] as { p_patch?: Record<string, unknown> })?.p_patch?.unidade_selecionada === "Cuca Mondubim"
   );
   assertEquals(gravouMondubim, true, "unidade citada durante uma conversa engajada deveria ser resolvida e gravada, igual ao branch aguardando_unidade (AUD-04)");
   const carregouProgramacaoCompleta = chamadas.some((c) => c.tabela === "documentos_rag");
@@ -403,7 +403,7 @@ Deno.test("S-WM-31: conversa_engajada=true + pedido_depende_unidade=true sem uni
   const comecaComSaudacao = SAUDACOES_ABERTURA.some((s) => (body.resposta ?? "").startsWith(s));
   assertEquals(comecaComSaudacao, false, "conversa já engajada — não pode repetir SAUDACOES_ABERTURA ao pedir a unidade");
   const gravouAguardando = chamadas.some((c) =>
-    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.aguardando_unidade === true
+    c.tabela === "rpc:merge_conversa_metadata" && (c.args?.[0] as { p_patch?: Record<string, unknown> })?.p_patch?.aguardando_unidade === true
   );
   assertEquals(gravouAguardando, true, "deveria transicionar pro estado aguardando_unidade=true, igual ao branch de 1ª mensagem quando pedido_depende_unidade=true");
 });
@@ -417,7 +417,7 @@ Deno.test("S-WM-31 item 6: cortesia pura na 1ª mensagem grava conversa_engajada
   );
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   const gravouEngajada = chamadas.some((c) =>
-    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.conversa_engajada === true
+    c.tabela === "rpc:merge_conversa_metadata" && (c.args?.[0] as { p_patch?: Record<string, unknown> })?.p_patch?.conversa_engajada === true
   );
   assertEquals(gravouEngajada, true, "cortesia pura na 1ª mensagem precisa marcar conversa_engajada=true — sem isso, a PRÓXIMA mensagem reseta pra saudação de novo (Causa raiz B)");
 });
@@ -431,7 +431,7 @@ Deno.test("S-WM-31 (ampliação Task 3/4): cortesia resolvida dentro de aguardan
   );
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   const gravouEngajada = chamadas.some((c) =>
-    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.conversa_engajada === true
+    c.tabela === "rpc:merge_conversa_metadata" && (c.args?.[0] as { p_patch?: Record<string, unknown> })?.p_patch?.conversa_engajada === true
   );
   assertEquals(gravouEngajada, true, "cortesia resolvida dentro de aguardando_unidade (supera VAL-13, Task 3) também precisa marcar conversa_engajada=true — senão a PRÓXIMA mensagem cai no branch de 1ª mensagem e reseta pra saudação (Causa raiz B reaparecendo neste caminho)");
 });
@@ -896,7 +896,7 @@ Deno.test("Item 3: resposta de visão geral grava o novo estado de menu_categori
     const resp = await handler(requestFake("Mondubim"), supabaseMock);
     assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   });
-  const updatesDeConversas = chamadas.filter((c) => c.tabela === "conversas" && c.metodo === "update").length;
+  const updatesDeConversas = chamadas.filter((c) => c.tabela === "rpc:merge_conversa_metadata").length;
   assertEquals(
     updatesDeConversas >= 2,
     true,
@@ -916,9 +916,9 @@ Deno.test("Fix CRITICAL: resolver unidade (AUD-04) + Item 3 gravando menu_catego
     const resp = await handler(requestFake("Mondubim"), supabaseMock);
     assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   });
-  const updatesDeConversas = chamadas.filter((c) => c.tabela === "conversas" && c.metodo === "update");
+  const updatesDeConversas = chamadas.filter((c) => c.tabela === "rpc:merge_conversa_metadata");
   const ultimoUpdate = updatesDeConversas[updatesDeConversas.length - 1];
-  const metadataFinal = (ultimoUpdate?.payload as { metadata?: Record<string, unknown> } | undefined)?.metadata;
+  const metadataFinal = (ultimoUpdate?.args?.[0] as { p_patch?: Record<string, unknown> } | undefined)?.p_patch;
   assertEquals(
     metadataFinal?.unidade_selecionada,
     "Cuca Mondubim",
@@ -939,9 +939,9 @@ Deno.test("Fix CRITICAL: troca semântica de unidade (Item 4) + Item 3 gravando 
     () => handler(requestFake("quero saber de outra unidade, tipo a que fica pertinho da minha casa"), supabaseMock),
     JSON.stringify({ unidade: "Cuca José Walter", quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: false }),
   );
-  const updatesDeConversas = chamadas.filter((c) => c.tabela === "conversas" && c.metodo === "update");
+  const updatesDeConversas = chamadas.filter((c) => c.tabela === "rpc:merge_conversa_metadata");
   const ultimoUpdate = updatesDeConversas[updatesDeConversas.length - 1];
-  const metadataFinal = (ultimoUpdate?.payload as { metadata?: Record<string, unknown> } | undefined)?.metadata;
+  const metadataFinal = (ultimoUpdate?.args?.[0] as { p_patch?: Record<string, unknown> } | undefined)?.p_patch;
   assertEquals(
     metadataFinal?.unidade_selecionada,
     "Cuca José Walter",
@@ -1842,7 +1842,7 @@ Deno.test("S-WM-37: conversa_id de outro lead é rejeitado com 403, sem gravar n
   const body = await resp.json();
   assertStringIncludes(body.error, "conversa_id");
   assertEquals(chamadas.some((c) => c.tabela === "mensagens" && (c.metodo === "insert" || c.metodo === "update")), false, "não deveria gravar mensagem nenhuma");
-  assertEquals(chamadas.some((c) => c.tabela === "conversas" && (c.metodo === "insert" || c.metodo === "update")), false, "não deveria inserir/atualizar conversa");
+  assertEquals(chamadas.some((c) => c.tabela === "conversas" && (c.metodo === "insert" || c.metodo === "update") || c.tabela === "rpc:merge_conversa_metadata"), false, "não deveria inserir/atualizar conversa");
 });
 
 Deno.test("S-WM-37: conversa_id do mesmo lead segue o fluxo normal (não regride)", async () => {
@@ -2347,7 +2347,7 @@ Deno.test("Achado 2026-07-24: cortesia pura na 1ª mensagem + disparo recente �
   assertEquals(eraCanned, false, "não deveria devolver uma saudação sorteada de SAUDACOES_ABERTURA");
 
   const gravouEngajada = chamadas.some((c) =>
-    c.tabela === "conversas" && c.metodo === "update" && (c.payload as { metadata?: Record<string, unknown> })?.metadata?.conversa_engajada === true
+    c.tabela === "rpc:merge_conversa_metadata" && (c.args?.[0] as { p_patch?: Record<string, unknown> })?.p_patch?.conversa_engajada === true
   );
   assertEquals(gravouEngajada, true, "mesmo ignorando a resposta canned, ainda precisa marcar conversa_engajada=true — senão a PRÓXIMA mensagem cairia de novo neste branch");
 

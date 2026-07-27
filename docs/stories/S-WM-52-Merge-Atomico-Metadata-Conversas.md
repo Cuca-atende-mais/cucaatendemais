@@ -1,7 +1,7 @@
 # S-WM-52 — Merge atômico de `conversas.metadata` via RPC (não mais overwrite de coluna inteira)
 
 ## Status
-Draft
+Ready for Review
 
 ## Origem
 Investigação "Corrida da Juventude" (disparo de 724 leads, 24/07/2026) — `docs/qa/DIAGNOSTICO-disparo-corrida-juventude-2026-07-27.md`, achado arquitetural nº 1 (seção 4). Plano técnico completo, com o diff exato linha-a-linha (**dry-run verificado ao vivo** num worktree descartável: 196/196 testes passando antes de escrever o plano), preservado integralmente em `docs/qa/planos-corrida-juventude/006-merge-atomico-metadata-conversas.md` — usar esse arquivo como referência técnica primária (Steps, Verify, STOP conditions), não este resumo. Elaborado em 2026-07-26 (commit base `256d547`). Formalizada em story por @sm em 2026-07-27, setup de teste ("Equipe Interna — QA") já criado e confirmado.
@@ -71,23 +71,26 @@ Confirmado por `grep -c` contra o commit `256d547`: exatamente 14 ocorrências, 
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Migration** (AC: 1)
-  - [ ] Criar `supabase/migrations/20260726000000_merge_atomico_metadata_conversas.sql` com `merge_conversa_metadata`.
-  - [ ] Aplicar via `apply_migration` (MCP Supabase, produção `cuca`).
-  - [ ] Confirmar por `execute_sql` que a função existe e resolve merge sem apagar chave não mencionada (teste manual com 2 patches).
-- [ ] **Task 2 — 14 call sites** (AC: 2, 5)
-  - [ ] Drift check: `grep -c` do literal antigo → deve dar exatamente 14 antes de começar. Se diferente, HALT e reportar.
-  - [ ] Substituição mecânica única (find-and-replace-all) — não tratar nenhum site diferente.
-  - [ ] Confirmar 0/14 via grep pós-mudança.
-- [ ] **Task 3 — 9 assertions de teste** (AC: 3, 4)
-  - [ ] Migrar os 6 sites do padrão `.some(...)` (372, 386, 406, 420, 434, 2350).
-  - [ ] Migrar o site de contagem (899) e os 2 sites de "filter + último update" (919/921, 942/944).
-  - [ ] Estender a assertion negativa (1845) para cobrir também `rpc:merge_conversa_metadata`.
-  - [ ] Rodar suíte completa → 196/0/2.
-- [ ] **Task 4 — Fechamento**
-  - [ ] `git status` confirma só os 3 arquivos em escopo modificados.
-  - [ ] File List e Change Log atualizados.
-  - [ ] Anunciar conclusão e recomendar @qa.
+- [x] **Task 1 — Migration** (AC: 1)
+  - [x] Criado `supabase/migrations/20260726000000_merge_atomico_metadata_conversas.sql` com `merge_conversa_metadata`.
+  - [x] Aplicado via `apply_migration` (MCP Supabase, produção `cuca`).
+  - [x] Confirmado por `execute_sql` (transação com `ROLLBACK`, sem efeito permanente) que `service_role` consegue chamar a função via RPC e que o merge preserva chaves de patches distintos (`campo_a`+`campo_b` coexistindo).
+- [x] **Task 2 — 14 call sites** (AC: 2, 5)
+  - [x] Drift check: `grep -c` do literal antigo → deu exatamente 14 antes de começar (mesmas linhas do plano: 1287, 1304, 1341, 1360, 1376, 1384, 1403, 1417, 1422, 1442, 1461, 1475, 1482, 1536). Sem drift.
+  - [x] Substituição mecânica única (find-and-replace-all).
+  - [x] Confirmado 0/14 via grep pós-mudança.
+- [x] **Task 3 — 9 assertions de teste** (AC: 3, 4)
+  - [x] Migrados os 6 sites do padrão `.some(...)` (372, 386, 406, 420, 434, 2350).
+  - [x] Migrado o site de contagem (899) e os 2 sites de "filter + último update" (919/921, 942/944).
+  - [x] Estendida a assertion negativa (1845) para cobrir também `rpc:merge_conversa_metadata`.
+  - [x] Suíte completa → 196 passed | 0 failed | 2 ignored (idêntico à baseline).
+- [x] **Task 4 — Mutation check** (não estava listada originalmente, executada a pedido do @dev-lead)
+  - [x] `index.ts` revertido temporariamente pro `.update()` antigo (14 sites), mantendo os testes já migrados → 8 testes falharam (os que exercitam a mudança de verdade; a assertion negativa da linha 1845 não é esperada falhar nesse cenário, é proteção pra um caso diferente).
+  - [x] `index.ts` restaurado → 196 passed | 0 failed | 2 ignored de novo.
+- [x] **Task 5 — Fechamento**
+  - [x] `git status` confirma só os 2 arquivos em escopo (`index.ts`, `index.audit.test.ts`) + a migration nova modificados/criados.
+  - [x] File List e Change Log atualizados.
+  - [x] Anunciado conclusão e recomendado @qa.
 
 ## Dev Notes
 
@@ -110,9 +113,34 @@ Branch: `fix/merge-atomico-metadata-conversas`. Commit único: `fix(motor-agente
 | Date | Version | Description | Author |
 |---|---|---|---|
 | 2026-07-27 | 0.1 | Story criada a partir do Plano 006 (investigação "Corrida da Juventude", 2026-07-26), diff dry-run verificado antes da escrita do plano. 1ª story da leva (execução independente). | @sm River |
+| 2026-07-27 | 0.2 | Implementada em branch isolada `fix/merge-atomico-metadata-conversas` (criada a partir de `origin/main`, sem herdar nada das outras stories da leva). Migration aplicada em produção e verificada via RPC real (transação com rollback). 14 call-sites + 9 assertions migrados exatamente conforme o plano, sem drift. Mutation check executado. Suíte: 196/0/2, idêntica à baseline. Status Draft → Ready for Review. | @dev Dex |
 
 ## Dev Agent Record
-_A ser preenchido pelo @dev durante a implementação._
+
+### Agent Model Used
+Claude Sonnet 5 (claude-sonnet-5)
+
+### Debug Log References
+- Drift check (`git diff --stat 256d547..HEAD -- index.ts index.audit.test.ts`): vazio — sem drift, plano aplicado sobre o mesmo estado de código em que foi escrito.
+- Baseline pré-mudança: `deno test --no-check --allow-net --allow-env --allow-read .` → 196 passed | 0 failed | 2 ignored.
+- Migration `merge_conversa_metadata` aplicada via `apply_migration` (MCP Supabase, produção `cuca`). Confirmado por `execute_sql`: `service_role`/`authenticated`/`anon` têm `EXECUTE` na função (mesmo padrão de `claim_evento_pontual` etc.).
+- Verificação funcional do merge: transação `BEGIN ... SET LOCAL ROLE service_role; SELECT merge_conversa_metadata(...); ROLLBACK;` contra uma linha `conversas` descartável — confirmado `{"campo_a":"valor_a","campo_b":"valor_b"}` (merge real, chaves distintas preservadas) e `ROLLBACK` efetivo (`count(*) = 0` depois).
+- `grep -c` dos 14 call-sites antigos → 14 antes, 0 depois. `grep -c` das novas chamadas RPC → 14.
+- 9 assertions de teste migradas: 6 do padrão `.some()` (372/386/406/420/434/2350) + 1 de contagem (899) + 2 de "filter + último update" (919/921, 942/944) + 1 negativa estendida (1845). `grep -c 'rpc:merge_conversa_metadata' index.audit.test.ts` → 10 (confere com o plano: 6+1+2+1).
+- Suíte pós-mudança: 196 passed | 0 failed | 2 ignored — idêntica à baseline.
+- Mutation check: `index.ts` revertido pro `.update()` antigo (mantendo os testes novos) → 8 testes falharam (nomes: S-WM-31 conversa_engajada linha 378, aguardando_unidade linha 393, cortesia 1ª msg linha 411, cortesia+aguardando_unidade linha 425, Item 3 visão geral linha 888, Fix CRITICAL resolver unidade linha 912, Fix CRITICAL troca semântica linha 935, achado 2026-07-24 disparo recente linha 2331) — confirma que as assertions migradas exercitam a proteção de verdade, não são decorativas. Restaurado → 196/0/2 de novo.
+- `grep -c "conversas" index.test.ts` → 0 (arquivo fora de escopo confirmado intacto).
+
+### Completion Notes List
+- Implementado exatamente como especificado no plano preservado (`docs/qa/planos-corrida-juventude/006-merge-atomico-metadata-conversas.md`), sem nenhum drift — mesmas linhas, mesmas contagens, mesmo resultado de teste (196/0/2) do dry-run original.
+- Branch criada a partir de `origin/main` (que já está no commit-base `256d547` do plano — o PR anterior já tinha sido mergeado), não a partir da branch de trabalho anterior — garante isolamento real, sem herdar mudanças de outras stories da leva.
+- Apenas 8 dos 9 sites de assertion migrados falharam no mutation check quando revertido — o 9º (linha 1845, assertion negativa) é proteção defensiva pra um cenário diferente (bot não deveria gravar nada), não é esperado falhar nesse experimento específico; comportamento correto, não uma lacuna.
+- Nenhum 15º call site com variável diferente de `metadataAtual` foi encontrado.
+
+### File List
+- `supabase/migrations/20260726000000_merge_atomico_metadata_conversas.sql` (novo — aplicado em produção)
+- `supabase/functions/motor-agente/index.ts` (modificado: 14 call-sites)
+- `supabase/functions/motor-agente/index.audit.test.ts` (modificado: 9 assertions migradas pro formato RPC)
 
 ## QA Results
 _A ser preenchido pelo @qa após a implementação._

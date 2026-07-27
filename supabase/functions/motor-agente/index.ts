@@ -1284,7 +1284,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         const novaUnidade = detectarTrocaUnidade(textoFinal, unidadeSalva);
         if (novaUnidade) {
           metadataAtual = { ...metadataAtual, unidade_selecionada: novaUnidade, aguardando_unidade: false };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           unidadeEfetiva = novaUnidade;
           trocouUnidade = true;
           // S-WM-34 (VAL-23, Task 3): este é o caminho reproduzido ao vivo — detectarTrocaUnidade
@@ -1301,7 +1301,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           const avaliacaoTroca = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico);
           if (avaliacaoTroca.unidade && avaliacaoTroca.unidade !== unidadeSalva) {
             metadataAtual = { ...metadataAtual, unidade_selecionada: avaliacaoTroca.unidade, aguardando_unidade: false };
-            await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+            await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
             unidadeEfetiva = avaliacaoTroca.unidade;
             trocouUnidade = true;
             // S-WM-34 (VAL-23): este caminho JÁ chama avaliarSelecaoUnidade — reaproveita
@@ -1338,7 +1338,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
         if (decisao.unidadeSelecionada) {
           metadataAtual = { ...metadataAtual, unidade_selecionada: decisao.unidadeSelecionada, aguardando_unidade: decisao.aguardandoUnidade };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           unidadeEfetiva = decisao.unidadeSelecionada;
           // AUD-04: resolução inicial de unidade dentro de aguardando_unidade (por nome OU
           // dígito) conta como equivalente a trocouUnidade — sem isso, só quem escolhe por
@@ -1357,7 +1357,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // usa no branch abaixo. quer_sair fica de fora via deveReconhecerDisparoRecente — lead
           // só quer parar, reconhecer o disparo não ajuda.
           metadataAtual = { ...metadataAtual, aguardando_unidade: false, conversa_engajada: true };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           console.log("[motor-agente v18] Disparo recente não reconhecido (aguardando_unidade) — ignora resposta canned, segue pro GPT");
         } else if (decisao.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisao.resposta, historico);
@@ -1373,7 +1373,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
             aguardando_unidade: decisao.aguardandoUnidade,
             ...(decisao.aguardandoUnidade ? {} : { conversa_engajada: true }),
           };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
@@ -1381,7 +1381,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // aguardando_unidade=false e segue pro fluxo normal (Passo 6 responde de verdade).
           // Ampliação (S-WM-31): também marca conversa_engajada=true, mesmo motivo do branch acima.
           metadataAtual = { ...metadataAtual, aguardando_unidade: decisao.aguardandoUnidade, conversa_engajada: true };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           perguntaGeralAtiva = true;
           console.log("[motor-agente v18] Pergunta geral identificada (aguardando_unidade): segue pro RAG geral (FAQ isolado)");
         }
@@ -1400,7 +1400,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
         if (decisaoEngajada.unidadeSelecionada) {
           metadataAtual = { ...metadataAtual, unidade_selecionada: decisaoEngajada.unidadeSelecionada, aguardando_unidade: false };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           unidadeEfetiva = decisaoEngajada.unidadeSelecionada;
           trocouUnidade = true;
           trocaComPedidoEspecifico = decisaoEngajada.pedidoEspecifico === true; // S-WM-34 (VAL-23)
@@ -1414,12 +1414,12 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // não distingue quer_sair internamente (cai no mesmo canned de continuação hoje) — a
           // exclusão de opt-out acontece aqui, via avaliacaoSemanticaEngajada.quer_sair.
           metadataAtual = { ...metadataAtual, aguardando_unidade: false };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           console.log("[motor-agente v18] Disparo recente não reconhecido (conversa engajada) — ignora resposta canned, segue pro GPT");
         } else if (decisaoEngajada.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoEngajada.resposta, historico);
           metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoEngajada.aguardandoUnidade };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
@@ -1439,7 +1439,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // AUD-07: unidade já citada na própria 1ª mensagem — resolve direto e segue pro
           // fluxo normal (RAG/GPT) em vez de mandar o menu e forçar uma rodada extra.
           metadataAtual = { ...metadataAtual, unidade_selecionada: decisaoPrimeira.unidadeSelecionada, aguardando_unidade: decisaoPrimeira.aguardandoUnidade };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           unidadeEfetiva = decisaoPrimeira.unidadeSelecionada;
           trocouUnidade = true;
           trocaComPedidoEspecifico = decisaoPrimeira.pedidoEspecifico === true; // S-WM-34 (VAL-23)
@@ -1458,7 +1458,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // decidirPrimeiraMensagem não distingue quer_sair (não faz sentido pedir pra sair na
           // 1ª mensagem) — a exclusão de opt-out acontece aqui, via avaliacaoSemantica1a.quer_sair.
           metadataAtual = { ...metadataAtual, aguardando_unidade: false, conversa_engajada: true };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           console.log("[motor-agente v18] Disparo recente não reconhecido (1a mensagem) — ignora resposta canned, segue pro GPT");
         } else if (decisaoPrimeira.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoPrimeira.resposta, historico);
@@ -1472,14 +1472,14 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
             aguardando_unidade: decisaoPrimeira.aguardandoUnidade,
             ...(decisaoPrimeira.aguardandoUnidade ? {} : { conversa_engajada: true }),
           };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           // VAL-12: pergunta_geral=true já na 1ª mensagem — segue pro fluxo normal (Passo 6).
           // Item 6: também marca conversa_engajada=true, mesmo motivo do branch acima.
           metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoPrimeira.aguardandoUnidade, conversa_engajada: true };
-          await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+          await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           perguntaGeralAtiva = true;
           console.log("[motor-agente v18] Pergunta geral identificada (1a mensagem): segue pro RAG geral (FAQ isolado)");
         }
@@ -1533,7 +1533,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       const menuCategoriaAtivoNovo = Boolean(temUnidadeDefinida) && precisaVisaoGeral;
       if (menuCategoriaAtivoNovo !== menuCategoriaAtivoAnterior) {
         metadataAtual = { ...metadataAtual, menu_categoria_ativo: menuCategoriaAtivoNovo };
-        await supabase.from('conversas').update({ metadata: metadataAtual }).eq('id', conversa.id);
+        await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
       }
     }
 
