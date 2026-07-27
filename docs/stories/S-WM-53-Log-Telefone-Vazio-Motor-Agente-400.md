@@ -121,4 +121,21 @@ Claude Sonnet 5 (claude-sonnet-5)
 - `worker/tests/test_meta_adapter_inbound.py` (modificado: 2 testes novos, dentro de `TestDispatchMotorAgente`)
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+**Revisão:** @qa Quinn, 2026-07-27 — branch `fix/log-telefone-vazio-motor-agente-400`, commit `be6db05`.
+
+**Verificação independente (não me baseei só no relato do @dev):**
+
+1. **Drift check** — confirmei eu mesma `git diff --stat 256d547..70af62b -- worker/meta_adapter_inbound.py worker/tests/test_meta_adapter_inbound.py` (entre o commit-base do plano e o commit-pai desta story, ANTES do diff do @dev) → vazio. Sem drift real.
+2. **Diff revisado linha a linha** (`git show be6db05`) — os 2 blocos batem exatamente com o plano preservado (`docs/qa/planos-corrida-juventude/002-...md`): `%r` pro telefone (distingue `None` de `""`), `.get("telefone")` (não `[...]`), `try/except (IndexError, KeyError, AttributeError)` em volta do cálculo de `lead_novo`/`conversa_nova`. Contei os placeholders `%s`/`%r` de cada log contra os argumentos passados — batem (5 e 5; 4 e 4).
+3. **Suíte — rodei eu mesma**: `pytest tests/test_meta_adapter_inbound.py -q` → 47 passed. `pytest tests/ -q` (completa) → 141 passed, 3 failed. Bate com o relatado.
+4. **As 3 falhas pré-existentes — investiguei a causa raiz, não só confirmei a contagem**: `test_meta_adapter_outbound.py::TestSendMessageEndpoint::{test_envia_via_meta_com_contrato_novo, test_rejeita_contrato_antigo_phone_message, test_rejeita_token_invalido}`, todas com `ModuleNotFoundError: No module named 'worker'` na linha `import worker.main as main_module`. Confirmei que **não existe `worker/__init__.py`** — `worker` não é um pacote Python de verdade, então esse `import` está estruturalmente quebrado independente de CWD ou forma de invocação (testei `pytest` de dentro de `worker/` e `python3 -m pytest worker/tests/` da raiz — mesmo resultado nos dois). Confirmei também, fazendo checkout temporário das versões desses 2 arquivos no commit-pai (`70af62b`, antes do diff desta story) e rodando a suíte completa: **as mesmas 3 falhas, com os mesmos nomes**, já existiam antes (139 passed/3 failed) — restaurei os arquivos pro estado do commit logo depois. `git log` do arquivo de teste que falha mostra a última mudança relevante em `8a144bf` (S-WM-31), muito antes desta leva. **Confirmado: fora de escopo desta story, ambiental (import de pacote), idêntico antes e depois — não bloqueante.**
+5. **Escopo** — `git show be6db05 --stat` e `git diff --stat 70af62b..HEAD -- worker/` confirmam só `worker/meta_adapter_inbound.py` e `worker/tests/test_meta_adapter_inbound.py` tocados (fora o arquivo da própria story).
+6. **Mutation check reproduzido por mim, independentemente** — revertei o Step 1 isoladamente: `test_log_de_falha_400_inclui_telefone_e_conversa_id` falhou (log no formato antigo, sem `conversa_id`). Restaurei → passou. Revertei o Step 2 isoladamente: `test_log_diagnostico_indica_lead_novo` falhou (sem `DIAG-achado1` no log). Restaurei → passou. Suíte completa reconfirmada 141/3(pré-existentes)/0(novas) depois de restaurar tudo.
+7. **Compatibilidade com o resto do pipeline (pedido 4)** — busquei no repo inteiro por qualquer parser/regex/dashboard que dependesse do formato textual antigo dessas 2 linhas de log (`grep` por `"motor-agente HTTP"`, `"DIAG-achado1"`, sistemas de log parsing/alerting) — **nada encontrado**. Consistente com o que o próprio diagnóstico da leva já registra: este projeto não tem nenhuma monitoração automatizada de log, só checagem manual no EasyPanel. Os 2 logs novos só **adicionam campos ao final da string formatada** (não removem nem reordenam nada que já existia) — mesmo que houvesse um parser textual em algum lugar não encontrado por mim, um parser que dependesse só do prefixo (`"[meta-inbound] motor-agente HTTP %s"`) continuaria funcionando; um que dependesse do sufixo exato quebraria, mas não achei nenhum.
+
+**AC1-6:** todos atendidos, com verificação independente de cada um.
+
+**Verdict: PASS**
+
+— Quinn, guardiã da qualidade 🛡️
