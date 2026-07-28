@@ -515,6 +515,12 @@ This must stay best-effort and fast: it runs inside the same background task tha
 
 **Verify**: `cd worker && python -c "import meta_adapter_inbound"` → exits 0.
 
+**Update (2026-07-28, revisão do sócio antes do fechamento da S-WM-57):** três ajustes pontuais sobre o Step 5 acima, resto do plano (Steps 1-4, 6 originais) permanece intacto.
+
+1. **Proteção contra status fora de ordem.** O `UPDATE` acima sobrescreve `logs_disparo` por `wamid` sem checar se o evento recebido é mais recente que o que já está gravado. Dois webhooks quase simultâneos pro mesmo `wamid` (ex.: "read" processado antes de "delivered" terminar de gravar, ou a Meta reentregando um evento antigo) podem fazer o `status` regredir (`lido` → `entregue`). Correção: gravar também o timestamp do evento (`status_evt.get("timestamp")`, epoch da Meta) numa coluna nova (`status_timestamp_meta timestamptz`, migration aditiva) e trocar o `UPDATE` para só aplicar quando o evento novo for mais recente — **verificado na própria query via `.or_()`** (ex.: `.or_(f"status_timestamp_meta.is.null,status_timestamp_meta.lt.{novo_timestamp}")`), não lendo o valor atual antes num `SELECT` separado e comparando em Python. A diferença importa: select-depois-compara tem janela de corrida entre 2 webhooks concorrentes pro mesmo `wamid` (os dois leem o valor antigo, os dois decidem sobrescrever); checar na própria condição do `UPDATE` é atômico no Postgres, sem essa janela.
+2. **2 valores de status faltando no `_STATUS_MAP`.** A Cloud API também manda `"deleted"` (mensagem apagada pelo usuário) e `"warning"` (aviso, com `errors[]` preenchido igual a `"failed"`) — nenhum dos dois está no dict hoje (`{"sent", "delivered", "read", "failed"}`), então esses eventos caem no `continue` e são descartados silenciosamente. Adicionar `"deleted": "apagada"` e `"warning": "aviso"` ao `_STATUS_MAP`; `"warning"` deve capturar `erro_codigo` do `errors[]` do evento, no mesmo bloco que hoje só trata isso pra `"failed"`.
+3. **+2 testes no Step 6** (total sobe de 6 para 8): um confirmando que a proteção de ordem está de fato amarrada no código (ex.: enviar um evento `"read"` com timestamp mais antigo depois de um `"delivered"` já gravado com timestamp mais novo, e assertar que o `status` final permanece `entregue`, não regride); outro confirmando que `"deleted"` e `"warning"` são mapeados corretamente (`"apagada"`/`"aviso"`, com `"warning"` também capturando `erro_codigo`).
+
 ### Step 6: Tests
 
 Neither `_processar_item_disparo_interno` nor `_processar_disparo_divulgacao_interno` has any existing test (confirmed by reading `worker/tests/test_campanhas_engine.py` in full — it only tests `_montar_parametros_named`, `_gravar_breadcrumb_disparo`, and `_query_leads_sync`). Add, in `worker/tests/test_campanhas_engine.py`, modeling the mocking style after `test_breadcrumb_cria_conversa_nova_quando_lead_nunca_falou_com_o_bot` (lines 165-185):
@@ -526,11 +532,11 @@ Neither `_processar_item_disparo_interno` nor `_processar_disparo_divulgacao_int
 5. `test_disparo_divulgacao_grava_ledger_por_destinatario` — same shape as #3, for `_processar_disparo_divulgacao_interno`.
 6. In `worker/tests/test_meta_adapter_inbound.py`, add `test_webhook_statuses_atualiza_ledger_por_wamid` — POST a payload shaped like `{"entry": [{"changes": [{"value": {"metadata": {...}, "statuses": [{"id": "wamid.ABC", "status": "delivered"}]}}]}]}` through `processar_webhook_meta` (or the relevant entry point this test file already uses for webhook payloads — follow the existing pattern for constructing a fake Meta payload in this file rather than inventing a new one) and assert `supabase.table("logs_disparo").update` was called with `status: "entregue"` and `.eq("wamid", "wamid.ABC")`.
 
-**Verify**: `cd worker && python -m pytest tests/test_campanhas_engine.py tests/test_meta_adapter_inbound.py -v` → all pass, including the 6 new tests. Then `cd worker && python -m pytest tests/ -v` → full suite green.
+**Verify**: `cd worker && python -m pytest tests/test_campanhas_engine.py tests/test_meta_adapter_inbound.py -v` → all pass, including the 6 new tests (8 after the 2026-07-28 update below). Then `cd worker && python -m pytest tests/ -v` → full suite green.
 
 ## Test plan
 
-- The 6 tests listed in Step 6, covering: wamid extraction on success/failure, ledger write for both dispatch paths, disparo-created-before-loop ordering, and webhook status consumption.
+- The 6 tests listed in Step 6 (8 after the 2026-07-28 update), covering: wamid extraction on success/failure, ledger write for both dispatch paths, disparo-created-before-loop ordering, webhook status consumption, out-of-order status protection, and the `deleted`/`warning` status mappings.
 - Structural pattern: `worker/tests/test_campanhas_engine.py`'s existing `MagicMock` + `monkeypatch.setattr(camp, "supabase", mock_sb)` style.
 - Verification: `cd worker && python -m pytest tests/ -v` → all pass.
 
@@ -539,11 +545,14 @@ Neither `_processar_item_disparo_interno` nor `_processar_disparo_divulgacao_int
 Machine-checkable. ALL must hold:
 
 - [ ] `cd worker && python -c "import campanhas_engine; import meta_adapter_inbound; import main"` exits 0
-- [ ] `cd worker && python -m pytest tests/ -v` exits 0, including the 6 new tests from Step 6
+- [ ] `cd worker && python -m pytest tests/ -v` exits 0, including the 6 new tests from Step 6 (8 after the 2026-07-28 update)
 - [ ] `grep -n "def _enviar_template_meta" -A 2 worker/campanhas_engine.py | grep "tuple\[bool, str | None\]"` matches (signature updated)
 - [ ] `grep -c "logs_disparo" worker/campanhas_engine.py` returns at least 2 (both dispatch functions write to it)
 - [ ] `grep -n "statuses" worker/meta_adapter_inbound.py` shows the new handling block
 - [ ] `supabase/migrations/20260727000000_reativa_logs_disparo_ledger.sql` exists and adds `disparo_divulgacao_id`, `wamid`, `atualizado_em` to `public.logs_disparo`
+- [ ] (2026-07-28 update) a follow-up additive migration adds `status_timestamp_meta timestamptz` to `public.logs_disparo`
+- [ ] (2026-07-28 update) `grep -n "_STATUS_MAP" -A 1 worker/meta_adapter_inbound.py` shows `deleted` and `warning` mapped alongside `sent`/`delivered`/`read`/`failed`
+- [ ] (2026-07-28 update) the Step 5 `UPDATE` checks `status_timestamp_meta` via `.or_()` in the query itself, not via a separate `SELECT` compared in Python
 - [ ] No files outside the in-scope list are modified (`git status`)
 - [ ] `plans/README.md` status row for Plan 007 updated
 

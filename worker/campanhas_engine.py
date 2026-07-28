@@ -237,8 +237,13 @@ async def _enviar_template_meta(
     token: str,
     template_name: str,
     components: list,
-) -> bool:
-    """POST Graph API v23.0 com type=template. Retorna True em sucesso."""
+) -> tuple[bool, str | None]:
+    """POST Graph API v23.0 com type=template. Retorna (sucesso, wamid).
+
+    S-WM-57: captura o wamid (WhatsApp message ID) da resposta de sucesso da Graph
+    API — necessário pra correlacionar com os eventos statuses[] (entregue/lido/
+    falhou) que o webhook da Meta manda depois, ver worker/meta_adapter_inbound.py.
+    """
     numero = _normalizar_numero_meta(to)
     url = f"https://graph.facebook.com/v23.0/{phone_number_id}/messages"
     body = {
@@ -259,12 +264,17 @@ async def _enviar_template_meta(
                 json=body,
             )
         if resp.status_code in (200, 201):
-            return True
+            wamid = None
+            try:
+                wamid = resp.json().get("messages", [{}])[0].get("id")
+            except Exception:
+                pass
+            return True, wamid
         logger.warning(f"[Meta] HTTP {resp.status_code} para {to}: {resp.text[:200]}")
-        return False
+        return False, None
     except Exception as exc:
         logger.error(f"[Meta] Erro ao enviar template {template_name!r} para {to}: {type(exc).__name__}")
-        return False
+        return False, None
 
 
 # ─── Processamento de itens de disparo ───────────────────────────────────────
@@ -380,6 +390,25 @@ async def _processar_item_disparo_interno(
         })
         return
 
+    # S-WM-57: disparo_id criado ANTES do loop (não mais só no fim) — cada linha do
+    # ledger (logs_disparo) grava referenciando um disparo_id que já existe desde o
+    # 1º envio, mesmo se o loop pausar/truncar no meio (error_threshold/daily_limit).
+    tipo_disparo = "pontual" if origem == "eventos_pontuais" else "mensal"
+    disparo_id = await asyncio.to_thread(_criar_disparo_sync, {
+        "tipo": tipo_disparo,
+        "evento_id": item_id if origem == "eventos_pontuais" else None,
+        "campanha_mensal_id": item_id if origem == "campanhas_mensais" else None,
+        "instancia_uazapi": phone_number_id,
+        "mensagem_template": template_name,
+        "midia_url": None,
+        "total_destinatarios": total,
+        "total_enviados": 0,
+        "total_erros": 0,
+        "status": "em_andamento",
+        "iniciado_em": datetime.now(timezone.utc).isoformat(),
+        "concluido_em": None,
+    })
+
     logger.info(
         f"Item {item_id} ({origem}): Disparando para {total} leads | "
         f"Template: {template_name} | phone={phone_number_id}"
@@ -436,7 +465,7 @@ async def _processar_item_disparo_interno(
                 ),
             }]
 
-        ok = await _enviar_template_meta(phone_number_id, numero, meta_token, template_name, components)
+        ok, wamid = await _enviar_template_meta(phone_number_id, numero, meta_token, template_name, components)
         if ok:
             sucessos += 1
             # Breadcrumb na conversa do lead
@@ -457,26 +486,40 @@ async def _processar_item_disparo_interno(
         else:
             erros += 1
 
+        # S-WM-57: ledger por destinatário (logs_disparo) — sempre em try/except próprio,
+        # nunca deixa uma falha de gravação virar erro contado nem parar o loop.
+        lead_id_ledger = lead.get("id")
+        if lead_id_ledger:
+            try:
+                await asyncio.to_thread(
+                    lambda: supabase.table("logs_disparo").insert({
+                        "disparo_id": disparo_id,
+                        "lead_id": lead_id_ledger,
+                        "telefone": numero,
+                        "wamid": wamid,
+                        "status": "enviado" if ok else "falhou",
+                    }).execute()
+                )
+            except Exception as ledger_err:
+                logger.warning(f"[Ledger] Erro ao gravar logs_disparo: {ledger_err}")
+
         if (i + 1) > 5:
             taxa_erro = (erros / (i + 1)) * 100
             if taxa_erro > error_threshold:
                 logger.error(f"Taxa de erro {taxa_erro:.1f}% > {error_threshold}%. Pausando!")
                 await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "pausada"})
+                await asyncio.to_thread(_update_db_sync, "disparos", disparo_id, {
+                    "status": "pausada",
+                    "total_enviados": sucessos,
+                    "total_erros": erros,
+                    "concluido_em": datetime.now(timezone.utc).isoformat(),
+                })
                 return
 
-    tipo_disparo = "pontual" if origem == "eventos_pontuais" else "mensal"
-    disparo_id = await asyncio.to_thread(_criar_disparo_sync, {
-        "tipo": tipo_disparo,
-        "evento_id": item_id if origem == "eventos_pontuais" else None,
-        "campanha_mensal_id": item_id if origem == "campanhas_mensais" else None,
-        "instancia_uazapi": phone_number_id,
-        "mensagem_template": template_name,
-        "midia_url": None,
-        "total_destinatarios": total,
+    await asyncio.to_thread(_update_db_sync, "disparos", disparo_id, {
+        "status": "concluida",
         "total_enviados": sucessos,
         "total_erros": erros,
-        "status": "concluida",
-        "iniciado_em": datetime.now(timezone.utc).isoformat(),
         "concluido_em": datetime.now(timezone.utc).isoformat(),
     })
     await asyncio.to_thread(_update_db_sync, origem, item_id, {
@@ -632,7 +675,7 @@ async def _processar_disparo_divulgacao_interno(
             ),
         }]
 
-        ok = await _enviar_template_meta(
+        ok, wamid = await _enviar_template_meta(
             phone_number_id, telefone, meta_token, template_divulgacao, components
         )
         if ok:
@@ -655,6 +698,23 @@ async def _processar_disparo_divulgacao_interno(
                     logger.warning(f"[Breadcrumb] Erro ao gravar contexto (divulgacao): {bc_err}")
         else:
             erros += 1
+
+        # S-WM-57: ledger por destinatário (logs_disparo) — mesmo padrão do motor
+        # eventos_pontuais/ouvidoria, sempre em try/except próprio.
+        lead_id_ledger = lead.get("id")
+        if lead_id_ledger:
+            try:
+                await asyncio.to_thread(
+                    lambda: supabase.table("logs_disparo").insert({
+                        "disparo_divulgacao_id": disparo_id,
+                        "lead_id": lead_id_ledger,
+                        "telefone": telefone,
+                        "wamid": wamid,
+                        "status": "enviado" if ok else "falhou",
+                    }).execute()
+                )
+            except Exception as ledger_err:
+                logger.warning(f"[Ledger] Erro ao gravar logs_disparo (divulgacao): {ledger_err}")
 
         if (i + 1) > 5:
             taxa_erro = (erros / (i + 1)) * 100

@@ -456,7 +456,7 @@ async def _notificar_transbordo(
             if corpo_texto:
                 preview = _render_template(corpo_texto, {1: nome, 2: lead_identificacao, 3: modulo})
                 logger.debug("[transbordo] preview: %s", preview[:120])
-            ok = await _enviar_template_meta(
+            ok, _wamid = await _enviar_template_meta(
                 phone_number_id_origem, telefone_destino, token,
                 template_name, components,
             )
@@ -557,9 +557,66 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         value = payload["entry"][0]["changes"][0]["value"]
         phone_number_id: str = value["metadata"]["phone_number_id"]
         messages = value.get("messages", [])
+        statuses = value.get("statuses", [])
     except (KeyError, IndexError):
         logger.warning("[meta-inbound] Estrutura entry/changes/value inesperada — descartado")
         return
+
+    # S-WM-57: consome os eventos statuses[] (entregue/lido/falhou) que a Meta manda
+    # depois de cada envio — antes descartados sem leitura junto com o early-return de
+    # "sem messages[]" abaixo. Best-effort: nunca deixa uma falha de lookup/update
+    # propagar da background task (o 200 pro webhook da Meta já foi respondido antes
+    # deste ponto, ver main.py).
+    if statuses:
+        supabase_status = _get_supabase()
+        _STATUS_MAP = {
+            "sent": "enviado",
+            "delivered": "entregue",
+            "read": "lido",
+            "failed": "falhou",
+            "deleted": "apagada",
+            "warning": "aviso",
+        }
+        for status_evt in statuses:
+            wamid_status = status_evt.get("id")
+            status_meta = status_evt.get("status")
+            if not wamid_status or status_meta not in _STATUS_MAP:
+                continue
+            erro_codigo = None
+            if status_meta in ("failed", "warning"):
+                erros_lista = status_evt.get("errors") or []
+                if erros_lista:
+                    erro_codigo = str(erros_lista[0].get("code", ""))
+            # S-WM-57 (emenda 2026-07-28): timestamp do evento reportado pela própria
+            # Meta, usado logo abaixo pra proteção contra status fora de ordem.
+            status_timestamp_meta = None
+            timestamp_evt = status_evt.get("timestamp")
+            if timestamp_evt is not None:
+                try:
+                    status_timestamp_meta = datetime.fromtimestamp(
+                        int(timestamp_evt), tz=timezone.utc
+                    ).isoformat()
+                except (TypeError, ValueError):
+                    status_timestamp_meta = None
+            try:
+                query = supabase_status.table("logs_disparo").update({
+                    "status": _STATUS_MAP[status_meta],
+                    "erro": erro_codigo,
+                    "atualizado_em": datetime.now(timezone.utc).isoformat(),
+                    "status_timestamp_meta": status_timestamp_meta,
+                }).eq("wamid", wamid_status)
+                # Proteção contra status fora de ordem (emenda 2026-07-28): só
+                # sobrescreve se não houver timestamp salvo ainda, ou se o evento
+                # novo for igual/mais recente que o já gravado. Checagem atômica na
+                # própria query (.or_), não select-depois-compara — evita a corrida
+                # entre 2 webhooks simultâneos pro mesmo wamid.
+                if status_timestamp_meta:
+                    query = query.or_(
+                        f"status_timestamp_meta.is.null,status_timestamp_meta.lte.{status_timestamp_meta}"
+                    )
+                query.execute()
+            except Exception as exc:
+                logger.warning(f"[meta-inbound] Erro ao atualizar status de wamid={wamid_status!r}: {exc}")
 
     # Ignorar eventos de status (delivery, read) sem messages[]
     if not messages:
