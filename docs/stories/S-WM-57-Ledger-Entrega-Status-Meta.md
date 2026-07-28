@@ -1,7 +1,7 @@
 # S-WM-57 — Ledger por destinatário de disparo (`logs_disparo`) + consumir `statuses[]` da Meta
 
 ## Status
-InReview — QA Gate: CONCERNS (gate original de 2026-07-27 cobre Steps 1-6 originais). **Delta da emenda 2026-07-28 implementado por @dev** (Tasks 5b/5c/6b/7b) — pendente de novo gate de @qa, só para o delta. @qa **não** acionado ainda — aguardando liberação explícita de Junior. @devops não acionado; validação com envio real ainda pendente.
+InReview — QA Gate: CONCERNS (gate original de 2026-07-27, escopo Steps 1-6, + re-gate de 2026-07-28 cobrindo o delta da emenda, Tasks 5b/5c/6b/7b — ambos CONCERNS, nenhum bloqueante). @devops **não** acionado — aguardando decisão de Junior. Validação com envio real (categoria "Equipe Interna — QA") ainda pendente, não coberta por nenhum dos 2 gates.
 
 ## Origem
 Investigação "Corrida da Juventude" (disparo de 724 leads, 24/07/2026) — `docs/qa/DIAGNOSTICO-disparo-corrida-juventude-2026-07-27.md`, achados arquiteturais nº 2 e nº 3 (seção 4) / achados B e C do diagnóstico arquitetural. Plano técnico completo, com a migration exata, os passos e os testes especificados, preservado integralmente em `docs/qa/planos-corrida-juventude/007-ledger-entrega-e-status-meta.md` — usar esse arquivo como referência técnica primária, não este resumo. Elaborado em 2026-07-26/27 (commit base `256d547`) — **não** dry-run executado ao vivo (sem Postgres disponível na sessão de origem); diff produzido por leitura direta do código, tratar com mais escrutínio que as demais stories da leva. Formalizada em story por @sm em 2026-07-27, setup de teste ("Equipe Interna — QA") já criado e confirmado. **Emenda 2026-07-28:** o mesmo arquivo do plano recebeu uma seção "Update (2026-07-28, revisão do sócio antes do fechamento da S-WM-57)", inserida logo após o Step 5 — 3 ajustes pontuais sobre o consumo de `statuses[]`, resto do plano (Steps 1-4, 6 originais) intacto. Ver Dev Notes.
@@ -140,6 +140,7 @@ Branch: `feat/ledger-entrega-status-meta`. Commits por passo (plano maior que os
 | 2026-07-27 | 0.4 | Gate de QA reconciliado: um passe anterior (preservado acima como FAIL) capturou o working tree no meio de um mutation check; reconciliação confirma working tree restaurado, limpo, suíte 153/3 reproduzida 3x. Corrigida imprecisão na descrição do mutation check do Teste 4 (não discrimina "ledger ausente" de "ledger fora de ordem" como alegado). Achado novo registrado (fora do checklist original, seguindo `impact-analysis-mandatory.md`): `disparos.status = "em_andamento"` é estado transitório novo sem consumidor hoje, mas com risco de linha órfã em crash de processo — relevante para o Plano 008. Veredito final: **CONCERNS**. @devops não acionado; validação com envio real (categoria "Equipe Interna — QA") ainda pendente. Status Ready for Review → InReview. | @qa Quinn |
 | 2026-07-28 | 0.5 | **Emenda pontual** (não reescrita): sócio revisou o Plano 007 e encontrou 3 ajustes no Step 5 (consumo de `statuses[]`), documentados na seção "Update (2026-07-28...)" acrescentada ao próprio plano. Adicionados AC 9-11, Tasks 5b/5c/6b/7b (pendentes, não implementadas): (1) proteção contra status da Meta fora de ordem via `status_timestamp_meta` + checagem atômica com `.or_()` na query, evitando corrida entre 2 webhooks simultâneos pro mesmo `wamid`; (2) mapeamento de `"deleted"`→`"apagada"` e `"warning"`→`"aviso"` no `_STATUS_MAP`; (3) 2 testes novos (Task 6 sobe de 6 para 8). Tasks 0-7 originais mantidas como concluídas (não refeitas). @dev **não** acionado — aguardando revisão de Junior antes de liberar a implementação do delta. | @sm River |
 | 2026-07-28 | 0.6 | **Delta da emenda implementado** (Tasks 5b/5c/6b/7b), escopo original (Steps 1-4, 6) não retocado: migration aditiva `status_timestamp_meta timestamptz` criada e aplicada em produção (`cuca`, via MCP); `_STATUS_MAP` ganhou `"deleted"`/`"warning"`, com `erro_codigo` capturado também em `"warning"`; `UPDATE` do consumo de `statuses[]` reescrito com `.or_()` atômico checando `status_timestamp_meta` (não `SELECT`-depois-compara), protegendo contra status fora de ordem. +2 testes novos, mutation check em cada (incluindo mutation isolada na captura de `erro_codigo` do `"warning"`), todos passaram de primeira e falharam corretamente sob mutação. Suíte completa: `155 passed, 3 skipped` (as 3 pré-existentes de `TestSendMessageEndpoint` apareceram como `skipped`, não `failed` — sinalizado para @qa confirmar, não é regressão deste delta). Nenhum arquivo fora do escopo do delta modificado. @qa **não** acionado — aguardando liberação explícita de Junior. | @dev Dex |
+| 2026-07-28 | 0.7 | **Re-gate do delta** (Tasks 5b/5c/6b/7b): suíte reproduzida de forma independente 2x (`155 passed, 3 skipped`); causa do `skipped` investigada a fundo (não aceita por relato) — `fastapi` genuinamente ausente do venv local agora, `skipif` preexistente no arquivo (não tocado pelo delta, `git diff` = 0 linhas), drift de ambiente entre sessões, não regressão de código; migration `20260728112959` confirmada aplicada e mais recente em `list_migrations`, coluna `status_timestamp_meta` confirmada ao vivo; `.or_()` confirmado amarrado no código via leitura direta (não só via teste passando), com ressalva não bloqueante: proteção não se aplica se o evento não trouxer `timestamp` parseável; os 2 mutation checks novos + o sinal isolado de `erro_codigo` em `warning` reproduzidos de forma independente (script próprio, não copiado do @dev) — todos falharam corretamente sob mutação, restaurados e suíte voltou a verde. Reconciliado com os 2 achados do gate anterior (S-WM-56 sem regressão, `em_andamento` órfão sem mudança, ambos não-bloqueantes). Veredito: **CONCERNS** (delta + story inteira) — nenhum achado bloqueante, mas registrados 2 itens novos não-bloqueantes (skip de ambiente, timestamp ausente). @devops **não** acionado — aguardando decisão de Junior. | @qa Quinn |
 
 ## Dev Agent Record
 
@@ -318,3 +319,76 @@ Nenhum dos dois bloqueia: os 6 ACs estao atendidos, a suite passa de forma repro
 
 - **Nao acionar @devops.** Sem push, sem PR — aguardando decisao de Junior.
 - **Validacao com envio real pendente**, categoria "Equipe Interna — QA" (`6e39d871-c640-41f8-b19d-ed3a3a97a9f8`) — necessaria depois deste gate, antes de considerar a story pronta para producao real. Nao e substituida por este gate.
+
+---
+
+## QA Results — Re-gate da emenda 2026-07-28 (Tasks 5b/5c/6b/7b)
+
+### Reviewed By: @qa Quinn
+
+### Escopo deste re-gate
+
+Cobre só o delta commitado por @dev Dex em cima do gate CONCERNS acima (commit `4b51670`, branch `feat/ledger-entrega-status-meta`): migration nova `status_timestamp_meta`, proteção contra status fora de ordem via `.or_()`, mapeamento de `deleted`/`warning`, +2 testes. Não refiz o gate do escopo original (Steps 1-4, 6) — permanece coberto pelo bloco CONCERNS acima, cujos 2 achados são reconciliados na seção final.
+
+### 1. Suíte completa reproduzida de forma independente
+
+`pytest tests/ -q` rodada 2x nesta revisão (antes e depois dos mutation checks): **`155 passed, 3 skipped`** nas duas vezes — mesma composição relatada pelo @dev (153 baseline + 2 novos). Os 3 `skipped` são os mesmos `TestSendMessageEndpoint` de sempre.
+
+### 2. Investigação skipped vs failed (ponto crítico pedido por Junior)
+
+Não aceitei o relato do @dev por si só — investiguei a causa raiz:
+
+- `pytest tests/test_meta_adapter_outbound.py::TestSendMessageEndpoint -rs` mostra o motivo exato do skip: `"fastapi não disponível neste ambiente de teste"` (linhas 624/646/660) — é um `@pytest.mark.skipif(not _fastapi_available, ...)` já existente no arquivo, não algo introduzido agora.
+- Confirmado ao vivo: `pip show fastapi` → *não encontrado*; `importlib.util.find_spec("fastapi")` → `None`. O pacote genuinamente não está instalado neste venv local agora, embora seja dependência real de produção (`worker/requirements.txt` lista `fastapi==0.110.0`, `worker/main.py` importa `FastAPI` de verdade).
+- `git log -p --follow -- worker/tests/test_meta_adapter_outbound.py` mostra que esse `skipif` já existia há vários commits, de muito antes desta story (não foi adicionado ou alterado pelo delta).
+- `git diff 4dccb8d..4b51670 -- worker/tests/test_meta_adapter_outbound.py` → **0 linhas** — o @dev não tocou nesse arquivo, confirmando que não é efeito colateral do código do delta.
+- `pip list` neste venv mostra só 29 pacotes, incluindo `openai` (que a própria story registrou como *ausente* num gate anterior — "main.py não importa isoladamente... por falta de `openai`"). Ou seja, o conteúdo deste venv local mudou entre sessões (pacotes instalados/removidos por quem trabalhou por último) — não é um ambiente de CI congelado.
+- **Conclusão:** a mudança de `failed` (`ModuleNotFoundError: No module named 'worker'`, relatado em gates anteriores) para `skipped` (`fastapi não disponível`) é **drift do ambiente local compartilhado** entre sessões de trabalho — antes, `fastapi` devia estar instalado (permitindo o teste chegar a rodar e falhar num import diferente); agora não está, e o próprio `skipif` da suíte intercepta antes disso. **Não é efeito colateral real do delta desta emenda** — o arquivo afetado nem foi tocado, e a causa (pacote ausente) é preexistente e externa ao código. Não bloqueia o gate, mas registro que esses 3 testes não estão de fato validando nada nesta execução (skip ≠ passou) — differente de "failed", que ao menos seria visível como uma regressão real se fosse uma. Recomendo ao Junior, fora do escopo desta story, reinstalar `fastapi` no venv local pra esses 3 testes voltarem a rodar de verdade.
+
+### 3. Mutation checks reproduzidos de forma independente (não confiei no relato do @dev)
+
+Reproduzi eu mesma, do zero, sem olhar os mutation checks do @dev antes:
+
+1. **Proteção de ordem:** neutralizei o `if status_timestamp_meta:` (trocado por `if False:`) via script Python direto no arquivo (não copiei a mutação do @dev) → `test_webhook_status_fora_de_ordem_protegido_por_or_atomico_na_query` **FALHOU** (`.or_() nunca foi chamado`). Restaurado via `git checkout --` → suíte voltou a `155 passed, 3 skipped`.
+2. **Mapeamento `deleted`/`warning`:** removi as 2 entradas do `_STATUS_MAP` → `test_webhook_status_deleted_e_warning_mapeados_corretamente` **FALHOU** (`update` nunca chamado, evento cai no `continue`). Restaurado → suíte limpa de novo.
+3. **Sinal independente da captura de `erro_codigo` em `warning`:** revertida a condição pra só `status_meta == "failed"` (mantendo `deleted`/`warning` no `_STATUS_MAP`) → mesmo teste do item 2 **FALHOU**, mas agora especificamente na asserção `erro == "470"` (não na de `status`), confirmando que é um sinal de teste independente do mapeamento de status, não a mesma falha disfarçada. Restaurado.
+
+Todas as 3 mutações confirmadas com o arquivo restaurado e `git status --short worker/` limpo ao final.
+
+### 4. Migration em produção — confirmado ao vivo
+
+- `execute_sql` (read-only, produção `cuca`/`svzkrkfzpiqcesloukgb`): `information_schema.columns` confirma `status_timestamp_meta` existe em `public.logs_disparo`, tipo `timestamp with time zone`, nullable.
+- `list_migrations`: `20260728112959 swm57_status_timestamp_meta_ordem` presente e é a migration mais recente da lista — aplicada e registrada corretamente.
+
+### 5. `.or_()` amarrado no código — confirmado por leitura direta, não por teste passando
+
+Li `worker/meta_adapter_inbound.py` linhas 601-617 diretamente: `query = query.or_(f"status_timestamp_meta.is.null,status_timestamp_meta.lte.{status_timestamp_meta}")` é chamado condicionalmente (`if status_timestamp_meta:`) sobre o builder retornado por `.update(...).eq(...)`, **antes** de `.execute()`. A semântica do filtro (`lte` sobre o valor já gravado) implementa corretamente "só sobrescreve se o evento novo for >= o já salvo". Ressalva não bloqueante: se o evento de webhook não trouxer `timestamp` parseável, `status_timestamp_meta` fica `None` e o `.or_()` **não** é aplicado — o `UPDATE` ocorre sem proteção de ordem nesse caso específico (mesmo comportamento de antes da emenda, não uma regressão, mas a proteção não é 100% incondicional). Payloads reais da Meta sempre trazem `timestamp`; risco residual baixo, registrando para conhecimento.
+
+### 6. Reconciliação com os achados do gate anterior (CONCERNS)
+
+1. **Teste S-WM-56 corrigido sem regressão:** reconferido nesta revisão — `test_disparo_divulgacao_grava_breadcrumb_apos_envio_com_sucesso` e `test_disparo_divulgacao_nao_grava_breadcrumb_quando_envio_falha` passam, não tocados pelo delta. Achado do gate anterior permanece resolvido, sem necessidade de nova ação.
+2. **Estado `em_andamento` órfão em `disparos`:** não relacionado ao delta desta emenda (que só toca `logs_disparo`/`meta_adapter_inbound.py`) — continua registrado como achado não-bloqueante, relevante para o Plano 008, sem mudança de status aqui.
+
+Nenhum achado novo bloqueante surgiu da investigação do delta além do já registrado no item 5 (ressalva não bloqueante sobre timestamp ausente) e item 2 (drift de ambiente, não é regressão de código).
+
+### Escopo/regressão do delta
+
+- `git diff 4dccb8d..4b51670 --stat`: só os 5 arquivos esperados (migration nova, `meta_adapter_inbound.py`, `test_meta_adapter_inbound.py`, story, plano) — nenhum arquivo fora do escopo do delta tocado.
+- Nenhum arquivo do escopo original (Steps 1-4, 6: `campanhas_engine.py`, `main.py`, `test_campanhas_engine.py`, migration de 07-27) foi modificado por este delta.
+
+### Gate Decision (delta + story inteira): CONCERNS
+
+Mantenho **CONCERNS** (não PASS, não FAIL) pela mesma régua já aplicada no gate anterior ("prefira CONCERNS a PASS quando não tiver certeza absoluta"). O delta em si está correto e bem testado — nenhum achado novo bloqueante. Os itens que impedem PASS são os já conhecidos, mais um novo, todos não-bloqueantes:
+
+1. (Já existia) `em_andamento` é estado transitório novo em `disparos`, sem consumidor hoje, risco de linha órfã em crash — assunto do Plano 008, fora do escopo desta story.
+2. (Já existia, teste 4 original) a alegação de "mutation cirúrgica" não se sustenta como descrita — já corrigido no corpo da story, não bloqueante.
+3. **(Novo, deste re-gate)** os 3 testes pré-existentes de `TestSendMessageEndpoint` estão `skipped` (não rodando de fato) neste ambiente local por ausência do pacote `fastapi` — drift de ambiente, não causado por este delta, mas significa que essa parte da suíte não está validando nada nesta execução. Recomendo reinstalar `fastapi` no venv antes do próximo gate que dependa dela.
+4. **(Novo, deste re-gate)** a proteção contra status fora de ordem não se aplica quando o evento de webhook não traz `timestamp` parseável — risco residual baixo (Meta sempre envia esse campo em produção), mas vale registrar.
+
+Nenhum dos 4 bloqueia: os ACs 9, 10 e 11 estão atendidos e verificados de forma independente (não só pelo relato do @dev), a migration está aplicada e confirmada ao vivo, o `.or_()` está de fato no código (não só no teste), a suíte é reproduzível (`155/3 skipped`, 2x), e não há regressão no escopo original nem na S-WM-56.
+
+### Pendências (não pular etapa)
+
+- **Não acionar @devops.** Sem push, sem PR — aguardando decisão de Junior.
+- **Validação com envio real ainda pendente**, categoria "Equipe Interna — QA" — não coberta por este re-gate (que é só sobre o delta de código/banco), necessária antes de considerar a story pronta para produção real.
+- Recomendação não bloqueante: reinstalar `fastapi` no venv local do worker pra os 3 testes de `TestSendMessageEndpoint` voltarem a rodar de verdade (hoje `skipped`, não validando nada).
