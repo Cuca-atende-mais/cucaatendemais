@@ -1636,3 +1636,70 @@ async def test_webhook_statuses_atualiza_ledger_por_wamid():
     assert update_call.args[0]["status"] == "entregue"
     eq_call = mock_supabase.table.return_value.update.return_value.eq.call_args
     assert eq_call.args == ("wamid", "wamid.ABC")
+
+
+@pytest.mark.asyncio
+async def test_webhook_status_fora_de_ordem_protegido_por_or_atomico_na_query():
+    """Emenda 2026-07-28 (revisão do sócio, Plano 007): o UPDATE de logs_disparo por
+    wamid sobrescrevia o status sem checar se o evento recebido era mais recente que
+    o já gravado — 2 webhooks quase simultâneos pro mesmo wamid podiam fazer o status
+    regredir (ex.: 'lido' sobrescrito por um 'entregue' atrasado). Este teste trava
+    que a proteção está amarrada na própria query via .or_() (atômico), não como um
+    design que não chega a ser aplicado no código — e não via SELECT-depois-compara
+    em Python, que teria a mesma janela de corrida que esta emenda corrige."""
+    from unittest.mock import MagicMock
+
+    payload = _payload_status(wamid="wamid.ORDEM", status="delivered")
+    raw = json.dumps(payload).encode()
+
+    mock_supabase = MagicMock()
+
+    with patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase):
+        await processar_webhook_meta(raw)
+
+    update_call = mock_supabase.table.return_value.update.call_args
+    assert update_call is not None, "logs_disparo.update nunca foi chamado"
+    assert update_call.args[0]["status_timestamp_meta"] is not None, (
+        "status_timestamp_meta nao foi gravado a partir do timestamp do evento da Meta"
+    )
+
+    or_call = mock_supabase.table.return_value.update.return_value.eq.return_value.or_.call_args
+    assert or_call is not None, (
+        ".or_() nunca foi chamado na query do UPDATE — protecao contra status fora "
+        "de ordem nao esta amarrada no codigo, so no design"
+    )
+    filtro = or_call.args[0]
+    assert "status_timestamp_meta.is.null" in filtro
+    assert "status_timestamp_meta.lte." in filtro
+
+
+@pytest.mark.asyncio
+async def test_webhook_status_deleted_e_warning_mapeados_corretamente():
+    """Emenda 2026-07-28 (revisão do sócio, Plano 007): 'deleted' e 'warning' faltavam
+    no _STATUS_MAP — antes caiam no 'continue' e eram descartados silenciosamente,
+    igual todo o resto de statuses[] antes da S-WM-57. 'warning' também precisa
+    capturar o código de erro de errors[], igual 'failed' já faz."""
+    from unittest.mock import MagicMock
+
+    payload_deleted = _payload_status(wamid="wamid.DEL", status="deleted")
+    mock_supabase_deleted = MagicMock()
+    with patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase_deleted):
+        await processar_webhook_meta(json.dumps(payload_deleted).encode())
+
+    update_call_deleted = mock_supabase_deleted.table.return_value.update.call_args
+    assert update_call_deleted is not None, "logs_disparo.update nunca foi chamado (deleted)"
+    assert update_call_deleted.args[0]["status"] == "apagada"
+
+    payload_warning = _payload_status(
+        wamid="wamid.WARN",
+        status="warning",
+        errors=[{"code": 470, "title": "Message failed to send because of an unknown error"}],
+    )
+    mock_supabase_warning = MagicMock()
+    with patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase_warning):
+        await processar_webhook_meta(json.dumps(payload_warning).encode())
+
+    update_call_warning = mock_supabase_warning.table.return_value.update.call_args
+    assert update_call_warning is not None, "logs_disparo.update nunca foi chamado (warning)"
+    assert update_call_warning.args[0]["status"] == "aviso"
+    assert update_call_warning.args[0]["erro"] == "470"

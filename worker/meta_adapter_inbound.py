@@ -569,23 +569,52 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
     # deste ponto, ver main.py).
     if statuses:
         supabase_status = _get_supabase()
-        _STATUS_MAP = {"sent": "enviado", "delivered": "entregue", "read": "lido", "failed": "falhou"}
+        _STATUS_MAP = {
+            "sent": "enviado",
+            "delivered": "entregue",
+            "read": "lido",
+            "failed": "falhou",
+            "deleted": "apagada",
+            "warning": "aviso",
+        }
         for status_evt in statuses:
             wamid_status = status_evt.get("id")
             status_meta = status_evt.get("status")
             if not wamid_status or status_meta not in _STATUS_MAP:
                 continue
             erro_codigo = None
-            if status_meta == "failed":
+            if status_meta in ("failed", "warning"):
                 erros_lista = status_evt.get("errors") or []
                 if erros_lista:
                     erro_codigo = str(erros_lista[0].get("code", ""))
+            # S-WM-57 (emenda 2026-07-28): timestamp do evento reportado pela própria
+            # Meta, usado logo abaixo pra proteção contra status fora de ordem.
+            status_timestamp_meta = None
+            timestamp_evt = status_evt.get("timestamp")
+            if timestamp_evt is not None:
+                try:
+                    status_timestamp_meta = datetime.fromtimestamp(
+                        int(timestamp_evt), tz=timezone.utc
+                    ).isoformat()
+                except (TypeError, ValueError):
+                    status_timestamp_meta = None
             try:
-                supabase_status.table("logs_disparo").update({
+                query = supabase_status.table("logs_disparo").update({
                     "status": _STATUS_MAP[status_meta],
                     "erro": erro_codigo,
                     "atualizado_em": datetime.now(timezone.utc).isoformat(),
-                }).eq("wamid", wamid_status).execute()
+                    "status_timestamp_meta": status_timestamp_meta,
+                }).eq("wamid", wamid_status)
+                # Proteção contra status fora de ordem (emenda 2026-07-28): só
+                # sobrescreve se não houver timestamp salvo ainda, ou se o evento
+                # novo for igual/mais recente que o já gravado. Checagem atômica na
+                # própria query (.or_), não select-depois-compara — evita a corrida
+                # entre 2 webhooks simultâneos pro mesmo wamid.
+                if status_timestamp_meta:
+                    query = query.or_(
+                        f"status_timestamp_meta.is.null,status_timestamp_meta.lte.{status_timestamp_meta}"
+                    )
+                query.execute()
             except Exception as exc:
                 logger.warning(f"[meta-inbound] Erro ao atualizar status de wamid={wamid_status!r}: {exc}")
 
