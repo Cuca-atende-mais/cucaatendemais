@@ -1,7 +1,7 @@
 # S-WM-58 — Painel de Acompanhamento de Envios: Visão de Entrega (leitura)
 
 ## Status
-Ready for Review — implementada por @dev em branch isolada (`feat/painel-acompanhamento-envios`, a partir de `main` já com S-WM-57/PR#62 mergeado). Aguardando @qa.
+InReview — QA Gate: **CONCERNS** (2 achados relevantes: enforcement de permissão não confirmado com HTTP autenticado real de ponta a ponta; join por FK reversa omite 4 de 9 disparos pontuais reais do painel — ver QA Results). @devops não acionado, aguardando decisão de Junior.
 
 ## Origem
 Pedido direto do Junior/sócio: um painel de acompanhamento de envios no portal, cobrindo os 4 motores de disparo (pontual, mensal/divulgação, ouvidoria, Academia Enem). Formalizado por @sm em 2026-07-28, após investigação de 2 pontos sinalizados como bloqueantes/relevantes antes de desenhar o escopo (ver "Achados de Investigação" abaixo). O pedido original foi dividido em **2 stories** por uma fronteira de dependência real encontrada na investigação — ver "Por que 2 stories" abaixo. Esta é a metade **não bloqueada**. A outra metade (controle: pausa/reenvio/limite) é a **S-WM-59**, bloqueada pelo Plano 008 (ainda não formalizado).
@@ -147,3 +147,81 @@ Branch: `feat/painel-acompanhamento-envios`, a partir de `main` (já com PR#62/S
 | 2026-07-28 | 0.1 | Story criada a partir de pedido do Junior/sócio (painel de acompanhamento de envios). Escopo dividido em 2 stories (esta + S-WM-59) pela fronteira real de dependência do Plano 008, encontrada durante investigação. 2 achados de investigação registrados (Academia Enem — bloqueante, decisão do sócio pendente; RBAC — reaproveitável, 2 alertas). @dev não acionado — aguardando validação do sócio. | @sm River |
 | 2026-07-28 | 0.2 | 2 decisões de Junior incorporadas: (1) Academia Enem confirmado fora de escopo desta rodada, registrado como item futuro separado (sem story própria por ora); (2) e-mail do bypass developer confirmado como `dev.cucaatendemais@gmail.com` (o underscore do pedido original era erro de digitação) — Task 0 do e-mail marcada concluída, sem ajuste de código necessário. | @sm River |
 | 2026-07-28 | 0.3 | Implementação completa em branch isolada `feat/painel-acompanhamento-envios` (a partir de `main`, já com PR#62/S-WM-57 mergeado). RPC `listar_disparos_acompanhamento` + seed RBAC aplicados em produção; registro RBAC no menu e na matriz de perfis; rota + página seguindo o padrão real de `api/divulgacao/disparar` (não o padrão RLS-`has_permission()` do Academia Enem, que não se aplica às tabelas subjacentes já permissivas). Achados de schema registrados nas Dev Notes (`disparos.tipo` não distingue motor, `ouvidoria_eventos.disparo_id` é `text` vs `uuid` em `eventos_pontuais`). 9 testes novos + mutation check em ambas as funções puras, sem exceção. `npm test`/`tsc --noEmit`/`eslint` sem erro novo. Status Draft → Ready for Review. | @dev Dex |
+| 2026-07-28 | 0.4 | Gate de QA: **CONCERNS**. Enforcement de permissão confirmado extensivamente (dados reais, testes com mutation, estrutura de FK, HTTP real pro caso não-autenticado) mas **não** com uma chamada HTTP autenticada real de ponta a ponta (sem senha de usuário de teste disponível) — não atinge o padrão de certeza absoluta pedido para PASS neste ponto. Achado novo e mais concreto: o JOIN por FK reversa (`eventos_pontuais.disparo_id`/`ouvidoria_eventos.disparo_id`) **omite silenciosamente 4 de 9 disparos pontuais reais** do painel — achado não reportado pelo @dev. Advisor de segurança: 1 WARN (`function_search_path_mutable`), mas confirmado que é padrão pré-existente do projeto (`has_permission`/`is_developer`/`buscar_leads_por_categoria` têm o mesmo gap), não regressão desta story. Escopo confirmado limpo (8 arquivos). Status InReview. @devops não acionado. | @qa Quinn |
+
+## QA Results
+
+### Review Date: 2026-07-28
+
+### Reviewed By: @qa Quinn
+
+### Escopo deste gate
+
+S-WM-58 completa (commit `0804893`, branch `feat/painel-acompanhamento-envios`). Não confiei em nenhum relato do @dev sem verificação própria — todos os pontos abaixo foram checados de forma independente (dados reais em produção, HTTP real quando possível, mutation checks reproduzidos do zero).
+
+### 1. Enforcement de permissão — ponto mais sensível, verificado em profundidade, não 100% de ponta a ponta
+
+**(a) Padrão real do Ouvidoria — CONFIRMADO independentemente (não por relato):**
+```sql
+-- ouvidoria_eventos / ouvidoria_registros, ao vivo em produção:
+"Acesso total a eventos para autenticados" ON ouvidoria_eventos FOR ALL TO authenticated USING (true)
+"Acesso total a registros para autenticados" ON ouvidoria_registros FOR ALL TO authenticated USING (true)
+"Ouvidoria: Leitura restrita por unidade ou developer" ... USING (is_developer() OR unidade_cuca IS NULL OR unidade_cuca = get_my_unit() OR get_my_unit() IS NULL)
+```
+Confirmado: **é de fato o padrão real hoje**, não uma exceção nova — RLS permissiva pra qualquer autenticado, enforcement real só no menu/client. Também reconferi as 4 tabelas que este painel lê (`disparos`, `disparos_divulgacao`, `logs_disparo`, `eventos_pontuais`): todas têm policy permissiva equivalente (`auth.uid() IS NOT NULL` ou `true` para `authenticated`). Isso confirma que adicionar uma policy `has_permission()` a essas tabelas **não teria efeito nenhum** (Postgres faz `OR` entre policies permissivas do mesmo comando) — a decisão do @dev de não mexer em RLS e enforçar via TypeScript na rota está correta e é consistente com o único precedente real do projeto pra este tipo de dado (`api/divulgacao/disparar`).
+
+**Achado colateral, não bloqueante mas relevante para o registro:** como essas 4 tabelas já são legíveis por qualquer usuário autenticado via RLS, um colaborador **sem** `config_acompanhamento_envios` pode, hoje, ler os mesmos dados diretamente via `supabase.from('logs_disparo').select('*')` no client, contornando a rota nova inteiramente. Isso **não é uma falha introduzida por esta story** — é uma característica pré-existente da RLS dessas tabelas, e corrigi-la exigiria uma iniciativa de hardening de RLS bem maior, fora de escopo aqui. Mas significa que o AC1 ("nem a rota é acessível diretamente, RLS bloqueia") só é literalmente verdadeiro pra visão **agregada** da rota nova — não pro dado bruto subjacente, que já não era protegido antes desta story. Registrando pra consciência de Junior, não como bloqueio.
+
+**(b) Teste real, não só leitura de código:**
+- Subi o servidor Next.js real (`npm run dev`) com URL/anon key reais de produção (obtidos via `get_project_url`/`get_publishable_keys`, sem tocar em `SUPABASE_SERVICE_ROLE_KEY`) e chamei `GET /api/configuracoes/acompanhamento-envios` sem nenhum cookie de sessão: **confirmei via HTTP real** — `307` redirecionando pra `/login`. Achado extra (não mencionado pelo @dev): isso acontece no **middleware da aplicação** (`src/middleware.ts`, matcher cobre `/api/*`), uma camada adicional de proteção **antes** até da própria checagem de `avaliarAcesso` da rota — o `401` que a rota devolveria sozinha é código correto, mas na prática inalcançável via browser normal porque o middleware já barra antes. Isso é comportamento consistente em todo o app (não introduzido por esta story), só não estava documentado nas Dev Notes.
+- Consultei ao vivo em produção os dados reais que alimentam a checagem: um colaborador real com role `Gerente` (`pattyejunior2007@gmail.com`) **não tem** nenhuma linha em `sys_permissions` para `config_acompanhamento_envios` — receberia 403. Um colaborador real com role `Super Admin Cuca` (`valmirmoreirajunior@gmail.com`) **tem** `can_read = true` — receberia acesso. Também confirmei que as 2 relações de FK que o `select` aninhado do Supabase-js depende (`colaboradores.role_id → sys_roles`, `sys_permissions.role_id → sys_roles`) existem de fato — sem elas, o embedding do PostgREST simplesmente não funcionaria.
+- **O que NÃO consegui confirmar**: uma chamada HTTP autenticada de verdade (login real de um usuário sem a permissão, batendo na rota, recebendo 403 via rede) — não tinha senha de nenhum usuário de teste disponível, e não fui atrás do `SUPABASE_SERVICE_ROLE_KEY` pra forjar uma sessão (ação maior do que o escopo deste gate justifica). Isso é uma lacuna real na verificação de ponta a ponta, não um achado de defeito — mas, seguindo a instrução explícita de Junior ("se não conseguir confirmar com certeza... não dê PASS"), não posso tratar isso como 100% confirmado.
+
+**(c) Bypass dos 2 e-mails developer:** confirmado no código (`DEVELOPER_EMAILS` em `route.ts` inclui `valmir@cucateste.com` e `dev.cucaatendemais@gmail.com`, idêntico ao array já usado em produção por `api/divulgacao/disparar/route.ts`) — mesmo mecanismo, não uma cópia com erro de digitação. Não testado via login real pelo mesmo motivo do item (b).
+
+### 2. Schema — achados do @dev confirmados, mais 1 achado novo
+
+- **Confirmado**: `disparos.tipo` não distingue motor de forma confiável — dado real em produção mostra só os valores `pontual`/`mensal`, nenhuma distinção "ouvidoria". A FK reversa (`eventos_pontuais.disparo_id`/`ouvidoria_eventos.disparo_id`) é de fato a única forma correta de distinguir.
+- **Confirmado**: `ouvidoria_eventos.disparo_id` é `text`, `eventos_pontuais.disparo_id` é `uuid` — o cast (`d.id::text`) na migration está correto e a função foi aplicada sem erro.
+- **ACHADO NOVO, não reportado pelo @dev**: o `LEFT JOIN` por FK reversa **omite silenciosamente disparos reais** que não têm essa FK preenchida. Contagem direta em produção: `disparos` tem **10** linhas `tipo='pontual'`, mas só **5** têm alguma linha em `eventos_pontuais`/`ouvidoria_eventos` apontando de volta pra elas via `disparo_id` — **5 ficam de fora da RPC inteiramente** (1 delas é um disparo sintético de validação da própria S-WM-57, esperado ficar de fora; as outras **4 são disparos reais de produção** com `total_destinatarios` entre 2 e 4, perfeitamente elegíveis pra aparecer no painel). Investigando a causa raiz de 1 dos 4 (`evento_id = 3cb1226e-...`): a linha em `eventos_pontuais` existe, mas seu `disparo_id` aponta pra **outro** disparo (o de "Corrida da Juventude") — ou seja, `eventos_pontuais.disparo_id` guarda só o **último** disparo daquele evento, não um histórico; se o mesmo evento gerar mais de um `disparos` ao longo do tempo, todos exceto o mais recente ficam órfãos da FK reversa pra sempre. Não existe FK/constraint entre `disparos.evento_id` e `eventos_pontuais.id` (confirmado via `pg_constraint`), então a integridade referencial nem é garantida nos dois sentidos. **Efeito prático**: o painel "Visão de Entrega" — cujo propósito inteiro é visibilidade completa — está hoje omitindo ~44% dos disparos pontuais reais já existentes, sem nenhum sinal de que isso está acontecendo (não aparece como "motor desconhecido", simplesmente não aparece). Isso não é um problema de segurança nem quebra os números dos disparos que **são** exibidos (AC3 continua correto pra esses), mas é uma lacuna de completude real, reproduzida com dado real, que a story deveria tratar — ao menos com um fallback pra `disparos.tipo` + título genérico quando a FK reversa não encontrar nada, em vez de excluir a linha do `UNION ALL`.
+
+### 3. Reprodução da suíte — independente
+
+- `npm test` (vitest): `24 passed` (inclui os pré-existentes de `planilha-parser`, este painel não adiciona nada ali — confirma que `tests/acompanhamento-envios-logic.test.ts` **não é coberto por `npm test`**, é rodado só via `node --test`, mesma limitação pré-existente já documentada pelo @dev).
+- `node --experimental-strip-types --test tests/*.test.ts`: **15 passed, 0 failed** (9 novos + 6 pré-existentes de `divulgacao-disparar-logic`).
+- **Mutation checks reproduzidos de forma independente** (script próprio, não reaproveitei o do @dev): neutralizei a checagem de módulo em `avaliarAcesso` → 2 testes falharam corretamente; restaurado → suíte voltou a verde. Neutralizei a validação de motor em `validarFiltros` → 1 teste falhou corretamente; restaurado → suíte voltou a verde. Working tree confirmado limpo (`git status`) após cada restauração.
+- `tsc --noEmit`: só os 2 erros já conhecidos/simétricos (`TS5097`, import com extensão `.ts` literal — mesmo em `divulgacao-disparar-logic.test.ts`, pré-existente, não introduzido aqui). `eslint`: 0 erros, 1 warning pré-existente em `perfis/page.tsx` não relacionado à linha editada.
+
+### 4. Migration e agregação — confirmado ao vivo
+
+- `list_migrations` confirma `20260728162027_swm58_acompanhamento_envios_rpc_rbac` como a mais recente.
+- `listar_disparos_acompanhamento()` chamada ao vivo: `28 divulgacao + 5 pontual`, `0 ouvidoria` — bate exatamente com o relatado pelo @dev. Cross-check contra contagem direta nas tabelas base (não confiando só na RPC) confirma os mesmos números — **ver achado do item 2 acima sobre os 5 disparos pontuais fora do total de 10**.
+
+### 5. Escopo — confirmado limpo
+
+`git diff main..HEAD --stat`: exatamente os 8 arquivos esperados. Nenhum botão de reenvio, seletor de limite, referência a Academia Enem, ou arquivo de `worker/` tocado.
+
+### 6. RLS / Advisors
+
+- Security: **1 WARN** — `function_search_path_mutable` em `listar_disparos_acompanhamento`. Verificado que **não é regressão**: `has_permission`, `is_developer` e `buscar_leads_por_categoria` (funções canônicas do projeto) têm exatamente o mesmo `proconfig NULL` — padrão pré-existente em todo o projeto, não introduzido por esta story. Não bloqueante, mas seria bom endereçar num lote futuro (afeta várias funções, não só esta).
+- Performance: 0 achados novos relacionados a `config_acompanhamento_envios` ou `listar_disparos_acompanhamento`.
+
+### Limpeza
+
+Removido `cuca-portal/.env.local` (criado só pra este teste de HTTP real, com URL/anon key públicos de produção — nunca continha a service role key). Confirmado gitignored e sem rastro no `git status`. Servidor `next dev` de teste finalizado.
+
+### Gate Decision: CONCERNS
+
+Não uso PASS pelos 2 motivos abaixo (nenhum dos dois bloqueia, mas nenhum permite certeza absoluta):
+
+1. **Enforcement de permissão** — confirmado com dado real, testes com mutation, estrutura de FK e HTTP real pro caso não-autenticado, mas **não** com uma chamada HTTP autenticada de ponta a ponta (sem senha de usuário de teste disponível, não fui atrás da service role key pra contornar isso). Seguindo a instrução explícita de Junior, isso impede PASS neste ponto especificamente, mesmo com toda a evidência indireta apontando pra funcionamento correto.
+2. **Achado novo de completude** — o JOIN por FK reversa omite 4 de 9 disparos pontuais reais do painel, silenciosamente. Não é falha de segurança nem dado errado nos disparos que aparecem, mas é uma lacuna real de completude num painel cujo propósito é exatamente visibilidade total.
+
+Nenhum dos dois é "a feature não funciona" — os 3 motores aparecem, os números batem pros disparos exibidos, RBAC segue o único padrão real do projeto pra este tipo de dado. Mas não atingem o padrão de certeza pedido pra PASS.
+
+### Pendências (não pular etapa)
+
+- **Não acionar @devops.** Sem push, sem PR — aguardando decisão de Junior.
+- Recomendação não bloqueante: adicionar fallback no `UNION ALL` da RPC pra disparos `tipo='pontual'`/`'mensal'` sem match de FK reversa (usar `d.tipo` + título genérico "(evento removido ou desvinculado)"), pra não perder histórico real silenciosamente.
+- Recomendação não bloqueante: `SET search_path = public` na função nova (e, num lote futuro, nas demais que já têm o mesmo gap).
+- Se Junior quiser confirmação end-to-end completa do item 1(b), precisa de uma senha de usuário de teste real (ex.: um dos e-mails de `sys_roles = 'Gerente'`/`'Institucional'`) ou autorização explícita pra usar a service role key e forjar uma sessão — nenhuma das duas foi feita neste gate.
