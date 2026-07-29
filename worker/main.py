@@ -452,6 +452,43 @@ async def academia_enem_process_endpoint(request: Request, background_tasks: Bac
         return Response(status_code=500, content=str(e))
 
 
+@app.post("/retomar-disparo/{origem}/{item_id}")
+async def retomar_disparo_endpoint(origem: str, item_id: str, request: Request, background_tasks: BackgroundTasks):
+    """Plano 008/S-WM-60 (Step 4): retomada manual (nunca automática) de um item pausado
+    por daily_limit. origem: 'eventos_pontuais' | 'ouvidoria_eventos' | 'divulgacao'.
+
+    Autenticação M2M: exige header x-internal-token == WEBHOOK_INTERNAL_TOKEN, mesmo
+    segredo interno usado por /academia-enem/process (worker/main.py:425-452) — mas
+    devolve 403 (não 401) pra token ausente/inválido, conforme AC4 da S-WM-60; o restante
+    do shape (Request + headers.get, Response por status_code, fail-closed se o token não
+    estiver configurado no worker) segue o padrão real já em produção neste arquivo.
+
+    Fire-and-forget (background_tasks), não aguardado inline: uma retomada pode enviar
+    para centenas de leads com delay anti-ban entre cada um (mesmo motivo pelo qual
+    /academia-enem/process já usa esse padrão) — aguardar isso na resposta HTTP arriscaria
+    timeout de gateway antes do envio terminar."""
+    expected = os.getenv("WEBHOOK_INTERNAL_TOKEN")
+    if not expected:
+        logger.error("[retomar-disparo] WEBHOOK_INTERNAL_TOKEN não configurada no worker — rejeitando.")
+        return Response(status_code=503, content="internal token not configured")
+    if request.headers.get("x-internal-token") != expected:
+        logger.warning("[retomar-disparo] token interno inválido — requisição rejeitada (403).")
+        return Response(status_code=403, content="Token inválido")
+    if origem not in ("eventos_pontuais", "ouvidoria_eventos", "divulgacao"):
+        return Response(status_code=400, content="origem inválida")
+
+    from campanhas_engine import get_config, retomar_disparo_pausado, retomar_disparo_divulgacao_pausado  # noqa: PLC0415
+    delay_min = await get_config("anti_ban_delay_min", 2000)
+    delay_max = await get_config("anti_ban_delay_max", 5000)
+    error_threshold = await get_config("anti_ban_error_threshold", 10)
+
+    if origem == "divulgacao":
+        background_tasks.add_task(retomar_disparo_divulgacao_pausado, item_id, delay_min, delay_max, None, error_threshold)
+    else:
+        background_tasks.add_task(retomar_disparo_pausado, item_id, origem, delay_min, delay_max, None, error_threshold)
+    return {"status": "retomada_iniciada"}
+
+
 @app.post("/buscar-vagas")
 async def buscar_vagas_endpoint(request: Request):
     """S18-02: Busca vagas abertas em todas as CUCAs para o motor-agente."""

@@ -23,8 +23,10 @@ de `postgrest.exceptions.APIError` (construtor recebe um dict e expõe
 instalado em outro projeto local, postgrest 2.27.2) — suficiente pros testes
 que checam `exc.code`, sem precisar do pacote real.
 """
+import asyncio
 import os
 import sys
+import threading
 import types
 from unittest.mock import AsyncMock, MagicMock
 
@@ -625,3 +627,496 @@ async def test_disparo_divulgacao_grava_ledger_por_destinatario(monkeypatch):
     assert payload["lead_id"] == "lead-div-ledger-1"
     assert payload["wamid"] == "wamid.DIV1"
     assert payload["status"] == "enviado"
+
+
+# ---------------------------------------------------------------------------
+# Plano 008 / S-WM-60: daily_limit deixa de mentir "concluída"/"concluido" (Steps 1-2),
+# retomada manual sem duplicar quem já recebeu (Step 3), disparo travado em em_andamento
+# vira log crítico (Step 5), daily_limit passa a ser por phone_number_id (Step 6).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_daily_limit_pausa_item_em_vez_de_concluir(monkeypatch):
+    """Step 1 (AC1): daily_limit atingido no meio do loop pausa com
+    'pausada_limite_diario' — achado original do plano (era só um break silencioso,
+    finalizando com 'concluida' falso e total_destinatarios != total_enviados sem sinal)."""
+    mock_sb, tabelas = _mock_supabase_disparo_pontual(
+        [{"nome": "tpl_pontual", "corpo_texto": "...", "variaveis": []}]
+    )
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-pontual-1", "token-1"))
+    leads = [{"id": f"lead-{i}", "telefone": "5585999999999", "nome": "Fulano"} for i in range(5)]
+    monkeypatch.setattr(camp, "_query_leads_sync", lambda unidade, categorias_alvo: MagicMock(data=leads))
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.XYZ")))
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+
+    item = {"id": "evento-1", "titulo": "Evento Teste", "descricao": "desc"}
+    await camp._processar_item_disparo_interno(item, "eventos_pontuais", 0, 0, 3, 100)
+
+    disparo_updates = tabelas["disparos"].update.call_args_list
+    assert len(disparo_updates) == 1
+    assert disparo_updates[0].args[0]["status"] == "pausada_limite_diario"
+    assert disparo_updates[0].args[0]["total_enviados"] == 3, "só os 3 dentro do limite, não os 5 elegíveis"
+
+    item_updates = tabelas["eventos_pontuais"].update.call_args_list
+    assert len(item_updates) == 1
+    assert item_updates[0].args[0]["status"] == "pausada_limite_diario"
+
+
+@pytest.mark.asyncio
+async def test_error_threshold_continua_pausando_como_antes(monkeypatch):
+    """Regressão: error_threshold continua pausando com status 'pausada' (não
+    'pausada_limite_diario') — branch pré-existente, não alterada pelo Plano 008."""
+    mock_sb, tabelas = _mock_supabase_disparo_pontual(
+        [{"nome": "tpl_pontual", "corpo_texto": "...", "variaveis": []}]
+    )
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-pontual-1", "token-1"))
+    leads = [{"id": f"lead-{i}", "telefone": "5585999999999", "nome": "Fulano"} for i in range(10)]
+    monkeypatch.setattr(camp, "_query_leads_sync", lambda unidade, categorias_alvo: MagicMock(data=leads))
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(False, None)))
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+
+    item = {"id": "evento-1", "titulo": "Evento Teste", "descricao": "desc"}
+    await camp._processar_item_disparo_interno(item, "eventos_pontuais", 0, 0, 100, 10)
+
+    disparo_updates = tabelas["disparos"].update.call_args_list
+    assert len(disparo_updates) == 1
+    assert disparo_updates[0].args[0]["status"] == "pausada"
+
+
+@pytest.mark.asyncio
+async def test_divulgacao_marca_pausado_limite_diario_quando_elegiveis_excede_limite(monkeypatch):
+    """Step 2 (AC2): daily_limit < leads elegíveis pausa com 'pausado_limite_diario' —
+    achado original do plano (bomba-relógio silenciosa: total = min(len(leads),
+    daily_limit) sempre terminava 'concluido', sem sinal de quem ficou de fora)."""
+    mock_sb = _mock_supabase_com_template_divulgacao()
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-div-1", "token-div-1"))
+    leads = [{"id": f"lead-div-{i}", "telefone": "5585999999999", "nome": "Fulano"} for i in range(5)]
+    monkeypatch.setattr(camp, "_query_leads_divulgacao_sync", lambda: MagicMock(data=leads))
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.DIV")))
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+    mock_metricas = MagicMock()
+    monkeypatch.setattr(camp, "_update_metricas_sync", mock_metricas)
+
+    await camp._processar_disparo_divulgacao_interno(
+        disparo_id="disparo-div-1", mes_nome="Agosto",
+        delay_min=0, delay_max=0, daily_limit=3, error_threshold=100,
+    )
+
+    assert mock_metricas.call_count == 1
+    call = mock_metricas.call_args
+    # _update_metricas_sync(disparo_id, enviados, erros, stop, status)
+    assert call.args[1] == 3, "só os 3 dentro do limite devem ser contados como enviados"
+    assert call.args[4] == "pausado_limite_diario"
+
+
+def _mock_supabase_retomada_pontual(item_data, ja_tentados_ids, template_data):
+    """Mock multi-tabela pra retomar_disparo_pausado: eventos_pontuais/ouvidoria_eventos
+    (item pausado), logs_disparo (já tentados via select simples + contagem cumulativa via
+    select com count='exact' — chains distintas por método encadeado, configuradas
+    separadamente), meta_templates (lookup de template)."""
+    mock_sb = MagicMock()
+    tabelas: dict[str, MagicMock] = {}
+
+    def _table(nome):
+        if nome not in tabelas:
+            tabelas[nome] = MagicMock()
+        return tabelas[nome]
+
+    mock_sb.table = MagicMock(side_effect=_table)
+
+    item_tbl = tabelas.setdefault(item_data.get("_origem_tabela", "eventos_pontuais"), MagicMock())
+    item_tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [item_data]
+
+    logs_tbl = tabelas.setdefault("logs_disparo", MagicMock())
+    # _fetch_all_lead_ids_tentados_sync pagina com .range() antes do .execute() — ver
+    # S-WM-60 (achado da revisão pré-QA: .select() sem .range() é sujeito ao limite de
+    # linhas do PostgREST/Supabase).
+    logs_tbl.select.return_value.eq.return_value.range.return_value.execute.return_value.data = [
+        {"lead_id": lid} for lid in ja_tentados_ids
+    ]
+    logs_tbl.select.return_value.eq.return_value.neq.return_value.execute.return_value.count = 0
+    logs_tbl.select.return_value.eq.return_value.in_.return_value.execute.return_value.count = 0
+
+    tpl_tbl = tabelas.setdefault("meta_templates", MagicMock())
+    (tpl_tbl.select.return_value.eq.return_value.contains.return_value
+        .eq.return_value.eq.return_value.limit.return_value.execute.return_value.data) = template_data
+
+    return mock_sb, tabelas
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_pausado_envia_so_pendentes(monkeypatch):
+    """Step 3 (AC3): retomada envia só pra quem ainda não tem linha em logs_disparo pro
+    disparo_id — nunca duplica quem já recebeu."""
+    item_data = {
+        "id": "evento-1", "titulo": "Evento Teste", "descricao": "desc",
+        "status": "pausada_limite_diario", "disparo_id": "disparo-retomada-1",
+        "unidade_cuca": None, "categorias_alvo": None,
+    }
+    mock_sb, tabelas = _mock_supabase_retomada_pontual(
+        item_data, ja_tentados_ids=["lead-1", "lead-2"],
+        template_data=[{"nome": "tpl_pontual", "corpo_texto": "...", "variaveis": []}],
+    )
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-pontual-1", "token-1"))
+    todos_leads = [{"id": f"lead-{i}", "telefone": "5585999999999", "nome": "Fulano"} for i in range(1, 6)]
+    monkeypatch.setattr(camp, "_query_leads_sync", lambda unidade, categorias_alvo: MagicMock(data=todos_leads))
+    mock_enviar = AsyncMock(return_value=(True, "wamid.RETOMADA"))
+    monkeypatch.setattr(camp, "_enviar_template_meta", mock_enviar)
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+
+    resultado = await camp.retomar_disparo_pausado("evento-1", "eventos_pontuais", 0, 0, 100, 100)
+
+    assert resultado["pendentes_encontrados"] == 3
+    assert mock_enviar.call_count == 3, "só os 3 leads sem logs_disparo (lead-3,4,5) deveriam ser enviados"
+    enviados_para = {c.args[1] for c in mock_enviar.call_args_list}
+    assert "5585999999999" in enviados_para  # todos normalizados pro mesmo número no mock — checagem de call_count já é a garantia real
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_pausado_rejeita_item_nao_pausado(monkeypatch):
+    """Retomada só é válida pra item com status='pausada_limite_diario' — qualquer outro
+    status (ex.: 'concluida') retorna erro sem enviar nada, sem side-effect."""
+    item_data = {"id": "evento-2", "status": "concluida", "disparo_id": "disparo-x"}
+    mock_sb, tabelas = _mock_supabase_retomada_pontual(item_data, ja_tentados_ids=[], template_data=[])
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    mock_enviar = AsyncMock()
+    monkeypatch.setattr(camp, "_enviar_template_meta", mock_enviar)
+
+    resultado = await camp.retomar_disparo_pausado("evento-2", "eventos_pontuais", 0, 0, 100, 100)
+
+    assert resultado["status"] == "erro"
+    mock_enviar.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_campanhas_loop_loga_critical_para_disparo_travado(monkeypatch, caplog):
+    """Step 5 (AC5): disparo preso em 'em_andamento' há mais de 2h gera log CRITICAL
+    (DISPARO-TRAVADO) — sem nenhuma chamada de .update() (visibilidade, não ação)."""
+    mock_sb = MagicMock()
+    stuck_row = {"id": "disparo-travado-1", "tipo": "pontual", "iniciado_em": "2026-07-29T00:00:00+00:00"}
+    (mock_sb.table.return_value.select.return_value.eq.return_value.lt.return_value
+        .execute.return_value.data) = [stuck_row]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "get_config", AsyncMock(side_effect=lambda chave, default: default))
+    monkeypatch.setattr(camp, "_claim_evento_pontual_sync", lambda: MagicMock(data=[]))
+    monkeypatch.setattr(camp, "_claim_ouvidoria_evento_sync", lambda: MagicMock(data=[]))
+    monkeypatch.setattr(camp, "processar_disparos_divulgacao", AsyncMock())
+
+    # A 1ª chamada de asyncio.sleep é o `await asyncio.sleep(5)` antes do `while True` — deixa
+    # passar normalmente. A 2ª é o `await asyncio.sleep(30)` no fim da 1ª iteração do loop —
+    # aí sim interrompe, depois que o corpo da iteração (incluindo o check de travado) rodou.
+    sleep_calls = {"n": 0}
+
+    async def _sleep_side_effect(*args, **kwargs):
+        sleep_calls["n"] += 1
+        if sleep_calls["n"] == 1:
+            return None
+        raise camp.asyncio.CancelledError()
+
+    monkeypatch.setattr(camp.asyncio, "sleep", AsyncMock(side_effect=_sleep_side_effect))
+
+    with caplog.at_level("CRITICAL"):
+        try:
+            await camp.campanhas_loop()
+        except camp.asyncio.CancelledError:
+            pass
+
+    assert any("DISPARO-TRAVADO" in rec.message and "disparo-travado-1" in rec.message for rec in caplog.records)
+    mock_sb.table.return_value.update.assert_not_called()
+
+
+def test_daily_limit_resolvido_por_phone_number_id(monkeypatch):
+    """Step 6: 2 phone_number_id distintos com daily_limit diferentes em
+    meta_phone_numbers — cada um resolve o próprio valor, não um global compartilhado."""
+    mock_sb = MagicMock()
+    respostas = {
+        "phone-A": MagicMock(data=[{"daily_limit": 100}]),
+        "phone-B": MagicMock(data=[{"daily_limit": 2000}]),
+    }
+
+    def _eq(campo, valor):
+        assert campo == "phone_number_id"
+        chain = MagicMock()
+        chain.limit.return_value.execute.return_value = respostas[valor]
+        return chain
+
+    mock_sb.table.return_value.select.return_value.eq = MagicMock(side_effect=_eq)
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    assert camp._get_daily_limit_by_phone_sync("phone-A") == 100
+    assert camp._get_daily_limit_by_phone_sync("phone-B") == 2000
+
+
+def test_daily_limit_fallback_quando_nao_configurado(monkeypatch):
+    """Step 6: phone_number_id com daily_limit NULL cai no fallback conservador (500) —
+    decisão confirmada com Junior (2026-07-29): não bloqueia o disparo."""
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"daily_limit": None}
+    ]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    assert camp._get_daily_limit_by_phone_sync("phone-sem-limite") == 500
+
+
+def test_daily_limit_fallback_quando_numero_nao_encontrado(monkeypatch):
+    """Mesmo fallback (500) quando o phone_number_id nem existe em meta_phone_numbers —
+    cobertura extra além do pedido explícito do plano, mesma função de fallback."""
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    assert camp._get_daily_limit_by_phone_sync("phone-inexistente") == 500
+
+
+@pytest.mark.asyncio
+async def test_retomada_resolve_daily_limit_por_numero(monkeypatch):
+    """Step 6: retomar_disparo_pausado, chamado com daily_limit=None (como o endpoint
+    /retomar-disparo sempre chama pós-Step 6), resolve o limite por phone_number_id — não
+    usa mais um valor global fixo."""
+    item_data = {
+        "id": "evento-3", "titulo": "Evento", "descricao": "desc",
+        "status": "pausada_limite_diario", "disparo_id": "disparo-retomada-2",
+        "unidade_cuca": None, "categorias_alvo": None,
+    }
+    mock_sb, tabelas = _mock_supabase_retomada_pontual(
+        item_data, ja_tentados_ids=[],
+        template_data=[{"nome": "tpl_pontual", "corpo_texto": "...", "variaveis": []}],
+    )
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-retomada-1", "token-1"))
+    monkeypatch.setattr(camp, "_query_leads_sync", lambda unidade, categorias_alvo: MagicMock(
+        data=[{"id": "lead-1", "telefone": "5585999999999", "nome": "Fulano"}]
+    ))
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.X")))
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+    mock_resolver = MagicMock(return_value=7)
+    monkeypatch.setattr(camp, "_get_daily_limit_by_phone_sync", mock_resolver)
+    monkeypatch.setattr(camp, "_warn_if_daily_limit_above_tier_sync", MagicMock())
+
+    await camp.retomar_disparo_pausado("evento-3", "eventos_pontuais", 0, 0, None, 100)
+
+    mock_resolver.assert_called_once_with("phone-retomada-1")
+
+
+def test_fetch_all_lead_ids_tentados_sync_pagina_alem_do_limite_padrao(monkeypatch):
+    """Achado da revisão pré-QA (pré-gate): um .select() sem .range() é sujeito ao limite
+    padrão de linhas do PostgREST/Supabase — com daily_limit podendo chegar a milhares por
+    número (Step 6), um único disparo pode passar de 1 página. Testa que a paginação soma
+    corretamente 2 páginas completas+incompleta e para assim que uma página vem incompleta,
+    sem chamada extra (nem loop infinito)."""
+    pagina_1 = [{"lead_id": f"lead-{i}"} for i in range(camp._POSTGREST_PAGE_SIZE)]
+    pagina_2 = [{"lead_id": f"lead-{camp._POSTGREST_PAGE_SIZE + i}"} for i in range(3)]
+
+    chamadas_range = []
+
+    def _range(start, end):
+        chamadas_range.append((start, end))
+        pagina = pagina_1 if start == 0 else pagina_2
+        return MagicMock(execute=lambda: MagicMock(data=pagina))
+
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.range.side_effect = _range
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    ids = camp._fetch_all_lead_ids_tentados_sync("disparo_id", "disparo-x")
+
+    assert len(ids) == camp._POSTGREST_PAGE_SIZE + 3
+    assert len(chamadas_range) == 2, "deve parar após a 1ª página incompleta, sem chamada extra"
+    assert chamadas_range[0] == (0, camp._POSTGREST_PAGE_SIZE - 1)
+    assert chamadas_range[1] == (camp._POSTGREST_PAGE_SIZE, camp._POSTGREST_PAGE_SIZE * 2 - 1)
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_divulgacao_pausado_faz_claim_atomico_antes_de_enviar(monkeypatch):
+    """Gate S-WM-60/QA (veredito FAIL, rodada anterior): a guarda antiga (SELECT-then-UPDATE
+    via _update_db_sync) não era atômica e não eliminava a corrida — substituída por
+    _claim_retomada_sync (UPDATE condicional WHERE id=X AND status=Y). Este teste garante
+    ordem (claim ANTES do envio) e que o claim usa a tabela/status corretos; a garantia de
+    exclusividade real sob concorrência é testada à parte, com 2 chamadas via
+    asyncio.gather() sobre a função real (ver test_retomar_disparo_divulgacao_pausado_sob_
+    concorrencia_so_1_dispara)."""
+    disparo_data = {"id": "disparo-div-1", "mes": 8, "status": "pausado_limite_diario"}
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [disparo_data]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_pendentes_sync",
+        lambda disparo_id: [{"id": "lead-div-1", "telefone": "5585999999999", "nome": "Fulano"}],
+    )
+
+    ordem = []
+
+    def _claim_fake(tabela, item_id, status_esperado, novo_status):
+        ordem.append(("claim", tabela, item_id, status_esperado, novo_status))
+        return True
+
+    monkeypatch.setattr(camp, "_claim_retomada_sync", _claim_fake)
+
+    async def _enviar_fake(*args, **kwargs):
+        ordem.append(("enviar",))
+        return {"status": "concluido", "enviados": 1, "erros": 0}
+
+    monkeypatch.setattr(camp, "_enviar_divulgacao_para_leads_pendentes", _enviar_fake)
+
+    resultado = await camp.retomar_disparo_divulgacao_pausado("disparo-div-1", 0, 0, 100, 100)
+
+    assert ordem[0] == ("claim", "disparos_divulgacao", "disparo-div-1", "pausado_limite_diario", "em_andamento")
+    assert ordem[1] == ("enviar",)
+    # mesma convenção do lado pontual: **resultado sobrescreve o "status" externo com o
+    # desfecho real do envio (aqui, o que _enviar_fake devolveu) — "retomado" não sobrevive.
+    assert resultado["status"] == "concluido"
+    assert resultado["pendentes_encontrados"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_divulgacao_pausado_nao_envia_quando_claim_falha(monkeypatch):
+    """Espelho do teste acima: quando outra chamada concorrente já reivindicou o disparo
+    (_claim_retomada_sync retorna False), esta chamada precisa retornar erro/no-op sem
+    consultar pendentes nem despachar envio nenhum."""
+    disparo_data = {"id": "disparo-div-1", "mes": 8, "status": "pausado_limite_diario"}
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [disparo_data]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_claim_retomada_sync", lambda *a: False)
+    mock_pendentes = MagicMock()
+    monkeypatch.setattr(camp, "_query_leads_divulgacao_pendentes_sync", mock_pendentes)
+    mock_enviar = AsyncMock()
+    monkeypatch.setattr(camp, "_enviar_divulgacao_para_leads_pendentes", mock_enviar)
+
+    resultado = await camp.retomar_disparo_divulgacao_pausado("disparo-div-1", 0, 0, 100, 100)
+
+    assert resultado["status"] == "erro"
+    mock_pendentes.assert_not_called()
+    mock_enviar.assert_not_called()
+
+
+class _FakeSupabaseConcorrencia:
+    """Fake de supabase que modela a semântica real do Postgres pra UPDATE condicional
+    (WHERE id=X AND status=Y): 2 UPDATEs concorrentes na mesma linha são serializados pelo
+    lock de linha do Postgres — a 2ª transação só reavalia sua cláusula WHERE depois que a
+    1ª commita. threading.Lock aqui simula esse lock (asyncio.to_thread roda o código
+    síncrono em threads reais de um pool, não em coroutines — por isso threading.Lock, não
+    asyncio.Lock)."""
+
+    def __init__(self, estado_inicial: dict):
+        self._estado = dict(estado_inicial)
+        self._lock = threading.Lock()
+        self.envios_disparados = []
+
+    def table(self, nome):
+        return _FakeTableConcorrencia(nome, self)
+
+
+class _FakeTableConcorrencia:
+    def __init__(self, nome, parent):
+        self.nome = nome
+        self.parent = parent
+        self._update_dados = None
+        self._filtros = {}
+
+    def select(self, *a, **kw):
+        return self
+
+    def update(self, dados):
+        self._update_dados = dados
+        return self
+
+    def eq(self, coluna, valor):
+        self._filtros[coluna] = valor
+        return self
+
+    def limit(self, *a):
+        return self
+
+    def neq(self, *a):
+        return self
+
+    def in_(self, *a):
+        return self
+
+    def range(self, *a):
+        return self
+
+    def execute(self):
+        if self._update_dados is not None:
+            with self.parent._lock:
+                status_esperado = self._filtros.get("status")
+                status_atual = self.parent._estado.get("status")
+                if status_esperado is not None and status_atual != status_esperado:
+                    return MagicMock(data=[])
+                novo_status = self._update_dados.get("status", status_atual)
+                self.parent._estado["status"] = novo_status
+                return MagicMock(data=[dict(self.parent._estado, id=self._filtros.get("id"))])
+        # SELECT informacional (não é o gate de exclusividade — o UPDATE acima é).
+        return MagicMock(data=[dict(self.parent._estado)], count=0)
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_divulgacao_pausado_sob_concorrencia_so_1_dispara(monkeypatch):
+    """Reprodução direta do achado da QA (gate S-WM-60, veredito FAIL): 2 chamadas
+    concorrentes (asyncio.gather) na FUNÇÃO REAL retomar_disparo_divulgacao_pausado, sobre
+    o mesmo disparo_id. Antes do fix (SELECT-then-UPDATE), as 2 despachavam envio — a QA
+    reproduziu isso com um script equivalente a este teste. Com o claim atômico
+    (_claim_retomada_sync), só 1 das 2 deve despachar; a outra recebe erro sem enviar
+    nada."""
+    fake_sb = _FakeSupabaseConcorrencia({
+        "id": "disparo-race-1", "mes": 8, "status": "pausado_limite_diario",
+    })
+    monkeypatch.setattr(camp, "supabase", fake_sb)
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_pendentes_sync",
+        lambda disparo_id: [{"id": "lead-race-1", "telefone": "5585999999999", "nome": "Fulano"}],
+    )
+
+    async def _enviar_fake(*args, **kwargs):
+        fake_sb.envios_disparados.append(1)
+        await asyncio.sleep(0.02)
+        return {"status": "concluido", "enviados": 1, "erros": 0}
+
+    monkeypatch.setattr(camp, "_enviar_divulgacao_para_leads_pendentes", _enviar_fake)
+
+    resultados = await asyncio.gather(
+        camp.retomar_disparo_divulgacao_pausado("disparo-race-1", 0, 0, 100, 100),
+        camp.retomar_disparo_divulgacao_pausado("disparo-race-1", 0, 0, 100, 100),
+    )
+
+    assert len(fake_sb.envios_disparados) == 1, "só 1 das 2 chamadas concorrentes pode disparar envio"
+    status_resultados = sorted(r["status"] for r in resultados)
+    assert status_resultados == ["concluido", "erro"], f"esperado 1 sucesso + 1 erro, veio {resultados}"
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_pausado_sob_concorrencia_so_1_dispara(monkeypatch):
+    """Espelho do teste acima pro lado pontual (retomar_disparo_pausado) — mesma classe de
+    corrida, pré-existente desde o v0.2 (não introduzida pela guarda da divulgação),
+    corrigida junto nesta rodada com o mesmo _claim_retomada_sync."""
+    fake_sb = _FakeSupabaseConcorrencia({
+        "id": "evento-race-1", "status": "pausada_limite_diario", "disparo_id": "disparo-race-2",
+        "unidade_cuca": None, "categorias_alvo": None,
+    })
+    monkeypatch.setattr(camp, "supabase", fake_sb)
+    monkeypatch.setattr(
+        camp, "_query_leads_pendentes_sync",
+        lambda unidade, categorias_alvo, disparo_id: [{"id": "lead-race-2", "telefone": "5585999999999", "nome": "Fulano"}],
+    )
+
+    async def _enviar_fake(*args, **kwargs):
+        fake_sb.envios_disparados.append(1)
+        await asyncio.sleep(0.02)
+        return {"status": "concluida", "sucessos": 1, "erros": 0}
+
+    monkeypatch.setattr(camp, "_enviar_para_leads_pendentes", _enviar_fake)
+
+    resultados = await asyncio.gather(
+        camp.retomar_disparo_pausado("evento-race-1", "eventos_pontuais", 0, 0, 100, 100),
+        camp.retomar_disparo_pausado("evento-race-1", "eventos_pontuais", 0, 0, 100, 100),
+    )
+
+    assert len(fake_sb.envios_disparados) == 1, "só 1 das 2 chamadas concorrentes pode disparar envio"
+    status_resultados = sorted(r["status"] for r in resultados)
+    assert status_resultados == ["concluida", "erro"], f"esperado 1 sucesso + 1 erro, veio {resultados}"

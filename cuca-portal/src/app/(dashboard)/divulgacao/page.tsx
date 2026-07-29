@@ -24,7 +24,7 @@ import { useUser } from "@/lib/auth/user-provider"
 
 /* ─── Tipos ─── */
 type StatusCampanha = "sem_planilha" | "pendente" | "aprovado" | "em_andamento"
-type StatusDisparo = "pendente" | "em_andamento" | "concluido" | "pausado" | "erro"
+type StatusDisparo = "pendente" | "em_andamento" | "concluido" | "pausado" | "pausado_limite_diario" | "erro"
 type UnidadeStatus = {
     unidade: string
     status: StatusCampanha
@@ -89,6 +89,8 @@ const DISPARO_STATUS_CONFIG: Record<StatusDisparo, { label: string; color: strin
     em_andamento: { label: "Enviando...", color: "bg-amber-500/15 text-amber-400" },
     concluido: { label: "Concluído", color: "bg-green-500/15 text-green-400" },
     pausado: { label: "Pausado", color: "bg-orange-500/15 text-orange-400" },
+    // S-WM-60: disparo truncado pelo limite diário do número — retomada é manual, sem UI própria ainda.
+    pausado_limite_diario: { label: "Pausado (limite diário)", color: "bg-orange-500/15 text-orange-400" },
     erro: { label: "Erro", color: "bg-red-500/15 text-red-400" },
 }
 
