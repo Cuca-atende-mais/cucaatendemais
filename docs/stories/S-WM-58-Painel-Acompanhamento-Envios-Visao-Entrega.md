@@ -235,3 +235,62 @@ Nenhum dos dois é "a feature não funciona" — os 3 motores aparecem, os núme
 - Recomendação não bloqueante: adicionar fallback no `UNION ALL` da RPC pra disparos `tipo='pontual'`/`'mensal'` sem match de FK reversa (usar `d.tipo` + título genérico "(evento removido ou desvinculado)"), pra não perder histórico real silenciosamente.
 - Recomendação não bloqueante: `SET search_path = public` na função nova (e, num lote futuro, nas demais que já têm o mesmo gap).
 - Se Junior quiser confirmação end-to-end completa do item 1(b), precisa de uma senha de usuário de teste real (ex.: um dos e-mails de `sys_roles = 'Gerente'`/`'Institucional'`) ou autorização explícita pra usar a service role key e forjar uma sessão — nenhuma das duas foi feita neste gate.
+
+---
+
+## RE-GATE — 2026-07-29
+
+### Reviewed By: @qa Quinn
+
+### Escopo deste re-gate
+
+Correção do @dev Dex pro achado 2 do gate anterior (join por FK reversa omitindo disparos pontuais reais). Não confiei no relato do Dex sem verificação própria — todos os pontos abaixo foram checados de forma independente, com consultas e cenários próprios (não reaproveitei o script dele para o mutation check, criei um cenário adicional).
+
+### 1. Escopo do commit — confirmado limpo
+
+`git diff HEAD~1..HEAD --stat`: exatamente os 3 arquivos esperados (story, migration nova, teste SQL novo). Nenhum arquivo fora do relatado.
+
+### 2. Migration aplicada e RPC usa join direto — CONFIRMADO
+
+`list_migrations` confirma `20260729112740_swm58_corrige_perda_historico_disparos_pontuais` como a mais recente. Li o `prosrc` da função direto de `pg_proc` (não confiei no arquivo local) — confirmado: `LEFT JOIN eventos_pontuais ep ON ep.id = d.evento_id`, **sem nenhuma referência a `ep.disparo_id`** (o ponteiro reverso problemático foi removido, não só contornado).
+
+### 3. Completude — reproduzida de forma independente, 1:1 exato
+
+- `count(*) FROM disparos WHERE tipo = 'pontual'` = **10**. Comparação direta (não só contagem) entre a base e o resultado da RPC: **10 na base, 10 na RPC, 0 faltando, 0 sobrando** — cobertura total confirmada, não só um número batendo por coincidência.
+- Caso 1 (evento com múltiplos disparos): evento `3cb1226e-...` ("Corrida da Juventude") — confirmado que **os 2 disparos** (`ff914f31` e `746c520f`) aparecem na RPC. `ff914f31` era exatamente o que sumia no gate anterior.
+- Caso 2 (evento excluído depois): 4 disparos retornam com título `"(evento removido ou desvinculado)"` — confirmado para os 4 que `NOT EXISTS (SELECT 1 FROM eventos_pontuais WHERE id = disparos.evento_id)`, ou seja, o fallback só ativa quando o evento de fato não existe mais, não por engano.
+- Números batendo: comparei os 4 totais (`elegiveis`/`enviados`/`entregues`/`falhou`) da RPC contra contagem direta em `logs_disparo` para os **10** disparos pontuais (não uma amostra) — **0 divergências**.
+
+### 4. Mutation check — reproduzido com script do @dev E com cenário próprio
+
+- Rodei `supabase/tests/swm58_listar_disparos_acompanhamento_historico.sql` verbatim (copiado do repositório, não modificado): resultado idêntico ao documentado no arquivo (3 linhas, a1/a2 com título real, a3 com fallback genérico).
+- Cenário adicional próprio (evento com **3** disparos, não 2, pra variar do caso do @dev): simulei o JOIN reverso antigo lado a lado com a RPC atual, na mesma transação — join antigo encontra **1 de 3** (bug confirmado, generalizando pra além do caso de 2 disparos testado pelo @dev), RPC atual encontra **3 de 3**. `ROLLBACK` confirmado sem deixar traço em ambos os testes (`count(*) = 0` pós-rollback).
+
+### 5. Regressão — divulgação e ouvidoria inalterados
+
+`divulgacao` = 28 (igual a antes), `ouvidoria` = 0 (igual a antes, nenhum disparo de ouvidoria existe hoje). `count(*) FROM disparos_divulgacao` = 28, confirma que a RPC não alterou nada da agregação de divulgação (lógica daquele CTE não foi tocada pela correção).
+
+### 6. Nota sobre "10, não 9" — confirmado como não sendo discrepância
+
+O achado original desta QA usou "9" como estimativa (10 disparos reais menos 1 considerado "sintético de validação"). O `91ed62f2-...` (evento_id sentinela `00000000-...-057`) tem `total_destinatarios=4` e 4 linhas reais em `logs_disparo` — é dado real, não um erro. A decisão do @dev de não hardcodear a exclusão desse UUID específico na RPC está correta: seria uma gambiarra pontual numa função de produção pra forçar um número "redondo", não uma correção de causa raiz. **10 é o número correto.**
+
+### 7. Regressão de suíte, tipos e segurança
+
+- `npm test` (vitest): 24/24. `node --experimental-strip-types --test tests/*.test.ts`: 15/15. Nenhum teste novo esperado aqui (a correção é só SQL) — confirma que nada quebrou.
+- `tsc --noEmit`: só os 2 erros já conhecidos (`TS5097`, pré-existentes, simétricos, não relacionados a esta correção). `eslint` nos caminhos do painel: limpo.
+- `get_advisors(security)`: mesmo e único WARN pré-existente (`function_search_path_mutable` em `listar_disparos_acompanhamento`) — já registrado no gate anterior como padrão do projeto, não regressão. Nenhum ERROR novo, nenhum WARN novo associado a esta migration.
+
+### 8. Achado 1 (enforcement de permissão) — sem novidade, mantido como estava
+
+Não encontrei um caminho seguro novo pra testar HTTP autenticado de ponta a ponta sem senha de usuário de teste real ou uso da service role key pra forjar sessão — mesma limitação do gate anterior, não re-investigada a fundo por instrução explícita de Junior (só revisitar se houvesse caminho seguro). Mantido exatamente como estava: verificado até onde deu (dado real, estrutura de FK, HTTP real pro caso não-autenticado), sem confirmação de ponta a ponta.
+
+### Gate Decision: CONCERNS → parcialmente resolvido
+
+O achado 2 (completude — disparos pontuais sumindo) está **RESOLVIDO e verificado de forma independente**: causa raiz dupla identificada e corrigida, cobertura 1:1 confirmada, mutation check reproduzido com 2 cenários diferentes, sem regressão em nenhum outro motor. Não uso PASS geral porque o achado 1 (enforcement de permissão sem HTTP autenticado de ponta a ponta) segue exatamente como estava — não é uma regressão nem um novo bloqueio, é a mesma lacuna de verificação já registrada, que só se resolve com uma credencial de teste real ou autorização explícita pra forjar sessão (nenhuma das duas disponível neste re-gate).
+
+**Resumo pra decisão de Junior:** dos 2 motivos que impediram PASS no gate anterior, 1 está resolvido (completude) e 1 segue em aberto por falta de credencial (enforcement) — não por um problema de código encontrado.
+
+### Pendências (não pular etapa)
+
+- **Não acionar @devops.** Sem push, sem PR — aguardando decisão de Junior.
+- Único item em aberto: confirmação HTTP autenticada de ponta a ponta do enforcement de permissão — precisa de senha de usuário de teste real ou autorização explícita pra usar a service role key.
