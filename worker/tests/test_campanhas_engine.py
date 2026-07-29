@@ -729,7 +729,10 @@ def _mock_supabase_retomada_pontual(item_data, ja_tentados_ids, template_data):
     item_tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [item_data]
 
     logs_tbl = tabelas.setdefault("logs_disparo", MagicMock())
-    logs_tbl.select.return_value.eq.return_value.execute.return_value.data = [
+    # _fetch_all_lead_ids_tentados_sync pagina com .range() antes do .execute() — ver
+    # S-WM-60 (achado da revisão pré-QA: .select() sem .range() é sujeito ao limite de
+    # linhas do PostgREST/Supabase).
+    logs_tbl.select.return_value.eq.return_value.range.return_value.execute.return_value.data = [
         {"lead_id": lid} for lid in ja_tentados_ids
     ]
     logs_tbl.select.return_value.eq.return_value.neq.return_value.execute.return_value.count = 0
@@ -896,3 +899,73 @@ async def test_retomada_resolve_daily_limit_por_numero(monkeypatch):
     await camp.retomar_disparo_pausado("evento-3", "eventos_pontuais", 0, 0, None, 100)
 
     mock_resolver.assert_called_once_with("phone-retomada-1")
+
+
+def test_fetch_all_lead_ids_tentados_sync_pagina_alem_do_limite_padrao(monkeypatch):
+    """Achado da revisão pré-QA (pré-gate): um .select() sem .range() é sujeito ao limite
+    padrão de linhas do PostgREST/Supabase — com daily_limit podendo chegar a milhares por
+    número (Step 6), um único disparo pode passar de 1 página. Testa que a paginação soma
+    corretamente 2 páginas completas+incompleta e para assim que uma página vem incompleta,
+    sem chamada extra (nem loop infinito)."""
+    pagina_1 = [{"lead_id": f"lead-{i}"} for i in range(camp._POSTGREST_PAGE_SIZE)]
+    pagina_2 = [{"lead_id": f"lead-{camp._POSTGREST_PAGE_SIZE + i}"} for i in range(3)]
+
+    chamadas_range = []
+
+    def _range(start, end):
+        chamadas_range.append((start, end))
+        pagina = pagina_1 if start == 0 else pagina_2
+        return MagicMock(execute=lambda: MagicMock(data=pagina))
+
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.range.side_effect = _range
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    ids = camp._fetch_all_lead_ids_tentados_sync("disparo_id", "disparo-x")
+
+    assert len(ids) == camp._POSTGREST_PAGE_SIZE + 3
+    assert len(chamadas_range) == 2, "deve parar após a 1ª página incompleta, sem chamada extra"
+    assert chamadas_range[0] == (0, camp._POSTGREST_PAGE_SIZE - 1)
+    assert chamadas_range[1] == (camp._POSTGREST_PAGE_SIZE, camp._POSTGREST_PAGE_SIZE * 2 - 1)
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_divulgacao_pausado_seta_em_andamento_antes_de_enviar(monkeypatch):
+    """Achado da revisão pré-QA (pré-gate): sem guarda de concorrência, 2 chamadas
+    simultâneas ao endpoint de retomada (fire-and-forget, retorna 200 antes de terminar)
+    passam ambas pelo check de status='pausado_limite_diario' antes de qualquer uma
+    escrever — a 2ª só falharia depois de reenviar pra todo mundo (duplicidade real de
+    WhatsApp). O lado pontual (retomar_disparo_pausado) já fazia esse flip; faltava o
+    espelho aqui. Este teste garante: (1) o status muda pra 'em_andamento' ANTES do envio
+    começar, e (2) o update é direto em status (não passa por _update_metricas_sync, que
+    zeraria total_enviados/total_erros já acumulados de uma rodada anterior)."""
+    disparo_data = {"id": "disparo-div-1", "mes": 8, "status": "pausado_limite_diario"}
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [disparo_data]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_pendentes_sync",
+        lambda disparo_id: [{"id": "lead-div-1", "telefone": "5585999999999", "nome": "Fulano"}],
+    )
+
+    ordem = []
+
+    def _update_db_sync_fake(tabela, item_id, dados):
+        ordem.append(("update", tabela, item_id, dados))
+
+    monkeypatch.setattr(camp, "_update_db_sync", _update_db_sync_fake)
+
+    async def _enviar_fake(*args, **kwargs):
+        ordem.append(("enviar",))
+        return {"status": "concluido", "enviados": 1, "erros": 0}
+
+    monkeypatch.setattr(camp, "_enviar_divulgacao_para_leads_pendentes", _enviar_fake)
+
+    resultado = await camp.retomar_disparo_divulgacao_pausado("disparo-div-1", 0, 0, 100, 100)
+
+    assert ordem[0] == ("update", "disparos_divulgacao", "disparo-div-1", {"status": "em_andamento"})
+    assert ordem[1] == ("enviar",)
+    # mesma convenção do lado pontual: **resultado sobrescreve o "status" externo com o
+    # desfecho real do envio (aqui, o que _enviar_fake devolveu) — "retomado" não sobrevive.
+    assert resultado["status"] == "concluido"
+    assert resultado["pendentes_encontrados"] == 1

@@ -177,14 +177,42 @@ def _query_leads_divulgacao_sync():
     )
 
 
+_POSTGREST_PAGE_SIZE = 1000  # default de max rows do PostgREST/Supabase — ver _fetch_all_lead_ids_tentados_sync
+
+
+def _fetch_all_lead_ids_tentados_sync(coluna_disparo: str, disparo_id: str) -> set:
+    """Pagina logs_disparo em blocos de _POSTGREST_PAGE_SIZE (achado da revisão pré-QA): um
+    .select() sem .range() é sujeito ao limite padrão de linhas do PostgREST/Supabase — com
+    daily_limit agora podendo chegar a milhares por número (Step 6), um único disparo pode
+    legitimamente passar de 1000 linhas em logs_disparo. Sem paginação, o conjunto de
+    "já tentados" seria truncado silenciosamente e a retomada reenviaria mensagem real de
+    WhatsApp pra quem já recebeu — não é uma hipótese, é o comportamento documentado do
+    PostgREST quando o limite de linhas é atingido sem paginação explícita."""
+    ids: set = set()
+    offset = 0
+    while True:
+        res = (
+            supabase.table("logs_disparo")
+            .select("lead_id")
+            .eq(coluna_disparo, disparo_id)
+            .range(offset, offset + _POSTGREST_PAGE_SIZE - 1)
+            .execute()
+        )
+        rows = res.data or []
+        ids.update(row["lead_id"] for row in rows if row.get("lead_id"))
+        if len(rows) < _POSTGREST_PAGE_SIZE:
+            break
+        offset += _POSTGREST_PAGE_SIZE
+    return ids
+
+
 def _query_leads_pendentes_sync(unidade, categorias_alvo, disparo_id):
     """Plano 008/S-WM-60 (Step 3): leads do alvo original de um item que ainda não têm
     nenhuma linha em logs_disparo pra este disparo_id — não tentados, nem com sucesso nem
     com falha (retry de quem falhou é escopo separado, não coberto aqui)."""
     leads_res = _query_leads_sync(unidade, categorias_alvo)
     leads = leads_res.data or []
-    ja_tentados = supabase.table("logs_disparo").select("lead_id").eq("disparo_id", disparo_id).execute()
-    ids_ja_tentados = {row["lead_id"] for row in (ja_tentados.data or []) if row.get("lead_id")}
+    ids_ja_tentados = _fetch_all_lead_ids_tentados_sync("disparo_id", disparo_id)
     return [lead for lead in leads if lead.get("id") not in ids_ja_tentados]
 
 
@@ -193,10 +221,7 @@ def _query_leads_divulgacao_pendentes_sync(disparo_divulgacao_id):
     filtra por logs_disparo.disparo_divulgacao_id em vez de disparo_id."""
     leads_res = _query_leads_divulgacao_sync()
     leads = leads_res.data or []
-    ja_tentados = supabase.table("logs_disparo").select("lead_id").eq(
-        "disparo_divulgacao_id", disparo_divulgacao_id
-    ).execute()
-    ids_ja_tentados = {row["lead_id"] for row in (ja_tentados.data or []) if row.get("lead_id")}
+    ids_ja_tentados = _fetch_all_lead_ids_tentados_sync("disparo_divulgacao_id", disparo_divulgacao_id)
     return [lead for lead in leads if lead.get("id") not in ids_ja_tentados]
 
 
@@ -1109,6 +1134,16 @@ async def retomar_disparo_divulgacao_pausado(
         )
         await asyncio.to_thread(_update_metricas_sync, disparo_id, enviados_res.count or 0, erros_res.count or 0, 0, "concluido")
         return {"status": "concluida", "pendentes_encontrados": 0}
+
+    # Guarda de concorrência (achado da revisão pré-QA): sem isto, 2 chamadas simultâneas ao
+    # endpoint de retomada (fire-and-forget, retorna 200 antes de terminar) passam ambas pelo
+    # check de status acima antes de qualquer uma escrever — a 2ª só falharia depois de reenviar
+    # pra todo mundo. O lado pontual (retomar_disparo_pausado) já flipa pra em_andamento antes de
+    # despachar; aqui faltava o espelho. Fecha a janela: 2ª chamada concorrente encontra
+    # status='em_andamento' (não mais 'pausado_limite_diario') e é rejeitada pelo check acima.
+    # Update direto (não _update_metricas_sync) porque este só escreve status — reusar
+    # _update_metricas_sync zeraria total_enviados/total_erros já acumulados na 1ª rodada.
+    await asyncio.to_thread(_update_db_sync, "disparos_divulgacao", disparo_id, {"status": "em_andamento"})
 
     resultado = await _enviar_divulgacao_para_leads_pendentes(
         disparo_id, mes_nome, pendentes, delay_min, delay_max, daily_limit, error_threshold,
