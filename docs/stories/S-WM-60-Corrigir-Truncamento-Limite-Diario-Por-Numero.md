@@ -149,3 +149,24 @@ Branch: `feat/retomada-manual-limite-diario` (já definida no plano técnico), c
 
 ### Decisão
 Devolvendo para o **@dev** corrigir o achado 2 (aplicar o UPDATE condicional atômico nos dois caminhos de retomada — pontual e divulgação) antes de reencaminhar para novo gate. Os demais 8 pontos estão resolvidos e não precisam de nova verificação na próxima rodada, só o achado 2 e sua cobertura de teste (recomendo um teste de concorrência real, como o script usado nesta verificação, e não só um teste de ordem de chamadas). @devops **não acionado** — aguardando decisão do Junior. | @qa Quinn
+
+---
+
+## QA Results — Re-gate (2026-07-29, foco no achado 2)
+
+**Veredito: PASS.**
+
+O @dev substituiu a guarda check-then-act por `_claim_retomada_sync`: um UPDATE condicional atômico (`WHERE id=X AND status=Y`, checando `bool(res.data)`) aplicado nos dois caminhos. Verificação independente dos 5 pontos pedidos, sem confiar no relato nem reaproveitar o teste/fixture do @dev:
+
+1. **Concorrência reproduzida do zero, independentemente — CONFIRMADO.** Escrevi um script próprio (`/tmp/claude-1000/.../scratchpad/qa_regate_concurrency.py`), com uma classe fake reimplementada do zero (não reaproveita `_FakeSupabaseConcorrencia` do arquivo de testes do @dev), rodando 30 chamadas concorrentes (`asyncio.gather`) por caminho = 60 rodadas no total. **0/60 duplicações** — a cada rodada, exatamente 1 das 2 chamadas concorrentes despachou envio, a outra recebeu erro/no-op.
+
+2. **Mutation checks reproduzidos de forma independente — CONFIRMADO, em 2 camadas.** (a) Rodei meu próprio script de concorrência contra o código com o claim atômico removido (via `sed`/substituição própria, não reaproveitando o backup do @dev): **30/30 duplicações** no caminho mutado isoladamente, em ambos os caminhos (testado um de cada vez) — reproduz o bug original de forma determinística (sem exclusividade nenhuma, as 2 chamadas sempre despacham). (b) Rodei também os 2 testes de concorrência que o @dev escreveu (`test_retomar_disparo_divulgacao_pausado_sob_concorrencia_so_1_dispara`, `test_retomar_disparo_pausado_sob_concorrencia_so_1_dispara`) contra essa mesma mutação: ambos falham com `assert 2 == 1` — confirma que os testes do @dev pegam a regressão de verdade, não passam por acaso. Arquivo restaurado após cada mutação, `git status` limpo.
+
+3. **Checagem de "0 linhas afetadas" — CONFIRMADO, bloqueia de verdade.** Lidas as duas funções: em ambas, `if not claimed: return {"status": "erro", ...}` é um `return` incondicional, antes de qualquer chamada a `_query_leads_pendentes_sync`/`_query_leads_divulgacao_pendentes_sync` ou a `_enviar_para_leads_pendentes`/`_enviar_divulgacao_para_leads_pendentes`. Não há log-e-continua — quem perde o claim não toca em leads nem em envio.
+
+4. **Suíte completa reproduzida — CONFIRMADO.** **174 passed**, mesmas 3 falhas pré-existentes não relacionadas (`test_meta_adapter_outbound.py::TestSendMessageEndpoint`). `python -c "import campanhas_engine; import main"` (sanity) também OK.
+
+5. **Revalidação dos 8 pontos anteriores — sem regressão.** `git diff` do gate anterior (`42be5be`) até este commit mostra a mudança **inteiramente confinada** a `retomar_disparo_pausado`/`retomar_disparo_divulgacao_pausado` + o novo helper `_claim_retomada_sync` — nenhum arquivo da migration, do portal, ou das funções de paginação/caminho-fresco (`_fetch_all_lead_ids_tentados_sync`, `_enviar_para_leads_pendentes`, `_enviar_divulgacao_para_leads_pendentes`, `_processar_item_disparo_interno`, `_processar_disparo_divulgacao_interno`) foi tocado nesta rodada — logo itens 3/4/7/9 do gate anterior permanecem válidos sem necessidade de reverificação line-by-line. Item 8 (zero auto-retomada) reconferido por `grep`: `_claim_retomada_sync` só é chamada de dentro das 2 funções de retomada, que continuam só sendo chamadas pelo endpoint `/retomar-disparo/{origem}/{item_id}` em `worker/main.py` — nenhum novo call site.
+
+### Decisão
+Achado 2 fechado — corrida real eliminada (não só reduzida), nos dois caminhos, com teste de concorrência real que comprovadamente pega a regressão. Story aprovada para prosseguir. Recomendo ao Junior autorizar o **@devops**: (a) push da branch `feat/retomada-manual-limite-diario` + PR contra `main` (sem merge automático), e (b) aplicar a migration `20260729120000_meta_phone_numbers_limits_tier_quality.sql` — a nota de ordem de deploy no próprio arquivo (migration antes ou junto do redeploy do worker, nunca depois) segue válida e deve ser seguida pelo @devops. @devops **não acionado por mim** — aguardando autorização do Junior. | @qa Quinn
