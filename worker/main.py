@@ -463,10 +463,16 @@ async def retomar_disparo_endpoint(origem: str, item_id: str, request: Request, 
     do shape (Request + headers.get, Response por status_code, fail-closed se o token não
     estiver configurado no worker) segue o padrão real já em produção neste arquivo.
 
-    Fire-and-forget (background_tasks), não aguardado inline: uma retomada pode enviar
-    para centenas de leads com delay anti-ban entre cada um (mesmo motivo pelo qual
-    /academia-enem/process já usa esse padrão) — aguardar isso na resposta HTTP arriscaria
-    timeout de gateway antes do envio terminar."""
+    S-WM-59 (item 2): dividido em claim síncrono + envio em background. O claim (SELECT +
+    UPDATE condicional, ~2 idas rápidas ao banco) é aguardado ANTES de responder — devolve
+    404/409/500 real se o item não existe, não está pausado, ou perdeu a corrida pra outra
+    chamada concorrente. Só o envio de fato (loop, pode levar minutos com delay anti-ban
+    entre cada lead) continua em background_tasks — mesmo motivo de sempre
+    (/academia-enem/process): aguardar isso na resposta HTTP arriscaria timeout de gateway.
+    CRÍTICO: a tarefa em background é continuar_retomada_{pontual,divulgacao}, NUNCA
+    retomar_disparo_{pausado,divulgacao_pausado} — esta última reexecutaria o claim (já
+    feito aqui) e faria no-op, silenciosamente não enviando nada (ver docstring de
+    continuar_retomada_pontual em campanhas_engine.py)."""
     expected = os.getenv("WEBHOOK_INTERNAL_TOKEN")
     if not expected:
         logger.error("[retomar-disparo] WEBHOOK_INTERNAL_TOKEN não configurada no worker — rejeitando.")
@@ -477,15 +483,31 @@ async def retomar_disparo_endpoint(origem: str, item_id: str, request: Request, 
     if origem not in ("eventos_pontuais", "ouvidoria_eventos", "divulgacao"):
         return Response(status_code=400, content="origem inválida")
 
-    from campanhas_engine import get_config, retomar_disparo_pausado, retomar_disparo_divulgacao_pausado  # noqa: PLC0415
+    from campanhas_engine import (  # noqa: PLC0415
+        get_config,
+        reivindicar_retomada_pontual,
+        continuar_retomada_pontual,
+        reivindicar_retomada_divulgacao,
+        continuar_retomada_divulgacao,
+    )
     delay_min = await get_config("anti_ban_delay_min", 2000)
     delay_max = await get_config("anti_ban_delay_max", 5000)
     error_threshold = await get_config("anti_ban_error_threshold", 10)
 
     if origem == "divulgacao":
-        background_tasks.add_task(retomar_disparo_divulgacao_pausado, item_id, delay_min, delay_max, None, error_threshold)
+        claim = await reivindicar_retomada_divulgacao(item_id)
+        if not claim["ok"]:
+            return Response(status_code=claim["status_code"], content=claim["motivo"])
+        background_tasks.add_task(
+            continuar_retomada_divulgacao, item_id, claim["mes_nome"], delay_min, delay_max, None, error_threshold
+        )
     else:
-        background_tasks.add_task(retomar_disparo_pausado, item_id, origem, delay_min, delay_max, None, error_threshold)
+        claim = await reivindicar_retomada_pontual(item_id, origem)
+        if not claim["ok"]:
+            return Response(status_code=claim["status_code"], content=claim["motivo"])
+        background_tasks.add_task(
+            continuar_retomada_pontual, claim["item"], origem, claim["disparo_id"], delay_min, delay_max, None, error_threshold
+        )
     return {"status": "retomada_iniciada"}
 
 

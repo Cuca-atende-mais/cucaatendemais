@@ -18,7 +18,7 @@ test("retorna 401 quando não há usuário autenticado", () => {
 test("retorna 403 para usuário sem o módulo config_acompanhamento_envios", () => {
     const acesso = avaliarAcesso(
         { id: "user-1", email: "sem-permissao@example.com" },
-        [{ module: "divulgacao", can_read: true }],
+        [{ module: "divulgacao", can_read: true, can_update: true }],
         "can_read",
         DEV_EMAILS,
     )
@@ -29,7 +29,7 @@ test("retorna 403 para usuário sem o módulo config_acompanhamento_envios", () 
 test("retorna 403 quando o módulo existe mas can_read é false", () => {
     const acesso = avaliarAcesso(
         { id: "user-2" },
-        [{ module: "config_acompanhamento_envios", can_read: false }],
+        [{ module: "config_acompanhamento_envios", can_read: false, can_update: false }],
         "can_read",
         DEV_EMAILS,
     )
@@ -39,8 +39,30 @@ test("retorna 403 quando o módulo existe mas can_read é false", () => {
 test("autoriza leitura via sys_permissions com o módulo correto", () => {
     assert.equal(avaliarAcesso(
         { id: "reader" },
-        [{ module: "config_acompanhamento_envios", can_read: true }],
+        [{ module: "config_acompanhamento_envios", can_read: true, can_update: false }],
         "can_read",
+        DEV_EMAILS,
+    ).autorizado, true)
+})
+
+// S-WM-59 (item 2/3): botão "Reenviar pendentes" e seletor de limite diário são ESCRITAS
+// (can_update) — leitura (can_read=true) sozinha não deve autorizar essas ações.
+test("nega escrita (can_update) mesmo com leitura liberada", () => {
+    const acesso = avaliarAcesso(
+        { id: "leitor-sem-escrita" },
+        [{ module: "config_acompanhamento_envios", can_read: true, can_update: false }],
+        "can_update",
+        DEV_EMAILS,
+    )
+    assert.equal(acesso.autorizado, false)
+    if (!acesso.autorizado) assert.equal(acesso.status, 403)
+})
+
+test("autoriza escrita (can_update) quando o módulo tem can_update true", () => {
+    assert.equal(avaliarAcesso(
+        { id: "editor" },
+        [{ module: "config_acompanhamento_envios", can_read: true, can_update: true }],
+        "can_update",
         DEV_EMAILS,
     ).autorizado, true)
 })

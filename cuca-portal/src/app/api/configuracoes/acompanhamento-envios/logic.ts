@@ -1,8 +1,9 @@
-export type AcaoAcompanhamentoEnvios = "can_read"
+export type AcaoAcompanhamentoEnvios = "can_read" | "can_update"
 
 export type PermissaoAcompanhamentoEnvios = {
     module: string
     can_read: boolean
+    can_update: boolean
 }
 
 type UsuarioAutenticado = {
