@@ -23,8 +23,10 @@ de `postgrest.exceptions.APIError` (construtor recebe um dict e expõe
 instalado em outro projeto local, postgrest 2.27.2) — suficiente pros testes
 que checam `exc.code`, sem precisar do pacote real.
 """
+import asyncio
 import os
 import sys
+import threading
 import types
 from unittest.mock import AsyncMock, MagicMock
 
@@ -930,15 +932,14 @@ def test_fetch_all_lead_ids_tentados_sync_pagina_alem_do_limite_padrao(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_retomar_disparo_divulgacao_pausado_seta_em_andamento_antes_de_enviar(monkeypatch):
-    """Achado da revisão pré-QA (pré-gate): sem guarda de concorrência, 2 chamadas
-    simultâneas ao endpoint de retomada (fire-and-forget, retorna 200 antes de terminar)
-    passam ambas pelo check de status='pausado_limite_diario' antes de qualquer uma
-    escrever — a 2ª só falharia depois de reenviar pra todo mundo (duplicidade real de
-    WhatsApp). O lado pontual (retomar_disparo_pausado) já fazia esse flip; faltava o
-    espelho aqui. Este teste garante: (1) o status muda pra 'em_andamento' ANTES do envio
-    começar, e (2) o update é direto em status (não passa por _update_metricas_sync, que
-    zeraria total_enviados/total_erros já acumulados de uma rodada anterior)."""
+async def test_retomar_disparo_divulgacao_pausado_faz_claim_atomico_antes_de_enviar(monkeypatch):
+    """Gate S-WM-60/QA (veredito FAIL, rodada anterior): a guarda antiga (SELECT-then-UPDATE
+    via _update_db_sync) não era atômica e não eliminava a corrida — substituída por
+    _claim_retomada_sync (UPDATE condicional WHERE id=X AND status=Y). Este teste garante
+    ordem (claim ANTES do envio) e que o claim usa a tabela/status corretos; a garantia de
+    exclusividade real sob concorrência é testada à parte, com 2 chamadas via
+    asyncio.gather() sobre a função real (ver test_retomar_disparo_divulgacao_pausado_sob_
+    concorrencia_so_1_dispara)."""
     disparo_data = {"id": "disparo-div-1", "mes": 8, "status": "pausado_limite_diario"}
     mock_sb = MagicMock()
     mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [disparo_data]
@@ -950,10 +951,11 @@ async def test_retomar_disparo_divulgacao_pausado_seta_em_andamento_antes_de_env
 
     ordem = []
 
-    def _update_db_sync_fake(tabela, item_id, dados):
-        ordem.append(("update", tabela, item_id, dados))
+    def _claim_fake(tabela, item_id, status_esperado, novo_status):
+        ordem.append(("claim", tabela, item_id, status_esperado, novo_status))
+        return True
 
-    monkeypatch.setattr(camp, "_update_db_sync", _update_db_sync_fake)
+    monkeypatch.setattr(camp, "_claim_retomada_sync", _claim_fake)
 
     async def _enviar_fake(*args, **kwargs):
         ordem.append(("enviar",))
@@ -963,9 +965,158 @@ async def test_retomar_disparo_divulgacao_pausado_seta_em_andamento_antes_de_env
 
     resultado = await camp.retomar_disparo_divulgacao_pausado("disparo-div-1", 0, 0, 100, 100)
 
-    assert ordem[0] == ("update", "disparos_divulgacao", "disparo-div-1", {"status": "em_andamento"})
+    assert ordem[0] == ("claim", "disparos_divulgacao", "disparo-div-1", "pausado_limite_diario", "em_andamento")
     assert ordem[1] == ("enviar",)
     # mesma convenção do lado pontual: **resultado sobrescreve o "status" externo com o
     # desfecho real do envio (aqui, o que _enviar_fake devolveu) — "retomado" não sobrevive.
     assert resultado["status"] == "concluido"
     assert resultado["pendentes_encontrados"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_divulgacao_pausado_nao_envia_quando_claim_falha(monkeypatch):
+    """Espelho do teste acima: quando outra chamada concorrente já reivindicou o disparo
+    (_claim_retomada_sync retorna False), esta chamada precisa retornar erro/no-op sem
+    consultar pendentes nem despachar envio nenhum."""
+    disparo_data = {"id": "disparo-div-1", "mes": 8, "status": "pausado_limite_diario"}
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [disparo_data]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_claim_retomada_sync", lambda *a: False)
+    mock_pendentes = MagicMock()
+    monkeypatch.setattr(camp, "_query_leads_divulgacao_pendentes_sync", mock_pendentes)
+    mock_enviar = AsyncMock()
+    monkeypatch.setattr(camp, "_enviar_divulgacao_para_leads_pendentes", mock_enviar)
+
+    resultado = await camp.retomar_disparo_divulgacao_pausado("disparo-div-1", 0, 0, 100, 100)
+
+    assert resultado["status"] == "erro"
+    mock_pendentes.assert_not_called()
+    mock_enviar.assert_not_called()
+
+
+class _FakeSupabaseConcorrencia:
+    """Fake de supabase que modela a semântica real do Postgres pra UPDATE condicional
+    (WHERE id=X AND status=Y): 2 UPDATEs concorrentes na mesma linha são serializados pelo
+    lock de linha do Postgres — a 2ª transação só reavalia sua cláusula WHERE depois que a
+    1ª commita. threading.Lock aqui simula esse lock (asyncio.to_thread roda o código
+    síncrono em threads reais de um pool, não em coroutines — por isso threading.Lock, não
+    asyncio.Lock)."""
+
+    def __init__(self, estado_inicial: dict):
+        self._estado = dict(estado_inicial)
+        self._lock = threading.Lock()
+        self.envios_disparados = []
+
+    def table(self, nome):
+        return _FakeTableConcorrencia(nome, self)
+
+
+class _FakeTableConcorrencia:
+    def __init__(self, nome, parent):
+        self.nome = nome
+        self.parent = parent
+        self._update_dados = None
+        self._filtros = {}
+
+    def select(self, *a, **kw):
+        return self
+
+    def update(self, dados):
+        self._update_dados = dados
+        return self
+
+    def eq(self, coluna, valor):
+        self._filtros[coluna] = valor
+        return self
+
+    def limit(self, *a):
+        return self
+
+    def neq(self, *a):
+        return self
+
+    def in_(self, *a):
+        return self
+
+    def range(self, *a):
+        return self
+
+    def execute(self):
+        if self._update_dados is not None:
+            with self.parent._lock:
+                status_esperado = self._filtros.get("status")
+                status_atual = self.parent._estado.get("status")
+                if status_esperado is not None and status_atual != status_esperado:
+                    return MagicMock(data=[])
+                novo_status = self._update_dados.get("status", status_atual)
+                self.parent._estado["status"] = novo_status
+                return MagicMock(data=[dict(self.parent._estado, id=self._filtros.get("id"))])
+        # SELECT informacional (não é o gate de exclusividade — o UPDATE acima é).
+        return MagicMock(data=[dict(self.parent._estado)], count=0)
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_divulgacao_pausado_sob_concorrencia_so_1_dispara(monkeypatch):
+    """Reprodução direta do achado da QA (gate S-WM-60, veredito FAIL): 2 chamadas
+    concorrentes (asyncio.gather) na FUNÇÃO REAL retomar_disparo_divulgacao_pausado, sobre
+    o mesmo disparo_id. Antes do fix (SELECT-then-UPDATE), as 2 despachavam envio — a QA
+    reproduziu isso com um script equivalente a este teste. Com o claim atômico
+    (_claim_retomada_sync), só 1 das 2 deve despachar; a outra recebe erro sem enviar
+    nada."""
+    fake_sb = _FakeSupabaseConcorrencia({
+        "id": "disparo-race-1", "mes": 8, "status": "pausado_limite_diario",
+    })
+    monkeypatch.setattr(camp, "supabase", fake_sb)
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_pendentes_sync",
+        lambda disparo_id: [{"id": "lead-race-1", "telefone": "5585999999999", "nome": "Fulano"}],
+    )
+
+    async def _enviar_fake(*args, **kwargs):
+        fake_sb.envios_disparados.append(1)
+        await asyncio.sleep(0.02)
+        return {"status": "concluido", "enviados": 1, "erros": 0}
+
+    monkeypatch.setattr(camp, "_enviar_divulgacao_para_leads_pendentes", _enviar_fake)
+
+    resultados = await asyncio.gather(
+        camp.retomar_disparo_divulgacao_pausado("disparo-race-1", 0, 0, 100, 100),
+        camp.retomar_disparo_divulgacao_pausado("disparo-race-1", 0, 0, 100, 100),
+    )
+
+    assert len(fake_sb.envios_disparados) == 1, "só 1 das 2 chamadas concorrentes pode disparar envio"
+    status_resultados = sorted(r["status"] for r in resultados)
+    assert status_resultados == ["concluido", "erro"], f"esperado 1 sucesso + 1 erro, veio {resultados}"
+
+
+@pytest.mark.asyncio
+async def test_retomar_disparo_pausado_sob_concorrencia_so_1_dispara(monkeypatch):
+    """Espelho do teste acima pro lado pontual (retomar_disparo_pausado) — mesma classe de
+    corrida, pré-existente desde o v0.2 (não introduzida pela guarda da divulgação),
+    corrigida junto nesta rodada com o mesmo _claim_retomada_sync."""
+    fake_sb = _FakeSupabaseConcorrencia({
+        "id": "evento-race-1", "status": "pausada_limite_diario", "disparo_id": "disparo-race-2",
+        "unidade_cuca": None, "categorias_alvo": None,
+    })
+    monkeypatch.setattr(camp, "supabase", fake_sb)
+    monkeypatch.setattr(
+        camp, "_query_leads_pendentes_sync",
+        lambda unidade, categorias_alvo, disparo_id: [{"id": "lead-race-2", "telefone": "5585999999999", "nome": "Fulano"}],
+    )
+
+    async def _enviar_fake(*args, **kwargs):
+        fake_sb.envios_disparados.append(1)
+        await asyncio.sleep(0.02)
+        return {"status": "concluida", "sucessos": 1, "erros": 0}
+
+    monkeypatch.setattr(camp, "_enviar_para_leads_pendentes", _enviar_fake)
+
+    resultados = await asyncio.gather(
+        camp.retomar_disparo_pausado("evento-race-1", "eventos_pontuais", 0, 0, 100, 100),
+        camp.retomar_disparo_pausado("evento-race-1", "eventos_pontuais", 0, 0, 100, 100),
+    )
+
+    assert len(fake_sb.envios_disparados) == 1, "só 1 das 2 chamadas concorrentes pode disparar envio"
+    status_resultados = sorted(r["status"] for r in resultados)
+    assert status_resultados == ["concluida", "erro"], f"esperado 1 sucesso + 1 erro, veio {resultados}"

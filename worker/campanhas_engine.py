@@ -180,6 +180,34 @@ def _query_leads_divulgacao_sync():
 _POSTGREST_PAGE_SIZE = 1000  # default de max rows do PostgREST/Supabase — ver _fetch_all_lead_ids_tentados_sync
 
 
+def _claim_retomada_sync(tabela: str, item_id: str, status_esperado: str, novo_status: str) -> bool:
+    """UPDATE condicional atômico — só muda o status se ele ainda for o esperado no momento
+    da escrita no Postgres (achado do gate S-WM-60/QA, verdito FAIL: a versão anterior fazia
+    SELECT-then-UPDATE, não atômico — 2 chamadas concorrentes ao endpoint de retomada
+    (fire-and-forget) podiam ambas ver o status pausado antes de qualquer uma escrever,
+    duplicando envio real de WhatsApp pro mesmo lead. Reproduzido empiricamente pela QA com
+    2 chamadas via asyncio.gather() na função real.
+
+    Um UPDATE com WHERE id=X AND status=Y é atômico no Postgres: 2 UPDATEs concorrentes na
+    mesma linha são serializados internamente pelo lock de linha — a 2ª transação só
+    reavalia sua cláusula WHERE depois que a 1ª commita, e nesse ponto o status já mudou,
+    então a 2ª afeta 0 linhas. Não precisa de lock explícito no lado da aplicação, mesmo
+    princípio das claim RPCs já existentes (FOR UPDATE SKIP LOCKED), aplicado via filtro em
+    vez de RPC porque aqui não há uma fila para percorrer, só 1 linha alvo conhecida.
+
+    Retorna True só se ESTA chamada conseguiu a transição (linha afetada); False significa
+    que outra chamada concorrente já reivindicou o item — quem recebe False não deve
+    prosseguir pro envio."""
+    res = (
+        supabase.table(tabela)
+        .update({"status": novo_status})
+        .eq("id", item_id)
+        .eq("status", status_esperado)
+        .execute()
+    )
+    return bool(res.data)
+
+
 def _fetch_all_lead_ids_tentados_sync(coluna_disparo: str, disparo_id: str) -> set:
     """Pagina logs_disparo em blocos de _POSTGREST_PAGE_SIZE (achado da revisão pré-QA): um
     .select() sem .range() é sujeito ao limite padrão de linhas do PostgREST/Supabase — com
@@ -762,6 +790,13 @@ async def retomar_disparo_pausado(
     if not disparo_id:
         return {"status": "erro", "motivo": "item pausado sem disparo_id associado — não deveria acontecer, investigar manualmente"}
 
+    # Claim atômico (ver _claim_retomada_sync) — precisa vir ANTES de calcular pendentes:
+    # é o único ponto que garante exclusividade real entre 2 chamadas concorrentes. Quem
+    # não ganha o claim retorna aqui, sem consultar leads nem despachar nada.
+    claimed = await asyncio.to_thread(_claim_retomada_sync, origem, item_id, "pausada_limite_diario", "em_andamento")
+    if not claimed:
+        return {"status": "erro", "motivo": "item já reivindicado por outra retomada concorrente — corrida evitada, nada enviado por esta chamada"}
+
     unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
     categorias_alvo = item.get("categorias_alvo") or None
     if isinstance(categorias_alvo, list) and len(categorias_alvo) == 0:
@@ -789,7 +824,7 @@ async def retomar_disparo_pausado(
         await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "concluida"})
         return {"status": "concluida", "pendentes_encontrados": 0}
 
-    await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "em_andamento"})
+    # origem já está em 'em_andamento' — foi o claim atômico acima que fez essa transição.
     await asyncio.to_thread(_update_db_sync, "disparos", disparo_id, {"status": "em_andamento"})
     resultado = await _enviar_para_leads_pendentes(
         item, origem, disparo_id, pendentes, delay_min, delay_max, daily_limit, error_threshold,
@@ -1120,6 +1155,17 @@ async def retomar_disparo_divulgacao_pausado(
     if disparo.get("status") != "pausado_limite_diario":
         return {"status": "erro", "motivo": f"disparo não está pausado por limite diário (status atual: {disparo.get('status')!r})"}
 
+    # Claim atômico (ver _claim_retomada_sync) — achado do gate S-WM-60/QA (veredito FAIL):
+    # a guarda anterior fazia SELECT-then-UPDATE, não atômico, e não eliminava a corrida
+    # entre 2 chamadas concorrentes ao endpoint (reproduzido empiricamente pela QA). Precisa
+    # vir ANTES de calcular pendentes: é o único ponto que garante exclusividade real. Quem
+    # não ganha o claim retorna aqui, sem consultar leads nem despachar nada.
+    claimed = await asyncio.to_thread(
+        _claim_retomada_sync, "disparos_divulgacao", disparo_id, "pausado_limite_diario", "em_andamento"
+    )
+    if not claimed:
+        return {"status": "erro", "motivo": "disparo já reivindicado por outra retomada concorrente — corrida evitada, nada enviado por esta chamada"}
+
     mes_nome = _MESES.get(disparo.get("mes", 0), str(disparo.get("mes", 0)))
 
     pendentes = await asyncio.to_thread(_query_leads_divulgacao_pendentes_sync, disparo_id)
@@ -1134,16 +1180,6 @@ async def retomar_disparo_divulgacao_pausado(
         )
         await asyncio.to_thread(_update_metricas_sync, disparo_id, enviados_res.count or 0, erros_res.count or 0, 0, "concluido")
         return {"status": "concluida", "pendentes_encontrados": 0}
-
-    # Guarda de concorrência (achado da revisão pré-QA): sem isto, 2 chamadas simultâneas ao
-    # endpoint de retomada (fire-and-forget, retorna 200 antes de terminar) passam ambas pelo
-    # check de status acima antes de qualquer uma escrever — a 2ª só falharia depois de reenviar
-    # pra todo mundo. O lado pontual (retomar_disparo_pausado) já flipa pra em_andamento antes de
-    # despachar; aqui faltava o espelho. Fecha a janela: 2ª chamada concorrente encontra
-    # status='em_andamento' (não mais 'pausado_limite_diario') e é rejeitada pelo check acima.
-    # Update direto (não _update_metricas_sync) porque este só escreve status — reusar
-    # _update_metricas_sync zeraria total_enviados/total_erros já acumulados na 1ª rodada.
-    await asyncio.to_thread(_update_db_sync, "disparos_divulgacao", disparo_id, {"status": "em_andamento"})
 
     resultado = await _enviar_divulgacao_para_leads_pendentes(
         disparo_id, mes_nome, pendentes, delay_min, delay_max, daily_limit, error_threshold,
