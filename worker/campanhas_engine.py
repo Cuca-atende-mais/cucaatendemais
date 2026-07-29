@@ -769,34 +769,66 @@ async def _enviar_para_leads_pendentes(
     return {"status": "concluida", "sucessos": total_enviados_final, "erros": total_erros_final}
 
 
-async def retomar_disparo_pausado(
-    item_id: str,
+async def reivindicar_retomada_pontual(item_id: str, origem: str) -> dict:
+    """S-WM-59 (item 2): extraído de retomar_disparo_pausado pra poder ser aguardado de
+    forma SÍNCRONA pelo endpoint HTTP (worker/main.py), antes de qualquer background_tasks.
+    Antes desta extração, todo o resultado (item não existe, não está pausado, corrida
+    perdida) só era conhecido dentro da tarefa em background — o endpoint sempre respondia
+    200 "retomada_iniciada" na hora, mesmo quando nada ia de fato acontecer. Isso tornava
+    impossível o portal mostrar um erro real pro usuário (S-WM-59 AC/item 2: "trate como
+    erro amigável, não crash").
+
+    Faz só a parte rápida (2 idas ao banco: SELECT + UPDATE condicional) — nenhuma consulta
+    de leads, nenhum envio. Retorna:
+      {"ok": True, "item": {...}, "disparo_id": "..."} — claim conseguido, pronto pra
+        continuar_retomada_pontual (chamada em background pelo endpoint).
+      {"ok": False, "status_code": 404|409|500, "motivo": "..."} — não prossiga: não
+        chame continuar_retomada_pontual, não background nada.
+
+    Não muda a lógica do claim atômico em si (_claim_retomada_sync, já aprovada 2x pelo
+    gate QA da S-WM-60) — só isola essa parte do resto do fluxo."""
+    item_res = supabase.table(origem).select("*").eq("id", item_id).limit(1).execute()
+    if not item_res.data:
+        return {"ok": False, "status_code": 404, "motivo": "item não encontrado"}
+    item = item_res.data[0]
+    if item.get("status") != "pausada_limite_diario":
+        return {
+            "ok": False, "status_code": 409,
+            "motivo": f"item não está pausado por limite diário (status atual: {item.get('status')!r})",
+        }
+    disparo_id = item.get("disparo_id")
+    if not disparo_id:
+        return {
+            "ok": False, "status_code": 500,
+            "motivo": "item pausado sem disparo_id associado — não deveria acontecer, investigar manualmente",
+        }
+
+    claimed = await asyncio.to_thread(_claim_retomada_sync, origem, item_id, "pausada_limite_diario", "em_andamento")
+    if not claimed:
+        return {
+            "ok": False, "status_code": 409,
+            "motivo": "item já reivindicado por outra retomada concorrente — corrida evitada, nada enviado por esta chamada",
+        }
+
+    return {"ok": True, "item": item, "disparo_id": disparo_id}
+
+
+async def continuar_retomada_pontual(
+    item: dict,
     origem: str,
+    disparo_id: str,
     delay_min: int,
     delay_max: int,
     daily_limit: int | None,
     error_threshold: int,
 ) -> dict:
-    """Plano 008/S-WM-60 (Step 3): retomada manual (nunca automática) de um item pausado
-    por daily_limit. Chamada só pelo endpoint /retomar-disparo/{origem}/{item_id}
-    (worker/main.py) — não faz parte do campanhas_loop() nem dos claims automáticos."""
-    item_res = supabase.table(origem).select("*").eq("id", item_id).limit(1).execute()
-    if not item_res.data:
-        return {"status": "erro", "motivo": "item não encontrado"}
-    item = item_res.data[0]
-    if item.get("status") != "pausada_limite_diario":
-        return {"status": "erro", "motivo": f"item não está pausado por limite diário (status atual: {item.get('status')!r})"}
-    disparo_id = item.get("disparo_id")
-    if not disparo_id:
-        return {"status": "erro", "motivo": "item pausado sem disparo_id associado — não deveria acontecer, investigar manualmente"}
-
-    # Claim atômico (ver _claim_retomada_sync) — precisa vir ANTES de calcular pendentes:
-    # é o único ponto que garante exclusividade real entre 2 chamadas concorrentes. Quem
-    # não ganha o claim retorna aqui, sem consultar leads nem despachar nada.
-    claimed = await asyncio.to_thread(_claim_retomada_sync, origem, item_id, "pausada_limite_diario", "em_andamento")
-    if not claimed:
-        return {"status": "erro", "motivo": "item já reivindicado por outra retomada concorrente — corrida evitada, nada enviado por esta chamada"}
-
+    """S-WM-59 (item 2): continuação de retomar_disparo_pausado depois do claim já ter sido
+    reivindicado por reivindicar_retomada_pontual. CRÍTICO: assume que o claim já aconteceu
+    (origem já está em 'em_andamento') — NÃO reexecuta o SELECT/checagem de status/claim. Se
+    reexecutasse, encontraria o próprio status que ELA mesma acabou de setar e faria no-op,
+    quebrando silenciosamente a retomada (mesma armadilha do "caminho do meio" descartado ao
+    decidir esta divisão: nunca chamar isto sem um claim bem-sucedido antes)."""
+    item_id = item.get("id")
     unidade = item.get("unidade_cuca") or item.get("unidade_cuca_id") or item.get("unidade_id")
     categorias_alvo = item.get("categorias_alvo") or None
     if isinstance(categorias_alvo, list) and len(categorias_alvo) == 0:
@@ -824,13 +856,36 @@ async def retomar_disparo_pausado(
         await asyncio.to_thread(_update_db_sync, origem, item_id, {"status": "concluida"})
         return {"status": "concluida", "pendentes_encontrados": 0}
 
-    # origem já está em 'em_andamento' — foi o claim atômico acima que fez essa transição.
+    # origem já está em 'em_andamento' — foi o claim (reivindicar_retomada_pontual) que fez
+    # essa transição, antes desta função ser chamada.
     await asyncio.to_thread(_update_db_sync, "disparos", disparo_id, {"status": "em_andamento"})
     resultado = await _enviar_para_leads_pendentes(
         item, origem, disparo_id, pendentes, delay_min, delay_max, daily_limit, error_threshold,
         usar_contagem_cumulativa=True,
     )
     return {"status": "retomado", "pendentes_encontrados": len(pendentes), **resultado}
+
+
+async def retomar_disparo_pausado(
+    item_id: str,
+    origem: str,
+    delay_min: int,
+    delay_max: int,
+    daily_limit: int | None,
+    error_threshold: int,
+) -> dict:
+    """Plano 008/S-WM-60 (Step 3): retomada manual (nunca automática) de um item pausado
+    por daily_limit. Camada de composição (claim + continuação) — mantida pelos testes já
+    existentes da S-WM-60 e como conveniência; o endpoint HTTP (worker/main.py) NÃO chama
+    esta função diretamente desde a S-WM-59 (item 2) — chama reivindicar_retomada_pontual
+    de forma síncrona e, só em caso de sucesso, agenda continuar_retomada_pontual em
+    background, pra poder responder com erro real (404/409) sem esperar o envio terminar."""
+    claim = await reivindicar_retomada_pontual(item_id, origem)
+    if not claim["ok"]:
+        return {"status": "erro", "motivo": claim["motivo"]}
+    return await continuar_retomada_pontual(
+        claim["item"], origem, claim["disparo_id"], delay_min, delay_max, daily_limit, error_threshold,
+    )
 
 
 # ─── Loop de Campanhas ────────────────────────────────────────────────────────
@@ -1137,37 +1192,47 @@ async def _enviar_divulgacao_para_leads_pendentes(
     return {"status": "concluido", "enviados": enviados_final, "erros": erros_final}
 
 
-async def retomar_disparo_divulgacao_pausado(
+async def reivindicar_retomada_divulgacao(disparo_id: str) -> dict:
+    """S-WM-59 (item 2): espelho de reivindicar_retomada_pontual pro lado divulgação —
+    mesmo motivo (endpoint HTTP precisa aguardar o claim de forma síncrona pra responder
+    erro real, sem esperar o envio em background). Retorna:
+      {"ok": True, "mes_nome": "..."} — claim conseguido.
+      {"ok": False, "status_code": 404|409, "motivo": "..."} — não prossiga."""
+    disparo_res = supabase.table("disparos_divulgacao").select("*").eq("id", disparo_id).limit(1).execute()
+    if not disparo_res.data:
+        return {"ok": False, "status_code": 404, "motivo": "disparo não encontrado"}
+    disparo = disparo_res.data[0]
+    if disparo.get("status") != "pausado_limite_diario":
+        return {
+            "ok": False, "status_code": 409,
+            "motivo": f"disparo não está pausado por limite diário (status atual: {disparo.get('status')!r})",
+        }
+
+    claimed = await asyncio.to_thread(
+        _claim_retomada_sync, "disparos_divulgacao", disparo_id, "pausado_limite_diario", "em_andamento"
+    )
+    if not claimed:
+        return {
+            "ok": False, "status_code": 409,
+            "motivo": "disparo já reivindicado por outra retomada concorrente — corrida evitada, nada enviado por esta chamada",
+        }
+
+    mes_nome = _MESES.get(disparo.get("mes", 0), str(disparo.get("mes", 0)))
+    return {"ok": True, "mes_nome": mes_nome}
+
+
+async def continuar_retomada_divulgacao(
     disparo_id: str,
+    mes_nome: str,
     delay_min: int,
     delay_max: int,
     daily_limit: int | None,
     error_threshold: int,
 ) -> dict:
-    """Plano 008/S-WM-60 (Step 3): retomada manual de um disparo de divulgação mensal
-    pausado por daily_limit. mes_nome não vem como parâmetro (o endpoint de retomada só
-    recebe disparo_id, sem mes_nome — Step 4) — resolvido aqui a partir de
-    disparos_divulgacao.mes, usando o mesmo _MESES de processar_disparos_divulgacao."""
-    disparo_res = supabase.table("disparos_divulgacao").select("*").eq("id", disparo_id).limit(1).execute()
-    if not disparo_res.data:
-        return {"status": "erro", "motivo": "disparo não encontrado"}
-    disparo = disparo_res.data[0]
-    if disparo.get("status") != "pausado_limite_diario":
-        return {"status": "erro", "motivo": f"disparo não está pausado por limite diário (status atual: {disparo.get('status')!r})"}
-
-    # Claim atômico (ver _claim_retomada_sync) — achado do gate S-WM-60/QA (veredito FAIL):
-    # a guarda anterior fazia SELECT-then-UPDATE, não atômico, e não eliminava a corrida
-    # entre 2 chamadas concorrentes ao endpoint (reproduzido empiricamente pela QA). Precisa
-    # vir ANTES de calcular pendentes: é o único ponto que garante exclusividade real. Quem
-    # não ganha o claim retorna aqui, sem consultar leads nem despachar nada.
-    claimed = await asyncio.to_thread(
-        _claim_retomada_sync, "disparos_divulgacao", disparo_id, "pausado_limite_diario", "em_andamento"
-    )
-    if not claimed:
-        return {"status": "erro", "motivo": "disparo já reivindicado por outra retomada concorrente — corrida evitada, nada enviado por esta chamada"}
-
-    mes_nome = _MESES.get(disparo.get("mes", 0), str(disparo.get("mes", 0)))
-
+    """S-WM-59 (item 2): continuação de retomar_disparo_divulgacao_pausado depois do claim
+    já ter sido reivindicado por reivindicar_retomada_divulgacao. CRÍTICO: assume que o
+    claim já aconteceu (status já 'em_andamento') — NÃO reexecuta o SELECT/checagem de
+    status/claim (mesma armadilha do lado pontual, ver continuar_retomada_pontual)."""
     pendentes = await asyncio.to_thread(_query_leads_divulgacao_pendentes_sync, disparo_id)
     if not pendentes:
         enviados_res = await asyncio.to_thread(
@@ -1186,3 +1251,24 @@ async def retomar_disparo_divulgacao_pausado(
         usar_contagem_cumulativa=True,
     )
     return {"status": "retomado", "pendentes_encontrados": len(pendentes), **resultado}
+
+
+async def retomar_disparo_divulgacao_pausado(
+    disparo_id: str,
+    delay_min: int,
+    delay_max: int,
+    daily_limit: int | None,
+    error_threshold: int,
+) -> dict:
+    """Plano 008/S-WM-60 (Step 3): retomada manual de um disparo de divulgação mensal
+    pausado por daily_limit. Camada de composição (claim + continuação) — mantida pelos
+    testes já existentes da S-WM-60 e como conveniência; o endpoint HTTP (worker/main.py)
+    NÃO chama esta função diretamente desde a S-WM-59 (item 2) — chama
+    reivindicar_retomada_divulgacao de forma síncrona e, só em caso de sucesso, agenda
+    continuar_retomada_divulgacao em background."""
+    claim = await reivindicar_retomada_divulgacao(disparo_id)
+    if not claim["ok"]:
+        return {"status": "erro", "motivo": claim["motivo"]}
+    return await continuar_retomada_divulgacao(
+        disparo_id, claim["mes_nome"], delay_min, delay_max, daily_limit, error_threshold,
+    )
