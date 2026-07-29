@@ -104,6 +104,7 @@ const MODULE_GROUPS = [
             { id: 'config_perfis', label: 'Perfis de Acesso (Controle de Matriz RBAC)' },
             { id: 'config_unidades', label: 'Cadastro e Edição de Unidades Físicas' },
             { id: 'config_categorias', label: 'Cadastro e Edição de Categorias de Equipamentos' },
+            { id: 'config_acompanhamento_envios', label: 'Acompanhamento de Envios (Visão de Entrega)' },
         ]
     },
     {
