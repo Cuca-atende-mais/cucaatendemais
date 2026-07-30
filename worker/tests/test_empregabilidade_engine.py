@@ -1185,6 +1185,7 @@ class TestAutorizacaoEmpresaPorNumeroWhatsapp:
         texto_enviado = mock_enviar.call_args.args[3]
         assert "encaminhamos seu contato" in texto_enviado.lower()
         mock_conversas.update.assert_called_once_with({"status": "awaiting_human", "updated_at": "now()"})
+        mock_conversas.update.return_value.eq.assert_called_once_with("id", "conv-1")
         mock_notificar.assert_called_once_with(
             "conv-1", "empregabilidade", "Barra", "PHONE_ID", "558599990000",
         )
