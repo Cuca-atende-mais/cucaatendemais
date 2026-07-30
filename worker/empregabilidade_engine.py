@@ -754,6 +754,41 @@ async def _processar_empresa(
         if emp_res.data:
             empresa = emp_res.data[0]
             nome_exibicao = empresa.get("nome_fantasia") or empresa["nome"]
+
+            # SEC-01 v2 (Plano 001): empresa_id não é mais concedido incondicionalmente
+            # a quem souber o CNPJ — checa se este número (phone, do webhook) já está
+            # na lista de autorizados dessa empresa.
+            autorizados_res = supabase.table("empresa_whatsapp_autorizados") \
+                .select("telefone").eq("empresa_id", empresa["id"]).execute()
+            telefones_autorizados = {row["telefone"] for row in (autorizados_res.data or [])}
+
+            if not telefones_autorizados:
+                # 1º toque nesse CNPJ (nunca autorizado antes) — vincula este número
+                # automaticamente. Janela residual aceita pelo Junior (ver Plano 001,
+                # "Why this matters").
+                supabase.table("empresa_whatsapp_autorizados").insert({
+                    "empresa_id": empresa["id"], "telefone": phone, "autorizado_por": None,
+                }).execute()
+            elif phone not in telefones_autorizados:
+                # Número diferente dos já autorizados — aciona transbordo humano real
+                # em vez de só bloquear (mesmo padrão de SQS-40, ver _processar_empregabilidade).
+                logger.warning(
+                    f"[SEC-01] Tentativa de acessar empresa {empresa['id']} (CNPJ {cnpj_limpo}) "
+                    f"de um WhatsApp não autorizado. phone={phone[:6]}****"
+                )
+                await e(
+                    "Esse CNPJ já está cadastrado com outro número de WhatsApp autorizado. 🔒\n\n"
+                    "Encaminhamos seu contato para verificação da nossa equipe — em breve alguém "
+                    "vai confirmar e liberar o acesso, se for o caso."
+                )
+                supabase.table("conversas").update(
+                    {"status": "awaiting_human", "updated_at": "now()"}
+                ).eq("id", conversa_id).execute()
+                from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
+                await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
+                _set_fluxo(conversa_id, {})
+                return
+
             await e(
                 f"✅ Empresa *{nome_exibicao}* já está cadastrada!\n\n"
                 "Deseja divulgar uma vaga agora? Responda *sim* ou *não*."
@@ -837,6 +872,13 @@ async def _processar_empresa(
                 "ativa": True,
             }).execute()
             empresa_id = emp_insert.data[0]["id"]
+            # SEC-01 v2 (Plano 001): vincula este número como autorizado logo após
+            # criar a empresa, antes de qualquer mensagem/estado — nenhuma empresa
+            # nova fica com 0 números autorizados (janela que daria auto-bind pro
+            # próximo número qualquer que tocasse esse CNPJ).
+            supabase.table("empresa_whatsapp_autorizados").insert({
+                "empresa_id": empresa_id, "telefone": phone, "autorizado_por": None,
+            }).execute()
             empresa_nome = dados_rf.get("nome", "")
             nome_exibicao = nome_fantasia or empresa_nome
 
@@ -883,6 +925,13 @@ async def _processar_empresa(
                 "ativa": True,
             }).execute()
             empresa_id = emp_insert.data[0]["id"]
+            # SEC-01 v2 (Plano 001): vincula este número como autorizado logo após
+            # criar a empresa, antes de qualquer mensagem/estado — nenhuma empresa
+            # nova fica com 0 números autorizados (janela que daria auto-bind pro
+            # próximo número qualquer que tocasse esse CNPJ).
+            supabase.table("empresa_whatsapp_autorizados").insert({
+                "empresa_id": empresa_id, "telefone": phone, "autorizado_por": None,
+            }).execute()
             empresa_nome = dados_rf.get("nome", "")
             nome_exibicao = nome_fantasia or empresa_nome
 

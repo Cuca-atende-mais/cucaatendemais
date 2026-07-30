@@ -1029,3 +1029,163 @@ class TestConsultaCandidaturaExigeTelefoneDeQuemPergunta:
             "telefone formatado no banco não deveria impedir o match com o phone normalizado"
         )
         assert "encontrada" in todo_texto_enviado
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SEC-01 v2 (Plano 001) — empresa deixa de ser "autenticada" só pelo CNPJ
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mock_multi_tabela(por_tabela: dict) -> MagicMock:
+    """supabase.table(nome) devolve um MagicMock diferente por nome de tabela
+    (dict pré-populado nome_tabela -> MagicMock), permitindo configurar
+    retornos diferentes por tabela na mesma chamada de função."""
+    mock_sb = MagicMock()
+
+    def _table(nome):
+        if nome not in por_tabela:
+            por_tabela[nome] = MagicMock()
+        return por_tabela[nome]
+
+    mock_sb.table.side_effect = _table
+    return mock_sb
+
+
+class TestAutorizacaoEmpresaPorNumeroWhatsapp:
+
+    @pytest.mark.asyncio
+    async def test_cnpj_novo_grava_autorizacao_automatica_no_cadastro(self, monkeypatch):
+        """Cadastro de empresa nova (confirmando_cadastro): logo após o
+        .insert() em empresas, o número de quem está cadastrando (phone) deve
+        ser gravado em empresa_whatsapp_autorizados com autorizado_por=None
+        (vínculo automático)."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_cadastro", {
+            "perfil": "empresa",
+            "dados_rf": {"nome": "ACME LTDA", "nome_fantasia": None},
+            "cnpj": "12345678000199",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        mock_empresas = MagicMock()
+        mock_empresas.insert.return_value.execute.return_value.data = [{"id": "e-nova"}]
+        mock_autorizados = MagicMock()
+        por_tabela = {"empresas": mock_empresas, "empresa_whatsapp_autorizados": mock_autorizados}
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela(por_tabela))
+
+        await emp._processar_empresa(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_autorizados.insert.assert_called_once()
+        payload = mock_autorizados.insert.call_args.args[0]
+        assert payload["empresa_id"] == "e-nova"
+        assert payload["telefone"] == "558599990000"
+        assert payload["autorizado_por"] is None
+
+    @pytest.mark.asyncio
+    async def test_cnpj_existente_numero_ja_autorizado_concede_acesso_normal(self, monkeypatch):
+        """Número que já está na lista de autorizados dessa empresa continua
+        tendo acesso normal, sem fricção nova."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        mock_empresas = MagicMock()
+        mock_empresas.select.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "e1", "nome": "ACME LTDA", "nome_fantasia": "ACME"}
+        ]
+        mock_autorizados = MagicMock()
+        mock_autorizados.select.return_value.eq.return_value.execute.return_value.data = [
+            {"telefone": "558599990000"}
+        ]
+        por_tabela = {"empresas": mock_empresas, "empresa_whatsapp_autorizados": mock_autorizados}
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela(por_tabela))
+
+        await emp._processar_empresa(
+            "12345678000199", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_autorizados.insert.assert_not_called()
+        assert estado.get("etapa") == "aguardando_criar_vaga"
+        assert estado.get("empresa_id") == "e1"
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "já está cadastrada" in texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_cnpj_existente_lista_vazia_faz_backfill_e_concede_acesso(self, monkeypatch):
+        """1º toque nesse CNPJ (nenhum número autorizado ainda) — vincula este
+        número automaticamente E concede acesso nesta primeira vez, sem
+        transbordo."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        mock_empresas = MagicMock()
+        mock_empresas.select.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "e1", "nome": "ACME LTDA", "nome_fantasia": "ACME"}
+        ]
+        mock_autorizados = MagicMock()
+        mock_autorizados.select.return_value.eq.return_value.execute.return_value.data = []
+        por_tabela = {"empresas": mock_empresas, "empresa_whatsapp_autorizados": mock_autorizados}
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela(por_tabela))
+
+        await emp._processar_empresa(
+            "12345678000199", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_autorizados.insert.assert_called_once()
+        payload = mock_autorizados.insert.call_args.args[0]
+        assert payload["empresa_id"] == "e1"
+        assert payload["telefone"] == "558599990000"
+        assert payload["autorizado_por"] is None
+        assert estado.get("etapa") == "aguardando_criar_vaga", (
+            "backfill não deveria acionar transbordo — acesso concedido normalmente na 1ª vez"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cnpj_existente_numero_diferente_aciona_transbordo(self, monkeypatch):
+        """Número diferente dos já autorizados para essa empresa aciona
+        transbordo humano real — não recebe empresa_id, não pode agir."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        mock_empresas = MagicMock()
+        mock_empresas.select.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "e1", "nome": "ACME LTDA", "nome_fantasia": "ACME"}
+        ]
+        mock_autorizados = MagicMock()
+        mock_autorizados.select.return_value.eq.return_value.execute.return_value.data = [
+            {"telefone": "5511999998888"}
+        ]
+        mock_conversas = MagicMock()
+        por_tabela = {
+            "empresas": mock_empresas,
+            "empresa_whatsapp_autorizados": mock_autorizados,
+            "conversas": mock_conversas,
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela(por_tabela))
+
+        import meta_adapter_inbound
+        mock_notificar = AsyncMock(return_value=None)
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", mock_notificar)
+
+        await emp._processar_empresa(
+            "12345678000199", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "encaminhamos seu contato" in texto_enviado.lower()
+        mock_conversas.update.assert_called_once_with({"status": "awaiting_human", "updated_at": "now()"})
+        mock_notificar.assert_called_once_with(
+            "conv-1", "empregabilidade", "Barra", "PHONE_ID", "558599990000",
+        )
+        assert estado == {}, "reset do fluxo — nenhum empresa_id deve sobrar em estado gravado"
