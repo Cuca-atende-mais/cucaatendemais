@@ -253,6 +253,20 @@ def test_setor_nenhum():
     assert canonical is None
 
 
+def test_entregar_curriculo_nao_deveria_disparar_filtro_de_logistica():
+    """Achado de auditoria (2026-07-09): 'entrega' -> Logística é buscado como
+    substring simples, sem limite de palavra, e bate dentro de 'entregar' — um
+    verbo comum em candidato dizendo 'quero entregar meu currículo'. Isso NÃO
+    é uma menção ao setor de Logística; filtrar por esse setor aqui esconderia
+    vagas de outras áreas do candidato (ou daria 'não temos vagas de entrega'
+    mesmo havendo vagas de sobra)."""
+    from intencao_detector import extrair_setor_da_mensagem
+    kw, canonical = extrair_setor_da_mensagem("quero entregar meu currículo pra alguma vaga")
+    assert canonical is None, (
+        f"'entregar' não deveria ser lido como menção ao setor Logística (retornou {kw!r} -> {canonical!r})"
+    )
+
+
 def test_setor_banco_talentos_nao_confunde():
     """'banco de talentos' tem guard para não ser confundido com setor."""
     from intencao_detector import extrair_setor_da_mensagem
