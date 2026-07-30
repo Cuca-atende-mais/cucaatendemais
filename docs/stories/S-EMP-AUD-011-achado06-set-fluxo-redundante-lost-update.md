@@ -75,3 +75,30 @@ GPT-5 Codex
 - v0.2 (2026-07-29): @po validou — GO (9/10). Status Draft → Ready. Melhor story do lote em riscos: decisão de produto, risco de compatibilidade técnica com outra story e dependência de infra (gunicorn) todos documentados com evidência e decisão explícita.
 - v0.3 (2026-07-29): @po adicionou "Valor de negócio" explícito.
 - v0.4 (2026-07-30): @dev implementou trava async por conversa integrada ao `to_thread` do Bloco 4 e teste concorrente. Status Ready → Ready for Review.
+
+## QA Results
+
+### Review Date: 2026-07-30
+
+### Reviewed By: Quinn (Test Architect & Quality Advisor)
+
+### Gate Status
+
+PASS com follow-up obrigatório.
+
+### Findings
+
+- Nenhum achado bloqueante identificado para o risco principal de lost-update: o dispatch normal é serializado por `conversa_id`, `_set_fluxo_async` é reentrante sob `ContextVar`, e o `empregabilidade_notify_loop` relê a etapa sob lock antes de gravar.
+- Follow-up obrigatório: `_set_fluxo` ainda executa `select("metadata")` antes do `update` em toda gravação (`worker/empregabilidade_engine.py:212-216`). A corrida foi mitigada, mas a parte de performance/round-trip redundante descrita no escopo do achado permanece.
+- A dependência de 1 processo segue relevante: a trava é em memória e deve constar na descrição do PR/deploy. Se o worker rodar com mais de 1 processo, o lock não atravessa processos.
+
+### Evidence
+
+- Revisão de código: `_fluxo_lock_context` usa `asyncio.Lock` por conversa no event loop; `processar_mensagem_empregabilidade` entra no lock antes do fluxo principal; notify loop grava com `etapa_esperada`.
+- Teste concorrente novo `test_lock_fluxo_impede_notify_de_sobrescrever_dispatch` cobre o caso stale com `asyncio.gather()`.
+- `cd worker && SUPABASE_URL=http://localhost SUPABASE_SERVICE_ROLE_KEY=<dummy-jwt> ../.venv/bin/python -c "import empregabilidade_engine"`: passou.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v`: `81 passed, 2 warnings`.
+
+### Notes
+
+- Os 2 warnings são `DeprecationWarning` preexistentes de `datetime.utcnow()` no fluxo de cancelamento.

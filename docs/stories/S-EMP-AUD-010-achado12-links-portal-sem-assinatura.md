@@ -81,3 +81,32 @@ GPT-5 Codex
 - v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Ponto forte: escopo restatado diretamente (4 páginas nomeadas), risco elaborado (checagem de posse circular na API).
 - v0.3 (2026-07-29): @po adicionou "Valor de negócio" explícito.
 - v0.4 (2026-07-30): @dev implementou links assinados HMAC no worker e validação server-side no portal. Status Ready → Ready for Review.
+
+## QA Results
+
+### Review Date: 2026-07-30
+
+### Reviewed By: Quinn (Test Architect & Quality Advisor)
+
+### Gate Status
+
+PASS.
+
+### Findings
+
+- Nenhum achado bloqueante identificado em S-EMP-AUD-010.
+- A assinatura HMAC cobre os links gerados pelo worker para as 4 rotas públicas confirmadas e as API routes sensíveis validam a assinatura no servidor antes de ler/gravar dados.
+- O segredo `EMPREGABILIDADE_LINK_SECRET` foi informado pelo usuário como configurado manualmente no EasyPanel com o mesmo valor nos serviços worker e portal; não houve verificação direta no painel por esta revisão.
+
+### Evidence
+
+- Revisão de código: `_assinar_link_portal` gera `exp` e `sig`; portal valida com `crypto.createHmac` e `crypto.timingSafeEqual`.
+- Smoke HMAC independente: assinatura válida retornou `true`; query alterada retornou `false`; expirada retornou `false`.
+- `cd worker && SUPABASE_URL=http://localhost SUPABASE_SERVICE_ROLE_KEY=<dummy-jwt> ../.venv/bin/python -c "import empregabilidade_engine"`: passou.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v`: `81 passed, 2 warnings`.
+- `cd cuca-portal && npx tsc --noEmit --allowImportingTsExtensions`: passou.
+- `cd cuca-portal && npm test`: `24 passed`.
+
+### Notes
+
+- Os 2 warnings são `DeprecationWarning` preexistentes de `datetime.utcnow()` no fluxo de cancelamento.
