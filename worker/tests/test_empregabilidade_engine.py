@@ -1134,6 +1134,249 @@ def _mock_multi_tabela(por_tabela: dict) -> MagicMock:
     return mock_sb
 
 
+def _mock_sb_multi_tabela(tabelas: dict[str, MagicMock]) -> MagicMock:
+    """Helper nomeado para os testes do Plano 008.
+
+    Reaproveita o padrão multi-tabela já usado na suíte: cada chamada
+    supabase.table(nome) recebe um mock dedicado, permitindo assertar payload
+    e filtros reais em fluxos que leem/escrevem mais de uma tabela.
+    """
+    return _mock_multi_tabela(tabelas)
+
+
+class TestConfirmandoCancelamento:
+
+    @pytest.mark.asyncio
+    async def test_sim_cancela_vaga_com_payload_correto(self, monkeypatch):
+        """TEST-01 + achado #14: cobre o cancelamento irreversível e verifica
+        payload/filtro do update, não só mensagem ou etapa final."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_cancelamento", {
+            "perfil": "empresa",
+            "empresa_id": "emp-1",
+            "empresa_nome": "Empresa Teste LTDA",
+            "empresa_nome_exibicao": "Empresa Teste",
+            "cnpj": "12345678000199",
+            "vaga_cancelar_id": "vaga-1",
+            "vaga_cancelar_titulo": "Vendedor",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "historico_alteracoes": [],
+            "created_by": None,
+            "unidade_cuca": "Barra",
+        }
+        mock_sb = _mock_sb_multi_tabela({"vagas": mock_vagas})
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_empresa(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        payload = mock_vagas.update.call_args.args[0]
+        assert payload["status"] == "cancelada"
+        assert len(payload["historico_alteracoes"]) == 1
+        assert payload["historico_alteracoes"][0]["tipo"] == "cancelamento"
+        assert payload["historico_alteracoes"][0]["ator"] == {"empresa_id": "emp-1"}
+        mock_vagas.select.return_value.eq.assert_called_with("id", "vaga-1")
+        mock_vagas.update.return_value.eq.assert_called_with("id", "vaga-1")
+        assert estado.get("etapa") == "menu_empresa_acoes"
+
+    @pytest.mark.asyncio
+    async def test_nao_aborta_sem_escrever_em_vagas(self, monkeypatch):
+        """Resposta diferente de confirmação não deve tocar a tabela vagas."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_cancelamento", {
+            "perfil": "empresa",
+            "empresa_id": "emp-1",
+            "vaga_cancelar_id": "vaga-1",
+            "vaga_cancelar_titulo": "Vendedor",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_vagas = MagicMock()
+        mock_sb = _mock_sb_multi_tabela({"vagas": mock_vagas})
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_empresa(
+            "não, mudei de ideia", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_vagas.update.assert_not_called()
+        assert estado.get("etapa") == "menu_empresa_acoes"
+
+
+class TestConfirmandoCadastro:
+
+    @pytest.mark.asyncio
+    async def test_sim_insere_empresa_com_payload_correto(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_cadastro", {
+            "perfil": "empresa",
+            "cnpj": "12345678000199",
+            "dados_rf": {
+                "nome": "Empresa Teste LTDA",
+                "nome_fantasia": "Teste",
+                "email": "contato@empresa.test",
+                "telefone": "8533334444",
+                "endereco": "Rua X, 1",
+                "setor": "Comércio",
+                "porte": "ME",
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_empresas = MagicMock()
+        mock_empresas.insert.return_value.execute.return_value.data = [{"id": "empresa-abc"}]
+        mock_autorizados = MagicMock()
+        mock_sb = _mock_sb_multi_tabela({
+            "empresas": mock_empresas,
+            "empresa_whatsapp_autorizados": mock_autorizados,
+        })
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_empresa(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        payload = mock_empresas.insert.call_args.args[0]
+        assert payload == {
+            "nome": "Empresa Teste LTDA",
+            "nome_fantasia": "Teste",
+            "cnpj": "12345678000199",
+            "email": "contato@empresa.test",
+            "telefone": "8533334444",
+            "endereco": "Rua X, 1",
+            "setor": "Comércio",
+            "porte": "ME",
+            "ativa": True,
+        }
+        mock_empresas.insert.assert_called_once_with(payload)
+        mock_autorizados.insert.assert_called_once_with({
+            "empresa_id": "empresa-abc",
+            "telefone": "558599990000",
+            "autorizado_por": None,
+        })
+        assert estado.get("etapa") == "aguardando_criar_vaga"
+        assert estado.get("empresa_id") == "empresa-abc"
+
+    @pytest.mark.asyncio
+    async def test_sim_com_correcao_insere_empresa_com_payload_correto(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_cadastro_com_correcao", {
+            "perfil": "empresa",
+            "cnpj": "12345678000199",
+            "dados_rf": {
+                "nome": "Empresa Corrigida LTDA",
+                "nome_fantasia": "",
+                "email": "",
+                "telefone": "8599990000",
+                "endereco": "Rua Corrigida, 10",
+                "setor": "Serviços",
+                "porte": "EPP",
+                "correcao": "telefone corrigido",
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_empresas = MagicMock()
+        mock_empresas.insert.return_value.execute.return_value.data = [{"id": "empresa-corrigida"}]
+        mock_autorizados = MagicMock()
+        mock_sb = _mock_sb_multi_tabela({
+            "empresas": mock_empresas,
+            "empresa_whatsapp_autorizados": mock_autorizados,
+        })
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_empresa(
+            "confirmar", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        payload = mock_empresas.insert.call_args.args[0]
+        assert payload == {
+            "nome": "Empresa Corrigida LTDA",
+            "nome_fantasia": None,
+            "cnpj": "12345678000199",
+            "email": None,
+            "telefone": "8599990000",
+            "endereco": "Rua Corrigida, 10",
+            "setor": "Serviços",
+            "porte": "EPP",
+            "ativa": True,
+        }
+        mock_empresas.insert.assert_called_once_with(payload)
+        mock_autorizados.insert.assert_called_once_with({
+            "empresa_id": "empresa-corrigida",
+            "telefone": "558599990000",
+            "autorizado_por": None,
+        })
+        assert estado.get("etapa") == "aguardando_criar_vaga"
+        assert estado.get("empresa_id") == "empresa-corrigida"
+
+
+class TestConfirmacaoEntrevista:
+
+    @pytest.mark.asyncio
+    async def test_confirmar_presenca_grava_status_correto(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_conversas = MagicMock()
+        mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "metadata": {}
+        }
+        mock_candidaturas = MagicMock()
+        mock_candidaturas.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "cand-1", "nome": "Fulano"}
+        ]
+        mock_sb = _mock_sb_multi_tabela({
+            "conversas": mock_conversas,
+            "candidaturas": mock_candidaturas,
+        })
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp.processar_mensagem_empregabilidade(
+            "1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra", "Fulano",
+        )
+
+        mock_candidaturas.select.return_value.eq.assert_called_with("telefone", "8599990000")
+        mock_candidaturas.select.return_value.eq.return_value.eq.assert_called_with("status", "convite_enviado")
+        mock_candidaturas.update.assert_called_once_with({"status": "entrevista_confirmada"})
+        mock_candidaturas.update.return_value.eq.assert_called_once_with("id", "cand-1")
+        assert estado == {"perfil": "encerrado"}
+
+    @pytest.mark.asyncio
+    async def test_recusar_presenca_grava_status_correto(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_conversas = MagicMock()
+        mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "metadata": {}
+        }
+        mock_candidaturas = MagicMock()
+        mock_candidaturas.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "cand-2", "nome": "Ciclana"}
+        ]
+        mock_sb = _mock_sb_multi_tabela({
+            "conversas": mock_conversas,
+            "candidaturas": mock_candidaturas,
+        })
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp.processar_mensagem_empregabilidade(
+            "não posso", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra", "Ciclana",
+        )
+
+        mock_candidaturas.update.assert_called_once_with({"status": "entrevista_recusada"})
+        mock_candidaturas.update.return_value.eq.assert_called_once_with("id", "cand-2")
+        assert estado == {"perfil": "encerrado"}
+
+
 class TestAutorizacaoEmpresaPorNumeroWhatsapp:
 
     @pytest.mark.asyncio
