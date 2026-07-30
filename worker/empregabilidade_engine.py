@@ -2784,15 +2784,25 @@ async def _rotear_por_intencao(
 
         if setor_canonical:
             # busca mais vagas para filtrar por setor em Python (substring match)
-            vagas_pool = (supabase.table("vagas").select("id, titulo, descricao, setor")
-                          .eq("status", "aberta").order("created_at", desc=True).limit(50).execute().data or [])
+            def _buscar_vagas_setor():
+                return (
+                    supabase.table("vagas").select("id, titulo, descricao, setor")
+                    .eq("status", "aberta").order("created_at", desc=True).limit(50).execute().data or []
+                )
+
+            vagas_pool = await _supabase_to_thread(_buscar_vagas_setor)
             vagas = [
                 v for v in vagas_pool
                 if any(setor_canonical.lower() in (s or "").lower() for s in (v.get("setor") or []))
             ][:5]
         else:
-            vagas = (supabase.table("vagas").select("id, titulo, descricao")
-                     .eq("status", "aberta").order("created_at", desc=True).limit(5).execute().data or [])
+            def _buscar_vagas_recentes():
+                return (
+                    supabase.table("vagas").select("id, titulo, descricao")
+                    .eq("status", "aberta").order("created_at", desc=True).limit(5).execute().data or []
+                )
+
+            vagas = await _supabase_to_thread(_buscar_vagas_recentes)
 
         if not vagas:
             if setor_canonical:
