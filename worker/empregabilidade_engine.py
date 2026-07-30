@@ -2956,9 +2956,12 @@ async def empregabilidade_notify_loop():
     logger.info("[empreg-notify] Loop de notificação de vagas iniciado.")
     while True:
         try:
-            res = supabase.table("conversas").select(
-                "id, metadata, origem_id, lead_id"
-            ).eq("agente_tipo", "Empregabilidade").in_("status", ["ativa", "aberta"]).execute()
+            def _buscar_conversas_pendentes():
+                return supabase.table("conversas").select(
+                    "id, metadata, origem_id, lead_id"
+                ).eq("agente_tipo", "Empregabilidade").in_("status", ["ativa", "aberta"]).execute()
+
+            res = await _supabase_to_thread(_buscar_conversas_pendentes)
 
             conversas = res.data or []
             for c in conversas:
@@ -2981,9 +2984,12 @@ async def empregabilidade_notify_loop():
                     logger.warning("[empreg-notify] origem_id ausente na conversa %s — skipping", conversa_id)
                     continue
 
-                lead_phone_res = supabase.table("leads").select(
-                    "telefone"
-                ).eq("id", lead_id).single().execute()
+                def _buscar_telefone_lead():
+                    return supabase.table("leads").select(
+                        "telefone"
+                    ).eq("id", lead_id).single().execute()
+
+                lead_phone_res = await _supabase_to_thread(_buscar_telefone_lead)
                 phone = (lead_phone_res.data or {}).get("telefone", "")
 
                 if not phone:
