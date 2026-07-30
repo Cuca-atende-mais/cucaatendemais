@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift, Copy, X, Clock, MapPin } from "lucide-react"
 import toast from "react-hot-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
 
 const TIPOS_CONTRATO = ["CLT", "PJ", "Estágio", "Temporário", "Aprendiz", "Freelancer"]
 const ESCOLARIDADES = ["Fundamental Incompleto", "Fundamental Completo", "Médio Incompleto", "Médio Completo", "Superior Incompleto", "Superior Completo"]
@@ -73,6 +74,7 @@ function NovaVagaEmpresaContent() {
     const unidadeDestinoParam = searchParams.get("unidade_destino") || "global"
     const emailParam = searchParams.get("email_responsavel") || ""
     const telefoneParam = searchParams.get("telefone_responsavel") || ""
+    const linkParams = serializarLinkParams(searchParams)
 
     const [unidadeDestino, setUnidadeDestino] = useState<string>("")
     const [unidadesOpcoes, setUnidadesOpcoes] = useState<{ value: string; label: string }[]>([])
@@ -125,8 +127,11 @@ function NovaVagaEmpresaContent() {
     const [vagaResumo, setVagaResumo] = useState<{ titulo: string; tipo_contrato: string; total_vagas: string; salario: string } | null>(null)
 
     useEffect(() => {
-        if (!empresaId) { setEmpresaInvalida(true); setLoadingEmpresa(false); return }
-        fetch(`/api/empregabilidade/empresa?id=${encodeURIComponent(empresaId)}`)
+        const fetchEmpresa = async () => {
+            if (!empresaId) { setEmpresaInvalida(true); setLoadingEmpresa(false); return }
+            const linkValido = await validarLinkAssinadoNoServidor(searchParams)
+            if (!linkValido) { setEmpresaInvalida(true); setLoadingEmpresa(false); return }
+            fetch(`/api/empregabilidade/empresa?id=${encodeURIComponent(empresaId)}`)
             .then(r => r.json())
             .then(data => {
                 if (data.error || !data.id) setEmpresaInvalida(true)
@@ -134,7 +139,9 @@ function NovaVagaEmpresaContent() {
                 setLoadingEmpresa(false)
             })
             .catch(() => { setEmpresaInvalida(true); setLoadingEmpresa(false) })
-    }, [empresaId])
+        }
+        fetchEmpresa()
+    }, [empresaId, linkParams, searchParams])
 
     useEffect(() => {
         fetch("/api/empregabilidade/unidades")
@@ -230,6 +237,7 @@ function NovaVagaEmpresaContent() {
                     pcd_vaga: pcdVaga,
                     pcd_tipo: pcdVaga ? (pcdTipo || null) : null,
                     pcd_homologado: pcdVaga ? pcdHomologado : false,
+                    link_params: linkParams,
                 }),
             })
             const data = await res.json()

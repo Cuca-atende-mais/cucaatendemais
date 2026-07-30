@@ -10,8 +10,9 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Building2, Calendar, CheckCircle2, Loader2, Plus, Trash2 } from "lucide-react"
+import { AlertTriangle, Building2, Calendar, CheckCircle2, Loader2, Plus, Trash2 } from "lucide-react"
 import toast from "react-hot-toast"
+import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
 
 const FAIXAS_ETARIAS = [
     "A partir de 14 anos",
@@ -31,12 +32,14 @@ function SelecaoNovaContent() {
     const unidadeCucaParam = searchParams.get("unidade_cuca") || ""
     const emailParam = searchParams.get("email_responsavel") || ""
     const telParam = searchParams.get("telefone_responsavel") || ""
+    const linkParams = serializarLinkParams(searchParams)
 
     const [empresa, setEmpresa] = useState<any>(null)
     const [loadingEmpresa, setLoadingEmpresa] = useState(true)
     const [success, setSuccess] = useState(false)
     const [loading, setLoading] = useState(false)
     const [erro, setErro] = useState("")
+    const [linkInvalido, setLinkInvalido] = useState(false)
 
     const [cargos, setCargos] = useState<CargoLinha[]>([cargoVazio()])
     const [datasSelecao, setDatasSelecao] = useState<DataHora[]>([{ data: "", hora: "08:00" }])
@@ -44,16 +47,22 @@ function SelecaoNovaContent() {
     const [unidadeSelecionada, setUnidadeSelecionada] = useState(unidadeCucaParam)
 
     useEffect(() => {
-        if (!empresaId) { setLoadingEmpresa(false); return }
-        fetch(`/api/empregabilidade/empresa/${empresaId}`)
+        const fetchDados = async () => {
+            if (!empresaId) { setLinkInvalido(true); setLoadingEmpresa(false); return }
+            const linkValido = await validarLinkAssinadoNoServidor(searchParams)
+            if (!linkValido) { setLinkInvalido(true); setLoadingEmpresa(false); return }
+
+            fetch(`/api/empregabilidade/empresa/${empresaId}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d) setEmpresa(d) })
             .finally(() => setLoadingEmpresa(false))
 
-        fetch("/api/empregabilidade/unidades")
+            fetch("/api/empregabilidade/unidades")
             .then(r => r.json())
             .then(d => setUnidades(Array.isArray(d) ? d : (d.unidades || [])))
-    }, [empresaId])
+        }
+        fetchDados()
+    }, [empresaId, linkParams, searchParams])
 
     // ── Cargos ─────────────────────────────────────────────────────────────────
     function addCargo() { setCargos(prev => [...prev, cargoVazio()]) }
@@ -96,6 +105,7 @@ function SelecaoNovaContent() {
                     datas_selecao: datasValidas,
                     email_responsavel: emailParam,
                     telefone_responsavel: telParam,
+                    link_params: linkParams,
                 }),
             })
             const data = await res.json()
@@ -113,6 +123,22 @@ function SelecaoNovaContent() {
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <Loader2 className="h-10 w-10 animate-spin text-cuca-blue" />
+            </div>
+        )
+    }
+
+    if (linkInvalido) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
+                <Card className="max-w-md w-full text-center">
+                    <CardContent className="pt-8 pb-8 space-y-4">
+                        <AlertTriangle className="h-16 w-16 text-yellow-500 mx-auto" />
+                        <h2 className="text-xl font-bold">Link inválido</h2>
+                        <p className="text-muted-foreground text-sm">
+                            Este link é inválido ou expirou. Solicite um novo pelo WhatsApp.
+                        </p>
+                    </CardContent>
+                </Card>
             </div>
         )
     }

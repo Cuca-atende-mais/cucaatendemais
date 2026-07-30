@@ -9,8 +9,13 @@ import os
 import re
 import logging
 import asyncio
+import hashlib
+import hmac
+import time
+import contextvars
+from contextlib import asynccontextmanager
 from datetime import date
-from urllib.parse import quote
+from urllib.parse import urlencode
 from supabase import create_client, Client
 
 logger = logging.getLogger("empregabilidade_engine")
@@ -18,6 +23,7 @@ logger = logging.getLogger("empregabilidade_engine")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 PORTAL_URL = os.getenv("PORTAL_URL", "https://www.cucaatendemais.com.br")
+_LINK_SECRET = os.getenv("EMPREGABILIDADE_LINK_SECRET", "")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -26,6 +32,28 @@ _PALAVRAS_ENCERRAR = {
     "obrigada", "valeu", "pronto", "pode fechar", "ok pode fechar",
     "nada mais", "só isso", "era isso",
 }
+
+
+def _assinar_link_portal(path: str, params: dict, ttl_horas: int = 48) -> str:
+    """Gera link do portal com HMAC e expiração para evitar capability URL crua."""
+    clean_params = {
+        key: str(value)
+        for key, value in params.items()
+        if value is not None and str(value) != ""
+    }
+    if not _LINK_SECRET:
+        logger.error(
+            "[link-assinado] EMPREGABILIDADE_LINK_SECRET não configurada — gerando link SEM assinatura"
+        )
+        return f"{PORTAL_URL}{path}?{urlencode(clean_params)}"
+
+    signed_params = {
+        **clean_params,
+        "exp": str(int(time.time()) + ttl_horas * 3600),
+    }
+    canonical = urlencode(sorted(signed_params.items()))
+    sig = hmac.new(_LINK_SECRET.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+    return f"{PORTAL_URL}{path}?{urlencode({**signed_params, 'sig': sig})}"
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +219,42 @@ def _set_fluxo(conversa_id: str, fluxo: dict):
 _GET_FLUXO_SYNC = _get_fluxo
 _SET_FLUXO_SYNC = _set_fluxo
 _ULTIMA_MENSAGEM_BOT_SYNC = _ultima_mensagem_bot
+_FLUXO_LOCKS: dict[str, asyncio.Lock] = {}
+_FLUXO_LOCKS_GUARD = asyncio.Lock()
+_FLUXO_LOCKS_HELD: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
+    "empreg_fluxo_locks_held",
+    default=frozenset(),
+)
+
+
+async def _obter_fluxo_lock(conversa_id: str) -> asyncio.Lock:
+    async with _FLUXO_LOCKS_GUARD:
+        lock = _FLUXO_LOCKS.get(conversa_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _FLUXO_LOCKS[conversa_id] = lock
+        return lock
+
+
+@asynccontextmanager
+async def _fluxo_lock_context(conversa_id: str):
+    if not conversa_id:
+        yield
+        return
+
+    held = _FLUXO_LOCKS_HELD.get()
+    if conversa_id in held:
+        yield
+        return
+
+    lock = await _obter_fluxo_lock(conversa_id)
+    await lock.acquire()
+    token = _FLUXO_LOCKS_HELD.set(held | {conversa_id})
+    try:
+        yield
+    finally:
+        _FLUXO_LOCKS_HELD.reset(token)
+        lock.release()
 
 
 def _supabase_mockado_em_teste() -> bool:
@@ -209,11 +273,25 @@ async def _get_fluxo_async(conversa_id: str) -> dict:
     return await asyncio.to_thread(_get_fluxo, conversa_id)
 
 
-async def _set_fluxo_async(conversa_id: str, fluxo: dict):
-    if _set_fluxo is not _SET_FLUXO_SYNC or _supabase_mockado_em_teste():
-        _set_fluxo(conversa_id, fluxo)
-        return
-    await asyncio.to_thread(_set_fluxo, conversa_id, fluxo)
+async def _set_fluxo_async(conversa_id: str, fluxo: dict, etapa_esperada: str | None = None) -> bool:
+    async with _fluxo_lock_context(conversa_id):
+        if etapa_esperada is not None:
+            fluxo_atual = await _get_fluxo_async(conversa_id)
+            if fluxo_atual.get("etapa") != etapa_esperada:
+                logger.info(
+                    "[empreg-fluxo-lock] Escrita ignorada por etapa divergente",
+                    extra={
+                        "conversa_id": conversa_id,
+                        "etapa_esperada": etapa_esperada,
+                        "etapa_atual": fluxo_atual.get("etapa"),
+                    },
+                )
+                return False
+        if _set_fluxo is not _SET_FLUXO_SYNC or _supabase_mockado_em_teste():
+            _set_fluxo(conversa_id, fluxo)
+            return True
+        await asyncio.to_thread(_set_fluxo, conversa_id, fluxo)
+        return True
 
 
 async def _ultima_mensagem_bot_async(conversa_id: str) -> str | None:
@@ -588,8 +666,10 @@ async def _processar_empresa(
         if vaga_match["status"] == "preenchida":
             await e(f"A vaga *{vaga_match['titulo']}* já está preenchida e não pode ser editada.")
             return
-        unidade_param = f"&empresa_id={empresa_id}"
-        link_edicao = f"{PORTAL_URL}/empregabilidade/vagas/editar?vaga_id={vaga_match['id']}{unidade_param}"
+        link_edicao = _assinar_link_portal(
+            "/empregabilidade/vagas/editar",
+            {"vaga_id": vaga_match["id"], "empresa_id": empresa_id},
+        )
         await e(
             f"🔗 Acesse o link abaixo para editar a vaga *{vaga_match['titulo']}*:\n\n"
             f"{link_edicao}\n\n"
@@ -634,8 +714,10 @@ async def _processar_empresa(
         else:
             empresa_id_ref = fluxo.get("empresa_id")
             vaga_id_ref = fluxo.get("vaga_edicao_id")
-            unidade_param = f"&empresa_id={empresa_id_ref}"
-            link_edicao = f"{PORTAL_URL}/empregabilidade/vagas/editar?vaga_id={vaga_id_ref}{unidade_param}"
+            link_edicao = _assinar_link_portal(
+                "/empregabilidade/vagas/editar",
+                {"vaga_id": vaga_id_ref, "empresa_id": empresa_id_ref},
+            )
             await e(
                 "Ainda aguardando o preenchimento do formulário de edição. 🕐\n\n"
                 f"Caso precise do link novamente:\n🔗 {link_edicao}\n\n"
@@ -1170,12 +1252,16 @@ async def _processar_empresa(
         empresa_id = fluxo.get("empresa_id")
         email_responsavel = fluxo.get("email_responsavel", "")
         tel_digits = fluxo.get("telefone_responsavel", "")
-        unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
-        email_param = f"&email_responsavel={quote(email_responsavel)}" if email_responsavel else ""
-        tel_param = f"&telefone_responsavel={quote(tel_digits)}" if tel_digits else ""
-
         if t_tipo in ("1", "vaga", "criar", "criar vaga", "vaga normal"):
-            link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}{email_param}{tel_param}"
+            link_vaga = _assinar_link_portal(
+                "/empregabilidade/vagas/nova",
+                {
+                    "empresa_id": empresa_id,
+                    "unidade_cuca": unidade_cuca,
+                    "email_responsavel": email_responsavel,
+                    "telefone_responsavel": tel_digits,
+                },
+            )
             await e(
                 "Ótimo! 🎯 Acesse o link abaixo para preencher os dados completos da vaga:\n\n"
                 f"🔗 {link_vaga}\n\n"
@@ -1187,7 +1273,15 @@ async def _processar_empresa(
                 "etapa": "aguardando_retorno_vaga",
             })
         elif t_tipo in ("2", "selecao", "seleção", "marcar", "marcar selecao", "marcar seleção", "evento"):
-            link_selecao = f"{PORTAL_URL}/empregabilidade/selecao/nova?empresa_id={empresa_id}{unidade_param}{email_param}{tel_param}"
+            link_selecao = _assinar_link_portal(
+                "/empregabilidade/selecao/nova",
+                {
+                    "empresa_id": empresa_id,
+                    "unidade_cuca": unidade_cuca,
+                    "email_responsavel": email_responsavel,
+                    "telefone_responsavel": tel_digits,
+                },
+            )
             await e(
                 "Ótimo! 📋 Acesse o link abaixo para registrar o processo seletivo:\n\n"
                 f"🔗 {link_selecao}\n\n"
@@ -1244,8 +1338,15 @@ async def _processar_empresa(
         else:
             # Formulário ainda não preenchido — reenviar link como lembrete
             empresa_id = fluxo.get("empresa_id")
-            unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
-            link_vaga = f"{PORTAL_URL}/empregabilidade/vagas/nova?empresa_id={empresa_id}{unidade_param}"
+            link_vaga = _assinar_link_portal(
+                "/empregabilidade/vagas/nova",
+                {
+                    "empresa_id": empresa_id,
+                    "unidade_cuca": unidade_cuca,
+                    "email_responsavel": fluxo.get("email_responsavel", ""),
+                    "telefone_responsavel": fluxo.get("telefone_responsavel", ""),
+                },
+            )
             await e(
                 "Ainda aguardando o preenchimento do formulário de vaga. 🕐\n\n"
                 f"Caso precise do link novamente:\n🔗 {link_vaga}\n\n"
@@ -1330,8 +1431,15 @@ async def _processar_empresa(
         else:
             # Formulário ainda não preenchido — reenviar link como lembrete
             empresa_id = fluxo.get("empresa_id")
-            unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
-            link_selecao = f"{PORTAL_URL}/empregabilidade/selecao/nova?empresa_id={empresa_id}{unidade_param}"
+            link_selecao = _assinar_link_portal(
+                "/empregabilidade/selecao/nova",
+                {
+                    "empresa_id": empresa_id,
+                    "unidade_cuca": unidade_cuca,
+                    "email_responsavel": fluxo.get("email_responsavel", ""),
+                    "telefone_responsavel": fluxo.get("telefone_responsavel", ""),
+                },
+            )
             await e(
                 "Ainda aguardando o preenchimento do formulário de seleção. 🕐\n\n"
                 f"Caso precise do link novamente:\n🔗 {link_selecao}\n\n"
@@ -2375,7 +2483,6 @@ async def _enviar_link_candidatura(
     lead_id: str = "",
 ):
     """Monta e envia o link de candidatura com nome e telefone pré-preenchidos."""
-    import urllib.parse
     params = {
         "nome": nome_candidato,
         "origem_tel": re.sub(r"\D", "", telefone_origem),
@@ -2394,8 +2501,7 @@ async def _enviar_link_candidatura(
     if cargos_escolhidos_link:
         params["cargos_escolhidos"] = ",".join(cargos_escolhidos_link)
 
-    query = urllib.parse.urlencode(params)
-    link = f"{PORTAL_URL}/empregabilidade/candidatura?{query}"
+    link = _assinar_link_portal("/empregabilidade/candidatura", params)
 
     if banco_talentos:
         mensagem_link = (
@@ -2453,6 +2559,31 @@ _ETAPAS_PUBLICO = {
 
 
 async def processar_mensagem_empregabilidade(
+    texto: str,
+    phone: str,
+    instance_name: str,
+    token: str,
+    lead_id: str,
+    conversa_id: str,
+    unidade_cuca: str,
+    push_name: str = "Cidadão",
+    midia_tipo: str = "",
+):
+    async with _fluxo_lock_context(conversa_id):
+        return await _processar_mensagem_empregabilidade_locked(
+            texto,
+            phone,
+            instance_name,
+            token,
+            lead_id,
+            conversa_id,
+            unidade_cuca,
+            push_name,
+            midia_tipo,
+        )
+
+
+async def _processar_mensagem_empregabilidade_locked(
     texto: str,
     phone: str,
     instance_name: str,
@@ -3030,7 +3161,7 @@ async def empregabilidade_notify_loop():
                             "empresa_nome_exibicao": empresa_nome,
                             "cnpj": fluxo.get("cnpj"),
                             "ultima_vaga_id": vaga_criada_id,
-                        })
+                        }, etapa_esperada=etapa_c)
                         logger.info(f"[empreg-notify] Notificação de criação enviada para conversa {conversa_id} — vaga {numero_ref}")
 
                 # --- SQS-49: Notificação de seleção por evento criada ---
@@ -3064,7 +3195,7 @@ async def empregabilidade_notify_loop():
                             "empresa_nome_exibicao": empresa_nome,
                             "cnpj": fluxo.get("cnpj"),
                             "ultima_vaga_id": selecao_criada_id,
-                        })
+                        }, etapa_esperada=etapa_c)
                         logger.info(f"[empreg-notify] Seleção por evento confirmada para conversa {conversa_id} — ref {numero_ref}")
 
                 # --- Notificação de edição confirmada ---
@@ -3095,7 +3226,7 @@ async def empregabilidade_notify_loop():
                             "empresa_nome": fluxo.get("empresa_nome", ""),
                             "empresa_nome_exibicao": empresa_nome,
                             "cnpj": fluxo.get("cnpj"),
-                        })
+                        }, etapa_esperada=etapa_c)
                         logger.info(f"[empreg-notify] Confirmação de edição enviada para conversa {conversa_id} — vaga {vaga_editada_id}")
 
                 # --- Notificação de candidatura confirmada (candidato) ---
@@ -3119,7 +3250,7 @@ async def empregabilidade_notify_loop():
                             await _set_fluxo_async(conversa_id, {
                                 "etapa": "candidatura_confirmada",
                                 "perfil": "publico",
-                            })
+                            }, etapa_esperada=etapa_c)
                             logger.info(f"[empreg-notify] Banco de talentos confirmado para conversa {conversa_id}")
                     else:
                         candidatura_codigo = fluxo.get("candidatura_codigo")
@@ -3149,7 +3280,7 @@ async def empregabilidade_notify_loop():
                                 "ultima_candidatura_codigo": codigo,
                                 "historico_vagas_aplicadas": historico,
                                 "nome_candidato_prefill": fluxo.get("nome_candidato", ""),
-                            })
+                            }, etapa_esperada=etapa_c)
                             logger.info(f"[empreg-notify] Confirmação enviada → pos_candidatura para conversa {conversa_id} — código {codigo}")
 
         except Exception as e:

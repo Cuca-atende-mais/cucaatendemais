@@ -23,6 +23,7 @@ Cobre:
 import os
 import sys
 import types
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -36,6 +37,59 @@ if "supabase" not in sys.modules:
     sys.modules["supabase"] = _fake_supabase_pkg
 
 import empregabilidade_engine as emp  # noqa: E402
+
+
+def test_assinar_link_portal_inclui_sig_e_exp(monkeypatch):
+    monkeypatch.setattr(emp, "PORTAL_URL", "https://portal.test")
+    monkeypatch.setattr(emp, "_LINK_SECRET", "segredo-teste")
+
+    link = emp._assinar_link_portal(
+        "/empregabilidade/candidatura",
+        {"nome": "Fulano de Tal", "origem_tel": "558599999999"},
+    )
+
+    assert link.startswith("https://portal.test/empregabilidade/candidatura?")
+    assert "nome=Fulano+de+Tal" in link
+    assert "origem_tel=558599999999" in link
+    assert "exp=" in link
+    assert "sig=" in link
+
+
+@pytest.mark.asyncio
+async def test_lock_fluxo_impede_notify_de_sobrescrever_dispatch(monkeypatch):
+    conversa_id = "conv-lock-bloco-05"
+    estado = {"etapa": "aguardando_retorno_vaga", "empresa_id": "emp-1"}
+
+    def _get(_conversa_id):
+        return dict(estado)
+
+    def _set(_conversa_id, novo_fluxo):
+        estado.clear()
+        estado.update(novo_fluxo)
+
+    monkeypatch.setattr(emp, "_get_fluxo", _get)
+    monkeypatch.setattr(emp, "_set_fluxo", _set)
+
+    async def dispatch_normal():
+        async with emp._fluxo_lock_context(conversa_id):
+            await asyncio.sleep(0.01)
+            await emp._set_fluxo_async(
+                conversa_id,
+                {"etapa": "menu_empresa_acoes", "origem": "dispatch"},
+            )
+
+    async def notify_loop_stale():
+        await asyncio.sleep(0.001)
+        return await emp._set_fluxo_async(
+            conversa_id,
+            {"etapa": "menu_empresa_acoes", "origem": "notify"},
+            etapa_esperada="aguardando_retorno_vaga",
+        )
+
+    _, notify_escreveu = await asyncio.gather(dispatch_normal(), notify_loop_stale())
+
+    assert notify_escreveu is False
+    assert estado == {"etapa": "menu_empresa_acoes", "origem": "dispatch"}
 
 
 def _fluxo_mock(etapa: str, extra: dict | None = None):

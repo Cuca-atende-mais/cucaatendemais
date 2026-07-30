@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 
 export async function POST(request: NextRequest) {
     // Rota pública: acesso via link gerado pelo worker (empresa_id validado abaixo)
@@ -17,10 +18,15 @@ export async function POST(request: NextRequest) {
             unidade_destino,
             setor, email_responsavel, telefone_responsavel,
             pcd_vaga, pcd_tipo, pcd_homologado,
+            link_params,
         } = body
 
         if (!empresa_id || !titulo || !descricao || !tipo_contrato) {
             return NextResponse.json({ error: "Campos obrigatórios ausentes: empresa_id, titulo, descricao e tipo_contrato são obrigatórios." }, { status: 400 })
+        }
+        const linkOk = verificarLinkParams(link_params, { empresa_id })
+        if (!linkOk.valido) {
+            return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
         }
         if (!unidade_destino) {
             return NextResponse.json({ error: "Campo obrigatório ausente: unidade_destino não pode ser nulo ou vazio." }, { status: 400 })

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { deleteFromR2 } from "@/lib/r2"
+import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 
 // GET — busca dados da vaga validando posse da empresa (usado pela página de edição pública)
 export async function GET(
@@ -16,6 +17,13 @@ export async function GET(
 
     if (!id || !empresaId) {
         return NextResponse.json({ error: "Parâmetros ausentes." }, { status: 400 })
+    }
+    const linkOk = verificarLinkParams(request.nextUrl.searchParams, {
+        vaga_id: id,
+        empresa_id: empresaId,
+    })
+    if (!linkOk.valido) {
+        return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
     }
 
     const { data: vaga, error } = await supabaseAdmin
@@ -47,10 +55,17 @@ export async function PATCH(
 
     try {
         const body = await request.json()
-        const { empresa_id, diff } = body
+        const { empresa_id, diff, link_params } = body
 
         if (!empresa_id || !diff || typeof diff !== "object" || Object.keys(diff).length === 0) {
             return NextResponse.json({ error: "Parâmetros inválidos ou sem alterações." }, { status: 400 })
+        }
+        const linkOk = verificarLinkParams(link_params, {
+            vaga_id: id,
+            empresa_id,
+        })
+        if (!linkOk.valido) {
+            return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
         }
 
         // Validar posse e status atual

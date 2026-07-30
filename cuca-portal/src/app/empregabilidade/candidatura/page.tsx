@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, Suspense } from "react"
+import { useState, useEffect, useRef, Suspense, useMemo } from "react"
 import { useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Gift, ShieldCheck, ChevronRight, Bookmark, Camera, Upload, X, Tag, Home } from "lucide-react"
+import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
 
 const AREAS_INTERESSE = [
     "Serviços Gerais (limpeza, portaria, zeladoria)",
@@ -49,6 +50,7 @@ function CandidaturaContent() {
     const cargosEscolhidos = cargosEscolhidosParam
         ? cargosEscolhidosParam.split(",").map(c => c.trim()).filter(Boolean)
         : []
+    const linkParams = serializarLinkParams(searchParams)
 
     const [vaga, setVaga] = useState<any>(null)
     const [empresa, setEmpresa] = useState<any>(null)
@@ -80,15 +82,22 @@ function CandidaturaContent() {
     const [numeroCandidatura, setNumeroCandidatura] = useState("")
     const [destinadoBancoTalentos, setDestinadoBancoTalentos] = useState(false)
 
-    const supabase = createClient()
+    const supabase = useMemo(() => createClient(), [])
 
     useEffect(() => {
-        // Candidatura geral (banco de talentos sem vaga específica)
-        if (!vagaId || bancoTalentosParam) {
-            setLoadingVaga(false)
-            return
-        }
-        supabase
+        const fetchVaga = async () => {
+            const linkValido = await validarLinkAssinadoNoServidor(searchParams)
+            if (!linkValido) {
+                setVagaInvalida(true)
+                setLoadingVaga(false)
+                return
+            }
+            // Candidatura geral (banco de talentos sem vaga específica)
+            if (!vagaId || bancoTalentosParam) {
+                setLoadingVaga(false)
+                return
+            }
+            supabase
             .from("vagas")
             .select("*")
             .eq("id", vagaId)
@@ -110,7 +119,9 @@ function CandidaturaContent() {
                 }
                 setLoadingVaga(false)
             })
-    }, [vagaId])
+        }
+        fetchVaga()
+    }, [vagaId, bancoTalentosParam, linkParams, searchParams, supabase])
 
     const formatPhone = (value: string) => {
         let digits = value.replace(/\D/g, "")
@@ -232,6 +243,7 @@ function CandidaturaContent() {
                     // AC10 SQS-49: array de cargos (selecao_evento) ou cargo único (vaga_normal)
                     cargos_escolhidos: cargosEscolhidos.length > 0 ? cargosEscolhidos : undefined,
                     cargo_escolhido: cargosEscolhidos.length === 0 ? (cargoEscolhidoParam || null) : undefined,
+                    link_params: linkParams,
                 }),
             })
             const candData = await res.json()
