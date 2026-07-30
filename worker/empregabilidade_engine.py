@@ -2443,12 +2443,21 @@ async def processar_mensagem_empregabilidade(
 
     # SQS-40 Task 3.3: Handover por Dúvida
     from datetime import datetime, timezone
-    cm_res = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
+    def _buscar_metadata_conversa():
+        return supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
+
+    cm_res = await _supabase_to_thread(_buscar_metadata_conversa)
     cm_meta = (cm_res.data or {}).get("metadata") or {}
     
     if cm_meta.get("ultima_intencao") == "duvida":
         cm_meta["ultima_intencao"] = None
-        supabase.table("conversas").update({"metadata": cm_meta}).eq("id", conversa_id).execute()
+        def _marcar_handover_duvida():
+            supabase.table("conversas").update({"metadata": cm_meta}).eq("id", conversa_id).execute()
+            supabase.table("conversas").update(
+                {"status": "awaiting_human", "updated_at": "now()"}
+            ).eq("id", conversa_id).execute()
+
+        await _supabase_to_thread(_marcar_handover_duvida)
         logger.info(f"[SQS-40] Disparando transbordo por dúvida — lead {phone[:6]}****")
         await _enviar(
             instance_name, token, phone,
@@ -2460,9 +2469,6 @@ async def processar_mensagem_empregabilidade(
             {"event": "handover_requested", "telefone": phone[:6] + "****",
              "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": "duvida"},
         )
-        supabase.table("conversas").update(
-            {"status": "awaiting_human", "updated_at": "now()"}
-        ).eq("id", conversa_id).execute()
         from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
         await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
         return
@@ -2493,9 +2499,12 @@ async def processar_mensagem_empregabilidade(
             {"event": "handover_requested", "telefone": phone[:6] + "****",
              "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": "palavra_chave"},
         )
-        supabase.table("conversas").update(
-            {"status": "awaiting_human", "updated_at": "now()"}
-        ).eq("id", conversa_id).execute()
+        def _marcar_handover_palavra_chave():
+            supabase.table("conversas").update(
+                {"status": "awaiting_human", "updated_at": "now()"}
+            ).eq("id", conversa_id).execute()
+
+        await _supabase_to_thread(_marcar_handover_palavra_chave)
         from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
         await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
         return
@@ -2504,13 +2513,16 @@ async def processar_mensagem_empregabilidade(
     texto_norm = texto.strip()
     # candidaturas.telefone é salvo sem o código de país (55); phone do JID tem "55" prefixado
     phone_local = phone[2:] if phone.startswith("55") and len(phone) > 11 else phone
-    cands_convite = (
-        supabase.table("candidaturas")
-        .select("id, nome")
-        .eq("telefone", phone_local)
-        .eq("status", "convite_enviado")
-        .execute().data or []
-    )
+    def _buscar_convites_entrevista():
+        return (
+            supabase.table("candidaturas")
+            .select("id, nome")
+            .eq("telefone", phone_local)
+            .eq("status", "convite_enviado")
+            .execute().data or []
+        )
+
+    cands_convite = await _supabase_to_thread(_buscar_convites_entrevista)
 
     if cands_convite:
         cand = cands_convite[0]
@@ -2518,7 +2530,10 @@ async def processar_mensagem_empregabilidade(
         cand_nome = cand.get("nome", "Candidato")
 
         if texto_norm in ("1", "1.", "sim", "sim!", "confirmar", "confirmado"):
-            supabase.table("candidaturas").update({"status": "entrevista_confirmada"}).eq("id", cand_id).execute()
+            def _confirmar_entrevista():
+                supabase.table("candidaturas").update({"status": "entrevista_confirmada"}).eq("id", cand_id).execute()
+
+            await _supabase_to_thread(_confirmar_entrevista)
             await _set_fluxo_async(conversa_id, {"perfil": "encerrado"})
             await _enviar(
                 instance_name, token, phone,
@@ -2528,7 +2543,10 @@ async def processar_mensagem_empregabilidade(
             )
             return
         elif texto_norm in ("2", "2.", "não", "nao", "não posso", "nao posso", "recusar"):
-            supabase.table("candidaturas").update({"status": "entrevista_recusada"}).eq("id", cand_id).execute()
+            def _recusar_entrevista():
+                supabase.table("candidaturas").update({"status": "entrevista_recusada"}).eq("id", cand_id).execute()
+
+            await _supabase_to_thread(_recusar_entrevista)
             await _set_fluxo_async(conversa_id, {"perfil": "encerrado"})
             await _enviar(
                 instance_name, token, phone,
@@ -2539,10 +2557,13 @@ async def processar_mensagem_empregabilidade(
             return
         elif texto_norm in ("3", "3.", "dúvida", "duvida", "?"):
             # Marcar dúvida e deixar o fluxo normal de transbordo tratar
-            cm_res2 = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
-            cm_meta2 = (cm_res2.data or {}).get("metadata") or {}
-            cm_meta2["ultima_intencao"] = "duvida"
-            supabase.table("conversas").update({"metadata": cm_meta2}).eq("id", conversa_id).execute()
+            def _marcar_duvida_convite():
+                cm_res2 = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
+                cm_meta2 = (cm_res2.data or {}).get("metadata") or {}
+                cm_meta2["ultima_intencao"] = "duvida"
+                supabase.table("conversas").update({"metadata": cm_meta2}).eq("id", conversa_id).execute()
+
+            await _supabase_to_thread(_marcar_duvida_convite)
             # Reprocessar com a flag de dúvida agora setada (vai cair no bloco acima)
             await processar_mensagem_empregabilidade(
                 texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca, push_name
@@ -2621,17 +2642,23 @@ async def processar_mensagem_empregabilidade(
         tel_limpo = re.sub(r"\D", "", phone)
         if tel_limpo.startswith("55") and len(tel_limpo) > 11:
             tel_limpo = tel_limpo[2:]
-        cand_event = supabase.table("candidaturas").select(
-            "id, cargo_escolhido, confirmacao_presenca"
-        ).eq("telefone", tel_limpo).eq("status", "selecionado").not_.is_(
-            "cargo_escolhido", "null"
-        ).is_("confirmacao_presenca", "null").order("updated_at", desc=True).limit(1).execute()
+        def _buscar_candidatura_evento():
+            return supabase.table("candidaturas").select(
+                "id, cargo_escolhido, confirmacao_presenca"
+            ).eq("telefone", tel_limpo).eq("status", "selecionado").not_.is_(
+                "cargo_escolhido", "null"
+            ).is_("confirmacao_presenca", "null").order("updated_at", desc=True).limit(1).execute()
+
+        cand_event = await _supabase_to_thread(_buscar_candidatura_evento)
         if cand_event.data:
             cand = cand_event.data[0]
             confirmacao = "confirmado" if t_conf in ("sim", "s", "✅") else "recusado"
-            supabase.table("candidaturas").update({
-                "confirmacao_presenca": confirmacao
-            }).eq("id", cand["id"]).execute()
+            def _atualizar_confirmacao_presenca():
+                supabase.table("candidaturas").update({
+                    "confirmacao_presenca": confirmacao
+                }).eq("id", cand["id"]).execute()
+
+            await _supabase_to_thread(_atualizar_confirmacao_presenca)
             cargo = cand.get("cargo_escolhido", "")
             if confirmacao == "confirmado":
                 await _enviar(
@@ -2654,7 +2681,10 @@ async def processar_mensagem_empregabilidade(
 
     # S-EMP-01-01 / S-WM-20 Task 3: Detector de intenção — primeira interação ou perfil indefinido
     from intencao_detector import avaliar_mensagem_contextual, extrair_nome_heuristico, extrair_setor_da_mensagem  # noqa: PLC0415
-    lead_res = supabase.table("leads").select("nome").eq("id", lead_id).maybe_single().execute()
+    def _buscar_lead_nome():
+        return supabase.table("leads").select("nome").eq("id", lead_id).maybe_single().execute()
+
+    lead_res = await _supabase_to_thread(_buscar_lead_nome)
     lead_nome = (lead_res.data or {}).get("nome") or extrair_nome_heuristico(texto)
     intencao_res = await avaliar_mensagem_contextual(
         texto, midia_tipo, perfil=None, etapa=None,
