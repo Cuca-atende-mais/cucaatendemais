@@ -670,6 +670,42 @@ class TestQuerEncerrarSubstringSemLimiteDePalavra:
         )
         assert "Boa sorte" not in texto_enviado  # mensagem de despedida do _encerrar_fluxo
 
+    @pytest.mark.asyncio
+    async def test_despedida_real_continua_encerrando_candidato_empresa_e_publico(self, monkeypatch):
+        async def assert_encerra(processar, args, etapa, perfil, texto):
+            estado, fake_get, fake_set = _fluxo_mock(etapa, {"perfil": perfil, "empresa_id": "e1"})
+            monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+            monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+            mock_enviar = AsyncMock(return_value=True)
+            monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+            await processar(texto, *args)
+
+            assert estado == {}
+            assert mock_enviar.await_count == 1
+
+        await assert_encerra(
+            emp._processar_candidato,
+            ("558599990000", "PHONE_ID", "token", "lead-1", "conv-candidato"),
+            "candidato_consultado",
+            "candidato",
+            "tchau",
+        )
+        await assert_encerra(
+            emp._processar_empresa,
+            ("558599990000", "PHONE_ID", "token", "lead-1", "conv-empresa", "Barra"),
+            "menu_empresa_acoes",
+            "empresa",
+            "obrigado, pode fechar",
+        )
+        await assert_encerra(
+            emp._processar_publico,
+            ("558599990000", "PHONE_ID", "token", "lead-1", "conv-publico", "Barra"),
+            "listou_vagas",
+            "publico",
+            "quero encerrar por favor",
+        )
+
 
 class TestPosCandidaturaNegacaoIgnorada:
 
@@ -739,6 +775,49 @@ class TestMenuPosVagaReinterpretaResposta:
             "reinterpretada contra o menu de menu_empresa_acoes, onde '3' significa "
             "'Editar uma vaga' — a empresa queria encerrar e caiu no fluxo de edição"
         )
+
+    @pytest.mark.asyncio
+    async def test_resposta_1_em_menu_pos_vaga_continua_divulgando_outra_vaga(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock(
+            "menu_pos_vaga", {
+                "perfil": "empresa",
+                "empresa_id": "e1",
+                "empresa_nome": "Empresa Teste",
+                "cnpj": "12345678000199",
+            }
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_empresa(
+            "1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "e-mail" in texto_enviado.lower()
+        assert estado.get("etapa") == "coletando_email_responsavel"
+
+    @pytest.mark.asyncio
+    async def test_resposta_2_em_menu_pos_vaga_continua_consultando_vagas(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock(
+            "menu_pos_vaga", {"perfil": "empresa", "empresa_id": "e1"}
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        mock_consulta = AsyncMock()
+        monkeypatch.setattr(emp, "_processar_consulta_empresa", mock_consulta)
+
+        await emp._processar_empresa(
+            "2", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "consulta_empresa"
+        mock_consulta.assert_awaited_once()
+        assert mock_consulta.await_args.args[0] == "todas"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
