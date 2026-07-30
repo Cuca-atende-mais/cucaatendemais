@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { useUser } from "@/lib/auth/user-provider"
 import { Empresa } from "@/lib/types/database"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -37,13 +38,21 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Search, Plus, Pencil, Trash2, Building2, Download, Upload } from "lucide-react"
+import { Search, Plus, Pencil, Trash2, Building2, Download, Upload, ShieldCheck } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 
 function getErrorMessage(error: unknown, fallback: string): string {
     return error instanceof Error ? error.message : fallback
+}
+
+type EmpresaWhatsappAutorizado = {
+    id: string
+    empresa_id: string
+    telefone: string
+    autorizado_em: string
+    autorizado_por: string | null
 }
 
 export default function EmpresasPage() {
@@ -54,6 +63,11 @@ export default function EmpresasPage() {
     const [editingEmpresa, setEditingEmpresa] = useState<Empresa | null>(null)
     const [deletingEmpresa, setDeletingEmpresa] = useState<Empresa | null>(null)
     const [deleteLoading, setDeleteLoading] = useState(false)
+    const [whatsappEmpresa, setWhatsappEmpresa] = useState<Empresa | null>(null)
+    const [whatsappAutorizados, setWhatsappAutorizados] = useState<EmpresaWhatsappAutorizado[]>([])
+    const [whatsappLoading, setWhatsappLoading] = useState(false)
+    const [whatsappSubmitting, setWhatsappSubmitting] = useState(false)
+    const [novoWhatsapp, setNovoWhatsapp] = useState("")
     const [formData, setFormData] = useState({
         nome: "",
         cnpj: "",
@@ -66,6 +80,8 @@ export default function EmpresasPage() {
         ativa: true,
     })
     const supabase = createClient()
+    const { hasPermission } = useUser()
+    const canAuthorizeWhatsapp = hasPermission("empreg_vagas", "update")
 
     useEffect(() => {
         fetchEmpresas()
@@ -178,6 +194,63 @@ export default function EmpresasPage() {
         } finally {
             setDeleteLoading(false)
             setDeletingEmpresa(null)
+        }
+    }
+
+    const fetchWhatsappAutorizados = async (empresa: Empresa) => {
+        setWhatsappLoading(true)
+        try {
+            const res = await fetch(`/api/empregabilidade/empresa/${empresa.id}/autorizar-whatsapp`, {
+                cache: "no-store",
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error || "Erro ao carregar WhatsApps autorizados")
+            setWhatsappAutorizados(json.autorizados || [])
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Erro ao carregar WhatsApps autorizados."))
+        } finally {
+            setWhatsappLoading(false)
+        }
+    }
+
+    const handleOpenWhatsappDialog = (empresa: Empresa) => {
+        setWhatsappEmpresa(empresa)
+        setNovoWhatsapp("")
+        setWhatsappAutorizados([])
+        fetchWhatsappAutorizados(empresa)
+    }
+
+    const handleAutorizarWhatsapp = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!whatsappEmpresa) return
+
+        const telefone = novoWhatsapp.replace(/\D/g, "")
+        if (telefone.length < 10) {
+            toast.error("Informe um telefone válido.")
+            return
+        }
+
+        setWhatsappSubmitting(true)
+        try {
+            const res = await fetch(`/api/empregabilidade/empresa/${whatsappEmpresa.id}/autorizar-whatsapp`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ telefone }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error || "Erro ao autorizar WhatsApp")
+
+            if (json.conversa_reativada && json.aviso_lead?.sent) {
+                toast.success("WhatsApp autorizado, conversa reativada e lead avisado.")
+            } else {
+                toast.success("WhatsApp autorizado com sucesso.")
+            }
+            setNovoWhatsapp("")
+            fetchWhatsappAutorizados(whatsappEmpresa)
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Erro ao autorizar WhatsApp."))
+        } finally {
+            setWhatsappSubmitting(false)
         }
     }
 
@@ -508,6 +581,17 @@ export default function EmpresasPage() {
                                                     <Pencil className="h-4 w-4 text-cuca-blue" />
                                                     <span className="hidden sm:inline">Editar</span>
                                                 </Button>
+                                                {canAuthorizeWhatsapp && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="gap-2"
+                                                        onClick={() => handleOpenWhatsappDialog(emp)}
+                                                    >
+                                                        <ShieldCheck className="h-4 w-4 text-green-700" />
+                                                        <span className="hidden sm:inline">WhatsApp</span>
+                                                    </Button>
+                                                )}
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
@@ -553,6 +637,77 @@ export default function EmpresasPage() {
                 </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
+
+        <Dialog open={whatsappEmpresa !== null} onOpenChange={(isOpen) => { if (!isOpen) setWhatsappEmpresa(null) }}>
+            <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                    <DialogTitle>WhatsApps autorizados</DialogTitle>
+                    <DialogDescription>
+                        {whatsappEmpresa?.nome}
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-4">
+                    <form onSubmit={handleAutorizarWhatsapp} className="flex flex-col gap-2 sm:flex-row">
+                        <div className="grid flex-1 gap-2">
+                            <Label htmlFor="novo-whatsapp">Novo número</Label>
+                            <Input
+                                id="novo-whatsapp"
+                                value={novoWhatsapp}
+                                onChange={(e) => setNovoWhatsapp(e.target.value)}
+                                placeholder="5585999999999"
+                                disabled={whatsappSubmitting}
+                            />
+                        </div>
+                        <Button
+                            type="submit"
+                            className="mt-0 bg-cuca-blue hover:bg-sky-800 sm:mt-8"
+                            disabled={whatsappSubmitting || !novoWhatsapp.trim()}
+                        >
+                            <ShieldCheck className="mr-2 h-4 w-4" />
+                            {whatsappSubmitting ? "Autorizando..." : "Autorizar"}
+                        </Button>
+                    </form>
+
+                    <div className="rounded-md border">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Telefone</TableHead>
+                                    <TableHead>Autorizado em</TableHead>
+                                    <TableHead>Por</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {whatsappLoading ? (
+                                    <TableRow>
+                                        <TableCell colSpan={3} className="py-6 text-center text-muted-foreground">
+                                            Carregando...
+                                        </TableCell>
+                                    </TableRow>
+                                ) : whatsappAutorizados.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={3} className="py-6 text-center text-muted-foreground">
+                                            Nenhum WhatsApp autorizado.
+                                        </TableCell>
+                                    </TableRow>
+                                ) : whatsappAutorizados.map((item) => (
+                                    <TableRow key={item.id}>
+                                        <TableCell className="font-medium">{item.telefone}</TableCell>
+                                        <TableCell>
+                                            {format(new Date(item.autorizado_em), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                                        </TableCell>
+                                        <TableCell className="text-muted-foreground">
+                                            {item.autorizado_por || "Vínculo automático"}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </div>
+            </DialogContent>
+        </Dialog>
         </>
     )
 }

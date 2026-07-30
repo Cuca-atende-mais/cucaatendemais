@@ -46,3 +46,13 @@ Out: busca por código de referência (já segura), qualquer outro achado da aud
 - v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Pontos fortes: AC específico, risco de dado real (formatação inconsistente) documentado com evidência.
 - v0.3 (2026-07-29): @po adicionou seção "Valor de negócio" explícita.
 - v0.4 (2026-07-29): @dev implementou (commit `d4d634d`, branch `feat/auditoria-empregabilidade-p1`). Desvio registrado: `.limit()` da busca por telefone subiu de 5 para 500 (achado durante implementação, não estava no plano original — um `limit(5)` aplicado antes do filtro por telefone perderia a candidatura certa sempre que não estivesse entre as 5 mais recentes da tabela inteira). 6 testes novos, todos com mutation check (revertido o fix, confirmado que os testes certos falham). Status → InReview, recomendado @qa.
+
+## QA Results
+
+### Review 2026-07-29 — @qa Quinn — Gate: PASS com follow-up obrigatório
+
+**Resultado:** implementação de telefone/nome atende ao Plano 002: as buscas por telefone e nome passam a filtrar pelo telefone real de quem pergunta, normalizando os dois lados, e a busca por código de referência continua inalterada. Os 6 testes da SEC-02 passam no `.venv`.
+
+**Follow-up fora de escopo:** a busca por CPF segue vulnerável ao mesmo padrão em `worker/empregabilidade_engine.py:1412-1420`: qualquer pessoa que saiba um CPF pode chegar às candidaturas ligadas ao candidato, sem vínculo com o `phone` real. O Plano 002 mandava parar/reportar ao detectar isso; como o Junior instruiu explicitamente “registrar, não corrigir agora”, não bloqueio esta story, mas considero item de segurança obrigatório para backlog/novo plano.
+
+**Evidência:** `../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py -v` resultou em 34 passed / 3 failed esperados do Bloco 2; todos os testes de `TestConsultaCandidaturaExigeTelefoneDeQuemPergunta` passaram.

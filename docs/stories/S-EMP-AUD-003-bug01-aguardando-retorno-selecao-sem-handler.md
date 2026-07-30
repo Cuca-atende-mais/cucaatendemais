@@ -40,3 +40,11 @@ Ver "Test plan" do plano.
 - v0.2 (2026-07-29): @po validou — NO-GO (5/10) por Escopo/Valor de negócio ausentes e AC genérico.
 - v0.3 (2026-07-29): @po corrigiu as 3 pendências (Escopo restatado, Valor de negócio adicionado, AC trocado por asserção testável) — GO. Status Draft → Ready. Critério aplicado de forma consistente com as demais 18 stories nesta rodada.
 - v0.4 (2026-07-29): @dev implementou (commit `d4d634d`, branch `feat/auditoria-empregabilidade-p1`). Confirmado que o campo é `vaga_criada_id`/`vaga_numero`/`vaga_titulo` compartilhado com vaga (não existe `selecao_criada_id` próprio) — já sabido da verificação anterior, não foi necessário grep novo. 3 testes novos, mutation check ok. Status → InReview, recomendado @qa.
+
+## QA Results
+
+### Review 2026-07-29 — @qa Quinn — Gate: PASS
+
+**Resultado:** o novo handler síncrono para `aguardando_retorno_selecao` espelha o padrão de `aguardando_retorno_vaga`, preserva `empresa_id`/contexto quando a empresa manda mensagem manual antes do formulário ser concluído, e avança para `menu_pos_vaga` quando o portal já gravou `vaga_criada_id`/`vaga_numero`/`vaga_titulo`. O lado assíncrono não foi tocado.
+
+**Evidência:** `../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py -v` resultou em 34 passed / 3 failed esperados do Bloco 2; os 3 testes de `TestAguardandoRetornoSelecao` passaram, incluindo a regressão de `aguardando_retorno_vaga`.

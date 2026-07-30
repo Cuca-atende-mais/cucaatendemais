@@ -28,7 +28,7 @@ em cada `Change Log` das stories.
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |-------|--------|------------|---------|------------|--------|
-| 001   | Empresa deixa de ser "autenticada" só pelo CNPJ (SEC-01) — v2 + Step 5 (reversão automática de awaiting_human + aviso ao lead, decisão do sócio) | P1 | M | — | **Parcial** (2026-07-29) — Steps 1-2 implementados e em produção (migration aplicada, `_processar_empresa` corrigido, 4 testes); **Steps 3-5 (endpoint+UI do portal) bloqueados** por STOP condition do plano — falta decisão de qual permissão protege o endpoint, ver commit `dadd4fa` |
+| 001   | Empresa deixa de ser "autenticada" só pelo CNPJ (SEC-01) — v2 + Step 5 (reversão automática de awaiting_human + aviso ao lead, decisão do sócio) | P1 | M | — | **Implementado** (2026-07-29) — Steps 1-2 já estavam implementados/aplicados; Steps 3-5 retomados após decisão do Junior e concluídos com endpoint + UI protegidos por `has_permission('empreg_vagas', 'update')`, 409 em conflito, reativação por telefone -> lead -> conversa e aviso automático ao lead. Recomendado @qa para o Bloco 1 inteiro (001 completo + 002 + 003). |
 | 002   | Consulta de candidatura para de vazar dado de terceiro (SEC-02) — normalização dos 2 lados do telefone (decisão do sócio) | P1 | S | — | **Implementado** (2026-07-29), commit `d4d634d` — 6 testes, suíte verde |
 | 003   | `aguardando_retorno_selecao` ganha handler síncrono (BUG-01) | P1 | S | — | **Implementado** (2026-07-29), commit `d4d634d` — 3 testes, suíte verde |
 | 004   | Filtro de setor por substring esconde vagas já na 1ª mensagem (EMP-01) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-004`. Teste vermelho commitado. |
