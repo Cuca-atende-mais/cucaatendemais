@@ -36,7 +36,7 @@ em cada `Change Log` das stories.
 | 006   | Negação ignorada em `pos_candidatura` reabre busca de vagas (EMP-03) | P1 | S | — | **Implementado** (2026-07-30) — `quer_mais_vagas` agora respeita negação, igual ao padrão de `oferta_banco_talentos`. |
 | 007   | `menu_pos_vaga` reinterpreta resposta contra menu errado (EMP-04) | P1 | S | — | **Implementado** (2026-07-30) — dispatch próprio para opções 1/2/3; testes cobrem regressão das 3 opções. |
 | 008   | Cobertura nos 3 fluxos de maior risco + mocks passam a verificar payload (TEST-01 + #14) | P1 | M | — | **Implementado** (2026-07-30) — helper multi-tabela nomeado + 6 testes novos cobrindo cancelamento, cadastro e confirmação/recusa de entrevista; suíte focal verde (`79 passed`). |
-| 009   | ~48 chamadas Supabase síncronas travam o event loop (BUG-02/PERF-01) | P1 | L | **008** | Story validada (Ready) — `S-EMP-AUD-009` |
+| 009   | ~48 chamadas Supabase síncronas travam o event loop (BUG-02/PERF-01) | P1 | L | **008** | **Implementado** (2026-07-30) — chamadas Supabase em handlers async movidas para closures executadas via `_supabase_to_thread`; checagem AST sem `supabase.table` direto em corpo async; suíte focal verde (`79 passed`). |
 | 010   | Links do portal sem assinatura nem expiração (achado #12) | P2 | M | — | Story validada (Ready) — `S-EMP-AUD-010` |
 | 011   | `_set_fluxo` redundante + risco de lost-update contra o loop de notificação (achado #6) — trava vira `asyncio.Lock()` real (decisão do sócio) | P2 | M | recomendado após 009 | Story validada (Ready) — `S-EMP-AUD-011` |
 | 012   | N+1 em 2 telas de listagem (achado #9) | P3 | S | — | Story validada (Ready) — `S-EMP-AUD-012` |
