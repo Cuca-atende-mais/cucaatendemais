@@ -70,3 +70,15 @@ GPT-5 Codex
 - v0.2 (2026-07-29): @po validou — NO-GO (5/10) por Escopo/Valor de negócio ausentes e AC genérico.
 - v0.3 (2026-07-29): @po corrigiu as 3 pendências (3 fluxos nomeados, Valor de negócio adicionado, AC com os cenários específicos) — GO. Status Draft → Ready.
 - v0.4 (2026-07-30): @dev implementou o Bloco 3/Plano 008 com helper multi-tabela nomeado, 6 testes novos e suíte focal verde. Status Ready → Ready for Review.
+
+## QA Results
+
+### Review 2026-07-30 — @qa Quinn — Gate: PASS
+
+**Resultado:** a implementação atende à S-EMP-AUD-008. O escopo ficou restrito a testes/documentação, sem mudança em código de produção. Os 6 testes novos cobrem os 3 fluxos de maior risco solicitados e verificam payload/filtros Supabase nas escritas sensíveis, não apenas mensagens ou etapa final.
+
+**Rastreabilidade:** `TestConfirmandoCancelamento` cobre confirmação/aborto de cancelamento; `TestConfirmandoCadastro` cobre cadastro direto e cadastro com correção; `TestConfirmacaoEntrevista` cobre confirmação e recusa de convite, incluindo atualização de `candidaturas.status`.
+
+**Evidência:** `cd worker && ../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py::TestConfirmandoCancelamento tests/test_empregabilidade_engine.py::TestConfirmandoCadastro tests/test_empregabilidade_engine.py::TestConfirmacaoEntrevista -v` resultou em `6 passed, 2 warnings`; `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `79 passed, 2 warnings`.
+
+**Nota não bloqueante:** os 2 warnings são `DeprecationWarning` preexistentes de `datetime.utcnow()` no fluxo de cancelamento em produção; não foram introduzidos por esta story e não bloqueiam o gate.
