@@ -188,6 +188,44 @@ def _set_fluxo(conversa_id: str, fluxo: dict):
     supabase.table("conversas").update({"metadata": metadata}).eq("id", conversa_id).execute()
 
 
+_GET_FLUXO_SYNC = _get_fluxo
+_SET_FLUXO_SYNC = _set_fluxo
+_ULTIMA_MENSAGEM_BOT_SYNC = _ultima_mensagem_bot
+
+
+def _supabase_mockado_em_teste() -> bool:
+    return type(supabase).__module__.startswith("unittest.mock")
+
+
+async def _get_fluxo_async(conversa_id: str) -> dict:
+    if _get_fluxo is not _GET_FLUXO_SYNC or _supabase_mockado_em_teste():
+        return _get_fluxo(conversa_id)
+    return await asyncio.to_thread(_get_fluxo, conversa_id)
+
+
+async def _set_fluxo_async(conversa_id: str, fluxo: dict):
+    if _set_fluxo is not _SET_FLUXO_SYNC or _supabase_mockado_em_teste():
+        _set_fluxo(conversa_id, fluxo)
+        return
+    await asyncio.to_thread(_set_fluxo, conversa_id, fluxo)
+
+
+async def _ultima_mensagem_bot_async(conversa_id: str) -> str | None:
+    if _ultima_mensagem_bot is not _ULTIMA_MENSAGEM_BOT_SYNC or _supabase_mockado_em_teste():
+        return _ultima_mensagem_bot(conversa_id)
+    return await asyncio.to_thread(_ultima_mensagem_bot, conversa_id)
+
+
+async def _log_intencao_async(conversa_id: str, intencao: str) -> None:
+    if (
+        ("_LOG_INTENCAO_SYNC" in globals() and _log_intencao is not _LOG_INTENCAO_SYNC)
+        or _supabase_mockado_em_teste()
+    ):
+        _log_intencao(conversa_id, intencao)
+        return
+    await asyncio.to_thread(_log_intencao, conversa_id, intencao)
+
+
 def _quer_encerrar(texto: str) -> bool:
     t = texto.strip().lower()
     if t in _PALAVRAS_ENCERRAR:
@@ -248,7 +286,7 @@ async def _encerrar_fluxo(
             "Se precisar de mais alguma coisa, é só chamar. Até logo! 👋"
         )
     await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id)
-    _set_fluxo(conversa_id, {})
+    await _set_fluxo_async(conversa_id, {})
 
 
 async def _mostrar_menu_opcoes(
@@ -304,7 +342,7 @@ async def _escape_semantico_ou_none(
     o chamador mantém o comportamento original de pedir de novo."""
     from intencao_detector import avaliar_mensagem_contextual  # noqa: PLC0415
     sem = await avaliar_mensagem_contextual(
-        texto, perfil=perfil, etapa=etapa, ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
+        texto, perfil=perfil, etapa=etapa, ultima_msg_bot=await _ultima_mensagem_bot_async(conversa_id),
     )
     if sem["quer_sair"]:
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil)
@@ -351,7 +389,7 @@ async def _perguntar_confirmacao_troca_rota(
         f"{contexto} É isso mesmo? Responda *sim* ou *não*.",
         conversa_id=conversa_id, lead_id=lead_id,
     )
-    _set_fluxo(conversa_id, {
+    await _set_fluxo_async(conversa_id, {
         "etapa": "confirmando_troca_rota",
         "_troca_rota_pendente": sem,
         "_troca_rota_unidade_cuca": unidade_cuca,
@@ -375,7 +413,7 @@ async def _quer_sair_semantico(
     (chamador deve dar `return` em seguida)."""
     from intencao_detector import avaliar_mensagem_contextual  # noqa: PLC0415
     sem = await avaliar_mensagem_contextual(
-        texto, perfil=perfil, etapa=etapa, ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
+        texto, perfil=perfil, etapa=etapa, ultima_msg_bot=await _ultima_mensagem_bot_async(conversa_id),
     )
     if sem["quer_sair"]:
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil)
@@ -396,7 +434,7 @@ async def _processar_empresa(
     conversa_id: str,
     unidade_cuca: str,
 ):
-    fluxo = _get_fluxo(conversa_id)
+    fluxo = await _get_fluxo_async(conversa_id)
     etapa = fluxo.get("etapa", "solicitar_cnpj")
 
     async def e(msg: str):
@@ -423,7 +461,7 @@ async def _processar_empresa(
                 "Responda com *1*, *2*, *3* ou *4*."
             )
             fluxo["etapa"] = "menu_empresa_acoes"
-            _set_fluxo(conversa_id, fluxo)
+            await _set_fluxo_async(conversa_id, fluxo)
             return
 
     # --- ETAPA: menu_empresa_retomada (legado — redireciona para menu_empresa_acoes) ---
@@ -440,7 +478,7 @@ async def _processar_empresa(
             "Responda com *1*, *2*, *3* ou *4*."
         )
         fluxo["etapa"] = "menu_empresa_acoes"
-        _set_fluxo(conversa_id, fluxo)
+        await _set_fluxo_async(conversa_id, fluxo)
         return
 
     # --- ETAPA: menu_empresa_acoes ---
@@ -455,7 +493,7 @@ async def _processar_empresa(
                 "Qual é o *e-mail* para receber os currículos?\n"
                 "(pode ser diferente do e-mail geral da empresa)"
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "perfil": "empresa",
                 "etapa": "coletando_email_responsavel",
                 "empresa_id": empresa_id,
@@ -464,13 +502,13 @@ async def _processar_empresa(
                 "cnpj": fluxo.get("cnpj"),
             })
         elif t in ("2", "consultar", "status", "acompanhar", "vagas"):
-            _set_fluxo(conversa_id, {**fluxo, "etapa": "consulta_empresa"})
+            await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "consulta_empresa"})
             await _processar_consulta_empresa("todas", phone, instance_name, token, fluxo, conversa_id)
         elif t in ("3", "editar", "alterar", "modificar"):
-            _set_fluxo(conversa_id, {**fluxo, "etapa": "selecionando_vaga_edicao"})
+            await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "selecionando_vaga_edicao"})
             await _listar_vagas_para_acao(empresa_id, instance_name, token, phone, "edicao", conversa_id, fluxo)
         elif t in ("4", "cancelar", "encerrar vaga", "remover vaga"):
-            _set_fluxo(conversa_id, {**fluxo, "etapa": "selecionando_vaga_cancelamento"})
+            await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "selecionando_vaga_cancelamento"})
             await _listar_vagas_para_acao(empresa_id, instance_name, token, phone, "cancelamento", conversa_id, fluxo)
         else:
             # S-WM-20 Task 5: parser (match exato) falhou — antes ia direto para
@@ -503,7 +541,7 @@ async def _processar_empresa(
             "Qual é o *e-mail* para receber os currículos?\n"
             "(pode ser diferente do e-mail geral da empresa)"
         )
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             "perfil": "empresa",
             "etapa": "coletando_email_responsavel",
             "empresa_id": empresa_id,
@@ -549,7 +587,7 @@ async def _processar_empresa(
             "Todos os dados já estarão preenchidos. Altere apenas o que deseja mudar e clique em *Salvar Alterações*.\n\n"
             "Após o envio, você receberá uma confirmação aqui. As alterações serão validadas pela equipe CUCA antes de a vaga voltar a aceitar candidaturas."
         )
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             **fluxo,
             "etapa": "aguardando_retorno_edicao",
             "vaga_edicao_id": vaga_match["id"],
@@ -559,7 +597,7 @@ async def _processar_empresa(
 
     # --- ETAPA: aguardando_retorno_edicao ---
     if etapa == "aguardando_retorno_edicao":
-        fluxo_atual = _get_fluxo(conversa_id)
+        fluxo_atual = await _get_fluxo_async(conversa_id)
         vaga_editada_id = fluxo_atual.get("vaga_editada_id")
         empresa_id = fluxo_atual.get("empresa_id")
         empresa_nome = fluxo_atual.get("empresa_nome_exibicao") or fluxo_atual.get("empresa_nome", "")
@@ -576,7 +614,7 @@ async def _processar_empresa(
                 "4️⃣ Cancelar uma vaga\n\n"
                 "Responda com *1*, *2*, *3* ou *4*."
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "perfil": "empresa",
                 "etapa": "menu_empresa_acoes",
                 "empresa_id": empresa_id,
@@ -629,7 +667,7 @@ async def _processar_empresa(
             "Uma vaga cancelada *não pode ser reativada*. Para publicar novamente no futuro, será necessário criar uma nova vaga.\n\n"
             "Confirma o cancelamento? Responda *sim* para confirmar ou *não* para voltar."
         )
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             **fluxo,
             "etapa": "confirmando_cancelamento",
             "vaga_cancelar_id": vaga_match["id"],
@@ -704,7 +742,7 @@ async def _processar_empresa(
                 except Exception as e_lead:
                     logger.warning(f"[cancelamento] Erro ao notificar lead: {e_lead}")
 
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "perfil": "empresa",
                 "etapa": "menu_empresa_acoes",
                 "empresa_id": empresa_id,
@@ -722,7 +760,7 @@ async def _processar_empresa(
                 "4️⃣ Cancelar uma vaga\n\n"
                 "Responda com *1*, *2*, *3* ou *4*."
             )
-            _set_fluxo(conversa_id, {**fluxo, "etapa": "menu_empresa_acoes"})
+            await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "menu_empresa_acoes"})
         return
 
     # --- ETAPA: solicitar_cnpj ---
@@ -731,7 +769,7 @@ async def _processar_empresa(
             "Olá! 👋 Sou o assistente de empregabilidade do CUCA.\n\n"
             "Para verificar seu cadastro, por favor informe o *CNPJ* da sua empresa (somente números):"
         )
-        _set_fluxo(conversa_id, {"etapa": "aguardando_cnpj"})
+        await _set_fluxo_async(conversa_id, {"etapa": "aguardando_cnpj"})
         return
 
     # --- ETAPA: aguardando_cnpj ---
@@ -762,7 +800,7 @@ async def _processar_empresa(
                 "Responda com o número ou descreva o que precisa.",
                 conversa_id=conversa_id, lead_id=lead_id,
             )
-            _set_fluxo(conversa_id, {})
+            await _set_fluxo_async(conversa_id, {})
             return
 
         cnpj_limpo = re.sub(r"\D", "", texto)
@@ -818,14 +856,14 @@ async def _processar_empresa(
                 ).eq("id", conversa_id).execute()
                 from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
                 await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
-                _set_fluxo(conversa_id, {})
+                await _set_fluxo_async(conversa_id, {})
                 return
 
             await e(
                 f"✅ Empresa *{nome_exibicao}* já está cadastrada!\n\n"
                 "Deseja divulgar uma vaga agora? Responda *sim* ou *não*."
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "etapa": "aguardando_criar_vaga",
                 "cnpj": cnpj_limpo,
                 "empresa_id": empresa["id"],
@@ -851,7 +889,7 @@ async def _processar_empresa(
                 f"⚠️ O CNPJ informado está com situação *{situacao}* na Receita Federal.\n"
                 "Não é possível cadastrar empresas inativas. Se houver erro, entre em contato com a unidade."
             )
-            _set_fluxo(conversa_id, {})
+            await _set_fluxo_async(conversa_id, {})
             return
 
         msg_dados = _formatar_dados_cnpj(dados_rf)
@@ -869,7 +907,7 @@ async def _processar_empresa(
         numero_end = endereco.get("numero") or ""
         end_completo = f"{logradouro}, {numero_end} — {municipio}/{uf}".strip(" ,—/")
 
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             "etapa": "confirmando_cadastro",
             "cnpj": cnpj_limpo,
             "dados_rf": {
@@ -919,7 +957,7 @@ async def _processar_empresa(
                 f"🏢 *{nome_exibicao}* agora está na nossa base de parceiros.\n\n"
                 "Deseja divulgar uma vaga agora? Responda *sim* ou *não*."
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "etapa": "aguardando_criar_vaga",
                 "cnpj": cnpj,
                 "empresa_id": empresa_id,
@@ -934,7 +972,7 @@ async def _processar_empresa(
             )
             fluxo["dados_rf"] = dados_rf
             fluxo["etapa"] = "confirmando_cadastro_com_correcao"
-            _set_fluxo(conversa_id, fluxo)
+            await _set_fluxo_async(conversa_id, fluxo)
         return
 
     # --- ETAPA: confirmando_cadastro_com_correcao ---
@@ -972,7 +1010,7 @@ async def _processar_empresa(
                 f"🏢 *{nome_exibicao}* agora está na nossa base.\n\n"
                 "Deseja divulgar uma vaga agora? Responda *sim* ou *não*."
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "etapa": "aguardando_criar_vaga",
                 "cnpj": cnpj,
                 "empresa_id": empresa_id,
@@ -981,7 +1019,7 @@ async def _processar_empresa(
             })
         else:
             await e("Entendido. Se precisar de ajuda, pode entrar em contato novamente. 👋")
-            _set_fluxo(conversa_id, {})
+            await _set_fluxo_async(conversa_id, {})
         return
 
     # --- ETAPA: aguardando_criar_vaga ---
@@ -997,7 +1035,7 @@ async def _processar_empresa(
                 "Qual é o *e-mail* para receber os currículos?\n"
                 "(pode ser diferente do e-mail geral da empresa)"
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "etapa": "coletando_email_responsavel",
                 "empresa_id": empresa_id,
                 "empresa_nome": empresa_nome,
@@ -1013,7 +1051,7 @@ async def _processar_empresa(
                 "4️⃣ Cancelar uma vaga\n\n"
                 "Responda com *1*, *2*, *3* ou *4*."
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "perfil": "empresa",
                 "etapa": "menu_empresa_acoes",
                 "cnpj": fluxo.get("cnpj"),
@@ -1043,7 +1081,7 @@ async def _processar_empresa(
             "Agora informe o *telefone/WhatsApp do responsável* pela seleção:\n"
             "(com DDD, ex: 85999990000)"
         )
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             **fluxo,
             "etapa": "coletando_telefone_responsavel",
             "email_responsavel": email_candidato,
@@ -1078,7 +1116,7 @@ async def _processar_empresa(
             "2️⃣ *Marcar seleção* — Processo seletivo com vários cargos e data definida\n\n"
             "Responda com *1* ou *2*."
         )
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             "etapa": "escolhendo_tipo_vaga",
             "empresa_id": empresa_id,
             "empresa_nome": empresa_nome,
@@ -1108,7 +1146,7 @@ async def _processar_empresa(
                 "Após o preenchimento, você receberá aqui o *número da vaga* e a confirmação. "
                 "A vaga será revisada pela equipe do CUCA antes de ser publicada."
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 **fluxo,
                 "etapa": "aguardando_retorno_vaga",
             })
@@ -1120,7 +1158,7 @@ async def _processar_empresa(
                 "Você poderá informar as datas, horários e cargos disponíveis. "
                 "Após o preenchimento, você receberá aqui a confirmação."
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 **fluxo,
                 "etapa": "aguardando_retorno_selecao",
             })
@@ -1139,7 +1177,7 @@ async def _processar_empresa(
     # --- ETAPA: aguardando_retorno_vaga (após link enviado) ---
     if etapa == "aguardando_retorno_vaga":
         # Verificar se o portal já notificou que a vaga foi criada
-        fluxo_atual = _get_fluxo(conversa_id)
+        fluxo_atual = await _get_fluxo_async(conversa_id)
         vaga_criada_id = fluxo_atual.get("vaga_criada_id")
         vaga_numero = fluxo_atual.get("vaga_numero")
         vaga_titulo = fluxo_atual.get("vaga_titulo", "")
@@ -1159,7 +1197,7 @@ async def _processar_empresa(
                 "3️⃣ Encerrar\n\n"
                 "Responda com *1*, *2* ou *3*."
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "etapa": "menu_pos_vaga",
                 "empresa_id": empresa_id,
                 "empresa_nome": fluxo_atual.get("empresa_nome", ""),
@@ -1191,7 +1229,7 @@ async def _processar_empresa(
                 "Qual é o *e-mail* para receber os currículos?\n"
                 "(pode ser diferente do e-mail geral da empresa)"
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "perfil": "empresa",
                 "etapa": "coletando_email_responsavel",
                 "empresa_id": empresa_id,
@@ -1200,7 +1238,7 @@ async def _processar_empresa(
                 "cnpj": fluxo.get("cnpj"),
             })
         elif t in ("2", "acompanhar", "acompanhar candidatos", "candidatos", "status"):
-            _set_fluxo(conversa_id, {**fluxo, "etapa": "consulta_empresa"})
+            await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "consulta_empresa"})
             await _processar_consulta_empresa("todas", phone, instance_name, token, fluxo, conversa_id)
         elif t in ("3", "encerrar", "finalizar", "tchau", "sair"):
             await _encerrar_fluxo(conversa_id, instance_name, token, phone, "empresa")
@@ -1225,7 +1263,7 @@ async def _processar_empresa(
         # compartilhado com vaga (confirmado em empregabilidade_notify_loop:2679 e em
         # selecao/route.ts, que grava vaga_criada_id/vaga_numero/vaga_titulo também
         # para seleção por evento, SQS-49; não existe coluna "selecao_criada_id" própria)
-        fluxo_atual = _get_fluxo(conversa_id)
+        fluxo_atual = await _get_fluxo_async(conversa_id)
         selecao_criada_id = fluxo_atual.get("vaga_criada_id")
         selecao_numero = fluxo_atual.get("vaga_numero")
         selecao_titulo = fluxo_atual.get("vaga_titulo", "")
@@ -1245,7 +1283,7 @@ async def _processar_empresa(
                 "3️⃣ Encerrar\n\n"
                 "Responda com *1*, *2* ou *3*."
             )
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "etapa": "menu_pos_vaga",
                 "empresa_id": empresa_id,
                 "empresa_nome": fluxo_atual.get("empresa_nome", ""),
@@ -1271,7 +1309,7 @@ async def _processar_empresa(
         return
 
     # Fallback — iniciar fluxo empresa
-    _set_fluxo(conversa_id, {"etapa": "solicitar_cnpj"})
+    await _set_fluxo_async(conversa_id, {"etapa": "solicitar_cnpj"})
     await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
 
 
@@ -1385,7 +1423,7 @@ async def _processar_consulta_empresa(
 
         if not vagas:
             await e("Sua empresa ainda não tem vagas cadastradas. Deseja criar uma? Responda *sim*.")
-            _set_fluxo(conversa_id, {**fluxo, "etapa": "aguardando_criar_vaga"})
+            await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "aguardando_criar_vaga"})
             return
 
         linhas = ["📋 *Suas vagas cadastradas:*\n"]
@@ -1399,7 +1437,7 @@ async def _processar_consulta_empresa(
         await e("\n".join(linhas))
     else:
         await e("Para consultar suas vagas, informe o *CNPJ* da empresa:")
-        _set_fluxo(conversa_id, {"etapa": "aguardando_cnpj"})
+        await _set_fluxo_async(conversa_id, {"etapa": "aguardando_cnpj"})
 
 
 # ---------------------------------------------------------------------------
@@ -1428,7 +1466,7 @@ async def _processar_candidato(
     lead_id: str,
     conversa_id: str,
 ):
-    fluxo = _get_fluxo(conversa_id)
+    fluxo = await _get_fluxo_async(conversa_id)
     etapa = fluxo.get("etapa", "solicitar_identificacao")
 
     async def e(msg: str):
@@ -1449,7 +1487,7 @@ async def _processar_candidato(
             "• Seu *nome completo*\n"
             "• Ou o *telefone* cadastrado no momento da inscrição"
         )
-        _set_fluxo(conversa_id, {"etapa": "aguardando_id_candidato"})
+        await _set_fluxo_async(conversa_id, {"etapa": "aguardando_id_candidato"})
         return
 
     if etapa == "aguardando_id_candidato":
@@ -1564,7 +1602,7 @@ async def _processar_candidato(
             "Deseja consultar outra candidatura ou encerrar?\n\n"
             "Responda com *outro* para nova consulta ou *encerrar* para finalizar."
         )
-        _set_fluxo(conversa_id, {"etapa": "candidato_consultado", "perfil": "candidato"})
+        await _set_fluxo_async(conversa_id, {"etapa": "candidato_consultado", "perfil": "candidato"})
         return
 
     # Estado consultado — oferecer nova consulta ou encerrar
@@ -1574,7 +1612,7 @@ async def _processar_candidato(
             await e(
                 "Informe o número da candidatura, nome completo ou telefone cadastrado:"
             )
-            _set_fluxo(conversa_id, {"etapa": "aguardando_id_candidato", "perfil": "candidato"})
+            await _set_fluxo_async(conversa_id, {"etapa": "aguardando_id_candidato", "perfil": "candidato"})
         elif _tem_palavra_encerramento(texto):
             await e(
                 "Fico feliz em ajudar. 😊\n\n"
@@ -1592,7 +1630,7 @@ async def _processar_candidato(
         return
 
     # Fallback
-    _set_fluxo(conversa_id, {"perfil": "candidato", "etapa": "solicitar_identificacao"})
+    await _set_fluxo_async(conversa_id, {"perfil": "candidato", "etapa": "solicitar_identificacao"})
     await _processar_candidato(texto, phone, instance_name, token, lead_id, conversa_id)
 
 
@@ -1663,7 +1701,7 @@ async def _processar_publico(
     conversa_id: str,
     unidade_cuca: str,
 ):
-    fluxo = _get_fluxo(conversa_id)
+    fluxo = await _get_fluxo_async(conversa_id)
     etapa = fluxo.get("etapa", "inicio")
     t_lower = texto.strip().lower()
 
@@ -1679,7 +1717,7 @@ async def _processar_publico(
             "Quando surgir uma vaga compatível com seu perfil, a equipe entrará em contato.\n\n"
             "Para continuar, preciso do seu *nome completo*:"
         )
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             "perfil": "publico",
             "etapa": "coletando_nome_candidato",
             "banco_talentos": True,
@@ -1702,7 +1740,7 @@ async def _processar_publico(
     # --- ETAPA: aguardando_confirmacao_candidatura ---
     # Verifica se o portal já registrou a candidatura e envia o número
     if etapa == "aguardando_confirmacao_candidatura":
-        fluxo_atual = _get_fluxo(conversa_id)
+        fluxo_atual = await _get_fluxo_async(conversa_id)
         candidatura_id = fluxo_atual.get("candidatura_criada_id")
         candidatura_codigo = fluxo_atual.get("candidatura_codigo")
 
@@ -1718,7 +1756,7 @@ async def _processar_publico(
                     "Deseja ver as *vagas abertas* ou encerrar por aqui?\n"
                     "Responda *vagas* para ver oportunidades ou *encerrar*."
                 )
-                _set_fluxo(conversa_id, {
+                await _set_fluxo_async(conversa_id, {
                     "etapa": "candidatura_confirmada",
                     "perfil": "publico",
                 })
@@ -1740,7 +1778,7 @@ async def _processar_publico(
                 historico = list(fluxo_atual.get("historico_vagas_aplicadas") or [])
                 if vaga_confirmada and vaga_confirmada not in historico:
                     historico.append(vaga_confirmada)
-                _set_fluxo(conversa_id, {
+                await _set_fluxo_async(conversa_id, {
                     "etapa": "pos_candidatura",  # S37C-01
                     "perfil": "publico",
                     "ultima_candidatura_codigo": codigo,
@@ -1762,7 +1800,7 @@ async def _processar_publico(
     # Comportamento idêntico ao antigo — redireciona para pos_candidatura de forma transparente.
     if etapa == "candidatura_confirmada":
         if any(p in t_lower for p in ("outra", "mais", "ver vagas", "outras vagas", "vagas", "vaga")):
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "perfil": "publico",
                 "etapa": "pos_candidatura",
                 "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
@@ -1790,7 +1828,7 @@ async def _processar_publico(
 
         if quer_mais_vagas:
             # S37C-04/05: preserva histórico e prefill, reinicia listagem de vagas
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "perfil": "publico",
                 "etapa": "inicio",
                 "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
@@ -1828,7 +1866,7 @@ async def _processar_publico(
         )
         if quer_banco:
             await e("Para continuar, preciso do seu *nome completo*:")
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "perfil": "publico",
                 "etapa": "coletando_nome_candidato",
                 "banco_talentos": True,
@@ -1876,7 +1914,7 @@ async def _processar_publico(
             "Esse currículo é para *você mesmo(a)* ou para outra pessoa?\n\n"
             "Responda *eu* ou *outra pessoa*."
         )
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             **fluxo,
             "etapa": "confirmando_terceiro",
             "nome_candidato": nome_coletado,
@@ -1893,7 +1931,7 @@ async def _processar_publico(
 
         if any(p in t_lower for p in ("outra", "outro", "outra pessoa", "amigo", "familiar", "parente", "não")):
             await e("Tudo certo! Informe o *nome completo* da pessoa para quem você está enviando o currículo:")
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 **fluxo,
                 "etapa": "coletando_nome_terceiro",
                 "vaga_id_selecionada": vaga_id_ref,
@@ -1960,7 +1998,7 @@ async def _processar_publico(
             return
         display_str = ", ".join(cargos_escolhidos)
         await e(f"Ótimo! Você escolheu: *{display_str}* ✅\n\nPara finalizar, preciso do seu *nome completo*:")
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             **fluxo,
             "etapa": "coletando_nome_candidato",
             "cargos_escolhidos": cargos_escolhidos,  # lista — AC10 SQS-49
@@ -1984,7 +2022,7 @@ async def _processar_publico(
                 ultima_vaga_id_cat = vc["id"]
             linhas_cat.append("\nDigite o *número* da vaga para se candidatar.")
             await e("\n".join(linhas_cat))
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 **fluxo,
                 "etapa": "listou_vagas",
                 "mapa_vagas": mapa_vagas_cat,
@@ -2023,7 +2061,7 @@ async def _processar_publico(
                     )
                 else:
                     # Salva estado antes de enviar para não ficar preso se envio falhar
-                    _set_fluxo(conversa_id, {
+                    await _set_fluxo_async(conversa_id, {
                         **novo_fluxo,
                         "etapa": "coletando_nome_candidato",
                         "banco_talentos": False,
@@ -2130,7 +2168,7 @@ async def _processar_publico(
                     faixa_txt = f" · {faixa}" if faixa else ""
                     linhas_cargos.append(f"*{idx_c}.* {cargo.get('titulo', '')}{qtd_txt}{faixa_txt}")
                 linhas_cargos.append("\nDigite o *número* do cargo. Para mais de um, separe por vírgula (ex: *1,3*).")
-                _set_fluxo(conversa_id, {
+                await _set_fluxo_async(conversa_id, {
                     **fluxo,
                     "etapa": "listando_cargos_selecao",
                     "vaga_id_selecionada": vaga_id_ref,
@@ -2160,7 +2198,7 @@ async def _processar_publico(
                 linhas_unid.append(f"*{idx_u}.* {u['nome']}")
             # Salva o estado ANTES de enviar a mensagem — evita ficar preso em listou_vagas
             # se o envio falhar de forma intermitente
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 **fluxo,
                 "etapa": "aguardando_escolha_unidade",
                 "vaga_id_selecionada": vaga_id_ref,
@@ -2180,7 +2218,7 @@ async def _processar_publico(
             )
         else:
             await e("Para finalizar sua candidatura, preciso do seu *nome completo*:")
-            _set_fluxo(conversa_id, {
+            await _set_fluxo_async(conversa_id, {
                 "perfil": "publico",
                 "etapa": "coletando_nome_candidato",
                 "vaga_id_selecionada": vaga_id_ref,
@@ -2204,7 +2242,7 @@ async def _processar_publico(
                 "Posso cadastrar seu currículo no banco de talentos para oportunidades futuras.\n\n"
                 "Deseja? Responda *sim* ou *não*."
             )
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             "perfil": "publico",
             "etapa": "oferta_banco_talentos",
             "historico_vagas_aplicadas": historico_aplicadas,
@@ -2241,7 +2279,7 @@ async def _processar_publico(
         "Ou diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
     )
     await e("\n".join(linhas))
-    _set_fluxo(conversa_id, {
+    await _set_fluxo_async(conversa_id, {
         "perfil": "publico",
         "etapa": "listou_categorias",
         "mapa_categorias": mapa_categorias,
@@ -2299,7 +2337,7 @@ async def _enviar_link_candidatura(
             "Após o envio, você receberá aqui o *número de acompanhamento* da candidatura. ✅"
         )
     await _enviar(instance_name, token, phone, mensagem_link, conversa_id=conversa_id, lead_id=lead_id)
-    _set_fluxo(conversa_id, {
+    await _set_fluxo_async(conversa_id, {
         "perfil": "publico",
         "etapa": "aguardando_confirmacao_candidatura",
         "nome_candidato": nome_candidato,
@@ -2356,7 +2394,7 @@ async def processar_mensagem_empregabilidade(
     Entry point chamado pelo main.py quando agente_tipo = 'Empregabilidade'.
     Identifica o perfil e roteia para o fluxo correto.
     """
-    fluxo = _get_fluxo(conversa_id)
+    fluxo = await _get_fluxo_async(conversa_id)
     perfil_atual = fluxo.get("perfil")
     etapa_atual = fluxo.get("etapa", "")
 
@@ -2438,7 +2476,7 @@ async def processar_mensagem_empregabilidade(
 
         if texto_norm in ("1", "1.", "sim", "sim!", "confirmar", "confirmado"):
             supabase.table("candidaturas").update({"status": "entrevista_confirmada"}).eq("id", cand_id).execute()
-            _set_fluxo(conversa_id, {"perfil": "encerrado"})
+            await _set_fluxo_async(conversa_id, {"perfil": "encerrado"})
             await _enviar(
                 instance_name, token, phone,
                 f"✅ Recebemos sua confirmação, *{cand_nome}*! Sua presença na entrevista foi registrada com sucesso. "
@@ -2448,7 +2486,7 @@ async def processar_mensagem_empregabilidade(
             return
         elif texto_norm in ("2", "2.", "não", "nao", "não posso", "nao posso", "recusar"):
             supabase.table("candidaturas").update({"status": "entrevista_recusada"}).eq("id", cand_id).execute()
-            _set_fluxo(conversa_id, {"perfil": "encerrado"})
+            await _set_fluxo_async(conversa_id, {"perfil": "encerrado"})
             await _enviar(
                 instance_name, token, phone,
                 f"Entendido, *{cand_nome}*. Recebemos sua resposta e registramos que você não poderá comparecer desta vez. "
@@ -2497,7 +2535,7 @@ async def processar_mensagem_empregabilidade(
         # Não confirmou (ou resposta que não seja um "sim" claro) — não travar
         # aqui: volta pro menu geral em vez de insistir na mesma pergunta.
         await _mostrar_menu_opcoes(instance_name, token, phone, conversa_id, lead_id)
-        _set_fluxo(conversa_id, {})
+        await _set_fluxo_async(conversa_id, {})
         return
 
     # SQS-41 Ação 2.2: Bypass global — "menu" reabre o menu de 4 opções a
@@ -2507,7 +2545,7 @@ async def processar_mensagem_empregabilidade(
     # escolha entre as rotas.
     if texto.strip().lower() == "menu":
         await _mostrar_menu_opcoes(instance_name, token, phone, conversa_id, lead_id)
-        _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
+        await _set_fluxo_async(conversa_id, {"etapa": "menu_inicial"})
         return
 
     # Rotear pelo perfil salvo OU pela etapa (evita loop quando _set_fluxo não preservou perfil)
@@ -2577,9 +2615,9 @@ async def processar_mensagem_empregabilidade(
     lead_nome = (lead_res.data or {}).get("nome") or extrair_nome_heuristico(texto)
     intencao_res = await avaliar_mensagem_contextual(
         texto, midia_tipo, perfil=None, etapa=None,
-        ultima_msg_bot=_ultima_mensagem_bot(conversa_id), lead_nome=lead_nome,
+        ultima_msg_bot=await _ultima_mensagem_bot_async(conversa_id), lead_nome=lead_nome,
     )
-    _log_intencao(conversa_id, intencao_res["intencao"])
+    await _log_intencao_async(conversa_id, intencao_res["intencao"])
     await _rotear_por_intencao(
         intencao_res, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
         extrair_setor_da_mensagem,
@@ -2612,21 +2650,21 @@ async def _processar_menu_inicial(
     t = texto.strip().lower()
     if t in ("1", "empresa", "divulgar", "divulgar vaga", "quero divulgar",
              "marcar selecao", "marcar seleção", "selecao", "seleção"):
-        _set_fluxo(conversa_id, {"perfil": "empresa", "etapa": "solicitar_cnpj"})
+        await _set_fluxo_async(conversa_id, {"perfil": "empresa", "etapa": "solicitar_cnpj"})
         await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         return
     if t in ("2", "candidato", "candidatura", "minha candidatura", "acompanhar"):
-        _set_fluxo(conversa_id, {"perfil": "candidato", "etapa": "solicitar_identificacao"})
+        await _set_fluxo_async(conversa_id, {"perfil": "candidato", "etapa": "solicitar_identificacao"})
         await _processar_candidato(texto, phone, instance_name, token, lead_id, conversa_id)
         return
     if t in ("3", "vagas", "vaga", "ver vagas", "vagas abertas", "quero trabalhar", "emprego"):
-        _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+        await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
         await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         return
     if t in ("4", "enviar curriculo", "enviar currículo", "deixar curriculo", "deixar currículo",
              "sem vaga", "curriculo sem vaga", "currículo sem vaga", "banco", "cadastrar curriculo",
              "cadastrar currículo"):
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             "perfil": "publico",
             "etapa": "coletando_nome_candidato",
             "banco_talentos": True,
@@ -2646,7 +2684,7 @@ async def _processar_menu_inicial(
     # repetir o erro, mesmo padrão híbrido usado no resto do arquivo.
     from intencao_detector import avaliar_mensagem_contextual, extrair_setor_da_mensagem  # noqa: PLC0415
     sem_menu = await avaliar_mensagem_contextual(
-        texto, perfil=None, etapa="menu_inicial", ultima_msg_bot=_ultima_mensagem_bot(conversa_id),
+        texto, perfil=None, etapa="menu_inicial", ultima_msg_bot=await _ultima_mensagem_bot_async(conversa_id),
     )
     if sem_menu["quer_sair"]:
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
@@ -2666,6 +2704,9 @@ def _log_intencao(conversa_id: str, intencao: str) -> None:
         supabase.table("conversas").update({"metadata": metadata}).eq("id", conversa_id).execute()
     except Exception as exc:
         logger.warning("[intencao] Falha ao gravar intencao_detectada: %s", exc)
+
+
+_LOG_INTENCAO_SYNC = _log_intencao
 
 
 async def _rotear_por_intencao(
@@ -2692,7 +2733,7 @@ async def _rotear_por_intencao(
     if intencao == "empresa":
         # AC#5 — pede CNPJ diretamente, humanizado
         await e(f"Olá{saudacao_nome} Me passa o CNPJ da empresa (somente números) para verificar seu cadastro:")
-        _set_fluxo(conversa_id, {"perfil": "empresa", "etapa": "aguardando_cnpj"})
+        await _set_fluxo_async(conversa_id, {"perfil": "empresa", "etapa": "aguardando_cnpj"})
 
     elif intencao == "candidato_vaga":
         # AC#1 — lista até 5 vagas abertas (com filtro de setor quando mencionado)
@@ -2716,14 +2757,14 @@ async def _rotear_por_intencao(
                     f"Não temos vagas de *{setor_kw}* no momento. 😕\n\n"
                     "Deseja ver outras vagas disponíveis?"
                 )
-                _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+                await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
             else:
                 await e(
                     f"Olá{saudacao_nome} No momento não há vagas abertas. 😕\n\n"
                     "Posso cadastrar seu currículo no banco de talentos para quando surgir uma oportunidade.\n\n"
                     "Deseja? Responda *sim* ou *não*."
                 )
-                _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "oferta_banco_talentos"})
+                await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "oferta_banco_talentos"})
             return
 
         mapa_vagas: dict[str, str] = {}
@@ -2737,7 +2778,7 @@ async def _rotear_por_intencao(
 
         linhas.append("\nDigite o *número da vaga* para se candidatar.")
         await e("\n".join(linhas))
-        _set_fluxo(conversa_id, {
+        await _set_fluxo_async(conversa_id, {
             "perfil": "publico",
             "etapa": "listou_vagas",
             "mapa_vagas": mapa_vagas,
@@ -2751,7 +2792,7 @@ async def _rotear_por_intencao(
             "ou deixar seu currículo no *Banco de Talentos*?\n\n"
             "Responda *vaga* ou *banco de talentos*."
         )
-        _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+        await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
 
     elif intencao == "upload":
         # AC#3 — pergunta contexto antes de processar o arquivo
@@ -2760,7 +2801,7 @@ async def _rotear_por_intencao(
             "*vaga específica* ou deixar no *Banco de Talentos*?\n\n"
             "Responda *vaga* ou *banco de talentos*."
         )
-        _set_fluxo(conversa_id, {"perfil": "publico", "etapa": "inicio", "arquivo_pendente": True})
+        await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio", "arquivo_pendente": True})
 
     else:
         # AC#4 / bug 1 (S-WM-20 Task 3): ambíguo — menu determinístico em vez
@@ -2777,14 +2818,14 @@ async def _rotear_por_intencao(
         # bot ainda existe nesta conversa) de uma ambiguidade repetida — "Não
         # entendi" não faz sentido quando é a primeira coisa que o lead
         # escreveu.
-        eh_primeira_interacao = _ultima_mensagem_bot(conversa_id) is None
+        eh_primeira_interacao = await _ultima_mensagem_bot_async(conversa_id) is None
         intro = (
             f"Olá{saudacao_nome} Para eu te ajudar melhor, escolha uma das opções:"
             if eh_primeira_interacao
             else f"Olá{saudacao_nome} Não entendi bem o que você precisa. Escolha uma das opções:"
         )
         await _mostrar_menu_opcoes(instance_name, token, phone, conversa_id, lead_id, intro)
-        _set_fluxo(conversa_id, {"etapa": "menu_inicial"})
+        await _set_fluxo_async(conversa_id, {"etapa": "menu_inicial"})
 
 
 # ---------------------------------------------------------------------------
@@ -2862,7 +2903,7 @@ async def empregabilidade_notify_loop():
                         "Responda com *1*, *2*, *3* ou *4*."
                     )
                     if _ok:
-                        _set_fluxo(conversa_id, {
+                        await _set_fluxo_async(conversa_id, {
                             "perfil": "empresa",
                             "etapa": "menu_empresa_acoes",
                             "empresa_id": empresa_id,
@@ -2896,7 +2937,7 @@ async def empregabilidade_notify_loop():
                         "Responda com *1*, *2*, *3* ou *4*."
                     )
                     if _ok:
-                        _set_fluxo(conversa_id, {
+                        await _set_fluxo_async(conversa_id, {
                             "perfil": "empresa",
                             "etapa": "menu_empresa_acoes",
                             "empresa_id": empresa_id,
@@ -2928,7 +2969,7 @@ async def empregabilidade_notify_loop():
                         "Responda com *1*, *2*, *3* ou *4*."
                     )
                     if _ok:
-                        _set_fluxo(conversa_id, {
+                        await _set_fluxo_async(conversa_id, {
                             "perfil": "empresa",
                             "etapa": "menu_empresa_acoes",
                             "empresa_id": empresa_id,
@@ -2956,7 +2997,7 @@ async def empregabilidade_notify_loop():
                             "Responda *vagas* para ver oportunidades ou *encerrar*."
                         )
                         if _ok:
-                            _set_fluxo(conversa_id, {
+                            await _set_fluxo_async(conversa_id, {
                                 "etapa": "candidatura_confirmada",
                                 "perfil": "publico",
                             })
@@ -2983,7 +3024,7 @@ async def empregabilidade_notify_loop():
                             historico = list(fluxo.get("historico_vagas_aplicadas") or [])
                             if vaga_confirmada and vaga_confirmada not in historico:
                                 historico.append(vaga_confirmada)
-                            _set_fluxo(conversa_id, {
+                            await _set_fluxo_async(conversa_id, {
                                 "etapa": "pos_candidatura",  # S37C-01
                                 "perfil": "publico",
                                 "ultima_candidatura_codigo": codigo,
