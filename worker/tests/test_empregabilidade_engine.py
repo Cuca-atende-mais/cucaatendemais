@@ -632,3 +632,110 @@ class TestEscapeHatchNomeLivre:
         texto_enviado = mock_enviar.call_args.args[3]
         assert "Xisto Wenceslau" in texto_enviado
         assert estado.get("etapa") == "confirmando_terceiro"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Achados de auditoria (2026-07-09) — _quer_encerrar por substring sem limite
+# de palavra, sem exceção nenhuma no fluxo de candidato; e negação ignorada em
+# pos_candidatura (mesma classe de bug já corrigida em oferta_banco_talentos).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestQuerEncerrarSubstringSemLimiteDePalavra:
+
+    @pytest.mark.asyncio
+    async def test_obrigado_no_meio_de_pergunta_nao_deveria_encerrar_candidato(self, monkeypatch):
+        """_quer_encerrar (empregabilidade_engine.py:191-193) casa 'obrigado'
+        como substring solta, sem checar limite de palavra nem se é a frase
+        inteira. Em _processar_candidato (candidato_consultado) não há
+        nenhuma exceção de etapa (diferente de pos_candidatura, que já tem
+        exceção documentada como S37C-03) — uma mensagem de agradecimento que
+        claramente CONTINUA a conversa ('muito obrigado! mas ainda tenho uma
+        dúvida...') encerra o fluxo na hora, antes até de a etapa
+        candidato_consultado ter chance de rodar seu próprio escape semântico."""
+        estado, fake_get, fake_set = _fluxo_mock("candidato_consultado", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_candidato(
+            "muito obrigado! mas ainda queria saber se posso mudar meu telefone de contato",
+            "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert estado != {}, (
+            "fluxo foi encerrado (_encerrar_fluxo limpa o estado) por causa da substring "
+            "'obrigado', mesmo a mensagem claramente pedindo pra continuar"
+        )
+        assert "Boa sorte" not in texto_enviado  # mensagem de despedida do _encerrar_fluxo
+
+
+class TestPosCandidaturaNegacaoIgnorada:
+
+    @pytest.mark.asyncio
+    async def test_nao_quero_mais_vagas_nao_deveria_reabrir_busca_de_vagas(self, monkeypatch):
+        """Em pos_candidatura (empregabilidade_engine.py:1585-1601), 'quero'
+        como substring marca quer_mais_vagas=True sem checar negação — 'não
+        quero mais vagas, obrigado' contém 'quero' e é lido como pedido de
+        mais vagas. A etapa seguinte (oferta_banco_talentos, linhas 1626-1629)
+        já tem a proteção de negação para exatamente esse padrão, com
+        comentário explicando o motivo — só não foi aplicada de volta aqui."""
+        estado, fake_get, fake_set = _fluxo_mock("pos_candidatura", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        mock_sb = MagicMock()
+        # Listagem de vagas abertas (fallthrough de _processar_publico)
+        mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = []
+        # Candidaturas já feitas por este telefone
+        mock_sb.table.return_value.select.return_value.eq.return_value.execute.return_value.data = []
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_publico(
+            "não quero mais vagas, obrigado",
+            "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "vagas abertas" not in texto_enviado.lower(), (
+            "negação ('não quero mais vagas') foi ignorada e o fluxo reabriu a busca "
+            "de vagas em vez de reconhecer que o lead está recusando"
+        )
+
+
+class TestMenuPosVagaReinterpretaResposta:
+
+    @pytest.mark.asyncio
+    async def test_resposta_3_para_encerrar_e_reinterpretada_como_editar_vaga(self, monkeypatch):
+        """menu_pos_vaga oferece '3 = Encerrar', mas o dispatch
+        (empregabilidade_engine.py:1101-1106) só troca a etapa para
+        menu_empresa_acoes e reprocessa o MESMO texto ('3') contra um menu
+        diferente, onde '3 = Editar uma vaga'. Uma empresa que responde '3'
+        querendo encerrar acaba, sem saber, no fluxo de edição de vaga."""
+        estado, fake_get, fake_set = _fluxo_mock(
+            "menu_pos_vaga", {"perfil": "empresa", "empresa_id": "e1"}
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        mock_sb = MagicMock()
+        # _listar_vagas_para_acao: table("vagas").select(...).eq(...).not_.in_(...).order(...).limit(...).execute()
+        mock_sb.table.return_value.select.return_value.eq.return_value.not_.in_.return_value \
+            .order.return_value.limit.return_value.execute.return_value.data = []
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_empresa(
+            "3", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert estado.get("etapa") != "selecionando_vaga_edicao", (
+            "resposta '3' (que no menu de menu_pos_vaga significa 'Encerrar') foi "
+            "reinterpretada contra o menu de menu_empresa_acoes, onde '3' significa "
+            "'Editar uma vaga' — a empresa queria encerrar e caiu no fluxo de edição"
+        )
