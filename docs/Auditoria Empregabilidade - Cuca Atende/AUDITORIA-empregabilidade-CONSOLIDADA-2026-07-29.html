@@ -1,0 +1,192 @@
+<title>Auditoria consolidada — Empregabilidade</title>
+<style>
+  :root {
+    --bg: #eef2f4; --bg-card: #ffffff; --ink: #182028; --ink-soft: #4b5563;
+    --line: rgba(24, 32, 40, 0.12); --accent: #0e7a80; --accent-soft: #e1f0f0;
+    --critical: #b23a2e; --critical-soft: #f7e6e3; --warning: #9a6a1f; --warning-soft: #f6ecd9;
+    --resolved: #3c7a56; --resolved-soft: #e3f0e8; --neutral: #5b6472; --neutral-soft: #e9ebee;
+    --violet: #6c4ea3; --violet-soft: #ece5f6;
+    --shadow: 0 1px 2px rgba(24,32,40,.04), 0 8px 24px -12px rgba(24,32,40,.18);
+  }
+  :root[data-theme="dark"] {
+    --bg: #10161c; --bg-card: #171f27; --ink: #e7ecef; --ink-soft: #a3adb8;
+    --line: rgba(231, 236, 239, 0.12); --accent: #4fc4cb; --accent-soft: rgba(79,196,203,0.14);
+    --critical: #e08579; --critical-soft: rgba(224,133,121,0.14); --warning: #d9ad63; --warning-soft: rgba(217,173,99,0.14);
+    --resolved: #7fc9a0; --resolved-soft: rgba(127,201,160,0.14); --neutral: #9aa4b1; --neutral-soft: rgba(154,164,177,0.12);
+    --violet: #b6a0e0; --violet-soft: rgba(182,160,224,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px -14px rgba(0,0,0,.6);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10161c; --bg-card: #171f27; --ink: #e7ecef; --ink-soft: #a3adb8;
+      --line: rgba(231, 236, 239, 0.12); --accent: #4fc4cb; --accent-soft: rgba(79,196,203,0.14);
+      --critical: #e08579; --critical-soft: rgba(224,133,121,0.14); --warning: #d9ad63; --warning-soft: rgba(217,173,99,0.14);
+      --resolved: #7fc9a0; --resolved-soft: rgba(127,201,160,0.14); --neutral: #9aa4b1; --neutral-soft: rgba(154,164,177,0.12);
+      --violet: #b6a0e0; --violet-soft: rgba(182,160,224,0.14);
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px -14px rgba(0,0,0,.6);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .page { max-width: 960px; margin: 0 auto; padding: 56px 24px 96px; }
+  code, .mono { font-family: Consolas, "SF Mono", Menlo, "Liberation Mono", monospace; font-size: 0.88em; }
+  code { background: var(--neutral-soft); padding: 0.12em 0.4em; border-radius: 4px; color: var(--ink); }
+  pre { background: var(--neutral-soft); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: Consolas, "SF Mono", Menlo, monospace; font-size: 0.8rem; line-height: 1.55; }
+  pre code { background: none; padding: 0; }
+  .eyebrow { font-family: Consolas, "SF Mono", Menlo, monospace; font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin: 0 0 14px; }
+  h1 { font-family: Georgia, "Iowan Old Style", "Times New Roman", serif; font-weight: 400; font-size: 2rem; line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 10px; text-wrap: balance; }
+  .subtitle { font-size: 1.05rem; color: var(--ink-soft); margin: 0 0 28px; max-width: 76ch; }
+  .intro { display: grid; gap: 10px; padding: 18px 20px; background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); font-size: 0.95rem; color: var(--ink-soft); max-width: 82ch; }
+  .intro strong { color: var(--ink); }
+  section.group { margin: 44px 0; }
+  .group-head { margin-bottom: 18px; padding-bottom: 12px; border-bottom: 2px solid var(--critical); }
+  .group.resolved .group-head { border-bottom-color: var(--resolved); }
+  .group.warning .group-head { border-bottom-color: var(--warning); }
+  .group.neutral .group-head { border-bottom-color: var(--line); border-bottom-width: 1px; }
+  .group-head h2 { font-family: Georgia, serif; font-weight: 400; font-size: 1.4rem; margin: 0 0 6px; line-height: 1.3; }
+  .card { background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 18px; }
+  .card p { margin: 0 0 12px; font-size: 0.96rem; }
+  .card p:last-child { margin-bottom: 0; }
+  .pill { display: inline-block; font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 9px; border-radius: 100px; font-weight: 600; margin-bottom: 12px; }
+  .pill.critical { background: var(--critical-soft); color: var(--critical); }
+  .pill.warning  { background: var(--warning-soft);  color: var(--warning); }
+  .pill.resolved { background: var(--resolved-soft); color: var(--resolved); }
+  .pill.accent   { background: var(--accent-soft);   color: var(--accent); }
+  .pill.neutral  { background: var(--neutral-soft);  color: var(--neutral); }
+  ol.plain, ul.plain { margin: 0 0 12px; padding-left: 1.3em; font-size: 0.95rem; }
+  ol.plain li, ul.plain li { margin-bottom: 8px; }
+  .table-scroll { overflow-x: auto; margin-bottom: 12px; }
+  table.list { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+  table.list th, table.list td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  table.list th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); font-weight: 600; }
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--ink-soft); }
+  a { color: var(--accent); }
+</style>
+
+<div class="page">
+
+  <p class="eyebrow">Auditoria consolidada &middot; 29 jul 2026</p>
+  <h1>Empregabilidade — `empregabilidade_engine.py` + `intencao_detector.py`</h1>
+  <p class="subtitle">Junção de 2 auditorias que existiam separadas (07/07 e 17/07, sem que uma soubesse da outra) — 20 achados distintos, 3 já com plano de correção escrito.</p>
+
+  <div class="intro">
+    <p><strong>O que este documento é:</strong> cruzamento de 2 auditorias independentes (`AUDITORIA-empregabilidade-2026-07-09.md`, 4 achados com teste vermelho já escrito; `AUDITORIA-empregabilidade-2026-07-17.md`, 17 achados mais aprofundados, feita numa branch nunca mergeada). 1 achado se sobrepõe (EMP-02 = achado #8); os outros 20 são distintos.</p>
+    <p><strong>Achado crítico sobre os testes:</strong> os 4 testes que a auditoria de 09/07 cita como "prova do bug" existem só como alteração <strong>local, nunca commitada</strong> — ver pasta <code>testes-locais-nao-commitados/</code> desta entrega. Recomendo commitar antes de qualquer outra coisa.</p>
+  </div>
+
+  <section class="group critical">
+    <div class="group-head"><h2>Resumo executivo</h2></div>
+    <div class="table-scroll">
+      <table class="list">
+        <tr><th>#</th><th>Achado</th><th>Categoria</th><th>Severidade</th><th>Teste hoje</th></tr>
+        <tr><td>SEC-01</td><td>Empresa "autenticada" só pelo CNPJ — takeover de identidade</td><td>Segurança</td><td><strong>Alta</strong></td><td>Não</td></tr>
+        <tr><td>SEC-02</td><td>Consulta de candidatura vaza PII de terceiro</td><td>Segurança</td><td><strong>Alta</strong></td><td>Não</td></tr>
+        <tr><td>BUG-01</td><td><code>aguardando_retorno_selecao</code> sem handler síncrono — reseta empresa</td><td>Bug/UX</td><td><strong>Alta</strong></td><td>Não</td></tr>
+        <tr><td>BUG-02/PERF-01</td><td>~48 chamadas Supabase síncronas dentro de <code>async def</code></td><td>Performance</td><td><strong>Alta</strong></td><td>Não</td></tr>
+        <tr><td>TEST-01</td><td>Zero teste nos 3 fluxos de maior risco</td><td>Testes</td><td><strong>Alta</strong></td><td>—</td></tr>
+        <tr><td>EMP-01</td><td>Filtro de setor ("entrega" casa "entregar") esconde vagas</td><td>Bug</td><td>Alta</td><td><strong>Sim (local)</strong></td></tr>
+        <tr><td>EMP-02 / #8</td><td>"Quer encerrar" substring sem limite, 3 fluxos afetados</td><td>Bug</td><td>Alta</td><td><strong>Sim (local)</strong></td></tr>
+        <tr><td>EMP-03</td><td>Negação ignorada em <code>pos_candidatura</code></td><td>Bug</td><td>Média-alta</td><td><strong>Sim (local)</strong></td></tr>
+        <tr><td>EMP-04</td><td><code>menu_pos_vaga</code> reinterpreta resposta contra menu errado</td><td>Bug</td><td>Média-alta</td><td><strong>Sim (local)</strong></td></tr>
+        <tr><td>#6</td><td><code>_set_fluxo</code> redundante + risco de lost-update</td><td>Perf/Bug</td><td>Média</td><td>Não</td></tr>
+        <tr><td>#9</td><td>N+1 em 2 telas de listagem</td><td>Perf</td><td>Média</td><td>Não</td></tr>
+        <tr><td>#10</td><td>Regex de nº de vaga pode capturar dígito de CNPJ/data</td><td>Bug</td><td>Média</td><td>Não</td></tr>
+        <tr><td>#11</td><td>Menu duplicado 10x (já divergiu); 7 tuplas de afirmativo inconsistentes</td><td>Tech-debt</td><td>Média</td><td>Não</td></tr>
+        <tr><td>#12</td><td>Links do portal sem assinatura/expiração na URL</td><td>Segurança</td><td>Média</td><td>Não</td></tr>
+        <tr><td>#13</td><td>2 pontos gravam estado antes de enviar mensagem</td><td>Bug</td><td>Média</td><td>Não</td></tr>
+        <tr><td>#14</td><td>Mocks de teste não verificam payload da query</td><td>Testes</td><td>Média</td><td>—</td></tr>
+        <tr><td>#15</td><td>Loop de notificação: N+1 + query sem limit</td><td>Perf</td><td>Média</td><td>Não</td></tr>
+        <tr><td>#16</td><td>Fluxos candidato/público quase sem teste</td><td>Testes</td><td>Alta (cobertura)</td><td>—</td></tr>
+        <tr><td>#17</td><td>CNPJ completo em log, sem mascaramento</td><td>Segurança</td><td>Baixa</td><td>Não</td></tr>
+        <tr><td>Cosmético</td><td>Parâmetro <code>token</code> nunca usado em <code>_enviar()</code></td><td>Tech-debt</td><td>Baixa</td><td>—</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="group critical">
+    <div class="group-head"><h2>Achados de maior severidade (verificados linha a linha nesta consolidação)</h2></div>
+
+    <div class="card">
+      <span class="pill critical">SEC-01</span>
+      <p><strong>Empresa é "autenticada" só pelo CNPJ</strong> — <code>empregabilidade_engine.py:753,761-767</code>. CNPJ não é segredo (nota fiscal, contrato, busca pública) — qualquer conversa que informe os 14 dígitos de uma empresa já cadastrada recebe a identidade completa dela pro resto da sessão. Fluxos de edição/cancelamento filtram por <code>empresa_id</code>, mas esse ID só vale o que vale essa checagem — nada. Cancelamento é irreversível pelo próprio texto do bot.</p>
+      <p><strong>Plano:</strong> <code>plans/empregabilidade/001-sec01-autenticacao-empresa-por-cnpj.md</code></p>
+    </div>
+
+    <div class="card">
+      <span class="pill critical">SEC-02</span>
+      <p><strong>Consulta de candidatura vaza dado de terceiro</strong> — <code>empregabilidade_engine.py:1298-1352</code>. As 4 estratégias de busca (CPF, código, telefone, nome) usam o valor digitado na mensagem, nunca o <code>phone</code> real de quem manda — já disponível como parâmetro da função. Qualquer um que saiba nome/telefone de um candidato puxa status e observações internas do recrutador.</p>
+      <p><strong>Plano:</strong> <code>plans/empregabilidade/002-sec02-consulta-candidatura-vaza-dado-terceiro.md</code></p>
+    </div>
+
+    <div class="card">
+      <span class="pill critical">BUG-01</span>
+      <p><strong><code>aguardando_retorno_selecao</code> sem handler síncrono</strong> — <code>empregabilidade_engine.py:1034-1045,1113-1115</code>. As 2 etapas irmãs tratam mensagem manual do usuário enquanto aguardam o portal; esta não — cai no fallback genérico que reseta a empresa inteira pra "informe seu CNPJ". O loop de notificação assíncrono já cobre esta etapa — o gap é só a mensagem manual síncrona.</p>
+      <p><strong>Plano:</strong> <code>plans/empregabilidade/003-bug01-aguardando-retorno-selecao-sem-handler.md</code></p>
+    </div>
+
+    <div class="card">
+      <span class="pill warning">BUG-02 / PERF-01</span>
+      <p><strong>~48 chamadas Supabase síncronas dentro de <code>async def</code></strong> — <code>asyncio.to_thread</code> aparece 1x no arquivo inteiro; <code>supabase.table(</code> aparece 49x. Cada chamada trava o event loop inteiro (todas as conversas), não só a de quem está sendo atendido. Esforço L — melhor via helper <code>_exec()</code> aplicado sistematicamente. Sem plano formal ainda; recomendo TEST-01/#14 antes.</p>
+    </div>
+
+    <div class="card">
+      <span class="pill warning">TEST-01</span>
+      <p><strong>Zero teste nos 3 fluxos de maior risco</strong> — cancelamento de vaga (irreversível), cadastro de empresa, confirmação de entrevista. Grep confirma zero ocorrência desses nomes de etapa nos testes. Sem plano formal ainda.</p>
+    </div>
+
+    <div class="card">
+      <span class="pill accent">EMP-01</span>
+      <p><strong>Filtro de setor por substring</strong> — <code>intencao_detector.py:270-285</code>. "entrega" (Logística) casa dentro de "entregar" — "Quero entregar meu currículo" filtra silenciosamente só vagas de Logística. Mesma classe já corrigida no Institucional (AUD-05), nunca aqui. Teste local: <code>test_entregar_curriculo_nao_deveria_disparar_filtro_de_logistica</code>.</p>
+    </div>
+
+    <div class="card">
+      <span class="pill accent">EMP-02 (= achado #8)</span>
+      <p><strong>"Quer encerrar" substring sem limite de palavra</strong> — <code>empregabilidade_engine.py:191-193</code>, checado em 3 fluxos, sem exceção nenhuma no fluxo candidato (e roda antes do próprio escape semântico daquele fluxo). "Muito obrigado! mas ainda tenho uma dúvida" encerra a conversa sem aviso. Teste local: <code>TestQuerEncerrarSubstringSemLimiteDePalavra</code>.</p>
+    </div>
+
+    <div class="card">
+      <span class="pill accent">EMP-03</span>
+      <p><strong>Negação ignorada em <code>pos_candidatura</code></strong> — <code>:1585-1601</code>. "Não quero mais vagas" contém "quero" → lido como pedido de mais vagas. A etapa vizinha já tem a correção certa, não foi replicada. Teste local: <code>TestPosCandidaturaNegacaoIgnorada</code>.</p>
+    </div>
+
+    <div class="card">
+      <span class="pill accent">EMP-04</span>
+      <p><strong><code>menu_pos_vaga</code> reinterpreta resposta contra menu errado</strong> — <code>:1101-1106</code>. Menu real é "1=nova vaga/2=consulta/3=editar/4=cancelar" (não "3=Encerrar" como o texto mostrado sugere) — responder "3" achando "Encerrar" cai em editar vaga. Teste local: <code>TestMenuPosVagaReinterpretaResposta</code>.</p>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-head"><h2>Demais achados (auditoria de 17/07, resumo)</h2></div>
+    <div class="table-scroll">
+      <table class="list">
+        <tr><th>#</th><th>Achado</th><th>Evidência</th><th>Esforço</th></tr>
+        <tr><td>6</td><td><code>_set_fluxo</code> redundante + risco de lost-update contra o loop de notificação</td><td>:178-188, :2160-2166, :2595-2799</td><td>M</td></tr>
+        <tr><td>9</td><td>N+1 em 2 telas de listagem</td><td>:1219-1237, :1349-1352</td><td>S</td></tr>
+        <tr><td>10</td><td>Regex de nº de vaga pode capturar dígito de CNPJ/data</td><td>:487, :570, :1192, :1775, :1812, :1888</td><td>S</td></tr>
+        <tr><td>11</td><td>Menu duplicado 10x (já divergiu); afirmativos inconsistentes</td><td>10 ocorrências de menu, 7 tuplas de afirmativo</td><td>S/M</td></tr>
+        <tr><td>12</td><td>Links do portal sem assinatura/expiração</td><td>:513, :1023, :1035, :2087-2088</td><td>M</td></tr>
+        <tr><td>13</td><td>2 pontos gravam estado antes de enviar mensagem</td><td>:1826-1832, :1962-1972</td><td>S</td></tr>
+        <tr><td>14</td><td>Mocks de teste não verificam payload da query</td><td>zero <code>.assert_called_with</code></td><td>S</td></tr>
+        <tr><td>15</td><td>Loop de notificação: N+1 + query sem limit</td><td>:2606-2608, :2611-2634</td><td>S/M</td></tr>
+        <tr><td>16</td><td>Fluxos candidato/público quase sem teste</td><td>~30 etapas sem hit em teste</td><td>L</td></tr>
+        <tr><td>17</td><td>CNPJ completo em log, sem mascaramento</td><td>:138 vs. :2172,2205,2491</td><td>S</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-head"><h2>Perguntas em aberto para o Valmir</h2></div>
+    <div class="card">
+      <ol class="plain">
+        <li><strong>SEC-01</strong> — existe alguma verificação fora deste arquivo que hoje mitiga isso na prática, ou o CNPJ é realmente o único fator?</li>
+        <li><strong>Achado #12</strong> — a rota do portal Next.js que recebe <code>vaga_id</code>/<code>empresa_id</code> da URL faz alguma checagem de sessão própria?</li>
+        <li><strong>Etapas "legado"</strong> (<code>menu_empresa_retomada</code>, <code>perguntando_unidade_vaga</code>) — pede pra rodar a query de contagem antes de decidir remover.</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>
+    Consolidação de <code>AUDITORIA-empregabilidade-2026-07-09.md</code> + <code>AUDITORIA-empregabilidade-2026-07-17.md</code> (branch <code>audit/empregabilidade-2026-07-17</code>, nunca mergeada). Planos completos em <code>plans/</code>. Testes locais não commitados em <code>testes-locais-nao-commitados/</code>.
+  </footer>
+
+</div>

@@ -1,0 +1,192 @@
+<style>
+  :root {
+    --bg: #eef2f4; --bg-card: #ffffff; --ink: #182028; --ink-soft: #4b5563;
+    --line: rgba(24, 32, 40, 0.12); --accent: #0e7a80; --accent-soft: #e1f0f0;
+    --critical: #b23a2e; --critical-soft: #f7e6e3;
+    --warning: #9a6a1f; --warning-soft: #f6ecd9;
+    --resolved: #3c7a56; --resolved-soft: #e3f0e8;
+    --neutral: #5b6472; --neutral-soft: #e9ebee;
+    --shadow: 0 1px 2px rgba(24,32,40,.04), 0 8px 24px -12px rgba(24,32,40,.18);
+  }
+  :root[data-theme="dark"] {
+    --bg: #10161c; --bg-card: #171f27; --ink: #e7ecef; --ink-soft: #a3adb8;
+    --line: rgba(231, 236, 239, 0.12); --accent: #4fc4cb; --accent-soft: rgba(79,196,203,0.14);
+    --critical: #e08579; --critical-soft: rgba(224,133,121,0.14);
+    --warning: #d9ad63; --warning-soft: rgba(217,173,99,0.14);
+    --resolved: #7fc9a0; --resolved-soft: rgba(127,201,160,0.14);
+    --neutral: #9aa4b1; --neutral-soft: rgba(154,164,177,0.12);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px -14px rgba(0,0,0,.6);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10161c; --bg-card: #171f27; --ink: #e7ecef; --ink-soft: #a3adb8;
+      --line: rgba(231, 236, 239, 0.12); --accent: #4fc4cb; --accent-soft: rgba(79,196,203,0.14);
+      --critical: #e08579; --critical-soft: rgba(224,133,121,0.14);
+      --warning: #d9ad63; --warning-soft: rgba(217,173,99,0.14);
+      --resolved: #7fc9a0; --resolved-soft: rgba(127,201,160,0.14);
+      --neutral: #9aa4b1; --neutral-soft: rgba(154,164,177,0.12);
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px -14px rgba(0,0,0,.6);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  .page { max-width: 860px; margin: 0 auto; padding: 56px 24px 96px; }
+  code, .mono { font-family: Consolas, "SF Mono", Menlo, "Liberation Mono", monospace; font-size: 0.88em; }
+  code { background: var(--neutral-soft); padding: 0.12em 0.4em; border-radius: 4px; color: var(--ink); }
+  .eyebrow { font-family: Consolas, "SF Mono", Menlo, monospace; font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin: 0 0 14px; }
+  h1 { font-family: Georgia, "Iowan Old Style", "Times New Roman", serif; font-weight: 400; font-size: 2.4rem; line-height: 1.12; letter-spacing: -0.01em; margin: 0 0 10px; text-wrap: balance; }
+  .subtitle { font-size: 1.05rem; color: var(--ink-soft); margin: 0 0 28px; max-width: 62ch; }
+  .intro { display: grid; gap: 10px; padding: 18px 20px; background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); font-size: 0.95rem; color: var(--ink-soft); max-width: 70ch; }
+  .intro strong { color: var(--ink); }
+  .proof-banner { display: flex; align-items: center; gap: 14px; margin: 28px 0; padding: 16px 20px; border-radius: 10px; background: var(--resolved-soft); border: 1px solid color-mix(in srgb, var(--resolved) 35%, var(--line)); }
+  .proof-banner .num { font-family: Consolas, monospace; font-weight: 700; font-size: 1.3rem; color: var(--resolved); white-space: nowrap; }
+  .proof-banner p { margin: 0; font-size: 0.92rem; color: var(--ink); }
+  .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 28px 0; }
+  .chip { padding: 14px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-card); box-shadow: var(--shadow); }
+  .chip .n { font-family: Georgia, serif; font-size: 1.9rem; font-variant-numeric: tabular-nums; line-height: 1; display: block; margin-bottom: 6px; }
+  .chip .label { font-size: 0.78rem; color: var(--ink-soft); letter-spacing: 0.02em; }
+  .chip.critical .n { color: var(--critical); }
+  .chip.warning .n { color: var(--warning); }
+  .chip.resolved .n { color: var(--resolved); }
+  .chip.neutral .n { color: var(--neutral); }
+  .scope-box { border: 1px solid var(--line); background: var(--bg-card); border-radius: 10px; padding: 18px 20px; margin: 28px 0; box-shadow: var(--shadow); font-size: 0.93rem; }
+  .scope-box .eyebrow { margin-bottom: 10px; }
+  .scope-box p { margin: 0 0 10px; color: var(--ink-soft); }
+  .scope-box p:last-child { margin-bottom: 0; }
+  section.group { margin: 44px 0; }
+  .group-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .group-head h2 { font-family: Georgia, serif; font-weight: 400; font-size: 1.3rem; margin: 0; }
+  .group-head .tally { font-family: Consolas, "SF Mono", monospace; font-size: 0.8rem; color: var(--ink-soft); }
+  article.finding { background: var(--bg-card); border: 1px solid var(--line); border-left-width: 4px; border-left-color: var(--critical); border-radius: 8px; padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 16px; }
+  article.finding.warn { border-left-color: var(--warning); }
+  article.finding.minor { border-left-color: var(--neutral); }
+  .finding-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+  .fid { font-family: Consolas, "SF Mono", monospace; font-weight: 700; font-size: 0.85rem; }
+  .pill { font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 9px; border-radius: 100px; font-weight: 600; }
+  .pill.critical { background: var(--critical-soft); color: var(--critical); }
+  .pill.warning { background: var(--warning-soft); color: var(--warning); }
+  .pill.resolved { background: var(--resolved-soft); color: var(--resolved); }
+  .pill.neutral { background: var(--neutral-soft); color: var(--ink-soft); }
+  .finding h3 { font-family: Georgia, serif; font-weight: 400; font-size: 1.1rem; margin: 0 0 10px; text-wrap: balance; }
+  .finding p { margin: 0 0 10px; color: var(--ink); font-size: 0.94rem; }
+  .finding p:last-child { margin-bottom: 0; }
+  .finding .field { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: 0.92rem; margin-bottom: 8px; }
+  .finding .field dt { color: var(--ink-soft); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.03em; padding-top: 2px; }
+  .finding .field dd { margin: 0; }
+  .menu-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+  .menu-compare > div { background: var(--neutral-soft); border-radius: 8px; padding: 12px 14px; font-size: 0.86rem; }
+  .menu-compare .cap { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-soft); margin-bottom: 6px; }
+  .menu-compare .hit { color: var(--critical); font-weight: 700; }
+  @media (max-width: 560px) { .menu-compare { grid-template-columns: 1fr; } }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+  table { width: 100%; border-collapse: collapse; background: var(--bg-card); font-size: 0.88rem; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); font-weight: 600; background: color-mix(in srgb, var(--ink) 3%, var(--bg-card)); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.n { font-family: Consolas, "SF Mono", monospace; font-weight: 700; white-space: nowrap; }
+  td.check { text-align: center; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 0.82rem; color: var(--ink-soft); }
+  @media (max-width: 520px) { h1 { font-size: 2rem; } .finding .field { grid-template-columns: 1fr; } .finding .field dt { padding-top: 0; } }
+</style>
+
+<div class="page">
+
+  <p class="eyebrow">CUCA Atende+ · Canal Empregabilidade</p>
+  <h1>Auditoria — motor de Empregabilidade</h1>
+  <p class="subtitle">Primeira auditoria de código deste canal — 09 de julho de 2026</p>
+
+  <div class="intro">
+    <p><strong>Escopo:</strong> diferente do canal Institucional (que roda no `motor-agente` do Supabase, Deno), a Empregabilidade tem seu próprio motor em Python — <code>worker/empregabilidade_engine.py</code> (quase 2.800 linhas), com 3 fluxos: <strong>empresa</strong>, <strong>candidato</strong> e <strong>público</strong>. Leitura completa do arquivo, sem teste ao vivo no WhatsApp.</p>
+    <p><strong>Como usar:</strong> os 4 achados abaixo têm <strong>teste automatizado vermelho</strong> provando o bug contra o código real — não é leitura teórica.</p>
+  </div>
+
+  <div class="proof-banner">
+    <span class="num">4 failed · 52 passed</span>
+    <p><code>pytest test_intencao_detector.py test_empregabilidade_engine.py</code> — os 4 vermelhos são os achados desta auditoria; os 52 testes já existentes continuam verdes, sem regressão.</p>
+  </div>
+
+  <div class="dashboard">
+    <div class="chip critical"><span class="n">2</span><span class="label">Severidade alta</span></div>
+    <div class="chip warning"><span class="n">2</span><span class="label">Média-alta</span></div>
+    <div class="chip neutral"><span class="n">1</span><span class="label">Cosmético</span></div>
+  </div>
+
+  <div class="scope-box">
+    <p class="eyebrow">Nota de arquitetura</p>
+    <p>O <code>agente_tipo === "julia"</code> que existe em <code>motor-agente/index.ts:11</code> é <strong>código morto</strong> — nenhuma chamada real chega lá. O worker desvia Empregabilidade direto pra <code>empregabilidade_engine.py</code> antes disso. Confirmado por leitura de código (roteamento em <code>meta_adapter_inbound.py:546-561</code>) antes de decidir o que auditar.</p>
+  </div>
+
+  <!-- ===================== EMP-01 ===================== -->
+  <section class="group">
+    <div class="group-head"><h2>Achados</h2><span class="tally">4 com teste vermelho</span></div>
+    <div class="findings">
+
+      <article class="finding">
+        <div class="finding-head"><span class="fid">EMP-01</span><span class="pill critical">Alta</span></div>
+        <h3>Filtro de setor por substring esconde vagas já na 1ª mensagem</h3>
+        <p>A keyword <code>"entrega"</code> (→ setor Logística) é buscada como substring pura, sem limite de palavra — bate dentro de <strong>"entregar"</strong>. "Quero <strong>entregar</strong> meu currículo pra alguma vaga" é frase natural de um candidato na 1ª mensagem. O sistema filtra silenciosamente só vagas de Logística; se não houver nenhuma, responde "não temos vagas de entrega" mesmo havendo vagas de sobra em outras áreas.</p>
+        <dl class="field"><dt>Onde</dt><dd><code>intencao_detector.py:270-285</code>, usado em <code>empregabilidade_engine.py:2500</code></dd></dl>
+        <dl class="field"><dt>Mesma classe de</dt><dd>AUD-05 do Institucional ("barragem" continha "barra") — já corrigida lá, nunca corrigida aqui</dd></dl>
+        <dl class="field"><dt>Teste</dt><dd><code>test_intencao_detector.py::test_entregar_curriculo_nao_deveria_disparar_filtro_de_logistica</code></dd></dl>
+      </article>
+
+      <article class="finding">
+        <div class="finding-head"><span class="fid">EMP-02</span><span class="pill critical">Alta</span></div>
+        <h3>"Quer encerrar" por substring — corrigido em alguns fluxos, não em outros</h3>
+        <p>Lista de despedida (<code>_PALAVRAS_ENCERRAR</code>) inclui <code>"obrigado"</code>, <code>"valeu"</code>, <code>"pronto"</code> — checados como substring pura em qualquer parte da mensagem. No fluxo <strong>candidato</strong> não há nenhuma exceção de etapa, e o check roda <em>antes</em> até do escape semântico próprio de <code>candidato_consultado</code> ter chance de rodar. Um "muito obrigado! mas ainda tenho uma dúvida" encerra a conversa na hora.</p>
+        <dl class="field"><dt>Onde</dt><dd><code>empregabilidade_engine.py:191-193</code>, aplicado em <code>:374</code> (empresa, 3/14 exceções), <code>:1267</code> (candidato, 0 exceções), <code>:1494</code> (público, 3 exceções)</dd></dl>
+        <dl class="field"><dt>Teste</dt><dd><code>TestQuerEncerrarSubstringSemLimiteDePalavra::test_obrigado_no_meio_de_pergunta_nao_deveria_encerrar_candidato</code></dd></dl>
+      </article>
+
+      <article class="finding warn">
+        <div class="finding-head"><span class="fid">EMP-03</span><span class="pill warning">Média-alta</span></div>
+        <h3>Negação ignorada em <code>pos_candidatura</code> — corrigida na etapa vizinha, não replicada</h3>
+        <p>"<strong>Não</strong> quero mais vagas, obrigado" contém "quero" → lido como pedido de mais vagas, reabrindo a busca. A etapa seguinte (<code>oferta_banco_talentos</code>) já tem a proteção certa (checa negação antes), com comentário no código explicando o motivo — o fix não foi aplicado de volta aqui.</p>
+        <dl class="field"><dt>Onde</dt><dd><code>:1585-1601</code> vs. o fix em <code>:1626-1629</code></dd></dl>
+        <dl class="field"><dt>Teste</dt><dd><code>TestPosCandidaturaNegacaoIgnorada::test_nao_quero_mais_vagas_nao_deveria_reabrir_busca_de_vagas</code></dd></dl>
+      </article>
+
+      <article class="finding warn">
+        <div class="finding-head"><span class="fid">EMP-04</span><span class="pill warning">Média-alta</span></div>
+        <h3>"3 = Encerrar" é reinterpretado como "3 = Editar vaga"</h3>
+        <p>Depois de criar uma vaga, o menu <code>menu_pos_vaga</code> é mostrado — mas ao responder, o código só troca a etapa pra <code>menu_empresa_acoes</code> e reprocessa o mesmo texto contra um menu diferente.</p>
+        <div class="menu-compare">
+          <div><div class="cap">menu_pos_vaga (o que foi mostrado)</div>1️⃣ Divulgar outra vaga<br>2️⃣ Acompanhar candidatos<br>3️⃣ <span class="hit">Encerrar</span></div>
+          <div><div class="cap">menu_empresa_acoes (o que "3" vira)</div>1️⃣ Cadastrar nova vaga<br>2️⃣ Consultar status<br>3️⃣ <span class="hit">Editar uma vaga</span></div>
+        </div>
+        <p>Uma empresa que responde "3" pensando em encerrar acaba, sem perceber, no fluxo de edição de vaga.</p>
+        <dl class="field"><dt>Onde</dt><dd><code>:1101-1106</code></dd></dl>
+        <dl class="field"><dt>Teste</dt><dd><code>TestMenuPosVagaReinterpretaResposta::test_resposta_3_para_encerrar_e_reinterpretada_como_editar_vaga</code></dd></dl>
+      </article>
+
+      <article class="finding minor">
+        <div class="finding-head"><span class="pill neutral">Cosmético</span></div>
+        <h3>Parâmetro <code>token</code> morto em <code>_enviar()</code></h3>
+        <p>A função recebe <code>token</code> mas nunca usa — sempre lê de <code>os.getenv("META_SYSTEM_USER_TOKEN")</code> diretamente. Sem efeito funcional, só confunde quem for mexer depois.</p>
+        <dl class="field"><dt>Onde</dt><dd><code>:96</code></dd></dl>
+      </article>
+
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-head"><h2>Resumo executivo</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Achado</th><th>Severidade</th><th style="text-align:center">Teste vermelho</th></tr></thead>
+        <tbody>
+          <tr><td class="n">EMP-01</td><td>Filtro de setor por substring ("entrega" em "entregar")</td><td>Alta</td><td class="check">✅</td></tr>
+          <tr><td class="n">EMP-02</td><td>"Quer encerrar" por substring, sem exceção no fluxo candidato</td><td>Alta</td><td class="check">✅</td></tr>
+          <tr><td class="n">EMP-03</td><td>Negação ignorada em <code>pos_candidatura</code></td><td>Média-alta</td><td class="check">✅</td></tr>
+          <tr><td class="n">EMP-04</td><td><code>menu_pos_vaga</code> reinterpreta resposta contra menu errado</td><td>Média-alta</td><td class="check">✅</td></tr>
+          <tr><td class="n">—</td><td>Parâmetro <code>token</code> morto</td><td>Cosmético</td><td class="check">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Documento técnico complementar: <code>AUDITORIA-empregabilidade-2026-07-09.md</code> · testes: <code>worker/tests/test_intencao_detector.py</code>, <code>worker/tests/test_empregabilidade_engine.py</code> · não inclui teste ao vivo no WhatsApp.
+  </footer>
+
+</div>
