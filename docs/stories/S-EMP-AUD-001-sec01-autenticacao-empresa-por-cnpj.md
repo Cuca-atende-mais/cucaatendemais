@@ -1,6 +1,6 @@
 # S-EMP-AUD-001 — Empresa deixa de ser "autenticada" só pelo CNPJ (SEC-01)
 
-**Status:** Ready
+**Status:** InProgress (parcial — ver v0.4 no Change Log)
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/001-sec01-autenticacao-empresa-por-cnpj.md` (ler o plano completo antes de implementar — Steps 1-5, Test plan, STOP conditions)
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seções "Plano 001" e "Ciclo completo de autenticação"
@@ -46,3 +46,4 @@ Ver "Scope" do plano — inclui migration, `_processar_empresa` (branch de empre
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 001, com o Step 5 (decisão do sócio) já incorporado.
 - v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Pontos fortes: AC concreto, dependências e riscos mapeados, decisão de produto (Step 5) documentada com justificativa.
 - v0.3 (2026-07-29): @po adicionou seção "Valor de negócio" explícita — corrige critério aplicado de forma inconsistente entre as 19 stories na v0.2 (ver nota consolidada no relatório desta rodada).
+- v0.4 (2026-07-29): @dev implementou Steps 1-2 (commit `dadd4fa`, branch `feat/auditoria-empregabilidade-p1`) — migration aplicada em produção (RLS habilitada, policy de leitura via `has_permission`), `_processar_empresa` corrigido (checagem de autorização + backfill nos 2 pontos de inserção de empresa nova), 4 testes com mutation check. **Steps 3-5 NÃO implementados — STOP condition do próprio plano**: nenhuma rota server-side do portal (nem as do módulo empregabilidade) checa permissão granular hoje, só sessão autenticada (`auth.getUser()`); esse endpoint concede controle de uma empresa a um número de WhatsApp, então "qualquer colaborador logado" é proteção mais fraca que o problema que este plano fecha. Decisão pendente: qual permissão usar (recomendação do @dev: `has_permission('empreg_vagas', 'update')`, mesma da policy de UPDATE de `empresas`). Status permanece InProgress até essa decisão liberar os Steps 3-5.

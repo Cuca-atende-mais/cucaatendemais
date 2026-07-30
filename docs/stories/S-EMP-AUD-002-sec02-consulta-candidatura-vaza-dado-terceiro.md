@@ -1,6 +1,6 @@
 # S-EMP-AUD-002 — Consulta de candidatura para de vazar dado de terceiro (SEC-02)
 
-**Status:** Ready
+**Status:** InReview
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/002-sec02-consulta-candidatura-vaza-dado-terceiro.md` (ler o plano completo — Step 1, Test plan, STOP conditions)
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 002"
@@ -45,3 +45,4 @@ Out: busca por código de referência (já segura), qualquer outro achado da aud
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 002, com a normalização dos 2 lados e o 6º teste (decisão do sócio) já incorporados.
 - v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Pontos fortes: AC específico, risco de dado real (formatação inconsistente) documentado com evidência.
 - v0.3 (2026-07-29): @po adicionou seção "Valor de negócio" explícita.
+- v0.4 (2026-07-29): @dev implementou (commit `d4d634d`, branch `feat/auditoria-empregabilidade-p1`). Desvio registrado: `.limit()` da busca por telefone subiu de 5 para 500 (achado durante implementação, não estava no plano original — um `limit(5)` aplicado antes do filtro por telefone perderia a candidatura certa sempre que não estivesse entre as 5 mais recentes da tabela inteira). 6 testes novos, todos com mutation check (revertido o fix, confirmado que os testes certos falham). Status → InReview, recomendado @qa.

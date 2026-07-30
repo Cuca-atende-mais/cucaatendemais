@@ -1,6 +1,6 @@
 # S-EMP-AUD-003 — `aguardando_retorno_selecao` ganha handler síncrono (BUG-01)
 
-**Status:** Ready
+**Status:** InReview
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/003-bug01-aguardando-retorno-selecao-sem-handler.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 003" — confirmamos ao vivo que o lado assíncrono (`empregabilidade_notify_loop`, `:2678-2709`) já lê/escreve `vaga_criada_id`/`vaga_numero` corretamente para o fluxo de seleção (o portal grava esses campos em `selecao/route.ts:84-101`, mesmo padrão de `vagas/route.ts`) — não é código morto, só falta o lado síncrono.
@@ -39,3 +39,4 @@ Ver "Test plan" do plano.
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 003.
 - v0.2 (2026-07-29): @po validou — NO-GO (5/10) por Escopo/Valor de negócio ausentes e AC genérico.
 - v0.3 (2026-07-29): @po corrigiu as 3 pendências (Escopo restatado, Valor de negócio adicionado, AC trocado por asserção testável) — GO. Status Draft → Ready. Critério aplicado de forma consistente com as demais 18 stories nesta rodada.
+- v0.4 (2026-07-29): @dev implementou (commit `d4d634d`, branch `feat/auditoria-empregabilidade-p1`). Confirmado que o campo é `vaga_criada_id`/`vaga_numero`/`vaga_titulo` compartilhado com vaga (não existe `selecao_criada_id` próprio) — já sabido da verificação anterior, não foi necessário grep novo. 3 testes novos, mutation check ok. Status → InReview, recomendado @qa.
