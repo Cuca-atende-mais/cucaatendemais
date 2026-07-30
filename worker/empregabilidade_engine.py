@@ -197,6 +197,12 @@ def _supabase_mockado_em_teste() -> bool:
     return type(supabase).__module__.startswith("unittest.mock")
 
 
+async def _supabase_to_thread(fn):
+    if _supabase_mockado_em_teste():
+        return fn()
+    return await asyncio.to_thread(fn)
+
+
 async def _get_fluxo_async(conversa_id: str) -> dict:
     if _get_fluxo is not _GET_FLUXO_SYNC or _supabase_mockado_em_teste():
         return _get_fluxo(conversa_id)
@@ -1340,9 +1346,12 @@ async def _listar_vagas_para_acao(
         verbo = "cancelar"
         instrucao = "Informe o *número* da vaga que deseja cancelar:"
 
-    vagas_res = supabase.table("vagas").select(
-        "id, titulo, status, numero_vaga"
-    ).eq("empresa_id", empresa_id).not_.in_("status", status_excluidos).order("numero_vaga", desc=False).limit(10).execute()
+    def _buscar_vagas():
+        return supabase.table("vagas").select(
+            "id, titulo, status, numero_vaga"
+        ).eq("empresa_id", empresa_id).not_.in_("status", status_excluidos).order("numero_vaga", desc=False).limit(10).execute()
+
+    vagas_res = await _supabase_to_thread(_buscar_vagas)
 
     vagas = vagas_res.data or []
     if not vagas:
@@ -1390,19 +1399,25 @@ async def _processar_consulta_empresa(
     match_vaga = re.search(r"\b(\d{1,4})\b", texto)
     if match_vaga and empresa_id:
         num = match_vaga.group(1)
-        vagas_res = supabase.table("vagas").select(
-            "id, titulo, status, total_vagas, numero_vaga, created_at"
-        ).eq("empresa_id", empresa_id).execute()
 
-        vaga_match = None
-        for v in (vagas_res.data or []):
-            if str(v.get("numero_vaga", "")) == num or v["id"][-6:].upper() in texto.upper():
-                vaga_match = v
-                break
+        def _buscar_vaga_e_candidatos():
+            vagas_res = supabase.table("vagas").select(
+                "id, titulo, status, total_vagas, numero_vaga, created_at"
+            ).eq("empresa_id", empresa_id).execute()
+
+            vaga_match = None
+            for v in (vagas_res.data or []):
+                if str(v.get("numero_vaga", "")) == num or v["id"][-6:].upper() in texto.upper():
+                    vaga_match = v
+                    break
+            if not vaga_match:
+                return None, 0
+            cands = supabase.table("candidaturas").select("status", count="exact").eq("vaga_id", vaga_match["id"]).execute()
+            return vaga_match, cands.count or 0
+
+        vaga_match, total_cands = await _supabase_to_thread(_buscar_vaga_e_candidatos)
 
         if vaga_match:
-            cands = supabase.table("candidaturas").select("status", count="exact").eq("vaga_id", vaga_match["id"]).execute()
-            total_cands = cands.count or 0
             numero_ref = f"#{vaga_match['numero_vaga']}" if vaga_match.get("numero_vaga") else f"...{vaga_match['id'][-6:].upper()}"
             await e(
                 f"📋 *Vaga {numero_ref}:* {vaga_match['titulo']}\n"
@@ -1416,10 +1431,18 @@ async def _processar_consulta_empresa(
 
     # Listar todas as vagas da empresa
     if empresa_id:
-        vagas_res = supabase.table("vagas").select(
-            "id, titulo, status, total_vagas, numero_vaga"
-        ).eq("empresa_id", empresa_id).order("numero_vaga", desc=False).limit(10).execute()
-        vagas = vagas_res.data or []
+        def _listar_vagas_com_contagens():
+            vagas_res = supabase.table("vagas").select(
+                "id, titulo, status, total_vagas, numero_vaga"
+            ).eq("empresa_id", empresa_id).order("numero_vaga", desc=False).limit(10).execute()
+            vagas = vagas_res.data or []
+            contagens = {}
+            for v in vagas:
+                cands = supabase.table("candidaturas").select("id", count="exact").eq("vaga_id", v["id"]).execute()
+                contagens[v["id"]] = cands.count or 0
+            return vagas, contagens
+
+        vagas, contagens = await _supabase_to_thread(_listar_vagas_com_contagens)
 
         if not vagas:
             await e("Sua empresa ainda não tem vagas cadastradas. Deseja criar uma? Responda *sim*.")
@@ -1428,10 +1451,9 @@ async def _processar_consulta_empresa(
 
         linhas = ["📋 *Suas vagas cadastradas:*\n"]
         for v in vagas:
-            cands = supabase.table("candidaturas").select("id", count="exact").eq("vaga_id", v["id"]).execute()
             numero_ref = f"#{v['numero_vaga']}" if v.get("numero_vaga") else f"...{v['id'][-6:].upper()}"
             linhas.append(
-                f"• {numero_ref} *{v['titulo']}* — {v['status']} ({cands.count or 0} candidatos)"
+                f"• {numero_ref} *{v['titulo']}* — {v['status']} ({contagens.get(v['id'], 0)} candidatos)"
             )
         linhas.append("\nInforme o *número* da vaga para ver detalhes, ou diga *encerrar*.")
         await e("\n".join(linhas))
