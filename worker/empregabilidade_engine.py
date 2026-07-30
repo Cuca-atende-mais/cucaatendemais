@@ -572,13 +572,16 @@ async def _processar_empresa(
             await e("Por favor, informe o *número* da vaga que deseja editar (ex: 1, 2, 3...):")
             return
         num = match_num.group(1)
-        vagas_res = supabase.table("vagas").select(
-            "id, titulo, status, numero_vaga"
-        ).eq("empresa_id", empresa_id).not_.in_("status", ["cancelada"]).execute()
-        vaga_match = next(
-            (v for v in (vagas_res.data or []) if str(v.get("numero_vaga", "")) == num),
-            None
-        )
+        def _buscar_vaga_edicao():
+            vagas_res = supabase.table("vagas").select(
+                "id, titulo, status, numero_vaga"
+            ).eq("empresa_id", empresa_id).not_.in_("status", ["cancelada"]).execute()
+            return next(
+                (v for v in (vagas_res.data or []) if str(v.get("numero_vaga", "")) == num),
+                None
+            )
+
+        vaga_match = await _supabase_to_thread(_buscar_vaga_edicao)
         if not vaga_match:
             await e("Vaga não encontrada ou não disponível para edição. Informe outro número:")
             return
@@ -654,14 +657,17 @@ async def _processar_empresa(
             await e("Por favor, informe o *número* da vaga que deseja cancelar (ex: 1, 2, 3...):")
             return
         num = match_num.group(1)
-        vagas_res = supabase.table("vagas").select(
-            "id, titulo, status, numero_vaga, created_at"
-        ).eq("empresa_id", empresa_id).execute()
-        vaga_match = next(
-            (v for v in (vagas_res.data or [])
-             if str(v.get("numero_vaga", "")) == num and v["status"] not in ("cancelada",)),
-            None
-        )
+        def _buscar_vaga_cancelamento():
+            vagas_res = supabase.table("vagas").select(
+                "id, titulo, status, numero_vaga, created_at"
+            ).eq("empresa_id", empresa_id).execute()
+            return next(
+                (v for v in (vagas_res.data or [])
+                 if str(v.get("numero_vaga", "")) == num and v["status"] not in ("cancelada",)),
+                None
+            )
+
+        vaga_match = await _supabase_to_thread(_buscar_vaga_cancelamento)
         if not vaga_match:
             await e("Vaga não encontrada ou já cancelada. Informe outro número ou diga *encerrar*.")
             return
@@ -691,26 +697,35 @@ async def _processar_empresa(
 
         if t in ("sim", "s", "confirmo", "confirmar", "ok", "yes"):
             from datetime import datetime
-            # Buscar histórico atual
-            vaga_res = supabase.table("vagas").select(
-                "historico_alteracoes, created_by, unidade_cuca"
-            ).eq("id", vaga_id_cancelar).single().execute()
-            historico = (vaga_res.data or {}).get("historico_alteracoes") or []
-            created_by = (vaga_res.data or {}).get("created_by")
-            unidade_vaga = (vaga_res.data or {}).get("unidade_cuca", unidade_cuca)
+            def _cancelar_vaga_e_buscar_lead():
+                # Buscar histórico atual
+                vaga_res = supabase.table("vagas").select(
+                    "historico_alteracoes, created_by, unidade_cuca"
+                ).eq("id", vaga_id_cancelar).single().execute()
+                historico = (vaga_res.data or {}).get("historico_alteracoes") or []
+                created_by = (vaga_res.data or {}).get("created_by")
+                unidade_vaga = (vaga_res.data or {}).get("unidade_cuca", unidade_cuca)
 
-            nova_entrada = {
-                "tipo": "cancelamento",
-                "canal": "whatsapp",
-                "ator": {"empresa_id": empresa_id},
-                "timestamp": datetime.utcnow().isoformat(),
-            }
+                nova_entrada = {
+                    "tipo": "cancelamento",
+                    "canal": "whatsapp",
+                    "ator": {"empresa_id": empresa_id},
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
 
-            supabase.table("vagas").update({
-                "status": "cancelada",
-                "historico_alteracoes": [*historico, nova_entrada],
-                "updated_at": datetime.utcnow().isoformat(),
-            }).eq("id", vaga_id_cancelar).execute()
+                supabase.table("vagas").update({
+                    "status": "cancelada",
+                    "historico_alteracoes": [*historico, nova_entrada],
+                    "updated_at": datetime.utcnow().isoformat(),
+                }).eq("id", vaga_id_cancelar).execute()
+
+                lead_phone = None
+                if created_by:
+                    lead_res = supabase.table("leads").select("telefone").eq("id", created_by).single().execute()
+                    lead_phone = (lead_res.data or {}).get("telefone")
+                return created_by, lead_phone, unidade_vaga
+
+            created_by, lead_phone, unidade_vaga = await _supabase_to_thread(_cancelar_vaga_e_buscar_lead)
 
             await e(
                 f"✅ A vaga *{vaga_titulo_cancelar}* foi *cancelada*.\n\n"
@@ -726,8 +741,6 @@ async def _processar_empresa(
             # Notificar lead responsável
             if created_by:
                 try:
-                    lead_res = supabase.table("leads").select("telefone").eq("id", created_by).single().execute()
-                    lead_phone = (lead_res.data or {}).get("telefone")
                     if lead_phone:
                         tel_limpo = re.sub(r"\D", "", lead_phone)
                         tel_fmt = tel_limpo if tel_limpo.startswith("55") else f"55{tel_limpo}"
@@ -825,27 +838,33 @@ async def _processar_empresa(
             await e("CNPJ inválido. Por favor, informe os *14 dígitos* do CNPJ da sua empresa:\n\n_(Se entrou aqui por engano, digite *menu* para voltar ao início.)_")
             return
 
-        # Verificar no banco
-        emp_res = supabase.table("empresas").select("id, nome, nome_fantasia").eq("cnpj", cnpj_limpo).execute()
-        if emp_res.data:
-            empresa = emp_res.data[0]
+        def _buscar_empresa_e_autorizacao():
+            emp_res = supabase.table("empresas").select("id, nome, nome_fantasia").eq("cnpj", cnpj_limpo).execute()
+            if not emp_res.data:
+                return None, set(), False
+            empresa_db = emp_res.data[0]
+            autorizados_res = supabase.table("empresa_whatsapp_autorizados") \
+                .select("telefone").eq("empresa_id", empresa_db["id"]).execute()
+            telefones = {row["telefone"] for row in (autorizados_res.data or [])}
+            backfill = False
+            if not telefones:
+                # 1º toque nesse CNPJ (nunca autorizado antes) — vincula este número
+                # automaticamente. Janela residual aceita pelo Junior (ver Plano 001,
+                # "Why this matters").
+                supabase.table("empresa_whatsapp_autorizados").insert({
+                    "empresa_id": empresa_db["id"], "telefone": phone, "autorizado_por": None,
+                }).execute()
+                backfill = True
+            return empresa_db, telefones, backfill
+
+        empresa, telefones_autorizados, _backfill_autorizacao = await _supabase_to_thread(_buscar_empresa_e_autorizacao)
+        if empresa:
             nome_exibicao = empresa.get("nome_fantasia") or empresa["nome"]
 
             # SEC-01 v2 (Plano 001): empresa_id não é mais concedido incondicionalmente
             # a quem souber o CNPJ — checa se este número (phone, do webhook) já está
             # na lista de autorizados dessa empresa.
-            autorizados_res = supabase.table("empresa_whatsapp_autorizados") \
-                .select("telefone").eq("empresa_id", empresa["id"]).execute()
-            telefones_autorizados = {row["telefone"] for row in (autorizados_res.data or [])}
-
-            if not telefones_autorizados:
-                # 1º toque nesse CNPJ (nunca autorizado antes) — vincula este número
-                # automaticamente. Janela residual aceita pelo Junior (ver Plano 001,
-                # "Why this matters").
-                supabase.table("empresa_whatsapp_autorizados").insert({
-                    "empresa_id": empresa["id"], "telefone": phone, "autorizado_por": None,
-                }).execute()
-            elif phone not in telefones_autorizados:
+            if telefones_autorizados and phone not in telefones_autorizados:
                 # Número diferente dos já autorizados — aciona transbordo humano real
                 # em vez de só bloquear (mesmo padrão de SQS-40, ver _processar_empregabilidade).
                 logger.warning(
@@ -857,9 +876,12 @@ async def _processar_empresa(
                     "Encaminhamos seu contato para verificação da nossa equipe — em breve alguém "
                     "vai confirmar e liberar o acesso, se for o caso."
                 )
-                supabase.table("conversas").update(
-                    {"status": "awaiting_human", "updated_at": "now()"}
-                ).eq("id", conversa_id).execute()
+                def _marcar_conversa_humana():
+                    supabase.table("conversas").update(
+                        {"status": "awaiting_human", "updated_at": "now()"}
+                    ).eq("id", conversa_id).execute()
+
+                await _supabase_to_thread(_marcar_conversa_humana)
                 from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
                 await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
                 await _set_fluxo_async(conversa_id, {})
@@ -936,25 +958,29 @@ async def _processar_empresa(
 
         if t in ("sim", "s", "confirmar", "confirmo", "correto", "ok", "certo", "isso"):
             nome_fantasia = dados_rf.get("nome_fantasia") or None
-            emp_insert = supabase.table("empresas").insert({
-                "nome": dados_rf.get("nome"),
-                "nome_fantasia": nome_fantasia,
-                "cnpj": cnpj,
-                "email": dados_rf.get("email") or None,
-                "telefone": dados_rf.get("telefone") or None,
-                "endereco": dados_rf.get("endereco") or None,
-                "setor": dados_rf.get("setor") or None,
-                "porte": dados_rf.get("porte") or None,
-                "ativa": True,
-            }).execute()
-            empresa_id = emp_insert.data[0]["id"]
-            # SEC-01 v2 (Plano 001): vincula este número como autorizado logo após
-            # criar a empresa, antes de qualquer mensagem/estado — nenhuma empresa
-            # nova fica com 0 números autorizados (janela que daria auto-bind pro
-            # próximo número qualquer que tocasse esse CNPJ).
-            supabase.table("empresa_whatsapp_autorizados").insert({
-                "empresa_id": empresa_id, "telefone": phone, "autorizado_por": None,
-            }).execute()
+            def _inserir_empresa_e_autorizacao():
+                emp_insert = supabase.table("empresas").insert({
+                    "nome": dados_rf.get("nome"),
+                    "nome_fantasia": nome_fantasia,
+                    "cnpj": cnpj,
+                    "email": dados_rf.get("email") or None,
+                    "telefone": dados_rf.get("telefone") or None,
+                    "endereco": dados_rf.get("endereco") or None,
+                    "setor": dados_rf.get("setor") or None,
+                    "porte": dados_rf.get("porte") or None,
+                    "ativa": True,
+                }).execute()
+                empresa_id_db = emp_insert.data[0]["id"]
+                # SEC-01 v2 (Plano 001): vincula este número como autorizado logo após
+                # criar a empresa, antes de qualquer mensagem/estado — nenhuma empresa
+                # nova fica com 0 números autorizados (janela que daria auto-bind pro
+                # próximo número qualquer que tocasse esse CNPJ).
+                supabase.table("empresa_whatsapp_autorizados").insert({
+                    "empresa_id": empresa_id_db, "telefone": phone, "autorizado_por": None,
+                }).execute()
+                return empresa_id_db
+
+            empresa_id = await _supabase_to_thread(_inserir_empresa_e_autorizacao)
             empresa_nome = dados_rf.get("nome", "")
             nome_exibicao = nome_fantasia or empresa_nome
 
@@ -989,25 +1015,29 @@ async def _processar_empresa(
 
         if t in ("sim", "s", "confirmar", "confirmo", "ok"):
             nome_fantasia = dados_rf.get("nome_fantasia") or None
-            emp_insert = supabase.table("empresas").insert({
-                "nome": dados_rf.get("nome"),
-                "nome_fantasia": nome_fantasia,
-                "cnpj": cnpj,
-                "email": dados_rf.get("email") or None,
-                "telefone": dados_rf.get("telefone") or None,
-                "endereco": dados_rf.get("endereco") or None,
-                "setor": dados_rf.get("setor") or None,
-                "porte": dados_rf.get("porte") or None,
-                "ativa": True,
-            }).execute()
-            empresa_id = emp_insert.data[0]["id"]
-            # SEC-01 v2 (Plano 001): vincula este número como autorizado logo após
-            # criar a empresa, antes de qualquer mensagem/estado — nenhuma empresa
-            # nova fica com 0 números autorizados (janela que daria auto-bind pro
-            # próximo número qualquer que tocasse esse CNPJ).
-            supabase.table("empresa_whatsapp_autorizados").insert({
-                "empresa_id": empresa_id, "telefone": phone, "autorizado_por": None,
-            }).execute()
+            def _inserir_empresa_corrigida_e_autorizacao():
+                emp_insert = supabase.table("empresas").insert({
+                    "nome": dados_rf.get("nome"),
+                    "nome_fantasia": nome_fantasia,
+                    "cnpj": cnpj,
+                    "email": dados_rf.get("email") or None,
+                    "telefone": dados_rf.get("telefone") or None,
+                    "endereco": dados_rf.get("endereco") or None,
+                    "setor": dados_rf.get("setor") or None,
+                    "porte": dados_rf.get("porte") or None,
+                    "ativa": True,
+                }).execute()
+                empresa_id_db = emp_insert.data[0]["id"]
+                # SEC-01 v2 (Plano 001): vincula este número como autorizado logo após
+                # criar a empresa, antes de qualquer mensagem/estado — nenhuma empresa
+                # nova fica com 0 números autorizados (janela que daria auto-bind pro
+                # próximo número qualquer que tocasse esse CNPJ).
+                supabase.table("empresa_whatsapp_autorizados").insert({
+                    "empresa_id": empresa_id_db, "telefone": phone, "autorizado_por": None,
+                }).execute()
+                return empresa_id_db
+
+            empresa_id = await _supabase_to_thread(_inserir_empresa_corrigida_e_autorizacao)
             empresa_nome = dados_rf.get("nome", "")
             nome_exibicao = nome_fantasia or empresa_nome
 
