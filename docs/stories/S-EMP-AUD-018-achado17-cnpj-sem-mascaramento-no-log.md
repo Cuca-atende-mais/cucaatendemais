@@ -57,3 +57,23 @@ GPT-5 Codex
 
 - `worker/empregabilidade_engine.py`
 - `worker/tests/test_empregabilidade_engine.py`
+
+## QA Results
+
+### Review Date: 2026-07-30
+
+### Reviewed By: Quinn (Test Architect)
+
+### Gate Status
+
+PASS
+
+### Evidence
+
+- Warning de `_consultar_cnpj` mascara CNPJ como `123456********`.
+- Teste com `caplog` garante que o CNPJ completo não aparece no log.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` — 92 passed, 2 warnings preexistentes.
+
+### Notes
+
+- Sem achados bloqueantes.

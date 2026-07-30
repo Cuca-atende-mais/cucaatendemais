@@ -60,3 +60,24 @@ GPT-5 Codex
 
 - `worker/empregabilidade_engine.py`
 - `worker/tests/test_empregabilidade_engine.py`
+
+## QA Results
+
+### Review Date: 2026-07-30
+
+### Reviewed By: Quinn (Test Architect)
+
+### Gate Status
+
+PASS
+
+### Evidence
+
+- `_empregabilidade_notify_tick` limita conversas com `.limit(200)`.
+- Telefones de leads elegíveis são buscados em lote com `.in_("id", ...)`.
+- Teste novo valida `.limit(200)`, batch de leads e ausência de busca para conversa não elegível.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` — 92 passed, 2 warnings preexistentes.
+
+### Notes
+
+- Sem achados bloqueantes.

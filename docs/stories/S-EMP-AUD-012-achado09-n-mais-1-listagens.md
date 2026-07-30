@@ -61,3 +61,24 @@ GPT-5 Codex
 
 - `worker/empregabilidade_engine.py`
 - `worker/tests/test_empregabilidade_engine.py`
+
+## QA Results
+
+### Review Date: 2026-07-30
+
+### Reviewed By: Quinn (Test Architect)
+
+### Gate Status
+
+PASS
+
+### Evidence
+
+- Revisado batching em `worker/empregabilidade_engine.py`: listagem de vagas usa `.in_("vaga_id", vaga_ids)` e busca de títulos usa `.in_("id", vaga_ids)`.
+- Testes novos cobrem contagens agregadas e títulos em lote.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` — 92 passed, 2 warnings preexistentes de `datetime.utcnow()`.
+- Import sanity passou com `import empregabilidade_engine`.
+
+### Notes
+
+- Sem achados bloqueantes.

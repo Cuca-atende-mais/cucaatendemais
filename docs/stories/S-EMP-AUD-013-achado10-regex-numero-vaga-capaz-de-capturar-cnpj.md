@@ -60,3 +60,23 @@ GPT-5 Codex
 
 - `worker/empregabilidade_engine.py`
 - `worker/tests/test_empregabilidade_engine.py`
+
+## QA Results
+
+### Review Date: 2026-07-30
+
+### Reviewed By: Quinn (Test Architect)
+
+### Gate Status
+
+PASS com follow-up
+
+### Evidence
+
+- Os 3 pontos de número de vaga usam `_REGEX_NUMERO_VAGA_ISOLADO`.
+- Regressão executa CNPJ formatado no fluxo de edição e confirma que a vaga isolada correta é escolhida.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` — 92 passed, 2 warnings preexistentes de `datetime.utcnow()`.
+
+### Follow-up
+
+- Não bloqueante: ampliar a regressão do CNPJ formatado para executar explicitamente também os caminhos de cancelamento e consulta. A implementação já compartilha a mesma constante nos três pontos.

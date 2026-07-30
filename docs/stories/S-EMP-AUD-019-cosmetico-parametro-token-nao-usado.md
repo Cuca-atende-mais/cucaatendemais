@@ -57,3 +57,23 @@ GPT-5 Codex
 ### File List
 
 - `worker/empregabilidade_engine.py`
+
+## QA Results
+
+### Review Date: 2026-07-30
+
+### Reviewed By: Quinn (Test Architect)
+
+### Gate Status
+
+PASS
+
+### Evidence
+
+- `_enviar` mantém `token` por compatibilidade e documenta que o envio real usa `META_SYSTEM_USER_TOKEN`.
+- Import sanity passou com `import empregabilidade_engine`.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` — 92 passed, 2 warnings preexistentes.
+
+### Notes
+
+- Sem achados bloqueantes.

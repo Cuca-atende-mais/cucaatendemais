@@ -60,3 +60,23 @@ GPT-5 Codex
 ### File List
 
 - `worker/tests/test_empregabilidade_engine.py`
+
+## QA Results
+
+### Review Date: 2026-07-30
+
+### Reviewed By: Quinn (Test Architect)
+
+### Gate Status
+
+PASS
+
+### Evidence
+
+- Testes novos cobrem os branches `empresa`, `candidato_vaga`, `banco_talentos` e `upload` de `_rotear_por_intencao`.
+- Branch `ambiguo` permanece coberto pelos testes anteriores.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` — 92 passed, 2 warnings preexistentes.
+
+### Notes
+
+- Sem achados bloqueantes.
