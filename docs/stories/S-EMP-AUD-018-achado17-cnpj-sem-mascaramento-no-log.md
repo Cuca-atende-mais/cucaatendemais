@@ -11,6 +11,10 @@
 
 CNPJ aparece completo em texto puro no log (`worker/empregabilidade_engine.py:138`), enquanto o padrão já estabelecido no mesmo arquivo mascara telefone (`phone[:6]` + `"****"`).
 
+## Valor de negócio
+
+Reduz exposição de CNPJ completo em log de aplicação — mesmo padrão de cuidado já aplicado a telefone no mesmo arquivo, relevante pra quem tem acesso aos logs sem precisar ver o dado completo.
+
 ## Dependência real
 
 Nenhuma.
@@ -31,4 +35,5 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 018.
-- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Story pequena e autocontida, AC direto e verificável, risco trivial. Não bloqueante: "Valor de negócio" (compliance/exposição de dado em log) não está em seção própria.
+- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Story pequena e autocontida, AC direto e verificável, risco trivial.
+- v0.3 (2026-07-29): @po adicionou "Valor de negócio" explícito.

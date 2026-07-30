@@ -11,6 +11,10 @@
 
 Hoje qualquer conversa que informe os 14 dígitos de um CNPJ já cadastrado recebe `empresa_id` sem nenhuma verificação contra o número real de quem está mandando a mensagem (`worker/empregabilidade_engine.py:753-768`). CNPJ não é segredo — qualquer um que souber o CNPJ de uma empresa concorrente pode assumir a identidade dela.
 
+## Valor de negócio
+
+Fecha o maior risco de segurança do módulo: hoje qualquer pessoa que souber um CNPJ (não é segredo) pode assumir a identidade de uma empresa real e cancelar/editar vagas dela, ou ver quantas candidaturas recebeu.
+
 ## Decisão de produto aplicada (sócio, 2026-07-29)
 
 Desenho v2 já definido no plano: 1º WhatsApp que tocar um CNPJ se vincula automaticamente; qualquer outro precisa de verificação humana via transbordo (tabela nova `empresa_whatsapp_autorizados`). **Adição fechada nesta rodada — Step 5 novo do plano:** o endpoint de autorização (Step 3) passa a reverter `conversas.status` de `awaiting_human` para `ativa` e avisar o lead automaticamente, buscando a conversa por **telefone → lead_id** (nunca por `empresa_id`, que é zerado no transbordo). Sem isso, autorizar um número exigia 2 ações manuais desconectadas e o lead nunca era avisado — gap confirmado em `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`.
@@ -40,4 +44,5 @@ Ver "Scope" do plano — inclui migration, `_processar_empresa` (branch de empre
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 001, com o Step 5 (decisão do sócio) já incorporado.
-- v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Pontos fortes: AC concreto, dependências e riscos mapeados, decisão de produto (Step 5) documentada com justificativa. Não bloqueante: "Valor de negócio" não está numa seção própria (implícito no Contexto — previne identity takeover).
+- v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Pontos fortes: AC concreto, dependências e riscos mapeados, decisão de produto (Step 5) documentada com justificativa.
+- v0.3 (2026-07-29): @po adicionou seção "Valor de negócio" explícita — corrige critério aplicado de forma inconsistente entre as 19 stories na v0.2 (ver nota consolidada no relatório desta rodada).

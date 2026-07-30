@@ -15,6 +15,10 @@
 
 **A trava deve ser um `asyncio.Lock()` real por `conversa_id` — não uma adaptação do mecanismo de debounce de `meta_adapter_inbound.py`.** Verificação da equipe confirmou que aquele mecanismo (`_DEBOUNCE_TASKS`, `_agendar_dispatch_debounced`) é debounce (adia processamento em rajada), não é lock de exclusão mútua — não protege contra a corrida descrita aqui.
 
+## Valor de negócio
+
+Evita perda silenciosa de estado de conversa real quando o loop de notificação e o dispatch normal escrevem ao mesmo tempo — hoje last-write-wins sem aviso, o que pode travar um usuário real numa etapa errada sem ninguém perceber.
+
 ## Dependência real
 
 **Recomendado (não bloqueante) rodar depois do Plano 009** — ambos tocam o mesmo trecho (`_set_fluxo`/`_get_fluxo`), fazer nesta ordem evita retrabalho de merge.
@@ -41,4 +45,5 @@ Ver "Test plan" do plano — teste de corrida real via `asyncio.gather()`.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 011, com a correção pra `asyncio.Lock` real (decisão do sócio) e o risco de compatibilidade com o Plano 009 já incorporados.
-- v0.2 (2026-07-29): @po validou — GO (9/10). Status Draft → Ready. Melhor story do lote em riscos: decisão de produto, risco de compatibilidade técnica com outra story e dependência de infra (gunicorn) todos documentados com evidência e decisão explícita. Não bloqueante: "Valor de negócio" não está em seção própria.
+- v0.2 (2026-07-29): @po validou — GO (9/10). Status Draft → Ready. Melhor story do lote em riscos: decisão de produto, risco de compatibilidade técnica com outra story e dependência de infra (gunicorn) todos documentados com evidência e decisão explícita.
+- v0.3 (2026-07-29): @po adicionou "Valor de negócio" explícito.

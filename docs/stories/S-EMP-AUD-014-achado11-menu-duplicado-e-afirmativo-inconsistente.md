@@ -15,6 +15,10 @@ O menu de 4 opções (`1️⃣ Cadastrar nova vaga / 2️⃣ Consultar status de
 
 `:646` vira `"4️⃣ Cancelar uma vaga"`, alinhado com as outras 9 — não era intencional. **Não é mais pergunta em aberto.** Consolidar as 10 ocorrências (incluindo a antiga `:646`) em `_MENU_ACOES_EMPRESA`.
 
+## Valor de negócio
+
+Fecha 1 divergência de texto real (empresa vendo "Encerrar" em vez de "Cancelar uma vaga" numa etapa) e, ao consolidar as 10 cópias numa constante única, evita que uma 11ª divergência apareça no futuro sem ninguém perceber.
+
 ## Dependência real
 
 Nenhuma.
@@ -37,4 +41,5 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 014, com a decisão do sócio sobre `:646` já incorporada (não é mais pergunta em aberto).
-- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Ponto forte: divergência de produto resolvida e registrada com evidência (linha exata). Não bloqueante: "Escopo" e "Valor de negócio" não estão em seção própria.
+- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Ponto forte: divergência de produto resolvida e registrada com evidência (linha exata).
+- v0.3 (2026-07-29): @po adicionou "Valor de negócio" explícito.

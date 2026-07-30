@@ -14,6 +14,10 @@
 
 **Inverter para o Jeito A: enviar antes de persistir**, alinhando com o padrão do resto do arquivo, com teste de falha de envio cobrindo os 2 pontos. Não é mais necessário levantar a pergunta — resolvida.
 
+## Valor de negócio
+
+Reduz o risco de o bot deixar o usuário "esperando resposta a algo que ele nunca recebeu" em 2 pontos de navegação — hoje, se o envio falhar, o estado já avançou mas a pergunta correspondente nunca chegou.
+
 ## Dependência real
 
 Nenhuma.
@@ -35,4 +39,5 @@ Ver "Scope" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 015, já com a decisão do sócio (inverter pro Jeito A) incorporada — deixa de ser plano sem fix prescrito.
-- v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Ponto forte: decisão de produto que estava em aberto há 2 auditorias foi resolvida com justificativa registrada. Não bloqueante: "Valor de negócio" não está em seção própria.
+- v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Ponto forte: decisão de produto que estava em aberto há 2 auditorias foi resolvida com justificativa registrada.
+- v0.3 (2026-07-29): @po adicionou "Valor de negócio" explícito.

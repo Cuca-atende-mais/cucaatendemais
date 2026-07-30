@@ -1,6 +1,6 @@
 # S-EMP-AUD-004 — Filtro de setor por substring esconde vagas já na 1ª mensagem (EMP-01)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/004-emp01-filtro-setor-substring-esconde-vagas.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 004" — confirmado em `worker/empregabilidade_engine.py:2508`
@@ -10,6 +10,10 @@
 ## Contexto
 
 `worker/intencao_detector.py:extrair_setor_da_mensagem` casa setor por substring solta (`setor_canonical.lower() in (s or "").lower()`, usado em `empregabilidade_engine.py:2508`) — "entregar" (verbo comum em "quero entregar meu currículo") contém "entrega" e é lido como menção ao setor Logística, escondendo vagas de outras áreas.
+
+## Valor de negócio
+
+Candidato que digita algo com "entregar" (ex.: "entregar meu currículo") para de ter vagas de outras áreas escondidas por engano logo na 1ª mensagem — reduz abandono no primeiro contato.
 
 ## Dependência real
 
@@ -22,7 +26,8 @@
 
 ## Escopo
 
-Ver "Scope" do plano — correção pontual em `extrair_setor_da_mensagem`/ponto de uso em `:2508`.
+**In:** `worker/intencao_detector.py::extrair_setor_da_mensagem` (troca de substring solta por comparação com limite de palavra) e o ponto de uso em `worker/empregabilidade_engine.py:2508`.
+**Out:** qualquer outro achado da auditoria; lista de setores em si (não muda quais setores existem, só como são detectados no texto).
 
 ## Test plan
 
@@ -31,4 +36,5 @@ Teste já escrito e commitado — só rodar `cd worker && python -m pytest tests
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 004. Passo 0 (commit do teste) já resolvido nesta mesma rodada.
-- v0.2 (2026-07-29): @po validou — NO-GO (6/10). Permanece em Draft. Pendências: (1) "Escopo" só remete ao plano — restatar diretamente; (2) "Valor de negócio" ausente — adicionar (candidato que digita "entregar currículo" para de ficar com vagas escondidas por engano). Ponto forte: teste vermelho já commitado e nomeado, AC direto.
+- v0.2 (2026-07-29): @po validou — NO-GO (6/10) por Escopo/Valor de negócio ausentes.
+- v0.3 (2026-07-29): @po corrigiu as pendências (Escopo restatado, Valor de negócio adicionado) — GO. Status Draft → Ready.

@@ -11,6 +11,10 @@
 
 Praticamente todas as chamadas `supabase.table(...)` em `empregabilidade_engine.py` (49 pontos) são síncronas, chamadas dentro de handlers `async def` — cada uma bloqueia o event loop inteiro do worker, afetando todos os outros módulos (Institucional, Academia Enem) que rodam no mesmo processo.
 
+## Valor de negócio
+
+Libera o event loop do worker, que hoje trava para **todos** os módulos que rodam no mesmo processo (Institucional, Academia Enem) enquanto Empregabilidade faz uma chamada Supabase síncrona — não é um problema isolado deste módulo.
+
 ## Dependência real
 
 **Depende do Plano 008 (hard, dependência dura confirmada nos dois planos)** — não começar sem a cobertura de teste do 008 fechada, dado o tamanho e risco desta mudança.
@@ -34,4 +38,5 @@ Ver "Test plan" do plano — depende da cobertura estabelecida no Plano 008.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 009, com nota de risco de compatibilidade com o Plano 011 registrada.
-- v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Ponto forte: risco (ALTO) justificado com números reais (49 pontos), dependência dura com 008 e risco de compatibilidade com 011 bem mapeados. Não bloqueante: "Valor de negócio" não está em seção própria (implícito — desbloqueio do event loop afeta todos os módulos no mesmo processo, não só Empregabilidade).
+- v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Ponto forte: risco (ALTO) justificado com números reais (49 pontos), dependência dura com 008 e risco de compatibilidade com 011 bem mapeados.
+- v0.3 (2026-07-29): @po adicionou "Valor de negócio" explícito.

@@ -11,6 +11,10 @@
 
 `_enviar(instance_name, token, phone, texto, ...)` recebe `token` mas nunca repassa para `_meta_enviar` (autenticação real usa outro mecanismo). Puramente cosmético.
 
+## Valor de negócio
+
+Remove confusão de manutenção: um parâmetro `token` presente na assinatura sugere autenticação por token que não existe de fato — quem for mexer na função pode perder tempo investigando um mecanismo que não é usado.
+
 ## Dependência real
 
 Nenhuma.
@@ -31,4 +35,5 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 019.
-- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Story trivial e de baixo risco, escopo mínimo o suficiente pra não precisar de mais detalhe. Não bloqueante: "Valor de negócio" ausente (é cosmético, valor é dívida técnica marginal).
+- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Story trivial e de baixo risco, escopo mínimo o suficiente pra não precisar de mais detalhe.
+- v0.3 (2026-07-29): @po adicionou "Valor de negócio" explícito.

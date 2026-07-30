@@ -13,35 +13,38 @@ Junior — severidade + dependência, não a ordem crua da tabela da auditoria).
 (`docs/stories/S-EMP-AUD-001` a `019`), com 5 decisões de produto do sócio já aplicadas direto nos
 planos (001, 002, 011, 014, 015 — ver notas abaixo) e verificação cruzada contra o código real em
 `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`. **Passo 0 concluído**: os testes
-vermelhos locais (`testes-locais-nao-commitados/`) foram mesclados nos arquivos committed de
-`worker/tests/` (commit `3ab3b96`) — 4 vermelhos (004-007) + 1 vermelho (Plano 004, lado
-`test_intencao_detector.py`), 52 verdes, confirmado rodando a suíte. Todas as stories nascem em
-`Status: Draft` — falta validação do `@po` (10-point checklist) antes de `@dev` iniciar, por regra
-do projeto (`story-lifecycle.md`).
+vermelhos locais (pasta `testes-locais-nao-commitados/`, já removida do disco — conteúdo mesclado)
+foram trazidos pros arquivos committed de `worker/tests/` (commit `3ab3b96` na branch
+`feat/painel-controle-pausa-limite`, cherry-picked para `b2b9940` na branch
+`feat/auditoria-empregabilidade-p1`) — 4 vermelhos (EMP-01 a EMP-04, planos 004-007), 52 verdes,
+confirmado rodando a suíte nesta branch. **@po validou as 19 stories** (checklist de 10 pontos):
+todas passaram para `Status: Ready` — 10 GO diretamente, 9 precisaram de 2 ajustes padronizados
+(seção "Valor de negócio" + Escopo restatado na própria story) antes de fechar GO. Detalhe completo
+em cada `Change Log` das stories.
 
 ## Ordem de execução & status
 
 | Plano | Título | Prioridade | Esforço | Depende de | Status |
 |-------|--------|------------|---------|------------|--------|
-| 001   | Empresa deixa de ser "autenticada" só pelo CNPJ (SEC-01) — v2 + Step 5 (reversão automática de awaiting_human + aviso ao lead, decisão do sócio) | P1 | M | — | Story formalizada (Draft) — `S-EMP-AUD-001` |
-| 002   | Consulta de candidatura para de vazar dado de terceiro (SEC-02) — normalização dos 2 lados do telefone (decisão do sócio) | P1 | S | — | Story formalizada (Draft) — `S-EMP-AUD-002` |
-| 003   | `aguardando_retorno_selecao` ganha handler síncrono (BUG-01) | P1 | S | — | Story formalizada (Draft) — `S-EMP-AUD-003` |
-| 004   | Filtro de setor por substring esconde vagas já na 1ª mensagem (EMP-01) | P1 | S | — | Story formalizada (Draft) — `S-EMP-AUD-004`. Teste vermelho commitado. |
-| 005   | `_quer_encerrar` por substring encerra conversa por engano (EMP-02 / #8) | P1 | S | — | Story formalizada (Draft) — `S-EMP-AUD-005`. Teste vermelho commitado. |
-| 006   | Negação ignorada em `pos_candidatura` reabre busca de vagas (EMP-03) | P1 | S | — | Story formalizada (Draft) — `S-EMP-AUD-006`. Teste vermelho commitado. |
-| 007   | `menu_pos_vaga` reinterpreta resposta contra menu errado (EMP-04) | P1 | S | — | Story formalizada (Draft) — `S-EMP-AUD-007`. Teste vermelho commitado. |
-| 008   | Cobertura nos 3 fluxos de maior risco + mocks passam a verificar payload (TEST-01 + #14) | P1 | M | — | Story formalizada (Draft) — `S-EMP-AUD-008` |
-| 009   | ~48 chamadas Supabase síncronas travam o event loop (BUG-02/PERF-01) | P1 | L | **008** | Story formalizada (Draft) — `S-EMP-AUD-009` |
-| 010   | Links do portal sem assinatura nem expiração (achado #12) | P2 | M | — | Story formalizada (Draft) — `S-EMP-AUD-010` |
-| 011   | `_set_fluxo` redundante + risco de lost-update contra o loop de notificação (achado #6) — trava vira `asyncio.Lock()` real (decisão do sócio) | P2 | M | recomendado após 009 | Story formalizada (Draft) — `S-EMP-AUD-011` |
-| 012   | N+1 em 2 telas de listagem (achado #9) | P3 | S | — | Story formalizada (Draft) — `S-EMP-AUD-012` |
-| 013   | Regex de número de vaga pode capturar dígito de CNPJ (achado #10) | P3 | S | — | Story formalizada (Draft) — `S-EMP-AUD-013` |
-| 014   | Menu duplicado 10x (`:646` → "Cancelar uma vaga", decisão do sócio) + 7 tuplas de afirmativo inconsistentes (achado #11) | P3 | S/M | — | Story formalizada (Draft) — `S-EMP-AUD-014` |
-| 015   | Ordem persistir-antes-de-enviar — inverter pro Jeito A (decisão do sócio, 2026-07-29) (achado #13) | P3 | S | — | Story formalizada (Draft) — `S-EMP-AUD-015`. Deixou de ser plano sem fix prescrito. |
-| 016   | Loop de notificação: N+1 de lead + query externa sem `.limit()` (achado #15) | P3 | S/M | — | Story formalizada (Draft) — `S-EMP-AUD-016` |
-| 017   | Cobertura dos 4 branches principais de `_rotear_por_intencao` (achado #16, escopo reduzido) | P3 | S | — | Story formalizada (Draft) — `S-EMP-AUD-017` |
-| 018   | CNPJ sem mascaramento em log (achado #17) | P4 | S | — | Story formalizada (Draft) — `S-EMP-AUD-018` |
-| 019   | Parâmetro `token` de `_enviar()` nunca usado (cosmético) | P5 | S | — | Story formalizada (Draft) — `S-EMP-AUD-019` |
+| 001   | Empresa deixa de ser "autenticada" só pelo CNPJ (SEC-01) — v2 + Step 5 (reversão automática de awaiting_human + aviso ao lead, decisão do sócio) | P1 | M | — | Story validada (Ready) — `S-EMP-AUD-001` |
+| 002   | Consulta de candidatura para de vazar dado de terceiro (SEC-02) — normalização dos 2 lados do telefone (decisão do sócio) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-002` |
+| 003   | `aguardando_retorno_selecao` ganha handler síncrono (BUG-01) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-003` |
+| 004   | Filtro de setor por substring esconde vagas já na 1ª mensagem (EMP-01) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-004`. Teste vermelho commitado. |
+| 005   | `_quer_encerrar` por substring encerra conversa por engano (EMP-02 / #8) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-005`. Teste vermelho commitado. |
+| 006   | Negação ignorada em `pos_candidatura` reabre busca de vagas (EMP-03) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-006`. Teste vermelho commitado. |
+| 007   | `menu_pos_vaga` reinterpreta resposta contra menu errado (EMP-04) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-007`. Teste vermelho commitado. |
+| 008   | Cobertura nos 3 fluxos de maior risco + mocks passam a verificar payload (TEST-01 + #14) | P1 | M | — | Story validada (Ready) — `S-EMP-AUD-008` |
+| 009   | ~48 chamadas Supabase síncronas travam o event loop (BUG-02/PERF-01) | P1 | L | **008** | Story validada (Ready) — `S-EMP-AUD-009` |
+| 010   | Links do portal sem assinatura nem expiração (achado #12) | P2 | M | — | Story validada (Ready) — `S-EMP-AUD-010` |
+| 011   | `_set_fluxo` redundante + risco de lost-update contra o loop de notificação (achado #6) — trava vira `asyncio.Lock()` real (decisão do sócio) | P2 | M | recomendado após 009 | Story validada (Ready) — `S-EMP-AUD-011` |
+| 012   | N+1 em 2 telas de listagem (achado #9) | P3 | S | — | Story validada (Ready) — `S-EMP-AUD-012` |
+| 013   | Regex de número de vaga pode capturar dígito de CNPJ (achado #10) | P3 | S | — | Story validada (Ready) — `S-EMP-AUD-013` |
+| 014   | Menu duplicado 10x (`:646` → "Cancelar uma vaga", decisão do sócio) + 7 tuplas de afirmativo inconsistentes (achado #11) | P3 | S/M | — | Story validada (Ready) — `S-EMP-AUD-014` |
+| 015   | Ordem persistir-antes-de-enviar — inverter pro Jeito A (decisão do sócio, 2026-07-29) (achado #13) | P3 | S | — | Story validada (Ready) — `S-EMP-AUD-015`. Deixou de ser plano sem fix prescrito. |
+| 016   | Loop de notificação: N+1 de lead + query externa sem `.limit()` (achado #15) | P3 | S/M | — | Story validada (Ready) — `S-EMP-AUD-016` |
+| 017   | Cobertura dos 4 branches principais de `_rotear_por_intencao` (achado #16, escopo reduzido) | P3 | S | — | Story validada (Ready) — `S-EMP-AUD-017` |
+| 018   | CNPJ sem mascaramento em log (achado #17) | P4 | S | — | Story validada (Ready) — `S-EMP-AUD-018` |
+| 019   | Parâmetro `token` de `_enviar()` nunca usado (cosmético) | P5 | S | — | Story validada (Ready) — `S-EMP-AUD-019` |
 
 **Ordem recomendada de execução** (severidade + dependência real, não a ordem numérica pura):
 1. **001-003** — segurança/bug crítico, independentes entre si.

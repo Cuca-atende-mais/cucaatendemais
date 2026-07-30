@@ -1,6 +1,6 @@
 # S-EMP-AUD-006 — Negação ignorada em `pos_candidatura` reabre busca de vagas (EMP-03)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/006-emp03-negacao-ignorada-pos-candidatura.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 006" — confirmado em torno de `worker/empregabilidade_engine.py:1583-1619`
@@ -10,6 +10,10 @@
 ## Contexto
 
 Na etapa `pos_candidatura`, "quero" como substring marca `quer_mais_vagas=True` sem checar negação — "não quero mais vagas, obrigado" contém "quero" e é lido como pedido de mais vagas. A etapa seguinte (`oferta_banco_talentos`) já tem a proteção de negação pra esse padrão; só não foi aplicada de volta aqui.
+
+## Valor de negócio
+
+Candidato que recusa mais vagas ("não quero mais, obrigado") para de ter a busca reaberta contra a vontade — evita atrito/confusão no fim do fluxo de candidatura.
 
 ## Dependência real
 
@@ -22,7 +26,8 @@ Na etapa `pos_candidatura`, "quero" como substring marca `quer_mais_vagas=True` 
 
 ## Escopo
 
-Ver "Scope" do plano — replicar a proteção de negação já existente em `oferta_banco_talentos` para `pos_candidatura`.
+**In:** etapa `pos_candidatura` (`worker/empregabilidade_engine.py:1583-1619`) — replicar a proteção de negação já existente em `oferta_banco_talentos` (`:1626-1629`).
+**Out:** qualquer outra etapa; a proteção de `oferta_banco_talentos`, já correta e usada como referência.
 
 ## Test plan
 
@@ -31,4 +36,5 @@ Teste já escrito e commitado.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 006. Passo 0 já resolvido.
-- v0.2 (2026-07-29): @po validou — NO-GO (6/10). Permanece em Draft. Pendências: (1) restatar Escopo diretamente na story; (2) "Valor de negócio" ausente — adicionar (candidato que recusa mais vagas para de ter a busca reaberta contra a vontade). Ponto forte: teste vermelho já commitado e nomeado.
+- v0.2 (2026-07-29): @po validou — NO-GO (6/10) por Escopo/Valor de negócio ausentes.
+- v0.3 (2026-07-29): @po corrigiu as pendências — GO. Status Draft → Ready.

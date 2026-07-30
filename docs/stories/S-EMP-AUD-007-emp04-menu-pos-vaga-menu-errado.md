@@ -1,6 +1,6 @@
 # S-EMP-AUD-007 — `menu_pos_vaga` reinterpreta resposta contra menu errado (EMP-04)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/007-emp04-menu-pos-vaga-menu-errado.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 007" — confirmado em `worker/empregabilidade_engine.py:1076-1082` (menu mostrado) e `:1101-1102` (dispatch errado)
@@ -10,6 +10,10 @@
 ## Contexto
 
 Depois de criar uma vaga, a etapa vira `menu_pos_vaga` (menu de 4 opções, "3 = Encerrar"), mas o dispatch dessa etapa redireciona para o handler de `menu_empresa_acoes`, onde "3 = Editar uma vaga". Uma empresa que responde "3" querendo encerrar acaba, sem saber, no fluxo de edição.
+
+## Valor de negócio
+
+Empresa que responde "3" pra encerrar para de cair sem saber no fluxo de edição de vaga — evita alteração indesejada de dado real por confusão de menu.
 
 ## Dependência real
 
@@ -31,4 +35,5 @@ Teste já escrito e commitado.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 007. Passo 0 já resolvido.
-- v0.2 (2026-07-29): @po validou — NO-GO (6/10). Permanece em Draft. Pendências: (1) restatar Escopo diretamente na story; (2) "Valor de negócio" ausente — adicionar (empresa que responde "3" pra encerrar para de cair sem saber no fluxo de edição). Ponto forte: teste vermelho já commitado, dependência de merge com o Plano 012 já mapeada.
+- v0.2 (2026-07-29): @po validou — NO-GO (6/10) por Valor de negócio ausente (Escopo já era específico o suficiente).
+- v0.3 (2026-07-29): @po adicionou "Valor de negócio" — GO. Status Draft → Ready.

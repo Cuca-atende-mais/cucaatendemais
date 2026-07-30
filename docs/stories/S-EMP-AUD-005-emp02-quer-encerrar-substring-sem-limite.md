@@ -11,6 +11,10 @@
 
 `_quer_encerrar` (`worker/empregabilidade_engine.py:191-193`) casa qualquer palavra de `_PALAVRAS_ENCERRAR` como substring solta, em qualquer lugar da mensagem — "muito **obrigado**! mas ainda tenho uma dúvida" encerra a conversa na hora. Chamada em 3 fluxos (candidato, empresa, público).
 
+## Valor de negócio
+
+Evita perder conversas reais (encerradas por engano) só por conter "obrigado"/"tchau" no meio da frase — reduz abandono de leads e empresas ativos no meio do fluxo.
+
 ## Dependência real
 
 **Bloqueada pelo Passo 0 (commit dos testes locais) — já resolvido em 2026-07-29** (commit `3ab3b96`). Teste vermelho commitado: `TestQuerEncerrarSubstringSemLimiteDePalavra` em `worker/tests/test_empregabilidade_engine.py`.
@@ -36,4 +40,5 @@ Teste vermelho já commitado + o teste adicional de regressão pra direção fal
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 005, com a ressalva de cobertura de teste (achado da verificação da equipe) registrada. Passo 0 já resolvido.
-- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Ponto forte: risco de falso-negativo do próprio fix já identificado e com AC cobrindo. Não bloqueante: "Valor de negócio" e "Escopo" não estão em seção própria (remetem ao plano).
+- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Ponto forte: risco de falso-negativo do próprio fix já identificado e com AC cobrindo.
+- v0.3 (2026-07-29): @po adicionou seção "Valor de negócio" explícita.
