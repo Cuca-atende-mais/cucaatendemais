@@ -739,3 +739,293 @@ class TestMenuPosVagaReinterpretaResposta:
             "reinterpretada contra o menu de menu_empresa_acoes, onde '3' significa "
             "'Editar uma vaga' — a empresa queria encerrar e caiu no fluxo de edição"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUG-01 (Plano 003) — aguardando_retorno_selecao sem handler síncrono
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestAguardandoRetornoSelecao:
+
+    @pytest.mark.asyncio
+    async def test_aguardando_retorno_selecao_com_mensagem_manual_nao_reseta_empresa(self, monkeypatch):
+        """BUG-01: sem o handler desta etapa, qualquer mensagem manual do usuário
+        caía no fallback genérico (`:1113-1115`), que reseta o fluxo pra
+        solicitar_cnpj e perde empresa_id/contexto todo. O handler novo deve
+        tratar 'oi' como lembrete de que o formulário do portal ainda não foi
+        preenchido, sem resetar nada."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_retorno_selecao", {
+            "perfil": "empresa", "empresa_id": "e1", "empresa_nome": "ACME",
+            "cnpj": "12345678000199",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_empresa(
+            "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "aguardando_retorno_selecao", (
+            "fluxo foi resetado (fallback genérico) em vez de tratar a etapa "
+            "aguardando_retorno_selecao — empresa_id/contexto perdido"
+        )
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "aguardando o preenchimento" in texto_enviado.lower()
+
+    @pytest.mark.asyncio
+    async def test_aguardando_retorno_selecao_com_selecao_ja_confirmada_avanca_para_menu(self, monkeypatch):
+        """Quando o portal já gravou vaga_criada_id/vaga_numero/vaga_titulo (campo
+        compartilhado com vaga, usado também pra seleção — confirmado em
+        selecao/route.ts e no notify_loop, :2679), a mensagem manual do usuário
+        deve mostrar a confirmação e avançar pra menu_pos_vaga, preservando
+        empresa_id."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_retorno_selecao", {
+            "perfil": "empresa", "empresa_id": "e1", "empresa_nome": "ACME",
+            "empresa_nome_exibicao": "ACME", "cnpj": "12345678000199",
+            "vaga_criada_id": "00000000-0000-0000-0000-0000000000ab",
+            "vaga_numero": 42, "vaga_titulo": "Processo Seletivo — ACME",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_empresa(
+            "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "menu_pos_vaga"
+        assert estado.get("empresa_id") == "e1", "empresa_id não pode se perder ao confirmar a seleção"
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "processo seletivo" in texto_enviado.lower()
+        assert "#42" in texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_aguardando_retorno_vaga_continua_funcionando_igual(self, monkeypatch):
+        """Regressão: o novo bloco de aguardando_retorno_selecao não deve afetar
+        o comportamento já existente de aguardando_retorno_vaga."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_retorno_vaga", {
+            "perfil": "empresa", "empresa_id": "e1", "empresa_nome": "ACME",
+            "cnpj": "12345678000199",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_empresa(
+            "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "aguardando_retorno_vaga"
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "aguardando o preenchimento" in texto_enviado.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SEC-02 (Plano 002) — consulta de candidatura para de vazar dado de terceiro
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _mock_gpt_ambiguo_sem_escape(texto, perfil, etapa, ultima_msg_bot):
+    return {"intencao": "ambiguo", "quer_sair": False, "mudou_de_assunto": False}
+
+
+class TestConsultaCandidaturaExigeTelefoneDeQuemPergunta:
+
+    @pytest.mark.asyncio
+    async def test_busca_por_telefone_so_retorna_candidatura_do_proprio_telefone(self, monkeypatch):
+        """SEC-02: telefone digitado bate com uma candidatura real, mas o dono
+        dessa candidatura NÃO é quem está mandando a mensagem (phone
+        diferente) — não deve vazar a candidatura de terceiro."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.order.return_value.limit.return_value \
+            .execute.return_value.data = [
+                {"id": "c1", "status": "pendente", "vaga_id": "v1", "created_at": "2026-01-01",
+                 "observacoes": "", "telefone": "8511112222"},
+            ]
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "8599990000", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "não encontrei candidatura" in texto_enviado.lower(), (
+            "candidatura de outro telefone vazou pra quem não é o dono dela"
+        )
+
+    @pytest.mark.asyncio
+    async def test_busca_por_telefone_retorna_quando_bate_com_proprio_telefone(self, monkeypatch):
+        """Caso legítimo: telefone de quem pergunta bate com o telefone da
+        candidatura — deve continuar funcionando normalmente (não regrediu)."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.order.return_value.limit.return_value \
+            .execute.return_value.data = [
+                {"id": "c1", "status": "pendente", "vaga_id": "v1", "created_at": "2026-01-01",
+                 "observacoes": "", "telefone": "8599990000"},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Vaga Teste"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "8599990000", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto_enviado = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "não encontrei candidatura" not in todo_texto_enviado, (
+            "candidatura legítima (mesmo telefone) deveria continuar sendo encontrada"
+        )
+        assert "encontrada" in todo_texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_busca_por_nome_nao_retorna_candidatura_de_telefone_diferente(self, monkeypatch):
+        """SEC-02: nome bate, mas o telefone da candidatura é diferente do
+        telefone de quem pergunta — não deve vazar."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.ilike.return_value.order.return_value \
+            .limit.return_value.execute.return_value.data = [
+                {"id": "c1", "status": "pendente", "vaga_id": "v1", "created_at": "2026-01-01",
+                 "observacoes": "", "nome": "Xisto Wenceslau", "telefone": "8511112222"},
+            ]
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "Xisto Wenceslau", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "não encontrei candidatura" in texto_enviado.lower(), (
+            "candidatura de outro telefone vazou por busca de nome, mesmo o nome batendo"
+        )
+
+    @pytest.mark.asyncio
+    async def test_busca_por_nome_retorna_quando_telefone_tambem_bate(self, monkeypatch):
+        """Caso legítimo: nome bate E o telefone de quem pergunta bate com o
+        telefone da candidatura — continua funcionando."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.ilike.return_value.order.return_value \
+            .limit.return_value.execute.return_value.data = [
+                {"id": "c1", "status": "pendente", "vaga_id": "v1", "created_at": "2026-01-01",
+                 "observacoes": "", "nome": "Xisto Wenceslau", "telefone": "8599990000"},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Vaga Teste"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "Xisto Wenceslau", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto_enviado = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "não encontrei candidatura" not in todo_texto_enviado
+        assert "encontrada" in todo_texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_busca_por_codigo_referencia_continua_funcionando_sem_checar_telefone(self, monkeypatch):
+        """Regressão: busca por código de referência (6 chars, token-based) NÃO
+        exige bater telefone — fora de escopo deste plano, já é razoavelmente
+        segura (só quem recebeu a confirmação da candidatura teria o código)."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        # id termina em "AB12CD" (case-insensitive, comparado em upper())
+        mock_sb.table.return_value.select.return_value.order.return_value.limit.return_value \
+            .execute.return_value.data = [
+                {"id": "00000000-0000-0000-0000-0000ab12cd", "status": "pendente", "vaga_id": "v1",
+                 "created_at": "2026-01-01", "observacoes": "", "telefone": "8511112222"},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Vaga Teste"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        # Telefone de quem pergunta é DIFERENTE do telefone da candidatura —
+        # e ainda assim deve encontrar, porque código de referência não checa telefone.
+        await emp._processar_candidato(
+            "AB12CD", "559999998888", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto_enviado = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "não encontrei candidatura" not in todo_texto_enviado, (
+            "busca por código de referência não deveria exigir telefone bater"
+        )
+        assert "encontrada" in todo_texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_busca_por_telefone_bate_mesmo_com_candidaturas_telefone_formatado(self, monkeypatch):
+        """Decisão do sócio (2026-07-29): candidaturas.telefone tem formatação
+        inconsistente em produção (46 puro-dígito, 78 formatadas). A
+        normalização precisa cobrir os 2 lados — não só o `phone` do webhook."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.order.return_value.limit.return_value \
+            .execute.return_value.data = [
+                {"id": "c1", "status": "pendente", "vaga_id": "v1", "created_at": "2026-01-01",
+                 "observacoes": "", "telefone": "(85) 9999-0000"},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Vaga Teste"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "8599990000", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto_enviado = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "não encontrei candidatura" not in todo_texto_enviado, (
+            "telefone formatado no banco não deveria impedir o match com o phone normalizado"
+        )
+        assert "encontrada" in todo_texto_enviado

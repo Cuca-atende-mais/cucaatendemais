@@ -1105,6 +1105,52 @@ async def _processar_empresa(
         await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
         return
 
+    # --- ETAPA: aguardando_retorno_selecao (após link enviado, BUG-01) ---
+    if etapa == "aguardando_retorno_selecao":
+        # Verificar se o portal já notificou que a seleção foi criada — mesmo campo
+        # compartilhado com vaga (confirmado em empregabilidade_notify_loop:2679 e em
+        # selecao/route.ts, que grava vaga_criada_id/vaga_numero/vaga_titulo também
+        # para seleção por evento, SQS-49; não existe coluna "selecao_criada_id" própria)
+        fluxo_atual = _get_fluxo(conversa_id)
+        selecao_criada_id = fluxo_atual.get("vaga_criada_id")
+        selecao_numero = fluxo_atual.get("vaga_numero")
+        selecao_titulo = fluxo_atual.get("vaga_titulo", "")
+        empresa_id = fluxo_atual.get("empresa_id")
+        empresa_nome_exibicao = fluxo_atual.get("empresa_nome_exibicao") or fluxo_atual.get("empresa_nome", "")
+
+        if selecao_criada_id:
+            numero_ref = f"#{selecao_numero}" if selecao_numero else f"...{selecao_criada_id[-6:].upper()}"
+            await e(
+                f"✅ *Processo seletivo cadastrado com sucesso!*\n\n"
+                f"📋 *Título:* {selecao_titulo}\n"
+                f"🔢 *Número de referência:* {numero_ref}\n\n"
+                "Guarde essa referência para acompanhar as candidaturas aqui no WhatsApp.\n\n"
+                "O que deseja fazer agora?\n\n"
+                "1️⃣ Divulgar outra vaga\n"
+                "2️⃣ Acompanhar candidatos desta seleção\n"
+                "3️⃣ Encerrar\n\n"
+                "Responda com *1*, *2* ou *3*."
+            )
+            _set_fluxo(conversa_id, {
+                "etapa": "menu_pos_vaga",
+                "empresa_id": empresa_id,
+                "empresa_nome": fluxo_atual.get("empresa_nome", ""),
+                "empresa_nome_exibicao": empresa_nome_exibicao,
+                "cnpj": fluxo_atual.get("cnpj"),
+                "ultima_vaga_id": selecao_criada_id,
+            })
+        else:
+            # Formulário ainda não preenchido — reenviar link como lembrete
+            empresa_id = fluxo.get("empresa_id")
+            unidade_param = f"&unidade_cuca={quote(unidade_cuca)}" if unidade_cuca else ""
+            link_selecao = f"{PORTAL_URL}/empregabilidade/selecao/nova?empresa_id={empresa_id}{unidade_param}"
+            await e(
+                "Ainda aguardando o preenchimento do formulário de seleção. 🕐\n\n"
+                f"Caso precise do link novamente:\n🔗 {link_selecao}\n\n"
+                "Se precisar de ajuda, entre em contato com a equipe da unidade. 🤝"
+            )
+        return
+
     # --- ETAPA: consulta_empresa ---
     if etapa in ("consulta_empresa", "empresa_ativa"):
         await _processar_consulta_empresa(texto, phone, instance_name, token, fluxo, conversa_id)
@@ -1246,6 +1292,20 @@ async def _processar_consulta_empresa(
 # Fluxo de CANDIDATO ATIVO
 # ---------------------------------------------------------------------------
 
+def _telefone_normalizado_para_comparacao(valor: str) -> str:
+    """SEC-02: normaliza telefone pros 2 lados de uma comparação de posse
+    (phone do webhook vs. candidaturas.telefone, que tem formatação
+    inconsistente em produção — confirmado ao vivo 2026-07-29: 46 linhas
+    puro-dígito, 78 com formatação tipo "(85) 92146-7046"). Reaproveita
+    `normalizar_telefone` (campanhas_engine) em vez de reinventar — mesma
+    regra (só dígitos, prefixo 55 se for BR sem DDI) já usada no restante
+    do projeto."""
+    from campanhas_engine import normalizar_telefone  # noqa: PLC0415
+    if not valor:
+        return ""
+    return normalizar_telefone(valor)
+
+
 async def _processar_candidato(
     texto: str,
     phone: str,
@@ -1321,19 +1381,37 @@ async def _processar_candidato(
                 if c["id"].replace("-", "")[-6:].upper() == ref
             ]
 
-        # Busca por telefone (10-11 dígitos)
+        # Busca por telefone (10-11 dígitos) — SEC-02: só aceita se bater com quem
+        # está perguntando. Normaliza os 2 lados (candidaturas.telefone tem
+        # formatação inconsistente em produção) — por isso não dá pra filtrar
+        # direto no banco com .eq(), traz um lote amplo e filtra em Python. O
+        # `.limit()` aqui precisa cobrir a tabela inteira (mesmo padrão já usado
+        # na busca por código de referência, algumas linhas acima) — um limit(5)
+        # pego ANTES do filtro por telefone perderia a candidatura certa sempre
+        # que ela não estiver entre as 5 mais recentes da tabela toda (a exibição
+        # final já limita a 5 resultados, logo abaixo, depois do filtro).
         elif len(apenas_digitos) in (10, 11):
+            telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
             cand_res = supabase.table("candidaturas").select(
-                "id, status, vaga_id, created_at, observacoes"
-            ).eq("telefone", apenas_digitos).order("created_at", desc=True).limit(5).execute()
-            candidaturas_encontradas = cand_res.data or []
+                "id, status, vaga_id, created_at, observacoes, telefone"
+            ).order("created_at", desc=True).limit(500).execute()
+            candidaturas_encontradas = [
+                c for c in (cand_res.data or [])
+                if _telefone_normalizado_para_comparacao(c.get("telefone") or "") == telefone_quem_pergunta
+            ]
 
-        # Busca por nome (texto com espaço, 5+ chars)
+        # Busca por nome (texto com espaço, 5+ chars) — SEC-02: nome sozinho não
+        # basta, tem que bater também com o telefone de quem está perguntando
+        # (mesma normalização dos 2 lados usada na busca por telefone acima).
         elif len(texto_limpo) >= 5 and " " in texto_limpo:
             cand_res = supabase.table("candidaturas").select(
-                "id, status, vaga_id, created_at, observacoes, nome"
+                "id, status, vaga_id, created_at, observacoes, nome, telefone"
             ).ilike("nome", f"%{texto_limpo}%").order("created_at", desc=True).limit(5).execute()
-            candidaturas_encontradas = cand_res.data or []
+            telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
+            candidaturas_encontradas = [
+                c for c in (cand_res.data or [])
+                if _telefone_normalizado_para_comparacao(c.get("telefone") or "") == telefone_quem_pergunta
+            ]
 
         if not candidaturas_encontradas:
             await e(
