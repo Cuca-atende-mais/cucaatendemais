@@ -72,3 +72,31 @@ GPT-5 Codex
 - v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Ponto forte: risco (ALTO) justificado com números reais (49 pontos), dependência dura com 008 e risco de compatibilidade com 011 bem mapeados.
 - v0.3 (2026-07-29): @po adicionou "Valor de negócio" explícito.
 - v0.4 (2026-07-30): @dev implementou Bloco 4/Plano 009 com closures Supabase em `to_thread`, commits incrementais por função/grupo e suíte focal verde. Status Ready → Ready for Review.
+
+## QA Results
+
+### Review Date: 2026-07-30
+
+### Reviewed By: Quinn (Test Architect & Quality Advisor)
+
+### Gate Status
+
+PASS com follow-ups mantidos fora de escopo.
+
+### Findings
+
+- Nenhum achado bloqueante identificado no Bloco 4 / S-EMP-AUD-009.
+- A abordagem centralizada via `_supabase_to_thread(fn)` atende ao AC de `asyncio.to_thread` ou abordagem equivalente: a contagem textual de `asyncio.to_thread` fica menor que a contagem histórica de chamadas Supabase, mas a checagem AST confirmou ausência de `supabase.table(...)` direto no corpo de `async def`.
+- Follow-ups já documentados seguem fora deste gate: select redundante/lost-update de `_set_fluxo` (Plano 011) e N+1/limit do loop de notificação (Plano 016).
+
+### Evidence
+
+- `python3 - <<'PY' ...` checagem AST de `supabase.table(...)` direto em `async def`: `violations=[]`.
+- `git diff --check main...HEAD`: sem problemas de whitespace.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py::TestConfirmandoCancelamento tests/test_empregabilidade_engine.py::TestConfirmandoCadastro tests/test_empregabilidade_engine.py::TestConfirmacaoEntrevista -v`: `6 passed, 2 warnings`.
+- `cd worker && SUPABASE_URL=http://localhost SUPABASE_SERVICE_ROLE_KEY=<dummy-jwt> ../.venv/bin/python -c "import empregabilidade_engine"`: passou.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v`: `79 passed, 2 warnings`.
+
+### Notes
+
+- Os 2 warnings são `DeprecationWarning` preexistentes de `datetime.utcnow()` no fluxo de cancelamento; não foram introduzidos pelo Bloco 4.
