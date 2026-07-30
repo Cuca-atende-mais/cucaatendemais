@@ -1,6 +1,6 @@
 # S-EMP-AUD-006 — Negação ignorada em `pos_candidatura` reabre busca de vagas (EMP-03)
 
-**Status:** Ready
+**Status:** Ready for Review
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/006-emp03-negacao-ignorada-pos-candidatura.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 006" — confirmado em torno de `worker/empregabilidade_engine.py:1583-1619`
@@ -21,8 +21,8 @@ Candidato que recusa mais vagas ("não quero mais, obrigado") para de ter a busc
 
 ## Acceptance Criteria
 
-- [ ] `test_nao_quero_mais_vagas_nao_deveria_reabrir_busca_de_vagas` passa
-- [ ] Suíte completa passando
+- [x] `test_nao_quero_mais_vagas_nao_deveria_reabrir_busca_de_vagas` passa
+- [x] Suíte completa passando
 
 ## Escopo
 
@@ -38,3 +38,36 @@ Teste já escrito e commitado.
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 006. Passo 0 já resolvido.
 - v0.2 (2026-07-29): @po validou — NO-GO (6/10) por Escopo/Valor de negócio ausentes.
 - v0.3 (2026-07-29): @po corrigiu as pendências — GO. Status Draft → Ready.
+- v0.4 (2026-07-30): @dev replicou o guard de negação em `pos_candidatura`. Status Ready → Ready for Review.
+
+## Dev Agent Record
+
+### Agent Model Used
+
+GPT-5 Codex
+
+### Debug Log References
+
+- `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` — passou: 72 passed.
+
+### Completion Notes List
+
+- `quer_mais_vagas` agora é desativado quando a mensagem contém negação (`não`/`nao`), permitindo que o branch de encerramento trate “não quero mais vagas”.
+
+### File List
+
+- `worker/empregabilidade_engine.py`
+
+## QA Results
+
+### Review 2026-07-30 — @qa Quinn — Gate: PASS
+
+**Resultado:** a implementação atende ao Plano 006. `pos_candidatura` agora calcula `tem_negacao` antes do fast-path positivo e impede que `"não quero mais vagas"` reabra a busca por conter `"quero"`, `"mais"` ou `"vagas"`.
+
+**Evidência:** `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `72 passed`; `TestPosCandidaturaNegacaoIgnorada::test_nao_quero_mais_vagas_nao_deveria_reabrir_busca_de_vagas` passou.
+
+### Re-review 2026-07-30 — @qa Quinn — Gate: PASS
+
+**Resultado:** PASS mantido no re-review do Bloco 2 inteiro. Nenhuma regressão identificada para a negação em `pos_candidatura` após o ajuste posterior da S-EMP-AUD-005.
+
+**Evidência:** `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `73 passed`.

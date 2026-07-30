@@ -31,10 +31,10 @@ em cada `Change Log` das stories.
 | 001   | Empresa deixa de ser "autenticada" só pelo CNPJ (SEC-01) — v2 + Step 5 (reversão automática de awaiting_human + aviso ao lead, decisão do sócio) | P1 | M | — | **Implementado** (2026-07-29) — Steps 1-2 já estavam implementados/aplicados; Steps 3-5 retomados após decisão do Junior e concluídos com endpoint + UI protegidos por `has_permission('empreg_vagas', 'update')`, 409 em conflito, reativação por telefone -> lead -> conversa e aviso automático ao lead. Recomendado @qa para o Bloco 1 inteiro (001 completo + 002 + 003). |
 | 002   | Consulta de candidatura para de vazar dado de terceiro (SEC-02) — normalização dos 2 lados do telefone (decisão do sócio) | P1 | S | — | **Implementado** (2026-07-29), commit `d4d634d` — 6 testes, suíte verde |
 | 003   | `aguardando_retorno_selecao` ganha handler síncrono (BUG-01) | P1 | S | — | **Implementado** (2026-07-29), commit `d4d634d` — 3 testes, suíte verde |
-| 004   | Filtro de setor por substring esconde vagas já na 1ª mensagem (EMP-01) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-004`. Teste vermelho commitado. |
-| 005   | `_quer_encerrar` por substring encerra conversa por engano (EMP-02 / #8) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-005`. Teste vermelho commitado. |
-| 006   | Negação ignorada em `pos_candidatura` reabre busca de vagas (EMP-03) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-006`. Teste vermelho commitado. |
-| 007   | `menu_pos_vaga` reinterpreta resposta contra menu errado (EMP-04) | P1 | S | — | Story validada (Ready) — `S-EMP-AUD-007`. Teste vermelho commitado. |
+| 004   | Filtro de setor por substring esconde vagas já na 1ª mensagem (EMP-01) | P1 | S | — | **Implementado** (2026-07-30) — limite de palavra em `extrair_setor_da_mensagem`; teste vermelho ficou verde. |
+| 005   | `_quer_encerrar` por substring encerra conversa por engano (EMP-02 / #8) | P1 | S | — | **Implementado** (2026-07-30) — encerramento exige intenção clara; teste extra garante despedidas reais nos 3 fluxos. |
+| 006   | Negação ignorada em `pos_candidatura` reabre busca de vagas (EMP-03) | P1 | S | — | **Implementado** (2026-07-30) — `quer_mais_vagas` agora respeita negação, igual ao padrão de `oferta_banco_talentos`. |
+| 007   | `menu_pos_vaga` reinterpreta resposta contra menu errado (EMP-04) | P1 | S | — | **Implementado** (2026-07-30) — dispatch próprio para opções 1/2/3; testes cobrem regressão das 3 opções. |
 | 008   | Cobertura nos 3 fluxos de maior risco + mocks passam a verificar payload (TEST-01 + #14) | P1 | M | — | Story validada (Ready) — `S-EMP-AUD-008` |
 | 009   | ~48 chamadas Supabase síncronas travam o event loop (BUG-02/PERF-01) | P1 | L | **008** | Story validada (Ready) — `S-EMP-AUD-009` |
 | 010   | Links do portal sem assinatura nem expiração (achado #12) | P2 | M | — | Story validada (Ready) — `S-EMP-AUD-010` |

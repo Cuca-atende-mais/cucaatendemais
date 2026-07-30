@@ -190,7 +190,39 @@ def _set_fluxo(conversa_id: str, fluxo: dict):
 
 def _quer_encerrar(texto: str) -> bool:
     t = texto.strip().lower()
-    return t in _PALAVRAS_ENCERRAR or any(p in t for p in _PALAVRAS_ENCERRAR)
+    if t in _PALAVRAS_ENCERRAR:
+        return True
+
+    matches = [
+        p for p in _PALAVRAS_ENCERRAR
+        if re.search(rf"(?<!\w){re.escape(p)}(?!\w)", t)
+    ]
+    if not matches:
+        return False
+
+    resto = t
+    for p in matches:
+        resto = re.sub(rf"(?<!\w){re.escape(p)}(?!\w)", " ", resto)
+    resto = re.sub(r"[^\wÀ-ÿ]+", " ", resto).strip()
+    if not resto:
+        return True
+    if any(re.search(rf"(?<!\w){neg}(?!\w)", resto) for neg in ("não", "nao")):
+        return False
+
+    palavras_apoio = {
+        "muito", "por", "favor", "pfv", "pf", "porfavor", "ok", "ta", "tá",
+        "certo", "beleza", "blz", "so", "só", "isso", "era", "eu", "quero",
+        "queria", "gostaria", "de",
+    }
+    return all(p in palavras_apoio for p in resto.split())
+
+
+def _tem_palavra_encerramento(texto: str) -> bool:
+    t = texto.strip().lower()
+    return any(
+        re.search(rf"(?<!\w){re.escape(p)}(?!\w)", t)
+        for p in _PALAVRAS_ENCERRAR
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1147,11 +1179,44 @@ async def _processar_empresa(
             )
         return
 
-    # --- ETAPA: menu_pos_vaga (redireciona para menu_empresa_acoes) ---
+    # --- ETAPA: menu_pos_vaga ---
     if etapa == "menu_pos_vaga":
-        fluxo["etapa"] = "menu_empresa_acoes"
-        _set_fluxo(conversa_id, fluxo)
-        await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+        t = texto.strip().lower()
+        empresa_id = fluxo.get("empresa_id")
+        empresa_nome = fluxo.get("empresa_nome_exibicao") or fluxo.get("empresa_nome", "")
+
+        if t in ("1", "divulgar", "divulgar outra vaga", "nova vaga", "criar", "cadastrar"):
+            await e(
+                "Ótimo! 🎯 Antes de gerar o link da vaga, preciso de algumas informações do *responsável pelo processo seletivo*.\n\n"
+                "Qual é o *e-mail* para receber os currículos?\n"
+                "(pode ser diferente do e-mail geral da empresa)"
+            )
+            _set_fluxo(conversa_id, {
+                "perfil": "empresa",
+                "etapa": "coletando_email_responsavel",
+                "empresa_id": empresa_id,
+                "empresa_nome": fluxo.get("empresa_nome", ""),
+                "empresa_nome_exibicao": empresa_nome,
+                "cnpj": fluxo.get("cnpj"),
+            })
+        elif t in ("2", "acompanhar", "acompanhar candidatos", "candidatos", "status"):
+            _set_fluxo(conversa_id, {**fluxo, "etapa": "consulta_empresa"})
+            await _processar_consulta_empresa("todas", phone, instance_name, token, fluxo, conversa_id)
+        elif t in ("3", "encerrar", "finalizar", "tchau", "sair"):
+            await _encerrar_fluxo(conversa_id, instance_name, token, phone, "empresa")
+        else:
+            tratado = await _escape_semantico_ou_none(
+                texto, "empresa", etapa, conversa_id, phone, instance_name, token, lead_id,
+                unidade_cuca,
+            )
+            if not tratado:
+                await e(
+                    "Não entendi. Escolha uma das opções:\n\n"
+                    "1️⃣ Divulgar outra vaga\n"
+                    "2️⃣ Acompanhar candidatos desta vaga\n"
+                    "3️⃣ Encerrar\n\n"
+                    "Responda com *1*, *2* ou *3*."
+                )
         return
 
     # --- ETAPA: aguardando_retorno_selecao (após link enviado, BUG-01) ---
@@ -1510,6 +1575,12 @@ async def _processar_candidato(
                 "Informe o número da candidatura, nome completo ou telefone cadastrado:"
             )
             _set_fluxo(conversa_id, {"etapa": "aguardando_id_candidato", "perfil": "candidato"})
+        elif _tem_palavra_encerramento(texto):
+            await e(
+                "Fico feliz em ajudar. 😊\n\n"
+                "Se quiser consultar outra candidatura, responda *outro*. "
+                "Se quiser finalizar, responda *encerrar*."
+            )
         else:
             # S-WM-20 Task 5: antes qualquer coisa que não fosse "outro/outra/
             # mais" encerrava direto — tenta o classificador semântico antes
@@ -1709,7 +1780,8 @@ async def _processar_publico(
 
     # --- ETAPA: pos_candidatura (S37C-01) ---
     if etapa == "pos_candidatura":
-        quer_mais_vagas = any(p in t_lower for p in (
+        tem_negacao = any(p in t_lower for p in ("não", "nao"))
+        quer_mais_vagas = not tem_negacao and any(p in t_lower for p in (
             "outra", "mais", "ver vagas", "outras vagas", "vagas", "vaga", "sim", "quero", "ok"
         ))
         quer_encerrar_claro = any(p in t_lower for p in (

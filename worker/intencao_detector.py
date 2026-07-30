@@ -278,7 +278,7 @@ def extrair_setor_da_mensagem(texto: str) -> tuple[str | None, str | None]:
         return None, None
     t = texto.lower()
     for keyword, canonical in _SETOR_KEYWORDS:
-        if keyword in t:
+        if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", t):
             if not canonical:  # guard para "banco de talentos"
                 return None, None
             return keyword, canonical
