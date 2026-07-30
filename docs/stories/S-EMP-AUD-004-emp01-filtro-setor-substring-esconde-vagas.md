@@ -66,3 +66,9 @@ GPT-5 Codex
 **Resultado:** a correção atende ao Plano 004. `extrair_setor_da_mensagem` deixou de casar keyword por substring solta e passou a exigir bordas de palavra, mantendo a lista de setores intacta. O caso `"entregar"` não dispara mais `"entrega" -> Logística`, e as regressões existentes de setor continuam verdes.
 
 **Evidência:** `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `72 passed`.
+
+### Re-review 2026-07-30 — @qa Quinn — Gate: PASS
+
+**Resultado:** PASS mantido no re-review do Bloco 2 inteiro. Nenhuma regressão identificada para o filtro de setor após o ajuste posterior da S-EMP-AUD-005.
+
+**Evidência:** `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `73 passed`.

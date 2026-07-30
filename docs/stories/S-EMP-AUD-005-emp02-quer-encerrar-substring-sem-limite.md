@@ -78,3 +78,9 @@ GPT-5 Codex
 **Evidência positiva:** os testes planejados passaram: `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `72 passed`; o teste novo confirma que despedidas reais continuam encerrando nos 3 fluxos.
 
 **Risco residual:** como `_quer_encerrar` é chamada no topo dos fluxos candidato, empresa e público, o falso-positivo ainda pode limpar o estado antes de handlers específicos ou escape semântico tratarem a intenção real do lead.
+
+### Re-review 2026-07-30 — @qa Quinn — Gate: PASS
+
+**Resultado:** o CONCERNS anterior fica superado. A correção passou a tratar termos fortes de fechamento junto com o restante da frase antes de retornar `True`, bloqueando encerramento quando há negação/continuação sem quebrar despedidas claras.
+
+**Evidência:** os exemplos reportados foram cobertos e validados: `_quer_encerrar("não quero encerrar, quero consultar outra candidatura") == False`, `_quer_encerrar("não pode fechar ainda, tenho outra dúvida") == False` e `_quer_encerrar("quero encerrar por favor") == True`. A suíte focal `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `73 passed`.

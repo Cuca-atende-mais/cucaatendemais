@@ -70,3 +70,11 @@ GPT-5 Codex
 **Evidência:** `cd worker && ../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py::TestMenuPosVagaReinterpretaResposta -v` resultou em `3 passed`; `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `72 passed`.
 
 **Follow-up mantido:** a opção 2 ainda consulta/lista no padrão existente da empresa, não exclusivamente a última vaga recém-criada, apesar do texto “desta vaga”. Isso já estava registrado como fora de escopo no plano e não bloqueia esta story.
+
+### Re-review 2026-07-30 — @qa Quinn — Gate: PASS com follow-up
+
+**Resultado:** PASS com follow-up mantido no re-review do Bloco 2 inteiro. O menu `menu_pos_vaga` continua interpretando as opções 1, 2 e 3 contra o menu correto.
+
+**Evidência:** `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `73 passed`.
+
+**Follow-up mantido:** opção 2 ainda lista no padrão existente da empresa, não exclusivamente a última vaga recém-criada; segue fora do escopo bloqueante desta story.
