@@ -1534,58 +1534,69 @@ async def _processar_candidato(
 
         candidaturas_encontradas = []
 
-        # Busca por CPF (histórico)
-        if len(apenas_digitos) == 11:
-            cand_pessoa = supabase.table("candidatos").select("id").eq("cpf", apenas_digitos).execute()
-            ids_candidatos = [c["id"] for c in (cand_pessoa.data or [])]
-            if ids_candidatos:
-                cand_res = supabase.table("candidaturas").select(
+        def _buscar_candidaturas_e_vagas():
+            candidaturas = []
+
+            # Busca por CPF (histórico)
+            if len(apenas_digitos) == 11:
+                cand_pessoa = supabase.table("candidatos").select("id").eq("cpf", apenas_digitos).execute()
+                ids_candidatos = [c["id"] for c in (cand_pessoa.data or [])]
+                if ids_candidatos:
+                    cand_res = supabase.table("candidaturas").select(
+                        "id, status, vaga_id, created_at, observacoes"
+                    ).in_("candidato_id", ids_candidatos).order("created_at", desc=True).limit(5).execute()
+                    candidaturas = cand_res.data or []
+
+            # Busca por número de candidatura (6+ chars alfanuméricos)
+            elif re.match(r"^[A-Za-z0-9]{6}$", texto_limpo):
+                ref = texto_limpo.upper()
+                todas = supabase.table("candidaturas").select(
                     "id, status, vaga_id, created_at, observacoes"
-                ).in_("candidato_id", ids_candidatos).order("created_at", desc=True).limit(5).execute()
-                candidaturas_encontradas = cand_res.data or []
+                ).order("created_at", desc=True).limit(500).execute()
+                candidaturas = [
+                    c for c in (todas.data or [])
+                    if c["id"].replace("-", "")[-6:].upper() == ref
+                ]
 
-        # Busca por número de candidatura (6+ chars alfanuméricos)
-        elif re.match(r"^[A-Za-z0-9]{6}$", texto_limpo):
-            ref = texto_limpo.upper()
-            todas = supabase.table("candidaturas").select(
-                "id, status, vaga_id, created_at, observacoes"
-            ).order("created_at", desc=True).limit(500).execute()
-            candidaturas_encontradas = [
-                c for c in (todas.data or [])
-                if c["id"].replace("-", "")[-6:].upper() == ref
-            ]
+            # Busca por telefone (10-11 dígitos) — SEC-02: só aceita se bater com quem
+            # está perguntando. Normaliza os 2 lados (candidaturas.telefone tem
+            # formatação inconsistente em produção) — por isso não dá pra filtrar
+            # direto no banco com .eq(), traz um lote amplo e filtra em Python. O
+            # `.limit()` aqui precisa cobrir a tabela inteira (mesmo padrão já usado
+            # na busca por código de referência, algumas linhas acima) — um limit(5)
+            # pego ANTES do filtro por telefone perderia a candidatura certa sempre
+            # que ela não estiver entre as 5 mais recentes da tabela toda (a exibição
+            # final já limita a 5 resultados, logo abaixo, depois do filtro).
+            elif len(apenas_digitos) in (10, 11):
+                telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
+                cand_res = supabase.table("candidaturas").select(
+                    "id, status, vaga_id, created_at, observacoes, telefone"
+                ).order("created_at", desc=True).limit(500).execute()
+                candidaturas = [
+                    c for c in (cand_res.data or [])
+                    if _telefone_normalizado_para_comparacao(c.get("telefone") or "") == telefone_quem_pergunta
+                ]
 
-        # Busca por telefone (10-11 dígitos) — SEC-02: só aceita se bater com quem
-        # está perguntando. Normaliza os 2 lados (candidaturas.telefone tem
-        # formatação inconsistente em produção) — por isso não dá pra filtrar
-        # direto no banco com .eq(), traz um lote amplo e filtra em Python. O
-        # `.limit()` aqui precisa cobrir a tabela inteira (mesmo padrão já usado
-        # na busca por código de referência, algumas linhas acima) — um limit(5)
-        # pego ANTES do filtro por telefone perderia a candidatura certa sempre
-        # que ela não estiver entre as 5 mais recentes da tabela toda (a exibição
-        # final já limita a 5 resultados, logo abaixo, depois do filtro).
-        elif len(apenas_digitos) in (10, 11):
-            telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
-            cand_res = supabase.table("candidaturas").select(
-                "id, status, vaga_id, created_at, observacoes, telefone"
-            ).order("created_at", desc=True).limit(500).execute()
-            candidaturas_encontradas = [
-                c for c in (cand_res.data or [])
-                if _telefone_normalizado_para_comparacao(c.get("telefone") or "") == telefone_quem_pergunta
-            ]
+            # Busca por nome (texto com espaço, 5+ chars) — SEC-02: nome sozinho não
+            # basta, tem que bater também com o telefone de quem está perguntando
+            # (mesma normalização dos 2 lados usada na busca por telefone acima).
+            elif len(texto_limpo) >= 5 and " " in texto_limpo:
+                cand_res = supabase.table("candidaturas").select(
+                    "id, status, vaga_id, created_at, observacoes, nome, telefone"
+                ).ilike("nome", f"%{texto_limpo}%").order("created_at", desc=True).limit(5).execute()
+                telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
+                candidaturas = [
+                    c for c in (cand_res.data or [])
+                    if _telefone_normalizado_para_comparacao(c.get("telefone") or "") == telefone_quem_pergunta
+                ]
 
-        # Busca por nome (texto com espaço, 5+ chars) — SEC-02: nome sozinho não
-        # basta, tem que bater também com o telefone de quem está perguntando
-        # (mesma normalização dos 2 lados usada na busca por telefone acima).
-        elif len(texto_limpo) >= 5 and " " in texto_limpo:
-            cand_res = supabase.table("candidaturas").select(
-                "id, status, vaga_id, created_at, observacoes, nome, telefone"
-            ).ilike("nome", f"%{texto_limpo}%").order("created_at", desc=True).limit(5).execute()
-            telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
-            candidaturas_encontradas = [
-                c for c in (cand_res.data or [])
-                if _telefone_normalizado_para_comparacao(c.get("telefone") or "") == telefone_quem_pergunta
-            ]
+            titulos = {}
+            for c in candidaturas[:5]:
+                vaga_res = supabase.table("vagas").select("titulo").eq("id", c["vaga_id"]).single().execute()
+                titulos[c["id"]] = (vaga_res.data or {}).get("titulo", "Vaga") if vaga_res.data else "Vaga"
+            return candidaturas, titulos
+
+        candidaturas_encontradas, titulos_vagas = await _supabase_to_thread(_buscar_candidaturas_e_vagas)
 
         if not candidaturas_encontradas:
             await e(
@@ -1600,8 +1611,7 @@ async def _processar_candidato(
 
         linhas = ["📋 *Candidatura(s) encontrada(s):*\n"]
         for c in candidaturas_encontradas[:5]:
-            vaga_res = supabase.table("vagas").select("titulo").eq("id", c["vaga_id"]).single().execute()
-            titulo_vaga = (vaga_res.data or {}).get("titulo", "Vaga") if vaga_res.data else "Vaga"
+            titulo_vaga = titulos_vagas.get(c["id"], "Vaga")
             obs = c.get("observacoes") or ""
             if "banco_talentos" in obs:
                 status_emoji = "⏳"
