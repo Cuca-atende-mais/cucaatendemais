@@ -2111,35 +2111,39 @@ async def _processar_publico(
 
     # Candidatos veem TODAS as vagas abertas de qualquer unidade.
     # unidade_destino controla apenas qual equipe CUCA gerencia a candidatura — não a visibilidade pública.
-    vagas_res = supabase.table("vagas").select(
-        "id, titulo, tipo_contrato, salario, escolaridade_minima, total_vagas, faixa_etaria, setor, unidade_destino"
-    ).eq("status", "aberta").order("created_at", desc=True).limit(50).execute()
-    vagas = vagas_res.data or []
+    def _buscar_vagas_abertas_e_candidaturas():
+        vagas_res = supabase.table("vagas").select(
+            "id, titulo, tipo_contrato, salario, escolaridade_minima, total_vagas, faixa_etaria, setor, unidade_destino"
+        ).eq("status", "aberta").order("created_at", desc=True).limit(50).execute()
+        vagas_db = vagas_res.data or []
 
-    # HF37-06: Sincronizar com o banco — buscar vagas já candidatadas por este telefone
-    # (captura candidaturas de sessões anteriores que não estão na memória da sessão atual)
-    # Filtro de status feito em Python puro para evitar incompatibilidade com postgrest-py
-    STATUS_INATIVOS = {"rejeitado", "cancelado", "excluido", "inativo"}
-    # Remove todos os não-dígitos e normaliza: candidaturas são salvas sem o "55" do Brasil
-    telefone_limpo = re.sub(r"\D", "", phone)
-    if telefone_limpo.startswith("55") and len(telefone_limpo) > 11:
-        telefone_limpo = telefone_limpo[2:]
-    db_cands_res = supabase.table("candidaturas").select("vaga_id, status, cargo_escolhido").eq(
-        "telefone", telefone_limpo
-    ).execute()
-    db_vagas_ids = set()
-    # SQS-49: selecao_evento — rastrear cargos já inscritos por vaga (não ocultar a vaga inteira)
-    db_cargos_por_vaga: dict[str, set] = {}
-    for c in (db_cands_res.data or []):
-        if not c.get("vaga_id") or c.get("status") in STATUS_INATIVOS:
-            continue
-        cargo = c.get("cargo_escolhido")
-        if cargo:
-            # candidatura com cargo: registra o cargo, não bloqueia a vaga inteira
-            db_cargos_por_vaga.setdefault(c["vaga_id"], set()).add(cargo)
-        else:
-            # candidatura sem cargo (vaga_normal): bloqueia a vaga normalmente
-            db_vagas_ids.add(c["vaga_id"])
+        # HF37-06: Sincronizar com o banco — buscar vagas já candidatadas por este telefone
+        # (captura candidaturas de sessões anteriores que não estão na memória da sessão atual)
+        # Filtro de status feito em Python puro para evitar incompatibilidade com postgrest-py
+        STATUS_INATIVOS = {"rejeitado", "cancelado", "excluido", "inativo"}
+        # Remove todos os não-dígitos e normaliza: candidaturas são salvas sem o "55" do Brasil
+        telefone_limpo = re.sub(r"\D", "", phone)
+        if telefone_limpo.startswith("55") and len(telefone_limpo) > 11:
+            telefone_limpo = telefone_limpo[2:]
+        db_cands_res = supabase.table("candidaturas").select("vaga_id, status, cargo_escolhido").eq(
+            "telefone", telefone_limpo
+        ).execute()
+        vagas_ids = set()
+        # SQS-49: selecao_evento — rastrear cargos já inscritos por vaga (não ocultar a vaga inteira)
+        cargos_por_vaga: dict[str, set] = {}
+        for c in (db_cands_res.data or []):
+            if not c.get("vaga_id") or c.get("status") in STATUS_INATIVOS:
+                continue
+            cargo = c.get("cargo_escolhido")
+            if cargo:
+                # candidatura com cargo: registra o cargo, não bloqueia a vaga inteira
+                cargos_por_vaga.setdefault(c["vaga_id"], set()).add(cargo)
+            else:
+                # candidatura sem cargo (vaga_normal): bloqueia a vaga normalmente
+                vagas_ids.add(c["vaga_id"])
+        return vagas_db, vagas_ids, cargos_por_vaga
+
+    vagas, db_vagas_ids, db_cargos_por_vaga = await _supabase_to_thread(_buscar_vagas_abertas_e_candidaturas)
 
     # S37C-04: Combinar histórico da sessão com IDs do banco e filtrar vagas
     historico_aplicadas = list(fluxo.get("historico_vagas_aplicadas") or [])
@@ -2180,9 +2184,22 @@ async def _processar_publico(
 
     if vaga_id_ref:
         # SQS-49: verificar se vaga é selecao_evento antes de qualquer outra coisa
-        vaga_tipo_res = supabase.table("vagas").select("tipo, cargos_lista").eq("id", vaga_id_ref).maybe_single().execute()
-        if vaga_tipo_res.data and vaga_tipo_res.data.get("tipo") == "selecao_evento":
-            cargos = vaga_tipo_res.data.get("cargos_lista") or []
+        def _buscar_meta_vaga_e_unidades():
+            vaga_tipo_res = supabase.table("vagas").select("tipo, cargos_lista").eq("id", vaga_id_ref).maybe_single().execute()
+            vaga_tipo = vaga_tipo_res.data or {}
+            vaga_meta_db = next((v for v in vagas if v["id"] == vaga_id_ref), None)
+            if not vaga_meta_db:
+                _vr = supabase.table("vagas").select("id, unidade_destino").eq("id", vaga_id_ref).maybe_single().execute()
+                vaga_meta_db = _vr.data or {}
+            unidades = []
+            if (vaga_meta_db or {}).get("unidade_destino", "") == "global":
+                _unid_res = supabase.table("unidades_cuca").select("id, nome").eq("ativo", True).order("nome").execute()
+                unidades = _unid_res.data or []
+            return vaga_tipo, vaga_meta_db, unidades
+
+        vaga_tipo, vaga_meta, unidades_disponiveis = await _supabase_to_thread(_buscar_meta_vaga_e_unidades)
+        if vaga_tipo and vaga_tipo.get("tipo") == "selecao_evento":
+            cargos = vaga_tipo.get("cargos_lista") or []
             # SQS-49: excluir cargos que o candidato já se inscreveu
             cargos_ja_inscritos = db_cargos_por_vaga.get(vaga_id_ref, set())
             cargos_disponiveis = [c for c in cargos if c.get("titulo") not in cargos_ja_inscritos]
@@ -2212,16 +2229,10 @@ async def _processar_publico(
             # Se não tiver cargos estruturados, cai no fluxo normal de candidatura
 
         # SQS-41 Ação 2.3: verificar se vaga é global antes de coletar nome/enviar link
-        vaga_meta = next((v for v in vagas if v["id"] == vaga_id_ref), None)
-        if not vaga_meta:
-            _vr = supabase.table("vagas").select("id, unidade_destino").eq("id", vaga_id_ref).maybe_single().execute()
-            vaga_meta = _vr.data or {}
         unidade_destino_vaga = (vaga_meta or {}).get("unidade_destino", "")
 
         if unidade_destino_vaga == "global":
             # Perguntar ao candidato qual unidade fica mais próxima
-            _unid_res = supabase.table("unidades_cuca").select("id, nome").eq("ativo", True).order("nome").execute()
-            unidades_disponiveis = _unid_res.data or []
             linhas_unid = [
                 "🌐 *Esta vaga é para toda a Rede CUCA!*\n\n"
                 "Qual unidade fica mais próxima da sua residência?\n"
