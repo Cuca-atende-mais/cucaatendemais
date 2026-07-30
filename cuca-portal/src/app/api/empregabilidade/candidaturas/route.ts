@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { parseLinkParams, verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
+
+function normalizarTelefone(valor: string | null | undefined): string {
+    let digits = String(valor || "").replace(/\D/g, "")
+    if ((digits.length === 12 || digits.length === 13) && digits.startsWith("55")) {
+        digits = digits.slice(2)
+    }
+    return digits
+}
 
 export async function POST(request: NextRequest) {
     const supabaseAdmin = createClient(
@@ -15,10 +24,23 @@ export async function POST(request: NextRequest) {
             pcd_candidato, pcd_tipo_candidato,
             cargo_escolhido, // vaga_normal: cargo único (legado)
             cargos_escolhidos, // selecao_evento AC10 SQS-49: array de cargos
+            link_params,
         } = body
 
         if (!nome || !telefone) {
             return NextResponse.json({ error: "Campos obrigatórios ausentes." }, { status: 400 })
+        }
+        const linkOk = verificarLinkParams(link_params, {
+            vaga_id,
+            conversa_id,
+        })
+        if (!linkOk.valido) {
+            return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
+        }
+
+        const origemTelMatch = parseLinkParams(link_params)?.get("origem_tel")
+        if (origemTelMatch && normalizarTelefone(origemTelMatch) !== normalizarTelefone(telefone)) {
+            return NextResponse.json({ error: "Telefone não confere com o link recebido." }, { status: 403 })
         }
 
         // Trava etária: se vaga exige "Maior de 18 anos", bloquear candidatos < 18

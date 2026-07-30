@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift, X, PencilLine } from "lucide-react"
 import toast from "react-hot-toast"
+import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
 
 const TIPOS_CONTRATO = ["CLT", "PJ", "Estágio", "Temporário", "Aprendiz", "Freelancer"]
 const ESCOLARIDADES = ["Fundamental Incompleto", "Fundamental Completo", "Médio Incompleto", "Médio Completo", "Superior Incompleto", "Superior Completo"]
@@ -80,6 +81,7 @@ function EditarVagaEmpresaContent() {
     const searchParams = useSearchParams()
     const vagaId = searchParams.get("vaga_id")
     const empresaId = searchParams.get("empresa_id")
+    const linkParams = serializarLinkParams(searchParams)
 
     const [vaga, setVaga] = useState<VagaData | null>(null)
     const [empresa, setEmpresa] = useState<{ id: string; nome: string } | null>(null)
@@ -115,8 +117,14 @@ function EditarVagaEmpresaContent() {
 
         const fetchData = async () => {
             try {
+                const linkValido = await validarLinkAssinadoNoServidor(searchParams)
+                if (!linkValido) {
+                    setLinkInvalido(true)
+                    setLoading(false)
+                    return
+                }
                 // Buscar dados da vaga (via endpoint público de empresa para validar posse)
-                const res = await fetch(`/api/empregabilidade/vagas/${vagaId}?empresa_id=${encodeURIComponent(empresaId)}`)
+                const res = await fetch(`/api/empregabilidade/vagas/${vagaId}?${linkParams}`)
                 const data = await res.json()
 
                 if (!res.ok || data.error) {
@@ -171,7 +179,7 @@ function EditarVagaEmpresaContent() {
         }
 
         fetchData()
-    }, [vagaId, empresaId])
+    }, [vagaId, empresaId, linkParams, searchParams])
 
     const toggleBeneficio = (b: string) => {
         setBeneficiosMarcados((prev) =>
@@ -226,7 +234,7 @@ function EditarVagaEmpresaContent() {
             const res = await fetch(`/api/empregabilidade/vagas/${vagaId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ empresa_id: empresaId, diff }),
+                body: JSON.stringify({ empresa_id: empresaId, diff, link_params: linkParams }),
             })
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
@@ -270,7 +278,7 @@ function EditarVagaEmpresaContent() {
                     <AlertTriangle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
                     <h2 className="text-xl font-bold mb-2">Link inválido</h2>
                     <p className="text-muted-foreground text-sm">
-                        Este link não é válido ou a vaga não pertence à sua empresa. Entre em contato com a unidade CUCA.
+                        Este link é inválido, expirou ou a vaga não pertence à sua empresa. Solicite um novo pelo WhatsApp.
                     </p>
                 </Card>
             </div>

@@ -3,6 +3,7 @@
 // NÃO altera nem conflita com /api/empregabilidade/vagas/route.ts
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 
 export async function POST(request: NextRequest) {
     const supabaseAdmin = createClient(
@@ -18,10 +19,15 @@ export async function POST(request: NextRequest) {
             datas_selecao,      // array: [{data, hora}]
             email_responsavel,
             telefone_responsavel,
+            link_params,
         } = body
 
         if (!empresa_id) {
             return NextResponse.json({ error: "empresa_id é obrigatório." }, { status: 400 })
+        }
+        const linkOk = verificarLinkParams(link_params, { empresa_id })
+        if (!linkOk.valido) {
+            return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
         }
         if (!cargos_lista || !Array.isArray(cargos_lista) || cargos_lista.length === 0) {
             return NextResponse.json({ error: "É necessário informar ao menos um cargo." }, { status: 400 })
