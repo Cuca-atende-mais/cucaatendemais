@@ -12,12 +12,14 @@ Junior — severidade + dependência, não a ordem crua da tabela da auditoria).
 **Atualização 2026-07-29 (tarde):** os 19 planos foram formalizados em stories
 (`docs/stories/S-EMP-AUD-001` a `019`), com 5 decisões de produto do sócio já aplicadas direto nos
 planos (001, 002, 011, 014, 015 — ver notas abaixo) e verificação cruzada contra o código real em
-`docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`. **Passo 0 concluído**: os testes
-vermelhos locais (pasta `testes-locais-nao-commitados/`, já removida do disco — conteúdo mesclado)
-foram trazidos pros arquivos committed de `worker/tests/` (commit `3ab3b96` na branch
-`feat/painel-controle-pausa-limite`, cherry-picked para `b2b9940` na branch
-`feat/auditoria-empregabilidade-p1`) — 4 vermelhos (EMP-01 a EMP-04, planos 004-007), 52 verdes,
-confirmado rodando a suíte nesta branch. **@po validou as 19 stories** (checklist de 10 pontos):
+`docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`. **Passo 0 concluído**: as 3 classes de teste + 1 teste novos da pasta local não commitada
+(`testes-locais-nao-commitados/`, já removida do disco) foram levados pros arquivos committed de
+`worker/tests/` (commit `3ab3b96` na branch `feat/painel-controle-pausa-limite`, cherry-picked para
+`b2b9940` na branch `feat/auditoria-empregabilidade-p1`) — **a cópia local não foi copiada por
+cima**: ela tinha perdido silenciosamente 1 asserção de um teste já existente
+(`TestEscapeHatchNomeLivre`), preservada na mesclagem. É esse cuidado que torna seguro ter apagado
+a pasta local. Resultado: 4 vermelhos (EMP-01 a EMP-04, planos 004-007), 52 verdes, confirmado
+rodando a suíte nesta branch. **@po validou as 19 stories** (checklist de 10 pontos):
 todas passaram para `Status: Ready` — 10 GO diretamente, 9 precisaram de 2 ajustes padronizados
 (seção "Valor de negócio" + Escopo restatado na própria story) antes de fechar GO. Detalhe completo
 em cada `Change Log` das stories.
