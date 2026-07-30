@@ -200,19 +200,19 @@ def _quer_encerrar(texto: str) -> bool:
     if not matches:
         return False
 
-    if any(p in matches for p in ("encerrar", "finalizar", "pode fechar", "ok pode fechar")):
-        return True
-
     resto = t
     for p in matches:
         resto = re.sub(rf"(?<!\w){re.escape(p)}(?!\w)", " ", resto)
     resto = re.sub(r"[^\wÀ-ÿ]+", " ", resto).strip()
     if not resto:
         return True
+    if any(re.search(rf"(?<!\w){neg}(?!\w)", resto) for neg in ("não", "nao")):
+        return False
 
     palavras_apoio = {
         "muito", "por", "favor", "pfv", "pf", "porfavor", "ok", "ta", "tá",
-        "certo", "beleza", "blz", "so", "só", "isso", "era",
+        "certo", "beleza", "blz", "so", "só", "isso", "era", "eu", "quero",
+        "queria", "gostaria", "de",
     }
     return all(p in palavras_apoio for p in resto.split())
 

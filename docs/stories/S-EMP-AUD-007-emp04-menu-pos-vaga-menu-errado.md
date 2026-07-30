@@ -60,3 +60,13 @@ GPT-5 Codex
 
 - `worker/empregabilidade_engine.py`
 - `worker/tests/test_empregabilidade_engine.py`
+
+## QA Results
+
+### Review 2026-07-30 — @qa Quinn — Gate: PASS com follow-up
+
+**Resultado:** a implementação atende ao Plano 007. `menu_pos_vaga` não delega mais o texto cru para `menu_empresa_acoes`; as opções 1, 2 e 3 agora são interpretadas contra o menu mostrado ao usuário. A opção `3` encerra o fluxo e não cai mais em edição de vaga.
+
+**Evidência:** `cd worker && ../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py::TestMenuPosVagaReinterpretaResposta -v` resultou em `3 passed`; `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `72 passed`.
+
+**Follow-up mantido:** a opção 2 ainda consulta/lista no padrão existente da empresa, não exclusivamente a última vaga recém-criada, apesar do texto “desta vaga”. Isso já estava registrado como fora de escopo no plano e não bloqueia esta story.

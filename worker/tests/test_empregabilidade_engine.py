@@ -642,6 +642,11 @@ class TestEscapeHatchNomeLivre:
 
 class TestQuerEncerrarSubstringSemLimiteDePalavra:
 
+    def test_negacao_com_termo_forte_nao_deveria_encerrar(self):
+        assert not emp._quer_encerrar("não quero encerrar, quero consultar outra candidatura")
+        assert not emp._quer_encerrar("não pode fechar ainda, tenho outra dúvida")
+        assert emp._quer_encerrar("quero encerrar por favor")
+
     @pytest.mark.asyncio
     async def test_obrigado_no_meio_de_pergunta_nao_deveria_encerrar_candidato(self, monkeypatch):
         """_quer_encerrar (empregabilidade_engine.py:191-193) casa 'obrigado'

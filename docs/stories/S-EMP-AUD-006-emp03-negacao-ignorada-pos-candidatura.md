@@ -57,3 +57,11 @@ GPT-5 Codex
 ### File List
 
 - `worker/empregabilidade_engine.py`
+
+## QA Results
+
+### Review 2026-07-30 — @qa Quinn — Gate: PASS
+
+**Resultado:** a implementação atende ao Plano 006. `pos_candidatura` agora calcula `tem_negacao` antes do fast-path positivo e impede que `"não quero mais vagas"` reabra a busca por conter `"quero"`, `"mais"` ou `"vagas"`.
+
+**Evidência:** `cd worker && ../.venv/bin/python -m pytest tests/test_intencao_detector.py tests/test_empregabilidade_engine.py -v` resultou em `72 passed`; `TestPosCandidaturaNegacaoIgnorada::test_nao_quero_mais_vagas_nao_deveria_reabrir_busca_de_vagas` passou.
