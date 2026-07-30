@@ -31,3 +31,4 @@ Teste já escrito e commitado.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 006. Passo 0 já resolvido.
+- v0.2 (2026-07-29): @po validou — NO-GO (6/10). Permanece em Draft. Pendências: (1) restatar Escopo diretamente na story; (2) "Valor de negócio" ausente — adicionar (candidato que recusa mais vagas para de ter a busca reaberta contra a vontade). Ponto forte: teste vermelho já commitado e nomeado.

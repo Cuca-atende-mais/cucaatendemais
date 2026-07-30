@@ -31,3 +31,4 @@ Teste já escrito e commitado.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 007. Passo 0 já resolvido.
+- v0.2 (2026-07-29): @po validou — NO-GO (6/10). Permanece em Draft. Pendências: (1) restatar Escopo diretamente na story; (2) "Valor de negócio" ausente — adicionar (empresa que responde "3" pra encerrar para de cair sem saber no fluxo de edição). Ponto forte: teste vermelho já commitado, dependência de merge com o Plano 012 já mapeada.

@@ -31,3 +31,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 012.
+- v0.2 (2026-07-29): @po validou — NO-GO (5/10). Permanece em Draft. Pendências: (1) "Escopo" só remete ao plano — restatar os 2 pontos e a abordagem de batching diretamente aqui; (2) "Valor de negócio" ausente — adicionar (reduz latência/carga no banco nas telas de listagem mais usadas pela empresa); (3) AC genérico demais.

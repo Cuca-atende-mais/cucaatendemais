@@ -32,3 +32,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 016.
+- v0.2 (2026-07-29): @po validou — NO-GO (5/10). Permanece em Draft. Pendências: (1) "Escopo" só remete ao plano — restatar diretamente; (2) "Valor de negócio" ausente; (3) AC genérico ("`.limit()` adequado", "N+1 resolvido") — trocar por número/critério concreto.

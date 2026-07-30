@@ -1,6 +1,6 @@
 # S-EMP-AUD-015 — Ordem persistir-antes-de-enviar — inverter pro Jeito A (achado #13)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/015-achado13-ordem-persistir-antes-de-enviar.md`
 **Prioridade:** P3 | **Esforço:** S | **Risco:** MED (muda comportamento de 2 fluxos reais)
@@ -35,3 +35,4 @@ Ver "Scope" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 015, já com a decisão do sócio (inverter pro Jeito A) incorporada — deixa de ser plano sem fix prescrito.
+- v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Ponto forte: decisão de produto que estava em aberto há 2 auditorias foi resolvida com justificativa registrada. Não bloqueante: "Valor de negócio" não está em seção própria.

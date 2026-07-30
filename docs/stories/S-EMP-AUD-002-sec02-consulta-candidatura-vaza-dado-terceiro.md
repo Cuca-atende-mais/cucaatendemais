@@ -1,6 +1,6 @@
 # S-EMP-AUD-002 — Consulta de candidatura para de vazar dado de terceiro (SEC-02)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/002-sec02-consulta-candidatura-vaza-dado-terceiro.md` (ler o plano completo — Step 1, Test plan, STOP conditions)
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 002"
@@ -39,3 +39,4 @@ Out: busca por código de referência (já segura), qualquer outro achado da aud
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 002, com a normalização dos 2 lados e o 6º teste (decisão do sócio) já incorporados.
+- v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Pontos fortes: AC específico, risco de dado real (formatação inconsistente) documentado com evidência. Não bloqueante: "Valor de negócio" não está numa seção própria.

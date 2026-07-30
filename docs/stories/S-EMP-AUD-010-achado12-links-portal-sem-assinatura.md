@@ -1,6 +1,6 @@
 # S-EMP-AUD-010 — Links do portal sem assinatura nem expiração (achado #12)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/010-achado12-links-portal-sem-assinatura.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 010" — risco confirmado mais amplo do que a amostra original: as 4 páginas (`candidatura`, `vagas/editar`, `vagas/nova`, `selecao/nova`) não têm assinatura; a API por trás (`vagas/[id]/route.ts`) faz uma checagem de posse circular (usa o próprio `empresa_id` da URL) — não mitiga o risco.
@@ -32,3 +32,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 010, com o escopo ampliado para as 4 páginas confirmadas.
+- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Ponto forte: escopo restatado diretamente (4 páginas nomeadas), risco elaborado (checagem de posse circular na API). Não bloqueante: "Valor de negócio" não está em seção própria.

@@ -1,6 +1,6 @@
 # S-EMP-AUD-001 — Empresa deixa de ser "autenticada" só pelo CNPJ (SEC-01)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/001-sec01-autenticacao-empresa-por-cnpj.md` (ler o plano completo antes de implementar — Steps 1-5, Test plan, STOP conditions)
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seções "Plano 001" e "Ciclo completo de autenticação"
@@ -40,3 +40,4 @@ Ver "Scope" do plano — inclui migration, `_processar_empresa` (branch de empre
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 001, com o Step 5 (decisão do sócio) já incorporado.
+- v0.2 (2026-07-29): @po validou — GO (8/10). Status Draft → Ready. Pontos fortes: AC concreto, dependências e riscos mapeados, decisão de produto (Step 5) documentada com justificativa. Não bloqueante: "Valor de negócio" não está numa seção própria (implícito no Contexto — previne identity takeover).

@@ -1,6 +1,6 @@
 # S-EMP-AUD-018 — CNPJ sem mascaramento no log (achado #17)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/018-achado17-cnpj-sem-mascaramento-no-log.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 018" — confirmado em `worker/empregabilidade_engine.py:138`
@@ -31,3 +31,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 018.
+- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Story pequena e autocontida, AC direto e verificável, risco trivial. Não bloqueante: "Valor de negócio" (compliance/exposição de dado em log) não está em seção própria.

@@ -1,6 +1,6 @@
 # S-EMP-AUD-005 — `_quer_encerrar` por substring encerra conversa por engano (EMP-02 / achado #8)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/005-emp02-quer-encerrar-substring-sem-limite.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 005" — inclui 1 risco adicional sobre cobertura de teste, ler antes de fechar a story como pronta
@@ -36,3 +36,4 @@ Teste vermelho já commitado + o teste adicional de regressão pra direção fal
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 005, com a ressalva de cobertura de teste (achado da verificação da equipe) registrada. Passo 0 já resolvido.
+- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Ponto forte: risco de falso-negativo do próprio fix já identificado e com AC cobrindo. Não bloqueante: "Valor de negócio" e "Escopo" não estão em seção própria (remetem ao plano).

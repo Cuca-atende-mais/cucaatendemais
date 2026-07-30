@@ -32,3 +32,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 003.
+- v0.2 (2026-07-29): @po validou — NO-GO (5/10). Permanece em Draft. Pendências antes de Ready: (1) "Escopo" só remete ao plano ("ver Scope do plano") — restatar In/Out diretamente aqui; (2) "Valor de negócio" ausente — adicionar 1-2 frases (ex.: evita resposta errada/travada pro usuário que usa o fluxo de seleção por evento, hoje sem handler síncrono); (3) AC genérico demais ("Confirmado que não há regressão") — trocar por asserção testável específica.

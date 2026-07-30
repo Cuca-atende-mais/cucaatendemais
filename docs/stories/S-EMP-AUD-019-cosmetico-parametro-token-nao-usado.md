@@ -1,6 +1,6 @@
 # S-EMP-AUD-019 — Parâmetro `token` de `_enviar()` nunca usado (cosmético)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/019-cosmetico-parametro-token-nao-usado.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 019" — confirmado em `worker/empregabilidade_engine.py:96-97`
@@ -31,3 +31,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 019.
+- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Story trivial e de baixo risco, escopo mínimo o suficiente pra não precisar de mais detalhe. Não bloqueante: "Valor de negócio" ausente (é cosmético, valor é dívida técnica marginal).

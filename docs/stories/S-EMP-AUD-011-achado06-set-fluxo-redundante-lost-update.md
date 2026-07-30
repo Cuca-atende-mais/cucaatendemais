@@ -1,6 +1,6 @@
 # S-EMP-AUD-011 — `_set_fluxo` redundante + risco de lost-update contra o loop de notificação (achado #6)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/011-achado06-set-fluxo-redundante-lost-update.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 011"
@@ -41,3 +41,4 @@ Ver "Test plan" do plano — teste de corrida real via `asyncio.gather()`.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 011, com a correção pra `asyncio.Lock` real (decisão do sócio) e o risco de compatibilidade com o Plano 009 já incorporados.
+- v0.2 (2026-07-29): @po validou — GO (9/10). Status Draft → Ready. Melhor story do lote em riscos: decisão de produto, risco de compatibilidade técnica com outra story e dependência de infra (gunicorn) todos documentados com evidência e decisão explícita. Não bloqueante: "Valor de negócio" não está em seção própria.

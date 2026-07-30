@@ -32,3 +32,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 013.
+- v0.2 (2026-07-29): @po validou — NO-GO (6/10). Permanece em Draft. Pendências: (1) restatar Escopo diretamente na story; (2) "Valor de negócio" ausente — adicionar (evita que uma empresa colando o CNPJ sem querer receba resposta como se tivesse pedido info de uma vaga aleatória). Ponto forte: explicação técnica da causa raiz já é específica e testável.

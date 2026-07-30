@@ -31,3 +31,4 @@ Teste já escrito e commitado — só rodar `cd worker && python -m pytest tests
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 004. Passo 0 (commit do teste) já resolvido nesta mesma rodada.
+- v0.2 (2026-07-29): @po validou — NO-GO (6/10). Permanece em Draft. Pendências: (1) "Escopo" só remete ao plano — restatar diretamente; (2) "Valor de negócio" ausente — adicionar (candidato que digita "entregar currículo" para de ficar com vagas escondidas por engano). Ponto forte: teste vermelho já commitado e nomeado, AC direto.

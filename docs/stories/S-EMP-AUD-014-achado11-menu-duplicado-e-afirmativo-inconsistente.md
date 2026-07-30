@@ -1,6 +1,6 @@
 # S-EMP-AUD-014 — Menu duplicado 10x (1 já divergiu) + 7 tuplas de afirmativo inconsistentes (achado #11)
 
-**Status:** Draft
+**Status:** Ready
 **Epic:** Auditoria Empregabilidade (2026-07-29)
 **Origem:** `docs/Auditoria Empregabilidade - Cuca Atende/plans/014-achado11-menu-duplicado-e-afirmativo-inconsistente.md`
 **Verificação cruzada:** `docs/qa/PROPOSTA-implementacao-auditoria-empregabilidade.md`, seção "Plano 014" — divergência de `:646` confirmada ao vivo
@@ -37,3 +37,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 014, com a decisão do sócio sobre `:646` já incorporada (não é mais pergunta em aberto).
+- v0.2 (2026-07-29): @po validou — GO (7/10). Status Draft → Ready. Ponto forte: divergência de produto resolvida e registrada com evidência (linha exata). Não bloqueante: "Escopo" e "Valor de negócio" não estão em seção própria.

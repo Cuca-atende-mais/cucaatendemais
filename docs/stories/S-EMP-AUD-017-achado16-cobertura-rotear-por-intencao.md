@@ -31,3 +31,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 017.
+- v0.2 (2026-07-29): @po validou — NO-GO (5/10). Permanece em Draft. Pendências: (1) "Escopo" só remete ao plano — nomear os 4 branches diretamente; (2) "Valor de negócio" ausente; (3) AC genérico ("Cobertura adicionada") — trocar por nomes de teste/cenário esperados.

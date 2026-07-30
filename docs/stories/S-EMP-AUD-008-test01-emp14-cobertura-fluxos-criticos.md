@@ -32,3 +32,4 @@ Ver "Test plan" do plano.
 ## Change Log
 
 - v0.1 (2026-07-29): Story criada por @sm River a partir do Plano 008.
+- v0.2 (2026-07-29): @po validou — NO-GO (5/10). Permanece em Draft. Pendências: (1) "Escopo" só remete ao plano — restatar quais são os 3 fluxos de maior risco diretamente aqui, não deixar implícito; (2) "Valor de negócio" ausente — adicionar (é pré-requisito de segurança do refactor grande do Plano 009); (3) AC genérico ("Cobertura adicionada", "Mocks passam a verificar payload") — trocar por lista dos cenários/nomes de teste esperados.
