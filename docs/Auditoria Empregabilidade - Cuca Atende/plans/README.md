@@ -39,14 +39,14 @@ em cada `Change Log` das stories.
 | 009   | ~48 chamadas Supabase síncronas travam o event loop (BUG-02/PERF-01) | P1 | L | **008** | **Implementado** (2026-07-30) — chamadas Supabase em handlers async movidas para closures executadas via `_supabase_to_thread`; checagem AST sem `supabase.table` direto em corpo async; suíte focal verde (`79 passed`). |
 | 010   | Links do portal sem assinatura nem expiração (achado #12) | P2 | M | — | **Implementado** (2026-07-30) — links HMAC com expiração no worker e validação server-side nas 4 páginas/APIs públicas do portal. |
 | 011   | `_set_fluxo` redundante + risco de lost-update contra o loop de notificação (achado #6) — trava vira `asyncio.Lock()` real (decisão do sócio) | P2 | M | recomendado após 009 | **Implementado** (2026-07-30) — lock async por `conversa_id`, integrado ao `to_thread`, com teste concorrente contra overwrite stale do notify loop. |
-| 012   | N+1 em 2 telas de listagem (achado #9) | P3 | S | — | Story validada (Ready) — `S-EMP-AUD-012` |
-| 013   | Regex de número de vaga pode capturar dígito de CNPJ (achado #10) | P3 | S | — | Story validada (Ready) — `S-EMP-AUD-013` |
-| 014   | Menu duplicado 10x (`:646` → "Cancelar uma vaga", decisão do sócio) + 7 tuplas de afirmativo inconsistentes (achado #11) | P3 | S/M | — | Story validada (Ready) — `S-EMP-AUD-014` |
-| 015   | Ordem persistir-antes-de-enviar — inverter pro Jeito A (decisão do sócio, 2026-07-29) (achado #13) | P3 | S | — | Story validada (Ready) — `S-EMP-AUD-015`. Deixou de ser plano sem fix prescrito. |
-| 016   | Loop de notificação: N+1 de lead + query externa sem `.limit()` (achado #15) | P3 | S/M | — | Story validada (Ready) — `S-EMP-AUD-016` |
-| 017   | Cobertura dos 4 branches principais de `_rotear_por_intencao` (achado #16, escopo reduzido) | P3 | S | — | Story validada (Ready) — `S-EMP-AUD-017` |
-| 018   | CNPJ sem mascaramento em log (achado #17) | P4 | S | — | Story validada (Ready) — `S-EMP-AUD-018` |
-| 019   | Parâmetro `token` de `_enviar()` nunca usado (cosmético) | P5 | S | — | Story validada (Ready) — `S-EMP-AUD-019` |
+| 012   | N+1 em 2 telas de listagem (achado #9) | P3 | S | — | **Implementado** (2026-07-30) — batching de contagens e títulos; regressões no worker. |
+| 013   | Regex de número de vaga pode capturar dígito de CNPJ (achado #10) | P3 | S | — | **Implementado** (2026-07-30) — regex de número isolado e teste com CNPJ formatado. |
+| 014   | Menu duplicado 10x (`:646` → "Cancelar uma vaga", decisão do sócio) + 7 tuplas de afirmativo inconsistentes (achado #11) | P3 | S/M | — | **Implementado** (2026-07-30) — `_MENU_ACOES_EMPRESA` e constantes afirmativas por contexto. |
+| 015   | Ordem persistir-antes-de-enviar — inverter pro Jeito A (decisão do sócio, 2026-07-29) (achado #13) | P3 | S | — | **Implementado** (2026-07-30) — estado só avança após envio bem-sucedido nos 2 pontos. |
+| 016   | Loop de notificação: N+1 de lead + query externa sem `.limit()` (achado #15) | P3 | S/M | — | **Implementado** (2026-07-30) — `.limit(200)`, batch de leads e tick testável. |
+| 017   | Cobertura dos 4 branches principais de `_rotear_por_intencao` (achado #16, escopo reduzido) | P3 | S | — | **Implementado** (2026-07-30) — testes para `empresa`, `candidato_vaga`, `banco_talentos` e `upload`. |
+| 018   | CNPJ sem mascaramento em log (achado #17) | P4 | S | — | **Implementado** (2026-07-30) — warning mascara CNPJ e teste via caplog. |
+| 019   | Parâmetro `token` de `_enviar()` nunca usado (cosmético) | P5 | S | — | **Implementado** (2026-07-30) — mantido por compatibilidade com justificativa documentada. |
 
 **Ordem recomendada de execução** (severidade + dependência real, não a ordem numérica pura):
 1. **001-003** — segurança/bug crítico, independentes entre si.

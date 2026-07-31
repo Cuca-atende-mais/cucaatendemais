@@ -1571,3 +1571,382 @@ class TestAutorizacaoEmpresaPorNumeroWhatsapp:
             "conv-1", "empregabilidade", "Barra", "PHONE_ID", "558599990000",
         )
         assert estado == {}, "reset do fluxo — nenhum empresa_id deve sobrar em estado gravado"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bloco 06 — Planos 012-019
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _ResultadoFake:
+    def __init__(self, data=None, count=None):
+        self.data = data or []
+        self.count = count
+
+
+class _TabelaFake:
+    def __init__(self, nome: str, banco: "_SupabaseFakeBloco6"):
+        self.nome = nome
+        self.banco = banco
+        self.select_cols = ""
+        self.filters = []
+        self.in_filters = []
+        self.limit_value = None
+
+    def select(self, cols, **kwargs):
+        self.select_cols = cols
+        self.select_kwargs = kwargs
+        return self
+
+    def eq(self, coluna, valor):
+        self.filters.append(("eq", coluna, valor))
+        return self
+
+    def ilike(self, coluna, valor):
+        self.filters.append(("ilike", coluna, valor))
+        return self
+
+    def in_(self, coluna, valores):
+        self.in_filters.append((coluna, list(valores)))
+        self.banco.in_calls.append((self.nome, coluna, list(valores)))
+        return self
+
+    def order(self, *args, **kwargs):
+        return self
+
+    def limit(self, valor):
+        self.limit_value = valor
+        self.banco.limit_calls.append((self.nome, valor))
+        return self
+
+    def single(self):
+        return self
+
+    def maybe_single(self):
+        return self
+
+    @property
+    def not_(self):
+        return self
+
+    def execute(self):
+        self.banco.execute_calls.append((self.nome, self.select_cols, list(self.filters), list(self.in_filters), self.limit_value))
+        return self.banco.resultado_para(self)
+
+
+class _SupabaseFakeBloco6:
+    def __init__(self):
+        self.in_calls = []
+        self.limit_calls = []
+        self.execute_calls = []
+        self.candidaturas_por_vaga = []
+        self.vagas_empresa = []
+        self.candidaturas_busca = []
+        self.vagas_titulos = []
+        self.vagas_publicas = []
+        self.unidades = []
+        self.conversas = []
+        self.leads = []
+
+    def table(self, nome):
+        return _TabelaFake(nome, self)
+
+    def resultado_para(self, tabela: _TabelaFake):
+        if tabela.nome == "vagas" and "tipo, cargos_lista" in tabela.select_cols:
+            return _ResultadoFake({"tipo": "vaga_normal"})
+        if tabela.nome == "vagas" and "id, titulo, status, total_vagas, numero_vaga" in tabela.select_cols:
+            return _ResultadoFake(self.vagas_empresa)
+        if tabela.nome == "vagas" and "id, unidade_destino" in tabela.select_cols:
+            vaga_id = next((valor for tipo, coluna, valor in tabela.filters if tipo == "eq" and coluna == "id"), None)
+            vaga = next((v for v in self.vagas_publicas if v["id"] == vaga_id), {})
+            return _ResultadoFake(vaga)
+        if tabela.nome == "vagas" and tabela.in_filters and "id, titulo" in tabela.select_cols:
+            ids = set(tabela.in_filters[0][1]) if tabela.in_filters else set()
+            return _ResultadoFake([v for v in self.vagas_titulos if v["id"] in ids])
+        if tabela.nome == "vagas":
+            return _ResultadoFake(self.vagas_publicas)
+        if tabela.nome == "candidaturas" and tabela.select_cols == "vaga_id":
+            ids = set(tabela.in_filters[0][1]) if tabela.in_filters else set()
+            return _ResultadoFake([c for c in self.candidaturas_por_vaga if c["vaga_id"] in ids])
+        if tabela.nome == "candidaturas":
+            return _ResultadoFake(self.candidaturas_busca)
+        if tabela.nome == "unidades_cuca":
+            return _ResultadoFake(self.unidades)
+        if tabela.nome == "conversas":
+            return _ResultadoFake(self.conversas)
+        if tabela.nome == "leads":
+            ids = set(tabela.in_filters[0][1]) if tabela.in_filters else set()
+            return _ResultadoFake([lead for lead in self.leads if lead["id"] in ids])
+        return _ResultadoFake([])
+
+
+_SupabaseFakeBloco6.__module__ = "unittest.mock"
+
+
+class TestBloco6PerformanceEParsers:
+
+    @pytest.mark.asyncio
+    async def test_listagem_empresa_agrega_contagens_sem_n_mais_1(self, monkeypatch, _isola_enviar):
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_empresa = [
+            {"id": "vaga-1", "titulo": "Atendente", "status": "aberta", "numero_vaga": 1},
+            {"id": "vaga-2", "titulo": "Auxiliar", "status": "aberta", "numero_vaga": 2},
+        ]
+        fake.candidaturas_por_vaga = [
+            {"vaga_id": "vaga-1"},
+            {"vaga_id": "vaga-1"},
+            {"vaga_id": "vaga-2"},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_consulta_empresa(
+            "todas", "558599990000", "PHONE_ID", "token",
+            {"empresa_id": "emp-1"}, "conv-1",
+        )
+
+        assert ("candidaturas", "vaga_id", ["vaga-1", "vaga-2"]) in fake.in_calls
+        assert [call for call in fake.execute_calls if call[0] == "candidaturas" and call[1] == "vaga_id"]
+        texto = _isola_enviar.call_args.args[3]
+        assert "Atendente" in texto and "(2 candidatos)" in texto
+        assert "Auxiliar" in texto and "(1 candidatos)" in texto
+
+    @pytest.mark.asyncio
+    async def test_busca_candidatura_nome_busca_titulos_em_lote(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_escape_semantico_ou_none", AsyncMock(return_value=False))
+
+        def _normalizar_fake(valor):
+            digitos = "".join(ch for ch in (valor or "") if ch.isdigit())
+            if digitos.startswith("55") and len(digitos) > 11:
+                return digitos[2:]
+            return digitos
+
+        monkeypatch.setattr(emp, "_telefone_normalizado_para_comparacao", _normalizar_fake)
+
+        fake = _SupabaseFakeBloco6()
+        fake.candidaturas_busca = [
+            {"id": "cand-1", "status": "pendente", "vaga_id": "vaga-1", "created_at": "2026-01-01", "observacoes": "", "nome": "Maria Silva", "telefone": "8599990000"},
+            {"id": "cand-2", "status": "pendente", "vaga_id": "vaga-2", "created_at": "2026-01-02", "observacoes": "", "nome": "Maria Silva", "telefone": "8599990000"},
+        ]
+        fake.vagas_titulos = [
+            {"id": "vaga-1", "titulo": "Recepção"},
+            {"id": "vaga-2", "titulo": "Cozinha"},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_candidato(
+            "Maria Silva", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        chamada_vagas = next(call for call in fake.in_calls if call[0] == "vagas" and call[1] == "id")
+        assert set(chamada_vagas[2]) == {"vaga-1", "vaga-2"}
+        texto = "\n".join(c.args[3] for c in _isola_enviar.call_args_list)
+        assert "Recepção" in texto
+        assert "Cozinha" in texto
+        assert estado.get("etapa") == "candidato_consultado"
+
+    @pytest.mark.asyncio
+    async def test_numero_vaga_ignora_partes_de_cnpj_e_usa_numero_isolado(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("selecionando_vaga_edicao", {
+            "perfil": "empresa",
+            "empresa_id": "emp-1",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.not_.in_.return_value.execute.return_value.data = [
+            {"id": "vaga-12", "titulo": "Errada", "status": "aberta", "numero_vaga": 12},
+            {"id": "vaga-2", "titulo": "Certa", "status": "aberta", "numero_vaga": 2},
+        ]
+        monkeypatch.setattr(emp, "supabase", _mock_sb_multi_tabela({"vagas": mock_vagas}))
+
+        await emp._processar_empresa(
+            "meu cnpj é 12.345.678/0001-99, quero editar a vaga 2",
+            "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("vaga_edicao_id") == "vaga-2"
+        assert "Certa" in _isola_enviar.call_args.args[3]
+
+
+class TestBloco6OrdemEnvioEstado:
+
+    @pytest.mark.asyncio
+    async def test_vaga_normal_nao_avanca_estado_quando_envio_nome_falha(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("listou_vagas", {
+            "perfil": "publico",
+            "mapa_vagas": {"1": "vaga-1"},
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_enviar", AsyncMock(return_value=False))
+
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {"id": "vaga-1", "titulo": "Atendente", "setor": ["Geral"], "unidade_destino": "Barra"},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico(
+            "1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado["etapa"] == "listou_vagas"
+        assert "vaga_id_selecionada" not in estado
+
+    @pytest.mark.asyncio
+    async def test_vaga_global_nao_avanca_estado_quando_envio_unidades_falha(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("listou_vagas", {
+            "perfil": "publico",
+            "mapa_vagas": {"1": "vaga-1"},
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_enviar", AsyncMock(return_value=False))
+
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {"id": "vaga-1", "titulo": "Atendente", "setor": ["Geral"], "unidade_destino": "global"},
+        ]
+        fake.unidades = [{"id": "u1", "nome": "Barra"}, {"id": "u2", "nome": "Mondubim"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico(
+            "1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado["etapa"] == "listou_vagas"
+        assert "unidades_opcoes" not in estado
+
+
+class TestBloco6RotearPorIntencao:
+
+    @pytest.mark.asyncio
+    async def test_rota_empresa_pede_cnpj_e_define_fluxo(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "empresa", "nome": "Ana"},
+            "sou empresa", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado == {"perfil": "empresa", "etapa": "aguardando_cnpj"}
+        assert "CNPJ" in _isola_enviar.call_args.args[3]
+
+    @pytest.mark.asyncio
+    async def test_rota_candidato_vaga_lista_vagas(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [{"id": "vaga-1", "titulo": "Atendente", "descricao": "Atendimento"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "candidato_vaga", "nome": "Ana"},
+            "quero vaga", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+            lambda _texto: (None, None),
+        )
+
+        assert estado["perfil"] == "publico"
+        assert estado["etapa"] == "listou_vagas"
+        assert estado["mapa_vagas"] == {"1": "vaga-1"}
+        assert "Atendente" in _isola_enviar.call_args.args[3]
+
+    @pytest.mark.asyncio
+    async def test_rota_banco_talentos_pergunta_contexto(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "banco_talentos"},
+            "quero deixar curriculo", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado == {"perfil": "publico", "etapa": "inicio"}
+        assert "Banco de Talentos" in _isola_enviar.call_args.args[3]
+
+    @pytest.mark.asyncio
+    async def test_rota_upload_pergunta_contexto_e_marca_arquivo_pendente(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "upload"},
+            "segue curriculo", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado == {"perfil": "publico", "etapa": "inicio", "arquivo_pendente": True}
+        assert "subir seu currículo" in _isola_enviar.call_args.args[3]
+
+
+class TestBloco6NotifyLoop:
+
+    @pytest.mark.asyncio
+    async def test_notify_tick_usa_limit_e_busca_telefones_em_lote(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        fake.conversas = [
+            {
+                "id": "conv-1",
+                "origem_id": "PHONE_ID",
+                "lead_id": "lead-1",
+                "metadata": {"empreg_fluxo": {
+                    "etapa": "aguardando_retorno_vaga",
+                    "empresa_id": "emp-1",
+                    "vaga_criada_id": "00000000-0000-0000-0000-000000000123",
+                    "vaga_numero": 7,
+                    "vaga_titulo": "Atendente",
+                }},
+            },
+            {
+                "id": "conv-2",
+                "origem_id": "PHONE_ID",
+                "lead_id": "lead-2",
+                "metadata": {"empreg_fluxo": {"etapa": "inicio"}},
+            },
+        ]
+        fake.leads = [
+            {"id": "lead-1", "telefone": "558599990000"},
+            {"id": "lead-2", "telefone": "558588880000"},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._empregabilidade_notify_tick()
+
+        assert ("conversas", 200) in fake.limit_calls
+        assert ("leads", "id", ["lead-1"]) in fake.in_calls
+        assert mock_enviar.await_count == 1
+
+
+def test_consultar_cnpj_mascara_cnpj_em_warning(monkeypatch, caplog):
+    class _ClientFake:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            raise RuntimeError("boom")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    httpx_fake = types.SimpleNamespace(AsyncClient=_ClientFake)
+    monkeypatch.setitem(sys.modules, "httpx", httpx_fake)
+
+    caplog.set_level("WARNING", logger="empregabilidade_engine")
+    asyncio.run(emp._consultar_cnpj("12.345.678/0001-99"))
+
+    texto_logs = "\n".join(record.getMessage() for record in caplog.records)
+    assert "123456********" in texto_logs
+    assert "12345678000199" not in texto_logs
