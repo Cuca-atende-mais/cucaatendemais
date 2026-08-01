@@ -23,6 +23,7 @@ import {
   gerarEmbedding,
   handler,
   deveReconhecerDisparoRecente,
+  deveAcionarHandoverInstitucional,
 } from "./index.ts";
 
 // ── Mock mínimo e encadeável do client Supabase, usado pelos testes AUD-04 abaixo ───────────
@@ -1019,7 +1020,7 @@ Deno.test("Item 2 / AC5: split acontece DEPOIS da tag [[HANDOVER]] — a tag cru
   const respostaComHandoverEList = "Vou te passar pra um atendente, mas antes segue a programação:\n\n" + LISTA_5_CURSOS_HANDLER + "\n\nJá te encaminho. [[HANDOVER]]";
 
   await comFetchMockado(async () => {
-    const resp = await handler(requestFake("quero falar com atendente"), supabaseMock);
+    const resp = await handler(requestFake("preciso resolver uma situação com a equipe"), supabaseMock);
     const body = await resp.json();
     assertEquals(body.handover, true, "handover continua sendo detectado normalmente");
     assertEquals(body.mensagens.length, 3, "a tag removida ainda deixa uma resposta listável de 3 partes");
@@ -1040,7 +1041,7 @@ Deno.test("S-WM-64 / Institucional: erro ao marcar awaiting_human é logado em v
 
   const { resultado, linhas } = await comConsoleLogCapturado(() =>
     comFetchMockado(async () => {
-      const resp = await handler(requestFake("quero falar com atendente"), supabaseMock);
+      const resp = await handler(requestFake("preciso resolver uma situação com a equipe"), supabaseMock);
       const body = await resp.json();
       assertEquals(resp.status, 200, "a story não muda o fluxo de resposta do Institucional");
       assertEquals(body.handover, true);
@@ -1063,6 +1064,40 @@ Deno.test("S-WM-64 / Institucional: erro ao marcar awaiting_human é logado em v
     true,
     "erro retornado pelo supabase-js não pode ser descartado silenciosamente",
   );
+});
+
+Deno.test("S-WM-65 Task 3: Institucional aciona handover determinístico para pedido explícito de humano", async () => {
+  for (const mensagem of ["quero falar com atendente", "quero falar com humano"]) {
+    const chamadas: ChamadaRegistrada[] = [];
+    const supabaseMock = criarSupabaseMock(respostasBaseHandler({ conversa_engajada: true }), chamadas);
+
+    const resp = await handler(requestFake(mensagem), supabaseMock);
+    const body = await resp.json();
+
+    assertEquals(resp.status, 200);
+    assertEquals(body.handover, true, "pedido explícito de humano precisa chegar ao worker como handover=true");
+    assertEquals(body.mensagens, ["Vou te encaminhar para um atendente humano, só um momento!"]);
+    assertEquals(
+      chamadas.some((c) =>
+        c.tabela === "conversas" &&
+        c.metodo === "update" &&
+        (c.payload as { status?: string } | undefined)?.status === "awaiting_human"
+      ),
+      true,
+      "motor precisa marcar awaiting_human antes do worker notificar o transbordo",
+    );
+    assertEquals(
+      chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares"),
+      false,
+      "pedido explícito de humano não deve depender de RAG/GPT para transbordar",
+    );
+  }
+});
+
+Deno.test("S-WM-65 Task 3: negação junto de atendente/humano não força handover Institucional", () => {
+  assertEquals(deveAcionarHandoverInstitucional("não quero falar com atendente, quero consultar outra coisa", "Institucional"), false);
+  assertEquals(deveAcionarHandoverInstitucional("não pode chamar humano ainda", "maria"), false);
+  assertEquals(deveAcionarHandoverInstitucional("quero falar com atendente", "sofia"), false);
 });
 
 // ── VAL-02: guardrail anti-alucinação — reforço com exemplo negativo explícito ──────────────
