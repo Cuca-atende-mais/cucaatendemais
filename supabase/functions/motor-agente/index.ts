@@ -115,6 +115,40 @@ export function extrairTagComArgumento(
   };
 }
 
+function normalizarTextoIntencao(texto: string): string {
+  return texto
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const PADROES_HANDOVER_INSTITUCIONAL = [
+  /\bfalar com (um |uma |o |a )?(atendente|humano|pessoa)\b/,
+  /\bquero (um |uma |o |a )?(atendente|humano)\b/,
+  /\bpreciso de (um |uma |o |a )?(atendente|humano|pessoa)\b/,
+  /\bchamar (um |uma |o |a )?(atendente|humano)\b/,
+  /\batendimento humano\b/,
+  /\bpessoa real\b/,
+  /\bme passa(r)? (para|pra|pro) (um |uma |o |a )?(atendente|humano|pessoa)\b/,
+  /\btransfer(ir|e)? (para|pra|pro) (um |uma |o |a )?(atendente|humano|pessoa)\b/,
+];
+
+const PADROES_NEGACAO_HANDOVER_INSTITUCIONAL = [
+  /\bnao (quero|preciso|pode|deve)\b.{0,40}\b(atendente|humano|pessoa|atendimento humano)\b/,
+  /\bsem (atendente|humano|atendimento humano)\b/,
+  /\bnao me passa(r)? (para|pra|pro)\b.{0,30}\b(atendente|humano|pessoa)\b/,
+];
+
+export function deveAcionarHandoverInstitucional(texto: string, agenteTipo: string): boolean {
+  if (agenteTipo !== "Institucional" && agenteTipo !== "maria") return false;
+  const normalizado = normalizarTextoIntencao(texto);
+  if (!normalizado) return false;
+  if (PADROES_NEGACAO_HANDOVER_INSTITUCIONAL.some((padrao) => padrao.test(normalizado))) return false;
+  return PADROES_HANDOVER_INSTITUCIONAL.some((padrao) => padrao.test(normalizado));
+}
+
 /**
  * Backlog 4a: canais da Rede CUCA fora do escopo do RAG do Institucional, pra onde a Maria
  * pode encaminhar o lead via [[ENCAMINHAR:canal]]. Lista fechada de propósito — é o que
@@ -1244,6 +1278,16 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     ]);
     const historico = (hist || []).reverse().map((m: { conteudo: string; remetente: string }) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
     if (!prompt) throw new Error("Prompt nao encontrado para: " + agente_tipo);
+
+    if (deveAcionarHandoverInstitucional(textoFinal, agente_tipo)) {
+      const resposta = "Vou te encaminhar para um atendente humano, só um momento!";
+      await salvarMensagemAgente(supabase, conversa.id, lead.id, resposta);
+      const { error: handoverError } = await supabase.from("conversas").update({ status: "awaiting_human", updated_at: new Date().toISOString() }).eq("id", conversa.id);
+      if (handoverError) {
+        console.error("[motor-agente v18] Falha ao marcar conversa como awaiting_human conversa_id=" + conversa.id + " agente_tipo=" + agente_tipo + " erro=" + handoverError.message);
+      }
+      return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover: true, encerrado: false, resposta, mensagens: [resposta] }), { headers: { "Content-Type": "application/json" } });
+    }
 
     const isSofia = agente_tipo === "sofia" || agente_tipo === "sofia_global" || agente_tipo === "sofia_unidade";
     if (conversaJustCreated && isSofia && prompt.menu_boas_vindas) {
