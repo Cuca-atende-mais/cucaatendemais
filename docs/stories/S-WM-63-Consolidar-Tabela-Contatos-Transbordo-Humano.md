@@ -1,7 +1,7 @@
 # S-WM-63 — Consolidar contatos de transbordo em `transbordo_humano`, remover UAZAPI legado das telas
 
 ## Status
-Ready for Review — @dev corrigiu os 2 achados do QA Gate FAIL (ver Dev Agent Record). Aguardando novo gate do @qa. Task 10 (teste real + manual com sessão autenticada) segue pendente do Junior, como já registrado.
+InReview — QA Gate (re-gate): **CONCERNS**. Os 2 achados do FAIL anterior foram corrigidos e verificados de forma independente. Único item aberto: Task 10 (teste real + manual com sessão autenticada), agora cobrindo 3 telas (a 4ª foi corrigida nesta rodada, não só as 2 originais) — não-bloqueante, a cargo do Junior. Ver QA Results.
 
 ## Origem
 Diagnóstico de transbordo (Empregabilidade + Institucional), sessão de 2026-07-31/08-01. **Reescrita completa** após validação de @po com Junior — a primeira versão desta story recomendava o caminho oposto (`human_handover_contacts`), revertida depois de o Junior mostrar a tela real em uso (`/configuracoes/whatsapp`, print anexado à conversa) e confirmar 3 decisões: (1) seguir com extração de componente compartilhado; (2) remover também a aba de transbordo embutida em Ouvidoria/Acesso CUCA; (3) OK no remapeamento de `modulo` para os valores capitalizados já usados por essa tela.
@@ -78,7 +78,7 @@ Confirmado ao vivo (print da tela real, `/configuracoes/whatsapp`, "WhatsApp —
 4. **Given** `canal-whatsapp-tab.tsx`, **when** inspecionado, **then** a seção de transbordo foi removida, e o resto do componente (gestão de instância/QR de Ouvidoria/Acesso) continua funcionando sem regressão.
 5. **Given** um gerente de Ouvidoria ou Acesso CUCA, **when** precisa cadastrar/editar transbordo do próprio canal após a remoção da Task 10, **then** consegue fazer isso via `/configuracoes/whatsapp` ou `/developer/instancias` sem erro de permissão — confirmado, não presumido.
 6. **Given** um teste real de transbordo em cada canal, **when** executado, **then** a notificação chega no telefone cadastrado.
-7. CRUD (criar/editar/excluir) de contato de transbordo funciona sem erro nas 2 telas remanescentes.
+7. CRUD (criar/editar/excluir) de contato de transbordo funciona sem erro nas 3 telas de transbordo: `/configuracoes/whatsapp`, `/developer/instancias` e `/configuracoes/transbordo`.
 8. Suíte de testes do worker sem regressão (incluindo os testes adaptados de `_notificar_transbordo`).
 
 ## Tasks / Subtasks
@@ -92,7 +92,7 @@ Confirmado ao vivo (print da tela real, `/configuracoes/whatsapp`, "WhatsApp —
 - [x] **Task 7 — Frontend: limpar `/developer/instancias`** (AC: 3)
 - [x] **Task 8 — Frontend: limpar `canal-whatsapp-tab.tsx`** (AC: 4)
 - [x] **Task 9 — Verificar acesso de Ouvidoria/Acesso pós-remoção da aba embutida** (AC: 5)
-- [ ] **Task 10 — Testes reais e fechamento** (AC: 6, 7) — verificação estática feita (TS limpo, dev server compila, código revisado linha a linha contra a story); teste real de mensagem chegando no telefone e teste manual de clique (criar/editar/excluir) nas 2 telas ficam pendentes de execução pelo Junior (sem sessão autenticada disponível para o agente, e criar conta de teste é ação proibida)
+- [ ] **Task 10 — Testes reais e fechamento** (AC: 6, 7) — verificação estática feita (TS limpo, dev server compila, código revisado linha a linha contra a story); teste real de mensagem chegando no telefone e teste manual de clique (criar/editar/excluir) nas 3 telas (`/configuracoes/whatsapp`, `/developer/instancias`, `/configuracoes/transbordo`) ficam pendentes de execução pelo Junior (sem sessão autenticada disponível para o agente, e criar conta de teste é ação proibida)
 
 ## Dev Notes
 
@@ -105,7 +105,7 @@ Confirmado ao vivo (print da tela real, `/configuracoes/whatsapp`, "WhatsApp —
 - Esta story só é testável de ponta a ponta depois da **S-WM-61** (trigger corrigido).
 
 ### Testing
-`cd worker && python -m pytest tests/test_meta_adapter_inbound.py -v`. Frontend: teste manual (sem suíte automatizada de UI no projeto) — criar/editar/excluir contato nas 2 telas, confirmar sem erro no console.
+`cd worker && python -m pytest tests/test_meta_adapter_inbound.py -v`. Frontend: teste manual (sem suíte automatizada de UI no projeto) — criar/editar/excluir contato nas 3 telas (`/configuracoes/whatsapp`, `/developer/instancias`, `/configuracoes/transbordo`), confirmar sem erro no console.
 
 ## Dependências
 **Depende da S-WM-61** para validação real de ponta a ponta (Task 10).
@@ -120,6 +120,7 @@ Branch: `feat/consolidar-transbordo-humano`. Commits separados por Task (backend
 | 2026-08-01 | 0.1 | Versão inicial, recomendava `human_handover_contacts` como canônica. | @sm River |
 | 2026-08-01 | 0.2 | **Reescrita completa** após @po validar com Junior (print real de `/configuracoes/whatsapp` anexado à conversa): decisão invertida, `transbordo_humano` é a canônica. Escopo ampliado para remoção de UI legada de instâncias UAZAPI nas 2 telas + na aba embutida de Ouvidoria/Acesso, com extração de componente compartilhado (confirmado com Junior). Complexidade subiu de M para L. | @po Pax |
 | 2026-08-01 | 0.3 | **Validado por @po — GO.** 10/10 no checklist após a reescrita: as 3 perguntas em aberto da v0.1 foram resolvidas diretamente com Junior (tabela canônica confirmada por evidência real de tela, extração de componente aprovada, remoção da 3ª tela confirmada). Escopo IN/OUT bem delimitado por camada (backend/banco/frontend), AC 5 e Task 9 cobrem explicitamente o risco de regressão de acesso pra gerentes de Ouvidoria/Acesso (não presumido, a verificar). Dependência com S-WM-61 explicitada. Status Draft → Ready. | @po Pax |
+| 2026-08-01 | 0.7 | **@qa Quinn — Re-gate: CONCERNS.** Suíte reproduzida do zero (218 passed, 4 pré-existentes). Grep próprio de escopo total confirma zero consumidores funcionais restantes de `human_handover_contacts` (achado lateral investigado e descartado: pasta `cuca-portal/supabase/migrations/` é histórico git-tracked pré-consolidação, não pipeline paralelo ativo). Fix do `MODULO_AUTOMACAO_MAP` confirmado aditivo, sem regressão em Ouvidoria/Empregabilidade. Item aberto não-bloqueante: Task 10 agora cobre 3 telas (a 4ª entrou nesta correção). Status Ready for Review → InReview (CONCERNS). | @qa Quinn |
 | 2026-08-01 | 0.6 | **@dev corrigiu os 2 achados do FAIL.** Retargetada a 4ª tela órfã (`/configuracoes/transbordo`) para `transbordo_humano` via `TransbordoSection`, mesmo padrão das outras 3; tipo morto `HumanHandoverContact` removido. Adicionada chave `"Acesso": "Acesso CUCA"` em `MODULO_AUTOMACAO_MAP` + teste cobrindo o caminho. Grep de escopo total confirma zero referências funcionais restantes a `human_handover_contacts`. Suíte: 218 passed, mesmas 4 falhas pré-existentes. Status InReview (FAIL) → Ready for Review. | @dev Dex |
 | 2026-08-01 | 0.5 | **@qa Quinn — QA Gate: FAIL.** Suíte reproduzida de forma independente (217 passed, 4 pré-existentes confirmados). Achado bloqueante: 4ª tela não mapeada (`/configuracoes/transbordo`, linkada no menu real com a mesma permissão de `/configuracoes/whatsapp`) continua lendo `human_handover_contacts`, removida por esta story — regressão confirmada, não presumida. Achado não-bloqueante: `MODULO_AUTOMACAO_MAP` sem chave `"Acesso"` (só `"ana"`/`"acesso_cuca"` → `"Acesso CUCA"`), dormant hoje mas vai falhar quando o template real for cadastrado. Volta para @dev. Status Ready for Review → InReview (FAIL). | @qa Quinn |
 | 2026-08-01 | 0.4 | **@dev implementou Tasks 1-9.** Backend retargetado (tabela/colunas/modulo capitalizado), migration de DROP aplicada + types regenerados, componente compartilhado extraído e usado nas 3 telas, acesso de Ouvidoria/Acesso confirmado via RLS/roles (sem regressão — só Developer/Super Admin gerenciavam esses módulos). Suíte de testes: 217 passed, 4 pré-existentes (não relacionados). Task 10 parcialmente pendente: verificação estática completa, mas teste real de mensagem + teste manual de clique dependem de sessão autenticada real (Junior optou por fazer ele mesmo, sem o agente criar conta/inserir credencial). Status Ready → Ready for Review. | @dev Dex |
@@ -203,7 +204,7 @@ verdict: FAIL
 
 ### Task 10 (registrado, não-bloqueante para este veredito)
 
-Teste real de transbordo (mensagem chegando no telefone) e teste manual de clique (CRUD nas 2 telas remanescentes) seguem pendentes, a cargo do Junior — mesmo padrão do S-WM-61/S-WM-62. Não influenciou o veredito FAIL (que já é definido pelo achado bloqueante acima), mas continua pendente independentemente da correção do achado #1.
+Teste real de transbordo (mensagem chegando no telefone) e teste manual de clique (CRUD nas 3 telas de transbordo) seguem pendentes, a cargo do Junior — mesmo padrão do S-WM-61/S-WM-62. Não influenciou o veredito FAIL (que já é definido pelo achado bloqueante acima), mas continua pendente independentemente da correção do achado #1.
 
 ### Branch
 
@@ -212,3 +213,32 @@ Confirmando a sinalização pedida: a branch `fix/trigger-alerta-handover-origem
 ### Recomendação
 
 **Não acionar @devops.** Veredito **FAIL** — volta para @dev com os 2 achados acima (1 bloqueante, 1 não-bloqueante) antes de nova rodada de QA.
+
+---
+
+## QA Results — Re-gate (2026-08-01)
+
+```yaml
+storyId: S-WM-63
+verdict: CONCERNS
+```
+
+### Verificação independente (própria, não reaproveitando a rodada anterior)
+
+1. **Suíte reproduzida do zero:** `cd worker && python -m pytest -q` → **218 passed** (217 + o teste novo do @dev), **4 failed** — mesmas falhas pré-existentes já confirmadas na rodada anterior (arquivo não tocado, `ModuleNotFoundError`/assertion não relacionada a transbordo).
+2. **Grep próprio, escopo total do repo** (`grep -rn "human_handover_contacts" .`, sem filtro de extensão, incluindo `.sql`, `.md`, scripts): zero referências funcionais restantes. O que aparece:
+   - `schema_producao.sql` — dump estático de schema, não é código executado.
+   - `cuca-portal/src/app/(dashboard)/configuracoes/transbordo/page.tsx:16` — só o comentário do próprio fix, documentando a mudança (não é código funcional).
+   - `docs/**/*.md` — documentação histórica de stories já concluídas (SQS-45, SQS-48, S-WM-09, S-AE-06, EPIC-Academia-Enem, etc.) — registro do passado, não código vivo.
+   - **Achado lateral, investigado e descartado como não-bloqueante:** existe uma pasta `cuca-portal/supabase/migrations/` (distinta de `supabase/migrations/`, a canônica) com migrations antigas que criaram/alteraram `human_handover_contacts` (`20260302161839_add_human_handover_contacts.sql` e outras). Confirmado via `git ls-files` que é uma pasta **git-tracked histórica** (não órfã oculta), sem `config.toml` próprio (logo, não é um projeto Supabase linkado ativo/paralelo), e nenhuma dessas versions aparece em `list_migrations` do projeto live — ou seja, é o histórico de migrations de **antes** da consolidação para a pasta raiz `supabase/migrations/`, não um segundo pipeline de deploy ativo. Não representa um consumidor novo da tabela.
+3. **4ª tela (`/configuracoes/transbordo`):** revisão de código completa — usa `TransbordoSection` com o mesmo padrão de escopo por perfil (`unidade_cuca`/`isSuperAdmin`) copiado byte-a-byte de `/configuracoes/whatsapp/page.tsx`, já validado na rodada anterior. Estruturalmente correta. **Limitação que se mantém, já aceita pelo Junior antes:** não há sessão autenticada disponível para o agente testar clique real (mesma limitação de sempre — criar conta é ação proibida). Verificação estática apenas.
+4. **Fix do `MODULO_AUTOMACAO_MAP`:** confirmado que a mudança é **puramente aditiva** (só a chave `"Acesso"` foi acrescentada, nenhuma chave existente foi alterada) — `git diff` mostra 1 linha adicionada. Rodei os 5 testes relacionados a transbordo (`TestNotificarTransbordo` completo + o teste de transbordo em `test_empregabilidade_engine.py`) isoladamente: **5 passed**. Confirmado por leitura direta do dict que `"Empregabilidade"`/`"Ouvidoria"` continuam caindo no mesmo fallback `.get(modulo, modulo)` de antes (nenhuma chave nova colide com eles) — não regride o comportamento coincidente que já funcionava.
+5. **Consumidor novo da tabela removida:** não encontrado. O grep de escopo total (item 2) já cobre isso — os únicos hits fora de docs/histórico são o comentário do próprio fix e o dump de schema estático.
+
+### Item aberto (não-bloqueante)
+
+Task 10 (teste real de mensagem + teste manual de clique) segue pendente — mas agora precisa cobrir **3 telas**, não 2 (a 4ª, `/configuracoes/transbordo`, entrou no escopo nesta rodada de correção). Recomendo atualizar a lista de teste manual do Junior para incluir essa tela também.
+
+### Recomendação
+
+**Não acionar @devops ainda.** Veredito **CONCERNS** — os 2 achados do FAIL estão corrigidos e verificados de forma independente; nada bloqueante restante. Fica a critério do Junior decidir se segue para @devops já ou espera o teste manual/real das 3 telas primeiro.
