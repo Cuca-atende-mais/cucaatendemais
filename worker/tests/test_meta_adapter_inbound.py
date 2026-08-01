@@ -1292,6 +1292,93 @@ class TestNotificarTransbordo:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Bloqueio permanente por telefone (2026-08-01, caso WEBLOCACAO/MKL IT SOLUTIONS)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestBloqueioPermanente:
+    @staticmethod
+    def _make_stub(agente_tipo="Empregabilidade", canal_tipo="Institucional"):
+        return {
+            "canal_origem": "TEST_PHONE_ID",
+            "agente_tipo": agente_tipo,
+            "canal_tipo": canal_tipo,
+            "unidade_cuca": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_numero_com_bloqueio_permanente_descarta_sem_criar_lead(self):
+        """Numero em numeros_bloqueados_permanente -> descarte silencioso, nenhum
+        upsert em leads, nenhum dispatch. Guard roda ANTES do upsert (por isso
+        sobrevive a exclusao futura da linha de leads, diferente de
+        leads.bloqueado)."""
+        from unittest.mock import MagicMock, patch, AsyncMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        payload = _payload_texto(phone_number_id="TEST_PHONE_ID", telefone="5511959803879", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        bloqueio_mock = MagicMock()
+        bloqueio_mock.select.return_value.eq.return_value.limit.return_value \
+            .execute.return_value.data = [{"telefone": "5511959803879"}]
+        leads_mock = MagicMock()
+
+        def _table_side_effect(name):
+            return bloqueio_mock if name == "numeros_bloqueados_permanente" else leads_mock
+        mock_supabase = MagicMock()
+        mock_supabase.table.side_effect = _table_side_effect
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=self._make_stub()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock) as mock_motor, \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        leads_mock.upsert.assert_not_called()
+        mock_motor.assert_not_called()
+        mock_enviar.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_numero_sem_bloqueio_permanente_segue_fluxo_normal(self):
+        """Numero ausente de numeros_bloqueados_permanente -> upsert de leads
+        continua acontecendo normalmente (guard nao bloqueia numeros comuns)."""
+        from unittest.mock import MagicMock, patch, AsyncMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        payload = _payload_texto(phone_number_id="TEST_PHONE_ID", telefone="558599999999", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        bloqueio_mock = MagicMock()
+        bloqueio_mock.select.return_value.eq.return_value.limit.return_value \
+            .execute.return_value.data = []
+        leads_mock = MagicMock()
+        leads_mock.upsert.return_value.execute.return_value.data = [{"id": "l1"}]
+        leads_mock.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"bloqueado": False}
+        leads_mock.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "c1", "status": "ativa"}
+        ]
+        # dedupe por wamid consulta "mensagens" com select().eq().limit() -- mesmo mock
+        # generico (leads_mock cobre qualquer tabela != numeros_bloqueados_permanente).
+        leads_mock.select.return_value.eq.return_value.limit.return_value \
+            .execute.return_value.data = []
+        leads_mock.insert.return_value.execute.return_value = MagicMock()
+
+        def _table_side_effect(name):
+            return bloqueio_mock if name == "numeros_bloqueados_permanente" else leads_mock
+        mock_supabase = MagicMock()
+        mock_supabase.table.side_effect = _table_side_effect
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=self._make_stub()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock) as mock_motor, \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock):
+            await processar_webhook_meta(raw)
+
+        assert leads_mock.upsert.called, "esperava leads.upsert ser chamado para numero sem bloqueio"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # S-WM-20 Task 1: dedupe de mensagens inbound por wamid
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1430,10 +1517,14 @@ class TestDebounceDispatch:
         mock_mensagens.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
         mock_mensagens.insert.return_value.execute.return_value = MagicMock()
 
+        mock_bloqueio_perm = MagicMock()
+        mock_bloqueio_perm.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
         def _por_tabela(nome: str):
-            return {"leads": mock_leads, "conversas": mock_conversas, "mensagens": mock_mensagens}.get(
-                nome, MagicMock()
-            )
+            return {
+                "leads": mock_leads, "conversas": mock_conversas, "mensagens": mock_mensagens,
+                "numeros_bloqueados_permanente": mock_bloqueio_perm,
+            }.get(nome, MagicMock())
 
         mock_sb = MagicMock()
         mock_sb.table.side_effect = _por_tabela

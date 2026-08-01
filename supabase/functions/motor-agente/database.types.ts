@@ -2404,6 +2404,27 @@ export type Database = {
         }
         Relationships: []
       }
+      numeros_bloqueados_permanente: {
+        Row: {
+          bloqueado_por: string | null
+          criado_em: string
+          motivo: string | null
+          telefone: string
+        }
+        Insert: {
+          bloqueado_por?: string | null
+          criado_em?: string
+          motivo?: string | null
+          telefone: string
+        }
+        Update: {
+          bloqueado_por?: string | null
+          criado_em?: string
+          motivo?: string | null
+          telefone?: string
+        }
+        Relationships: []
+      }
       ouvidoria_eventos: {
         Row: {
           categorias_alvo: Json | null
