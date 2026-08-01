@@ -305,10 +305,10 @@ export default function AeChatWindow({ conversationId }: { conversationId: strin
                                     </Avatar>
                                     <div className={cn(
                                         "px-4 py-2.5 rounded-2xl text-[13px] shadow-sm relative transition-all",
-                                        isLead ? "bg-muted border border-border/50 rounded-bl-none text-foreground" : "bg-primary text-primary-foreground rounded-br-none",
+                                        isLead ? "bg-muted border border-border/50 rounded-bl-none text-foreground" : "bg-[#f2eee6] border border-stone-300/70 text-slate-950 rounded-br-none",
                                     )}>
                                         <p className="leading-relaxed whitespace-pre-wrap">{msg.conteudo}</p>
-                                        <div className={cn("text-[9px] mt-1.5 flex items-center gap-1 opacity-60", isLead ? "text-muted-foreground" : "text-primary-foreground")}>
+                                        <div className={cn("text-[9px] mt-1.5 flex items-center gap-1 opacity-60", isLead ? "text-muted-foreground" : "text-slate-700")}>
                                             {format(new Date(msg.created_at), "HH:mm")}
                                             {!isLead && <ShieldCheck className="h-2 w-2" />}
                                         </div>

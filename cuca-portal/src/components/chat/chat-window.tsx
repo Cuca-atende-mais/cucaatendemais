@@ -325,12 +325,12 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                                         "px-4 py-2.5 rounded-2xl text-[13px] shadow-sm relative transition-all",
                                         msg.remetente === 'lead'
                                             ? "bg-muted border border-border/50 rounded-bl-none text-foreground"
-                                            : "bg-primary text-primary-foreground rounded-br-none"
+                                            : "bg-[#f2eee6] border border-stone-300/70 text-slate-950 rounded-br-none"
                                     )}>
                                         <p className="leading-relaxed whitespace-pre-wrap">{msg.conteudo}</p>
                                         <div className={cn(
                                             "text-[9px] mt-1.5 flex items-center gap-1 opacity-60",
-                                            msg.remetente === 'lead' ? "text-muted-foreground" : "text-primary-foreground"
+                                            msg.remetente === 'lead' ? "text-muted-foreground" : "text-slate-700"
                                         )}>
                                             {format(new Date(msg.created_at), "HH:mm")}
                                             {msg.remetente !== 'lead' && <ShieldCheck className="h-2 w-2" />}
