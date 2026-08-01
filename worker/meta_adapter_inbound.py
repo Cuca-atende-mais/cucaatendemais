@@ -262,10 +262,10 @@ def _get_supabase():
 # ─── Agentes despachados via motor-agente Edge Function ────────────────────────
 _AGENTES_MOTOR_AGENTE = frozenset({"Institucional", "maria", "sofia", "ana"})
 _AGENTE_MODULO_MAP: dict[str, str] = {
-    "sofia":         "ouvidoria",
-    "Institucional": "programacao",
-    "maria":         "programacao",
-    "ana":           "acesso_cuca",
+    "sofia":         "Ouvidoria",
+    "Institucional": "Institucional",
+    "maria":         "Institucional",
+    "ana":           "Acesso",
 }
 
 # S-WM-16 Task 2: normaliza modulo/agente_tipo (snake_case interno) para a tag de
@@ -412,11 +412,11 @@ async def _notificar_transbordo(
         sb = _get_supabase()
         contacts: list = []
         if unidade_cuca:
-            res = sb.table("human_handover_contacts").select("*") \
+            res = sb.table("transbordo_humano").select("*") \
                 .eq("modulo", modulo).eq("unidade_cuca", unidade_cuca).eq("ativo", True).execute()
             contacts = res.data or []
         if not contacts:
-            res = sb.table("human_handover_contacts").select("*") \
+            res = sb.table("transbordo_humano").select("*") \
                 .eq("modulo", modulo).is_("unidade_cuca", "null").eq("ativo", True).execute()
             contacts = res.data or []
         if not contacts:
@@ -447,8 +447,8 @@ async def _notificar_transbordo(
         token = os.getenv("META_SYSTEM_USER_TOKEN", "")
         from campanhas_engine import _enviar_template_meta, _montar_parametros_named  # noqa: PLC0415
         for contato in contacts:
-            nome = contato.get("nome_responsavel") or "Equipe"
-            telefone_destino = contato["telefone_destino"]
+            nome = contato.get("responsavel") or "Equipe"
+            telefone_destino = contato["telefone"]
             components = [{
                 "type": "body",
                 "parameters": _montar_parametros_named(variaveis_transbordo, [nome, lead_identificacao, modulo]),

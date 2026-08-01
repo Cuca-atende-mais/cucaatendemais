@@ -465,7 +465,7 @@ class TestDispatchMotorAgente:
         )
         mock_notificar.assert_called_once()
         call_kwargs = mock_notificar.call_args.kwargs
-        assert call_kwargs["modulo"] == "ouvidoria"
+        assert call_kwargs["modulo"] == "Ouvidoria"
         assert call_kwargs["lead_identificacao"] == "55"
 
     # ── Dispatch completo: agentes motor-agente roteiam corretamente ──────
@@ -973,7 +973,7 @@ class TestDispatchMotorAgente:
         from unittest.mock import patch, AsyncMock, MagicMock
         from meta_adapter_inbound import processar_webhook_meta
 
-        for agente, modulo_esperado in [("sofia", "ouvidoria"), ("maria", "programacao"), ("Institucional", "programacao")]:
+        for agente, modulo_esperado in [("sofia", "Ouvidoria"), ("maria", "Institucional"), ("Institucional", "Institucional")]:
             stub = self._make_stub(agente)
             payload = _payload_texto(phone_number_id="INST_PHONE_ID", texto="falar com atendente")
             raw = json.dumps(payload).encode()
@@ -1177,7 +1177,7 @@ class TestNotificarTransbordo:
         from unittest.mock import MagicMock, patch, AsyncMock
         from meta_adapter_inbound import _notificar_transbordo
 
-        contato = {"telefone_destino": "5585999990001", "nome_responsavel": "Fulano"}
+        contato = {"telefone": "5585999990001", "responsavel": "Fulano"}
         mock_sb = MagicMock()
 
         contacts_mock = MagicMock()
@@ -1192,7 +1192,7 @@ class TestNotificarTransbordo:
             .execute.return_value.data = None
 
         def _table_side_effect(name):
-            return contacts_mock if name == "human_handover_contacts" else templates_mock
+            return contacts_mock if name == "transbordo_humano" else templates_mock
         mock_sb.table.side_effect = _table_side_effect
 
         mock_enviar = AsyncMock()
@@ -1202,7 +1202,7 @@ class TestNotificarTransbordo:
         fake_camp._enviar_template_meta = mock_enviar
         with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
              patch.dict(sys.modules, {"campanhas_engine": fake_camp}):
-            await _notificar_transbordo("conv-1", "empregabilidade", "Barra", "PHONE_ID", "5585999991111")
+            await _notificar_transbordo("conv-1", "Empregabilidade", "Barra", "PHONE_ID", "5585999991111")
 
         mock_enviar.assert_not_called()
 
@@ -1212,7 +1212,7 @@ class TestNotificarTransbordo:
         from unittest.mock import MagicMock, patch
         from meta_adapter_inbound import _notificar_transbordo
 
-        contato = {"telefone_destino": "5585999990001", "nome_responsavel": "Fulano"}
+        contato = {"telefone": "5585999990001", "responsavel": "Fulano"}
         mock_sb = MagicMock()
         mock_sb.table.return_value.select.return_value \
             .eq.return_value.eq.return_value.eq.return_value.execute.return_value.data = [contato]
@@ -1224,12 +1224,12 @@ class TestNotificarTransbordo:
             .limit.return_value.maybe_single.return_value.execute.return_value.data = None
 
         def _table_side_effect_2(name):
-            return mock_sb._contacts_mock if name == "human_handover_contacts" else templates_mock
+            return mock_sb._contacts_mock if name == "transbordo_humano" else templates_mock
         mock_sb._contacts_mock = mock_sb.table.return_value
         mock_sb.table.side_effect = _table_side_effect_2
 
         with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
-            await _notificar_transbordo("conv-2", "empregabilidade", "Barra", "PHONE_ID", "55phone")
+            await _notificar_transbordo("conv-2", "Empregabilidade", "Barra", "PHONE_ID", "55phone")
 
         # Fallback global usa .is_() — deve ter sido chamado zero vezes
         first_eq_rv = mock_sb._contacts_mock.select.return_value.eq.return_value
@@ -1247,7 +1247,7 @@ class TestNotificarTransbordo:
             .eq.return_value.is_.return_value.eq.return_value.execute.return_value.data = []
 
         with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
-            await _notificar_transbordo("conv-3", "ouvidoria", None, "PHONE_ID", "55phone")
+            await _notificar_transbordo("conv-3", "Ouvidoria", None, "PHONE_ID", "55phone")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

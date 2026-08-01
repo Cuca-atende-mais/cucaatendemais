@@ -970,7 +970,7 @@ async def _processar_empresa(
 
                 await _supabase_to_thread(_marcar_conversa_humana)
                 from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
-                await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
+                await _notificar_transbordo(conversa_id, "Empregabilidade", unidade_cuca or None, instance_name, phone)
                 await _set_fluxo_async(conversa_id, {})
                 return
 
@@ -2645,7 +2645,7 @@ async def _processar_mensagem_empregabilidade_locked(
              "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": "duvida"},
         )
         from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
-        await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
+        await _notificar_transbordo(conversa_id, "Empregabilidade", unidade_cuca or None, instance_name, phone)
         return
 
     # Detecção por expressão natural: usuário pede explicitamente atendimento humano
@@ -2681,7 +2681,7 @@ async def _processar_mensagem_empregabilidade_locked(
 
         await _supabase_to_thread(_marcar_handover_palavra_chave)
         from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
-        await _notificar_transbordo(conversa_id, "empregabilidade", unidade_cuca or None, instance_name, phone)
+        await _notificar_transbordo(conversa_id, "Empregabilidade", unidade_cuca or None, instance_name, phone)
         return
 
     # SQS-40 Task 3.4: Interceptar respostas ao convite de entrevista

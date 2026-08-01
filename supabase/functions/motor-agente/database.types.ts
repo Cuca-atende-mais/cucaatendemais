@@ -1301,6 +1301,38 @@ export type Database = {
           },
         ]
       }
+      empresa_whatsapp_autorizados: {
+        Row: {
+          autorizado_em: string
+          autorizado_por: string | null
+          empresa_id: string
+          id: string
+          telefone: string
+        }
+        Insert: {
+          autorizado_em?: string
+          autorizado_por?: string | null
+          empresa_id: string
+          id?: string
+          telefone: string
+        }
+        Update: {
+          autorizado_em?: string
+          autorizado_por?: string | null
+          empresa_id?: string
+          id?: string
+          telefone?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "empresa_whatsapp_autorizados_empresa_id_fkey"
+            columns: ["empresa_id"]
+            isOneToOne: false
+            referencedRelation: "empresas"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       empresas: {
         Row: {
           ativa: boolean | null
@@ -1812,39 +1844,6 @@ export type Database = {
           },
         ]
       }
-      human_handover_contacts: {
-        Row: {
-          ativo: boolean | null
-          created_at: string
-          id: string
-          modulo: string
-          nome_responsavel: string | null
-          telefone_destino: string
-          unidade_cuca: string | null
-          updated_at: string
-        }
-        Insert: {
-          ativo?: boolean | null
-          created_at?: string
-          id?: string
-          modulo: string
-          nome_responsavel?: string | null
-          telefone_destino: string
-          unidade_cuca?: string | null
-          updated_at?: string
-        }
-        Update: {
-          ativo?: boolean | null
-          created_at?: string
-          id?: string
-          modulo?: string
-          nome_responsavel?: string | null
-          telefone_destino?: string
-          unidade_cuca?: string | null
-          updated_at?: string
-        }
-        Relationships: []
-      }
       inscricoes_eventos: {
         Row: {
           confirmado: boolean | null
@@ -2081,38 +2080,86 @@ export type Database = {
         }
         Relationships: []
       }
+      leads_isolamento_temp_2026_07: {
+        Row: {
+          bloqueado_original: boolean
+          criado_em: string
+          lead_id: string
+          telefone: string
+        }
+        Insert: {
+          bloqueado_original: boolean
+          criado_em?: string
+          lead_id: string
+          telefone: string
+        }
+        Update: {
+          bloqueado_original?: boolean
+          criado_em?: string
+          lead_id?: string
+          telefone?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_isolamento_temp_2026_07_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: true
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       logs_disparo: {
         Row: {
+          atualizado_em: string
           created_at: string | null
+          disparo_divulgacao_id: string | null
           disparo_id: string | null
           enviado_em: string | null
           erro: string | null
           id: string
           lead_id: string | null
           status: string
+          status_timestamp_meta: string | null
           telefone: string
+          wamid: string | null
         }
         Insert: {
+          atualizado_em?: string
           created_at?: string | null
+          disparo_divulgacao_id?: string | null
           disparo_id?: string | null
           enviado_em?: string | null
           erro?: string | null
           id?: string
           lead_id?: string | null
           status: string
+          status_timestamp_meta?: string | null
           telefone: string
+          wamid?: string | null
         }
         Update: {
+          atualizado_em?: string
           created_at?: string | null
+          disparo_divulgacao_id?: string | null
           disparo_id?: string | null
           enviado_em?: string | null
           erro?: string | null
           id?: string
           lead_id?: string | null
           status?: string
+          status_timestamp_meta?: string | null
           telefone?: string
+          wamid?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "logs_disparo_disparo_divulgacao_id_fkey"
+            columns: ["disparo_divulgacao_id"]
+            isOneToOne: false
+            referencedRelation: "disparos_divulgacao"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "logs_disparo_disparo_id_fkey"
             columns: ["disparo_id"]
@@ -2225,8 +2272,12 @@ export type Database = {
           ativo: boolean
           canal_tipo: string
           created_at: string
+          daily_limit: number | null
           display_name: string | null
+          messaging_limit_tier: number | null
+          messaging_limit_tier_confirmado_em: string | null
           phone_number_id: string
+          quality_rating: string | null
           unidade_cuca: string | null
           updated_at: string
           waba_id: string
@@ -2236,8 +2287,12 @@ export type Database = {
           ativo?: boolean
           canal_tipo: string
           created_at?: string
+          daily_limit?: number | null
           display_name?: string | null
+          messaging_limit_tier?: number | null
+          messaging_limit_tier_confirmado_em?: string | null
           phone_number_id: string
+          quality_rating?: string | null
           unidade_cuca?: string | null
           updated_at?: string
           waba_id: string
@@ -2247,8 +2302,12 @@ export type Database = {
           ativo?: boolean
           canal_tipo?: string
           created_at?: string
+          daily_limit?: number | null
           display_name?: string | null
+          messaging_limit_tier?: number | null
+          messaging_limit_tier_confirmado_em?: string | null
           phone_number_id?: string
+          quality_rating?: string | null
           unidade_cuca?: string | null
           updated_at?: string
           waba_id?: string
@@ -3346,6 +3405,14 @@ export type Database = {
           similaridade: number
         }[]
       }
+      buscar_leads_por_categoria: {
+        Args: { p_categorias: string[]; p_unidade?: string }
+        Returns: {
+          id: string
+          nome: string
+          telefone: string
+        }[]
+      }
       buscar_vagas_multi_cuca: {
         Args: { p_busca: string }
         Returns: {
@@ -3468,6 +3535,31 @@ export type Database = {
       }
       increment_nao_lidas: { Args: { conv_id: string }; Returns: undefined }
       is_developer: { Args: never; Returns: boolean }
+      listar_disparos_acompanhamento: {
+        Args: {
+          p_ate?: string
+          p_desde?: string
+          p_limit?: number
+          p_motor?: string
+        }
+        Returns: {
+          criado_em: string
+          disparo_id: string
+          item_id: string
+          motor: string
+          status: string
+          titulo: string
+          total_elegiveis: number
+          total_entregues: number
+          total_enviados: number
+          total_falhou: number
+          total_pendentes: number
+        }[]
+      }
+      merge_conversa_metadata: {
+        Args: { p_conversa_id: string; p_patch: Json }
+        Returns: undefined
+      }
       next_numero_vaga:
         | { Args: never; Returns: number }
         | { Args: { p_empresa_id: string }; Returns: number }

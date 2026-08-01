@@ -5,18 +5,22 @@
  * ─────────────────
  * Componente de sub-aba "Canal WhatsApp" reutilizável.
  * Usado dentro de Ouvidoria e Acesso CUCA para que o Super Admin
- * gerencie instâncias e transbordo desses módulos específicos,
+ * gerencie instâncias desses módulos específicos,
  * sem expor essa configuração para gerentes de unidade.
  *
  * Props:
  *   modulo: "Ouvidoria" | "Acesso"  — define qual tipo de canal mostrar
+ *
+ * S-WM-63: a seção de Transbordo Humano que existia aqui foi extraída para o componente
+ * compartilhado `TransbordoSection` (mesmo usado em /configuracoes/whatsapp e
+ * /developer/instancias) — evita 3 cópias divergentes da mesma lógica de CRUD.
  */
 
 import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
-    Phone, Shield, MessageSquare, Wifi, WifiOff, QrCode, Loader2,
-    Plus, Pencil, Trash2, Save, X, UserCheck, RefreshCw, TriangleAlert,
+    Shield, MessageSquare, Wifi, WifiOff, QrCode, Loader2,
+    Plus, Pencil, Save, X, RefreshCw, TriangleAlert,
 } from "lucide-react"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -31,6 +35,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { toast } from "sonner"
 import { useUazapi } from "@/hooks/use-uazapi"
+import { TransbordoSection } from "@/components/transbordo/transbordo-section"
 
 /* ─── Tipos ────────────────────────────────────────────────── */
 type Instancia = {
@@ -46,15 +51,6 @@ type Instancia = {
     webhook_url: string | null
 }
 
-type Transbordo = {
-    id: string
-    unidade_cuca: string | null
-    modulo: string
-    responsavel: string
-    telefone: string
-    ativo: boolean
-}
-
 /* ─── Props ────────────────────────────────────────────────── */
 interface Props {
     modulo: "Ouvidoria" | "Acesso"
@@ -65,7 +61,6 @@ export function CanalWhatsappTab({ modulo }: Props) {
     const supabase = createClient()
 
     const [instancias, setInstancias] = useState<Instancia[]>([])
-    const [transbordos, setTransbordos] = useState<Transbordo[]>([])
     const [fetching, setFetching] = useState(true)
 
     // Modal Instância
@@ -75,13 +70,6 @@ export function CanalWhatsappTab({ modulo }: Props) {
     const [iTelefone, setITelefone] = useState("")
     const [iObs, setIObs] = useState("")
     const [savingInst, setSavingInst] = useState(false)
-
-    // Modal Transbordo
-    const [modalTrans, setModalTrans] = useState(false)
-    const [editingTrans, setEditingTrans] = useState<Transbordo | null>(null)
-    const [tResponsavel, setTResponsavel] = useState("")
-    const [tTelefone, setTTelefone] = useState("")
-    const [savingTrans, setSavingTrans] = useState(false)
 
     // Modal QR Code real
     const [modalQr, setModalQr] = useState(false)
@@ -100,20 +88,12 @@ export function CanalWhatsappTab({ modulo }: Props) {
     const loadData = useCallback(async () => {
         setFetching(true)
         try {
-            const [instRes, transRes] = await Promise.all([
-                supabase
-                    .from("instancias_uazapi")
-                    .select("*")
-                    .eq("canal_tipo", modulo)
-                    .order("nome"),
-                supabase
-                    .from("transbordo_humano")
-                    .select("*")
-                    .eq("modulo", modulo)
-                    .order("responsavel"),
-            ])
-            setInstancias(instRes.data || [])
-            setTransbordos(transRes.data || [])
+            const { data } = await supabase
+                .from("instancias_uazapi")
+                .select("*")
+                .eq("canal_tipo", modulo)
+                .order("nome")
+            setInstancias(data || [])
         } catch {
             toast.error("Erro ao carregar dados do canal.")
         } finally {
@@ -201,54 +181,6 @@ export function CanalWhatsappTab({ modulo }: Props) {
         }
     }
 
-
-    /* ─── CRUD Transbordo ────────────────────────────────── */
-    const openCreateTrans = () => {
-        setEditingTrans(null); setTResponsavel(""); setTTelefone("")
-        setModalTrans(true)
-    }
-    const openEditTrans = (t: Transbordo) => {
-        setEditingTrans(t); setTResponsavel(t.responsavel); setTTelefone(t.telefone)
-        setModalTrans(true)
-    }
-
-    const saveTrans = async () => {
-        if (!tResponsavel.trim() || !tTelefone.trim()) {
-            toast.error("Responsável e Telefone são obrigatórios.")
-            return
-        }
-        setSavingTrans(true)
-        try {
-            const payload = {
-                unidade_cuca: null,   // Global
-                modulo: modulo,
-                responsavel: tResponsavel.trim(),
-                telefone: tTelefone.trim(),
-                ativo: true,
-            }
-            if (editingTrans) {
-                await supabase.from("transbordo_humano").update(payload).eq("id", editingTrans.id)
-                toast.success("Atendente atualizado!")
-            } else {
-                await supabase.from("transbordo_humano").insert(payload)
-                toast.success("Atendente cadastrado!")
-            }
-            setModalTrans(false)
-            await loadData()
-        } catch (err: any) {
-            toast.error(`Erro: ${err.message}`)
-        } finally {
-            setSavingTrans(false)
-        }
-    }
-
-    const excluirTrans = async (t: Transbordo) => {
-        if (!confirm(`Remover "${t.responsavel}"?`)) return
-        await supabase.from("transbordo_humano").delete().eq("id", t.id)
-        toast.success("Removido.")
-        await loadData()
-    }
-
     /* ─── Render ─────────────────────────────────────────── */
     if (fetching) {
         return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
@@ -326,52 +258,12 @@ export function CanalWhatsappTab({ modulo }: Props) {
                 )}
             </div>
 
-            {/* ── Transbordo Humano ── */}
-            <div className="border rounded-xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sm font-semibold">
-                        <UserCheck className="h-4 w-4 text-primary" />
-                        Transbordo Humano — {modulo}
-                    </div>
-                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={openCreateTrans}>
-                        <Plus className="h-3 w-3" /> Adicionar
-                    </Button>
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                    Quando a IA não resolver, o sistema avisa estes números.
-                </p>
-
-                {transbordos.length === 0 ? (
-                    <div className="text-center py-6 text-muted-foreground border rounded-lg border-dashed">
-                        <p className="text-xs">Nenhum atendente cadastrado.</p>
-                    </div>
-                ) : (
-                    <div className="space-y-2">
-                        {transbordos.map((t) => (
-                            <div key={t.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-secondary/10">
-                                <div className="flex items-center gap-2.5">
-                                    <div className="p-1.5 rounded-full bg-primary/10">
-                                        <Phone className="h-3.5 w-3.5 text-primary" />
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-medium">{t.responsavel}</p>
-                                        <p className="text-xs font-mono text-muted-foreground">{t.telefone}</p>
-                                    </div>
-                                </div>
-                                <div className="flex gap-1">
-                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditTrans(t)}>
-                                        <Pencil className="h-3.5 w-3.5" />
-                                    </Button>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
-                                        onClick={() => excluirTrans(t)}>
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
+            {/* ── Transbordo Humano (componente compartilhado, S-WM-63) ── */}
+            <TransbordoSection
+                moduloFixo={modulo}
+                titulo={`Transbordo Humano — ${modulo}`}
+                descricao="Quando a IA não resolver, o sistema avisa estes números."
+            />
 
             {/* ── Modal QR Code Real ── */}
             <Dialog open={modalQr} onOpenChange={(open) => { if (!open) { resetQr(); setModalQr(false); loadData() } }}>
@@ -484,34 +376,6 @@ export function CanalWhatsappTab({ modulo }: Props) {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-
-            {/* ── Modal Transbordo ── */}
-            <Dialog open={modalTrans} onOpenChange={setModalTrans}>
-                <DialogContent className="sm:max-w-sm">
-                    <DialogHeader>
-                        <DialogTitle>{editingTrans ? "Editar Atendente" : "Novo Atendente de Transbordo"}</DialogTitle>
-                    </DialogHeader>
-                    <div className="grid gap-3 py-2">
-                        <div className="grid gap-1.5">
-                            <Label>Nome *</Label>
-                            <Input placeholder="Ex: Ana da Ouvidoria" value={tResponsavel} onChange={(e) => setTResponsavel(e.target.value)} />
-                        </div>
-                        <div className="grid gap-1.5">
-                            <Label>WhatsApp (com DDI) *</Label>
-                            <Input placeholder="+5585999998888" value={tTelefone} onChange={(e) => setTTelefone(e.target.value)} />
-                        </div>
-                    </div>
-                    <DialogFooter className="gap-2">
-                        <Button variant="outline" onClick={() => setModalTrans(false)}>
-                            <X className="mr-2 h-4 w-4" /> Cancelar
-                        </Button>
-                        <Button onClick={saveTrans} disabled={savingTrans}>
-                            {savingTrans ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                            {editingTrans ? "Salvar" : "Cadastrar"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </div >
+        </div>
     )
 }
