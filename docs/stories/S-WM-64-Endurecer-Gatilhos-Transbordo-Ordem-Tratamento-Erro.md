@@ -96,6 +96,7 @@ Branch: `fix/endurecer-gatilhos-transbordo`. Não dar push/PR sem autorização 
 | 2026-08-01 | 0.1 | Story criada a partir do diagnóstico de transbordo — cobre os 2 canais (Empregabilidade e Institucional), já que ambos compartilham o mesmo padrão de risco (mensagem otimista sem confirmação de sucesso). | @sm River |
 | 2026-08-01 | 0.2 | **Validado por @po — GO.** 9/10 no checklist original; único ponto em aberto (ordem de resposta do Institucional) resolvido nesta validação com decisão de escopo de menor risco (não inverter a ordem, só logar erro — ver Dev Notes), evitando reabrir pergunta de produto para uma nuance de implementação. AC testáveis, escopo IN/OUT claro, dependência com S-WM-61 explicitada. Status Draft → Ready. | @po Pax |
 | 2026-08-01 | 0.3 | **Implementado por @dev.** Empregabilidade passa a acionar status/notificação/reset antes de prometer atendimento; falhas recebem mensagem honesta e log `ERROR`. Institucional passa a logar erro retornado pelo `.update()`. Testes novos cobrem os 4 cenários de falha. Status Ready → Ready for Review. | @dev Dex |
+| 2026-08-01 | 0.4 | **Correção pós-QA.** Em falha após `status='awaiting_human'` já gravado, Empregabilidade reverte a conversa para `ativa` antes de responder ao lead, evitando conversa pausada sem humano notificado. Testes de falha dos 3 gatilhos agora validam a sequência `awaiting_human` → `ativa`. | @dev Dex |
 
 ## Dev Agent Record
 
@@ -108,10 +109,16 @@ GPT-5 Codex
 - `cd supabase/functions/motor-agente && deno test --no-check --allow-env --allow-net index.audit.test.ts` → 136 passed.
 - `git diff --check` → passou.
 - Tentativa informativa: `deno test --allow-env --allow-net index.audit.test.ts --filter "S-WM-64"` falhou no typecheck global preexistente do arquivo; reexecutado com `--no-check` conforme suíte audit runtime.
+- Pós-QA: `cd worker && ../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py -v` → 63 passed, 2 warnings preexistentes de `datetime.utcnow()`.
+- Pós-QA: `cd worker && ../.venv/bin/python -m pytest tests/test_meta_adapter_inbound.py -q` → 52 passed, 1 warning preexistente de `gotrue`.
+- Pós-QA: `cd supabase/functions/motor-agente && deno test --no-check --allow-env --allow-net index.audit.test.ts` → 136 passed.
+- Pós-QA: `git diff --check` → passou.
+- Tentativa de suíte completa worker: `cd worker && ../.venv/bin/python -m pytest -q` falhou na coleta por `OPENAI_API_KEY` ausente; reexecução com `OPENAI_API_KEY=test` avançou, mas ficou sem concluir após vários minutos e foi interrompida manualmente. Suítes focais da story passaram.
 
 ### Completion Notes List
 - `_notificar_transbordo` agora retorna `bool`, preservando compatibilidade dos call sites que ignoram retorno e permitindo à Empregabilidade detectar notificação não enviada.
 - Os 3 gatilhos de Empregabilidade usam `_acionar_transbordo_empregabilidade`, que só envia a mensagem de sucesso após status/notificação/reset concluírem; em falha, loga `ERROR` com `exc_info` e envia fallback honesto.
+- Correção pós-QA: se a notificação falhar depois de `awaiting_human` já ter sido gravado, o helper tenta reverter a conversa para `ativa`; os testes dos 3 gatilhos validam essa compensação para evitar lead preso em conversa silenciada.
 - No Institucional, o fluxo de resposta foi preservado conforme decisão de escopo; apenas o `error` do update para `awaiting_human` passou a ser logado.
 - Teste real ponta a ponta ainda depende de execução em produção pelo Junior após deploy, conforme dependência operacional já documentada.
 
@@ -123,4 +130,51 @@ GPT-5 Codex
 - `supabase/functions/motor-agente/index.audit.test.ts`
 
 ## QA Results
-_A preencher pelo @qa._
+### Review 2026-08-01 — @qa Quinn
+
+**Gate: CONCERNS**
+
+**Achado MED — falha de notificação ainda pode deixar a conversa em `awaiting_human` sem humano notificado.**
+
+Em `worker/empregabilidade_engine.py:360-370`, o helper grava `conversas.status = 'awaiting_human'` antes de chamar `_notificar_transbordo`. Se `_notificar_transbordo` retornar `False`, o `except` envia a mensagem honesta ao lead (`worker/empregabilidade_engine.py:384-388`), mas não reverte/compensa o status já persistido. Como o inbound silencia qualquer conversa em `awaiting_human` (`worker/meta_adapter_inbound.py:801-806` e reconferência em `worker/meta_adapter_inbound.py:854-857`), um lead que recebeu "tente novamente em alguns minutos" pode tentar novamente e ser descartado pela IA, mesmo sem confirmação de que algum humano foi avisado.
+
+Esse ponto não invalida o avanço principal da story: a IA não promete mais "encaminhamos" quando `_notificar_transbordo` falha. Mas mantém uma inconsistência operacional no mesmo cenário-alvo da S-WM-64. Recomendo o @dev ajustar antes de acionar @devops: em falha após status gravado, restaurar status seguro (`ativa`) ou usar outra compensação explícita, e adicionar teste cobrindo que falha de notificação não deixa a conversa silenciada.
+
+**Verificações OK**
+
+- Empregabilidade: os 3 gatilhos agora passam por `_acionar_transbordo_empregabilidade` e só enviam a mensagem de sucesso após status/notificação/reset concluírem (`worker/empregabilidade_engine.py:342-399`, `worker/empregabilidade_engine.py:1027-1041`, `worker/empregabilidade_engine.py:2694-2708`, `worker/empregabilidade_engine.py:2724-2736`).
+- `_notificar_transbordo` agora retorna `False` para ausência de contato/template, exceção ou falha de todos os envios, e `True` quando pelo menos um envio real passou (`worker/meta_adapter_inbound.py:404-473`).
+- Institucional agora checa/loga o `error` do `.update()` para `awaiting_human`, sem mudar o fluxo de resposta conforme decisão de escopo (`supabase/functions/motor-agente/index.ts:1806-1810`).
+- Testes novos cobrem falha nos 3 gatilhos da Empregabilidade e erro no update do Institucional (`worker/tests/test_empregabilidade_engine.py:1577`, `worker/tests/test_empregabilidade_engine.py:1617`, `worker/tests/test_empregabilidade_engine.py:1642`, `supabase/functions/motor-agente/index.audit.test.ts:1032`).
+
+**Evidências executadas**
+
+- `cd worker && ../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py -v` → 63 passed, 2 warnings preexistentes de `datetime.utcnow()`.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_meta_adapter_inbound.py -q` → 52 passed, 1 warning preexistente de `gotrue`.
+- `cd supabase/functions/motor-agente && deno test --no-check --allow-env --allow-net index.audit.test.ts` → 136 passed.
+- `git diff --check` → passou.
+
+**Limitação**
+
+Não executei o teste real de falha proposital em produção/staging; esta revisão ficou em code review + suítes locais. O cenário real continua dependente de deploy e validação operacional controlada.
+
+### Re-review 2026-08-01 — @qa Quinn
+
+**Gate: PASS**
+
+O MED anterior fica superado. A correção pós-QA marca `status_humano_marcado` apenas depois do update de `awaiting_human` retornar e, se `_notificar_transbordo` falhar, tenta compensar o estado para `ativa` antes de responder ao lead (`worker/empregabilidade_engine.py:356-393`). Isso elimina o cenário que motivou o CONCERNS: conversa pausada sem humano notificado.
+
+Os testes de falha dos 3 gatilhos de Empregabilidade agora verificam explicitamente a mutação `awaiting_human` → `ativa` (`worker/tests/test_empregabilidade_engine.py:1611-1613`, `worker/tests/test_empregabilidade_engine.py:1642-1644`, `worker/tests/test_empregabilidade_engine.py:1671-1673`). A cobertura é suficiente para pegar uma remoção acidental da compensação.
+
+**Evidências executadas**
+
+- `cd worker && ../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py -v` → 63 passed, 2 warnings preexistentes de `datetime.utcnow()`.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_empregabilidade_engine.py::TestAutorizacaoEmpresaPorNumeroWhatsapp::test_cnpj_existente_numero_diferente_falha_transbordo_nao_promete tests/test_empregabilidade_engine.py::TestHandoverEmpregabilidadeEndurecido -q` → 3 passed.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_meta_adapter_inbound.py::TestNotificarTransbordo -q` → 4 passed, 1 warning preexistente de `gotrue`.
+- `cd worker && ../.venv/bin/python -m pytest tests/test_meta_adapter_inbound.py -q -k 'not DebounceDispatch'` → 49 passed, 5 deselected, 1 warning preexistente de `gotrue`.
+- `cd supabase/functions/motor-agente && deno test --no-check --allow-env --allow-net index.audit.test.ts` → 136 passed.
+- `git diff --check` → passou.
+
+**Limitação**
+
+A suíte completa `tests/test_meta_adapter_inbound.py` não foi usada como evidência final porque ficou pendurada ao entrar em `TestDebounceDispatch`; interrompi a execução e reexecutei os blocos relevantes ao transbordo, além do adapter excluindo o debounce. Não encontrei regressão funcional na S-WM-64.

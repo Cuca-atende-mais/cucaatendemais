@@ -353,6 +353,7 @@ async def _acionar_transbordo_empregabilidade(
     reset_fluxo: bool = False,
 ) -> bool:
     """Aciona handover real antes de prometer atendimento humano ao lead."""
+    status_humano_marcado = False
     try:
         def _marcar_conversa_humana():
             if metadata_update is not None:
@@ -362,6 +363,7 @@ async def _acionar_transbordo_empregabilidade(
             ).eq("id", conversa_id).execute()
 
         await _supabase_to_thread(_marcar_conversa_humana)
+        status_humano_marcado = True
         from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
         notificado = await _notificar_transbordo(
             conversa_id, "Empregabilidade", unidade_cuca or None, instance_name, phone
@@ -381,6 +383,25 @@ async def _acionar_transbordo_empregabilidade(
             },
             exc_info=True,
         )
+        if status_humano_marcado:
+            try:
+                def _restaurar_conversa_ativa():
+                    supabase.table("conversas").update(
+                        {"status": "ativa", "updated_at": "now()"}
+                    ).eq("id", conversa_id).execute()
+
+                await _supabase_to_thread(_restaurar_conversa_ativa)
+            except Exception:
+                logger.error(
+                    "[handover] Falha ao reverter status de transbordo de Empregabilidade",
+                    extra={
+                        "conversa_id": conversa_id,
+                        "unidade_cuca": unidade_cuca,
+                        "motivo": motivo,
+                        "telefone": phone[:6] + "****",
+                    },
+                    exc_info=True,
+                )
         await _enviar(
             instance_name, token, phone, _MSG_TRANSBORDO_FALHOU,
             conversa_id=conversa_id, lead_id=lead_id,

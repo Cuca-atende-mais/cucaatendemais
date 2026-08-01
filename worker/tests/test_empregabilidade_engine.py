@@ -1608,6 +1608,9 @@ class TestAutorizacaoEmpresaPorNumeroWhatsapp:
         assert "não consegui confirmar" in texto_enviado
         assert "encaminhamos seu contato" not in texto_enviado
         assert estado == {"perfil": "empresa", "etapa": "aguardando_cnpj"}
+        updates = [chamada.args[0] for chamada in mock_conversas.update.call_args_list]
+        assert {"status": "awaiting_human", "updated_at": "now()"} in updates
+        assert updates[-1] == {"status": "ativa", "updated_at": "now()"}
         assert "Falha ao acionar transbordo de Empregabilidade" in caplog.text
 
 
@@ -1636,6 +1639,9 @@ class TestHandoverEmpregabilidadeEndurecido:
         texto_enviado = _isola_enviar.call_args.args[3].lower()
         assert "não consegui confirmar" in texto_enviado
         assert "em breve você será atendido" not in texto_enviado
+        updates = [chamada.args[0] for chamada in mock_conversas.update.call_args_list]
+        assert {"status": "awaiting_human", "updated_at": "now()"} in updates
+        assert updates[-1] == {"status": "ativa", "updated_at": "now()"}
         assert "Falha ao acionar transbordo de Empregabilidade" in caplog.text
 
     @pytest.mark.asyncio
@@ -1662,6 +1668,9 @@ class TestHandoverEmpregabilidadeEndurecido:
         assert "não consegui confirmar" in texto_enviado
         assert "em breve você será atendido" not in texto_enviado
         assert estado == {"etapa": ""}
+        updates = [chamada.args[0] for chamada in mock_conversas.update.call_args_list]
+        assert {"status": "awaiting_human", "updated_at": "now()"} in updates
+        assert updates[-1] == {"status": "ativa", "updated_at": "now()"}
         assert "Falha ao acionar transbordo de Empregabilidade" in caplog.text
 
 
