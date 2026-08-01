@@ -24,6 +24,7 @@ import os
 import sys
 import types
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -1571,6 +1572,97 @@ class TestAutorizacaoEmpresaPorNumeroWhatsapp:
             "conv-1", "Empregabilidade", "Barra", "PHONE_ID", "558599990000",
         )
         assert estado == {}, "reset do fluxo — nenhum empresa_id deve sobrar em estado gravado"
+
+    @pytest.mark.asyncio
+    async def test_cnpj_existente_numero_diferente_falha_transbordo_nao_promete(self, monkeypatch, caplog):
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        caplog.set_level(logging.ERROR, logger="empregabilidade_engine")
+
+        mock_empresas = MagicMock()
+        mock_empresas.select.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "e1", "nome": "ACME LTDA", "nome_fantasia": "ACME"}
+        ]
+        mock_autorizados = MagicMock()
+        mock_autorizados.select.return_value.eq.return_value.execute.return_value.data = [
+            {"telefone": "5511999998888"}
+        ]
+        mock_conversas = MagicMock()
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({
+            "empresas": mock_empresas,
+            "empresa_whatsapp_autorizados": mock_autorizados,
+            "conversas": mock_conversas,
+        }))
+
+        import meta_adapter_inbound
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", AsyncMock(return_value=False))
+
+        await emp._processar_empresa(
+            "12345678000199", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3].lower()
+        assert "não consegui confirmar" in texto_enviado
+        assert "encaminhamos seu contato" not in texto_enviado
+        assert estado == {"perfil": "empresa", "etapa": "aguardando_cnpj"}
+        assert "Falha ao acionar transbordo de Empregabilidade" in caplog.text
+
+
+class TestHandoverEmpregabilidadeEndurecido:
+
+    @pytest.mark.asyncio
+    async def test_duvida_falha_transbordo_nao_promete_atendimento(self, monkeypatch, _isola_enviar, caplog):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        caplog.set_level(logging.ERROR, logger="empregabilidade_engine")
+
+        mock_conversas = MagicMock()
+        mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "metadata": {"ultima_intencao": "duvida"}
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"conversas": mock_conversas}))
+
+        import meta_adapter_inbound
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", AsyncMock(return_value=False))
+
+        await emp.processar_mensagem_empregabilidade(
+            "tenho uma dúvida", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3].lower()
+        assert "não consegui confirmar" in texto_enviado
+        assert "em breve você será atendido" not in texto_enviado
+        assert "Falha ao acionar transbordo de Empregabilidade" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_palavra_chave_falha_transbordo_nao_promete_atendimento(self, monkeypatch, _isola_enviar, caplog):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        caplog.set_level(logging.ERROR, logger="empregabilidade_engine")
+
+        mock_conversas = MagicMock()
+        mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "metadata": {}
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"conversas": mock_conversas}))
+
+        import meta_adapter_inbound
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", AsyncMock(return_value=False))
+
+        await emp.processar_mensagem_empregabilidade(
+            "quero falar com atendente", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3].lower()
+        assert "não consegui confirmar" in texto_enviado
+        assert "em breve você será atendido" not in texto_enviado
+        assert estado == {"etapa": ""}
+        assert "Falha ao acionar transbordo de Empregabilidade" in caplog.text
 
 
 # ─────────────────────────────────────────────────────────────────────────────

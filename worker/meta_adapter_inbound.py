@@ -407,7 +407,7 @@ async def _notificar_transbordo(
     unidade_cuca: str | None,
     phone_number_id_origem: str,
     lead_identificacao: str,
-) -> None:
+) -> bool:
     """Notifica colaboradores configurados sobre transbordo via template Meta."""
     try:
         sb = _get_supabase()
@@ -425,7 +425,7 @@ async def _notificar_transbordo(
                 "[transbordo] Nenhum contato ativo para modulo=%s unidade=%s conversa=%s",
                 modulo, unidade_cuca, conversa_id,
             )
-            return
+            return False
         automacao = MODULO_AUTOMACAO_MAP.get(modulo, modulo)
         # Lookup relacional (automação + número + tag "Transbordo" — zero nome hardcoded).
         # A 2ª tag "Transbordo" desambigua de outros templates que também usam o mesmo
@@ -441,12 +441,13 @@ async def _notificar_transbordo(
                 "[transbordo] Nenhum template aprovado para automacao=%s phone_number_id=%s — notificação não enviada",
                 automacao, phone_number_id_origem,
             )
-            return
+            return False
         template_name = tpl_res.data["nome"]
         corpo_texto = tpl_res.data.get("corpo_texto") or ""
         variaveis_transbordo = tpl_res.data.get("variaveis")
         token = os.getenv("META_SYSTEM_USER_TOKEN", "")
         from campanhas_engine import _enviar_template_meta, _montar_parametros_named  # noqa: PLC0415
+        algum_envio_ok = False
         for contato in contacts:
             nome = contato.get("responsavel") or "Equipe"
             telefone_destino = contato["telefone"]
@@ -462,11 +463,14 @@ async def _notificar_transbordo(
                 template_name, components,
             )
             if ok:
+                algum_envio_ok = True
                 logger.info("[transbordo] Notificação enviada para %s (modulo=%s)", telefone_destino, modulo)
             else:
                 logger.warning("[transbordo] Falha ao notificar %s (modulo=%s)", telefone_destino, modulo)
+        return algum_envio_ok
     except Exception as exc:
         logger.error("[transbordo] Erro inesperado em _notificar_transbordo: %s", exc)
+        return False
 
 
 # ─── Debounce de dispatch (VAL-05) ─────────────────────────────────────────────
