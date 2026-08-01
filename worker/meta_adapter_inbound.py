@@ -286,6 +286,7 @@ MODULO_AUTOMACAO_MAP: dict[str, str] = {
     "programacao":     "Institucional",
     "ouvidoria":       "Ouvidoria",
     "acesso_cuca":     "Acesso CUCA",
+    "Acesso":          "Acesso CUCA",
 }
 
 

@@ -1249,6 +1249,47 @@ class TestNotificarTransbordo:
         with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
             await _notificar_transbordo("conv-3", "Ouvidoria", None, "PHONE_ID", "55phone")
 
+    @pytest.mark.asyncio
+    async def test_modulo_acesso_busca_template_com_tag_acesso_cuca(self):
+        """QA S-WM-63 (achado #2): modulo="Acesso" (transbordo_humano) deve buscar template
+        com automação "Acesso CUCA" (convenção de MODULO_AUTOMACAO_MAP), não "Acesso" cru —
+        regressão que ficaria dormant até alguém cadastrar o template real de Acesso."""
+        from unittest.mock import MagicMock, patch, AsyncMock
+        from meta_adapter_inbound import _notificar_transbordo
+
+        contato = {"telefone": "5585999990002", "responsavel": "Ana"}
+        contacts_mock = MagicMock()
+        contacts_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value \
+            .execute.return_value.data = [contato]
+
+        templates_mock = MagicMock()
+        templates_mock.select.return_value.contains.return_value.contains.return_value \
+            .eq.return_value.eq.return_value.limit.return_value.maybe_single.return_value \
+            .execute.return_value.data = {
+                "nome": "acesso_transbordo_v1", "corpo_texto": "", "variaveis": None,
+            }
+
+        def _table_side_effect(name):
+            return contacts_mock if name == "transbordo_humano" else templates_mock
+        mock_sb = MagicMock()
+        mock_sb.table.side_effect = _table_side_effect
+
+        mock_enviar = AsyncMock(return_value=(True, "wamid-1"))
+        import sys
+        import types
+        fake_camp = types.ModuleType("campanhas_engine")
+        fake_camp._enviar_template_meta = mock_enviar
+        fake_camp._montar_parametros_named = lambda *a, **k: []
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_sb), \
+             patch.dict(sys.modules, {"campanhas_engine": fake_camp}):
+            await _notificar_transbordo("conv-4", "Acesso", "Barra", "PHONE_ID", "5585999991111")
+
+        contains_calls = templates_mock.select.return_value.contains.call_args_list
+        assert contains_calls[0].args == ("automacoes", ["Acesso CUCA", "Transbordo"]), (
+            f"esperava buscar automacao 'Acesso CUCA', chamou com {contains_calls[0].args!r}"
+        )
+        mock_enviar.assert_called_once()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # S-WM-20 Task 1: dedupe de mensagens inbound por wamid

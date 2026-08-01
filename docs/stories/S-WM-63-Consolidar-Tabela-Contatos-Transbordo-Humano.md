@@ -1,7 +1,7 @@
 # S-WM-63 — Consolidar contatos de transbordo em `transbordo_humano`, remover UAZAPI legado das telas
 
 ## Status
-Ready for Review — Tasks 1-9 concluídas pelo @dev; Task 10 (teste real de transbordo + teste manual de clique nas 2 telas) fica pendente de confirmação do Junior, mesmo padrão do S-WM-61/S-WM-62 (verificação estática de código feita; verificação com sessão autenticada real não pôde ser feita pelo agente — ver Completion Notes).
+Ready for Review — @dev corrigiu os 2 achados do QA Gate FAIL (ver Dev Agent Record). Aguardando novo gate do @qa. Task 10 (teste real + manual com sessão autenticada) segue pendente do Junior, como já registrado.
 
 ## Origem
 Diagnóstico de transbordo (Empregabilidade + Institucional), sessão de 2026-07-31/08-01. **Reescrita completa** após validação de @po com Junior — a primeira versão desta story recomendava o caminho oposto (`human_handover_contacts`), revertida depois de o Junior mostrar a tela real em uso (`/configuracoes/whatsapp`, print anexado à conversa) e confirmar 3 decisões: (1) seguir com extração de componente compartilhado; (2) remover também a aba de transbordo embutida em Ouvidoria/Acesso CUCA; (3) OK no remapeamento de `modulo` para os valores capitalizados já usados por essa tela.
@@ -120,6 +120,8 @@ Branch: `feat/consolidar-transbordo-humano`. Commits separados por Task (backend
 | 2026-08-01 | 0.1 | Versão inicial, recomendava `human_handover_contacts` como canônica. | @sm River |
 | 2026-08-01 | 0.2 | **Reescrita completa** após @po validar com Junior (print real de `/configuracoes/whatsapp` anexado à conversa): decisão invertida, `transbordo_humano` é a canônica. Escopo ampliado para remoção de UI legada de instâncias UAZAPI nas 2 telas + na aba embutida de Ouvidoria/Acesso, com extração de componente compartilhado (confirmado com Junior). Complexidade subiu de M para L. | @po Pax |
 | 2026-08-01 | 0.3 | **Validado por @po — GO.** 10/10 no checklist após a reescrita: as 3 perguntas em aberto da v0.1 foram resolvidas diretamente com Junior (tabela canônica confirmada por evidência real de tela, extração de componente aprovada, remoção da 3ª tela confirmada). Escopo IN/OUT bem delimitado por camada (backend/banco/frontend), AC 5 e Task 9 cobrem explicitamente o risco de regressão de acesso pra gerentes de Ouvidoria/Acesso (não presumido, a verificar). Dependência com S-WM-61 explicitada. Status Draft → Ready. | @po Pax |
+| 2026-08-01 | 0.6 | **@dev corrigiu os 2 achados do FAIL.** Retargetada a 4ª tela órfã (`/configuracoes/transbordo`) para `transbordo_humano` via `TransbordoSection`, mesmo padrão das outras 3; tipo morto `HumanHandoverContact` removido. Adicionada chave `"Acesso": "Acesso CUCA"` em `MODULO_AUTOMACAO_MAP` + teste cobrindo o caminho. Grep de escopo total confirma zero referências funcionais restantes a `human_handover_contacts`. Suíte: 218 passed, mesmas 4 falhas pré-existentes. Status InReview (FAIL) → Ready for Review. | @dev Dex |
+| 2026-08-01 | 0.5 | **@qa Quinn — QA Gate: FAIL.** Suíte reproduzida de forma independente (217 passed, 4 pré-existentes confirmados). Achado bloqueante: 4ª tela não mapeada (`/configuracoes/transbordo`, linkada no menu real com a mesma permissão de `/configuracoes/whatsapp`) continua lendo `human_handover_contacts`, removida por esta story — regressão confirmada, não presumida. Achado não-bloqueante: `MODULO_AUTOMACAO_MAP` sem chave `"Acesso"` (só `"ana"`/`"acesso_cuca"` → `"Acesso CUCA"`), dormant hoje mas vai falhar quando o template real for cadastrado. Volta para @dev. Status Ready for Review → InReview (FAIL). | @qa Quinn |
 | 2026-08-01 | 0.4 | **@dev implementou Tasks 1-9.** Backend retargetado (tabela/colunas/modulo capitalizado), migration de DROP aplicada + types regenerados, componente compartilhado extraído e usado nas 3 telas, acesso de Ouvidoria/Acesso confirmado via RLS/roles (sem regressão — só Developer/Super Admin gerenciavam esses módulos). Suíte de testes: 217 passed, 4 pré-existentes (não relacionados). Task 10 parcialmente pendente: verificação estática completa, mas teste real de mensagem + teste manual de clique dependem de sessão autenticada real (Junior optou por fazer ele mesmo, sem o agente criar conta/inserir credencial). Status Ready → Ready for Review. | @dev Dex |
 
 ## Dev Agent Record
@@ -142,17 +144,71 @@ Claude Sonnet 5 (@dev Dex)
 - Achado lateral fora de escopo (não corrigido): permissões de `config_whatsapp` para o papel "Admin Empregabilidade" estão todas `false` em `sys_permissions` — inconsistência pré-existente, não introduzida por esta story.
 - Task 10 fica parcialmente pendente: verificação estática completa (tipos, testes, compilação, revisão de código linha a linha contra AC 3/4/5), mas o teste real de mensagem e o teste manual de clique nas 2 telas remanescentes dependem de sessão autenticada real, que só o Junior pode fazer.
 
+### Correções pós-QA FAIL (@qa Quinn)
+
+- **Achado bloqueante (4ª tela órfã):** `cuca-portal/src/app/(dashboard)/configuracoes/transbordo/page.tsx` ("Atendimento Humano", linkada em `src/lib/constants.ts:93` com a mesma permissão `config_whatsapp` de `/configuracoes/whatsapp`) retargetada de `human_handover_contacts` para `transbordo_humano`, usando o mesmo padrão das outras 3 telas (componente compartilhado `TransbordoSection` + escopo por `unidade_cuca`/`isSuperAdmin` do perfil logado, copiado de `/configuracoes/whatsapp/page.tsx`). Tipo `HumanHandoverContact` removido de `src/lib/types/database.ts` (única referência que restava, sem mais nenhum consumidor). Confirmado via `grep -rln "human_handover_contacts\|HumanHandoverContact"` no repo inteiro (`.py`/`.ts`/`.tsx`) que não sobra nenhuma referência funcional — só o comentário desta própria correção, documentando o que mudou.
+- **Achado não-bloqueante (tag de automação):** adicionada a chave `"Acesso": "Acesso CUCA"` em `MODULO_AUTOMACAO_MAP` (`worker/meta_adapter_inbound.py`), corrigindo o fallback que buscava a tag errada (`"Acesso"` em vez de `"Acesso CUCA"`) quando o template real desse módulo for cadastrado. Teste novo `test_modulo_acesso_busca_template_com_tag_acesso_cuca` cobrindo esse caminho (falha sem o fix, confirmando que capturava a regressão).
+- Suíte re-executada: 218 passed (217 + 1 teste novo), mesmas 4 falhas pré-existentes não relacionadas. TypeScript limpo (mesmos 4 erros pré-existentes não relacionados).
+- Branch: mantida `fix/trigger-alerta-handover-origem-id` (reaproveitada da S-WM-61) — decisão de separar em branch própria fica para @devops/Junior antes do PR, não decidida unilateralmente aqui.
+
 ### File List
-- `worker/meta_adapter_inbound.py` (retarget tabela/colunas/mapa de módulo)
+- `worker/meta_adapter_inbound.py` (retarget tabela/colunas/mapa de módulo + fix MODULO_AUTOMACAO_MAP["Acesso"])
 - `worker/empregabilidade_engine.py` (3 call sites, modulo capitalizado)
-- `worker/tests/test_meta_adapter_inbound.py` (testes adaptados)
+- `worker/tests/test_meta_adapter_inbound.py` (testes adaptados + teste novo do módulo Acesso)
 - `worker/tests/test_empregabilidade_engine.py` (1 assertion adaptada)
 - `supabase/migrations/20260801012129_drop_human_handover_contacts_legado.sql` (novo)
 - `supabase/functions/motor-agente/database.types.ts` (regenerado)
 - `cuca-portal/src/components/transbordo/transbordo-section.tsx` (novo — componente compartilhado)
 - `cuca-portal/src/app/(dashboard)/configuracoes/whatsapp/page.tsx` (reescrito)
 - `cuca-portal/src/app/(dashboard)/developer/instancias/page.tsx` (reescrito)
+- `cuca-portal/src/app/(dashboard)/configuracoes/transbordo/page.tsx` (reescrito — achado bloqueante do QA, 4ª tela órfã)
 - `cuca-portal/src/components/instancias/canal-whatsapp-tab.tsx` (seção de transbordo removida)
+- `cuca-portal/src/lib/types/database.ts` (removido tipo `HumanHandoverContact`, sem mais consumidores)
 
 ## QA Results
-_A preencher pelo @qa._
+
+```yaml
+storyId: S-WM-63
+verdict: FAIL
+```
+
+### Verificação independente reproduzida
+
+1. **Suíte de testes (reproduzida do zero, não copiada do @dev):** `cd worker && python -m pytest -q` → **217 passed, 4 failed**. Confirmado via `git diff HEAD~1 HEAD -- worker/tests/test_meta_adapter_outbound.py` (sem diff) e `git log` desse arquivo que as 4 falhas são **pré-existentes e não relacionadas** (3× `ModuleNotFoundError: No module named 'worker'`, 1× assertion do loop proativo — nenhuma toca transbordo).
+2. **TypeScript:** limpo nos arquivos da story (mesmos 4 erros pré-existentes de `TS5097` em `tests/*.test.ts`, não relacionados).
+3. **RLS/Advisors:** `transbordo_humano` com RLS habilitada (`relrowsecurity=true`), 2 policies efetivas (`super_admin_transbordo_all`, `gerente_transbordo_unidade`). `get_advisors(security)` sem nenhum achado envolvendo `transbordo_humano`/`human_handover_contacts`. Migration de DROP é idempotente (`IF EXISTS`) e está registrada em `list_migrations`. Confirmado `to_regclass('public.human_handover_contacts')` → `null` (tabela realmente removida).
+4. **`canal-whatsapp-tab.tsx`:** lido por completo — gestão de instância/QR (`useUazapi`, `instancias_uazapi`, modal QR, modal instância) permanece 100% intacta; só a seção de transbordo foi trocada pelo componente compartilhado. Sem regressão aqui.
+
+### 🔴 Achado bloqueante (FAIL)
+
+**Existe uma 4ª tela não mapeada no escopo da story que ainda depende de `human_handover_contacts`, removida por este PR:**
+
+- `cuca-portal/src/app/(dashboard)/configuracoes/transbordo/page.tsx` — página completa e funcional ("Atendimento Humano"), com CRUD próprio, fazendo `supabase.from("human_handover_contacts")` em `select`/`insert`/`update`/`delete` (linhas 72, 98, 112, 153).
+- **Está linkada no menu real**, não é código morto: `cuca-portal/src/lib/constants.ts:93` — `{ title: "Atendimento Humano", url: "/configuracoes/transbordo", permission: { recurso: "config_whatsapp", acao: "read" } }`, com a **mesma permissão** (`config_whatsapp`) da tela WhatsApp que foi limpa nesta story. Todo perfil com acesso a `/configuracoes/whatsapp` também vê "Atendimento Humano" no menu.
+- **Impacto real:** qualquer usuário (Developer, Super Admin, Auxiliar administrativo, Institucional, Gerente — conforme o levantamento de `sys_permissions` que o próprio @dev fez na Task 9) que clicar em "Atendimento Humano" no menu vai receber erro em todas as operações — a tabela não existe mais (`to_regclass` confirma `null`). A migration de DROP (comentário da própria migration) afirma "`human_handover_contacts` não tinha nenhuma tela real usando ela" — **essa premissa está incorreta**, e foi a causa raiz de este 4º consumidor ter passado despercebido tanto na análise de impacto quanto na implementação.
+- A regra do projeto (`impact-analysis-mandatory.md`) exige rastrear **todo** consumidor real antes de aprovar remoção — aqui bastou 1 `grep -rl "human_handover_contacts"` no repo inteiro (não só nos arquivos que o @dev já ia tocar) para achar esse consumidor. Recomendo esse grep de escopo total como parte padrão do checklist de qualquer DROP de tabela daqui pra frente.
+- **Correção sugerida (decisão de @dev/@po, não minha):** provavelmente essa tela é uma versão legada/duplicada, anterior à consolidação em `/configuracoes/whatsapp` — mesmo padrão das outras 3 telas já tratadas nesta story (retargetar pra `transbordo_humano` via o componente `TransbordoSection`, ou remover a tela + a entrada do menu, se for de fato redundante). Não presumo qual — só confirmo que hoje ela está quebrada e visível.
+
+### 🟡 Achado não-bloqueante (CONCERNS — corrigir junto)
+
+**Tag de automação incorreta para o módulo Acesso, dormant hoje mas vai falhar silenciosamente quando alguém cadastrar o template real:**
+
+- `_notificar_transbordo` faz `MODULO_AUTOMACAO_MAP.get(modulo, modulo)` (`worker/meta_adapter_inbound.py:427`) para achar a tag de automação em `meta_templates.automacoes`. Com o retarget, `modulo` chega já capitalizado via `_AGENTE_MODULO_MAP["ana"] = "Acesso"`.
+- `MODULO_AUTOMACAO_MAP` não tem chave `"Acesso"` (só `"ana"` e `"acesso_cuca"`, ambos apontando pra `"Acesso CUCA"` — a tag real, com sufixo, conforme a própria convenção do mapa). `.get("Acesso", "Acesso")` cai no fallback e retorna `"Acesso"` (sem "CUCA") — **errado** frente à convenção que o próprio mapa já define.
+- **Hoje isso não quebra nada visível**, porque não existe nenhum template com automação "Acesso" nem "Acesso CUCA" ainda (confirmado via query em `meta_templates` — só `institucional_transbordo_v1` e `empregabilidade_transbordo_v1` existem, ambos aprovados). O caminho cai no branch "Nenhum template aprovado" de qualquer forma.
+- Mas no dia em que alguém cadastrar o template real com automação `"Acesso CUCA"` (seguindo a convenção já estabelecida no próprio mapa), a notificação de transbordo do módulo Acesso vai **silenciosamente não encontrar o template** (log de warning, sem alerta visível pro usuário) — porque o código busca `"Acesso"`, não `"Acesso CUCA"`.
+- **Ouvidoria e Empregabilidade não têm esse problema** — a capitalização que `_AGENTE_MODULO_MAP`/o call site direto produzem já coincide com a tag real (`"Ouvidoria"`, `"Empregabilidade"`), então o fallback do `.get()` acerta por coincidência. Só Acesso tem o sufixo "CUCA" divergente.
+- Sem cobertura de teste pra esse caminho específico — `grep -n "Acesso\|MODULO_AUTOMACAO_MAP" worker/tests/test_meta_adapter_inbound.py` não retornou nada.
+- **Correção sugerida:** adicionar `"Acesso": "Acesso CUCA"` em `MODULO_AUTOMACAO_MAP` (1 linha), e um teste cobrindo esse módulo especificamente.
+
+### Task 10 (registrado, não-bloqueante para este veredito)
+
+Teste real de transbordo (mensagem chegando no telefone) e teste manual de clique (CRUD nas 2 telas remanescentes) seguem pendentes, a cargo do Junior — mesmo padrão do S-WM-61/S-WM-62. Não influenciou o veredito FAIL (que já é definido pelo achado bloqueante acima), mas continua pendente independentemente da correção do achado #1.
+
+### Branch
+
+Confirmando a sinalização pedida: a branch `fix/trigger-alerta-handover-origem-id` foi reaproveitada da S-WM-61 (o commit desta story está em cima do commit do fix do trigger). O doc da story original previa `feat/consolidar-transbordo-humano` como branch própria. Não é um problema técnico em si (nada impede o PR), mas é uma decisão de @devops/Junior — sinalizado conforme pedido, sem opinião de mérito da minha parte.
+
+### Recomendação
+
+**Não acionar @devops.** Veredito **FAIL** — volta para @dev com os 2 achados acima (1 bloqueante, 1 não-bloqueante) antes de nova rodada de QA.
