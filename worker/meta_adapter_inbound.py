@@ -671,6 +671,20 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
     mensagem: str = contrato_v2["mensagem"]
     midia_tipo: str = contrato_v2["midia_tipo"]
 
+    # Guard: numero com bloqueio permanente (2026-08-01, caso WEBLOCACAO/MKL IT
+    # SOLUTIONS) — tabela separada de `leads`, checada ANTES do upsert, porque
+    # `leads.bloqueado` mora na propria linha e nao sobrevive a um DELETE dela.
+    # Fail-open (loga e segue) em erro de leitura: um bug aqui nao pode travar
+    # todo o processamento de mensagens.
+    try:
+        bloqueio_perm = supabase.table("numeros_bloqueados_permanente") \
+            .select("telefone").eq("telefone", telefone).limit(1).execute()
+        if bloqueio_perm.data:
+            logger.info(f"[meta-inbound] Numero {telefone} com bloqueio permanente — descartado")
+            return
+    except Exception as exc:
+        logger.warning(f"[meta-inbound] Erro ao checar bloqueio permanente de {telefone}: {exc}")
+
     # ── DB A: upsert Lead por telefone ────────────────────────────────────
     try:
         lead_result = supabase.table("leads").upsert(
