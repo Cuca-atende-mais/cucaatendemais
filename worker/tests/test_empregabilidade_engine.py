@@ -1568,7 +1568,7 @@ class TestAutorizacaoEmpresaPorNumeroWhatsapp:
         mock_conversas.update.assert_called_once_with({"status": "awaiting_human", "updated_at": "now()"})
         mock_conversas.update.return_value.eq.assert_called_once_with("id", "conv-1")
         mock_notificar.assert_called_once_with(
-            "conv-1", "empregabilidade", "Barra", "PHONE_ID", "558599990000",
+            "conv-1", "Empregabilidade", "Barra", "PHONE_ID", "558599990000",
         )
         assert estado == {}, "reset do fluxo — nenhum empresa_id deve sobrar em estado gravado"
 

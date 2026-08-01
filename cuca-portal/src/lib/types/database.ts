@@ -239,14 +239,3 @@ export type Curriculo = {
     created_at: string
     updated_at: string
 }
-
-export type HumanHandoverContact = {
-    id: string
-    modulo: string
-    unidade_cuca: string | null
-    telefone_destino: string
-    nome_responsavel: string | null
-    ativo: boolean
-    created_at: string
-    updated_at: string
-}

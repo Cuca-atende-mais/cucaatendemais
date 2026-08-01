@@ -1,376 +1,86 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { HumanHandoverContact } from "@/lib/types/database"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@/components/ui/table"
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-} from "@/components/ui/dialog"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
-import { Search, Plus, Pencil, PhoneForwarded, Trash2 } from "lucide-react"
-import { format } from "date-fns"
-import { ptBR } from "date-fns/locale"
-import toast from "react-hot-toast"
-import { unidadesCuca, UnidadeCuca } from "@/lib/constants"
+import { Loader2, UserCheck } from "lucide-react"
+import { TransbordoSection } from "@/components/transbordo/transbordo-section"
 
-const MÓDULOS_PERMITIDOS = [
-    { value: 'empregabilidade', label: 'Empregabilidade' },
-    { value: 'ouvidoria', label: 'Ouvidoria' },
-    { value: 'programacao', label: 'Programação' },
-    { value: 'acesso_cuca', label: 'Acesso CUCA' },
-    { value: 'geral', label: 'Geral (Fallback)' },
-]
+/* ─── Tipos ──────────────────────────────────────────────── */
+type UserProfile = {
+    email: string | null
+    unidade_cuca: string | null
+    isSuperAdmin: boolean
+}
 
+/* ─── Componente Principal ───────────────────────────────── */
+// S-WM-63 (fix pós-QA FAIL): esta página lia/gravava direto em human_handover_contacts,
+// tabela removida por esta story — achado bloqueante da @qa Quinn (tela linkada no menu
+// real, `config_whatsapp:read`, mesma permissão de /configuracoes/whatsapp). Retargetada
+// para transbordo_humano via TransbordoSection, mesmo padrão já usado nas outras 3 telas.
 export default function TransbordoPage() {
-    const [contatos, setContatos] = useState<HumanHandoverContact[]>([])
-    const [loading, setLoading] = useState(true)
-    const [searchTerm, setSearchTerm] = useState("")
-    const [dialogOpen, setDialogOpen] = useState(false)
-    const [editingContato, setEditingContato] = useState<HumanHandoverContact | null>(null)
-    const [formData, setFormData] = useState({
-        modulo: "",
-        unidade_cuca: "todas", // "todas" map to null in DB
-        telefone_destino: "",
-        nome_responsavel: "",
-        ativo: true,
-    })
     const supabase = createClient()
+    const [profile, setProfile] = useState<UserProfile | null>(null)
+    const [fetching, setFetching] = useState(true)
 
     useEffect(() => {
-        fetchContatos()
+        loadProfile()
     }, [])
 
-    const fetchContatos = async () => {
-        setLoading(true)
-        const { data, error } = await supabase
-            .from("human_handover_contacts")
-            .select("*")
-            .order("modulo", { ascending: true })
+    const loadProfile = async () => {
+        setFetching(true)
+        try {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) return
 
-        if (error) {
-            console.error("Erro ao buscar contatos:", error)
-            toast.error("Erro ao carregar configurações de transbordo")
-        } else {
-            setContatos(data || [])
-        }
-        setLoading(false)
-    }
+            const { data: colab } = await supabase
+                .from("colaboradores")
+                .select("unidade_cuca, role_id")
+                .eq("user_id", user.id)
+                .maybeSingle()
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault()
+            const { data: roleData } = await supabase
+                .from("sys_roles")
+                .select("name")
+                .eq("id", colab?.role_id)
+                .maybeSingle()
 
-        const payload = {
-            modulo: formData.modulo,
-            unidade_cuca: formData.unidade_cuca === "todas" ? null : formData.unidade_cuca,
-            telefone_destino: formData.telefone_destino.replace(/\D/g, ''), // Salvar apenas números
-            nome_responsavel: formData.nome_responsavel,
-            ativo: formData.ativo,
-        }
+            const roleName = roleData?.name || ""
+            const unidadeColab = colab?.unidade_cuca || null
+            // Usuários com unidade 'Geral' ou nula têm visão global (equivalente a Super Admin nesta página)
+            const isGlobal = !unidadeColab || unidadeColab === "Geral"
+            const isSuperAdmin = isGlobal || ["Super Admin Cuca", "Developer"].includes(roleName)
 
-        if (editingContato) {
-            const { error } = await supabase
-                .from("human_handover_contacts")
-                .update(payload)
-                .eq("id", editingContato.id)
-
-            if (error) {
-                console.error("Erro ao atualizar contato:", error)
-                toast.error("Erro ao atualizar contato")
-            } else {
-                toast.success("Regra de transbordo atualizada com sucesso!")
-                fetchContatos()
-                handleCloseDialog()
-            }
-        } else {
-            const { error } = await supabase
-                .from("human_handover_contacts")
-                .insert(payload)
-
-            if (error) {
-                console.error("Erro ao criar contato:", error)
-                toast.error("Erro ao criar regra de transbordo")
-            } else {
-                toast.success("Regra de transbordo criada com sucesso!")
-                fetchContatos()
-                handleCloseDialog()
-            }
+            setProfile({
+                email: user.email || null,
+                unidade_cuca: unidadeColab,
+                isSuperAdmin,
+            })
+        } catch (err) {
+            console.error("Erro ao carregar perfil:", err)
+        } finally {
+            setFetching(false)
         }
     }
 
-    const handleEdit = (contato: HumanHandoverContact) => {
-        setEditingContato(contato)
-        setFormData({
-            modulo: contato.modulo,
-            unidade_cuca: contato.unidade_cuca || "todas",
-            telefone_destino: contato.telefone_destino,
-            nome_responsavel: contato.nome_responsavel || "",
-            ativo: contato.ativo,
-        })
-        setDialogOpen(true)
+    if (fetching) {
+        return <div className="flex justify-center py-40"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
     }
-
-    const handleCloseDialog = () => {
-        setDialogOpen(false)
-        setEditingContato(null)
-        setFormData({
-            modulo: "",
-            unidade_cuca: "todas",
-            telefone_destino: "",
-            nome_responsavel: "",
-            ativo: true,
-        })
-    }
-
-    const handleDelete = async (contato: HumanHandoverContact) => {
-        const label = getModuloLabel(contato.modulo)
-        if (!confirm(`Remover regra "${label}" — ${contato.nome_responsavel || contato.telefone_destino}? Esta ação não pode ser desfeita.`)) return
-        const { error } = await supabase.from("human_handover_contacts").delete().eq("id", contato.id)
-        if (error) {
-            console.error("Erro ao remover regra:", error)
-            toast.error("Erro ao remover regra de transbordo")
-        } else {
-            toast.success("Regra removida com sucesso!")
-            fetchContatos()
-        }
-    }
-
-    const getModuloLabel = (val: string) => MÓDULOS_PERMITIDOS.find(m => m.value === val)?.label || val
-
-    const filteredContatos = contatos.filter((c) =>
-        getModuloLabel(c.modulo).toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (c.nome_responsavel && c.nome_responsavel.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        c.telefone_destino.includes(searchTerm)
-    )
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Atendimento Humano</h1>
-                    <p className="text-muted-foreground">
-                        Configure para quais números de WhatsApp os resumos de atendimento serão enviados.
-                    </p>
-                </div>
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                    <DialogTrigger asChild>
-                        <Button className="bg-cuca-blue hover:bg-sky-800" onClick={() => setEditingContato(null)}>
-                            <Plus className="mr-2 h-4 w-4" />
-                            Nova Regra
-                        </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                        <form onSubmit={handleSubmit}>
-                            <DialogHeader>
-                                <DialogTitle>
-                                    {editingContato ? "Editar Regra de Transbordo" : "Nova Regra de Transbordo"}
-                                </DialogTitle>
-                                <DialogDescription>
-                                    Defina quem receberá mensagens quando a IA detectar a necessidade de assumir presencialmente/humanamente.
-                                </DialogDescription>
-                            </DialogHeader>
-                            <div className="grid gap-4 py-4">
-                                <div className="grid gap-2">
-                                    <Label htmlFor="modulo">Módulo IA *</Label>
-                                    <Select
-                                        value={formData.modulo}
-                                        onValueChange={(v) => setFormData({ ...formData, modulo: v })}
-                                        required
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Selecione o módulo de origem" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {MÓDULOS_PERMITIDOS.map(m => (
-                                                <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="grid gap-2">
-                                    <Label htmlFor="unidade_cuca">Unidade CUCA (Filtro)</Label>
-                                    <Select
-                                        value={formData.unidade_cuca}
-                                        onValueChange={(v) => setFormData({ ...formData, unidade_cuca: v })}
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Selecione a unidade" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="todas">Todas as Unidades (Fallback Geral)</SelectItem>
-                                            {unidadesCuca.map((u) => (
-                                                <SelectItem key={u} value={u}>{u}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    <span className="text-xs text-muted-foreground">Útil para rotear atendimento de Empregabilidade ou Ouvidoria por campus.</span>
-                                </div>
-                                <div className="grid gap-2">
-                                    <Label htmlFor="nome_responsavel">Nome do Responsável / Setor</Label>
-                                    <Input
-                                        id="nome_responsavel"
-                                        value={formData.nome_responsavel}
-                                        onChange={(e) => setFormData({ ...formData, nome_responsavel: e.target.value })}
-                                        placeholder="Ex: RH Geral, Atendente João"
-                                    />
-                                </div>
-                                <div className="grid gap-2">
-                                    <Label htmlFor="telefone_destino">WhatsApp de Destino (DDI+DDD+Número) *</Label>
-                                    <Input
-                                        id="telefone_destino"
-                                        value={formData.telefone_destino}
-                                        onChange={(e) => setFormData({ ...formData, telefone_destino: e.target.value })}
-                                        placeholder="Ex: 5585999999999"
-                                        required
-                                    />
-                                    <span className="text-xs text-muted-foreground">Número que receberá o alerta ativo do Worker.</span>
-                                </div>
-                                <div className="flex items-center justify-between mt-2">
-                                    <Label htmlFor="ativo">Regra Ativa</Label>
-                                    <Switch
-                                        id="ativo"
-                                        checked={formData.ativo}
-                                        onCheckedChange={(checked) => setFormData({ ...formData, ativo: checked })}
-                                    />
-                                </div>
-                            </div>
-                            <DialogFooter>
-                                <Button type="button" variant="outline" onClick={handleCloseDialog}>
-                                    Cancelar
-                                </Button>
-                                <Button type="submit" className="bg-cuca-blue hover:bg-sky-800" disabled={!formData.modulo || !formData.telefone_destino}>
-                                    {editingContato ? "Atualizar Regra" : "Criar Regra"}
-                                </Button>
-                            </DialogFooter>
-                        </form>
-                    </DialogContent>
-                </Dialog>
+            <div>
+                <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+                    <UserCheck className="h-7 w-7 text-primary" />
+                    Atendimento Humano — {profile?.isSuperAdmin ? "Toda a Rede CUCA" : (profile?.unidade_cuca || "Minha Unidade")}
+                </h1>
+                <p className="text-muted-foreground">
+                    Configure para quais números de WhatsApp os alertas de transbordo serão enviados, por canal.
+                </p>
             </div>
 
-            <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                    <div>
-                        <CardTitle>Regras de Roteamento</CardTitle>
-                        <CardDescription>
-                            Prioridade: Regras com "Unidade CUCA" têm maior peso sobre as regras "Todas".
-                        </CardDescription>
-                    </div>
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                            placeholder="Buscar contatos..."
-                            className="pl-10 w-64"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                </CardHeader>
-                <CardContent>
-                    {loading ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                            Carregando rotas...
-                        </div>
-                    ) : filteredContatos.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                            Nenhuma regra configurada.
-                        </div>
-                    ) : (
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Módulo IA</TableHead>
-                                    <TableHead>Unidade CUCA</TableHead>
-                                    <TableHead>Setor / Nome</TableHead>
-                                    <TableHead>WhatsApp Destino</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead className="text-right">Ações</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {filteredContatos.map((contato) => (
-                                    <TableRow key={contato.id}>
-                                        <TableCell className="font-semibold text-slate-700">
-                                            {getModuloLabel(contato.modulo)}
-                                        </TableCell>
-                                        <TableCell>
-                                            {contato.unidade_cuca ? (
-                                                <Badge variant="outline" className="border-cuca-blue text-cuca-blue">
-                                                    {contato.unidade_cuca}
-                                                </Badge>
-                                            ) : (
-                                                <Badge variant="secondary">Global (Fallback)</Badge>
-                                            )}
-                                        </TableCell>
-                                        <TableCell className="text-muted-foreground">
-                                            <div className="flex items-center gap-2">
-                                                <PhoneForwarded className="w-3 h-3" />
-                                                {contato.nome_responsavel || "Setor Padrão"}
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="font-mono text-sm">
-                                            +{contato.telefone_destino}
-                                        </TableCell>
-                                        <TableCell>
-                                            {contato.ativo ? (
-                                                <Badge variant="default" className="bg-green-600">
-                                                    Ativo
-                                                </Badge>
-                                            ) : (
-                                                <Badge variant="secondary">Inativo</Badge>
-                                            )}
-                                        </TableCell>
-                                        <TableCell className="text-right">
-                                            <div className="flex items-center justify-end gap-1">
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    className="text-cuca-blue hover:text-sky-800"
-                                                    onClick={() => handleEdit(contato)}
-                                                >
-                                                    <Pencil className="h-4 w-4 mr-1" /> Editar
-                                                </Button>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    className="text-destructive hover:text-destructive/80"
-                                                    onClick={() => handleDelete(contato)}
-                                                >
-                                                    <Trash2 className="h-4 w-4" />
-                                                </Button>
-                                            </div>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    )}
-                </CardContent>
-            </Card>
+            <TransbordoSection
+                unidadeCuca={profile?.isSuperAdmin ? null : profile?.unidade_cuca}
+            />
         </div>
     )
 }
