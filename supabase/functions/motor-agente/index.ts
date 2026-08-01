@@ -1803,8 +1803,12 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     for (const parte of mensagens) {
       await salvarMensagemAgente(supabase, conversa.id, lead.id, parte);
     }
-    if (handover) await supabase.from("conversas").update({ status: "awaiting_human", updated_at: new Date().toISOString() }).eq("id", conversa.id);
-    else if (encerrado) await supabase.from("conversas").update({ status: "encerrada", updated_at: new Date().toISOString() }).eq("id", conversa.id);
+    if (handover) {
+      const { error: handoverError } = await supabase.from("conversas").update({ status: "awaiting_human", updated_at: new Date().toISOString() }).eq("id", conversa.id);
+      if (handoverError) {
+        console.error("[motor-agente v18] Falha ao marcar conversa como awaiting_human conversa_id=" + conversa.id + " agente_tipo=" + agente_tipo + " erro=" + handoverError.message);
+      }
+    } else if (encerrado) await supabase.from("conversas").update({ status: "encerrada", updated_at: new Date().toISOString() }).eq("id", conversa.id);
 
     return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover, encerrado, resposta, mensagens }), { headers: { "Content-Type": "application/json" } });
 

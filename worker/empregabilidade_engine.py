@@ -333,6 +333,93 @@ async def _ultima_mensagem_bot_async(conversa_id: str) -> str | None:
     return await asyncio.to_thread(_ultima_mensagem_bot, conversa_id)
 
 
+_MSG_TRANSBORDO_FALHOU = (
+    "Tentei acionar nossa equipe agora, mas não consegui confirmar o encaminhamento automático. "
+    "Por favor, tente novamente em alguns minutos ou procure a equipe do CUCA pelo canal oficial."
+)
+
+
+async def _acionar_transbordo_empregabilidade(
+    *,
+    conversa_id: str,
+    unidade_cuca: str | None,
+    instance_name: str,
+    token: str,
+    phone: str,
+    lead_id: str,
+    motivo: str,
+    mensagem_sucesso: str,
+    metadata_update: dict | None = None,
+    reset_fluxo: bool = False,
+) -> bool:
+    """Aciona handover real antes de prometer atendimento humano ao lead."""
+    status_humano_marcado = False
+    try:
+        def _marcar_conversa_humana():
+            if metadata_update is not None:
+                supabase.table("conversas").update({"metadata": metadata_update}).eq("id", conversa_id).execute()
+            supabase.table("conversas").update(
+                {"status": "awaiting_human", "updated_at": "now()"}
+            ).eq("id", conversa_id).execute()
+
+        await _supabase_to_thread(_marcar_conversa_humana)
+        status_humano_marcado = True
+        from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
+        notificado = await _notificar_transbordo(
+            conversa_id, "Empregabilidade", unidade_cuca or None, instance_name, phone
+        )
+        if notificado is False:
+            raise RuntimeError("notificacao_transbordo_nao_enviada")
+        if reset_fluxo:
+            await _set_fluxo_async(conversa_id, {})
+    except Exception:
+        logger.error(
+            "[handover] Falha ao acionar transbordo de Empregabilidade",
+            extra={
+                "conversa_id": conversa_id,
+                "unidade_cuca": unidade_cuca,
+                "motivo": motivo,
+                "telefone": phone[:6] + "****",
+            },
+            exc_info=True,
+        )
+        if status_humano_marcado:
+            try:
+                def _restaurar_conversa_ativa():
+                    supabase.table("conversas").update(
+                        {"status": "ativa", "updated_at": "now()"}
+                    ).eq("id", conversa_id).execute()
+
+                await _supabase_to_thread(_restaurar_conversa_ativa)
+            except Exception:
+                logger.error(
+                    "[handover] Falha ao reverter status de transbordo de Empregabilidade",
+                    extra={
+                        "conversa_id": conversa_id,
+                        "unidade_cuca": unidade_cuca,
+                        "motivo": motivo,
+                        "telefone": phone[:6] + "****",
+                    },
+                    exc_info=True,
+                )
+        await _enviar(
+            instance_name, token, phone, _MSG_TRANSBORDO_FALHOU,
+            conversa_id=conversa_id, lead_id=lead_id,
+        )
+        return False
+
+    await _enviar(
+        instance_name, token, phone, mensagem_sucesso,
+        conversa_id=conversa_id, lead_id=lead_id,
+    )
+    logger.info(
+        "[handover] %s",
+        {"event": "handover_requested", "telefone": phone[:6] + "****",
+         "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": motivo},
+    )
+    return True
+
+
 async def _log_intencao_async(conversa_id: str, intencao: str) -> None:
     if (
         ("_LOG_INTENCAO_SYNC" in globals() and _log_intencao is not _LOG_INTENCAO_SYNC)
@@ -958,20 +1045,21 @@ async def _processar_empresa(
                     f"[SEC-01] Tentativa de acessar empresa {empresa['id']} (CNPJ {cnpj_limpo}) "
                     f"de um WhatsApp não autorizado. phone={phone[:6]}****"
                 )
-                await e(
-                    "Esse CNPJ já está cadastrado com outro número de WhatsApp autorizado. 🔒\n\n"
-                    "Encaminhamos seu contato para verificação da nossa equipe — em breve alguém "
-                    "vai confirmar e liberar o acesso, se for o caso."
+                await _acionar_transbordo_empregabilidade(
+                    conversa_id=conversa_id,
+                    unidade_cuca=unidade_cuca,
+                    instance_name=instance_name,
+                    token=token,
+                    phone=phone,
+                    lead_id=lead_id,
+                    motivo="cnpj_numero_nao_autorizado",
+                    mensagem_sucesso=(
+                        "Esse CNPJ já está cadastrado com outro número de WhatsApp autorizado. 🔒\n\n"
+                        "Encaminhamos seu contato para verificação da nossa equipe — em breve alguém "
+                        "vai confirmar e liberar o acesso, se for o caso."
+                    ),
+                    reset_fluxo=True,
                 )
-                def _marcar_conversa_humana():
-                    supabase.table("conversas").update(
-                        {"status": "awaiting_human", "updated_at": "now()"}
-                    ).eq("id", conversa_id).execute()
-
-                await _supabase_to_thread(_marcar_conversa_humana)
-                from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
-                await _notificar_transbordo(conversa_id, "Empregabilidade", unidade_cuca or None, instance_name, phone)
-                await _set_fluxo_async(conversa_id, {})
                 return
 
             await e(
@@ -2626,26 +2714,18 @@ async def _processar_mensagem_empregabilidade_locked(
     
     if cm_meta.get("ultima_intencao") == "duvida":
         cm_meta["ultima_intencao"] = None
-        def _marcar_handover_duvida():
-            supabase.table("conversas").update({"metadata": cm_meta}).eq("id", conversa_id).execute()
-            supabase.table("conversas").update(
-                {"status": "awaiting_human", "updated_at": "now()"}
-            ).eq("id", conversa_id).execute()
-
-        await _supabase_to_thread(_marcar_handover_duvida)
         logger.info(f"[SQS-40] Disparando transbordo por dúvida — lead {phone[:6]}****")
-        await _enviar(
-            instance_name, token, phone,
-            "Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
-            conversa_id=conversa_id, lead_id=lead_id,
+        await _acionar_transbordo_empregabilidade(
+            conversa_id=conversa_id,
+            unidade_cuca=unidade_cuca,
+            instance_name=instance_name,
+            token=token,
+            phone=phone,
+            lead_id=lead_id,
+            motivo="duvida",
+            mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+            metadata_update=cm_meta,
         )
-        logger.info(
-            "[handover] %s",
-            {"event": "handover_requested", "telefone": phone[:6] + "****",
-             "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": "duvida"},
-        )
-        from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
-        await _notificar_transbordo(conversa_id, "Empregabilidade", unidade_cuca or None, instance_name, phone)
         return
 
     # Detecção por expressão natural: usuário pede explicitamente atendimento humano
@@ -2664,24 +2744,16 @@ async def _processar_mensagem_empregabilidade_locked(
     }
     if any(kw in _texto_lower for kw in _CONTAINS_HANDOVER):
         logger.info(f"[HANDOVER-KW] Transbordo por palavra-chave — lead {phone[:6]}****")
-        await _enviar(
-            instance_name, token, phone,
-            "Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
-            conversa_id=conversa_id, lead_id=lead_id,
+        await _acionar_transbordo_empregabilidade(
+            conversa_id=conversa_id,
+            unidade_cuca=unidade_cuca,
+            instance_name=instance_name,
+            token=token,
+            phone=phone,
+            lead_id=lead_id,
+            motivo="palavra_chave",
+            mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
         )
-        logger.info(
-            "[handover] %s",
-            {"event": "handover_requested", "telefone": phone[:6] + "****",
-             "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": "palavra_chave"},
-        )
-        def _marcar_handover_palavra_chave():
-            supabase.table("conversas").update(
-                {"status": "awaiting_human", "updated_at": "now()"}
-            ).eq("id", conversa_id).execute()
-
-        await _supabase_to_thread(_marcar_handover_palavra_chave)
-        from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
-        await _notificar_transbordo(conversa_id, "Empregabilidade", unidade_cuca or None, instance_name, phone)
         return
 
     # SQS-40 Task 3.4: Interceptar respostas ao convite de entrevista

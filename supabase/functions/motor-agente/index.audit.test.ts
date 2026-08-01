@@ -44,30 +44,43 @@ import {
 // mock nunca guardava o conteúdo pra comparar). Aditivo: nenhum teste existente lê `payload`,
 // então adicionar o campo não quebra nada.
 type ChamadaRegistrada = { tabela: string; metodo: string; args?: unknown[]; payload?: unknown };
+type RespostaSupabaseMock = {
+  data: unknown;
+  error?: { message: string } | null;
+  errorByOperation?: Record<string, { message: string } | null>;
+};
 
 // S-WM-39: `error` opcional por tabela — aditivo (default null, preserva todo call-site
 // existente que só configura `data`). Simula uma query real do supabase-js falhando
 // (select/insert na mesma tabela resolvem o mesmo `error` configurado — suficiente pros
 // cenários testados, que não precisam diferenciar select de insert na mesma tabela).
 // deno-lint-ignore no-explicit-any
-function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown; error?: { message: string } | null }>, chamadas: ChamadaRegistrada[]): any {
+function criarSupabaseMock(respostasPorTabela: Record<string, RespostaSupabaseMock>, chamadas: ChamadaRegistrada[]): any {
   function criarChain(tabela: string) {
     // deno-lint-ignore no-explicit-any
     const chain: any = {};
+    let operacao = "";
     for (const metodo of ["select", "eq", "order", "limit", "single"]) {
       chain[metodo] = (...args: unknown[]) => {
         chamadas.push({ tabela, metodo, args });
+        if (metodo === "select") operacao = metodo;
         return chain;
       };
     }
     for (const metodo of ["insert", "update"]) {
       chain[metodo] = (payload: unknown) => {
         chamadas.push({ tabela, metodo, payload });
+        operacao = metodo;
         return chain;
       };
     }
-    chain.then = (resolve: (v: { data: unknown; error: { message: string } | null }) => unknown) =>
-      resolve({ data: respostasPorTabela[tabela]?.data ?? null, error: respostasPorTabela[tabela]?.error ?? null });
+    chain.then = (resolve: (v: { data: unknown; error: { message: string } | null }) => unknown) => {
+      const resposta = respostasPorTabela[tabela];
+      resolve({
+        data: resposta?.data ?? null,
+        error: resposta?.errorByOperation?.[operacao] ?? resposta?.error ?? null,
+      });
+    };
     return chain;
   }
   return {
@@ -82,7 +95,7 @@ function criarSupabaseMock(respostasPorTabela: Record<string, { data: unknown; e
 
 /** Base comum aos cenários de handler (AUD-04, AUD-07) abaixo — só muda `conversas.metadata` e
  * a mensagem do lead. */
-function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record<string, { data: unknown; error?: { message: string } | null }> {
+function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record<string, RespostaSupabaseMock> {
   return {
     "rpc:get_openai_key": { data: "fake-openai-key" },
     "leads": { data: { id: "lead-1", nome: "Fulano", opt_in: true, bloqueado: false } },
@@ -125,14 +138,17 @@ function comFetchMockado<T>(fn: () => Promise<T>, respostaChatCompletions = "Res
 function comConsoleLogCapturado<T>(fn: () => Promise<T>): Promise<{ resultado: T; linhas: string[] }> {
   const originalLog = console.log;
   const originalWarn = console.warn;
+  const originalError = console.error;
   const linhas: string[] = [];
   // deno-lint-ignore no-explicit-any
   console.log = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as typeof console.log;
   // deno-lint-ignore no-explicit-any
   console.warn = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as typeof console.warn;
+  // deno-lint-ignore no-explicit-any
+  console.error = ((...args: any[]) => { linhas.push(args.map(String).join(" ")); }) as typeof console.error;
   return fn()
     .then((resultado) => ({ resultado, linhas }))
-    .finally(() => { console.log = originalLog; console.warn = originalWarn; });
+    .finally(() => { console.log = originalLog; console.warn = originalWarn; console.error = originalError; });
 }
 
 function requestFake(mensagem: string): Request {
@@ -1011,6 +1027,42 @@ Deno.test("Item 2 / AC5: split acontece DEPOIS da tag [[HANDOVER]] — a tag cru
       assertEquals(parte.includes("[[HANDOVER]]"), false, "AC5: a tag crua não pode sobreviver em NENHUMA parte — o split só pode acontecer depois da remoção da tag");
     }
   }, respostaComHandoverEList);
+});
+
+Deno.test("S-WM-64 / Institucional: erro ao marcar awaiting_human é logado em vez de descartado", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["conversas"] = {
+    data: { id: "conv-1", status: "ativa", metadata: { unidade_selecionada: "Cuca Barra" }, lead_id: "lead-1" },
+    errorByOperation: { update: { message: "trigger quebrou" } },
+  };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resultado, linhas } = await comConsoleLogCapturado(() =>
+    comFetchMockado(async () => {
+      const resp = await handler(requestFake("quero falar com atendente"), supabaseMock);
+      const body = await resp.json();
+      assertEquals(resp.status, 200, "a story não muda o fluxo de resposta do Institucional");
+      assertEquals(body.handover, true);
+      return body;
+    }, "Vou te encaminhar para um atendente. [[HANDOVER]]")
+  );
+
+  assertEquals(resultado.handover, true);
+  const updateHandover = chamadas.find((c) =>
+    c.tabela === "conversas" &&
+    c.metodo === "update" &&
+    (c.payload as { status?: string } | undefined)?.status === "awaiting_human"
+  );
+  assertEquals(Boolean(updateHandover), true, "o update de handover precisa continuar sendo tentado");
+  assertEquals(
+    linhas.some((linha) =>
+      linha.includes("Falha ao marcar conversa como awaiting_human") &&
+      linha.includes("trigger quebrou")
+    ),
+    true,
+    "erro retornado pelo supabase-js não pode ser descartado silenciosamente",
+  );
 });
 
 // ── VAL-02: guardrail anti-alucinação — reforço com exemplo negativo explícito ──────────────
