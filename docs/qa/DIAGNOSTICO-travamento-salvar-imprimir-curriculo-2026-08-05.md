@@ -4,7 +4,9 @@
 **Autor:** @dev (Dex) — levantamento a pedido do Junior, a partir de investigação externa repassada
 (`INVESTIGACAO-travamento-salvar-imprimir-curriculo-2026-08-04.md`, sócio/rede CUCA).
 **Status:** Levantamento concluído em 2026-08-05. **Correção implementada em 2026-08-05** (autorização explícita do
-Junior: *"@dev pode seguir no ajuste conforme pipeline Aiox"*) — ver seção 7. Pronto para @qa.
+Junior: *"@dev pode seguir no ajuste conforme pipeline Aiox"*) — ver seção 7. **QA gate executado em 2026-08-05
+— veredito: CONCERNS** (ver seção 8) — não bloqueante, mas com uma ressalva importante sobre como a reprodução foi
+validada. Aguardando decisão do Junior para seguir a @devops.
 **Escopo:** ferramenta interna **Criar Currículo** do Portal
 (`cuca-portal/src/app/(dashboard)/empregabilidade/criar-curriculo/[id]/page.tsx`), exclusiva de colaboradores logados.
 
@@ -164,3 +166,80 @@ aqui para retomar se o Junior quiser incluir depois.
 **Próximo passo:** conforme `aiox-pipeline-enforcement.md`, esta etapa do @dev termina aqui — recomendo chamar o
 @qa para o quality gate (7 checks + reprodução manual do bug em ambiente local/staging). @devops só commita/pusha
 depois de autorização explícita do Junior sobre a descrição do commit/PR.
+
+---
+
+## 8. QA Gate (@qa Quinn) — 2026-08-05
+
+**Veredito: CONCERNS.** A correção está tecnicamente sólida e não há regressão identificada — mas a validação
+manual não pôde confirmar o bug *original* de forma limpa, por um motivo relevante explicado abaixo. Não é
+bloqueante para seguir, mas o Junior deve estar ciente da ressalva antes de aprovar o PR.
+
+### 8.1 — Os 7 checks
+
+1. **Code review:** revisado o diff completo de `handlePrint` (linhas 247-281). Implementação bate exatamente com
+   a proposta da seção 7/do relatório original: `window.open("", "_blank")` síncrono antes do `handleSubmit`,
+   `printWindow.location.href` definido só após o `await`, `printWindow?.close()` em todo caminho de falha, toast
+   de fallback quando o próprio `window.open` inicial retorna `null`. Nenhum code smell, nenhuma duplicação nova.
+2. **Testes:** não há teste automatizado cobrindo isso (confirmado na seção 5 — decisão de escopo em aberto, não
+   deste fix). `eslint` e `tsc --noEmit` reexecutados por mim, independente do @dev — ambos limpos no arquivo
+   tocado.
+3. **Acceptance criteria:** não há story formal com AC numerado para este bug pontual (é um fix direto a partir de
+   relatório de investigação) — julgo pelo enunciado do relatório original: "abrir a aba em branco de forma
+   síncrona, guardar a referência, e só definir a URL depois que o salvamento retornar" — **atendido linha a
+   linha**.
+4. **Regressão:** `grep -rn "handlePrint"` confirma zero consumidores externos (só o próprio `onClick`). `onSubmit`,
+   a RPC `salvar_curriculo_estruturado` e a rota `/empregabilidade/print/[id]` não foram tocadas. Botão "Salvar"
+   isolado (linhas 443-450) não chama `handlePrint`, comportamento dele inalterado.
+5. **Performance:** sem impacto — um `window.open("", "_blank")` a mais não é custo perceptível.
+6. **Segurança:** sem superfície nova. Sem dado sensível em URL, sem novo endpoint, sem mudança de RLS/permissão.
+7. **Docs:** este diagnóstico documenta a mudança; nenhuma doc de produto/API precisa de atualização (é comportamento
+   interno de UI, não contrato de API).
+
+### 8.2 — Reprodução manual em produção (via Chrome real do Junior, sessão já autenticada)
+
+Criei um candidato de teste (`TESTE QA NAO USAR - bug print curriculo`, claramente identificado, **arquivado
+via soft-delete ao final do teste** — `deleted_at`, não é hard-delete, dado não removido fisicamente do banco) em
+`https://cucaatendemais.com.br/empregabilidade/criar-curriculo`, e cliquei em **"Salvar e Imprimir"**.
+
+**Resultado observado:** a aba de impressão abriu corretamente e renderizou o currículo com os dados salvos.
+
+**Ressalva importante — isso não valida a correção do jeito que eu gostaria:** esse teste rodou contra o código
+**já publicado em produção hoje** (a correção deste PR ainda não foi deployada — deploy de App exige PR + aprovação
+humana na `main`, seção 7 de `cuca-deploy-environments.md`). Ou seja, testei o comportamento **antigo** (sem a
+correção), e ele funcionou sem travar.
+
+Isso não invalida o diagnóstico original — é consistente com a mecânica documentada de "user activation" dos
+navegadores: o Chrome mantém uma janela de **ativação transitória** por alguns segundos após o clique (não expira
+no primeiro `await`/microtask; expira por tempo ou por certas interrupções). Minha conexão até o Supabase de
+produção, nesta sessão, respondeu rápido o suficiente para o `window.open()` ainda cair dentro dessa janela. Isso
+**explica por que o bug é intermitente** — depende da latência real da chamada RPC no momento do clique (rede da
+unidade, carga do banco, etc.) — e por que um clique manual isolado, de uma conexão rápida, não é garantia de
+reproduzir o problema relatado pela rede CUCA. Tentei isolar objetivamente esse limiar com uma página de teste
+sintética (dois padrões — antigo vs. novo — disparando `window.open()` depois de delays crescentes, de 0 a 8s),
+mas o navegador de automação usado para esse teste sintético (`Claude_Browser`, diferente do Chrome real via
+`claude-in-chrome`) bloqueou o padrão antigo em **todos** os delays testados, inclusive 0ms — o que indica que esse
+ambiente de automação específico não replica de forma confiável a política real de user-activation do Chrome (needs
+gesture genuinamente "trusted" de um jeito que esse harness não reproduziu), então descartei esse resultado como
+não-conclusivo, em vez de reportá-lo como confirmação.
+
+**O que fica validado, com o nível de confiança que dá para ter aqui:**
+- ✅ A correção **elimina estruturalmente a dependência de timing** — abre a aba antes de qualquer `await`, então
+  não importa se a RPC responde em 50ms ou 5s, o resultado passa a ser determinístico.
+- ✅ O padrão aplicado é **idêntico** ao que já roda em produção sem esse bug há tempo, no mesmo arquivo/módulo
+  (`candidatos/[candidatura_id]/page.tsx:410`).
+- ✅ Reproduzi o fluxo ponta a ponta (criar → salvar → nova aba → renderização do currículo) sem erro, confirmando
+  que a integração `handlePrint` → `/empregabilidade/print/[id]` funciona corretamente quando a aba não é
+  bloqueada.
+- ⚠️ **Não consegui, nesta rodada, forçar uma reprodução limpa do bug original nem comparar old-vs-new sob a
+  mesma latência real do Chrome** — precisaria ou (a) simular uma rede lenta no Chrome real (throttling), o que
+  não tentei, ou (b) comparar contra o código já deployado com o fix, que exige subir a `main` primeiro.
+
+### 8.3 — Recomendação
+
+**Seguir para @devops** — a correção é de baixo risco, tecnicamente correta e comprovadamente elimina a causa raiz
+identificada por leitura de código (a dependência de timing do `window.open`), mesmo que a reprodução manual do
+sintoma antigo não tenha sido 100% limpa nesta rodada. Sugestão: se o Junior quiser uma confirmação mais forte antes
+do merge, o teste mais direto seria throttlear a rede no DevTools (Slow 3G) no Chrome real, contra o código atual
+(sem o fix), e repetir o clique — isso deve reproduzir o travamento de forma mais confiável do que uma conexão
+rápida.
