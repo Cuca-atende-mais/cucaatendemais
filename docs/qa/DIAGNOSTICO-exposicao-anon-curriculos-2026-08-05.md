@@ -186,3 +186,70 @@ criadas **antes** de a permissiva ser removida).
 - **Embed morto:** a página de impressão faz join em `talent_bank(nome)` que nunca é usado (por ordem de
   spread, `dados.nome` sempre sobrescreve; verificado: 0 de 35 currículos dependem do join). Limpeza
   pequena, deixada fora para manter esta mudança de segurança focada.
+
+---
+
+## 8. QA Gate (@qa Quinn) — 2026-08-05
+
+**Veredito: CONCERNS.** A correção central está **correta e verificada de forma independente** — o
+vazamento crítico está de fato fechado. Mas a varredura do @dev foi **incompleta por falha de método**, e
+uma das duas migrations **não tem arquivo em disco**. Dois itens voltam ao @dev antes do PR.
+
+### 8.1 — O que validei e passou
+
+| Check | Resultado |
+|---|---|
+| Policies em `curriculos` | ✅ 4 policies granulares, todas `TO authenticated`, keyed a `has_permission('empreg_curriculos', ...)`. A permissiva `curriculos_all` não existe mais. |
+| RPC `salvar_curriculo_estruturado` | ✅ contém checagem RBAC; segue `SECURITY DEFINER` (correto — precisa, para escrever em `talent_bank`). |
+| Fechamento anon (reverificado por mim, de fora, sem sessão) | ✅ `curriculos` → `[]`; `audit_logs` → `[]`; `vagas_feedback_tokens` → `[]`. |
+| Escrita anônima via RPC | ✅ `401` / `42501`. |
+| Migrations registradas no banco | ✅ `20260805200554` e `20260805210333`. |
+| **Regressão de UX (checagem que o @dev não fez)** | ✅ **Sem regressão.** `src/lib/constants.ts:44` já gateia o menu "Criar Currículo" por `empreg_curriculos.read` — **o mesmo módulo** agora usado na RLS. Ou seja, Gerente não verá nem o item de menu; não haverá o cenário confuso de "menu visível com lista vazia". UI e banco ficaram coerentes. |
+
+### 8.2 — 🔴 Achado que o @dev deixou passar (mesma classe, severidade ERROR)
+
+O `get_advisors` de segurança — que o @dev **não executou** — retorna 1 achado nível ERROR:
+
+> `Table public.leads_isolamento_temp_2026_07 is public, but RLS has not been enabled.`
+
+**Confirmei que é explorável:** anon lê a tabela e recebe **986 telefones de leads** (cidadãos), sem
+autenticação. É exatamente a mesma classe de exposição que motivou esta correção.
+
+**Por que passou:** a varredura do @dev procurou policies com expressão `USING (true)`. Uma tabela com
+**RLS desabilitada não tem policy nenhuma** — logo não aparece nessa busca. É falha de método, não azar: a
+consulta deveria ter incluído `relrowsecurity = false`. Verifiquei o inverso também — é a **única** tabela
+do schema `public` sem RLS. As outras 10 sinalizadas pelo advisor têm RLS ligada e **nenhuma** policy, o
+que nega tudo por padrão (seguro, não é vazamento).
+
+### 8.3 — ⚠️ Violação de processo: migration sem arquivo
+
+A regra `cuca-deploy-environments.md` §3 exige que **toda** mudança de banco gere também um arquivo em
+`supabase/migrations/`. Verificado:
+
+- `curriculos_rls_rbac_fecha_exposicao_anon` — ✅ tem arquivo, mas com **drift de versão**: o arquivo em
+  disco é `20260805120000`, a aplicada é `20260805200554`.
+- `fecha_exposicao_anon_audit_logs_e_feedback_tokens` — ❌ **não existe arquivo nenhum.** Foi aplicada
+  direto via MCP.
+
+**Risco concreto, não formal:** se o banco for reconstruído a partir das migrations versionadas,
+`audit_logs` e `vagas_feedback_tokens` **voltam a ficar expostos**, sem que nada acuse. A correção existe
+hoje só no estado do banco de produção.
+
+### 8.4 — O que continua sem validação
+
+Mantém-se integralmente a limitação da seção 6: **o caminho do usuário logado não foi exercido**, nem por
+@dev nem por mim — nenhum de nós consegue autenticar como colaborador. O teste da seção 6 (com um **Admin
+Empregabilidade**, não Developer) segue **obrigatório** antes de dar por encerrado.
+
+### 8.5 — Recomendação
+
+**Não seguir para @devops ainda.** Devolver ao @dev para:
+
+1. Criar o arquivo de migration faltante (`audit_logs` + `vagas_feedback_tokens`) e alinhar a versão do
+   arquivo existente com a aplicada.
+2. Fechar `leads_isolamento_temp_2026_07` — com a mesma análise de impacto: é tabela temporária de
+   isolamento de julho, então antes de habilitar RLS vale confirmar se ainda é usada por worker/Edge
+   Function ou se o correto é **descartá-la** (986 telefones parados numa tabela temp sem RLS é risco sem
+   contrapartida).
+
+A correção de `curriculos` em si **está aprovada** — não precisa ser refeita.
