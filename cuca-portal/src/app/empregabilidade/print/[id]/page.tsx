@@ -119,12 +119,31 @@ export default function PrintPage() {
     const [erro, setErro] = useState("")
 
     useEffect(() => {
-        supabase
-            .from("curriculos")
-            .select("dados, talent_bank(nome)")
-            .eq("id", curriculoId)
-            .single()
+        // Guarda contra setState após o componente ter trocado de curriculoId/desmontado
+        // (evita corrida entre o timeout de segurança e uma resposta tardia).
+        let cancelado = false
+
+        // Timeout de segurança: sem isso, uma falha de rede que rejeita a promise (em vez
+        // de resolver com { error }) deixava a tela presa no spinner para sempre, sem
+        // nenhum feedback — ver DIAGNOSTICO-travamento-salvar-imprimir-curriculo-2026-08-05.md.
+        const timeoutId = setTimeout(() => {
+            if (cancelado) return
+            setErro("Não foi possível carregar o currículo (tempo esgotado). Verifique sua conexão e tente novamente.")
+            setLoading(false)
+        }, 15000)
+
+        // Promise.resolve(...) converte o thenable do supabase-js num Promise de verdade —
+        // o builder original só implementa `.then()`, sem `.catch()`.
+        Promise.resolve(
+            supabase
+                .from("curriculos")
+                .select("dados, talent_bank(nome)")
+                .eq("id", curriculoId)
+                .single()
+        )
             .then(({ data, error }) => {
+                if (cancelado) return
+                clearTimeout(timeoutId)
                 if (error || !data) { setErro("Currículo não encontrado."); setLoading(false); return }
                 const d = data.dados || {}
                 if (Object.keys(d).length === 0) {
@@ -132,10 +151,23 @@ export default function PrintPage() {
                     setLoading(false)
                     return
                 }
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- shape do join FK não é tipado pelo supabase-js aqui (pré-existente)
                 const talentNome = (data.talent_bank as any)?.nome || ""
                 setDados({ nome: talentNome, ...d } as CvDados)
                 setLoading(false)
             })
+            .catch((err: unknown) => {
+                if (cancelado) return
+                clearTimeout(timeoutId)
+                console.error("[print/curriculo] erro ao carregar", err)
+                setErro("Erro ao carregar o currículo. Tente novamente.")
+                setLoading(false)
+            })
+
+        return () => {
+            cancelado = true
+            clearTimeout(timeoutId)
+        }
     }, [curriculoId])
 
     if (loading) return (

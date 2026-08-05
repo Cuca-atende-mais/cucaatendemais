@@ -5,8 +5,12 @@
 (`INVESTIGACAO-travamento-salvar-imprimir-curriculo-2026-08-04.md`, sócio/rede CUCA).
 **Status:** Levantamento concluído em 2026-08-05. **Correção implementada em 2026-08-05** (autorização explícita do
 Junior: *"@dev pode seguir no ajuste conforme pipeline Aiox"*) — ver seção 7. **QA gate executado em 2026-08-05
-— veredito: CONCERNS** (ver seção 8) — não bloqueante, mas com uma ressalva importante sobre como a reprodução foi
-validada. Aguardando decisão do Junior para seguir a @devops.
+— veredito: CONCERNS** (ver seção 8). PR #78 mergeado e deployado — **o Junior reportou que o travamento
+persistiu em produção após o deploy.** Reinvestigação (seção 9) achou um **segundo bug, pré-existente**, que
+estava mascarado pelo primeiro: a página `/empregabilidade/print/[id]` trava num spinner infinito se a
+promise de carregamento do currículo rejeitar (falha de rede) em vez de resolver com `{ error }` — sem
+`.catch()`, sem timeout, sem feedback algum. **Corrigido em 2026-08-05** (seção 10). Aguardando novo QA gate e
+autorização para nova PR.
 **Escopo:** ferramenta interna **Criar Currículo** do Portal
 (`cuca-portal/src/app/(dashboard)/empregabilidade/criar-curriculo/[id]/page.tsx`), exclusiva de colaboradores logados.
 
@@ -243,3 +247,131 @@ sintoma antigo não tenha sido 100% limpa nesta rodada. Sugestão: se o Junior q
 do merge, o teste mais direto seria throttlear a rede no DevTools (Slow 3G) no Chrome real, contra o código atual
 (sem o fix), e repetir o clique — isso deve reproduzir o travamento de forma mais confiável do que uma conexão
 rápida.
+
+---
+
+## 9. Reincidência pós-deploy (2026-08-05) — segundo bug, pré-existente e mascarado
+
+PR #78 foi mergeado e o portal redeployado no EasyPanel. O Junior reportou que o travamento **persistiu**: "ao
+criar currículo, clicar em salvar&imprimir trava novamente, ao sair da página travada carregando e solicitar
+novamente o botão salvar&imprimir, responde dinamicamente".
+
+**Passos da reinvestigação:**
+
+1. Confirmei que o deploy publicou o código certo: busquei o bundle JS servido em produção e o chunk carregado
+   pela rota contém o texto da correção (`printWindow`, a mensagem de fallback) — **descartado deploy
+   incompleto/stale**.
+2. Refiz o teste do zero (candidato novo, sessão nova, primeiro clique) — funcionou. Não reproduzi o travamento
+   original nessa rodada.
+3. O Junior enviou print confirmando o sintoma ao vivo: a **nova aba abriu com a URL certa**
+   (`/empregabilidade/print/{id}`) — ou seja, **a correção do PR #78 está funcionando**, a aba não fica mais
+   bloqueada — mas a própria página de impressão fica presa no spinner de carregamento indefinidamente.
+
+**Causa raiz do segundo bug** — `cuca-portal/src/app/empregabilidade/print/[id]/page.tsx` (código antes da
+correção desta seção):
+
+```js
+useEffect(() => {
+    supabase
+        .from("curriculos")
+        .select("dados, talent_bank(nome)")
+        .eq("id", curriculoId)
+        .single()
+        .then(({ data, error }) => {
+            if (error || !data) { setErro("Currículo não encontrado."); setLoading(false); return }
+            ...
+            setLoading(false)
+        })
+}, [curriculoId])
+```
+
+Não tem `.catch()`. Se a *promise* em si **rejeitar** (falha de rede, timeout, conexão instável — qualquer coisa
+que não seja "PostgREST respondeu com um erro", que o `supabase-js` normalmente resolve como `{ data: null,
+error }`, não como rejeição), o `.then()` nunca dispara. `loading` fica `true` para sempre — spinner infinito,
+sem mensagem, sem forma de sair a não ser fechando a aba.
+
+**Por que isso nunca apareceu antes:** este bug é **pré-existente** ao trabalho desta investigação — sempre
+esteve no código da página de impressão. Mas estava **mascarado** pelo primeiro bug (o do `window.open`): antes,
+a aba de impressão praticamente nunca chegava a abrir de verdade (bloqueada pelo navegador), então esse trecho de
+código quase nunca executava em produção. Ao corrigir o primeiro bug, a aba passou a abrir de forma confiável — e
+isso expôs esse segundo bug, que sempre esteve lá, agora sendo exercido pela primeira vez em escala.
+
+Não consegui forçar a reprodução exata do hiccup de rede que dispara o hang (funcionou nos meus 2 testes) — mas a
+falta de tratamento de erro é uma falha de código concreta e verificável, independente da causa exata da
+instabilidade de rede que a aciona.
+
+## 10. Correção do segundo bug (2026-08-05)
+
+Aplicada em `print/[id]/page.tsx` (função `PrintPage`, `useEffect` de carregamento):
+
+- **`.catch()`** — como o builder do `supabase-js` só implementa `.then()` (não é um `Promise` completo, é um
+  thenable), envolvi a chamada em `Promise.resolve(...)` para poder encadear `.catch()` de forma type-safe.
+  Qualquer rejeição agora cai num estado de erro visível (`"Erro ao carregar o currículo. Tente novamente."`),
+  em vez de travar silenciosamente.
+- **Timeout de segurança (15s)** — mesmo que a causa exata do hang não seja uma rejeição capturável (ex.: a
+  promise nunca resolve nem rejeita, fica pendente), o usuário agora recebe feedback (`"Não foi possível carregar
+  o currículo (tempo esgotado)..."`) em vez de spinner infinito.
+- **Guarda `cancelado`** — evita `setState` depois que o efeito for cancelado (troca de `curriculoId` ou
+  desmontagem), e evita a corrida entre o timeout e uma resposta tardia que chegue depois dele já ter disparado.
+
+**Escopo:** só o `useEffect` de carregamento da página de impressão foi tocado. Não mexe no editor
+(`criar-curriculo/[id]/page.tsx`), na RPC de salvamento, nem no restante do componente `PrintPage` (renderização
+do currículo, botão de imprimir).
+
+**Verificação:** `eslint` e `tsc --noEmit` limpos no arquivo (o único warning restante — `useEffect` sem
+`supabase` nas deps — é pré-existente, não introduzido por esta mudança). Não testei contra produção porque o
+código ainda não foi deployado (mesma limitação da seção 8.2) — a validação em produção fica para a próxima
+rodada de QA/deploy.
+
+**Próximo passo:** chamar @qa para nova rodada de gate nesta correção, antes de nova PR.
+
+---
+
+## 11. QA Gate #2 (@qa Quinn) — correção do spinner infinito, 2026-08-05
+
+**Veredito: PASS.**
+
+### 11.1 — Os 7 checks
+
+1. **Code review:** diff revisado linha a linha. `Promise.resolve(builder)` é o padrão correto pra dar `.catch()`
+   type-safe a um thenable do `supabase-js` (que só implementa `.then()`) — sem isso o `tsc` acusa `Property
+   'catch' does not exist on type 'PromiseLike<void>'` (confirmei reproduzindo o erro antes do wrap). A guarda
+   `cancelado` evita `setState` pós-desmontagem/troca de id e evita a corrida timeout-vs-resposta-tardia.
+2. **Testes:** nenhum adicionado (mesma decisão de escopo já registrada na seção 5 — jsdom/Testing Library fora
+   do projeto hoje). `eslint` e `tsc --noEmit` reexecutados por mim, independente do @dev — ambos limpos (só o
+   warning pré-existente de `useEffect` sem `supabase` nas deps, que já existia antes desta mudança).
+3. **Critério de aceite:** implícito ("nunca mais travar em spinner infinito sem feedback") — atendido: todo
+   caminho (sucesso, erro do Postgrest, rejeição de rede, hang sem resolver/rejeitar) agora termina em
+   `setLoading(false)` com uma mensagem visível ao usuário.
+4. **Regressão:** o caminho de sucesso é idêntico ao original (mesmas chamadas de `setDados`/`setLoading`) — não
+   muda nada pra quem usa a ferramenta sem erro de rede. Único comportamento novo: se a resposta real chegar
+   *depois* dos 15s do timeout (conexão muito lenta, mas que eventualmente responde), o efeito ainda processa o
+   resultado normalmente e substitui a mensagem de timeout pelo currículo carregado — não é bug, é
+   autorrecuperação, mas registro como nota de UX: o usuário pode ver a mensagem de erro piscar antes do
+   conteúdo aparecer nesse cenário específico de rede muito lenta. Não bloqueante.
+5. **Performance:** um `setTimeout` a mais, sem custo perceptível.
+6. **Segurança:** mesma query, mesmo escopo de dados, nenhuma superfície nova.
+7. **Docs:** este diagnóstico documenta a mudança (seções 9-10); não há doc de produto/API a atualizar.
+
+### 11.2 — Achado adicional, fora do escopo desta correção (não bloqueante)
+
+`grep` no `cuca-portal/src/app` por `useEffect` que chama Supabase sem `.catch()` encontra **7 arquivos** com o
+mesmo padrão de risco (promise sem tratamento de rejeição num efeito de carregamento). Não investiguei cada um
+agora — está fora do escopo deste PR — mas registro como candidato a um levantamento à parte, já que a classe de
+bug que acabamos de corrigir aqui (spinner infinito sem feedback em falha de rede) provavelmente não é exclusiva
+desta página.
+
+### 11.3 — Validação manual
+
+**Não realizada nesta rodada** — mesma limitação já registrada na seção 8.2: o código ainda não foi deployado, e
+testar contra produção agora só exerceria o código antigo (já com o fix do PR #78, mas sem este segundo fix).
+Só dá pra validar de verdade depois do próximo deploy — recomendo ao Junior repetir o teste (criar currículo,
+"Salvar e Imprimir", aba nova) depois do deploy desta correção, e also usar o timeout de 15s como sinal: se
+aparecer a mensagem de timeout em vez de spinner infinito, pelo menos o `.catch()`/timeout está funcionando, mesmo
+que a causa raiz do hiccup de rede em si precise de mais investigação.
+
+### 11.4 — Recomendação
+
+Seguir para @devops — correção pequena, de baixo risco, escopo isolado ao `useEffect` de carregamento da página
+de impressão, sem regressão no caminho de sucesso. Sugiro incluir o achado da seção 11.2 como um item de
+levantamento futuro, não como bloqueio deste PR.
