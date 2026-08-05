@@ -245,9 +245,18 @@ export default function CriarCurriculoEditorPage() {
     // ── Imprimir (salva antes) ────────────────────────────────────────────────
 
     const handlePrint = () => {
+        // Abre a aba em branco de forma síncrona, ainda dentro do gesto de clique — depois de um
+        // `await` de rede (o salvamento abaixo), o navegador já não considera mais um `window.open()`
+        // parte da ação do usuário e bloqueia silenciosamente, sem erro visível (ver DIAGNOSTICO-
+        // travamento-salvar-imprimir-curriculo-2026-08-05.md).
+        const printWindow = window.open("", "_blank")
+
         handleSubmit(async (values) => {
             const savedId = await onSubmit(values)
-            if (!savedId) return
+            if (!savedId) {
+                printWindow?.close()
+                return
+            }
             // Buscar id do currículo recém-salvo
             const id = savedId || curriculoId || await (async () => {
                 const { data } = await supabase
@@ -260,7 +269,14 @@ export default function CriarCurriculoEditorPage() {
                     .maybeSingle()
                 return data?.id
             })()
-            if (id) window.open(`/empregabilidade/print/${id}`, "_blank")
+            if (id && printWindow) {
+                printWindow.location.href = `/empregabilidade/print/${id}`
+            } else {
+                printWindow?.close()
+                if (id && !printWindow) {
+                    toast.error("Seu navegador bloqueou a aba de impressão. Permita pop-ups para este site e tente novamente.")
+                }
+            }
         })()
     }
 
