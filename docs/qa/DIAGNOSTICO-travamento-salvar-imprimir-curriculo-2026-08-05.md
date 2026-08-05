@@ -324,3 +324,54 @@ código ainda não foi deployado (mesma limitação da seção 8.2) — a valida
 rodada de QA/deploy.
 
 **Próximo passo:** chamar @qa para nova rodada de gate nesta correção, antes de nova PR.
+
+---
+
+## 11. QA Gate #2 (@qa Quinn) — correção do spinner infinito, 2026-08-05
+
+**Veredito: PASS.**
+
+### 11.1 — Os 7 checks
+
+1. **Code review:** diff revisado linha a linha. `Promise.resolve(builder)` é o padrão correto pra dar `.catch()`
+   type-safe a um thenable do `supabase-js` (que só implementa `.then()`) — sem isso o `tsc` acusa `Property
+   'catch' does not exist on type 'PromiseLike<void>'` (confirmei reproduzindo o erro antes do wrap). A guarda
+   `cancelado` evita `setState` pós-desmontagem/troca de id e evita a corrida timeout-vs-resposta-tardia.
+2. **Testes:** nenhum adicionado (mesma decisão de escopo já registrada na seção 5 — jsdom/Testing Library fora
+   do projeto hoje). `eslint` e `tsc --noEmit` reexecutados por mim, independente do @dev — ambos limpos (só o
+   warning pré-existente de `useEffect` sem `supabase` nas deps, que já existia antes desta mudança).
+3. **Critério de aceite:** implícito ("nunca mais travar em spinner infinito sem feedback") — atendido: todo
+   caminho (sucesso, erro do Postgrest, rejeição de rede, hang sem resolver/rejeitar) agora termina em
+   `setLoading(false)` com uma mensagem visível ao usuário.
+4. **Regressão:** o caminho de sucesso é idêntico ao original (mesmas chamadas de `setDados`/`setLoading`) — não
+   muda nada pra quem usa a ferramenta sem erro de rede. Único comportamento novo: se a resposta real chegar
+   *depois* dos 15s do timeout (conexão muito lenta, mas que eventualmente responde), o efeito ainda processa o
+   resultado normalmente e substitui a mensagem de timeout pelo currículo carregado — não é bug, é
+   autorrecuperação, mas registro como nota de UX: o usuário pode ver a mensagem de erro piscar antes do
+   conteúdo aparecer nesse cenário específico de rede muito lenta. Não bloqueante.
+5. **Performance:** um `setTimeout` a mais, sem custo perceptível.
+6. **Segurança:** mesma query, mesmo escopo de dados, nenhuma superfície nova.
+7. **Docs:** este diagnóstico documenta a mudança (seções 9-10); não há doc de produto/API a atualizar.
+
+### 11.2 — Achado adicional, fora do escopo desta correção (não bloqueante)
+
+`grep` no `cuca-portal/src/app` por `useEffect` que chama Supabase sem `.catch()` encontra **7 arquivos** com o
+mesmo padrão de risco (promise sem tratamento de rejeição num efeito de carregamento). Não investiguei cada um
+agora — está fora do escopo deste PR — mas registro como candidato a um levantamento à parte, já que a classe de
+bug que acabamos de corrigir aqui (spinner infinito sem feedback em falha de rede) provavelmente não é exclusiva
+desta página.
+
+### 11.3 — Validação manual
+
+**Não realizada nesta rodada** — mesma limitação já registrada na seção 8.2: o código ainda não foi deployado, e
+testar contra produção agora só exerceria o código antigo (já com o fix do PR #78, mas sem este segundo fix).
+Só dá pra validar de verdade depois do próximo deploy — recomendo ao Junior repetir o teste (criar currículo,
+"Salvar e Imprimir", aba nova) depois do deploy desta correção, e also usar o timeout de 15s como sinal: se
+aparecer a mensagem de timeout em vez de spinner infinito, pelo menos o `.catch()`/timeout está funcionando, mesmo
+que a causa raiz do hiccup de rede em si precise de mais investigação.
+
+### 11.4 — Recomendação
+
+Seguir para @devops — correção pequena, de baixo risco, escopo isolado ao `useEffect` de carregamento da página
+de impressão, sem regressão no caminho de sucesso. Sugiro incluir o achado da seção 11.2 como um item de
+levantamento futuro, não como bloqueio deste PR.
