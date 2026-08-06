@@ -1,0 +1,46 @@
+-- ============================================================================
+-- Habilita RLS em `leads_isolamento_temp_2026_07` (exposição anon)
+-- ============================================================================
+--
+-- PROBLEMA (CRÍTICO): a tabela foi criada em 20260731134640 sem
+-- `ENABLE ROW LEVEL SECURITY`. Sem RLS, a policy default do PostgREST expõe a
+-- tabela a QUALQUER requisição com a chave anon — que está embutida no bundle JS
+-- público do portal. Confirmado empiricamente em 2026-08-05: uma requisição
+-- anônima retornava os **986 telefones** de leads guardados aqui.
+--
+-- É a mesma classe de exposição de `curriculos` (ver
+-- docs/qa/DIAGNOSTICO-exposicao-anon-curriculos-2026-08-05.md), mas passou
+-- despercebida na primeira varredura porque aquela busca procurava policies com
+-- `USING (true)` — e uma tabela SEM RLS não tem policy nenhuma, logo não aparecia.
+-- Achado pelo @qa via `get_advisors` (nível ERROR: `rls_disabled_in_public`).
+-- Verificado: era a ÚNICA tabela do schema `public` sem RLS.
+--
+-- POR QUE NÃO DESCARTAR A TABELA: ela não é descartável apesar do nome "temp".
+-- Guarda `bloqueado_original`, o valor de `leads.bloqueado` de ANTES do isolamento
+-- de julho — é o único registro que permite **restaurar** os 986 leads ao estado
+-- correto quando o isolamento for revertido. Dropar a tabela perderia essa
+-- capacidade de forma irreversível. Fechar o acesso preserva o dado e resolve a
+-- exposição.
+--
+-- ESTRATÉGIA: habilitar RLS **sem criar policy alguma**. No PostgreSQL isso nega
+-- acesso a todos os roles sujeitos a RLS (`anon` e `authenticated`), enquanto
+-- `service_role` continua passando normalmente por ter BYPASSRLS.
+--
+-- ANÁLISE DE IMPACTO (regra impact-analysis-mandatory.md):
+--   1. Toca: apenas o flag de RLS da tabela. Nenhum dado é alterado ou removido.
+--   2. Quem consome hoje: nenhum código de aplicação. `grep` por
+--      `leads_isolamento_temp` em worker (.py), portal (.ts/.tsx) e Edge Functions
+--      retorna apenas (a) as duas migrations que a criam/populam e (b) uma entrada
+--      em `motor-agente/database.types.ts`, que é tipo gerado, não uso real.
+--   3. Impacto real observável: anon deixa de conseguir ler os telefones. Nenhum
+--      fluxo de usuário muda, porque nenhum fluxo lê esta tabela. As migrations
+--      futuras de reversão do isolamento rodam como postgres/service_role e
+--      seguem funcionando.
+--   4. De-risk: `service_role` tem BYPASSRLS — a reversão do isolamento (o uso
+--      real e futuro desta tabela) não é afetada. Verificação pós-aplicação:
+--      requisição anon deve passar a retornar `[]`.
+--
+-- Idempotente: `ENABLE ROW LEVEL SECURITY` é no-op se já estiver habilitada.
+-- ============================================================================
+
+ALTER TABLE public.leads_isolamento_temp_2026_07 ENABLE ROW LEVEL SECURITY;

@@ -41,12 +41,20 @@ export async function updateSession(request: NextRequest) {
     // Antes: pathname.startsWith('/empregabilidade') liberava também o dashboard
     // interno (Route Group `(dashboard)`), expondo banco-talentos, candidatos,
     // criar-curriculo etc. sem auth e disparando RLS no talent_bank.
+    // ATENÇÃO: só entram aqui rotas que precisam ser acessadas por gente de fora
+    // (candidato, empresa) via link assinado. Currículo NÃO é uma delas — ver abaixo.
     const publicEmpregabilidadePrefixes = [
         '/empregabilidade/vagas',         // página pública de listagem/visualização externa
         '/empregabilidade/candidatura',   // formulário público de candidatura
-        '/empregabilidade/print',         // impressão pública de currículo
         '/empregabilidade/selecao',       // página pública de seleção/evento
     ]
+    // 2026-08-05 — `/empregabilidade/print` REMOVIDO desta whitelist.
+    // Estava público por engano: a impressão de currículo só é acionada de dentro
+    // do dashboard (lista e editor de Criar Currículo), nunca por link externo —
+    // o mecanismo de link assinado (EMPREGABILIDADE_LINK_SECRET) cobre apenas
+    // vagas/candidatura/seleção. Deixá-la pública, somada à policy `USING (true)`
+    // da tabela `curriculos`, expunha dados pessoais de candidatos a qualquer
+    // pessoa na internet. Ver docs/qa/DIAGNOSTICO-exposicao-anon-curriculos-2026-08-05.md.
     const isPublicEmpregabilidade = publicEmpregabilidadePrefixes.some(p =>
         pathname === p || pathname.startsWith(p + '/')
     )
