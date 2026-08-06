@@ -309,3 +309,59 @@ Estado final: as 3 migrations aplicadas hoje têm arquivo correspondente, com a 
 Inalterado e ainda **obrigatório**: a validação do caminho do usuário logado (seção 6 / 8.4). Nenhum agente
 consegue autenticar como colaborador — o teste com um **Admin Empregabilidade** (não Developer) segue como
 condição para dar a correção por encerrada.
+
+---
+
+## 10. QA Gate #2 (@qa Quinn) — validação das correções, 2026-08-05
+
+**Veredito: CONCERNS (baixa severidade).** Toda a **substância de segurança está correta e verificada de
+forma independente**. Sobra **um** item, de bookkeeping, que é correção de uma linha.
+
+### 10.1 — Aprovado
+
+| Check | Resultado |
+|---|---|
+| Decisão de não descartar `leads_isolamento_temp_2026_07` | ✅ **Concordo, e o @dev estava certo em me contrariar.** Reli a migration `20260731134640`: `bloqueado_original` é de fato o único registro que permite restaurar os 986 leads. Minha sugestão de avaliar o descarte teria levado a perda irreversível de dado. |
+| **Nenhuma função/trigger no banco referencia a tabela** | ✅ Checagem que o @dev não fez (ele grepou só o código da aplicação). Consultei `pg_proc` — **zero** funções referenciam `leads_isolamento_temp`. Confirma que habilitar RLS não quebra nada server-side. |
+| Estado de `leads_isolamento_temp_2026_07` | ✅ RLS ativa, **0 policies** (nega `anon` e `authenticated`; `service_role` passa por BYPASSRLS), **986 linhas preservadas**. |
+| Tabelas sem RLS no schema `public` | ✅ **0** (era 1). |
+| Arquivo de migration de `audit_logs` × estado real do banco | ✅ **Confere.** Comparei a policy no banco com a que o arquivo cria — expressão idêntica (`is_developer` OR `funcoes.super_admin` OR `sys_roles` in lista), `FOR SELECT`, `TO authenticated`. Replayar o arquivo reproduz o estado atual. |
+| Reverificação anon (independente) | ✅ `curriculos`, `audit_logs`, `vagas_feedback_tokens`, `leads_isolamento_temp_2026_07`, `talent_bank` e `leads` → todos `[]`. |
+
+### 10.2 — ⚠️ O drift reincidiu na migration nova
+
+O @dev corrigiu o drift do arquivo de `curriculos`, mas **reintroduziu o mesmo erro** no arquivo que
+acabou de aplicar:
+
+- Aplicada no banco: **`20260805235925`**_enable_rls_leads_isolamento_temp_2026_07
+- Arquivo em disco: **`20260805220000`**_enable_rls_leads_isolamento_temp_2026_07.sql
+
+Causa: o timestamp do arquivo foi escolhido à mão, antes de aplicar, em vez de ser alinhado com o que o
+MCP atribuiu depois. É exatamente a mesma armadilha do achado 8.3 — o @dev corrigiu o sintoma nos dois
+arquivos antigos sem ajustar o **procedimento** que produz o erro.
+
+**Severidade real: baixa.** O conteúdo é `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, que é idempotente —
+se for reaplicado fora de ordem numa reconstrução, não causa dano. Mas a numeração incorreta significa que
+a migration seria vista como "não aplicada" e re-executada, o que é bookkeeping errado. **Correção: renomear
+o arquivo para `20260805235925_...`.** Uma linha.
+
+**Recomendação de processo (para não repetir):** aplicar via MCP primeiro, consultar
+`supabase_migrations.schema_migrations` para pegar a versão atribuída, e só então nomear o arquivo.
+
+### 10.3 — Observação registrada (pré-existente, não introduzida por esta correção)
+
+`vagas_feedback_tokens` mantém a policy `"Gerenciamento total para colaboradores"` — `FOR ALL`,
+`TO authenticated`, `USING (true)`. Ou seja: fechou-se o acesso anônimo (que era o vazamento grave), mas
+**qualquer colaborador logado ainda lê e escreve todos os tokens de feedback**. Não é regressão desta
+mudança e não é da mesma gravidade (exige login de colaborador, que é pessoal de confiança), mas fica
+registrado junto das demais pendências de endurecimento de RLS.
+
+### 10.4 — Continua pendente
+
+Sem alteração: **a validação do caminho do usuário logado nunca foi feita**, por nenhum agente. Continua
+sendo a condição real para encerrar — teste com **Admin Empregabilidade**, não Developer.
+
+### 10.5 — Recomendação
+
+Renomear o arquivo (10.2) e seguir para @devops. Não há nada a refazer no banco: **a produção está
+correta**; o problema é só o nome de um arquivo no repositório.
