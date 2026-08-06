@@ -253,3 +253,59 @@ Empregabilidade**, não Developer) segue **obrigatório** antes de dar por encer
    contrapartida).
 
 A correção de `curriculos` em si **está aprovada** — não precisa ser refeita.
+
+---
+
+## 9. Correção dos apontamentos do QA (@dev, 2026-08-05)
+
+Os dois itens da seção 8.5 foram tratados.
+
+### 9.1 — `leads_isolamento_temp_2026_07` (achado 8.2)
+
+**Decisão: habilitar RLS, NÃO descartar a tabela.** O @qa levantou a hipótese de descartá-la ("tabela
+temporária de julho"), mas ao ler a migration que a criou (`20260731134640`) fica claro que **o nome
+engana**: ela guarda `bloqueado_original`, o valor de `leads.bloqueado` de **antes** do isolamento. É o
+único registro que permite **restaurar** os 986 leads ao estado correto quando o isolamento for revertido.
+Dropar perderia essa capacidade de forma irreversível — seria trocar um problema de exposição por uma
+perda de dado.
+
+**Análise de impacto:**
+1. **Toca:** só o flag de RLS. Nenhum dado alterado ou removido.
+2. **Quem consome:** nenhum código de aplicação. `grep` por `leads_isolamento_temp` em worker (`.py`),
+   portal (`.ts`/`.tsx`) e Edge Functions retorna apenas as duas migrations que a criam/populam e uma
+   entrada em `motor-agente/database.types.ts` — que é **tipo gerado, não uso**.
+3. **Impacto real:** anon deixa de ler os telefones. Nenhum fluxo de usuário muda, porque nenhum fluxo lê
+   esta tabela.
+4. **De-risk:** RLS habilitada **sem policy** nega `anon` e `authenticated`, mas `service_role` tem
+   `BYPASSRLS` — a reversão futura do isolamento (o uso real da tabela) continua funcionando.
+
+Migration `20260805220000_enable_rls_leads_isolamento_temp_2026_07.sql`, aplicada em produção.
+
+### 9.2 — Migrations sem arquivo / com drift (achado 8.3)
+
+- Criado `cuca-portal/supabase/migrations/20260805210333_fecha_exposicao_anon_audit_logs_e_feedback_tokens.sql`
+  com SQL **idêntico** ao que foi aplicado, e com nota de processo registrando que o arquivo veio depois da
+  aplicação.
+- Arquivo de `curriculos` renomeado de `20260805120000` para **`20260805200554`**, alinhando com a versão
+  realmente aplicada.
+
+Estado final: as 3 migrations aplicadas hoje têm arquivo correspondente, com a mesma versão do banco.
+
+### 9.3 — Verificação pós-correção
+
+| Tabela | anon lê? |
+|---|---|
+| `curriculos` | `[]` |
+| `audit_logs` | `[]` |
+| `vagas_feedback_tokens` | `[]` |
+| `leads_isolamento_temp_2026_07` | `[]` |
+
+- `leads_isolamento_temp_2026_07`: **986 linhas preservadas**, `relrowsecurity = true`.
+- Tabelas do schema `public` ainda sem RLS: **0**.
+- `get_advisors` (security): **0 achados nível ERROR** (antes: 1).
+
+### 9.4 — O que continua pendente
+
+Inalterado e ainda **obrigatório**: a validação do caminho do usuário logado (seção 6 / 8.4). Nenhum agente
+consegue autenticar como colaborador — o teste com um **Admin Empregabilidade** (não Developer) segue como
+condição para dar a correção por encerrada.
