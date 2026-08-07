@@ -342,6 +342,34 @@ def _warn_if_daily_limit_above_tier_sync(phone_number_id: str, daily_limit: int)
         )
 
 
+def _montar_componente_header(header_tipo: str | None, header_media_id: str | None) -> dict | None:
+    """2026-08-07: templates com componente HEADER de mídia (ex.: programacao_agosto_v6,
+    editado direto no WhatsApp Manager pelo sócio, com header IMAGE) exigem esse
+    componente em TODO envio — a Graph API rejeita a mensagem se o template aprovado
+    tem header de mídia e a chamada de envio não inclui o parâmetro correspondente
+    (a "example.header_handle" da definição do template é só o preview usado na
+    aprovação, não é reenviado automaticamente).
+
+    `header_media_id` é o handle de mídia já pré-carregado via POST
+    /{phone_number_id}/media (upload único, reusado em todos os envios — mais
+    confiável que `link` num disparo de centenas de leads, que exigiria a Meta
+    buscar a imagem de novo a cada mensagem). Se o template não tiver header de
+    mídia (`header_tipo` NULL — caso comum, maioria dos templates hoje é só
+    corpo de texto), retorna None e nenhum componente extra é enviado.
+
+    Só suporta "image" por ora — é o único tipo em uso; outros tipos de header
+    (video/document) ficam para quando surgir necessidade real."""
+    if not header_tipo or not header_media_id:
+        return None
+    if header_tipo != "image":
+        logger.warning(f"[Templates] header_tipo={header_tipo!r} não suportado — componente de header ignorado")
+        return None
+    return {
+        "type": "header",
+        "parameters": [{"type": "image", "image": {"id": header_media_id}}],
+    }
+
+
 def _montar_parametros_named(variaveis: list[dict] | None, valores: list[str]) -> list[dict]:
     """Monta os parameters do body com parameter_name a partir de meta_templates.variaveis.
 
@@ -1070,7 +1098,7 @@ async def _enviar_divulgacao_para_leads_pendentes(
         await asyncio.to_thread(_warn_if_daily_limit_above_tier_sync, phone_number_id, daily_limit)
 
     _tpl_div = await asyncio.to_thread(
-        lambda: supabase.table("meta_templates").select("nome, corpo_texto, variaveis")
+        lambda: supabase.table("meta_templates").select("nome, corpo_texto, variaveis, header_tipo, header_media_id")
         .eq("automacoes", '{"Institucional"}')
         .contains("phone_number_ids", [phone_number_id])
         .eq("ativo", True).eq("status", "aprovado")
@@ -1083,6 +1111,11 @@ async def _enviar_divulgacao_para_leads_pendentes(
     _tpl_div_row = _tpl_div.data[0]
     template_divulgacao = _tpl_div_row["nome"]
     variaveis_divulgacao = _tpl_div_row.get("variaveis")
+    # 2026-08-07: componente de header (ex.: imagem) montado 1x fora do loop de leads —
+    # mesmo componente reenviado pra todo mundo, não recalculado por lead.
+    componente_header_divulgacao = _montar_componente_header(
+        _tpl_div_row.get("header_tipo"), _tpl_div_row.get("header_media_id")
+    )
 
     limitado_por_daily_limit = len(leads) > daily_limit
     total = min(len(leads), daily_limit)
@@ -1107,12 +1140,15 @@ async def _enviar_divulgacao_para_leads_pendentes(
             continue
         telefone = normalizar_telefone(telefone_raw)
 
-        components = [{
+        components = []
+        if componente_header_divulgacao:
+            components.append(componente_header_divulgacao)
+        components.append({
             "type": "body",
             "parameters": _montar_parametros_named(
                 variaveis_divulgacao, [nome, mes_nome, LINK_PROGRAMACAO_MENSAL]
             ),
-        }]
+        })
 
         ok, wamid = await _enviar_template_meta(
             phone_number_id, telefone, meta_token, template_divulgacao, components
