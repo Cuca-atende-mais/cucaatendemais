@@ -259,6 +259,24 @@ def _get_supabase():
     return _supabase_client
 
 
+# S-WM-24 Task 2 (AUD-08, escopo ampliado a pedido do Junior em 2026-08-07): tipos de
+# mensagem que o motor-agente estruturalmente não consegue interpretar hoje — não é
+# falha técnica, é conteúdo pro qual não existe extração de texto nenhuma (diferente de
+# "image", que ao menos resolve midia_url, e de "voz"/audio, que já passa por
+# transcrição Whisper). midia_tipo aqui é o `type` cru do webhook Meta (sticker, video,
+# document, location, contacts, reaction, button, interactive, order, system...) —
+# lista aberta de propósito: qualquer tipo que caia no `else` de _parse_mensagem_meta
+# (mensagem="") e não seja "text"/"voz"/"image" entra automaticamente aqui, sem
+# precisar atualizar esta constante a cada tipo novo que a Meta manda.
+_MIDIA_TIPOS_COM_INTERPRETACAO = frozenset({"text", "voz", "image"})
+
+# Escopo do guard acima: só Institucional/maria (mesmo módulo, ver _AGENTE_MODULO_MAP).
+# A story original (S-WM-24) marca "Qualquer mudança em Sofia, Ouvidoria, ..., Ana"
+# como fora de escopo — esses canais ainda não migraram pra Meta, e a decisão de
+# "ignorar em silêncio" não foi tomada pra eles. Se/quando migrarem, este guard não
+# se aplica automaticamente — precisa de decisão própria.
+_AGENTES_GUARD_MIDIA_SEM_INTERPRETACAO = frozenset({"Institucional", "maria"})
+
 # ─── Agentes despachados via motor-agente Edge Function ────────────────────────
 _AGENTES_MOTOR_AGENTE = frozenset({"Institucional", "maria", "sofia", "ana"})
 _AGENTE_MODULO_MAP: dict[str, str] = {
@@ -891,6 +909,27 @@ async def _executar_dispatch(
             logger.error(f"[meta-inbound] Erro no dispatch Empregabilidade: {exc}")
 
     elif agente_tipo in _AGENTES_MOTOR_AGENTE:
+        # S-WM-24 Task 2 (AUD-08, escopo ampliado 2026-08-07): mídia sem interpretação
+        # (sticker, video, document, location, contacts, reaction, ...) é IGNORADA em
+        # silêncio — sem chamar o motor-agente (que hoje só valida `mensagem` não-vazia,
+        # nunca usa midia_url/midia_tipo, e responderia 400 "Nenhuma mensagem"), sem
+        # marcar lida/digitando, sem nenhuma resposta ao lead. Decisão explícita do
+        # Junior: não travar a IA nem devolver o fallback enganoso de "problema técnico"
+        # pra esse conteúdo — fica assim até decidirem como tratar cada tipo. O inbound
+        # já foi gravado no histórico (`mensagens`, em processar_webhook_meta, com o
+        # texto descritivo de _texto_historico_para_midia_vazia) antes de chegar aqui —
+        # só a resposta automática é que não acontece. "image" e "voz" (áudio) NÃO
+        # entram neste guard — comportamento deles é inalterado por esta mudança.
+        if (
+            agente_tipo in _AGENTES_GUARD_MIDIA_SEM_INTERPRETACAO
+            and midia_tipo not in _MIDIA_TIPOS_COM_INTERPRETACAO
+        ):
+            logger.info(
+                "[meta-inbound] midia_tipo=%r sem interpretação — motor-agente não chamado, "
+                "lead não recebe resposta (S-WM-24/AUD-08). conversa_id=%s",
+                midia_tipo, conversa_id,
+            )
+            return
         try:
             from meta_adapter_outbound import _meta_enviar, _meta_marcar_lida_e_digitando  # noqa: PLC0415
             token = os.getenv("META_SYSTEM_USER_TOKEN", "")

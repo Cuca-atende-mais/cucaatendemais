@@ -102,6 +102,34 @@ def _payload_imagem(phone_number_id="TEST_ID", media_id="IMG_123"):
     }
 
 
+def _payload_midia_sem_interpretacao(tipo: str, phone_number_id="TEST_ID", campo_tipo: dict | None = None):
+    """S-WM-24 Task 2 (AUD-08): payload genérico pra tipos de mensagem Meta que
+    `_parse_mensagem_meta` não interpreta (sticker, video, document, ...) — o `else`
+    de `_parse_mensagem_meta` só olha `msg["type"]`, então o conteúdo de `campo_tipo`
+    é irrelevante pro parsing; existe só pra manter o payload realista."""
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "WABA_ID",
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {"display_phone_number": "558500000000", "phone_number_id": phone_number_id},
+                    "contacts": [{"profile": {"name": "Teste"}, "wa_id": "558599999999"}],
+                    "messages": [{
+                        "from": "558599999999",
+                        "id": "wamid.test",
+                        "timestamp": "1750000000",
+                        "type": tipo,
+                        tipo: campo_tipo or {"id": f"{tipo.upper()}_ID"},
+                    }],
+                },
+                "field": "messages",
+            }],
+        }],
+    }
+
+
 _STUB_INSTANCIA = {
     "canal_origem": "cuca_empregabilidade_01",
     "agente_tipo":  "Empregabilidade",
@@ -211,6 +239,18 @@ class TestParseMensagem:
         }
         mensagem, _, _ = await _parse_mensagem_meta(msg)
         assert mensagem == ""
+
+    @pytest.mark.parametrize("tipo", ["sticker", "video", "document", "location", "contacts"])
+    @pytest.mark.asyncio
+    async def test_parse_mensagem_tipo_sem_interpretacao(self, tipo):
+        """S-WM-24 Task 2 (AUD-08): tipos sem extração de texto caem no `else` —
+        mensagem="", midia_url=None, midia_tipo preserva o `type` cru do webhook
+        (usado pelo guard de _executar_dispatch pra decidir ignorar em silêncio)."""
+        msg = {"type": tipo, "from": "558599999999", tipo: {"id": "X"}}
+        mensagem, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
+        assert mensagem == ""
+        assert midia_url is None
+        assert midia_tipo == tipo
 
 
 # ─── Contrato v2 ──────────────────────────────────────────────────────────────
@@ -863,6 +903,99 @@ class TestDispatchMotorAgente:
         # Achado: a mensagem enviada é a de "problema técnico" — não menciona imagem/foto,
         # o que é enganoso (não houve falha técnica, imagem simplesmente não é suportada).
         assert "problema técnico" in texto_enviado
+
+    # ── S-WM-24 Task 2 (AUD-08, escopo ampliado 2026-08-07): sticker/video/document
+    # não travam a IA nem geram o fallback enganoso — são ignorados em silêncio ──
+    @pytest.mark.parametrize("tipo", ["sticker", "video", "document"])
+    @pytest.mark.asyncio
+    async def test_processar_webhook_midia_sem_interpretacao_ignorada_silenciosamente(self, tipo):
+        """Decisão do Junior (2026-08-07): sticker/video/document (e qualquer outro tipo
+        fora de text/voz/image) não chamam o motor-agente, não marcam lida/digitando e
+        não enviam nenhuma resposta ao lead — ficam assim até decidirem como tratar cada
+        tipo. Reproduz ponta a ponta, sem mockar _chamar_motor_agente, pra provar que ele
+        de fato nunca é chamado (não só que a resposta final é vazia)."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("Institucional")
+        payload = _payload_midia_sem_interpretacao(tipo, phone_number_id="INST_PHONE_ID")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [
+            {"id": "lead-id-1"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-id-1", "status": "ativa"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock) as mock_motor, \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock) as mock_lida, \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock) as mock_enviar:
+            await processar_webhook_meta(raw)
+
+        mock_motor.assert_not_called()
+        mock_lida.assert_not_called()
+        mock_enviar.assert_not_called()
+
+        # O inbound continua sendo gravado no histórico (visível pro colaborador no
+        # painel) — só a resposta automática é que não acontece.
+        inserts_de_lead = [
+            call.args[0] for call in mock_supabase.table.return_value.insert.call_args_list
+            if isinstance(call.args[0], dict) and call.args[0].get("remetente") == "lead"
+        ]
+        assert len(inserts_de_lead) == 1
+        assert inserts_de_lead[0]["tipo"] == tipo
+
+    @pytest.mark.asyncio
+    async def test_processar_webhook_sticker_sofia_nao_afetada(self):
+        """Escopo explícito da story S-WM-24: o guard de silêncio é só pra
+        Institucional/maria — Sofia (Ouvidoria) e Ana (Acesso) ainda não migraram pra
+        Meta e não tiveram essa decisão tomada pra elas. Mesmo tipo de mídia (sticker),
+        mas agente_tipo="sofia" deveria seguir o caminho normal (chamando o
+        motor-agente), não o guard novo."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        stub = self._make_stub("sofia", canal_tipo="Ouvidoria")
+        payload = _payload_midia_sem_interpretacao("sticker", phone_number_id="SOFIA_PHONE_ID")
+        raw = json.dumps(payload).encode()
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value.data = [
+            {"id": "lead-id-1"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+        mock_supabase.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "conv-id-1", "status": "ativa"}
+        ]
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=stub), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock,
+                   return_value=None) as mock_motor, \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock,
+                   return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock,
+                   return_value=True):
+            await processar_webhook_meta(raw)
+
+        mock_motor.assert_called_once()
 
     # ── Discard: agente_tipo desconhecido não envia nada ─────────────────
     @pytest.mark.asyncio
