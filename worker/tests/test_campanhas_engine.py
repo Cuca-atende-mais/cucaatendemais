@@ -58,7 +58,7 @@ if "postgrest" not in sys.modules:
     sys.modules["postgrest"] = _fake_postgrest_pkg
     sys.modules["postgrest.exceptions"] = _fake_postgrest_exceptions_mod
 
-from campanhas_engine import _montar_parametros_named, _gravar_breadcrumb_disparo  # noqa: E402
+from campanhas_engine import _montar_parametros_named, _montar_componente_header, _gravar_breadcrumb_disparo  # noqa: E402
 from postgrest.exceptions import APIError  # noqa: E402
 
 
@@ -157,6 +157,45 @@ def test_variaveis_a_mais_que_valores_trunca_no_menor():
     parametros = _montar_parametros_named(variaveis, valores)
 
     assert parametros == [{"type": "text", "parameter_name": "nome", "text": "Ana"}]
+
+
+# ---------------------------------------------------------------------------
+# _montar_componente_header — 2026-08-07, programacao_agosto_v6 (header IMAGE
+# editado direto no WhatsApp Manager pelo sócio). Templates com header de mídia
+# exigem esse componente em todo envio — sem ele, a Graph API rejeita a mensagem.
+# ---------------------------------------------------------------------------
+
+def test_header_image_com_media_id_monta_componente():
+    componente = _montar_componente_header("image", "1047489034359204")
+    assert componente == {
+        "type": "header",
+        "parameters": [{"type": "image", "image": {"id": "1047489034359204"}}],
+    }
+
+
+def test_header_tipo_none_retorna_none():
+    """Caso comum hoje: maioria dos templates não tem header de mídia nenhum."""
+    assert _montar_componente_header(None, None) is None
+
+
+def test_header_tipo_presente_sem_media_id_retorna_none():
+    """Header configurado mas sem media_id (upload nunca feito/perdido) —
+    melhor não enviar componente nenhum do que mandar um id vazio pra Meta."""
+    assert _montar_componente_header("image", None) is None
+
+
+def test_header_media_id_presente_sem_tipo_retorna_none():
+    assert _montar_componente_header(None, "1047489034359204") is None
+
+
+def test_header_tipo_nao_suportado_retorna_none(caplog):
+    """Só "image" é suportado por ora — video/document ficam pra quando surgir
+    necessidade real, não devem quebrar o disparo silenciosamente, mas o caso
+    precisa ficar visível em log (não é um "None" indistinguível de "sem header")."""
+    with caplog.at_level("WARNING", logger="campanhas_engine"):
+        resultado = _montar_componente_header("video", "algum-id")
+    assert resultado is None
+    assert any("video" in rec.message for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -388,14 +427,18 @@ def test_query_leads_divulgacao_seleciona_id(monkeypatch):
     mock_sb.table.return_value.select.assert_called_with("id, telefone, nome")
 
 
-def _mock_supabase_com_template_divulgacao():
+def _mock_supabase_com_template_divulgacao(header_tipo=None, header_media_id=None):
     """Mock de supabase configurado só pra resolver o lookup de meta_templates que
     _processar_disparo_divulgacao_interno faz antes do loop de envio — comum aos
-    3 testes async abaixo."""
+    testes async abaixo. header_tipo/header_media_id (2026-08-07, programacao_agosto_v6)
+    default None — a maioria dos templates não tem header de mídia."""
     mock_sb = MagicMock()
     (mock_sb.table.return_value.select.return_value.eq.return_value.contains.return_value
         .eq.return_value.eq.return_value.limit.return_value.execute.return_value.data) = [
-        {"nome": "tpl_divulgacao", "corpo_texto": "Oi {{nome}}, programação de {{mes}}: {{link}}", "variaveis": []}
+        {
+            "nome": "tpl_divulgacao", "corpo_texto": "Oi {{nome}}, programação de {{mes}}: {{link}}",
+            "variaveis": [], "header_tipo": header_tipo, "header_media_id": header_media_id,
+        }
     ]
     return mock_sb
 
@@ -456,6 +499,65 @@ async def test_disparo_divulgacao_nao_grava_breadcrumb_quando_envio_falha(monkey
     # _update_metricas_sync(disparo_id, enviados, erros, stop, status) — erros=1
     metricas_call = mock_metricas.call_args
     assert metricas_call.args[2] == 1, "erro do envio falho precisa continuar contado normalmente"
+
+
+@pytest.mark.asyncio
+async def test_disparo_divulgacao_com_header_imagem_inclui_componente_header(monkeypatch):
+    """2026-08-07 (programacao_agosto_v6): quando o template ativo tem header_tipo/
+    header_media_id configurados, o componente 'header' precisa ir na chamada real a
+    _enviar_template_meta, ANTES do 'body' — sem isso a Graph API rejeita a mensagem
+    (template com header de mídia exige o parâmetro correspondente em todo envio)."""
+    monkeypatch.setattr(
+        camp, "supabase",
+        _mock_supabase_com_template_divulgacao(header_tipo="image", header_media_id="1047489034359204"),
+    )
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-div-1", "token-div-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_sync",
+        lambda: MagicMock(data=[{"id": "lead-div-3", "telefone": "5585977777777", "nome": "Fulano"}]),
+    )
+    mock_enviar = AsyncMock(return_value=(True, "wamid.TESTE456"))
+    monkeypatch.setattr(camp, "_enviar_template_meta", mock_enviar)
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+    monkeypatch.setattr(camp, "_update_metricas_sync", MagicMock())
+
+    await camp._processar_disparo_divulgacao_interno(
+        disparo_id="disparo-div-3", mes_nome="Agosto",
+        delay_min=0, delay_max=0, daily_limit=10, error_threshold=100,
+    )
+
+    mock_enviar.assert_called_once()
+    components_enviados = mock_enviar.call_args.args[4]
+    assert components_enviados[0] == {
+        "type": "header",
+        "parameters": [{"type": "image", "image": {"id": "1047489034359204"}}],
+    }
+    assert components_enviados[1]["type"] == "body"
+
+
+@pytest.mark.asyncio
+async def test_disparo_divulgacao_sem_header_nao_inclui_componente_header(monkeypatch):
+    """Regressão: templates sem header de mídia (a maioria hoje) continuam mandando
+    só o componente 'body', igual antes desta mudança — nenhum componente extra."""
+    monkeypatch.setattr(camp, "supabase", _mock_supabase_com_template_divulgacao())
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-div-1", "token-div-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_sync",
+        lambda: MagicMock(data=[{"id": "lead-div-4", "telefone": "5585966666666", "nome": "Beltrano"}]),
+    )
+    mock_enviar = AsyncMock(return_value=(True, "wamid.TESTE789"))
+    monkeypatch.setattr(camp, "_enviar_template_meta", mock_enviar)
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+    monkeypatch.setattr(camp, "_update_metricas_sync", MagicMock())
+
+    await camp._processar_disparo_divulgacao_interno(
+        disparo_id="disparo-div-4", mes_nome="Agosto",
+        delay_min=0, delay_max=0, daily_limit=10, error_threshold=100,
+    )
+
+    components_enviados = mock_enviar.call_args.args[4]
+    assert len(components_enviados) == 1
+    assert components_enviados[0]["type"] == "body"
 
 
 # ---------------------------------------------------------------------------
