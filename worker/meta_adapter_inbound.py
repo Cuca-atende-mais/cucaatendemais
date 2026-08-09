@@ -738,7 +738,9 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             on_conflict="lead_id,origem_id",
         ).execute()
 
-        conv_fresh = supabase.table("conversas").select("id, status, created_at, updated_at").match(
+        conv_fresh = supabase.table("conversas").select(
+            "id, status, created_at, updated_at, primeira_interacao_lead_em"
+        ).match(
             {"lead_id": lead_id, "origem_id": phone_number_id}
         ).execute()
         conversa_id: str = conv_fresh.data[0]["id"]
@@ -746,6 +748,27 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
     except Exception as exc:
         logger.error(f"[meta-inbound] Erro ao gerenciar Conversa: {exc}")
         return
+
+    # S-WM-66: marca o momento da 1ª mensagem enviada PELO LEAD — nunca setado pelo
+    # caminho de disparo/breadcrumb (campanhas_engine.py), só aqui, porque só aqui é
+    # garantido que a mensagem que chegou é do lead, não um envio nosso. Base pra
+    # fixar, no painel de Atendimento, toda conversa com interação real, sem
+    # depender de awaiting_human (handover explícito, raro por decisão de produto —
+    # a instrução de "fale com humano" é deliberadamente omitida do prompt).
+    # Restrito a agente_tipo do motor-agente (Institucional/maria/sofia/ana) — decisão
+    # do Junior de deixar Empregabilidade/Julia de fora por enquanto (ver
+    # docs/stories/S-WM-66-Fila-Fixa-Leads-Engajados-Atendimento.md, Escopo OUT).
+    # Guard "IS NULL" no UPDATE (não só na leitura acima) fecha a corrida entre 2
+    # mensagens quase simultâneas do mesmo lead — mesmo se ambas lerem a coluna como
+    # NULL, só a 1ª a chegar no banco de fato grava; a 2ª UPDATE não afeta linha
+    # nenhuma (WHERE já não bate mais), sem sobrescrever com um timestamp mais tardio.
+    if agente_tipo in _AGENTES_MOTOR_AGENTE and conv_fresh.data[0].get("primeira_interacao_lead_em") is None:
+        try:
+            supabase.table("conversas").update(
+                {"primeira_interacao_lead_em": "now()"}
+            ).eq("id", conversa_id).is_("primeira_interacao_lead_em", "null").execute()
+        except Exception as exc:
+            logger.warning(f"[meta-inbound] Erro ao gravar primeira_interacao_lead_em (conversa_id={conversa_id}): {exc}")
 
     # Achado 2026-07-25/26: 27 de 32 casos de HTTP 400 do motor-agente (telefone
     # vazio) aconteceram entre 11-12,5s da criação do lead — correlação forte com
