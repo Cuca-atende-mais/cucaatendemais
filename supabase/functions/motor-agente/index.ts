@@ -324,9 +324,14 @@ export function normalizarTexto(texto: string): string {
  */
 export function extrairModalidades(chunks: string[]): string[] {
   const nomes = new Set<string>();
-  const regex = /Modalidade:\s*([^-]+?)\s*-\s*Turma/g;
+  const regexEsporte = /Modalidade:\s*([^-]+?)\s*-\s*Turma/g;
+  const regexCurso = /Curso:\s*([^.]+?)\.\s*Educador:/g;
   for (const conteudo of chunks) {
-    for (const match of conteudo.matchAll(regex)) {
+    for (const match of conteudo.matchAll(regexEsporte)) {
+      const nome = match[1].trim();
+      if (nome) nomes.add(nome);
+    }
+    for (const match of conteudo.matchAll(regexCurso)) {
       const nome = match[1].trim();
       if (nome) nomes.add(nome);
     }
