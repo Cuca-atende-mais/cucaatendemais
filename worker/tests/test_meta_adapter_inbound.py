@@ -1512,6 +1512,148 @@ class TestBloqueioPermanente:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# S-WM-66: conversas.primeira_interacao_lead_em -- marca a 1ª mensagem do LEAD
+# (nunca do lado do disparo/breadcrumb), pra fixar no painel de Atendimento toda
+# conversa com interação real, sem depender de awaiting_human.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPrimeiraInteracaoLead:
+    @staticmethod
+    def _make_stub(agente_tipo="Institucional", canal_tipo="Institucional"):
+        return {
+            "canal_origem": "TEST_PHONE_ID",
+            "agente_tipo": agente_tipo,
+            "canal_tipo": canal_tipo,
+            "unidade_cuca": None,
+        }
+
+    @staticmethod
+    def _make_mock_supabase(primeira_interacao_lead_em=None):
+        """Roteamento por nome de tabela — granularidade fina em 'conversas' porque
+        os testes precisam inspecionar especificamente as chamadas em
+        conversas.update() (não dá pra usar o catch-all genérico de outros testes
+        deste arquivo, que não distinguem tabela por tabela)."""
+        from unittest.mock import MagicMock
+
+        bloqueio_mock = MagicMock()
+        bloqueio_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+
+        leads_mock = MagicMock()
+        leads_mock.upsert.return_value.execute.return_value.data = [
+            {"id": "lead-1", "created_at": "2026-08-09T00:00:00Z", "updated_at": "2026-08-09T00:00:00Z"}
+        ]
+        leads_mock.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "bloqueado": False
+        }
+
+        conversas_mock = MagicMock()
+        conversas_mock.upsert.return_value.execute.return_value = MagicMock()
+        conversas_mock.select.return_value.match.return_value.execute.return_value.data = [{
+            "id": "conv-1", "status": "ativa",
+            "created_at": "2026-08-09T00:00:00Z", "updated_at": "2026-08-09T00:00:00Z",
+            "primeira_interacao_lead_em": primeira_interacao_lead_em,
+        }]
+        conversas_mock.update.return_value.eq.return_value.is_.return_value.execute.return_value = MagicMock()
+
+        mensagens_mock = MagicMock()
+        # dedupe por wamid (select().eq().limit()) — vazio = nunca processado
+        mensagens_mock.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mensagens_mock.insert.return_value.execute.return_value = MagicMock()
+
+        def _table_side_effect(name):
+            return {
+                "numeros_bloqueados_permanente": bloqueio_mock,
+                "leads": leads_mock,
+                "conversas": conversas_mock,
+                "mensagens": mensagens_mock,
+            }.get(name, MagicMock())
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.side_effect = _table_side_effect
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock()
+        return mock_supabase, conversas_mock
+
+    @pytest.mark.asyncio
+    async def test_lead_novo_ou_respondendo_apos_disparo_seta_primeira_interacao(self):
+        """AC2 (lead novo, nunca conversou) e AC4 (lead que recebeu disparo e responde
+        depois) são, do ponto de vista deste código, o MESMO caso: a coluna está NULL
+        na conversa no momento em que a mensagem do lead chega — não importa se a
+        conversa é recém-criada ou já existia (criada pelo breadcrumb do disparo).
+        Um teste só, cobrindo os dois ACs, em vez de duplicar o mesmo mock/asserção."""
+        from unittest.mock import patch, AsyncMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        payload = _payload_texto(phone_number_id="TEST_PHONE_ID", telefone="558599999999", texto="oi")
+        raw = json.dumps(payload).encode()
+        mock_supabase, conversas_mock = self._make_mock_supabase(primeira_interacao_lead_em=None)
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=self._make_stub()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock, return_value=None), \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True):
+            await processar_webhook_meta(raw)
+
+        conversas_mock.update.assert_called_once_with({"primeira_interacao_lead_em": "now()"})
+        conversas_mock.update.return_value.eq.assert_called_once_with("id", "conv-1")
+        conversas_mock.update.return_value.eq.return_value.is_.assert_called_once_with(
+            "primeira_interacao_lead_em", "null"
+        )
+
+    @pytest.mark.asyncio
+    async def test_conversa_ja_com_interacao_nao_e_sobrescrita(self):
+        """AC5: conversa já tem primeira_interacao_lead_em preenchido — mensagens
+        seguintes do lead NÃO podem avançar esse timestamp. O guard de leitura
+        (conv_fresh.data[0].get(...) is None) já impede a chamada de UPDATE
+        inteira — nem chega a tentar."""
+        from unittest.mock import patch, AsyncMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        payload = _payload_texto(phone_number_id="TEST_PHONE_ID", telefone="558599999999", texto="segunda mensagem")
+        raw = json.dumps(payload).encode()
+        mock_supabase, conversas_mock = self._make_mock_supabase(
+            primeira_interacao_lead_em="2026-08-01T10:00:00+00:00"
+        )
+
+        with patch("meta_adapter_inbound._get_instancia_by_phone_number_id", return_value=self._make_stub()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase), \
+             patch("meta_adapter_inbound._chamar_motor_agente", new_callable=AsyncMock, return_value=None), \
+             patch("meta_adapter_outbound._meta_marcar_lida_e_digitando", new_callable=AsyncMock, return_value=True), \
+             patch("meta_adapter_outbound._meta_enviar", new_callable=AsyncMock, return_value=True):
+            await processar_webhook_meta(raw)
+
+        conversas_mock.update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empregabilidade_nao_seta_primeira_interacao(self):
+        """AC6: decisão do Junior — Empregabilidade/Julia fica de fora por enquanto.
+        Mesmo cenário do 1º teste (coluna NULL, lead mandando 1ª mensagem), mas
+        agente_tipo='Empregabilidade' — o guard de agente_tipo tem que impedir o
+        UPDATE inteiro, não só não fixar na UI."""
+        import sys
+        import types
+        from unittest.mock import patch, AsyncMock
+        from meta_adapter_inbound import processar_webhook_meta
+
+        mock_processar = AsyncMock()
+        fake_emp_module = types.ModuleType("empregabilidade_engine")
+        fake_emp_module.processar_mensagem_empregabilidade = mock_processar
+
+        payload = _payload_texto(phone_number_id="EMP_PHONE_ID", texto="quero vagas")
+        raw = json.dumps(payload).encode()
+        mock_supabase, conversas_mock = self._make_mock_supabase(primeira_interacao_lead_em=None)
+
+        with patch.dict(sys.modules, {"empregabilidade_engine": fake_emp_module}), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
+                   return_value=self._make_stub(agente_tipo="Empregabilidade")), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase):
+            await processar_webhook_meta(raw)
+
+        conversas_mock.update.assert_not_called()
+        mock_processar.assert_called_once()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # S-WM-20 Task 1: dedupe de mensagens inbound por wamid
 # ─────────────────────────────────────────────────────────────────────────────
 
