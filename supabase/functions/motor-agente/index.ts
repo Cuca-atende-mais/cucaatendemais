@@ -349,7 +349,13 @@ export function detectarAtividadeMencionada(mensagem: string, modalidades: strin
   const msgNorm = normalizarTexto(mensagem);
   const ordenadas = [...modalidades].sort((a, b) => b.length - a.length);
   for (const modalidade of ordenadas) {
-    if (msgNorm.includes(normalizarTexto(modalidade))) return modalidade;
+    const modalidadeNorm = normalizarTexto(modalidade);
+    if (msgNorm.includes(modalidadeNorm)) return modalidade;
+    // Achado 2026-08-09 (fecha o débito do Plano 011): cursos têm título longo e o lead
+    // costuma citar só uma palavra/trecho dele (ex.: "Fotografia" pra "FUNDAMENTOS DA
+    // FOTOGRAFIA: ILUMINAÇÃO..."). Guarda de tamanho mínimo (4) evita casar palavra
+    // trivial ("de", "a", "no") contra qualquer título longo.
+    if (msgNorm.length >= 4 && modalidadeNorm.includes(msgNorm)) return modalidade;
   }
   return null;
 }

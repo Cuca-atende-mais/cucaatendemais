@@ -70,21 +70,21 @@ Deno.test("extrairModalidades: reconhece cursos e esportes juntos, sem duplicar"
   );
 });
 
-// Débito conhecido (achado 2026-08-09, fora do escopo do Plano 011): detectarAtividadeMencionada
-// só verifica msgNorm.includes(modalidadeNorm) — funciona pra esportes (nome curto dentro de
-// mensagem mais longa), mas falha pra cursos com título longo quando o lead cita só uma palavra
-// (ex.: "Fotografia" não contém "FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO..."). Extrair o nome do
-// curso (Plano 011) não basta sozinho; precisa de correspondência bidirecional com guarda de
-// tamanho mínimo — mudança de escopo maior, não decidida ainda.
-Deno.test({
-  name: "detectarAtividadeMencionada: débito conhecido — não detecta curso citado parcialmente (Fotografia) contra o nome completo do curso",
-  ignore: true,
-  fn: () => {
-    assertEquals(
-      detectarAtividadeMencionada("Fotografia", ["FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS", "Natação"]),
-      "FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS",
-    );
-  },
+// Achado 2026-08-09 (fecha o débito do Plano 011): detectarAtividadeMencionada agora também
+// casa modalidadeNorm.includes(msgNorm) (com guarda de tamanho mínimo 4) — cobre curso citado
+// parcialmente (ex.: "Fotografia" dentro de "FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO...").
+Deno.test("detectarAtividadeMencionada: detecta curso citado parcialmente (Fotografia) contra o nome completo do curso", () => {
+  assertEquals(
+    detectarAtividadeMencionada("Fotografia", ["FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS", "Natação"]),
+    "FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS",
+  );
+});
+
+Deno.test("detectarAtividadeMencionada: guarda de tamanho mínimo evita casar palavra trivial contra título longo", () => {
+  assertEquals(
+    detectarAtividadeMencionada("de", ["FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS"]),
+    null,
+  );
 });
 
 // ── S-WM-34 (VAL-09) — detectarAtividadeMencionada ──────────────────────────
