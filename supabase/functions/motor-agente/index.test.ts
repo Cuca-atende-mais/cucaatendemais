@@ -45,6 +45,48 @@ Deno.test("extrairModalidades: retorna vazio quando não há nenhum padrão no t
   assertEquals(extrairModalidades(["texto qualquer sem o padrão esperado"]), []);
 });
 
+Deno.test("extrairModalidades: extrai nomes únicos do padrão 'Curso: X. Educador:' (seção CURSOS)", () => {
+  const chunks = [
+    "• FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS Detalhes: Curso: FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS. Educador: Ulisses Narciso. Vagas: 15.",
+    "• Informática Básica - Módulo 5 Detalhes: Curso: Informática Básica - Módulo 5. Educador: Gleison Oliveira. Vagas: 20.",
+    "continuação sem match Curso nenhuma aqui",
+  ];
+  const modalidades = extrairModalidades(chunks);
+  assertEquals(
+    modalidades.sort(),
+    ["FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS", "Informática Básica - Módulo 5"].sort(),
+  );
+});
+
+Deno.test("extrairModalidades: reconhece cursos e esportes juntos, sem duplicar", () => {
+  const chunks = [
+    "• Natação Detalhes: Esporte Modalidade: Natação - Turma Turma 11 . Professor: Daniel Reis.",
+    "• FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS Detalhes: Curso: FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS. Educador: Ulisses Narciso.",
+  ];
+  const modalidades = extrairModalidades(chunks);
+  assertEquals(
+    modalidades.sort(),
+    ["FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS", "Natação"].sort(),
+  );
+});
+
+// Débito conhecido (achado 2026-08-09, fora do escopo do Plano 011): detectarAtividadeMencionada
+// só verifica msgNorm.includes(modalidadeNorm) — funciona pra esportes (nome curto dentro de
+// mensagem mais longa), mas falha pra cursos com título longo quando o lead cita só uma palavra
+// (ex.: "Fotografia" não contém "FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO..."). Extrair o nome do
+// curso (Plano 011) não basta sozinho; precisa de correspondência bidirecional com guarda de
+// tamanho mínimo — mudança de escopo maior, não decidida ainda.
+Deno.test({
+  name: "detectarAtividadeMencionada: débito conhecido — não detecta curso citado parcialmente (Fotografia) contra o nome completo do curso",
+  ignore: true,
+  fn: () => {
+    assertEquals(
+      detectarAtividadeMencionada("Fotografia", ["FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS", "Natação"]),
+      "FUNDAMENTOS DA FOTOGRAFIA: ILUMINAÇÃO PROFISSIONAL PARA FOTOS INCRÍVEIS",
+    );
+  },
+});
+
 // ── S-WM-34 (VAL-09) — detectarAtividadeMencionada ──────────────────────────
 Deno.test("detectarAtividadeMencionada: detecta com acento igual ao original", () => {
   assertEquals(detectarAtividadeMencionada("tem natação de noite?", ["Natação", "Judô"]), "Natação");

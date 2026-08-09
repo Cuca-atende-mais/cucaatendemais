@@ -2110,3 +2110,32 @@ async def test_webhook_status_deleted_e_warning_mapeados_corretamente():
     assert update_call_warning is not None, "logs_disparo.update nunca foi chamado (warning)"
     assert update_call_warning.args[0]["status"] == "aviso"
     assert update_call_warning.args[0]["erro"] == "470"
+
+
+class TestNormalizacaoTelefoneContratoV2:
+    @pytest.mark.asyncio
+    async def test_contrato_v2_normaliza_telefone_sem_nono_digito(self):
+        """Telefone BR de 12 dígitos sem o 9 (formato que a Meta às vezes manda)
+        deve virar 13 dígitos com o 9, batendo com o formato salvo na importação/campanha."""
+        payload = _payload_texto(telefone="558586902920")  # sem o 9
+        instancia_data = {
+            "canal_origem": "institucional",
+            "agente_tipo": "Institucional",
+            "canal_tipo": "whatsapp",
+            "unidade_cuca": None,
+        }
+        contrato = await build_contrato_v2(payload, instancia_data)
+        assert contrato["telefone"] == "5585986902920"  # com o 9
+
+    @pytest.mark.asyncio
+    async def test_contrato_v2_nao_altera_telefone_ja_com_nono_digito(self):
+        """Telefone que já chega com o 9 não deve ser alterado (idempotência)."""
+        payload = _payload_texto(telefone="5585986902920")
+        instancia_data = {
+            "canal_origem": "institucional",
+            "agente_tipo": "Institucional",
+            "canal_tipo": "whatsapp",
+            "unidade_cuca": None,
+        }
+        contrato = await build_contrato_v2(payload, instancia_data)
+        assert contrato["telefone"] == "5585986902920"

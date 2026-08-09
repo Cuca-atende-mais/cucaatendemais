@@ -13,6 +13,8 @@ import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone, timedelta
 
+from meta_adapter_outbound import _normalizar_telefone_br
+
 logger = logging.getLogger("worker-cuca")
 
 
@@ -222,7 +224,7 @@ async def build_contrato_v2(meta_payload: dict, instancia_data: dict) -> dict:
         raise ValueError("Payload Meta sem messages[]")
 
     msg = messages[0]
-    telefone: str = msg.get("from", "")
+    telefone: str = _normalizar_telefone_br(msg.get("from", ""))
     wamid: str = msg.get("id", "")
 
     mensagem, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
