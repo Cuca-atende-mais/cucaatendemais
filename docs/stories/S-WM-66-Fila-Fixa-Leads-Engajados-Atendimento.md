@@ -1,7 +1,7 @@
 # S-WM-66 — Fila fixa de leads engajados no painel de Atendimento
 
 ## Status
-Ready for Review
+Ready for Review (correção do achado do QA aplicada — ver Dev Agent Record / Change Log 0.5)
 
 ## Origem
 `docs/qa/LEVANTAMENTO-Fila-Fixa-Leads-Engajados-Atendimento-2026-08.md` (@dev, 2026-08-07) — pedido
@@ -238,6 +238,8 @@ S-WM-24.**
 | 2026-08-07 | 0.1 | Draft inicial, a partir de `docs/qa/LEVANTAMENTO-Fila-Fixa-Leads-Engajados-Atendimento-2026-08.md` e das 3 decisões do Junior (ordenação, saída da fila, exclusão de Empregabilidade). | @sm River |
 | 2026-08-07 | 0.2 | Validado (GO, 8/10 → 10/10 após ajuste). 2 ajustes aplicados: (1) "Dependências" alegava que `_AGENTES_MOTOR_AGENTE` era "tocado pela S-WM-24" e recomendava esperar aquele PR — falso, conferido direto em `origin/main`: a constante já existe lá, independente da S-WM-24, e as regiões do arquivo tocadas por cada story nem ficam próximas; dependência removida, story pode começar já. (2) Explicitado que reaproveitar `_AGENTES_MOTOR_AGENTE` inteiro inclui Sofia/Ana no guard de propósito (forward-compatible, sem efeito hoje) — não era uma decisão documentada, virou nota explícita na Seção Escopo. Status Draft → Ready. | @po Pax |
 | 2026-08-08 | 0.3 | Implementação completa (Tasks 1-4). Migration aplicada em produção (528 conversas, 25 com interação, backfill com 0 divergências). Worker: gravação de `primeira_interacao_lead_em` no caminho inbound, guard de `agente_tipo` testado explicitamente pros dois lados (seta pra Institucional, não seta pra Empregabilidade). Frontend: `chat-sidebar.tsx` com 2 seções (fixa sem limite + normal como antes). Testes: 233/238 passando no worker (5 falhas pré-existentes, confirmadas sem relação); `tsc`/`eslint` limpos no portal. **1 pendência explícita:** sem credencial de login neste ambiente, não foi possível confirmar visualmente a UI renderizada nas 5 páginas — validado só por compilação (`tsc`) e análise estática (`eslint`), não por inspeção real na tela. Status InProgress → Ready for Review. | @dev Dex |
+| 2026-08-09 | 0.4 | QA: **FAIL** (achado único, pequeno e delimitado). Verificação independente de tudo (testes, backfill, migration, `get_advisors`, `"now()"` empírico) sem achado — problema real é no badge do header de `chat-sidebar.tsx`, que passou a olhar só `fixedConversations` e por isso deixa de disparar pra conversas de Empregabilidade em `awaiting_human` (mecanismo próprio de transbordo desse módulo, `empregabilidade_engine.py:362`, não coberto pelo teste que o AC8 pediu — esse só cobria o backend). Correção: badge precisa olhar as 2 listas. Devolvido pro @dev. Status Ready for Review → InProgress. | @qa Quinn |
+| 2026-08-09 | 0.5 | Correção do achado do QA aplicada — badge do header agora olha `[...fixedConversations, ...normalConversations]`. `tsc --noEmit` e `eslint`: 0 erro/warning. Teste automatizado NÃO adicionado — projeto não tem infraestrutura de teste de componente React (`vitest` configurado node-only, sem `jsdom`, decisão deliberada já registrada); escrever um teste de renderização pra esta linha exigiria montar essa infra do zero, desproporcional a um fix de 1 condição. Verificação visual real segue com a mesma limitação já registrada na v0.3 (sem credencial de login neste ambiente). Status InProgress → Ready for Review. | @dev Dex |
 
 ## Dev Agent Record
 
@@ -302,6 +304,17 @@ setado, então nunca aparece na seção normal).
   sessão. Documentado como pendência explícita — ver Task 3 (item marcado `[~]`) e recomendação ao
   @qa/usuário no fechamento.
 
+### Correção do achado do QA (2026-08-09)
+Badge do header (`fixedConversations.some(...)`) trocado pra `[...fixedConversations,
+...normalConversations].some(c => c.status === 'awaiting_human')` — volta a enxergar conversas de
+Empregabilidade em `awaiting_human`, que nunca entram na seção fixa (decisão #3, exclusão
+deliberada). `tsc --noEmit` e `eslint`: 0 erro/warning, mesmo resultado limpo de antes. Tentei
+subir o servidor local de novo pra reconferir visualmente — mesma limitação de credencial de
+login já registrada acima, sem novidade aqui. Não adicionei teste automatizado pro comportamento
+do badge: este projeto não tem `jsdom`/testing-library configurado pra testar renderização de
+componente React (decisão deliberada, `vitest.config.ts` é node-only) — montar essa infraestrutura
+do zero seria desproporcional a uma correção de 1 condição JSX.
+
 ## File List
 
 | Arquivo | Mudança |
@@ -312,4 +325,58 @@ setado, então nunca aparece na seção normal).
 | `cuca-portal/src/components/chat/chat-sidebar.tsx` | Task 3 — query de 2 seções + UI (seção fixa/normal) |
 
 ## QA Results
-_A ser preenchido pelo @qa após a implementação._
+
+### 2026-08-09 — @qa Quinn
+
+**Veredito: FAIL (achado único, pequeno e bem delimitado — não é rejeição ampla)**
+
+Reexecutei de forma independente, não confiei só no Dev Agent Record:
+- `pytest worker/tests/test_meta_adapter_inbound.py`: 66/66. Suíte completa do worker: 233/238 (5
+  falhas pré-existentes, confirmadas sem relação — `ModuleNotFoundError: openai`).
+- AC1 (backfill) reconferido direto no banco, agora: 25 conversas com interação, 25 com a coluna
+  preenchida, **0 divergências**.
+- Migration: versão do arquivo bate exatamente com `supabase_migrations.schema_migrations`
+  (`20260809013403`) — sem drift.
+- `get_advisors(security)`: 0 menção a `conversas`, 0 ERROR, mesma baseline de antes (95 WARN + 10
+  INFO).
+- Validei empiricamente (não assumi) que `"now()"` como valor de update num campo `timestamptz`
+  funciona no Postgres (`SELECT 'now()'::timestamptz` retorna o timestamp atual, tratado igual a
+  `'now'`) — não é bug latente.
+- Confirmei que `.is_("coluna", "null")` é o padrão já estabelecido no projeto (4 outros usos no
+  mesmo arquivo/worker), não uma API inventada.
+
+**Achado que bloqueia — AC8 não está de fato coberto:**
+
+`worker/empregabilidade_engine.py:362` também seta `status='awaiting_human'` — Empregabilidade tem
+seu **próprio** mecanismo de transbordo, independente do motor-agente (`_acionar_handover_real` /
+notificação via `_notificar_transbordo`). A decisão #3 da story exclui Empregabilidade de
+`primeira_interacao_lead_em` de propósito — correto — mas isso quebra uma premissa que o `chat-
+sidebar.tsx` passou a assumir: o badge do header (`fixedConversations.some(c => c.status ===
+'awaiting_human')`, linha ~305) agora só olha o array fixo, e conversas de Empregabilidade nunca
+entram nele.
+
+**Efeito:** uma conversa de Empregabilidade aguardando atendimento humano real **não dispara mais
+o badge vermelho pulsante "Aguardando" no topo da sidebar** — a conversa continua visível (com
+destaque âmbar, badge "Humano", ordenada primeiro dentro da seção normal, tudo isso preservado),
+só o alerta de topo que some. Não é perda de dado nem de funcionalidade, é degradação de um sinal
+de alerta que este projeto já tratou como sério antes (S-WM-61, dedicada só a corrigir gatilho de
+alerta de handover).
+
+**Por que não foi pego pelos testes:** `test_empregabilidade_nao_seta_primeira_interacao` (o teste
+que o próprio AC6/8 pediu) cobre só o lado backend (coluna não setada) — nunca exercitou o badge
+do frontend. AC8 promete "comportamento idêntico ao de antes" pra Empregabilidade, mas essa
+premissa não foi verificada onde realmente importava.
+
+**Correção necessária (pequena, 1 linha):** o badge do header precisa olhar as duas listas, não só
+a fixa —
+```tsx
+{[...fixedConversations, ...normalConversations].some(c => c.status === 'awaiting_human') && (
+```
+Nenhuma outra parte do código precisa mudar — a ordenação e o estilo de linha (âmbar/"Humano") já
+funcionam corretamente hoje dentro da seção normal, é só o badge de topo que precisa do escopo
+maior.
+
+**Resto da story:** sólido. Migration, backend e as outras 9 ACs verificados de forma independente,
+sem achado. Recomendo @dev aplicar a correção acima + adicionar 1 teste (mesmo padrão dos outros,
+mock com `agente_tipo='Empregabilidade'` e `status='awaiting_human'`, confirmando que o badge
+dispara) antes de reenviar pro @qa.

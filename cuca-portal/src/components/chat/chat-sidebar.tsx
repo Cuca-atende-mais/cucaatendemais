@@ -302,7 +302,11 @@ export default function ChatSidebar({
             <div className="p-4 space-y-4">
                 <div className="flex items-center justify-between">
                     <h2 className="text-xl font-bold tracking-tight">{title}</h2>
-                    {fixedConversations.some(c => c.status === 'awaiting_human') && (
+                    {/* QA (2026-08-09): olhar as 2 listas, não só fixedConversations — Empregabilidade
+                        tem seu próprio mecanismo de awaiting_human (empregabilidade_engine.py) e nunca
+                        entra na seção fixa (decisão #3 da story), mas ainda precisa disparar este
+                        alerta quando um lead pede atendente humano. */}
+                    {[...fixedConversations, ...normalConversations].some(c => c.status === 'awaiting_human') && (
                         <Badge variant="destructive" className="text-[9px] h-4 px-1.5 animate-pulse">
                             Aguardando
                         </Badge>
