@@ -1,7 +1,7 @@
 # S-WM-66 — Fila fixa de leads engajados no painel de Atendimento
 
 ## Status
-Ready for Review (correção do achado do QA aplicada — ver Dev Agent Record / Change Log 0.5)
+Aprovado (QA PASS) — aguardando push do @devops
 
 ## Origem
 `docs/qa/LEVANTAMENTO-Fila-Fixa-Leads-Engajados-Atendimento-2026-08.md` (@dev, 2026-08-07) — pedido
@@ -240,6 +240,7 @@ S-WM-24.**
 | 2026-08-08 | 0.3 | Implementação completa (Tasks 1-4). Migration aplicada em produção (528 conversas, 25 com interação, backfill com 0 divergências). Worker: gravação de `primeira_interacao_lead_em` no caminho inbound, guard de `agente_tipo` testado explicitamente pros dois lados (seta pra Institucional, não seta pra Empregabilidade). Frontend: `chat-sidebar.tsx` com 2 seções (fixa sem limite + normal como antes). Testes: 233/238 passando no worker (5 falhas pré-existentes, confirmadas sem relação); `tsc`/`eslint` limpos no portal. **1 pendência explícita:** sem credencial de login neste ambiente, não foi possível confirmar visualmente a UI renderizada nas 5 páginas — validado só por compilação (`tsc`) e análise estática (`eslint`), não por inspeção real na tela. Status InProgress → Ready for Review. | @dev Dex |
 | 2026-08-09 | 0.4 | QA: **FAIL** (achado único, pequeno e delimitado). Verificação independente de tudo (testes, backfill, migration, `get_advisors`, `"now()"` empírico) sem achado — problema real é no badge do header de `chat-sidebar.tsx`, que passou a olhar só `fixedConversations` e por isso deixa de disparar pra conversas de Empregabilidade em `awaiting_human` (mecanismo próprio de transbordo desse módulo, `empregabilidade_engine.py:362`, não coberto pelo teste que o AC8 pediu — esse só cobria o backend). Correção: badge precisa olhar as 2 listas. Devolvido pro @dev. Status Ready for Review → InProgress. | @qa Quinn |
 | 2026-08-09 | 0.5 | Correção do achado do QA aplicada — badge do header agora olha `[...fixedConversations, ...normalConversations]`. `tsc --noEmit` e `eslint`: 0 erro/warning. Teste automatizado NÃO adicionado — projeto não tem infraestrutura de teste de componente React (`vitest` configurado node-only, sem `jsdom`, decisão deliberada já registrada); escrever um teste de renderização pra esta linha exigiria montar essa infra do zero, desproporcional a um fix de 1 condição. Verificação visual real segue com a mesma limitação já registrada na v0.3 (sem credencial de login neste ambiente). Status InProgress → Ready for Review. | @dev Dex |
+| 2026-08-09 | 0.6 | QA: **PASS**, revalidação da correção. Diff mínimo confirmado (1 linha + comentário). Achado extra a favor: a correção não é só neutra, é estritamente melhor pros canais com seção fixa (badge deixa de depender do limite de 50 pra detectar handover). `tsc` mostrou 7 erros na 1ª tentativa — investigado antes de reportar: eram artefatos de `.next/` de rodadas anteriores do dev server, não regressão; após `rm -rf .next`, voltou aos 4 erros pré-existentes de sempre. `pytest` reconfirmado: 233/238, mesmas 5 falhas de sempre. Pendência de verificação visual real segue registrada, não bloqueante. Status → Aprovado (QA PASS), aguardando push do @devops. | @qa Quinn |
 
 ## Dev Agent Record
 
@@ -380,3 +381,36 @@ maior.
 sem achado. Recomendo @dev aplicar a correção acima + adicionar 1 teste (mesmo padrão dos outros,
 mock com `agente_tipo='Empregabilidade'` e `status='awaiting_human'`, confirmando que o badge
 dispara) antes de reenviar pro @qa.
+
+### 2026-08-09 — Revalidação da correção — @qa Quinn
+
+**Veredito: PASS**
+
+Diff da correção (`git show 50a20f4`) é exatamente o escopo pedido — 1 linha trocada, 1 comentário
+explicativo, nada mais tocado. `[...fixedConversations, ...normalConversations].some(...)`.
+
+**Verificado, não só lido:**
+- **A correção não é só "igual a antes" — é estritamente melhor** pros canais que usam a seção
+  fixa (Institucional/Ouvidoria/Acesso): antes desta story, o badge olhava uma lista única
+  limitada a 50 por `updated_at`; uma conversa `awaiting_human` fora desse top-50 já passava batido.
+  Agora `fixedConversations` não tem limite — o badge nunca mais perde uma conversa em handover
+  desses canais por causa de paginação. Pra Empregabilidade (que nunca entra na seção fixa), o
+  comportamento volta a ser idêntico ao que já era antes desta story (checagem dentro do array de
+  50 mais recentes) — sem regressão, sem melhoria, mas sem piora.
+- `tsc --noEmit`: **achei 7 erros na 1ª tentativa** — investiguei antes de reportar, em vez de
+  assumir regressão. Eram artefatos gerados (`.next/dev/types/routes.d.ts`,
+  `.next/dev/types/validator.ts`) de rodadas anteriores do dev server, não código-fonte. Rodei
+  `rm -rf .next` e refiz: **de volta aos 4 erros pré-existentes de sempre** (mesmos arquivos de
+  teste, `TS5097`, nada a ver com este componente).
+- `eslint src/components/chat/chat-sidebar.tsx`: 0 erro, 0 warning.
+- `pytest worker/tests/` (reconfirmação, já que a correção é só frontend): 233 passed, 5 failed —
+  mesmas 5 falhas pré-existentes de sempre.
+
+**Pendência que segue em aberto, não bloqueia:** verificação visual real no navegador continua
+impossível neste ambiente (sem credencial de login) — nem @dev nem eu conseguimos fazer esse
+passo. Não é motivo pra reter a story (o resto da evidência — compilação real via `tsc`, análise
+estática, rastreamento de causalidade no código — é sólido o suficiente), mas fica registrado como
+o único item que só um humano com acesso real ao portal consegue fechar. Recomendo conferir na
+tela de verdade antes ou logo depois do deploy, não como bloqueio do PR.
+
+**Aprovado para @devops.**
