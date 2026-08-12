@@ -1,33 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { createClient as createServerClient } from "@/lib/supabase/server"
-import { NIVEIS_ESCOLARIDADE } from "@/constants/empregabilidade"
+import { normalizarEscolaridade } from "@/lib/empregabilidade/escolaridade"
 
 const DEVELOPER_EMAILS = ["valmir@cucateste.com", "dev.cucaatendemais@gmail.com"]
-
-// Tenta mapear uma string de escolaridade livre para o nível canônico mais próximo
-function normalizarEscolaridade(raw: string | undefined | null): string | null {
-    if (!raw) return null
-    const lower = raw.toLowerCase()
-    if (lower.includes("doutor") || lower.includes("phd")) return "Mestrado ou superior"
-    if (lower.includes("mestre") || lower.includes("mestrado")) return "Mestrado ou superior"
-    if (lower.includes("pós") || lower.includes("pos-grad") || lower.includes("especializa")) {
-        return lower.includes("incom") ? "Pós-graduação Incompleta" : "Pós-graduação Completa"
-    }
-    if (lower.includes("superior") || lower.includes("faculdade") || lower.includes("graduação") || lower.includes("universid")) {
-        return lower.includes("incom") || lower.includes("cursando") ? "Superior Incompleto" : "Superior Completo"
-    }
-    if (lower.includes("técnico") || lower.includes("tecnico")) return "Técnico"
-    if (lower.includes("médio") || lower.includes("medio") || lower.includes("2º grau") || lower.includes("ensino medio")) {
-        return lower.includes("incom") || lower.includes("cursando") ? "Médio Incompleto" : "Médio Completo"
-    }
-    if (lower.includes("fundamental") || lower.includes("1º grau")) {
-        return lower.includes("incom") || lower.includes("cursando") ? "Fundamental Incompleto" : "Fundamental Completo"
-    }
-    // Se a string já é um nível canônico, retorna direto
-    if ((NIVEIS_ESCOLARIDADE as readonly string[]).includes(raw)) return raw
-    return null
-}
 
 export async function POST(req: NextRequest) {
     try {
