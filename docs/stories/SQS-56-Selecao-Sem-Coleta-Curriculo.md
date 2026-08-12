@@ -347,8 +347,12 @@ Claude Sonnet 5 (@dev)
 **Novos:**
 - `cuca-portal/supabase/migrations/20260812120000_sqs56_selecao_sem_coleta_curriculo.sql`
 - `cuca-portal/src/app/(dashboard)/empregabilidade/selecoes/page.tsx`
-- `cuca-portal/src/components/empregabilidade/selecao-detalhe-modal.tsx`
+- `cuca-portal/src/app/(dashboard)/empregabilidade/selecoes/[id]/page.tsx` *(ajuste pós-review)*
 - `cuca-portal/src/lib/empregabilidade/coleta-curriculo-guard.ts`
+
+**Removido no ajuste pós-review:**
+- ~~`cuca-portal/src/components/empregabilidade/selecao-detalhe-modal.tsx`~~ — substituído pela
+  página dedicada `selecoes/[id]/page.tsx`
 
 **Modificados — worker:**
 - `worker/empregabilidade_engine.py` — 2 etapas novas (`confirmando_presenca_nome`,
@@ -481,3 +485,4 @@ implementação, antes de tocar a máquina de estados.
 | 2026-08-12 | @dev | Implementação completa (T1-T11, AC1-AC17). Consultou advisor antes de codar — 3 achados bloqueantes corrigidos antes da implementação (armadilha `tipo IS NULL`, fail-safe `is False`, validação de telefone). Status `Ready` → `InProgress`. Ver Dev Agent Record para a ressalva de escopo do AC15 e demais decisões |
 | 2026-08-12 | @qa | **Veredito: CONCERNS** (aprovado). 7 checks executados de forma independente, ACs verificados contra código e produção (schema, grants, CHECK constraints). Status `InProgress` → `InReview` |
 | 2026-08-12 | @qa | **Correção de premissa:** o pedido de "validação em staging com número de teste" estava desatualizado — não existe mais staging/número de teste neste projeto (dados já vão direto pra produção, confirmado que a migration da story foi aplicada em `cuca` real). Veredito atualizado para **PASS**. Recomendação: acompanhar a primeira seleção real criada em produção |
+| 2026-08-12 | @dev | **Ajuste pós-review do Junior (UI reprovada).** 3 problemas reais: (1) coluna de cargos estourava a tabela e escondia as colunas seguintes — corrigido com `table-fixed` + larguras explícitas + truncate + "+N" com tooltip; (2) detalhe da seleção era um modal apertado — substituído por **página dedicada** `selecoes/[id]`, espelhando `vagas/[id]` (cabeçalho com dados da seleção, card de cargos com inscritos/vagas, grid de presença); (3) **faltava o CRUD de status** que vaga normal tem — adicionado: Publicar (rascunho→aberta), Marcar como preenchida, Voltar para rascunho, Reabrir, Cancelar. Somado: busca + filtro por status na listagem, máscara de telefone e AlertDialog de confirmação na remoção. Status permanece `InReview` — requer novo gate do @qa |

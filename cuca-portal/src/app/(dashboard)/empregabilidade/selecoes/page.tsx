@@ -5,28 +5,58 @@
 // aparecer na listagem de Vagas normais.
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { createClient } from "@/lib/supabase/client"
 import { Vaga, Empresa } from "@/lib/types/database"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Loader2, Plus, CalendarDays, Users, Globe, FileText, FileX2 } from "lucide-react"
+import {
+    Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
+    Loader2, Plus, CalendarDays, Users, Globe, FileText, FileX2, Search, ChevronRight, Building2,
+} from "lucide-react"
 import { SelecaoModal } from "@/components/empregabilidade/selecao-modal"
-import { SelecaoDetalheModal } from "@/components/empregabilidade/selecao-detalhe-modal"
 import { useUser } from "@/lib/auth/user-provider"
 
-const SELECOES_KEY = ["empregabilidade", "selecoes"] as const
+export const SELECOES_KEY = ["empregabilidade", "selecoes"] as const
+
+const STATUS_LABEL: Record<string, { label: string; className: string }> = {
+    aberta: { label: "Aberta", className: "bg-green-500/15 text-green-400 border-green-500/30" },
+    pre_cadastro: { label: "Rascunho", className: "bg-amber-500/15 text-amber-400 border-amber-500/30" },
+    preenchida: { label: "Preenchida", className: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
+    cancelada: { label: "Cancelada", className: "bg-red-500/15 text-red-400 border-red-500/30" },
+}
+
+function StatusBadge({ status }: { status: string }) {
+    const cfg = STATUS_LABEL[status]
+    return (
+        <Badge variant="outline" className={cfg?.className || "text-muted-foreground"}>
+            {cfg?.label || status}
+        </Badge>
+    )
+}
+
+/** Formata "2026-09-12" → "12/09/2026". Retorna "" se vazio/mal formado. */
+function formatarData(iso: string | undefined): string {
+    if (!iso) return ""
+    const p = iso.split("-")
+    return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : iso
+}
 
 export default function SelecoesPage() {
     const supabase = createClient()
+    const router = useRouter()
     const qc = useQueryClient()
     const { hasPermission } = useUser()
 
     const [isModalOpen, setIsModalOpen] = useState(false)
-    const [editando, setEditando] = useState<Vaga | null>(null)
-    const [detalheAberto, setDetalheAberto] = useState<Vaga | null>(null)
+    const [busca, setBusca] = useState("")
+    const [filtroStatus, setFiltroStatus] = useState<string>("todas")
 
     const { data, isLoading } = useQuery({
         queryKey: SELECOES_KEY,
@@ -60,28 +90,32 @@ export default function SelecoesPage() {
         },
     })
 
-    const selecoes = data?.selecoes ?? []
+    const todas = data?.selecoes ?? []
     const empresasMap = data?.empresasMap ?? {}
     const confirmadosCount = data?.confirmadosCount ?? {}
 
+    const nomeEmpresa = (v: Vaga) =>
+        empresasMap[v.empresa_id]?.nome_fantasia || empresasMap[v.empresa_id]?.nome || "—"
+
+    const selecoes = todas.filter(v => {
+        if (filtroStatus !== "todas" && v.status !== filtroStatus) return false
+        if (!busca) return true
+        const s = busca.toLowerCase()
+        const cargos = (v.cargos_lista || []).map(c => c.titulo).join(" ").toLowerCase()
+        return nomeEmpresa(v).toLowerCase().includes(s) || cargos.includes(s)
+    })
+
     const invalidate = () => qc.invalidateQueries({ queryKey: SELECOES_KEY })
 
-    const abrirNova = () => { setEditando(null); setIsModalOpen(true) }
-    const abrirEdicao = (v: Vaga) => { setEditando(v); setIsModalOpen(true); setDetalheAberto(null) }
-
-    const getStatusBadge = (status: string) => {
-        switch (status) {
-            case "aberta": return <Badge className="bg-green-600 text-white">Aberta</Badge>
-            case "pre_cadastro": return <Badge variant="outline" className="text-amber-600 border-amber-600 bg-amber-50">Rascunho</Badge>
-            case "preenchida": return <Badge variant="secondary">Preenchida</Badge>
-            case "cancelada": return <Badge variant="destructive">Cancelada</Badge>
-            default: return <Badge variant="outline">{status}</Badge>
-        }
+    const contagem = {
+        todas: todas.length,
+        aberta: todas.filter(v => v.status === "aberta").length,
+        pre_cadastro: todas.filter(v => v.status === "pre_cadastro").length,
     }
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
                         <CalendarDays className="h-8 w-8 text-cuca-blue" />
@@ -90,63 +124,151 @@ export default function SelecoesPage() {
                     <p className="text-muted-foreground">Processos seletivos por evento — presenciais e com data marcada.</p>
                 </div>
                 {hasPermission("empreg_selecao", "create") && (
-                    <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold" onClick={abrirNova}>
+                    <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold" onClick={() => setIsModalOpen(true)}>
                         <Plus className="mr-2 h-4 w-4" /> Nova Seleção
                     </Button>
                 )}
             </div>
 
+            {/* Filtros */}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-1 bg-muted p-1 rounded-lg">
+                    {([
+                        ["todas", `Todas (${contagem.todas})`],
+                        ["aberta", `Abertas (${contagem.aberta})`],
+                        ["pre_cadastro", `Rascunhos (${contagem.pre_cadastro})`],
+                    ] as const).map(([valor, rotulo]) => (
+                        <Button
+                            key={valor}
+                            variant={filtroStatus === valor ? "secondary" : "ghost"}
+                            size="sm"
+                            className="h-8 text-xs px-3"
+                            onClick={() => setFiltroStatus(valor)}
+                        >
+                            {rotulo}
+                        </Button>
+                    ))}
+                </div>
+                <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                        placeholder="Buscar por empresa ou cargo..."
+                        className="pl-10 w-72 h-9"
+                        value={busca}
+                        onChange={e => setBusca(e.target.value)}
+                    />
+                </div>
+            </div>
+
             <Card className="border-none shadow-sm overflow-hidden">
                 <CardContent className="p-0">
-                    <Table>
+                    {/* `table-fixed` + larguras explícitas: sem isso a coluna de
+                        cargos (que pode ter 10+ títulos) empurra a tabela para
+                        fora da tela e esconde as colunas seguintes. */}
+                    <Table className="table-fixed w-full">
                         <TableHeader className="bg-muted/30">
                             <TableRow>
-                                <TableHead>Empresa</TableHead>
-                                <TableHead>Cargos</TableHead>
-                                <TableHead>Data</TableHead>
-                                <TableHead>Currículo</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead className="text-center">Confirmados</TableHead>
+                                <TableHead className="w-[26%]">Empresa</TableHead>
+                                <TableHead className="w-[30%]">Cargos</TableHead>
+                                <TableHead className="w-[14%]">Data</TableHead>
+                                <TableHead className="w-[14%]">Currículo</TableHead>
+                                <TableHead className="w-[10%]">Status</TableHead>
+                                <TableHead className="w-[6%] text-center">Conf.</TableHead>
+                                <TableHead className="w-14"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {isLoading ? (
-                                <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
+                                <TableRow><TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                                     <Loader2 className="h-5 w-5 animate-spin inline-block" />
                                 </TableCell></TableRow>
                             ) : selecoes.length === 0 ? (
-                                <TableRow><TableCell colSpan={6} className="text-center py-10 text-muted-foreground">Nenhuma seleção cadastrada.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                                    {todas.length === 0
+                                        ? "Nenhuma seleção cadastrada."
+                                        : "Nenhuma seleção encontrada com os filtros aplicados."}
+                                </TableCell></TableRow>
                             ) : selecoes.map(v => {
                                 const datas = v.datas_selecao || []
                                 const cargos = (v.cargos_lista || []).map(c => c.titulo).filter(Boolean)
+                                // Mostra só os 2 primeiros + contador; a lista
+                                // completa fica no tooltip e na página de detalhe.
+                                const cargosVisiveis = cargos.slice(0, 2).join(", ")
+                                const restantes = cargos.length - 2
                                 return (
-                                    <TableRow key={v.id} className="cursor-pointer hover:bg-muted/30" onClick={() => setDetalheAberto(v)}>
-                                        <TableCell>
-                                            <div className="flex flex-col">
-                                                <span className="font-semibold flex items-center gap-2">
-                                                    {empresasMap[v.empresa_id]?.nome_fantasia || empresasMap[v.empresa_id]?.nome || "—"}
-                                                    {v.unidade_destino === "global" && <Badge className="bg-cuca-blue/10 text-cuca-blue border-cuca-blue/30 text-[10px] h-4 px-1 gap-1"><Globe className="h-2.5 w-2.5" /> Rede</Badge>}
+                                    <TableRow
+                                        key={v.id}
+                                        className="cursor-pointer hover:bg-muted/30"
+                                        onClick={() => router.push(`/empregabilidade/selecoes/${v.id}`)}
+                                    >
+                                        <TableCell className="max-w-0">
+                                            <div className="flex flex-col min-w-0">
+                                                <span className="font-semibold truncate flex items-center gap-1.5">
+                                                    <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                                                    <span className="truncate">{nomeEmpresa(v)}</span>
                                                 </span>
-                                                {v.numero_vaga && <span className="text-xs text-muted-foreground font-mono">#{v.numero_vaga}</span>}
+                                                <span className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                                                    {v.numero_vaga && <span className="font-mono">#{v.numero_vaga}</span>}
+                                                    {v.unidade_destino === "global" && (
+                                                        <span className="inline-flex items-center gap-1 text-cuca-blue">
+                                                            <Globe className="h-3 w-3" /> Rede
+                                                        </span>
+                                                    )}
+                                                </span>
                                             </div>
                                         </TableCell>
-                                        <TableCell className="text-sm text-muted-foreground">{cargos.join(", ") || "—"}</TableCell>
-                                        <TableCell className="text-sm text-muted-foreground">
-                                            {datas[0] ? `${datas[0].data?.split("-").reverse().join("/")}${datas[0].hora ? ` ${datas[0].hora}` : ""}` : "—"}
-                                            {datas.length > 1 && <span className="text-xs"> (+{datas.length - 1})</span>}
+                                        <TableCell className="max-w-0">
+                                            {cargos.length === 0 ? (
+                                                <span className="text-muted-foreground text-sm">—</span>
+                                            ) : (
+                                                <TooltipProvider>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                                <span className="text-sm text-muted-foreground truncate">{cargosVisiveis}</span>
+                                                                {restantes > 0 && (
+                                                                    <Badge variant="secondary" className="text-[10px] h-5 px-1.5 flex-shrink-0">
+                                                                        +{restantes}
+                                                                    </Badge>
+                                                                )}
+                                                            </div>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent className="max-w-sm">
+                                                            <p className="text-xs">{cargos.join(" · ")}</p>
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                </TooltipProvider>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                                            {datas[0] ? (
+                                                <span>
+                                                    {formatarData(datas[0].data)}
+                                                    {datas[0].hora ? ` · ${datas[0].hora}` : ""}
+                                                    {datas.length > 1 && <span className="text-xs opacity-70"> +{datas.length - 1}</span>}
+                                                </span>
+                                            ) : "—"}
                                         </TableCell>
                                         <TableCell>
                                             {v.coleta_curriculo ? (
-                                                <Badge variant="outline" className="gap-1 text-xs"><FileText className="h-3 w-3" /> Sim</Badge>
+                                                <Badge variant="outline" className="gap-1 text-xs whitespace-nowrap">
+                                                    <FileText className="h-3 w-3" /> Com currículo
+                                                </Badge>
                                             ) : (
-                                                <Badge variant="outline" className="gap-1 text-xs text-amber-600 border-amber-500/40 bg-amber-50/50"><FileX2 className="h-3 w-3" /> Só presença</Badge>
+                                                <Badge variant="outline" className="gap-1 text-xs whitespace-nowrap text-amber-600 border-amber-500/40 bg-amber-500/10">
+                                                    <FileX2 className="h-3 w-3" /> Só presença
+                                                </Badge>
                                             )}
                                         </TableCell>
-                                        <TableCell>{getStatusBadge(v.status)}</TableCell>
+                                        <TableCell><StatusBadge status={v.status} /></TableCell>
                                         <TableCell className="text-center">
                                             <span className="inline-flex items-center gap-1 text-sm font-medium">
-                                                <Users className="h-3.5 w-3.5 text-muted-foreground" /> {confirmadosCount[v.id] ?? 0}
+                                                <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                                                {confirmadosCount[v.id] ?? 0}
                                             </span>
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <ChevronRight className="h-4 w-4 text-muted-foreground inline-block" />
                                         </TableCell>
                                     </TableRow>
                                 )
@@ -160,15 +282,7 @@ export default function SelecoesPage() {
                 open={isModalOpen}
                 onOpenChange={setIsModalOpen}
                 onSuccess={invalidate}
-                selecao={editando}
-            />
-
-            <SelecaoDetalheModal
-                open={detalheAberto !== null}
-                onOpenChange={(o) => { if (!o) setDetalheAberto(null) }}
-                selecao={detalheAberto}
-                empresaNome={detalheAberto ? (empresasMap[detalheAberto.empresa_id]?.nome_fantasia || empresasMap[detalheAberto.empresa_id]?.nome || "") : ""}
-                onEditar={() => detalheAberto && abrirEdicao(detalheAberto)}
+                selecao={null}
             />
         </div>
     )
