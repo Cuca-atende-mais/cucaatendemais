@@ -233,6 +233,29 @@ export default function CriarCurriculoEditorPage() {
             setCurriculoId(savedId)
             setTalentNome(values.nome || talentNome)
             toast.success("Currículo salvo e Banco de Talentos atualizado!")
+
+            // SQS-57 (AC1/T5): gera o PDF real e popula skills_jsonb logo após salvar.
+            // Aguardado (não fire-and-forget) de propósito: "Verificar Vagas em
+            // Aberto" (handleVincular) lê talent_bank.arquivo_cv_url logo em seguida
+            // para copiar no encaminhamento (AC7) — sem esperar, essa leitura corria
+            // na frente da geração e o candidato seria encaminhado sem anexo.
+            // Não desfaz o salvamento se falhar — o currículo já está salvo; a
+            // equipe pode tentar de novo pelo botão manual no Banco de Talentos (AC8).
+            try {
+                const res = await fetch("/api/empregabilidade/curriculo/gerar-pdf", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ talent_id: talentId }),
+                })
+                if (!res.ok) {
+                    const body = await res.json().catch(() => null)
+                    throw new Error(body?.error || `HTTP ${res.status}`)
+                }
+            } catch (err: unknown) {
+                console.error("[criar-curriculo/gerar-pdf]", err)
+                toast.error("Currículo salvo, mas houve falha ao gerar o PDF. Tente novamente pelo Banco de Talentos.")
+            }
+
             return savedId
         } catch (err: unknown) {
             toast.error(getErrorMessage(err, "Erro ao salvar."))

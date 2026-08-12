@@ -19,7 +19,7 @@ import {
     ShoppingCart, Building2, Truck, Wrench, UtensilsCrossed,
     Palette, HardHat, Cpu, HelpCircle, Star, Clock, GraduationCap,
     CheckCircle, AlertCircle, ExternalLink, MessageCircle, Scissors, Heart, Trash2,
-    ChevronLeft, ChevronRight, Filter, PenLine,
+    ChevronLeft, ChevronRight, Filter, PenLine, FileOutput, Loader2,
 } from "lucide-react"
 import { useUser } from "@/lib/auth/user-provider"
 import { Label } from "@/components/ui/label"
@@ -191,6 +191,7 @@ export default function BancoTalentosPage() {
     const [formArquivo, setFormArquivo] = useState<File | null>(null)
     const [savingCadastro, setSavingCadastro] = useState(false)
     const [deletandoId, setDeletandoId] = useState<string | null>(null)
+    const [gerandoPdfId, setGerandoPdfId] = useState<string | null>(null)
 
     const AREAS_INTERESSE = AREAS.filter(a => a.key !== null).map(a => a.key as string)
 
@@ -366,6 +367,27 @@ export default function BancoTalentosPage() {
             toast.error(getErrorMessage(err, "Erro ao deletar candidato."))
         } finally {
             setDeletandoId(null)
+        }
+    }
+
+    // SQS-57 (AC8/T6): botão manual para os currículos legados montados na
+    // plataforma sem arquivo — sem processamento em massa (decisão do Junior).
+    const handleGerarPdf = async (id: string, nome: string) => {
+        setGerandoPdfId(id)
+        try {
+            const res = await fetch("/api/empregabilidade/curriculo/gerar-pdf", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ talent_id: id }),
+            })
+            const body = await res.json().catch(() => null)
+            if (!res.ok) throw new Error(body?.error || "Erro ao gerar PDF")
+            setTalentos(prev => prev.map(t => t.id === id ? { ...t, arquivo_cv_url: body.url } : t))
+            toast.success(`PDF de ${nome} gerado.`)
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Erro ao gerar PDF do currículo."))
+        } finally {
+            setGerandoPdfId(null)
         }
     }
 
@@ -657,6 +679,17 @@ export default function BancoTalentosPage() {
                                             {t.arquivo_cv_url && (
                                                 <Button variant="ghost" size="icon" title="Ver PDF" onClick={() => window.open(t.arquivo_cv_url!, "_blank")}>
                                                     <FileText className="h-4 w-4 text-muted-foreground" />
+                                                </Button>
+                                            )}
+                                            {!t.arquivo_cv_url && t.curriculo_estruturado && Object.keys(t.curriculo_estruturado).length > 0 && (
+                                                <Button
+                                                    variant="ghost" size="icon" title="Gerar PDF do currículo"
+                                                    disabled={gerandoPdfId === t.id}
+                                                    onClick={() => handleGerarPdf(t.id, t.nome)}
+                                                >
+                                                    {gerandoPdfId === t.id
+                                                        ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                                        : <FileOutput className="h-4 w-4 text-cuca-blue" />}
                                                 </Button>
                                             )}
                                             {t.telefone && (
