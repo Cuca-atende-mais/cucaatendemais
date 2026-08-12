@@ -39,12 +39,21 @@ export async function POST(
     try {
         const { data: vaga, error: vagaErr } = await supabase
             .from("vagas")
-            .select("titulo, descricao, requisitos, escolaridade_minima, tipo_contrato, setor, tipo, cargos_lista")
+            .select("titulo, descricao, requisitos, escolaridade_minima, tipo_contrato, setor, tipo, cargos_lista, coleta_curriculo")
             .eq("id", vagaId)
             .single()
 
         if (vagaErr || !vaga) {
             return NextResponse.json({ error: "Vaga não encontrada." }, { status: 404 })
+        }
+
+        // SQS-56 (AC15): triagem do banco de talentos fica desativada para
+        // seleções sem coleta de currículo — bloqueio no servidor, não só na UI.
+        if (vaga.coleta_curriculo === false) {
+            return NextResponse.json(
+                { error: "Esta seleção não coleta currículo — triagem do banco de talentos está desativada para ela." },
+                { status: 403 }
+            )
         }
 
         // Buscar telefones de candidatos já inscritos nesta vaga (via candidaturas)

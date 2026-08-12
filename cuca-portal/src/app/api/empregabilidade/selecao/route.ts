@@ -20,6 +20,9 @@ export async function POST(request: NextRequest) {
             email_responsavel,
             telefone_responsavel,
             link_params,
+            coleta_curriculo,   // SQS-56 AC1 — campo bloqueante, default true preserva comportamento atual
+            observacoes_selecao, // SQS-56 AC2
+            local_entrevista,    // reaproveita coluna já existente em vagas (não é campo novo desta story)
         } = body
 
         if (!empresa_id) {
@@ -80,6 +83,9 @@ export async function POST(request: NextRequest) {
                 telefone_responsavel: telefone_responsavel || null,
                 pcd_vaga: false,
                 total_vagas: cargos_lista.reduce((acc: number, c: any) => acc + (parseInt(c.quantidade) || 1), 0),
+                coleta_curriculo: coleta_curriculo !== false, // qualquer coisa != false preserva o padrão (fail-safe, AC3)
+                observacoes_selecao: observacoes_selecao || null,
+                local_entrevista: local_entrevista || null,
             })
             .select("id, titulo, numero_vaga")
             .single()

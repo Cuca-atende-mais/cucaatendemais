@@ -25,7 +25,8 @@ export async function POST(req: NextRequest) {
                 vagas (
                     id,
                     titulo,
-                    unidade_cuca
+                    unidade_cuca,
+                    coleta_curriculo
                 )
             `)
             .eq("id", candidatura_id)
@@ -38,6 +39,15 @@ export async function POST(req: NextRequest) {
         const vaga = (cand as any).vagas
         const telefone = cand.telefone
         const unidade = vaga.unidade_cuca
+
+        // SQS-56 (AC15): convite de entrevista fica desativado para seleções
+        // sem coleta de currículo — bloqueio no servidor, não só na UI.
+        if (vaga.coleta_curriculo === false) {
+            return NextResponse.json(
+                { error: "Esta seleção não coleta currículo — convite de entrevista está desativado para ela." },
+                { status: 403 }
+            )
+        }
 
         if (!telefone) {
             return NextResponse.json({ error: "Candidato sem telefone cadastrado" }, { status: 400 })

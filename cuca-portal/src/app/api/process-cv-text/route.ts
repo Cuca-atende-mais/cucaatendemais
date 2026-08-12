@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server'
+import { createClient } from "@supabase/supabase-js"
+import { vagaBloqueiaColetaCurriculo, MSG_BLOQUEIO_COLETA_CURRICULO } from "@/lib/empregabilidade/coleta-curriculo-guard"
 
 export async function POST(request: Request) {
     try {
@@ -7,6 +9,16 @@ export async function POST(request: Request) {
 
         if (!candidatura_id || !cv_text || !vaga_id) {
             return NextResponse.json({ error: 'Faltam parâmetros obrigatórios' }, { status: 400 })
+        }
+
+        // SQS-56 (AC15): análise de CV pela IA fica desativada para seleções
+        // sem coleta de currículo — bloqueio no servidor, não só na UI.
+        const supabaseAdmin = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+        )
+        if (await vagaBloqueiaColetaCurriculo(supabaseAdmin, vaga_id)) {
+            return NextResponse.json({ error: MSG_BLOQUEIO_COLETA_CURRICULO }, { status: 403 })
         }
 
         const workerUrl = process.env.WORKER_URL || 'http://127.0.0.1:8000'

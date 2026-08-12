@@ -2272,12 +2272,231 @@ async def _processar_publico(
             await e("\n".join(linhas_re))
             return
         display_str = ", ".join(cargos_escolhidos)
+
+        # SQS-56: seleção sem coleta prévia de currículo — desvia para o fluxo
+        # de confirmação de presença (nome + telefone). NUNCA passa por
+        # coletando_nome_candidato/_enviar_link_candidatura e NUNCA grava
+        # status diferente de "pendente" — é isso que impede os
+        # interceptadores A (convite pós-seleção, SQS-40) e B (presença de
+        # selecionado, SQS-49) de capturarem essa conversa. `is False`
+        # explícito: qualquer valor que não seja False (None incluído)
+        # mantém o comportamento atual.
+        if fluxo.get("coleta_curriculo") is False:
+            def _buscar_detalhes_convocacao():
+                v_res = supabase.table("vagas").select(
+                    "observacoes_selecao, datas_selecao, local_entrevista, empresa_id"
+                ).eq("id", vaga_id_ref).maybe_single().execute()
+                v = v_res.data or {}
+                empresa_nome_conv = ""
+                empresa_id_v = v.get("empresa_id")
+                if empresa_id_v:
+                    emp_res = supabase.table("empresas").select(
+                        "nome, nome_fantasia"
+                    ).eq("id", empresa_id_v).maybe_single().execute()
+                    emp = emp_res.data or {}
+                    empresa_nome_conv = emp.get("nome_fantasia") or emp.get("nome") or ""
+                return v, empresa_nome_conv
+
+            detalhes_vaga, empresa_nome_conv = await _supabase_to_thread(_buscar_detalhes_convocacao)
+
+            datas = detalhes_vaga.get("datas_selecao") or []
+            data_hora_txt = ""
+            if datas:
+                d0 = datas[0]
+                data_iso = d0.get("data", "")
+                partes_data = data_iso.split("-")
+                data_fmt = f"{partes_data[2]}/{partes_data[1]}/{partes_data[0]}" if len(partes_data) == 3 else data_iso
+                hora_fmt = d0.get("hora", "")
+                data_hora_txt = f"{data_fmt}" + (f" às {hora_fmt}" if hora_fmt else "")
+            local_txt = detalhes_vaga.get("local_entrevista") or ""
+            obs_txt = detalhes_vaga.get("observacoes_selecao") or ""
+
+            linhas_convocacao = [
+                f"🎉 Você está convocado(a) para o processo seletivo"
+                + (f" *{empresa_nome_conv}*!" if empresa_nome_conv else "!") + "\n",
+                f"📋 Cargo(s): *{display_str}*",
+            ]
+            if data_hora_txt:
+                linhas_convocacao.append(f"📅 Data: *{data_hora_txt}*")
+            if local_txt:
+                linhas_convocacao.append(f"📍 Local: *{local_txt}*")
+            if obs_txt:
+                linhas_convocacao.append(f"ℹ️ Observações: {obs_txt}")
+            linhas_convocacao.append("\nPara confirmar sua presença, digite seu *nome completo*:")
+            await e("\n".join(linhas_convocacao))
+
+            await _set_fluxo_async(conversa_id, {
+                **fluxo,
+                "etapa": "confirmando_presenca_nome",
+                "cargos_escolhidos": cargos_escolhidos,
+                "vaga_id_selecionada": vaga_id_ref,
+                "empresa_nome_selecao": empresa_nome_conv,
+                "tentativas_confirmacao_presenca": 0,
+            })
+            return
+
         await e(f"Ótimo! Você escolheu: *{display_str}* ✅\n\nPara finalizar, preciso do seu *nome completo*:")
         await _set_fluxo_async(conversa_id, {
             **fluxo,
             "etapa": "coletando_nome_candidato",
             "cargos_escolhidos": cargos_escolhidos,  # lista — AC10 SQS-49
             "banco_talentos": False,
+        })
+        return
+
+    # --- ETAPA: confirmando_presenca_nome (SQS-56) ---
+    if etapa == "confirmando_presenca_nome":
+        # Campo de DADO livre (nome) — mesma variante de alta precisão usada
+        # em coletando_nome_candidato/coletando_nome_terceiro: só honra
+        # quer_sair, nunca mudou_de_assunto (nome incomum teria falso-positivo
+        # alto nesse sinal).
+        if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
+            return
+
+        texto_limpo = texto.strip()
+        t_lower_nome = texto_limpo.lower()
+        tentativas = fluxo.get("tentativas_confirmacao_presenca", 0)
+
+        # AC6: uma afirmação isolada ("sim", "ok", "confirmar"...) não é um
+        # nome — reconduz pedindo o nome completo, não registra.
+        nome_invalido = (
+            not texto_limpo
+            or t_lower_nome in _AFIRMATIVO_CONFIRMACAO
+            or len(texto_limpo.split()) < 2
+        )
+        if nome_invalido:
+            tentativas += 1
+            if tentativas >= 2:
+                # AC9 gatilho (a): 2 respostas consecutivas não reconhecidas
+                # na mesma etapa — transbordo imediato + pausa da IA.
+                await _acionar_transbordo_empregabilidade(
+                    conversa_id=conversa_id, unidade_cuca=unidade_cuca,
+                    instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+                    motivo="selecao_presenca_confusao",
+                    mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+                )
+                return
+            await e(
+                "Não consegui identificar seu nome completo. 🙏\n\n"
+                "Para confirmar sua presença, digite seu *nome completo* (nome e sobrenome):"
+            )
+            await _set_fluxo_async(conversa_id, {**fluxo, "tentativas_confirmacao_presenca": tentativas})
+            return
+
+        await e(f"Obrigado, *{texto_limpo}*!\n\nAgora preciso do seu *telefone para contato* (com DDD):")
+        await _set_fluxo_async(conversa_id, {
+            **fluxo,
+            "etapa": "confirmando_presenca_telefone",
+            "nome_confirmacao_presenca": texto_limpo,
+            "tentativas_confirmacao_presenca": 0,
+        })
+        return
+
+    # --- ETAPA: confirmando_presenca_telefone (SQS-56) ---
+    if etapa == "confirmando_presenca_telefone":
+        from campanhas_engine import normalizar_telefone  # noqa: PLC0415
+        from meta_adapter_outbound import _normalizar_telefone_br  # noqa: PLC0415
+
+        digits_tel = re.sub(r"\D", "", texto)
+        tel_com_ddi = normalizar_telefone(digits_tel) if digits_tel else ""
+        local_tel = tel_com_ddi[2:] if tel_com_ddi.startswith("55") else tel_com_ddi
+
+        # AC7: valida o FORMATO de celular antes de normalizar — o número
+        # de 9 dígitos é obrigatório desde a resolução da Anatel de 2016.
+        # _normalizar_telefone_br insere o "9" cegamente quando ausente,
+        # o que criaria um "celular" falso a partir de um fixo (ex.:
+        # 8532001234 → 85932001234) se não filtrarmos antes.
+        mobile_valido = bool(local_tel) and (
+            (len(local_tel) == 11 and local_tel[2] == "9")
+            or (len(local_tel) == 10 and local_tel[2] in "6789")
+        )
+        tel_norm = _normalizar_telefone_br(tel_com_ddi) if mobile_valido else ""
+        telefone_valido = mobile_valido and tel_norm.startswith("55") and len(tel_norm) == 13
+
+        if not telefone_valido:
+            # Parser determinístico falhou — tenta o classificador semântico
+            # (mesmo padrão de listando_cargos_selecao/pos_candidatura) antes
+            # de reexplicar; telefone tem formato verificável, então
+            # _escape_semantico_ou_none (não _quer_sair_semantico) é o
+            # correto aqui.
+            if await _escape_semantico_ou_none(
+                texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+            ):
+                return
+            tentativas_tel = fluxo.get("tentativas_confirmacao_presenca", 0) + 1
+            if tentativas_tel >= 2:
+                # AC9 gatilho (a)
+                await _acionar_transbordo_empregabilidade(
+                    conversa_id=conversa_id, unidade_cuca=unidade_cuca,
+                    instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+                    motivo="selecao_presenca_confusao",
+                    mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+                )
+                return
+            await e(
+                "Não consegui reconhecer esse telefone. 🙏\n\n"
+                "Digite o telefone com DDD, só números (ex: 85999998888):"
+            )
+            await _set_fluxo_async(conversa_id, {**fluxo, "tentativas_confirmacao_presenca": tentativas_tel})
+            return
+
+        # AC8: só grava com nome E telefone — os dois já garantidos aqui.
+        nome_final = fluxo.get("nome_confirmacao_presenca", "")
+        cargos_finais = fluxo.get("cargos_escolhidos") or []
+        vaga_id_final = fluxo.get("vaga_id_selecionada")
+        empresa_nome_final = fluxo.get("empresa_nome_selecao", "")
+
+        # candidaturas.telefone é a identidade (número do WhatsApp, igual a
+        # todo o resto do fluxo) — telefone_contato é o número digitado
+        # (Item 3 da análise de impacto da story). NUNCA status != "pendente".
+        phone_local_grav = phone[2:] if phone.startswith("55") and len(phone) > 11 else phone
+
+        def _gravar_presencas():
+            gravados = []
+            for cargo in (cargos_finais or [None]):
+                # Mesmo guard anti-duplicidade de candidaturas/route.ts
+                # (vaga_id, telefone, cargo_escolhido) — não há índice único
+                # no banco para isso, então replica o check-then-insert.
+                query_dup = supabase.table("candidaturas").select("id").eq(
+                    "vaga_id", vaga_id_final
+                ).eq("telefone", phone_local_grav)
+                query_dup = query_dup.eq("cargo_escolhido", cargo) if cargo else query_dup.is_("cargo_escolhido", "null")
+                existe = query_dup.limit(1).execute()
+                if existe.data:
+                    gravados.append(cargo)
+                    continue
+                supabase.table("candidaturas").insert({
+                    "vaga_id": vaga_id_final,
+                    "nome": nome_final,
+                    "telefone": phone_local_grav,
+                    "telefone_contato": tel_norm,
+                    "cargo_escolhido": cargo,
+                    "status": "pendente",
+                    "confirmacao_presenca": "confirmado",
+                    "unidade_cuca": unidade_cuca or None,
+                }).execute()
+                gravados.append(cargo)
+            return gravados
+
+        await _supabase_to_thread(_gravar_presencas)
+
+        linhas_final = [f"✅ Presença confirmada, *{nome_final}*!\n"]
+        if empresa_nome_final:
+            linhas_final.append(f"Você está registrado(a) no processo seletivo *{empresa_nome_final}*.")
+        linhas_final.append(
+            "\nQuer continuar procurando outras vagas ou prefere encerrar por aqui?\n"
+            "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
+        )
+        await e("\n".join(linhas_final))
+
+        # AC10: reusa a mesma etapa pos_candidatura já existente (S37C-01)
+        # para a pergunta "continuar ou encerrar" interpretada por IA — sem
+        # duplicar lógica que já está madura e testada.
+        await _set_fluxo_async(conversa_id, {
+            "perfil": "publico",
+            "etapa": "pos_candidatura",
+            "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+            "nome_candidato_prefill": nome_final,
         })
         return
 
@@ -2427,7 +2646,9 @@ async def _processar_publico(
     if vaga_id_ref:
         # SQS-49: verificar se vaga é selecao_evento antes de qualquer outra coisa
         def _buscar_meta_vaga_e_unidades():
-            vaga_tipo_res = supabase.table("vagas").select("tipo, cargos_lista").eq("id", vaga_id_ref).maybe_single().execute()
+            vaga_tipo_res = supabase.table("vagas").select(
+                "tipo, cargos_lista, coleta_curriculo"
+            ).eq("id", vaga_id_ref).maybe_single().execute()
             vaga_tipo = vaga_tipo_res.data or {}
             vaga_meta_db = next((v for v in vagas if v["id"] == vaga_id_ref), None)
             if not vaga_meta_db:
@@ -2465,6 +2686,13 @@ async def _processar_publico(
                     "vaga_id_selecionada": vaga_id_ref,
                     "cargos_disponiveis": cargos_disponiveis,
                     "historico_vagas_aplicadas": historico_aplicadas,
+                    # SQS-56: guardado aqui (não recalculado depois) para a
+                    # ramificação em listando_cargos_selecao. Checagem sempre
+                    # "is False" — coluna é NOT NULL DEFAULT true, mas o `is`
+                    # explícito garante que nunca vira o ramo novo por engano
+                    # (fail-safe: qualquer coisa que não seja False literal
+                    # mantém o comportamento atual, AC3/AC17).
+                    "coleta_curriculo": vaga_tipo.get("coleta_curriculo", True),
                 })
                 await e("\n".join(linhas_cargos))
                 return
@@ -2657,6 +2885,8 @@ _ETAPAS_PUBLICO = {
     "listou_categorias",          # SQS-41: menu dinâmico por categoria
     "aguardando_escolha_unidade", # SQS-41: roteamento de vaga global
     "listando_cargos_selecao",    # SQS-49: escolha de cargo dentro de selecao_evento
+    "confirmando_presenca_nome",     # SQS-56: seleção sem coleta de currículo
+    "confirmando_presenca_telefone", # SQS-56: seleção sem coleta de currículo
 }
 
 

@@ -1432,6 +1432,248 @@ class TestConfirmacaoEntrevista:
         assert estado == {"perfil": "encerrado"}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SQS-56 — Seleção sem coleta prévia de currículo
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestSelecaoSemColetaCurriculo:
+
+    @pytest.mark.asyncio
+    async def test_cargo_escolhido_com_coleta_curriculo_false_desvia_para_confirmacao_presenca(self, monkeypatch, _isola_enviar):
+        """AC4/AC5 — com coleta_curriculo=False, o candidato recebe a
+        convocação imediata (empresa, cargo, data, local, observação) e vai
+        para confirmando_presenca_nome, NUNCA para coletando_nome_candidato."""
+        estado, fake_get, fake_set = _fluxo_mock("listando_cargos_selecao", {
+            "perfil": "publico",
+            "vaga_id_selecionada": "vaga-1",
+            "cargos_disponiveis": [{"titulo": "Caixa", "quantidade": 2, "faixa_etaria": "Maior de 18 anos"}],
+            "coleta_curriculo": False,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "observacoes_selecao": "Levar RG e caneta",
+            "datas_selecao": [{"data": "2026-09-12", "hora": "08:00"}],
+            "local_entrevista": "CUCA Barra do Ceará",
+            "empresa_id": "emp-1",
+        }
+        mock_empresas = MagicMock()
+        mock_empresas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "nome": "Empresa Teste LTDA", "nome_fantasia": "Empresa Teste",
+        }
+        mock_sb = _mock_multi_tabela({"vagas": mock_vagas, "empresas": mock_empresas})
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_publico(
+            "1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "convocado" in texto_enviado.lower()
+        assert "Empresa Teste" in texto_enviado
+        assert "Caixa" in texto_enviado
+        assert "12/09/2026" in texto_enviado
+        assert "CUCA Barra do Ceará" in texto_enviado
+        assert "Levar RG e caneta" in texto_enviado
+        assert "nome completo" in texto_enviado.lower()
+        assert estado.get("etapa") == "confirmando_presenca_nome"
+        assert estado.get("cargos_escolhidos") == ["Caixa"]
+        assert estado.get("tentativas_confirmacao_presenca") == 0
+
+    @pytest.mark.asyncio
+    async def test_cargo_escolhido_sem_coleta_curriculo_no_fluxo_mantem_comportamento_atual(self, monkeypatch, _isola_enviar):
+        """AC3/AC17 — fail-safe: fluxo sem a chave coleta_curriculo (seleção
+        criada antes desta migration, ou qualquer coisa que não seja False
+        literal) preserva o fluxo de candidatura normal, nunca desvia."""
+        estado, fake_get, fake_set = _fluxo_mock("listando_cargos_selecao", {
+            "perfil": "publico",
+            "vaga_id_selecionada": "vaga-1",
+            "cargos_disponiveis": [{"titulo": "Caixa", "quantidade": 2, "faixa_etaria": "Maior de 18 anos"}],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", MagicMock())
+
+        await emp._processar_publico(
+            "1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "coletando_nome_candidato"
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "convocado" not in texto_enviado.lower()
+
+    @pytest.mark.asyncio
+    async def test_confirmando_presenca_nome_recusa_afirmacao_isolada(self, monkeypatch, _isola_enviar):
+        """AC6 — 'sim' sozinho não é um nome: reconduz sem registrar e sem
+        avançar de etapa."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_nome", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 0,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", MagicMock())
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "nome completo" in texto_enviado.lower()
+        assert estado.get("etapa") == "confirmando_presenca_nome"
+        assert estado.get("tentativas_confirmacao_presenca") == 1
+
+    @pytest.mark.asyncio
+    async def test_confirmando_presenca_nome_segunda_falha_aciona_transbordo(self, monkeypatch, _isola_enviar):
+        """AC9 gatilho (a) — 2 respostas consecutivas não reconhecidas na
+        mesma etapa disparam transbordo imediato + pausa da IA."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_nome", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 1,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_conversas = MagicMock()
+        mock_sb = _mock_multi_tabela({"conversas": mock_conversas})
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        mock_notificar = AsyncMock(return_value=True)
+        import meta_adapter_inbound
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", mock_notificar)
+
+        await emp._processar_publico(
+            "ok", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_conversas.update.assert_any_call({"status": "awaiting_human", "updated_at": "now()"})
+        mock_notificar.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_confirmando_presenca_nome_nome_valido_avanca_para_telefone(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_nome", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 0,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", MagicMock())
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "Maria da Silva", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "telefone" in texto_enviado.lower()
+        assert estado.get("etapa") == "confirmando_presenca_telefone"
+        assert estado.get("nome_confirmacao_presenca") == "Maria da Silva"
+        assert estado.get("tentativas_confirmacao_presenca") == 0
+
+    @pytest.mark.asyncio
+    async def test_confirmando_presenca_telefone_rejeita_numero_fixo(self, monkeypatch, _isola_enviar):
+        """AC7 — número fixo (dígito após DDD não é 6-9) não deve ser aceito
+        como celular, mesmo depois de _normalizar_telefone_br inserir um '9'
+        cego. Regressão do achado do advisor: 8532001234 nunca pode virar
+        um celular válido só porque a normalização "conserta" o formato."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_telefone", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 0,
+            "nome_confirmacao_presenca": "Maria da Silva",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", MagicMock())
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False, mudou_de_assunto=False))
+
+        await emp._processar_publico(
+            "8532001234", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "não consegui reconhecer" in texto_enviado.lower()
+        assert estado.get("etapa") == "confirmando_presenca_telefone"
+        assert estado.get("tentativas_confirmacao_presenca") == 1
+
+    @pytest.mark.asyncio
+    async def test_confirmando_presenca_telefone_valido_grava_candidatura_por_cargo(self, monkeypatch, _isola_enviar):
+        """AC7/AC8 — celular válido sem o 9º dígito é normalizado e aceito;
+        grava 1 candidatura por cargo escolhido, telefone = identidade
+        (WhatsApp), telefone_contato = número digitado, status pendente,
+        confirmacao_presenca preenchida."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_telefone", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 0,
+            "nome_confirmacao_presenca": "Maria da Silva",
+            "cargos_escolhidos": ["Caixa", "Estoque"],
+            "vaga_id_selecionada": "vaga-1",
+            "empresa_nome_selecao": "Empresa Teste",
+            "historico_vagas_aplicadas": [],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_candidaturas = MagicMock()
+        mock_candidaturas.select.return_value.eq.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        mock_sb = _mock_multi_tabela({"candidaturas": mock_candidaturas})
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_publico(
+            "85 8173-3321", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert mock_candidaturas.insert.call_count == 2
+        payloads = [call.args[0] for call in mock_candidaturas.insert.call_args_list]
+        for p in payloads:
+            assert p["vaga_id"] == "vaga-1"
+            assert p["nome"] == "Maria da Silva"
+            assert p["telefone"] == "8599990000"           # identidade — número do WhatsApp
+            assert p["telefone_contato"] == "5585981733321"  # digitado, com 9º dígito inserido
+            assert p["status"] == "pendente"
+            assert p["confirmacao_presenca"] == "confirmado"
+        assert {p["cargo_escolhido"] for p in payloads} == {"Caixa", "Estoque"}
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "presença confirmada" in texto_enviado.lower()
+        assert "outra" in texto_enviado.lower() and "encerrar" in texto_enviado.lower()
+        assert estado.get("etapa") == "pos_candidatura"
+        assert estado.get("perfil") == "publico"
+
+    @pytest.mark.asyncio
+    async def test_confirmando_presenca_telefone_nao_duplica_candidatura_ja_existente(self, monkeypatch, _isola_enviar):
+        """Mesmo guard anti-duplicidade de candidaturas/route.ts — não há
+        índice único no banco para (vaga_id, telefone, cargo_escolhido)."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_telefone", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 0,
+            "nome_confirmacao_presenca": "Maria da Silva",
+            "cargos_escolhidos": ["Caixa"],
+            "vaga_id_selecionada": "vaga-1",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_candidaturas = MagicMock()
+        mock_candidaturas.select.return_value.eq.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+            {"id": "ja-existe"}
+        ]
+        mock_sb = _mock_multi_tabela({"candidaturas": mock_candidaturas})
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_publico(
+            "85981733321", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_candidaturas.insert.assert_not_called()
+        assert estado.get("etapa") == "pos_candidatura"
+
+
 class TestAutorizacaoEmpresaPorNumeroWhatsapp:
 
     @pytest.mark.asyncio
