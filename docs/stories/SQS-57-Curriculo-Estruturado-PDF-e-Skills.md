@@ -2,7 +2,7 @@
 
 ## Status
 
-InReview
+Done
 
 **Prioridade:** Alta
 **Tipo:** Correção + Fundação
@@ -402,3 +402,4 @@ Junior.
 | 2026-08-12 | @dev | Spike T0 aprovado sem ressalvas. Implementação completa (T0-T7, AC0-AC9). Status `Ready` → `InProgress`. Ver Dev Agent Record para achados de impacto (T5 aguardado por corrida com `handleVincular`; escopo real de AC7; lacuna sistêmica de auth pré-existente em `/api/empregabilidade/*`) |
 | 2026-08-12 | @qa | **Veredito: CONCERNS** (aprovado, 2 observações menores não bloqueantes). 7 checks executados, ACs verificados contra código e produção (read-only). Status `InProgress` → `InReview` |
 | 2026-08-12 | @devops | Commit `9a24e85` (13 arquivos, só o escopo da story) pushado para `feat/fila-fixa-leads-engajados-atendimento`. PR [#86](https://github.com/Cuca-atende-mais/cucaatendemais/pull/86) aberto contra `main`. Status permanece `InReview` — `Done` fica pendente do merge aprovado pelo Junior no próprio PR (nenhuma migration envolvida; redeploy do `portal` no EasyPanel necessário após o merge) |
+| 2026-08-12 | @devops | **Incidente pós-merge:** build do `portal` falhou no EasyPanel (`npm ci` — lockfile gerado com npm 11 incompatível com npm 10 do container `node:20-alpine`). Causa confirmada e corrigida em [PR #87](https://github.com/Cuca-atende-mais/cucaatendemais/pull/87) (só `package-lock.json`, regenerado com node 20/npm 10 — a versão real do container). PR #87 mergeado (`f2d5940`). Status `InReview` → `Done` |

@@ -59,8 +59,8 @@ Registradas aqui porque valem para **todas** as stories do épico:
 
 | Story | Escopo | Estimativa | Depende de | Status |
 |---|---|---|---|---|
-| **SQS-56** | Seleção sem coleta prévia de currículo (+ menu Seleções, lista de presença, CRUD manual) | L | SQS-49 (em produção) | Draft |
-| **SQS-57** | Currículo estruturado: geração de PDF + entrada na triagem por skills | M | — (fundação) | Draft |
+| **SQS-56** | Seleção sem coleta prévia de currículo (+ menu Seleções, lista de presença, CRUD manual) | L | SQS-49 (em produção) | Ready |
+| **SQS-57** | Currículo estruturado: geração de PDF + entrada na triagem por skills | M | — (fundação) | ✅ Done |
 | **SQS-58** | Currículo por autoatendimento via link público seguro | M-L | **SQS-57 (bloqueante)** | Draft |
 | **SQS-59** | Envio de currículos em lote para a empresa | S-M | SQS-57 (para anexar CV da plataforma) | ⚠️ **não escrita** — pendente de decisão do Junior sobre estratégia de anexos |
 
