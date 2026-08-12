@@ -132,6 +132,9 @@ export type Vaga = {
     cargos_lista: Array<{ titulo: string; quantidade: string; faixa_etaria: string }> | null
     datas_selecao: Array<{ data: string; hora: string }> | null
     email_responsavel: string | null
+    // SQS-56: seleção sem coleta prévia de currículo
+    coleta_curriculo: boolean
+    observacoes_selecao: string | null
 }
 
 export type EmpregabilidadeFollowup = {
@@ -147,6 +150,7 @@ export type EmpregabilidadeFollowup = {
 export type Empresa = {
     id: string
     nome: string
+    nome_fantasia: string | null
     cnpj: string | null
     telefone: string | null
     email: string | null
@@ -197,6 +201,8 @@ export type Candidatura = {
     hora_entrevista: string | null
     local_entrevista: string | null
     cargo_escolhido: string | null
+    confirmacao_presenca: string | null
+    telefone_contato: string | null
     created_at: string
     updated_at: string
 }

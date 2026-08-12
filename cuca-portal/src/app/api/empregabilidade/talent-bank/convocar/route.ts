@@ -28,12 +28,22 @@ export async function POST(request: NextRequest) {
         // 2. Buscar dados da vaga para preencher campos da candidatura
         const { data: vaga, error: vErr } = await supabase
             .from("vagas")
-            .select("unidade_cuca")
+            .select("unidade_cuca, coleta_curriculo")
             .eq("id", vaga_id)
             .single()
 
         if (vErr || !vaga) {
             return NextResponse.json({ error: "Vaga não encontrada." }, { status: 404 })
+        }
+
+        // SQS-56 (AC15): convocação a partir do banco de talentos (com envio
+        // de CV + disparo de análise de IA) fica desativada para seleções
+        // sem coleta de currículo — bloqueio no servidor, não só na UI.
+        if (vaga.coleta_curriculo === false) {
+            return NextResponse.json(
+                { error: "Esta seleção não coleta currículo — convocação pelo banco de talentos está desativada para ela." },
+                { status: 403 }
+            )
         }
 
         // 3. Verificar se já existe candidatura desse talent para essa vaga

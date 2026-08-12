@@ -28,12 +28,21 @@ export async function POST(request: NextRequest) {
         // Buscar vaga
         const { data: vaga, error: vErr } = await supabase
             .from("vagas")
-            .select("titulo, email_contato_empresa, unidade_cuca, numero_vaga, unidade_destino")
+            .select("titulo, email_contato_empresa, unidade_cuca, numero_vaga, unidade_destino, coleta_curriculo")
             .eq("id", vaga_id)
             .single()
 
         if (vErr || !vaga) {
             return NextResponse.json({ error: "Vaga não encontrada." }, { status: 404 })
+        }
+
+        // SQS-56 (AC15): envio de currículo fica desativado para seleções
+        // sem coleta de currículo — bloqueio no servidor, não só na UI.
+        if (vaga.coleta_curriculo === false) {
+            return NextResponse.json(
+                { error: "Esta seleção não coleta currículo — envio de currículo está desativado para ela." },
+                { status: 403 }
+            )
         }
 
         if (!vaga.email_contato_empresa) {
