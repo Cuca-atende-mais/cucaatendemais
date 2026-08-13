@@ -84,6 +84,39 @@ def _assinar_link_portal(path: str, params: dict, ttl_horas: int = 48) -> str:
     return f"{PORTAL_URL}{path}?{urlencode({**signed_params, 'sig': sig})}"
 
 
+def _criar_ou_recuperar_talent_bank(nome: str, telefone: str) -> str:
+    """Cria/recupera candidato por telefone para o currículo público estruturado."""
+    tel_norm = re.sub(r"\D", "", telefone or "")
+    if (len(tel_norm) in (12, 13)) and tel_norm.startswith("55"):
+        tel_norm = tel_norm[2:]
+    if not tel_norm:
+        raise RuntimeError("telefone obrigatório para criar currículo público")
+
+    existing = (
+        supabase.table("talent_bank")
+        .select("id")
+        .eq("telefone", tel_norm)
+        .limit(1)
+        .execute()
+    )
+    rows = existing.data or []
+    payload = {
+        "nome": nome,
+        "telefone": tel_norm,
+        "status": "disponivel",
+    }
+    if rows:
+        talent_id = rows[0]["id"]
+        supabase.table("talent_bank").update(payload).eq("id", talent_id).execute()
+        return talent_id
+
+    created = supabase.table("talent_bank").insert(payload).execute()
+    created_rows = created.data or []
+    if not created_rows:
+        raise RuntimeError("não foi possível criar candidato no banco de talentos")
+    return created_rows[0]["id"]
+
+
 # ---------------------------------------------------------------------------
 # Envio de mensagem de texto via Meta Cloud API (S-WM-02)
 # ---------------------------------------------------------------------------
@@ -514,8 +547,9 @@ async def _mostrar_menu_opcoes(
         "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
         "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
         "3️⃣ *Vagas* — Quero ver vagas abertas\n"
-        "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
-        "Digite *1*, *2*, *3* ou *4*, ou simplesmente me conte o que você precisa.",
+        "4️⃣ *Enviar Currículo* — Quero deixar meu currículo (arquivo pronto) para futuras oportunidades\n"
+        "5️⃣ *Criar meu Currículo agora* — Não tenho currículo pronto, quero montar um pelo celular\n\n"
+        "Digite *1*, *2*, *3*, *4* ou *5*, ou simplesmente me conte o que você precisa.",
         conversa_id=conversa_id, lead_id=lead_id,
     )
 
@@ -989,7 +1023,8 @@ async def _processar_empresa(
                 "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
                 "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
                 "3️⃣ *Vagas* — Quero ver vagas abertas\n"
-                "4️⃣ *Enviar Currículo* — Quero deixar meu currículo para futuras oportunidades\n\n"
+                "4️⃣ *Enviar Currículo* — Quero deixar meu currículo (arquivo pronto) para futuras oportunidades\n"
+                "5️⃣ *Criar meu Currículo agora* — Não tenho currículo pronto, quero montar um pelo celular\n\n"
                 "Responda com o número ou descreva o que precisa.",
                 conversa_id=conversa_id, lead_id=lead_id,
             )
@@ -2002,7 +2037,10 @@ async def _processar_publico(
 
     # Encerramento
     # S37C-03: pos_candidatura é tolerante — "obrigado", "valeu" não encerram o fluxo
-    if _quer_encerrar(texto) and etapa not in ("coletando_nome_candidato", "confirmando_terceiro", "pos_candidatura"):
+    if _quer_encerrar(texto) and etapa not in (
+        "coletando_nome_candidato", "confirmando_terceiro", "pos_candidatura",
+        "coletando_nome_curriculo_publico",
+    ):
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
         return
 
@@ -2018,8 +2056,9 @@ async def _processar_publico(
         fluxo_atual = await _get_fluxo_async(conversa_id)
         candidatura_id = fluxo_atual.get("candidatura_criada_id")
         candidatura_codigo = fluxo_atual.get("candidatura_codigo")
+        curriculo_publico_salvo = fluxo_atual.get("curriculo_publico_salvo")
 
-        if candidatura_id:
+        if candidatura_id or curriculo_publico_salvo:
             eh_banco_talentos = fluxo_atual.get("banco_talentos", False)
             if eh_banco_talentos:
                 await e(
@@ -2195,6 +2234,44 @@ async def _processar_publico(
             "nome_candidato": nome_coletado,
             "vaga_id_selecionada": vaga_id_ref,
             "banco_talentos": eh_banco_talentos,
+        })
+        return
+
+    # --- ETAPA: coletando_nome_curriculo_publico (SQS-58, opção 5) ---
+    if etapa == "coletando_nome_curriculo_publico":
+        if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
+            return
+        nome_coletado = texto.strip()
+        talent_id = _criar_ou_recuperar_talent_bank(nome_coletado, phone)
+        link = _assinar_link_portal(
+            "/empregabilidade/curriculo",
+            {
+                "nome": nome_coletado,
+                "talent_id": talent_id,
+                "conversa_id": conversa_id,
+                # origem_tel só preenche o campo telefone por padrão no formulário —
+                # o candidato pode trocar, não é mais validado como travamento (a
+                # pedido do Junior: o link pode ser aberto de um telefone diferente
+                # do que deve constar no currículo).
+                "origem_tel": re.sub(r"\D", "", phone),
+            },
+            ttl_horas=24,
+        )
+        await e(
+            f"Perfeito, *{nome_coletado}*! 📝\n\n"
+            f"Acesse o link abaixo pelo celular para montar seu currículo:\n\n"
+            f"🔗 {link}\n\n"
+            "Seu nome já vem preenchido. Preencha o restante (inclusive o telefone de contato — "
+            "pode ser diferente deste WhatsApp, sem problema). Ao salvar, você recebe o PDF e o "
+            "currículo já entra no banco de talentos da rede CUCA. ✅"
+        )
+        await _set_fluxo_async(conversa_id, {
+            "perfil": "publico",
+            "etapa": "aguardando_confirmacao_candidatura",
+            "nome_candidato": nome_coletado,
+            "link_candidatura": link,
+            "banco_talentos": True,
+            "talent_id": talent_id,
         })
         return
 
@@ -2887,6 +2964,7 @@ _ETAPAS_PUBLICO = {
     "listando_cargos_selecao",    # SQS-49: escolha de cargo dentro de selecao_evento
     "confirmando_presenca_nome",     # SQS-56: seleção sem coleta de currículo
     "confirmando_presenca_telefone", # SQS-56: seleção sem coleta de currículo
+    "coletando_nome_curriculo_publico", # SQS-58: opção 5, montar currículo pelo celular
 }
 
 
@@ -3224,6 +3302,28 @@ async def _processar_menu_inicial(
             "📁 *Enviar Currículo (sem vaga)*\n\n"
             "Vamos cadastrar seu currículo no banco de talentos da rede CUCA. "
             "Quando surgir uma oportunidade compatível com seu perfil, a equipe entrará em contato.\n\n"
+            "Para começar, preciso do seu *nome completo*:",
+            conversa_id=conversa_id, lead_id=lead_id,
+        )
+        return
+    # SQS-58: opção 5 — candidato sem currículo pronto monta o próprio pelo
+    # celular (link público, formulário estruturado, PDF automático). Rota
+    # separada da opção 4 (upload de arquivo pronto + triagem da IA antes de
+    # entrar no banco) — não reaproveita a mesma etapa/mensagem.
+    if t in ("5", "criar meu curriculo agora", "criar meu currículo agora",
+             "criar curriculo", "criar currículo", "criar curriculo agora",
+             "criar currículo agora", "montar curriculo", "montar currículo",
+             "não tenho curriculo", "nao tenho curriculo", "não tenho currículo",
+             "nao tenho currículo"):
+        await _set_fluxo_async(conversa_id, {
+            "perfil": "publico",
+            "etapa": "coletando_nome_curriculo_publico",
+        })
+        await _enviar(
+            instance_name, token, phone,
+            "📝 *Criar meu Currículo agora*\n\n"
+            "Vamos montar seu currículo pelo celular: você preenche um formulário rápido, "
+            "recebe o PDF pronto e ele já entra no banco de talentos da rede CUCA.\n\n"
             "Para começar, preciso do seu *nome completo*:",
             conversa_id=conversa_id, lead_id=lead_id,
         )
