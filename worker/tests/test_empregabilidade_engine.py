@@ -2447,3 +2447,67 @@ class TestOpcao5CriarCurriculoAgora:
         assert mock_enviar.await_count == 1
         texto_enviado = mock_enviar.call_args.args[3]
         assert "banco de talentos" in texto_enviado.lower()
+
+
+class TestAguardandoConfirmacaoCandidaturaEscapeHatch:
+
+    @pytest.mark.asyncio
+    async def test_nao_quero_mais_enviar_encerra_por_escape_semantico(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
+            "perfil": "publico",
+            "link_candidatura": "https://portal.test/candidatura",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        await emp._processar_publico(
+            "não quero mais enviar",
+            "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "ainda aguardando" not in texto_enviado.lower()
+        assert estado == {}
+
+    @pytest.mark.asyncio
+    async def test_quero_ver_outras_vagas_reabre_listagem_sem_llm(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
+            "perfil": "publico",
+            "link_candidatura": "https://portal.test/candidatura",
+            "historico_vagas_aplicadas": ["vaga-ja-vista"],
+            "nome_candidato_prefill": "Fulano de Tal",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {"id": "vaga-1", "titulo": "Atendente", "setor": ["Atendimento"], "unidade_destino": "Barra"},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        import intencao_detector
+
+        async def mock_gpt_nao_deveria_ser_chamado(texto, perfil, etapa, ultima_msg_bot):
+            raise AssertionError("LLM não deveria ser chamado no atalho determinístico de vagas")
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt_nao_deveria_ser_chamado)
+
+        await emp._processar_publico(
+            "Quero ver outras vagas",
+            "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "vagas abertas" in texto_enviado.lower()
+        assert estado["perfil"] == "publico"
+        assert estado["etapa"] == "listou_categorias"
+        assert estado["historico_vagas_aplicadas"] == ["vaga-ja-vista"]
+        assert estado["nome_candidato_prefill"] == "Fulano de Tal"

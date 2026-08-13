@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import time
 import contextvars
+import threading
 from contextlib import asynccontextmanager
 from datetime import date
 from urllib.parse import urlencode
@@ -25,7 +26,54 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANO
 PORTAL_URL = os.getenv("PORTAL_URL", "https://www.cucaatendemais.com.br")
 _LINK_SECRET = os.getenv("EMPREGABILIDADE_LINK_SECRET", "")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+class _EmptySupabaseResult:
+    data: list = []
+
+
+class _EmptySupabaseTable:
+    def select(self, *args, **kwargs):
+        return self
+
+    def eq(self, *args, **kwargs):
+        return self
+
+    def ilike(self, *args, **kwargs):
+        return self
+
+    def in_(self, *args, **kwargs):
+        return self
+
+    def order(self, *args, **kwargs):
+        return self
+
+    def limit(self, *args, **kwargs):
+        return self
+
+    def single(self):
+        return self
+
+    def maybe_single(self):
+        return self
+
+    @property
+    def not_(self):
+        return self
+
+    def execute(self):
+        return _EmptySupabaseResult()
+
+
+class _EmptySupabaseClient:
+    def table(self, *args, **kwargs):
+        return _EmptySupabaseTable()
+
+
+supabase: Client | _EmptySupabaseClient = (
+    create_client(SUPABASE_URL, SUPABASE_KEY)
+    if SUPABASE_URL and SUPABASE_KEY
+    else _EmptySupabaseClient()
+)
 
 _PALAVRAS_ENCERRAR = {
     "tchau", "até mais", "até logo", "encerrar", "finalizar", "obrigado",
@@ -285,8 +333,8 @@ def _set_fluxo(conversa_id: str, fluxo: dict):
 _GET_FLUXO_SYNC = _get_fluxo
 _SET_FLUXO_SYNC = _set_fluxo
 _ULTIMA_MENSAGEM_BOT_SYNC = _ultima_mensagem_bot
-_FLUXO_LOCKS: dict[str, asyncio.Lock] = {}
-_FLUXO_LOCKS_GUARD = asyncio.Lock()
+_FLUXO_LOCKS: dict[tuple[asyncio.AbstractEventLoop, str], asyncio.Lock] = {}
+_FLUXO_LOCKS_GUARD = threading.Lock()
 _FLUXO_LOCKS_HELD: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
     "empreg_fluxo_locks_held",
     default=frozenset(),
@@ -294,11 +342,12 @@ _FLUXO_LOCKS_HELD: contextvars.ContextVar[frozenset[str]] = contextvars.ContextV
 
 
 async def _obter_fluxo_lock(conversa_id: str) -> asyncio.Lock:
-    async with _FLUXO_LOCKS_GUARD:
-        lock = _FLUXO_LOCKS.get(conversa_id)
+    key = (asyncio.get_running_loop(), conversa_id)
+    with _FLUXO_LOCKS_GUARD:
+        lock = _FLUXO_LOCKS.get(key)
         if lock is None:
             lock = asyncio.Lock()
-            _FLUXO_LOCKS[conversa_id] = lock
+            _FLUXO_LOCKS[key] = lock
         return lock
 
 
@@ -324,7 +373,7 @@ async def _fluxo_lock_context(conversa_id: str):
 
 
 def _supabase_mockado_em_teste() -> bool:
-    return type(supabase).__module__.startswith("unittest.mock")
+    return isinstance(supabase, _EmptySupabaseClient) or type(supabase).__module__.startswith("unittest.mock")
 
 
 async def _supabase_to_thread(fn):
@@ -2100,6 +2149,24 @@ async def _processar_publico(
                     "nome_candidato_prefill": fluxo_atual.get("nome_candidato", ""),
                 })
         else:
+            tem_negacao = any(p in t_lower for p in ("não", "nao"))
+            if not tem_negacao and any(
+                p in t_lower for p in ("outra", "mais", "ver vagas", "outras vagas", "vagas", "vaga")
+            ):
+                await _set_fluxo_async(conversa_id, {
+                    "perfil": "publico",
+                    "etapa": "inicio",
+                    "historico_vagas_aplicadas": fluxo_atual.get("historico_vagas_aplicadas") or [],
+                    "nome_candidato_prefill": fluxo_atual.get("nome_candidato_prefill", ""),
+                })
+                await _processar_publico("vagas", phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+                return
+
+            if await _escape_semantico_ou_none(
+                texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+            ):
+                return
+
             # Ainda aguardando — link reenviado se necessário
             link_reenviado = fluxo_atual.get("link_candidatura", "")
             await e(
