@@ -476,6 +476,46 @@ silenciado.
   suíte Vitest completa continua não executável neste ambiente por problema de runner, não por falha
   funcional observada na story.
 
+### Revalidação em 2026-08-13 (bugfix + UX pós-teste real) — @qa Quinn
+
+**Gate:** PASS COM CONCERNS
+
+**Escopo desta revisão:** dois lotes pequenos, pós-produção — (1) o bugfix do retry de envio
+(achado do próprio Junior testando ao vivo) e (2) os 3 ajustes de UX (máscara MM/AAAA, posição do
+botão de download, botão "Voltar para o WhatsApp"). Não revalida a story inteira de novo.
+
+**7 checks:**
+
+1. **Code review** — mudanças pequenas e localizadas, comentários explicam o "porquê" (achado +
+   decisão), consistentes com o padrão do arquivo. OK.
+2. **Testes** — `pytest worker/tests/test_empregabilidade_engine.py` → **76 passed** (2 novos:
+   retry com sucesso na 2ª tentativa, e falha nas duas com avanço de etapa mesmo assim). `eslint`
+   nos 2 arquivos `.tsx` tocados → limpo. `tsc --noEmit` → mesmos 4 erros pré-existentes de sempre
+   (`tests/*.test.ts`, import `.ts`), nenhum novo. OK.
+3. **Acceptance Criteria** — nenhum AC da story original é alterado por este lote; é
+   comportamento operacional (retry) e UX (posição de botão, máscara), não escopo funcional novo.
+   N/A.
+4. **Regressão** — o retry só entra em jogo quando `_enviar` retorna `False`; o caminho feliz
+   (1ª tentativa OK) é idêntico ao anterior, confirmado pelo teste que já cobria isso
+   (`test_coletando_nome_curriculo_publico_envia_link_sem_travar_telefone`, que mocka sucesso e
+   segue passando). Os outros fluxos (`_enviar_link_candidatura`, opção 4) não foram tocados.
+5. **Performance** — retry adiciona no máximo +1 chamada HTTP síncrona (bloqueante dentro do
+   próprio handler) só no caso de falha; sem polling, sem loop.
+6. **Segurança** — nenhuma superfície nova. O retry reenvia o **mesmo texto** (inclui o mesmo
+   link, já gerado antes da 1ª tentativa) — não gera um segundo link/token.
+   **Achado não-bloqueante:** o retry cobre qualquer motivo de falha em `_enviar` (`_meta_enviar`
+   retorna `False` tanto pra `ConnectTimeout` — request nunca saiu — quanto pra `ReadTimeout`/
+   `RequestError` genérico, onde a Meta *pode* ter recebido a 1ª tentativa e a confirmação que não
+   voltou a tempo). Nesse segundo caso, o candidato podia receber a mesma mensagem duas vezes. Não
+   é bloqueante (mensagem informativa duplicada, não uma ação — pior caso é confusão leve, não
+   dado incorreto ou duplicidade de registro), mas registrado pra não virar suposição não
+   verificada: o cenário observado em produção (log real) foi especificamente `ConnectTimeout`,
+   onde isso não se aplica.
+7. **Documentação** — story atualizada (Change Log com os dois lotes). OK.
+
+**Decisão:** aprovar para seguir ao @devops. O achado do item 6 é uma observação de baixo risco
+para acompanhar, não motivo de bloqueio.
+
 ---
 
 ## Change Log
@@ -488,3 +528,5 @@ silenciado.
 | 2026-08-11 | @po | **Validação: GO (10/10)** — template completo, épico ratificado. Status `Draft` → `Ready`, porém **bloqueada para início** até SQS-57 concluir |
 | 2026-08-12 | @dev | Implementado curriculo publico por link assinado: worker, pagina publica, API service-role, rate-limit, PDF/skills SQS-57, download one-use e fechamento de acesso publico legado a `curriculos`/`gerar-pdf` |
 | 2026-08-12 | @dev | **Correção de escopo (Junior):** revertido o hijack da opção 4 (voltou a ser upload de arquivo + triagem IA, como era); opção 5 nova criada para o formulário público da SQS-58; `link-assinado` volta a fail-open; telefone do formulário deixa de ser travado ao telefone de origem do link |
+| 2026-08-13 | @dev | **Bugfix pós-produção (achado do Junior em teste real):** candidato escolheu opção 5, informou o nome e o bot "parou". Causa raiz: `ConnectTimeout` transitório pra Graph API ao enviar o link — `_enviar` nunca teve o retorno checado, então a etapa avançava pra `aguardando_confirmacao_candidatura` mesmo com a mensagem nunca tendo saído (confirmado via `mensagens`/`conversas.metadata` em produção, `conversa_id=eae11985-2e0c-4ebf-af97-83c818cd4bd7`). Corrigido com retry único; se as duas tentativas falharem, ainda avança de etapa (com `link_candidatura` salvo) em vez de ficar em `coletando_nome_curriculo_publico`, pra não arriscar interpretar a próxima mensagem do candidato como um nome novo — o fallback de reenvio já existente em `aguardando_confirmacao_candidatura` cobre a entrega. 2 novos testes (76 no total) |
+| 2026-08-13 | @dev | **Ajustes de UX pós-teste (Junior):** (1) máscara automática MM/AAAA nos campos de período de experiência, nos dois formulários (`/empregabilidade/curriculo` público e `criar-curriculo/[id]` interno); (2) botão "Baixar PDF" movido do topo da página pra logo abaixo do botão "Salvar currículo e gerar PDF" (candidato não achava o botão em cima); (3) botão verde "Voltar para o WhatsApp" após o download, usando `window.history.back()` — o link é aberto de dentro do in-app browser do WhatsApp, então volta pra conversa já aberta sem precisar de número fixo (decisão do Junior, confirmada após pergunta de esclarecimento). O "pergunta se quer buscar vaga ou encerrar" ao retornar já era coberto pelo fluxo existente (`aguardando_confirmacao_candidatura`/`curriculo_publico_salvo`), sem necessidade de mudança |

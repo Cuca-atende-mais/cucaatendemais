@@ -2362,3 +2362,52 @@ class TestOpcao5CriarCurriculoAgora:
         assert estado.get("etapa") == "aguardando_confirmacao_candidatura"
         assert estado.get("banco_talentos") is True
         assert estado.get("talent_id") == "talent-1"
+
+    @pytest.mark.asyncio
+    async def test_coletando_nome_curriculo_publico_faz_retry_em_falha_de_envio(self, monkeypatch):
+        """Achado em produção 2026-08-13: ConnectTimeout esporádico pro Graph API
+        deixava o candidato travado (etapa avançava mesmo sem o link ter sido
+        enviado, `_enviar` nunca checado). Cobre o retry único e o fallback."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_curriculo_publico")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "PORTAL_URL", "https://portal.test")
+        monkeypatch.setattr(emp, "_LINK_SECRET", "segredo-teste")
+        monkeypatch.setattr(emp, "_criar_ou_recuperar_talent_bank", lambda nome, telefone: "talent-1")
+
+        # 1ª tentativa falha (timeout simulado), 2ª tentativa funciona.
+        mock_enviar = AsyncMock(side_effect=[False, True])
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_publico(
+            "Fulano de Tal", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert mock_enviar.call_count == 2
+        assert estado.get("etapa") == "aguardando_confirmacao_candidatura"
+        assert estado.get("talent_id") == "talent-1"
+
+    @pytest.mark.asyncio
+    async def test_coletando_nome_curriculo_publico_duas_falhas_ainda_avanca_com_link_salvo(self, monkeypatch):
+        """Se as duas tentativas falharem, a etapa não pode ficar em
+        coletando_nome_curriculo_publico (a próxima mensagem do candidato seria
+        mal-interpretada como nome novo) — avança mesmo assim, com
+        `link_candidatura` salvo, pro fallback de reenvio existente em
+        aguardando_confirmacao_candidatura cobrir a entrega."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_curriculo_publico")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "PORTAL_URL", "https://portal.test")
+        monkeypatch.setattr(emp, "_LINK_SECRET", "segredo-teste")
+        monkeypatch.setattr(emp, "_criar_ou_recuperar_talent_bank", lambda nome, telefone: "talent-1")
+
+        mock_enviar = AsyncMock(return_value=False)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_publico(
+            "Fulano de Tal", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert mock_enviar.call_count == 2
+        assert estado.get("etapa") == "aguardando_confirmacao_candidatura"
+        assert estado.get("link_candidatura", "").startswith("https://portal.test/empregabilidade/curriculo?")
