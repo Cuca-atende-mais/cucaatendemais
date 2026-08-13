@@ -69,6 +69,14 @@ function formatMesAno(valor: string): string {
     return `${digitos.slice(0, 2)}/${digitos.slice(2)}`
 }
 
+// SQS-61: dica de preenchimento por campo, linguagem simples — rascunho
+// revisado e aprovado pelo Junior em 2026-08-13. Não aparece no formulário
+// interno do dashboard (esse é só pro público, que nunca teve orientação
+// nenhuma pra preencher currículo).
+function Dica({ children }: { children: ReactNode }) {
+    return <p className="text-xs text-muted-foreground">{children}</p>
+}
+
 function Section({ icon, title, children }: {
     icon: ReactNode
     title: string
@@ -219,26 +227,32 @@ function CurriculoPublicoContent() {
                             <div className="space-y-1.5 md:col-span-2">
                                 <Label>Nome Completo</Label>
                                 <Input {...register("nome")} placeholder="Seu nome completo" />
+                                <Dica>Escreva seu nome completo, como está no documento.</Dica>
                             </div>
                             <div className="space-y-1.5 md:col-span-2">
                                 <Label>Endereço</Label>
                                 <Input {...register("endereco")} placeholder="Rua, número, bairro, cidade" />
+                                <Dica>Bairro e cidade já ajudam. Não precisa escrever o endereço completo se não quiser.</Dica>
                             </div>
                             <div className="space-y-1.5">
                                 <Label>Telefone</Label>
                                 <Input {...register("telefone")} placeholder="(85) 99999-9999" />
+                                <Dica>Número que a equipe da CUCA pode usar pra te chamar — pode ser diferente do WhatsApp que você está usando agora.</Dica>
                             </div>
                             <div className="space-y-1.5">
                                 <Label>E-mail</Label>
                                 <Input {...register("email")} type="email" placeholder="email@exemplo.com" />
+                                <Dica>Se você tiver um e-mail, coloque aqui. Não é obrigatório.</Dica>
                             </div>
                             <div className="space-y-1.5">
                                 <Label>LinkedIn</Label>
                                 <Input {...register("linkedin")} placeholder="linkedin.com/in/seu-nome" />
+                                <Dica>Se você tiver perfil no LinkedIn, cole o link aqui. Se não tiver, pode deixar em branco.</Dica>
                             </div>
                             <div className="space-y-1.5">
                                 <Label>GitHub / Portfólio</Label>
                                 <Input {...register("portfolio")} placeholder="github.com/nome ou behance.net/nome" />
+                                <Dica>Só preencha se tiver algum trabalho pra mostrar online (projetos, fotos, site). Se não tiver, deixe em branco.</Dica>
                             </div>
                         </div>
                     </Section>
@@ -247,6 +261,11 @@ function CurriculoPublicoContent() {
                         <div className="space-y-1.5">
                             <Label>Texto de Apresentação</Label>
                             <Textarea {...register("apresentacao")} rows={5} placeholder="Conte um pouco sobre sua experiência, interesses e pontos fortes." />
+                            <Dica>
+                                Aqui você conta, com suas próprias palavras, o que sabe fazer — mesmo que nunca
+                                tenha trabalhado com carteira assinada ou não tenha curso na área. Fale das suas
+                                habilidades, do seu jeito de trabalhar e do que você tem vontade de aprender.
+                            </Dica>
                         </div>
                     </Section>
 
@@ -254,6 +273,11 @@ function CurriculoPublicoContent() {
                         <div className="space-y-1.5">
                             <Label>Cargo / Área desejada</Label>
                             <Input {...register("objetivo")} placeholder="Ex: Auxiliar Administrativo | Atendente de Loja" />
+                            <Dica>
+                                Escreva o tipo de trabalho que você procura. Exemplo: Auxiliar de Limpeza,
+                                Vendedor, Cuidador de Idosos. Pode colocar mais de uma opção, separando com
+                                uma barra ( | ).
+                            </Dica>
                         </div>
                     </Section>
 
@@ -269,10 +293,12 @@ function CurriculoPublicoContent() {
                                         <div className="space-y-1">
                                             <Label>Cargo</Label>
                                             <Input {...register(`experiencias.${i}.cargo`)} placeholder="Ex: Auxiliar de Estoque" />
+                                            <Dica>O nome da função que você exercia. Exemplo: Ajudante Geral, Balconista.</Dica>
                                         </div>
                                         <div className="space-y-1">
                                             <Label>Empresa</Label>
                                             <Input {...register(`experiencias.${i}.empresa`)} placeholder="Nome da empresa" />
+                                            <Dica>Nome do lugar onde você trabalhou. Se foi um trabalho informal (bico, autônomo), pode escrever assim mesmo.</Dica>
                                         </div>
                                         <div className="space-y-1">
                                             <Label>Início (MM/AAAA)</Label>
@@ -301,6 +327,9 @@ function CurriculoPublicoContent() {
                                                 disabled={atual}
                                             />
                                         </div>
+                                        <div className="md:col-span-2">
+                                            <Dica>Mês e ano de início e fim. Não precisa ser exato — use a data mais próxima que você lembrar.</Dica>
+                                        </div>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <Controller
@@ -318,6 +347,7 @@ function CurriculoPublicoContent() {
                                         render={({ field: f }) => (
                                             <div className="space-y-2">
                                                 <Label>Atividades realizadas</Label>
+                                                <Dica>O que você fazia no dia a dia desse trabalho. Exemplo: atender clientes, organizar o estoque, limpar o ambiente.</Dica>
                                                 {(f.value || []).map((at: Atividade, j: number) => (
                                                     <div key={j} className="flex gap-2">
                                                         <Input
@@ -369,14 +399,17 @@ function CurriculoPublicoContent() {
                                                 </Select>
                                             )}
                                         />
+                                        <Dica>Escolha até onde você estudou. Se ainda está estudando, escolha &quot;Cursando&quot;.</Dica>
                                     </div>
                                     <div className="space-y-1">
                                         <Label>Instituição</Label>
                                         <Input {...register(`formacoes.${i}.instituicao`)} placeholder="Nome da escola ou faculdade" />
+                                        <Dica>Nome da escola, faculdade ou curso onde você estudou.</Dica>
                                     </div>
                                     <div className="space-y-1 md:col-span-2">
                                         <Label>Curso / Graduação</Label>
                                         <Input {...register(`formacoes.${i}.curso`)} placeholder="Ex: Administração" />
+                                        <Dica>Se for ensino técnico ou superior, escreva o nome do curso. Se for ensino fundamental ou médio, pode deixar em branco.</Dica>
                                     </div>
                                     <div className="space-y-1">
                                         <Label>Status</Label>
@@ -393,10 +426,12 @@ function CurriculoPublicoContent() {
                                                 </Select>
                                             )}
                                         />
+                                        <Dica>Se já terminou, marque &quot;Concluído&quot;. Se ainda está estudando, marque &quot;Cursando&quot;.</Dica>
                                     </div>
                                     <div className="space-y-1">
                                         <Label>Ano</Label>
                                         <Input {...register(`formacoes.${i}.ano`)} placeholder="2024" maxLength={4} />
+                                        <Dica>Ano em que concluiu ou em que está cursando atualmente.</Dica>
                                     </div>
                                 </div>
                             </div>
@@ -417,18 +452,22 @@ function CurriculoPublicoContent() {
                                     <div className="space-y-1">
                                         <Label>Título do Curso</Label>
                                         <Input {...register(`cursos.${i}.titulo`)} placeholder="Ex: Pacote Office Completo" />
+                                        <Dica>Nome do curso que você fez. Exemplo: Curso de Informática Básica, Auxiliar de Cozinha.</Dica>
                                     </div>
                                     <div className="space-y-1">
                                         <Label>Instituição</Label>
                                         <Input {...register(`cursos.${i}.instituicao`)} placeholder="Ex: SENAC, SEBRAE" />
+                                        <Dica>Onde você fez o curso (escola, ONG, SENAI, SENAC, online etc.).</Dica>
                                     </div>
                                     <div className="space-y-1">
                                         <Label>Ano</Label>
                                         <Input {...register(`cursos.${i}.ano`)} placeholder="2023" maxLength={4} />
+                                        <Dica>Ano em que fez ou concluiu o curso.</Dica>
                                     </div>
                                     <div className="space-y-1">
                                         <Label>Descrição</Label>
                                         <Input {...register(`cursos.${i}.descricao`)} placeholder="Breve descrição ou carga horária" />
+                                        <Dica>Se quiser, explique rapidamente o que aprendeu ou quantas horas teve o curso. Não é obrigatório.</Dica>
                                     </div>
                                 </div>
                             </div>
@@ -442,8 +481,14 @@ function CurriculoPublicoContent() {
                     <Section icon={<Wrench className="h-4 w-4" />} title="Habilidades Técnicas">
                         {habFields.fields.map((field, i) => (
                             <div key={field.id} className="flex gap-2 items-start">
-                                <Input {...register(`habilidades.${i}.titulo`)} placeholder="Ex: Excel" className="w-36 shrink-0 md:w-48" />
-                                <Input {...register(`habilidades.${i}.descricao`)} placeholder="Nível ou detalhe" />
+                                <div className="w-36 shrink-0 space-y-1 md:w-48">
+                                    <Input {...register(`habilidades.${i}.titulo`)} placeholder="Ex: Excel" />
+                                    <Dica>Nome da habilidade. Ex: Excel, CNH, Atendimento.</Dica>
+                                </div>
+                                <div className="flex-1 space-y-1">
+                                    <Input {...register(`habilidades.${i}.descricao`)} placeholder="Nível ou detalhe" />
+                                    <Dica>Se quiser, diga o quanto você sabe disso. Exemplo: básico, intermediário, avançado.</Dica>
+                                </div>
                                 <Button type="button" variant="ghost" size="icon" onClick={() => habFields.remove(i)}>
                                     <Trash2 className="h-4 w-4 text-destructive" />
                                 </Button>

@@ -63,11 +63,20 @@ Registradas aqui porque valem para **todas** as stories do épico:
 | **SQS-57** | Currículo estruturado: geração de PDF + entrada na triagem por skills | M | — (fundação) | ✅ Done |
 | **SQS-58** | Currículo por autoatendimento via link público seguro | M-L | **SQS-57 (bloqueante)** | Draft |
 | **SQS-59** | Envio de currículos em lote para a empresa | S-M | SQS-57 (para anexar CV da plataforma) | ⚠️ **não escrita** — pendente de decisão do Junior sobre estratégia de anexos |
+| **SQS-60** | Envio do currículo por email (opt-in do candidato) | P | SQS-58 | Ready |
+| **SQS-61** | Dicas de preenchimento por campo no formulário público | P | SQS-58 | InReview |
+| **SQS-62** | IA gera "Texto de Apresentação" a partir de habilidades | M | SQS-58, SQS-61 | Ready |
+| **SQS-63** | Download do currículo em DOCX (candidato) | P-M | SQS-58 | Ready |
+
+> SQS-60 a 63 nasceram de feedback do sócio/gestores numa demo da SQS-58 em 2026-08-13 — fora do
+> desenho original do épico, mas mesma família (currículo público). Numeração pulou o SQS-59 já
+> reservado acima para não colidir.
 
 ### Ordem de execução recomendada
 
 ```
-SQS-57 (fundação) ──→ SQS-58
+SQS-57 (fundação) ──→ SQS-58 ──→ SQS-60 / SQS-61 / SQS-63 (independentes entre si)
+                 │                              └──→ SQS-62 (depende de SQS-61 pela mesma seção de UI)
                  └──→ SQS-59
 SQS-56 (independente, pode correr em paralelo)
 ```
@@ -127,3 +136,4 @@ que a SQS-58 nasça reproduzindo o mesmo defeito em escala maior.
 | Data | Autor | Mudança |
 |---|---|---|
 | 2026-08-11 | @pm | Criação. Agrupa SQS-56/57/58 (escritas) + SQS-59 (pendente). Enquadramento por causa raiz comum: o módulo não escala em alto volume |
+| 2026-08-13 | @sm | Adicionadas SQS-60/61/62/63 (Draft) — feedback do sócio/gestores numa demo da SQS-58: email opt-in, dicas de preenchimento, IA no texto de apresentação, download DOCX |
