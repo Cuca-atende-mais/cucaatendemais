@@ -7,6 +7,7 @@ import { Controller, useFieldArray, useForm } from "react-hook-form"
 import toast from "react-hot-toast"
 import {
     AlertTriangle,
+    ArrowLeft,
     BookOpen,
     Briefcase,
     CheckCircle2,
@@ -56,6 +57,16 @@ const defaultValues: CvDados = {
     formacoes: [],
     cursos: [],
     habilidades: [],
+}
+
+// Máscara automática MM/AAAA pros campos de período de experiência (achado do
+// Junior, 2026-08-13): candidato digitava livre e errava o formato esperado
+// pelo matching da IA. Só dígitos são aceitos; a barra é inserida sozinha
+// depois do 2º dígito, limitado a 6 dígitos (MMAAAA).
+function formatMesAno(valor: string): string {
+    const digitos = valor.replace(/\D/g, "").slice(0, 6)
+    if (digitos.length <= 2) return digitos
+    return `${digitos.slice(0, 2)}/${digitos.slice(2)}`
 }
 
 function Section({ icon, title, children }: {
@@ -183,30 +194,21 @@ function CurriculoPublicoContent() {
         <main className="min-h-screen bg-slate-50">
             <div className="mx-auto max-w-4xl px-4 py-6 md:py-10">
                 <div className="mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div>
-                            <p className="text-sm font-medium text-cuca-blue">Banco de Talentos CUCA</p>
-                            <h1 className="text-2xl font-bold tracking-tight text-slate-950">Criar currículo</h1>
-                            <p className="mt-1 text-sm text-slate-600">
-                                Preencha seus dados. Ao salvar, você receberá seu currículo em PDF.
-                            </p>
-                        </div>
-                        {downloadUrl ? (
-                            <Button asChild className="bg-cuca-blue text-white hover:bg-sky-800">
-                                <a href={downloadUrl}>
-                                    <Download className="mr-2 h-4 w-4" />
-                                    Baixar PDF
-                                </a>
-                            </Button>
-                        ) : null}
-                    </div>
+                    <p className="text-sm font-medium text-cuca-blue">Banco de Talentos CUCA</p>
+                    <h1 className="text-2xl font-bold tracking-tight text-slate-950">Criar currículo</h1>
+                    <p className="mt-1 text-sm text-slate-600">
+                        Preencha seus dados. Ao salvar, você receberá seu currículo em PDF.
+                    </p>
                 </div>
 
                 {downloadUrl ? (
                     <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
                         <div className="flex items-start gap-2">
                             <CheckCircle2 className="mt-0.5 h-4 w-4" />
-                            <p>Currículo salvo. O botão de download funciona uma única vez e expira em alguns minutos.</p>
+                            <p>
+                                Currículo salvo! O botão de download está logo abaixo do botão de salvar,
+                                no final do formulário. Funciona uma única vez e expira em alguns minutos.
+                            </p>
                         </div>
                     </div>
                 ) : null}
@@ -274,11 +276,30 @@ function CurriculoPublicoContent() {
                                         </div>
                                         <div className="space-y-1">
                                             <Label>Início (MM/AAAA)</Label>
-                                            <Input {...register(`experiencias.${i}.data_inicio`)} placeholder="01/2023" />
+                                            <Input
+                                                {...register(`experiencias.${i}.data_inicio`)}
+                                                onChange={e => {
+                                                    e.target.value = formatMesAno(e.target.value)
+                                                    register(`experiencias.${i}.data_inicio`).onChange(e)
+                                                }}
+                                                placeholder="01/2023"
+                                                inputMode="numeric"
+                                                maxLength={7}
+                                            />
                                         </div>
                                         <div className="space-y-1">
                                             <Label>Fim (MM/AAAA)</Label>
-                                            <Input {...register(`experiencias.${i}.data_fim`)} placeholder="01/2024" disabled={atual} />
+                                            <Input
+                                                {...register(`experiencias.${i}.data_fim`)}
+                                                onChange={e => {
+                                                    e.target.value = formatMesAno(e.target.value)
+                                                    register(`experiencias.${i}.data_fim`).onChange(e)
+                                                }}
+                                                placeholder="01/2024"
+                                                inputMode="numeric"
+                                                maxLength={7}
+                                                disabled={atual}
+                                            />
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -434,11 +455,35 @@ function CurriculoPublicoContent() {
                         </Button>
                     </Section>
 
-                    <div className="sticky bottom-0 -mx-4 border-t bg-white/95 px-4 py-3 backdrop-blur md:rounded-lg md:border md:shadow-sm">
+                    <div className="sticky bottom-0 -mx-4 space-y-2 border-t bg-white/95 px-4 py-3 backdrop-blur md:rounded-lg md:border md:shadow-sm">
                         <Button type="submit" className="w-full bg-cuca-blue text-white hover:bg-sky-800" disabled={saving}>
                             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                             Salvar currículo e gerar PDF
                         </Button>
+                        {downloadUrl ? (
+                            <>
+                                {/* Logo abaixo do botão de salvar, não no topo da página — achado
+                                    do Junior 2026-08-13: o candidato ficava procurando o botão em
+                                    cima e não achava. */}
+                                <Button asChild className="w-full bg-cuca-blue text-white hover:bg-sky-800">
+                                    <a href={downloadUrl}>
+                                        <Download className="mr-2 h-4 w-4" />
+                                        Baixar PDF
+                                    </a>
+                                </Button>
+                                {/* O link foi aberto de dentro do WhatsApp (in-app browser) — só
+                                    volta pra conversa que já estava aberta, sem precisar saber o
+                                    número do bot (decisão do Junior, 2026-08-13). */}
+                                <Button
+                                    type="button"
+                                    className="w-full bg-emerald-600 text-white hover:bg-emerald-700"
+                                    onClick={() => window.history.back()}
+                                >
+                                    <ArrowLeft className="mr-2 h-4 w-4" />
+                                    Voltar para o WhatsApp
+                                </Button>
+                            </>
+                        ) : null}
                     </div>
                 </form>
             </div>

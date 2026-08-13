@@ -93,6 +93,16 @@ function calcPermanencia(inicio: string, fim: string, atual: boolean): string {
     } catch { return "" }
 }
 
+// Máscara automática MM/AAAA pros campos de período de experiência (achado do
+// Junior, 2026-08-13, aplicado nos dois formulários — este e o público em
+// /empregabilidade/curriculo). Só dígitos são aceitos; a barra é inserida
+// sozinha depois do 2º dígito, limitado a 6 dígitos (MMAAAA).
+function formatMesAno(valor: string): string {
+    const digitos = valor.replace(/\D/g, "").slice(0, 6)
+    if (digitos.length <= 2) return digitos
+    return `${digitos.slice(0, 2)}/${digitos.slice(2)}`
+}
+
 const ESCOLARIDADES = [
     "Ensino Fundamental Incompleto",
     "Ensino Fundamental Completo",
@@ -578,11 +588,30 @@ export default function CriarCurriculoEditorPage() {
                                     </div>
                                     <div className="space-y-1">
                                         <Label>Início (MM/AAAA)</Label>
-                                        <Input {...register(`experiencias.${i}.data_inicio`)} placeholder="01/2023" />
+                                        <Input
+                                            {...register(`experiencias.${i}.data_inicio`)}
+                                            onChange={e => {
+                                                e.target.value = formatMesAno(e.target.value)
+                                                register(`experiencias.${i}.data_inicio`).onChange(e)
+                                            }}
+                                            placeholder="01/2023"
+                                            inputMode="numeric"
+                                            maxLength={7}
+                                        />
                                     </div>
                                     <div className="space-y-1">
                                         <Label>Fim (MM/AAAA)</Label>
-                                        <Input {...register(`experiencias.${i}.data_fim`)} placeholder="01/2024" disabled={atual} />
+                                        <Input
+                                            {...register(`experiencias.${i}.data_fim`)}
+                                            onChange={e => {
+                                                e.target.value = formatMesAno(e.target.value)
+                                                register(`experiencias.${i}.data_fim`).onChange(e)
+                                            }}
+                                            placeholder="01/2024"
+                                            inputMode="numeric"
+                                            maxLength={7}
+                                            disabled={atual}
+                                        />
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2">

@@ -2257,7 +2257,7 @@ async def _processar_publico(
             },
             ttl_horas=24,
         )
-        await e(
+        mensagem_link = (
             f"Perfeito, *{nome_coletado}*! 📝\n\n"
             f"Acesse o link abaixo pelo celular para montar seu currículo:\n\n"
             f"🔗 {link}\n\n"
@@ -2265,6 +2265,37 @@ async def _processar_publico(
             "pode ser diferente deste WhatsApp, sem problema). Ao salvar, você recebe o PDF e o "
             "currículo já entra no banco de talentos da rede CUCA. ✅"
         )
+        # Achado em produção 2026-08-13: ConnectTimeout esporádico pra Graph API
+        # deixava o candidato "travado" — o fluxo avançava pra
+        # aguardando_confirmacao_candidatura mesmo sem a mensagem nunca ter
+        # saído (nenhum retry, resultado de `e()` nunca checado). Uma nova
+        # mensagem do candidato ainda reenviaria o link (fallback já existente
+        # em aguardando_confirmacao_candidatura), mas o candidato não tinha
+        # motivo pra saber disso — o bot simplesmente parou de responder.
+        # Retry único como mitigação de baixo risco (falha transitória de rede
+        # costuma se resolver em segundos); não introduz busy-loop nem trava
+        # a etapa se as duas tentativas falharem.
+        enviado = await e(mensagem_link)
+        if not enviado:
+            logger.warning(
+                "[curriculo_publico] Falha ao enviar link (1ª tentativa) para %s — retry único",
+                phone[:6] + "****",
+            )
+            enviado = await e(mensagem_link)
+            if not enviado:
+                # Duas tentativas falharam. Não deixa a etapa em
+                # coletando_nome_curriculo_publico — a próxima mensagem do
+                # candidato seria mal-interpretada como um novo nome. Avança
+                # para aguardando_confirmacao_candidatura mesmo assim: essa
+                # etapa já reenvia `link_candidatura` na próxima mensagem
+                # recebida (ver bloco "Ainda aguardando..." abaixo), servindo
+                # de rede de segurança para esta falha de envio.
+                logger.error(
+                    "[curriculo_publico] Falha ao enviar link (2 tentativas) para %s — "
+                    "avança etapa mesmo assim; link será reenviado na próxima mensagem "
+                    "do candidato via fallback de aguardando_confirmacao_candidatura.",
+                    phone[:6] + "****",
+                )
         await _set_fluxo_async(conversa_id, {
             "perfil": "publico",
             "etapa": "aguardando_confirmacao_candidatura",
