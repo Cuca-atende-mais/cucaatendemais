@@ -185,14 +185,25 @@ def test_contextual_repassa_quer_sair_e_mudou_de_assunto(monkeypatch):
 
     async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
         capturado.update(texto=texto, perfil=perfil, etapa=etapa, ultima_msg_bot=ultima_msg_bot)
-        return {"intencao": "empresa", "quer_sair": False, "mudou_de_assunto": True}
+        return {
+            "intencao": "empresa",
+            "quer_sair": False,
+            "mudou_de_assunto": True,
+            "quer_atendente_humano": False,
+        }
 
     monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
     res = asyncio.run(avaliar_mensagem_contextual(
         "nao nao, sou uma empresa", perfil="candidato", etapa="aguardando_id_candidato",
         ultima_msg_bot="Informe seu CPF ou telefone",
     ))
-    assert res == {"intencao": "empresa", "quer_sair": False, "mudou_de_assunto": True, "nome": None}
+    assert res == {
+        "intencao": "empresa",
+        "quer_sair": False,
+        "mudou_de_assunto": True,
+        "quer_atendente_humano": False,
+        "nome": None,
+    }
     assert capturado == {
         "texto": "nao nao, sou uma empresa", "perfil": "candidato",
         "etapa": "aguardando_id_candidato", "ultima_msg_bot": "Informe seu CPF ou telefone",
@@ -210,6 +221,23 @@ def test_contextual_intencao_invalida_vira_ambiguo(monkeypatch):
     assert res["intencao"] == "ambiguo"
 
 
+def test_contextual_repassa_quer_atendente_humano(monkeypatch):
+    """S-EMP-AUD-022: pedido flexível de humano entra no contrato semântico."""
+    import intencao_detector
+
+    async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+        return {
+            "intencao": "ambiguo",
+            "quer_sair": False,
+            "mudou_de_assunto": False,
+            "quer_atendente_humano": True,
+        }
+
+    monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+    res = asyncio.run(avaliar_mensagem_contextual("falar com atendendte"))
+    assert res["quer_atendente_humano"] is True
+
+
 def test_contextual_excecao_vira_default_seguro(monkeypatch):
     """Falha no LLM (rede, JSON malformado, etc.) nunca deve travar o fluxo."""
     import intencao_detector
@@ -219,7 +247,13 @@ def test_contextual_excecao_vira_default_seguro(monkeypatch):
 
     monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt_error)
     res = asyncio.run(avaliar_mensagem_contextual("mensagem qualquer"))
-    assert res == {"intencao": "ambiguo", "quer_sair": False, "mudou_de_assunto": False, "nome": None}
+    assert res == {
+        "intencao": "ambiguo",
+        "quer_sair": False,
+        "mudou_de_assunto": False,
+        "quer_atendente_humano": False,
+        "nome": None,
+    }
 
 
 # ─── extrair_setor_da_mensagem ────────────────────────────────────────────────

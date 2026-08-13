@@ -100,6 +100,13 @@ _AFIRMATIVO_CONFIRMACAO_DETALHADA = (
 _AFIRMATIVO_CANCELAMENTO = (*_AFIRMATIVO_CONFIRMACAO, "yes")
 _AFIRMATIVO_CRIAR_VAGA = ("sim", "s", "quero", "vou", "yes", "ok", "1")
 _AFIRMATIVO_ROTA = (*_AFIRMATIVO_CONFIRMACAO_DETALHADA, "exato")
+_NEGATIVO_ATENDENTE_HUMANO = ("não", "nao", "n", "negativo")
+_LIMIAR_FALHAS_OFERTA_ATENDENTE = 2
+_ETAPAS_OFERTA_ATENDENTE = {
+    "listou_categorias",
+    "listando_cargos_selecao",
+    "aguardando_escolha_unidade",
+}
 _RESPOSTAS_ENTREVISTA_BINARIA = ("sim", "s", "não", "nao", "n", "✅", "❌")
 _CONFIRMA_ENTREVISTA = ("sim", "s", "✅")
 _ETAPAS_NOTIFY_PORTAL = (
@@ -631,6 +638,14 @@ async def _escape_semantico_ou_none(
     sem = await avaliar_mensagem_contextual(
         texto, perfil=perfil, etapa=etapa, ultima_msg_bot=await _ultima_mensagem_bot_async(conversa_id),
     )
+    if sem.get("quer_atendente_humano"):
+        await _acionar_transbordo_empregabilidade(
+            conversa_id=conversa_id, unidade_cuca=unidade_cuca,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+            motivo="pedido_atendente_humano",
+            mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+        )
+        return True
     if sem["quer_sair"]:
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil)
         return True
@@ -644,6 +659,61 @@ async def _escape_semantico_ou_none(
             sem, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
         )
         return True
+    return False
+
+
+def _fluxo_sem_falhas_atendente(fluxo: dict) -> dict:
+    return {
+        k: v for k, v in fluxo.items()
+        if k not in {
+            "falhas_atendente_etapa",
+            "falhas_atendente_nome_etapa",
+            "_oferta_atendente_contexto",
+        }
+    }
+
+
+async def _registrar_falha_e_oferecer_atendente(
+    *,
+    fluxo: dict,
+    etapa: str,
+    conversa_id: str,
+    instance_name: str,
+    token: str,
+    phone: str,
+    lead_id: str,
+) -> bool:
+    if etapa not in _ETAPAS_OFERTA_ATENDENTE:
+        return False
+
+    etapa_contador = fluxo.get("falhas_atendente_nome_etapa")
+    falhas = int(fluxo.get("falhas_atendente_etapa") or 0)
+    falhas = falhas + 1 if etapa_contador == etapa else 1
+
+    fluxo_base = _fluxo_sem_falhas_atendente({**fluxo, "etapa": etapa})
+    if falhas >= _LIMIAR_FALHAS_OFERTA_ATENDENTE:
+        await _enviar(
+            instance_name, token, phone,
+            "Percebi que não consegui te ajudar por aqui. Quer que eu chame um atendente da nossa equipe "
+            "para continuar o atendimento? "
+            "Responda *sim* ou *não*.",
+            conversa_id=conversa_id, lead_id=lead_id,
+        )
+        await _set_fluxo_async(conversa_id, {
+            "perfil": "publico",
+            "etapa": "oferecendo_atendente_humano",
+            "_oferta_atendente_contexto": {
+                "etapa_anterior": etapa,
+                "fluxo_anterior": fluxo_base,
+            },
+        })
+        return True
+
+    await _set_fluxo_async(conversa_id, {
+        **fluxo,
+        "falhas_atendente_nome_etapa": etapa,
+        "falhas_atendente_etapa": falhas,
+    })
     return False
 
 
@@ -2084,6 +2154,29 @@ async def _processar_publico(
             "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
         })
 
+    if etapa == "oferecendo_atendente_humano":
+        if t_lower in _AFIRMATIVO_CONFIRMACAO:
+            await _acionar_transbordo_empregabilidade(
+                conversa_id=conversa_id, unidade_cuca=unidade_cuca,
+                instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+                motivo="oferta_proativa_falhas",
+                mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+            )
+            return
+        if t_lower in _NEGATIVO_ATENDENTE_HUMANO:
+            contexto = fluxo.get("_oferta_atendente_contexto") or {}
+            fluxo_anterior = contexto.get("fluxo_anterior") or {}
+            etapa_anterior = contexto.get("etapa_anterior") or fluxo_anterior.get("etapa", "inicio")
+            await e("Tudo bem, seguimos por aqui.")
+            await _set_fluxo_async(conversa_id, _fluxo_sem_falhas_atendente({
+                **fluxo_anterior,
+                "perfil": "publico",
+                "etapa": etapa_anterior,
+            }))
+            return
+        await e("Quer que eu chame nossa equipe para continuar o atendimento? Responda *sim* ou *não*.")
+        return
+
     # Encerramento
     # S37C-03: pos_candidatura é tolerante — "obrigado", "valeu" não encerram o fluxo
     if _quer_encerrar(texto) and etapa not in (
@@ -2441,6 +2534,11 @@ async def _processar_publico(
                 texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
             ):
                 return
+            if await _registrar_falha_e_oferecer_atendente(
+                fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
+                instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+            ):
+                return
             linhas_re = ["Não entendi. Digite o número do cargo de interesse. Ex: *1* ou *1,3*\n"]
             for idx_c, c in enumerate(cargos_disponiveis, start=1):
                 linhas_re.append(f"{idx_c}️⃣ {c.get('titulo', '')}")
@@ -2501,7 +2599,7 @@ async def _processar_publico(
             await e("\n".join(linhas_convocacao))
 
             await _set_fluxo_async(conversa_id, {
-                **fluxo,
+                **_fluxo_sem_falhas_atendente(fluxo),
                 "etapa": "confirmando_presenca_nome",
                 "cargos_escolhidos": cargos_escolhidos,
                 "vaga_id_selecionada": vaga_id_ref,
@@ -2512,7 +2610,7 @@ async def _processar_publico(
 
         await e(f"Ótimo! Você escolheu: *{display_str}* ✅\n\nPara finalizar, preciso do seu *nome completo*:")
         await _set_fluxo_async(conversa_id, {
-            **fluxo,
+            **_fluxo_sem_falhas_atendente(fluxo),
             "etapa": "coletando_nome_candidato",
             "cargos_escolhidos": cargos_escolhidos,  # lista — AC10 SQS-49
             "banco_talentos": False,
@@ -2692,7 +2790,7 @@ async def _processar_publico(
             linhas_cat.append("\nDigite o *número* da vaga para se candidatar.")
             await e("\n".join(linhas_cat))
             await _set_fluxo_async(conversa_id, {
-                **fluxo,
+                **_fluxo_sem_falhas_atendente(fluxo),
                 "etapa": "listou_vagas",
                 "mapa_vagas": mapa_vagas_cat,
                 "ultima_vaga_id": ultima_vaga_id_cat,
@@ -2700,6 +2798,11 @@ async def _processar_publico(
             })
         else:
             # Re-exibe o menu de categorias
+            if await _registrar_falha_e_oferecer_atendente(
+                fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
+                instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+            ):
+                return
             linhas_re = ["💼 *Vagas abertas na Rede CUCA — Escolha uma categoria:*\n"]
             for k, v in mapa_cat.items():
                 subcats_re = ", ".join(vg["titulo"].lower() for vg in v["vagas"][:3])
@@ -2722,7 +2825,10 @@ async def _processar_publico(
                 unidade_escolhida = unidades_opcoes[idx_escolha]
                 unidade_id_escolhida: str = unidade_escolhida["id"]
                 nome_prefill = fluxo.get("nome_candidato_prefill", "")
-                novo_fluxo = {**fluxo, "unidade_id_escolhida": unidade_id_escolhida}
+                novo_fluxo = {
+                    **_fluxo_sem_falhas_atendente(fluxo),
+                    "unidade_id_escolhida": unidade_id_escolhida,
+                }
                 if nome_prefill:
                     await _enviar_link_candidatura(
                         instance_name, token, phone, conversa_id, novo_fluxo,
@@ -2737,6 +2843,11 @@ async def _processar_publico(
                         })
                 return
         # Resposta inválida — re-exibe as opções
+        if await _registrar_falha_e_oferecer_atendente(
+            fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+        ):
+            return
         linhas_re_unid = [
             "Não entendi. Por favor, escolha a unidade CUCA mais próxima de você:\n"
         ]
