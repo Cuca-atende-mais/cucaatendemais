@@ -125,18 +125,26 @@ async def avaliar_mensagem_contextual(
 
     Contrato novo: recebe a frase inteira + perfil já declarado + etapa atual
     + última mensagem do bot, e pede ao GPT-4o-mini um veredito único sobre
-    intenção E sinais de escape (quer_sair, mudou_de_assunto) — diferente do
+    intenção E sinais de escape (quer_sair, mudou_de_assunto,
+    quer_atendente_humano) — diferente do
     `classificar()` acima (keyword-primeiro, sem contexto de conversa,
     só para a primeira mensagem). É a decisão PRIMÁRIA agora: keywords não são
     mais consultadas antes do LLM. Atalhos determinísticos (upload, dígito
     puro) continuam sem chamar o LLM, por serem inequívocos e por custo/latência
     (AC#12).
 
-    Retorna sempre {"intencao", "quer_sair", "mudou_de_assunto", "nome"} — nunca
-    propaga exceção; qualquer falha (JSON malformado, API fora do ar, etc.) cai
-    no default seguro (ambíguo, sem sinais de escape) para nunca travar o fluxo.
+    Retorna sempre {"intencao", "quer_sair", "mudou_de_assunto",
+    "quer_atendente_humano", "nome"} — nunca propaga exceção; qualquer falha
+    (JSON malformado, API fora do ar, etc.) cai no default seguro (ambíguo,
+    sem sinais de escape) para nunca travar o fluxo.
     """
-    default = {"intencao": "ambiguo", "quer_sair": False, "mudou_de_assunto": False, "nome": lead_nome}
+    default = {
+        "intencao": "ambiguo",
+        "quer_sair": False,
+        "mudou_de_assunto": False,
+        "quer_atendente_humano": False,
+        "nome": lead_nome,
+    }
 
     if midia_tipo in ("document", "image"):
         return {**default, "intencao": "upload"}
@@ -158,6 +166,7 @@ async def avaliar_mensagem_contextual(
             "intencao": intencao,
             "quer_sair": bool(data.get("quer_sair", False)),
             "mudou_de_assunto": bool(data.get("mudou_de_assunto", False)),
+            "quer_atendente_humano": bool(data.get("quer_atendente_humano", False)),
             "nome": lead_nome,
         }
     except Exception as exc:
@@ -185,7 +194,10 @@ async def _chamar_gpt_contextual(
                 "(despedida, negativa de continuar, sem intenção de fazer outra coisa)\n"
                 "- 'mudou_de_assunto': true se o lead está redirecionando para uma intenção "
                 "diferente da etapa atual (ex.: nega o que foi perguntado e diz que quer outra "
-                "coisa), mesmo sem querer encerrar a conversa\n\n"
+                "coisa), mesmo sem querer encerrar a conversa\n"
+                "- 'quer_atendente_humano': true se o lead pede falar com atendente humano, "
+                "suporte, equipe, pessoa ou ajuda humana, mesmo com erro de digitação "
+                "(ex.: atendendte, atendete, atendente humano)\n\n"
                 f"Perfil já declarado: {perfil or 'nenhum'}\n"
                 f"Etapa atual da conversa: {etapa or 'nenhuma'}\n"
                 f"Última mensagem do bot: {ultima_msg_bot or 'nenhuma'}\n"

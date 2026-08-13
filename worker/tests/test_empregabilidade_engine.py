@@ -505,9 +505,14 @@ class TestQuerBancoTalentosNegacao:
 # e (b) quer_sair de alta precisão em estados de nome livre.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _mock_gpt(intencao=None, quer_sair=False, mudou_de_assunto=False):
+def _mock_gpt(intencao=None, quer_sair=False, mudou_de_assunto=False, quer_atendente_humano=False):
     async def _fn(texto, perfil, etapa, ultima_msg_bot):
-        return {"intencao": intencao, "quer_sair": quer_sair, "mudou_de_assunto": mudou_de_assunto}
+        return {
+            "intencao": intencao,
+            "quer_sair": quer_sair,
+            "mudou_de_assunto": mudou_de_assunto,
+            "quer_atendente_humano": quer_atendente_humano,
+        }
     return _fn
 
 
@@ -2511,3 +2516,161 @@ class TestAguardandoConfirmacaoCandidaturaEscapeHatch:
         assert estado["etapa"] == "listou_categorias"
         assert estado["historico_vagas_aplicadas"] == ["vaga-ja-vista"]
         assert estado["nome_candidato_prefill"] == "Fulano de Tal"
+
+
+class TestTransbordoHumanoFlexivelAud022:
+
+    @pytest.mark.asyncio
+    async def test_typo_real_falar_com_atendendte_aciona_transbordo_sem_confirmacao(self, monkeypatch, _isola_enviar):
+        """Regressão da conversa 6a9af3ca-...: pedido com typo deve ir direto
+        para atendimento humano quando o parser da etapa falha."""
+        estado, fake_get, fake_set = _fluxo_mock("listando_cargos_selecao", {
+            "perfil": "publico",
+            "vaga_id_selecionada": "vaga-1",
+            "cargos_disponiveis": [{"titulo": "Auxiliar Administrativo"}],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_ultima_mensagem_bot", lambda conversa_id: "Digite o número do cargo.")
+
+        import intencao_detector
+        monkeypatch.setattr(
+            intencao_detector,
+            "_chamar_gpt_contextual",
+            _mock_gpt(intencao="ambiguo", quer_atendente_humano=True),
+        )
+        mock_transbordo = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_acionar_transbordo_empregabilidade", mock_transbordo)
+
+        await emp._processar_publico(
+            "falar com atendendte", "558599990000", "PHONE_ID", "token", "lead-1",
+            "6a9af3ca-regressao", "Barra",
+        )
+
+        mock_transbordo.assert_awaited_once()
+        assert mock_transbordo.await_args.kwargs["motivo"] == "pedido_atendente_humano"
+        assert "Não entendi" not in (_isola_enviar.call_args.args[3] if _isola_enviar.call_args else "")
+        assert estado["etapa"] == "listando_cargos_selecao"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("etapa", "extra"),
+        [
+            ("listou_categorias", {
+                "perfil": "publico",
+                "mapa_categorias": {
+                    "1": {"categoria": "Administrativo", "vagas": [{"id": "vaga-1", "titulo": "Auxiliar"}]},
+                },
+            }),
+            ("listando_cargos_selecao", {
+                "perfil": "publico",
+                "vaga_id_selecionada": "vaga-1",
+                "cargos_disponiveis": [{"titulo": "Auxiliar Administrativo"}],
+            }),
+            ("aguardando_escolha_unidade", {
+                "perfil": "publico",
+                "vaga_id_selecionada": "vaga-1",
+                "unidades_opcoes": [{"id": "unidade-1", "nome": "CUCA Barra"}],
+            }),
+        ],
+    )
+    async def test_duas_falhas_na_mesma_etapa_oferecem_atendente(self, etapa, extra, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock(etapa, extra)
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_ultima_mensagem_bot", lambda conversa_id: "Escolha uma opção.")
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(intencao="ambiguo"))
+
+        await emp._processar_publico(
+            "resposta inválida", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+        assert estado["etapa"] == etapa
+        assert estado["falhas_atendente_etapa"] == 1
+
+        _isola_enviar.reset_mock()
+        await emp._processar_publico(
+            "resposta inválida", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado["etapa"] == "oferecendo_atendente_humano"
+        assert estado["_oferta_atendente_contexto"]["etapa_anterior"] == etapa
+        assert "atendente" in _isola_enviar.call_args.args[3].lower()
+
+    @pytest.mark.asyncio
+    async def test_contador_zerado_ao_mudar_de_etapa(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("listou_categorias", {
+            "perfil": "publico",
+            "falhas_atendente_nome_etapa": "listou_categorias",
+            "falhas_atendente_etapa": 1,
+            "mapa_categorias": {
+                "1": {
+                    "categoria": "Administrativo",
+                    "vagas": [{"id": "vaga-1", "titulo": "Auxiliar", "unidade_destino": "Barra"}],
+                },
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico(
+            "1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado["etapa"] == "listou_vagas"
+        assert "falhas_atendente_etapa" not in estado
+        assert "falhas_atendente_nome_etapa" not in estado
+
+    @pytest.mark.asyncio
+    async def test_sim_na_oferta_aciona_transbordo(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("oferecendo_atendente_humano", {
+            "perfil": "publico",
+            "_oferta_atendente_contexto": {
+                "etapa_anterior": "listou_categorias",
+                "fluxo_anterior": {"perfil": "publico", "etapa": "listou_categorias", "mapa_categorias": {}},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_transbordo = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_acionar_transbordo_empregabilidade", mock_transbordo)
+
+        await emp._processar_publico(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_transbordo.assert_awaited_once()
+        assert mock_transbordo.await_args.kwargs["motivo"] == "oferta_proativa_falhas"
+        assert estado["etapa"] == "oferecendo_atendente_humano"
+
+    @pytest.mark.asyncio
+    async def test_nao_na_oferta_restaura_etapa_anterior_com_contador_zerado(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("oferecendo_atendente_humano", {
+            "perfil": "publico",
+            "_oferta_atendente_contexto": {
+                "etapa_anterior": "aguardando_escolha_unidade",
+                "fluxo_anterior": {
+                    "perfil": "publico",
+                    "etapa": "aguardando_escolha_unidade",
+                    "vaga_id_selecionada": "vaga-1",
+                    "unidades_opcoes": [{"id": "unidade-1", "nome": "CUCA Barra"}],
+                    "falhas_atendente_nome_etapa": "aguardando_escolha_unidade",
+                    "falhas_atendente_etapa": 1,
+                },
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_transbordo = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_acionar_transbordo_empregabilidade", mock_transbordo)
+
+        await emp._processar_publico(
+            "não", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_transbordo.assert_not_awaited()
+        assert estado["etapa"] == "aguardando_escolha_unidade"
+        assert "falhas_atendente_etapa" not in estado
+        assert "falhas_atendente_nome_etapa" not in estado
+        assert "seguimos por aqui" in _isola_enviar.call_args.args[3].lower()
