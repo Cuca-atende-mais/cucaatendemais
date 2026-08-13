@@ -117,6 +117,11 @@ function CurriculoPublicoContent() {
     const [linkInvalido, setLinkInvalido] = useState(false)
     const [saving, setSaving] = useState(false)
     const [downloadUrl, setDownloadUrl] = useState("")
+    // SQS-63: só fica preenchido quando o backend conseguiu gerar o DOCX —
+    // se a geração falhar, o backend simplesmente não manda docx_url e o
+    // botão não aparece (Risco #3 da story: melhor não mostrar do que
+    // mostrar um botão quebrado).
+    const [downloadUrlDocx, setDownloadUrlDocx] = useState("")
     // SQS-62: 3 habilidades em texto livre que a IA usa pra montar o texto
     // de apresentação — não fazem parte do CvDados, são só insumo do botão.
     const [habilidadesIA, setHabilidadesIA] = useState(["", "", ""])
@@ -195,6 +200,7 @@ function CurriculoPublicoContent() {
         }
         setSaving(true)
         setDownloadUrl("")
+        setDownloadUrlDocx("")
         try {
             const res = await fetch("/api/empregabilidade/curriculo/publico", {
                 method: "POST",
@@ -204,6 +210,7 @@ function CurriculoPublicoContent() {
             const data = await res.json().catch(() => ({}))
             if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
             setDownloadUrl(data.pdf_url)
+            if (data.docx_url) setDownloadUrlDocx(data.docx_url)
             reset(values)
             toast.success("Currículo salvo e PDF gerado.")
         } catch (err: unknown) {
@@ -606,6 +613,16 @@ function CurriculoPublicoContent() {
                                         Baixar PDF
                                     </a>
                                 </Button>
+                                {/* SQS-63: só aparece se o backend conseguiu gerar o DOCX — nunca
+                                    um botão apontando pra um arquivo que não existe. */}
+                                {downloadUrlDocx ? (
+                                    <Button asChild variant="outline" className="w-full border-cuca-blue text-cuca-blue hover:bg-sky-100">
+                                        <a href={downloadUrlDocx}>
+                                            <FileText className="mr-2 h-4 w-4" />
+                                            Baixar em Word (editável)
+                                        </a>
+                                    </Button>
+                                ) : null}
                                 {/* O link foi aberto de dentro do WhatsApp (in-app browser) — só
                                     volta pra conversa que já estava aberta, sem precisar saber o
                                     número do bot (decisão do Junior, 2026-08-13). */}

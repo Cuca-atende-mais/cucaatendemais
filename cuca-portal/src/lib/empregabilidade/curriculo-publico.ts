@@ -83,15 +83,21 @@ export function criarRespostaCurriculoPublico(params: {
     curriculoId: string
     talentId: string
     downloadUrl: string
+    // SQS-63: só presente quando a geração do DOCX deu certo — falha na
+    // geração não deve expor um botão de download quebrado (Risco #3 da
+    // story), então o campo fica ausente em vez de null/erro.
+    docxDownloadUrl?: string
 }): {
     curriculo_id: string
     talent_id: string
     pdf_url: string
+    docx_url?: string
 } {
     return {
         curriculo_id: params.curriculoId,
         talent_id: params.talentId,
         pdf_url: params.downloadUrl,
+        ...(params.docxDownloadUrl ? { docx_url: params.docxDownloadUrl } : {}),
     }
 }
 

@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { Resend } from "resend"
 import { parseLinkParams, verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 import { gerarEArmazenarPdfCurriculo } from "@/lib/empregabilidade/curriculo-pdf-service"
+import { gerarEArmazenarDocxCurriculo } from "@/lib/empregabilidade/curriculo-docx-service"
 import {
     criarRespostaCurriculoPublico,
     criarDownloadToken,
@@ -160,6 +161,28 @@ export async function POST(request: NextRequest) {
         const pdfResultado = await gerarEArmazenarPdfCurriculo(supabase, talentId, values)
         const download = criarDownloadToken(talentId, secret)
 
+        // SQS-63: DOCX gerado junto no salvamento (decisão do Junior — não
+        // sob demanda). Best-effort (AC5): se falhar, loga e segue sem
+        // token/URL de DOCX — o candidato simplesmente não vê o botão em vez
+        // de ver um botão quebrado (Risco #3 da story).
+        let downloadDocx: ReturnType<typeof criarDownloadToken> | null = null
+        try {
+            await gerarEArmazenarDocxCurriculo(supabase, talentId, values)
+            downloadDocx = criarDownloadToken(talentId, secret)
+            const { error: tokenDocxErr } = await supabase
+                .from("empregabilidade_curriculo_download_tokens")
+                .insert({
+                    token_hash: downloadDocx.tokenHash,
+                    talent_id: talentId,
+                    expires_at: downloadDocx.expiresAt,
+                    tipo: "docx",
+                })
+            if (tokenDocxErr) throw tokenDocxErr
+        } catch (docxErr) {
+            console.warn("[curriculo/publico] Falha ao gerar/armazenar DOCX:", docxErr)
+            downloadDocx = null
+        }
+
         // SQS-60 (AC3/AC4): só dispara na 1ª vez (talent.email_enviado_em ainda
         // null) — edições seguintes com o checkbox marcado não reenviam.
         // Best-effort: falha no email nunca derruba o salvamento do currículo
@@ -185,6 +208,7 @@ export async function POST(request: NextRequest) {
                 token_hash: download.tokenHash,
                 talent_id: talentId,
                 expires_at: download.expiresAt,
+                tipo: "pdf",
             })
 
         if (tokenErr) throw tokenErr
@@ -213,6 +237,7 @@ export async function POST(request: NextRequest) {
             curriculoId: curriculo.id,
             talentId,
             downloadUrl: download.url,
+            docxDownloadUrl: downloadDocx?.url,
         }))
     } catch (err: unknown) {
         console.error("[curriculo/publico] Erro:", err)
