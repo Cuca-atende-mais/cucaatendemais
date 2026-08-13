@@ -17,6 +17,7 @@ import {
     Loader2,
     Plus,
     Save,
+    Sparkles,
     Trash2,
     User,
     Wrench,
@@ -116,12 +117,16 @@ function CurriculoPublicoContent() {
     const [linkInvalido, setLinkInvalido] = useState(false)
     const [saving, setSaving] = useState(false)
     const [downloadUrl, setDownloadUrl] = useState("")
+    // SQS-62: 3 habilidades em texto livre que a IA usa pra montar o texto
+    // de apresentação — não fazem parte do CvDados, são só insumo do botão.
+    const [habilidadesIA, setHabilidadesIA] = useState(["", "", ""])
+    const [gerandoApresentacao, setGerandoApresentacao] = useState(false)
 
     // Nome já vem preenchido (coletado no WhatsApp antes do link ser emitido).
     // Telefone e os demais campos ficam em branco: quem abre o link pode estar
     // usando um celular diferente do número que deve constar no currículo —
     // decisão do Junior, 2026-08-12.
-    const { control, handleSubmit, register, reset, watch } = useForm<CvDados>({
+    const { control, handleSubmit, register, reset, watch, setValue, getValues } = useForm<CvDados>({
         defaultValues: {
             ...defaultValues,
             nome: searchParams.get("nome") || "",
@@ -144,6 +149,37 @@ function CurriculoPublicoContent() {
         validate()
         return () => { cancelled = true }
     }, [searchParams])
+
+    // SQS-62: gera o texto de apresentação a partir das 3 habilidades. Se já
+    // houver texto no campo, pede confirmação antes de sobrescrever (AC3).
+    const gerarApresentacaoComIA = async () => {
+        const habilidadesPreenchidas = habilidadesIA.map(h => h.trim()).filter(Boolean)
+        if (habilidadesPreenchidas.length === 0) {
+            toast.error("Informe ao menos 1 habilidade pra IA usar.")
+            return
+        }
+        const textoAtual = getValues("apresentacao")
+        if (textoAtual?.trim() && !window.confirm("Já existe um texto de apresentação. Substituir pelo texto gerado pela IA?")) {
+            return
+        }
+        setGerandoApresentacao(true)
+        try {
+            const res = await fetch("/api/empregabilidade/curriculo/gerar-apresentacao", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ habilidades: habilidadesPreenchidas, link_params: linkParams }),
+            })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
+            setValue("apresentacao", data.apresentacao, { shouldDirty: true })
+            toast.success("Texto gerado! Você pode editar à vontade antes de salvar.")
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Não foi possível gerar o texto agora."
+            toast.error(message)
+        } finally {
+            setGerandoApresentacao(false)
+        }
+    }
 
     const onSubmit = async (values: CvDados) => {
         if (!values.nome || !values.telefone) {
@@ -266,6 +302,37 @@ function CurriculoPublicoContent() {
                                 tenha trabalhado com carteira assinada ou não tenha curso na área. Fale das suas
                                 habilidades, do seu jeito de trabalhar e do que você tem vontade de aprender.
                             </Dica>
+                        </div>
+
+                        {/* SQS-62: não sabe o que escrever? A IA monta um texto a partir de até 3
+                            habilidades, usando só o que o candidato informou aqui. */}
+                        <div className="rounded-lg border border-dashed border-cuca-blue/40 bg-sky-50/50 p-3 space-y-2">
+                            <Label className="text-sm">Não sabe o que escrever? Deixe a IA te ajudar</Label>
+                            <Dica>Digite até 3 habilidades que você sabe fazer (uma palavra ou frase curta em cada) e a IA monta um texto de apresentação pra você — depois é só editar à vontade.</Dica>
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                {[0, 1, 2].map(i => (
+                                    <Input
+                                        key={i}
+                                        value={habilidadesIA[i]}
+                                        onChange={e => {
+                                            const novas = [...habilidadesIA]
+                                            novas[i] = e.target.value
+                                            setHabilidadesIA(novas)
+                                        }}
+                                        placeholder={`Habilidade ${i + 1}`}
+                                    />
+                                ))}
+                            </div>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="border-cuca-blue text-cuca-blue hover:bg-sky-100"
+                                disabled={gerandoApresentacao}
+                                onClick={gerarApresentacaoComIA}
+                            >
+                                {gerandoApresentacao ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                                Gerar com IA
+                            </Button>
                         </div>
                     </Section>
 

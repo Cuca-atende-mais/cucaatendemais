@@ -17,7 +17,7 @@ import {
 import {
     ChevronDown, ChevronUp, Plus, Trash2, Save, Printer,
     ArrowLeft, Loader2, User, Briefcase, GraduationCap,
-    BookOpen, Wrench, Link2, Search, FileText,
+    BookOpen, Wrench, Link2, Search, FileText, Sparkles,
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { differenceInMonths, parse } from "date-fns"
@@ -158,7 +158,12 @@ export default function CriarCurriculoEditorPage() {
     const [vagaLoading, setVagaLoading] = useState(false)
     const [vinculando, setVinculando] = useState<string | null>(null)
 
-    const { register, control, handleSubmit, reset, watch } = useForm<CvForm>({
+    // SQS-62: mesmo botão de IA do formulário público, pra agilizar quando a
+    // equipe do CUCA digita o currículo por alguém.
+    const [habilidadesIA, setHabilidadesIA] = useState(["", "", ""])
+    const [gerandoApresentacao, setGerandoApresentacao] = useState(false)
+
+    const { register, control, handleSubmit, reset, watch, setValue, getValues } = useForm<CvForm>({
         defaultValues: {
             nome: "", endereco: "", telefone: "", email: "", linkedin: "", portfolio: "",
             apresentacao: "", objetivo: "",
@@ -221,6 +226,39 @@ export default function CriarCurriculoEditorPage() {
         init()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [talentId])
+
+    // SQS-62: gera o texto de apresentação a partir de até 3 habilidades.
+    // Sessão autenticada cobre a autorização — sem link assinado nem
+    // rate-limit adicional aqui (rota diferencia pela ausência de
+    // `link_params` no body).
+    const gerarApresentacaoComIA = async () => {
+        const habilidadesPreenchidas = habilidadesIA.map(h => h.trim()).filter(Boolean)
+        if (habilidadesPreenchidas.length === 0) {
+            toast.error("Informe ao menos 1 habilidade pra IA usar.")
+            return
+        }
+        const textoAtual = getValues("apresentacao")
+        if (textoAtual?.trim() && !window.confirm("Já existe um texto de apresentação. Substituir pelo texto gerado pela IA?")) {
+            return
+        }
+        setGerandoApresentacao(true)
+        try {
+            const res = await fetch("/api/empregabilidade/curriculo/gerar-apresentacao", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ habilidades: habilidadesPreenchidas }),
+            })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
+            setValue("apresentacao", data.apresentacao, { shouldDirty: true })
+            toast.success("Texto gerado! Você pode editar à vontade antes de salvar.")
+        } catch (err: unknown) {
+            const message = getErrorMessage(err, "Não foi possível gerar o texto agora.")
+            toast.error(message)
+        } finally {
+            setGerandoApresentacao(false)
+        }
+    }
 
     // ── Salvar currículo + upsert talent_bank (RN1) ──────────────────────────
 
@@ -544,6 +582,39 @@ export default function CriarCurriculoEditorPage() {
                         <p className="text-xs text-muted-foreground">
                             Este texto aparece no topo do currículo, antes do objetivo. Seja específico e objetivo.
                         </p>
+                    </div>
+
+                    {/* SQS-62: mesmo botão de IA do formulário público — agiliza quando o
+                        candidato dita as habilidades e a equipe monta o texto na hora. */}
+                    <div className="rounded-lg border border-dashed border-primary/40 bg-muted/30 p-3 space-y-2">
+                        <Label className="text-sm">Gerar com IA a partir de habilidades</Label>
+                        <p className="text-xs text-muted-foreground">
+                            Digite até 3 habilidades do candidato e a IA monta um rascunho do texto de
+                            apresentação. Depois é só ajustar.
+                        </p>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                            {[0, 1, 2].map(i => (
+                                <Input
+                                    key={i}
+                                    value={habilidadesIA[i]}
+                                    onChange={e => {
+                                        const novas = [...habilidadesIA]
+                                        novas[i] = e.target.value
+                                        setHabilidadesIA(novas)
+                                    }}
+                                    placeholder={`Habilidade ${i + 1}`}
+                                />
+                            ))}
+                        </div>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            disabled={gerandoApresentacao}
+                            onClick={gerarApresentacaoComIA}
+                        >
+                            {gerandoApresentacao ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                            Gerar com IA
+                        </Button>
                     </div>
                 </Section>
 
