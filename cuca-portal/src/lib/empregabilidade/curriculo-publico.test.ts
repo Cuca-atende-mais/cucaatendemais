@@ -65,6 +65,23 @@ describe("curriculo publico", () => {
         expect(serializado).not.toContain("/empregabilidade/print")
     })
 
+    it("SQS-63: inclui docx_url só quando a geração do DOCX deu certo", () => {
+        const semDocx = criarRespostaCurriculoPublico({
+            curriculoId: "curriculo-a",
+            talentId: "talent-a",
+            downloadUrl: "/api/empregabilidade/curriculo/download?token=one-use-pdf",
+        })
+        expect(semDocx).not.toHaveProperty("docx_url")
+
+        const comDocx = criarRespostaCurriculoPublico({
+            curriculoId: "curriculo-a",
+            talentId: "talent-a",
+            downloadUrl: "/api/empregabilidade/curriculo/download?token=one-use-pdf",
+            docxDownloadUrl: "/api/empregabilidade/curriculo/download?token=one-use-docx",
+        })
+        expect(comDocx.docx_url).toBe("/api/empregabilidade/curriculo/download?token=one-use-docx")
+    })
+
     it("preserva o formato CvDados usado pelo PDF", () => {
         const dados = normalizarCvDados({ nome: " Maria ", telefone: "+55 85 99999-9999" }, {
             nome: "",

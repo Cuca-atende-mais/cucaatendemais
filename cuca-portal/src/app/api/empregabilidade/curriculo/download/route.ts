@@ -35,31 +35,44 @@ export async function GET(request: NextRequest) {
         )
 
         if (consumeErr) throw consumeErr
-        const consumedTalentId = Array.isArray(consumed) ? consumed[0]?.talent_id : null
-        if (consumedTalentId !== talentId) {
+        const linha = Array.isArray(consumed) ? consumed[0] : null
+        if (linha?.talent_id !== talentId) {
             return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
         }
 
+        // SQS-63: cada token já sabe, desde que foi emitido, se autoriza o
+        // PDF ou o DOCX (coluna `tipo`) — o candidato pode ter os dois links
+        // na tela ao mesmo tempo, cada um de uso único e válido só pro seu
+        // próprio arquivo.
+        const tipo = linha?.tipo === "docx" ? "docx" : "pdf"
+        const coluna = tipo === "docx" ? "arquivo_docx_url" : "arquivo_cv_url"
+
         const { data: talent, error: talentErr } = await supabase
             .from("talent_bank")
-            .select("arquivo_cv_url")
+            .select(coluna)
             .eq("id", talentId)
             .single()
 
-        if (talentErr || !talent?.arquivo_cv_url) {
+        const arquivoUrl = (talent as Record<string, string | null> | null)?.[coluna] || null
+        if (talentErr || !arquivoUrl) {
             return NextResponse.json({ error: "Currículo não encontrado." }, { status: 404 })
         }
 
-        const pdfRes = await fetch(talent.arquivo_cv_url)
-        if (!pdfRes.ok || !pdfRes.body) {
-            return NextResponse.json({ error: "Não foi possível carregar o PDF." }, { status: 502 })
+        const arquivoRes = await fetch(arquivoUrl)
+        if (!arquivoRes.ok || !arquivoRes.body) {
+            return NextResponse.json({ error: "Não foi possível carregar o arquivo." }, { status: 502 })
         }
 
-        return new NextResponse(pdfRes.body, {
+        const contentType = tipo === "docx"
+            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : "application/pdf"
+        const filename = tipo === "docx" ? `curriculo-${talentId}.docx` : `curriculo-${talentId}.pdf`
+
+        return new NextResponse(arquivoRes.body, {
             status: 200,
             headers: {
-                "Content-Type": "application/pdf",
-                "Content-Disposition": `attachment; filename="curriculo-${talentId}.pdf"`,
+                "Content-Type": contentType,
+                "Content-Disposition": `attachment; filename="${filename}"`,
                 "Cache-Control": "no-store",
             },
         })

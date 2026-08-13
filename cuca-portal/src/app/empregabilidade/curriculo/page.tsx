@@ -117,10 +117,18 @@ function CurriculoPublicoContent() {
     const [linkInvalido, setLinkInvalido] = useState(false)
     const [saving, setSaving] = useState(false)
     const [downloadUrl, setDownloadUrl] = useState("")
+    // SQS-63: só fica preenchido quando o backend conseguiu gerar o DOCX —
+    // se a geração falhar, o backend simplesmente não manda docx_url e o
+    // botão não aparece (Risco #3 da story: melhor não mostrar do que
+    // mostrar um botão quebrado).
+    const [downloadUrlDocx, setDownloadUrlDocx] = useState("")
     // SQS-62: 3 habilidades em texto livre que a IA usa pra montar o texto
     // de apresentação — não fazem parte do CvDados, são só insumo do botão.
     const [habilidadesIA, setHabilidadesIA] = useState(["", "", ""])
     const [gerandoApresentacao, setGerandoApresentacao] = useState(false)
+    // SQS-60: opt-in de envio por email — flag local, não faz parte do
+    // CvDados (é instrução de fluxo, não dado de currículo).
+    const [receberEmail, setReceberEmail] = useState(false)
 
     // Nome já vem preenchido (coletado no WhatsApp antes do link ser emitido).
     // Telefone e os demais campos ficam em branco: quem abre o link pode estar
@@ -186,17 +194,23 @@ function CurriculoPublicoContent() {
             toast.error("Informe nome e telefone para salvar o currículo.")
             return
         }
+        if (receberEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email || "")) {
+            toast.error("Informe um e-mail válido para receber o currículo, ou desmarque a opção.")
+            return
+        }
         setSaving(true)
         setDownloadUrl("")
+        setDownloadUrlDocx("")
         try {
             const res = await fetch("/api/empregabilidade/curriculo/publico", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ link_params: linkParams, dados: values }),
+                body: JSON.stringify({ link_params: linkParams, dados: values, receber_email: receberEmail }),
             })
             const data = await res.json().catch(() => ({}))
             if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
             setDownloadUrl(data.pdf_url)
+            if (data.docx_url) setDownloadUrlDocx(data.docx_url)
             reset(values)
             toast.success("Currículo salvo e PDF gerado.")
         } catch (err: unknown) {
@@ -276,9 +290,25 @@ function CurriculoPublicoContent() {
                                 <Dica>Número que a equipe da CUCA pode usar pra te chamar — pode ser diferente do WhatsApp que você está usando agora.</Dica>
                             </div>
                             <div className="space-y-1.5">
-                                <Label>E-mail</Label>
+                                <Label>E-mail{receberEmail ? " *" : ""}</Label>
                                 <Input {...register("email")} type="email" placeholder="email@exemplo.com" />
-                                <Dica>Se você tiver um e-mail, coloque aqui. Não é obrigatório.</Dica>
+                                <Dica>
+                                    {receberEmail
+                                        ? "Obrigatório porque você marcou a opção de receber o currículo por email, abaixo."
+                                        : "Se você tiver um e-mail, coloque aqui. Não é obrigatório."}
+                                </Dica>
+                            </div>
+                            <div className="space-y-1.5 md:col-span-2">
+                                <div className="flex items-start gap-2 rounded-lg border border-dashed border-cuca-blue/40 bg-sky-50/50 p-3">
+                                    <Checkbox
+                                        checked={receberEmail}
+                                        onCheckedChange={v => setReceberEmail(v === true)}
+                                        id="receber-email"
+                                    />
+                                    <Label htmlFor="receber-email" className="cursor-pointer text-sm font-normal leading-snug">
+                                        Quero receber meu currículo por email também (além do PDF que aparece aqui na tela).
+                                    </Label>
+                                </div>
                             </div>
                             <div className="space-y-1.5">
                                 <Label>LinkedIn</Label>
@@ -583,6 +613,16 @@ function CurriculoPublicoContent() {
                                         Baixar PDF
                                     </a>
                                 </Button>
+                                {/* SQS-63: só aparece se o backend conseguiu gerar o DOCX — nunca
+                                    um botão apontando pra um arquivo que não existe. */}
+                                {downloadUrlDocx ? (
+                                    <Button asChild variant="outline" className="w-full border-cuca-blue text-cuca-blue hover:bg-sky-100">
+                                        <a href={downloadUrlDocx}>
+                                            <FileText className="mr-2 h-4 w-4" />
+                                            Baixar em Word (editável)
+                                        </a>
+                                    </Button>
+                                ) : null}
                                 {/* O link foi aberto de dentro do WhatsApp (in-app browser) — só
                                     volta pra conversa que já estava aberta, sem precisar saber o
                                     número do bot (decisão do Junior, 2026-08-13). */}
