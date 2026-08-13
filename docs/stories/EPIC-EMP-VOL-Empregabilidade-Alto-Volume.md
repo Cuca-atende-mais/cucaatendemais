@@ -63,7 +63,7 @@ Registradas aqui porque valem para **todas** as stories do épico:
 | **SQS-57** | Currículo estruturado: geração de PDF + entrada na triagem por skills | M | — (fundação) | ✅ Done |
 | **SQS-58** | Currículo por autoatendimento via link público seguro | M-L | **SQS-57 (bloqueante)** | Draft |
 | **SQS-59** | Envio de currículos em lote para a empresa | S-M | SQS-57 (para anexar CV da plataforma) | ⚠️ **não escrita** — pendente de decisão do Junior sobre estratégia de anexos |
-| **SQS-60** | Envio do currículo por email (opt-in do candidato) | P | SQS-58 | Ready |
+| **SQS-60** | Envio do currículo por email (opt-in do candidato) | P | SQS-58 | InReview |
 | **SQS-61** | Dicas de preenchimento por campo no formulário público | P | SQS-58 | InReview |
 | **SQS-62** | IA gera "Texto de Apresentação" a partir de habilidades | M | SQS-58, SQS-61 | InReview |
 | **SQS-63** | Download do currículo em DOCX (candidato) | P-M | SQS-58 | Ready |

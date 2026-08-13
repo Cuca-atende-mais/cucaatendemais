@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { Resend } from "resend"
 import { parseLinkParams, verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 import { gerarEArmazenarPdfCurriculo } from "@/lib/empregabilidade/curriculo-pdf-service"
 import {
@@ -9,6 +10,36 @@ import {
     normalizarCvDados,
 } from "@/lib/empregabilidade/curriculo-publico"
 import type { CvDados } from "@/lib/empregabilidade/curriculo-tipos"
+
+// SQS-60: e-mail simples de confirmação com o PDF anexado, só quando o
+// candidato marca o opt-in e só na 1ª vez que o currículo é salvo (controlado
+// por talent_bank.email_enviado_em). Mesmo remetente/domínio verificado já
+// usado em api/empregabilidade/enviar-cv/route.ts — não inventa um novo.
+async function enviarEmailConfirmacao(params: {
+    nome: string
+    email: string
+    pdfBuffer: Buffer
+}): Promise<void> {
+    const resend = new Resend(process.env.RESEND_API_KEY!)
+    await resend.emails.send({
+        from: "CUCA Empregabilidade <noreply@cucaatendemais.com.br>",
+        to: params.email,
+        subject: "Seu currículo foi salvo — Rede CUCA",
+        attachments: [{ filename: "curriculo.pdf", content: params.pdfBuffer }],
+        html: `
+            <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #333;">
+                <div style="background: #0066cc; padding: 24px; border-radius: 8px 8px 0 0;">
+                    <h1 style="color: white; margin: 0; font-size: 20px;">Currículo salvo com sucesso</h1>
+                </div>
+                <div style="background: #f9f9f9; padding: 24px; border-radius: 0 0 8px 8px; border: 1px solid #e0e0e0;">
+                    <p>Olá, <strong>${params.nome}</strong>!</p>
+                    <p>Seu currículo foi cadastrado no banco de talentos da Rede CUCA e já concorre às oportunidades compatíveis com o seu perfil. Em anexo está o PDF, para você guardar.</p>
+                    <p style="color: #666; font-size: 13px;">Assim que surgir uma vaga compatível, nossa equipe entra em contato pelo WhatsApp.</p>
+                </div>
+            </div>
+        `,
+    })
+}
 
 export async function POST(request: NextRequest) {
     const secret = process.env.EMPREGABILIDADE_LINK_SECRET || ""
@@ -46,6 +77,15 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: "Nome e telefone são obrigatórios." }, { status: 400 })
         }
 
+        // SQS-60: opt-in de envio por email — só exige/valida o campo quando
+        // o candidato marca o checkbox (AC1/AC2). Desmarcado, email continua
+        // opcional como sempre foi.
+        const receberEmail = body.receber_email === true
+        const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        if (receberEmail && !EMAIL_REGEX.test(values.email || "")) {
+            return NextResponse.json({ error: "Informe um e-mail válido para receber o currículo." }, { status: 400 })
+        }
+
         // Telefone do formulário NÃO precisa bater com o telefone de origem do
         // link — o candidato pode montar o currículo a partir de um WhatsApp
         // diferente do número que deve constar no currículo (decisão do Junior,
@@ -65,7 +105,7 @@ export async function POST(request: NextRequest) {
 
         const { data: talent, error: talentErr } = await supabase
             .from("talent_bank")
-            .select("id")
+            .select("id, email_enviado_em")
             .eq("id", talentId)
             .single()
 
@@ -117,8 +157,27 @@ export async function POST(request: NextRequest) {
 
         if (talentUpdateErr) throw talentUpdateErr
 
-        await gerarEArmazenarPdfCurriculo(supabase, talentId, values)
+        const pdfResultado = await gerarEArmazenarPdfCurriculo(supabase, talentId, values)
         const download = criarDownloadToken(talentId, secret)
+
+        // SQS-60 (AC3/AC4): só dispara na 1ª vez (talent.email_enviado_em ainda
+        // null) — edições seguintes com o checkbox marcado não reenviam.
+        // Best-effort: falha no email nunca derruba o salvamento do currículo
+        // (AC5), mesmo princípio de resiliência do PDF.
+        if (receberEmail && !talent.email_enviado_em) {
+            try {
+                const pdfRes = await fetch(pdfResultado.url)
+                if (!pdfRes.ok) throw new Error(`HTTP ${pdfRes.status}`)
+                const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer())
+                await enviarEmailConfirmacao({ nome: values.nome, email: values.email, pdfBuffer })
+                await supabase
+                    .from("talent_bank")
+                    .update({ email_enviado_em: now })
+                    .eq("id", talentId)
+            } catch (emailErr) {
+                console.warn("[curriculo/publico] Falha ao enviar email de confirmação:", emailErr)
+            }
+        }
 
         const { error: tokenErr } = await supabase
             .from("empregabilidade_curriculo_download_tokens")

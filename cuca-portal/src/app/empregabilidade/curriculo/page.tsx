@@ -121,6 +121,9 @@ function CurriculoPublicoContent() {
     // de apresentação — não fazem parte do CvDados, são só insumo do botão.
     const [habilidadesIA, setHabilidadesIA] = useState(["", "", ""])
     const [gerandoApresentacao, setGerandoApresentacao] = useState(false)
+    // SQS-60: opt-in de envio por email — flag local, não faz parte do
+    // CvDados (é instrução de fluxo, não dado de currículo).
+    const [receberEmail, setReceberEmail] = useState(false)
 
     // Nome já vem preenchido (coletado no WhatsApp antes do link ser emitido).
     // Telefone e os demais campos ficam em branco: quem abre o link pode estar
@@ -186,13 +189,17 @@ function CurriculoPublicoContent() {
             toast.error("Informe nome e telefone para salvar o currículo.")
             return
         }
+        if (receberEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email || "")) {
+            toast.error("Informe um e-mail válido para receber o currículo, ou desmarque a opção.")
+            return
+        }
         setSaving(true)
         setDownloadUrl("")
         try {
             const res = await fetch("/api/empregabilidade/curriculo/publico", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ link_params: linkParams, dados: values }),
+                body: JSON.stringify({ link_params: linkParams, dados: values, receber_email: receberEmail }),
             })
             const data = await res.json().catch(() => ({}))
             if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
@@ -276,9 +283,25 @@ function CurriculoPublicoContent() {
                                 <Dica>Número que a equipe da CUCA pode usar pra te chamar — pode ser diferente do WhatsApp que você está usando agora.</Dica>
                             </div>
                             <div className="space-y-1.5">
-                                <Label>E-mail</Label>
+                                <Label>E-mail{receberEmail ? " *" : ""}</Label>
                                 <Input {...register("email")} type="email" placeholder="email@exemplo.com" />
-                                <Dica>Se você tiver um e-mail, coloque aqui. Não é obrigatório.</Dica>
+                                <Dica>
+                                    {receberEmail
+                                        ? "Obrigatório porque você marcou a opção de receber o currículo por email, abaixo."
+                                        : "Se você tiver um e-mail, coloque aqui. Não é obrigatório."}
+                                </Dica>
+                            </div>
+                            <div className="space-y-1.5 md:col-span-2">
+                                <div className="flex items-start gap-2 rounded-lg border border-dashed border-cuca-blue/40 bg-sky-50/50 p-3">
+                                    <Checkbox
+                                        checked={receberEmail}
+                                        onCheckedChange={v => setReceberEmail(v === true)}
+                                        id="receber-email"
+                                    />
+                                    <Label htmlFor="receber-email" className="cursor-pointer text-sm font-normal leading-snug">
+                                        Quero receber meu currículo por email também (além do PDF que aparece aqui na tela).
+                                    </Label>
+                                </div>
                             </div>
                             <div className="space-y-1.5">
                                 <Label>LinkedIn</Label>
