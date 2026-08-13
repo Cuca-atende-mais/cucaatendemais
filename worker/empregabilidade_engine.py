@@ -107,6 +107,12 @@ _ETAPAS_OFERTA_ATENDENTE = {
     "listando_cargos_selecao",
     "aguardando_escolha_unidade",
 }
+_ETAPA_ANTERIOR = {
+    "listou_categorias": "inicio",
+    "listou_vagas": "listou_categorias",
+    "listando_cargos_selecao": "listou_vagas",
+    "aguardando_escolha_unidade": "listou_vagas",
+}
 _RESPOSTAS_ENTREVISTA_BINARIA = ("sim", "s", "não", "nao", "n", "✅", "❌")
 _CONFIRMA_ENTREVISTA = ("sim", "s", "✅")
 _ETAPAS_NOTIFY_PORTAL = (
@@ -646,6 +652,13 @@ async def _escape_semantico_ou_none(
             mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
         )
         return True
+    if sem.get("quer_voltar") and etapa in _ETAPA_ANTERIOR:
+        fluxo = await _get_fluxo_async(conversa_id)
+        if await _voltar_etapa_publico(
+            fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+        ):
+            return True
     if sem["quer_sair"]:
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil)
         return True
@@ -714,6 +727,143 @@ async def _registrar_falha_e_oferecer_atendente(
         "falhas_atendente_nome_etapa": etapa,
         "falhas_atendente_etapa": falhas,
     })
+    return False
+
+
+def _limpar_campos_navegacao_publico(fluxo: dict, *, manter_categoria: bool = True) -> dict:
+    novo = _fluxo_sem_falhas_atendente(fluxo)
+    for key in (
+        "mapa_vagas",
+        "ultima_vaga_id",
+        "_vagas_meta",
+        "vaga_id_selecionada",
+        "cargos_disponiveis",
+        "cargos_escolhidos",
+        "unidade_id_escolhida",
+        "unidades_opcoes",
+    ):
+        novo.pop(key, None)
+    if not manter_categoria:
+        novo.pop("categoria_escolhida", None)
+    return novo
+
+
+async def _mostrar_categorias(
+    instance_name: str,
+    token: str,
+    phone: str,
+    conversa_id: str,
+    lead_id: str,
+    mapa_categorias: dict,
+) -> None:
+    linhas = ["💼 *Vagas abertas na Rede CUCA — Escolha uma categoria:*\n"]
+    for k, v in mapa_categorias.items():
+        subcats = ", ".join(vg["titulo"].lower() for vg in v["vagas"][:3])
+        total = len(v["vagas"])
+        linhas.append(
+            f"*{k}.* {v['categoria']} ({subcats}) - ({total} vaga{'s' if total > 1 else ''})"
+        )
+    linhas.append(
+        "\nDigite o *número* da categoria para ver as vagas disponíveis.\n"
+        "Digite *voltar* para ver outras opções.\n"
+        "Ou diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
+    )
+    await _enviar(instance_name, token, phone, "\n".join(linhas), conversa_id=conversa_id, lead_id=lead_id)
+
+
+async def _mostrar_vagas_da_categoria(
+    instance_name: str,
+    token: str,
+    phone: str,
+    conversa_id: str,
+    lead_id: str,
+    cat_data: dict,
+) -> dict:
+    cat_vagas = cat_data["vagas"]  # list of {"id", "titulo", "unidade_destino"}
+    linhas_cat = [f"💼 *{cat_data['categoria']} — Vagas disponíveis:*\n"]
+    mapa_vagas_cat: dict = {}
+    ultima_vaga_id_cat = None
+    for ic, vc in enumerate(cat_vagas, start=1):
+        linhas_cat.append(f"*{ic}.* {vc['titulo']}")
+        mapa_vagas_cat[str(ic)] = vc["id"]
+        ultima_vaga_id_cat = vc["id"]
+    linhas_cat.append(
+        "\nDigite o *número* da vaga para se candidatar.\n"
+        "Digite *voltar* para ver outras opções."
+    )
+    await _enviar(instance_name, token, phone, "\n".join(linhas_cat), conversa_id=conversa_id, lead_id=lead_id)
+    return {
+        "mapa_vagas": mapa_vagas_cat,
+        "ultima_vaga_id": ultima_vaga_id_cat,
+        "_vagas_meta": {vc["id"]: vc for vc in cat_vagas},
+        "categoria_escolhida": cat_data,
+    }
+
+
+async def _voltar_etapa_publico(
+    *,
+    fluxo: dict,
+    etapa: str,
+    conversa_id: str,
+    instance_name: str,
+    token: str,
+    phone: str,
+    lead_id: str,
+) -> bool:
+    etapa_anterior = _ETAPA_ANTERIOR.get(etapa)
+    if not etapa_anterior:
+        return False
+
+    if etapa_anterior == "inicio":
+        await _mostrar_menu_opcoes(instance_name, token, phone, conversa_id, lead_id)
+        await _set_fluxo_async(conversa_id, {
+            "perfil": "publico",
+            "etapa": "inicio",
+            "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+            "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
+        })
+        return True
+
+    if etapa_anterior == "listou_categorias":
+        mapa_categorias = fluxo.get("mapa_categorias") or {}
+        if not mapa_categorias:
+            return False
+        await _mostrar_categorias(instance_name, token, phone, conversa_id, lead_id, mapa_categorias)
+        novo_fluxo = _limpar_campos_navegacao_publico(fluxo, manter_categoria=False)
+        await _set_fluxo_async(conversa_id, {
+            **novo_fluxo,
+            "perfil": "publico",
+            "etapa": "listou_categorias",
+            "mapa_categorias": mapa_categorias,
+        })
+        return True
+
+    if etapa_anterior == "listou_vagas":
+        cat_data = fluxo.get("categoria_escolhida")
+        if not cat_data:
+            mapa_categorias = fluxo.get("mapa_categorias") or {}
+            if mapa_categorias:
+                await _mostrar_categorias(instance_name, token, phone, conversa_id, lead_id, mapa_categorias)
+                await _set_fluxo_async(conversa_id, {
+                    **_limpar_campos_navegacao_publico(fluxo, manter_categoria=False),
+                    "perfil": "publico",
+                    "etapa": "listou_categorias",
+                    "mapa_categorias": mapa_categorias,
+                })
+                return True
+            return False
+        meta_vagas = await _mostrar_vagas_da_categoria(
+            instance_name, token, phone, conversa_id, lead_id, cat_data,
+        )
+        novo_fluxo = _limpar_campos_navegacao_publico(fluxo, manter_categoria=True)
+        await _set_fluxo_async(conversa_id, {
+            **novo_fluxo,
+            "perfil": "publico",
+            "etapa": "listou_vagas",
+            **meta_vagas,
+        })
+        return True
+
     return False
 
 
@@ -2154,6 +2304,13 @@ async def _processar_publico(
             "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
         })
 
+    if t_lower in ("voltar", "volta") and etapa in _ETAPA_ANTERIOR:
+        if await _voltar_etapa_publico(
+            fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+        ):
+            return
+
     if etapa == "oferecendo_atendente_humano":
         if t_lower in _AFIRMATIVO_CONFIRMACAO:
             await _acionar_transbordo_empregabilidade(
@@ -2542,6 +2699,7 @@ async def _processar_publico(
             linhas_re = ["Não entendi. Digite o número do cargo de interesse. Ex: *1* ou *1,3*\n"]
             for idx_c, c in enumerate(cargos_disponiveis, start=1):
                 linhas_re.append(f"{idx_c}️⃣ {c.get('titulo', '')}")
+            linhas_re.append("\nDigite *voltar* para ver outras opções.")
             await e("\n".join(linhas_re))
             return
         display_str = ", ".join(cargos_escolhidos)
@@ -2779,22 +2937,13 @@ async def _processar_publico(
         match_cat = re.search(r"\b(\d{1,2})\b", texto)
         if match_cat and match_cat.group(1) in mapa_cat:
             cat_data = mapa_cat[match_cat.group(1)]
-            cat_vagas = cat_data["vagas"]  # list of {"id", "titulo", "unidade_destino"}
-            linhas_cat = [f"💼 *{cat_data['categoria']} — Vagas disponíveis:*\n"]
-            mapa_vagas_cat: dict = {}
-            ultima_vaga_id_cat = None
-            for ic, vc in enumerate(cat_vagas, start=1):
-                linhas_cat.append(f"*{ic}.* {vc['titulo']}")
-                mapa_vagas_cat[str(ic)] = vc["id"]
-                ultima_vaga_id_cat = vc["id"]
-            linhas_cat.append("\nDigite o *número* da vaga para se candidatar.")
-            await e("\n".join(linhas_cat))
+            meta_vagas = await _mostrar_vagas_da_categoria(
+                instance_name, token, phone, conversa_id, lead_id, cat_data,
+            )
             await _set_fluxo_async(conversa_id, {
                 **_fluxo_sem_falhas_atendente(fluxo),
                 "etapa": "listou_vagas",
-                "mapa_vagas": mapa_vagas_cat,
-                "ultima_vaga_id": ultima_vaga_id_cat,
-                "_vagas_meta": {vc["id"]: vc for vc in cat_vagas},
+                **meta_vagas,
             })
         else:
             # Re-exibe o menu de categorias
@@ -2803,15 +2952,7 @@ async def _processar_publico(
                 instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
             ):
                 return
-            linhas_re = ["💼 *Vagas abertas na Rede CUCA — Escolha uma categoria:*\n"]
-            for k, v in mapa_cat.items():
-                subcats_re = ", ".join(vg["titulo"].lower() for vg in v["vagas"][:3])
-                total_re = len(v["vagas"])
-                linhas_re.append(
-                    f"*{k}.* {v['categoria']} ({subcats_re}) - ({total_re} vaga{'s' if total_re > 1 else ''})"
-                )
-            linhas_re.append("\nDigite o número da categoria.")
-            await e("\n".join(linhas_re))
+            await _mostrar_categorias(instance_name, token, phone, conversa_id, lead_id, mapa_cat)
         return
 
     # --- ETAPA: aguardando_escolha_unidade (SQS-41 Ação 2.3) ---
@@ -2843,6 +2984,10 @@ async def _processar_publico(
                         })
                 return
         # Resposta inválida — re-exibe as opções
+        if await _escape_semantico_ou_none(
+            texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+        ):
+            return
         if await _registrar_falha_e_oferecer_atendente(
             fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
             instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
@@ -2853,6 +2998,7 @@ async def _processar_publico(
         ]
         for idx_ru, u in enumerate(unidades_opcoes, start=1):
             linhas_re_unid.append(f"*{idx_ru}.* {u['nome']}")
+        linhas_re_unid.append("\nDigite *voltar* para ver outras opções.")
         await e("\n".join(linhas_re_unid))
         return
 
@@ -2965,7 +3111,10 @@ async def _processar_publico(
                     qtd_txt = f" · {qtd} vagas" if qtd else ""
                     faixa_txt = f" · {faixa}" if faixa else ""
                     linhas_cargos.append(f"*{idx_c}.* {cargo.get('titulo', '')}{qtd_txt}{faixa_txt}")
-                linhas_cargos.append("\nDigite o *número* do cargo. Para mais de um, separe por vírgula (ex: *1,3*).")
+                linhas_cargos.append(
+                    "\nDigite o *número* do cargo. Para mais de um, separe por vírgula (ex: *1,3*).\n"
+                    "Digite *voltar* para ver outras opções."
+                )
                 await _set_fluxo_async(conversa_id, {
                     **fluxo,
                     "etapa": "listando_cargos_selecao",
@@ -2995,6 +3144,7 @@ async def _processar_publico(
             ]
             for idx_u, u in enumerate(unidades_disponiveis, start=1):
                 linhas_unid.append(f"*{idx_u}.* {u['nome']}")
+            linhas_unid.append("\nDigite *voltar* para ver outras opções.")
             if await e("\n".join(linhas_unid)):
                 await _set_fluxo_async(conversa_id, {
                     **fluxo,
@@ -3055,14 +3205,8 @@ async def _processar_publico(
         cat = setores[0] if setores else "Geral"
         categorias_map[cat].append(v)
 
-    linhas = ["💼 *Vagas abertas na Rede CUCA — Escolha uma categoria:*\n"]
     mapa_categorias: dict = {}
     for i, (cat, cat_vagas) in enumerate(categorias_map.items(), start=1):
-        subcats = ", ".join(v["titulo"].lower() for v in cat_vagas[:3])
-        total = len(cat_vagas)
-        linhas.append(
-            f"*{i}.* {cat} ({subcats}) - ({total} vaga{'s' if total > 1 else ''})"
-        )
         mapa_categorias[str(i)] = {
             "categoria": cat,
             "vagas": [
@@ -3071,11 +3215,7 @@ async def _processar_publico(
             ],
         }
 
-    linhas.append(
-        "\nDigite o *número* da categoria para ver as vagas disponíveis.\n"
-        "Ou diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
-    )
-    await e("\n".join(linhas))
+    await _mostrar_categorias(instance_name, token, phone, conversa_id, lead_id, mapa_categorias)
     await _set_fluxo_async(conversa_id, {
         "perfil": "publico",
         "etapa": "listou_categorias",

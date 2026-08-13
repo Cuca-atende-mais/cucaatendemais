@@ -126,7 +126,7 @@ async def avaliar_mensagem_contextual(
     Contrato novo: recebe a frase inteira + perfil já declarado + etapa atual
     + última mensagem do bot, e pede ao GPT-4o-mini um veredito único sobre
     intenção E sinais de escape (quer_sair, mudou_de_assunto,
-    quer_atendente_humano) — diferente do
+    quer_atendente_humano, quer_voltar) — diferente do
     `classificar()` acima (keyword-primeiro, sem contexto de conversa,
     só para a primeira mensagem). É a decisão PRIMÁRIA agora: keywords não são
     mais consultadas antes do LLM. Atalhos determinísticos (upload, dígito
@@ -134,15 +134,16 @@ async def avaliar_mensagem_contextual(
     (AC#12).
 
     Retorna sempre {"intencao", "quer_sair", "mudou_de_assunto",
-    "quer_atendente_humano", "nome"} — nunca propaga exceção; qualquer falha
-    (JSON malformado, API fora do ar, etc.) cai no default seguro (ambíguo,
-    sem sinais de escape) para nunca travar o fluxo.
+    "quer_atendente_humano", "quer_voltar", "nome"} — nunca propaga exceção;
+    qualquer falha (JSON malformado, API fora do ar, etc.) cai no default
+    seguro (ambíguo, sem sinais de escape) para nunca travar o fluxo.
     """
     default = {
         "intencao": "ambiguo",
         "quer_sair": False,
         "mudou_de_assunto": False,
         "quer_atendente_humano": False,
+        "quer_voltar": False,
         "nome": lead_nome,
     }
 
@@ -167,6 +168,7 @@ async def avaliar_mensagem_contextual(
             "quer_sair": bool(data.get("quer_sair", False)),
             "mudou_de_assunto": bool(data.get("mudou_de_assunto", False)),
             "quer_atendente_humano": bool(data.get("quer_atendente_humano", False)),
+            "quer_voltar": bool(data.get("quer_voltar", False)),
             "nome": lead_nome,
         }
     except Exception as exc:
@@ -197,7 +199,10 @@ async def _chamar_gpt_contextual(
                 "coisa), mesmo sem querer encerrar a conversa\n"
                 "- 'quer_atendente_humano': true se o lead pede falar com atendente humano, "
                 "suporte, equipe, pessoa ou ajuda humana, mesmo com erro de digitação "
-                "(ex.: atendendte, atendete, atendente humano)\n\n"
+                "(ex.: atendendte, atendete, atendente humano)\n"
+                "- 'quer_voltar': true se o lead quer voltar um passo, rever opções anteriores "
+                "ou ver outras opções/vagas dentro do mesmo assunto, sem encerrar e sem trocar "
+                "para empresa/banco de talentos\n\n"
                 f"Perfil já declarado: {perfil or 'nenhum'}\n"
                 f"Etapa atual da conversa: {etapa or 'nenhuma'}\n"
                 f"Última mensagem do bot: {ultima_msg_bot or 'nenhuma'}\n"

@@ -190,6 +190,7 @@ def test_contextual_repassa_quer_sair_e_mudou_de_assunto(monkeypatch):
             "quer_sair": False,
             "mudou_de_assunto": True,
             "quer_atendente_humano": False,
+            "quer_voltar": False,
         }
 
     monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
@@ -202,6 +203,7 @@ def test_contextual_repassa_quer_sair_e_mudou_de_assunto(monkeypatch):
         "quer_sair": False,
         "mudou_de_assunto": True,
         "quer_atendente_humano": False,
+        "quer_voltar": False,
         "nome": None,
     }
     assert capturado == {
@@ -238,6 +240,24 @@ def test_contextual_repassa_quer_atendente_humano(monkeypatch):
     assert res["quer_atendente_humano"] is True
 
 
+def test_contextual_repassa_quer_voltar(monkeypatch):
+    """S-EMP-AUD-021: voltar um passo entra no contrato semântico."""
+    import intencao_detector
+
+    async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+        return {
+            "intencao": "ambiguo",
+            "quer_sair": False,
+            "mudou_de_assunto": False,
+            "quer_atendente_humano": False,
+            "quer_voltar": True,
+        }
+
+    monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+    res = asyncio.run(avaliar_mensagem_contextual("quero ver outras vagas"))
+    assert res["quer_voltar"] is True
+
+
 def test_contextual_excecao_vira_default_seguro(monkeypatch):
     """Falha no LLM (rede, JSON malformado, etc.) nunca deve travar o fluxo."""
     import intencao_detector
@@ -252,6 +272,7 @@ def test_contextual_excecao_vira_default_seguro(monkeypatch):
         "quer_sair": False,
         "mudou_de_assunto": False,
         "quer_atendente_humano": False,
+        "quer_voltar": False,
         "nome": None,
     }
 

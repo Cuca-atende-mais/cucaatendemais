@@ -505,13 +505,20 @@ class TestQuerBancoTalentosNegacao:
 # e (b) quer_sair de alta precisão em estados de nome livre.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _mock_gpt(intencao=None, quer_sair=False, mudou_de_assunto=False, quer_atendente_humano=False):
+def _mock_gpt(
+    intencao=None,
+    quer_sair=False,
+    mudou_de_assunto=False,
+    quer_atendente_humano=False,
+    quer_voltar=False,
+):
     async def _fn(texto, perfil, etapa, ultima_msg_bot):
         return {
             "intencao": intencao,
             "quer_sair": quer_sair,
             "mudou_de_assunto": mudou_de_assunto,
             "quer_atendente_humano": quer_atendente_humano,
+            "quer_voltar": quer_voltar,
         }
     return _fn
 
@@ -2674,3 +2681,184 @@ class TestTransbordoHumanoFlexivelAud022:
         assert "falhas_atendente_etapa" not in estado
         assert "falhas_atendente_nome_etapa" not in estado
         assert "seguimos por aqui" in _isola_enviar.call_args.args[3].lower()
+
+
+def _nav_mapa_categorias():
+    return {
+        "1": {
+            "categoria": "Administrativo",
+            "vagas": [
+                {"id": "vaga-1", "titulo": "Auxiliar Administrativo", "unidade_destino": "Barra"},
+                {"id": "vaga-2", "titulo": "Recepcionista", "unidade_destino": "global"},
+            ],
+        },
+        "2": {
+            "categoria": "Serviços Gerais",
+            "vagas": [
+                {"id": "vaga-3", "titulo": "Auxiliar de Serviços Gerais", "unidade_destino": "Barra"},
+            ],
+        },
+    }
+
+
+def _nav_fluxo(etapa: str, extra: dict | None = None):
+    mapa = _nav_mapa_categorias()
+    categoria = mapa["1"]
+    base = {
+        "perfil": "publico",
+        "etapa": etapa,
+        "mapa_categorias": mapa,
+        "categoria_escolhida": categoria,
+        "mapa_vagas": {"1": "vaga-1", "2": "vaga-2"},
+        "ultima_vaga_id": "vaga-2",
+        "_vagas_meta": {v["id"]: v for v in categoria["vagas"]},
+        "historico_vagas_aplicadas": ["vaga-ja-vista"],
+        "nome_candidato_prefill": "Fulano de Tal",
+    }
+    if etapa == "listando_cargos_selecao":
+        base.update({
+            "vaga_id_selecionada": "vaga-1",
+            "cargos_disponiveis": [{"titulo": "Auxiliar Administrativo"}],
+        })
+    if etapa == "aguardando_escolha_unidade":
+        base.update({
+            "vaga_id_selecionada": "vaga-2",
+            "unidades_opcoes": [{"id": "unidade-1", "nome": "CUCA Barra"}],
+        })
+    if extra:
+        base.update(extra)
+    return base
+
+
+class TestVoltarNavegacaoAud021:
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("etapa", "etapa_esperada", "texto_esperado"),
+        [
+            ("listou_categorias", "inicio", "Empresa"),
+            ("listou_vagas", "listou_categorias", "Escolha uma categoria"),
+            ("listando_cargos_selecao", "listou_vagas", "Vagas disponíveis"),
+            ("aguardando_escolha_unidade", "listou_vagas", "Vagas disponíveis"),
+        ],
+    )
+    async def test_voltar_deterministico_nas_quatro_etapas_sem_llm(
+        self, etapa, etapa_esperada, texto_esperado, monkeypatch, _isola_enviar,
+    ):
+        extra = {"categoria_escolhida": None} if etapa == "listou_categorias" else {}
+        estado, fake_get, fake_set = _fluxo_mock(etapa, _nav_fluxo(etapa, extra))
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        import intencao_detector
+
+        async def mock_gpt_nao_deveria_ser_chamado(texto, perfil, etapa, ultima_msg_bot):
+            raise AssertionError("LLM não deveria ser chamado para voltar determinístico")
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt_nao_deveria_ser_chamado)
+
+        await emp._processar_publico(
+            "voltar", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado["etapa"] == etapa_esperada
+        assert estado["historico_vagas_aplicadas"] == ["vaga-ja-vista"]
+        assert texto_esperado.lower() in _isola_enviar.call_args.args[3].lower()
+
+    @pytest.mark.asyncio
+    async def test_regressao_bb65d04a_quero_ver_outras_vagas_volta_para_lista_de_vagas(
+        self, monkeypatch, _isola_enviar,
+    ):
+        estado, fake_get, fake_set = _fluxo_mock(
+            "listando_cargos_selecao",
+            _nav_fluxo("listando_cargos_selecao"),
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_ultima_mensagem_bot", lambda conversa_id: "Digite o número do cargo.")
+
+        import intencao_detector
+        monkeypatch.setattr(
+            intencao_detector,
+            "_chamar_gpt_contextual",
+            _mock_gpt(intencao="ambiguo", quer_voltar=True),
+        )
+
+        await emp._processar_publico(
+            "Quero ver outras vagas", "558599990000", "PHONE_ID", "token", "lead-1",
+            "bb65d04a-4aed-473a-a6f2-4eb88886da68", "Barra",
+        )
+
+        assert estado["etapa"] == "listou_vagas"
+        assert "Não entendi" not in _isola_enviar.call_args.args[3]
+        assert "Auxiliar Administrativo" in _isola_enviar.call_args.args[3]
+        assert "voltar" in _isola_enviar.call_args.args[3].lower()
+
+    @pytest.mark.asyncio
+    async def test_aguardando_escolha_unidade_agora_aceita_voltar_semantico(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock(
+            "aguardando_escolha_unidade",
+            _nav_fluxo("aguardando_escolha_unidade"),
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_ultima_mensagem_bot", lambda conversa_id: "Escolha a unidade.")
+
+        import intencao_detector
+        monkeypatch.setattr(
+            intencao_detector,
+            "_chamar_gpt_contextual",
+            _mock_gpt(intencao="ambiguo", quer_voltar=True),
+        )
+
+        await emp._processar_publico(
+            "quero ver outras opções", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado["etapa"] == "listou_vagas"
+        assert "Auxiliar Administrativo" in _isola_enviar.call_args.args[3]
+
+    @pytest.mark.asyncio
+    async def test_quer_voltar_semantico_fora_do_mapa_nao_intercepta_escape(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_terceiro", {
+            "perfil": "publico",
+            "nome_candidato": "Fulano de Tal",
+            "vaga_id_selecionada": "vaga-1",
+            "banco_talentos": False,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_ultima_mensagem_bot", lambda conversa_id: "Esse currículo é para você?")
+
+        import intencao_detector
+        monkeypatch.setattr(
+            intencao_detector,
+            "_chamar_gpt_contextual",
+            _mock_gpt(intencao="ambiguo", quer_voltar=True),
+        )
+
+        tratado = await emp._escape_semantico_ou_none(
+            "quero voltar", "publico", "confirmando_terceiro",
+            "conv-1", "558599990000", "PHONE_ID", "token", "lead-1", "Barra",
+        )
+
+        assert tratado is False
+        assert estado["etapa"] == "confirmando_terceiro"
+        _isola_enviar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_telas_extraidas_exibem_rodape_voltar(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("listou_categorias", {
+            "perfil": "publico",
+            "mapa_categorias": _nav_mapa_categorias(),
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico(
+            "1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado["etapa"] == "listou_vagas"
+        assert estado["categoria_escolhida"]["categoria"] == "Administrativo"
+        assert "voltar" in _isola_enviar.call_args.args[3].lower()
