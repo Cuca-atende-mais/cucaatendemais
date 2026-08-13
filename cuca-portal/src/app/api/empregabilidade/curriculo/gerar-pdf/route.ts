@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { createClient as createServerClient } from "@/lib/supabase/server"
 import { gerarEArmazenarPdfCurriculo } from "@/lib/empregabilidade/curriculo-pdf-service"
 import type { CvDados } from "@/lib/empregabilidade/curriculo-tipos"
 
@@ -8,12 +9,16 @@ import type { CvDados } from "@/lib/empregabilidade/curriculo-tipos"
 // salvar_curriculo_estruturado (AC1), e (2) o botão manual "Gerar PDF" do
 // Banco de Talentos para os currículos legados sem arquivo (AC8).
 //
-// Convenção de auth: segue o mesmo padrão hoje em vigor nas demais rotas de
-// /api/empregabilidade/* (service-role client, sem checagem de sessão aqui —
-// a rota é tecnicamente pública pelo middleware, como toda essa família de
-// rotas). Isso é uma lacuna pré-existente e sistêmica, não introduzida por
-// esta story; ver Dev Notes da SQS-57.
+// SQS-58: esta rota nao precisa ser publica. O formulario publico chama o
+// servico de PDF internamente apos validar link/telefone/rate-limit; aqui fica
+// somente o fluxo autenticado do dashboard.
 export async function POST(request: NextRequest) {
+    const authClient = await createServerClient()
+    const { data: { user } } = await authClient.auth.getUser()
+    if (!user) {
+        return NextResponse.json({ error: "Não autenticado." }, { status: 401 })
+    }
+
     const supabase = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!

@@ -15,7 +15,7 @@ export async function updateSession(request: NextRequest) {
                     return request.cookies.getAll()
                 },
                 setAll(cookiesToSet) {
-                    cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
+                    cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
                     supabaseResponse = NextResponse.next({
                         request,
                     })
@@ -42,11 +42,12 @@ export async function updateSession(request: NextRequest) {
     // interno (Route Group `(dashboard)`), expondo banco-talentos, candidatos,
     // criar-curriculo etc. sem auth e disparando RLS no talent_bank.
     // ATENÇÃO: só entram aqui rotas que precisam ser acessadas por gente de fora
-    // (candidato, empresa) via link assinado. Currículo NÃO é uma delas — ver abaixo.
+    // (candidato, empresa) via link assinado.
     const publicEmpregabilidadePrefixes = [
         '/empregabilidade/vagas',         // página pública de listagem/visualização externa
         '/empregabilidade/candidatura',   // formulário público de candidatura
         '/empregabilidade/selecao',       // página pública de seleção/evento
+        '/empregabilidade/curriculo',     // SQS-58: formulário público com link assinado
     ]
     // 2026-08-05 — `/empregabilidade/print` REMOVIDO desta whitelist.
     // Estava público por engano: a impressão de currículo só é acionada de dentro

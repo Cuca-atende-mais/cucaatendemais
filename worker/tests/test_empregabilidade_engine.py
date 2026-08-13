@@ -2293,3 +2293,72 @@ def test_consultar_cnpj_mascara_cnpj_em_warning(monkeypatch, caplog):
     texto_logs = "\n".join(record.getMessage() for record in caplog.records)
     assert "123456********" in texto_logs
     assert "12345678000199" not in texto_logs
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SQS-58 (correção) — opção 5 separada da opção 4, sem travar telefone
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestOpcao5CriarCurriculoAgora:
+
+    @pytest.mark.asyncio
+    async def test_opcao_4_continua_indo_para_upload_de_arquivo(self, monkeypatch):
+        """Opção 4 (arquivo pronto + triagem da IA) não pode voltar a apontar
+        para o formulário público — regressão do desvio incorreto corrigido
+        nesta sessão."""
+        estado, fake_get, fake_set = _fluxo_mock("menu_inicial")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_menu_inicial(
+            "4", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "coletando_nome_candidato"
+        assert estado.get("banco_talentos") is True
+
+    @pytest.mark.asyncio
+    async def test_opcao_5_pede_nome_para_montar_curriculo_pelo_link(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("menu_inicial")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_menu_inicial(
+            "5", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "coletando_nome_curriculo_publico"
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "nome completo" in texto_enviado.lower()
+
+    @pytest.mark.asyncio
+    async def test_coletando_nome_curriculo_publico_envia_link_sem_travar_telefone(self, monkeypatch):
+        """Nome vem preenchido no link; telefone e demais campos ficam livres
+        para o candidato preencher no formulário — pode abrir o link de um
+        WhatsApp diferente do número que deve constar no currículo (decisão
+        do Junior, 2026-08-12)."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_curriculo_publico")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "PORTAL_URL", "https://portal.test")
+        monkeypatch.setattr(emp, "_LINK_SECRET", "segredo-teste")
+        monkeypatch.setattr(emp, "_criar_ou_recuperar_talent_bank", lambda nome, telefone: "talent-1")
+
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_publico(
+            "Fulano de Tal", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "/empregabilidade/curriculo?" in texto_enviado
+        assert "talent_id=talent-1" in texto_enviado
+        assert "nome=Fulano" in texto_enviado
+        assert estado.get("etapa") == "aguardando_confirmacao_candidatura"
+        assert estado.get("banco_talentos") is True
+        assert estado.get("talent_id") == "talent-1"
