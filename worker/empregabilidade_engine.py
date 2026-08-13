@@ -3663,7 +3663,15 @@ async def _empregabilidade_notify_tick():
         # --- Notificação de candidatura confirmada (candidato) ---
         elif etapa_c == "aguardando_confirmacao_candidatura":
             candidatura_id = fluxo.get("candidatura_criada_id")
-            if not candidatura_id:
+            # SQS-58 (achado do Junior 2026-08-13): o currículo público não
+            # preenche candidatura_criada_id — preenche curriculo_publico_salvo
+            # (gravado pela rota /api/empregabilidade/curriculo/publico). Sem
+            # isso, o loop proativo nunca disparava pra esse fluxo: o
+            # candidato só recebia a confirmação se mandasse outra mensagem
+            # (fallback reativo em _processar_publico), nunca sozinho ao
+            # voltar pro WhatsApp — o "não volta" reportado.
+            curriculo_publico_salvo = fluxo.get("curriculo_publico_salvo")
+            if not candidatura_id and not curriculo_publico_salvo:
                 continue
             eh_banco_talentos = fluxo.get("banco_talentos", False)
             if eh_banco_talentos:

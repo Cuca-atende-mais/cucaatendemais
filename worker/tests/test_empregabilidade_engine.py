@@ -2411,3 +2411,39 @@ class TestOpcao5CriarCurriculoAgora:
         assert mock_enviar.call_count == 2
         assert estado.get("etapa") == "aguardando_confirmacao_candidatura"
         assert estado.get("link_candidatura", "").startswith("https://portal.test/empregabilidade/curriculo?")
+
+    @pytest.mark.asyncio
+    async def test_notify_tick_dispara_proativo_pro_curriculo_publico_sem_candidatura_id(self, monkeypatch):
+        """Achado do Junior 2026-08-13: o currículo público (SQS-58, opção 5) só
+        preenche curriculo_publico_salvo, nunca candidatura_criada_id — sem esse
+        branch, o loop proativo nunca disparava e o candidato só recebia a
+        confirmação se mandasse outra mensagem no WhatsApp (fallback reativo)."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        fake.conversas = [
+            {
+                "id": "conv-1",
+                "origem_id": "PHONE_ID",
+                "lead_id": "lead-1",
+                "metadata": {"empreg_fluxo": {
+                    "etapa": "aguardando_confirmacao_candidatura",
+                    "banco_talentos": True,
+                    "curriculo_publico_salvo": True,
+                    "talent_id": "talent-1",
+                    "nome_candidato": "Fulano de Tal",
+                }},
+            },
+        ]
+        fake.leads = [{"id": "lead-1", "telefone": "558599990000"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "banco de talentos" in texto_enviado.lower()

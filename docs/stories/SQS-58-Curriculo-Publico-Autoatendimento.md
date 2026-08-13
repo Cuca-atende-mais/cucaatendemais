@@ -516,6 +516,49 @@ botão de download, botão "Voltar para o WhatsApp"). Não revalida a story inte
 **Decisão:** aprovar para seguir ao @devops. O achado do item 6 é uma observação de baixo risco
 para acompanhar, não motivo de bloqueio.
 
+### Revalidação em 2026-08-13 (bugfix real do "não volta" + SQS-61 juntos) — @qa Quinn
+
+**Gate:** PASS
+
+**Escopo desta revisão:** o Junior pediu análise conjunta de dois itens que vão no mesmo lote —
+(1) o bugfix real do "ao encerrar não volta" (loop proativo `_empregabilidade_notify_tick`, não
+o botão "Voltar" que já tinha sido revisado antes) e (2) SQS-61 (dicas de preenchimento). Detalhe
+completo da SQS-61 registrado na própria story dela — aqui só o veredito consolidado.
+
+**7 checks (para os dois itens juntos):**
+
+1. **Code review** — bugfix: 1 guard (`if not candidatura_id and not curriculo_publico_salvo`) +
+   comentário explicando a causa raiz, mesmo padrão dos branches vizinhos no mesmo loop. SQS-61:
+   componente `Dica` reutilizável, inserido de forma consistente nos 23 campos. OK nos dois.
+2. **Testes** — `pytest worker/tests/test_empregabilidade_engine.py` → **77 passed** (1 novo:
+   `test_notify_tick_dispara_proativo_pro_curriculo_publico_sem_candidatura_id`, cobre exatamente
+   o cenário do bug real — `curriculo_publico_salvo=True` sem `candidatura_criada_id`). `eslint`
+   em `curriculo/page.tsx` → limpo. `tsc --noEmit` → mesmos 4 erros pré-existentes do projeto, não
+   relacionados. SQS-61 é conteúdo estático — sem teste automatizado aplicável, coberto por
+   `eslint`/revisão visual do texto (já aprovado pelo Junior antes da implementação).
+3. **Acceptance Criteria** — bugfix não tem AC formal próprio (é correção de causa raiz de um
+   comportamento já esperado). SQS-61: AC1-AC4 todos atendidos (23 dicas, linguagem revisada,
+   formulário interno intacto, rascunho aprovado antes da implementação, não só no PR).
+4. **Regressão** — **verificado via grep, não assumido**: `curriculo_publico_salvo=true` só é
+   gravado por `route.ts:143` (`/api/empregabilidade/curriculo/publico`), que só é alcançável pela
+   etapa `coletando_nome_curriculo_publico` do worker — essa etapa **sempre** grava
+   `banco_talentos: True` antes de emitir o link. Ou seja, o branch `else` do notify (que faria
+   `candidatura_id.replace(...)` e quebraria com `None`) é **inalcançável** nesse cenário — não é
+   suposição, é rastreado ponta a ponta. Os outros branches do mesmo loop
+   (`aguardando_retorno_vaga`, `aguardando_retorno_selecao`, `aguardando_retorno_edicao`) não foram
+   tocados. SQS-61: `criar-curriculo/[id]/page.tsx` (formulário interno) não foi tocado — grep
+   confirma `Dica`/23 ocorrências só em `curriculo/page.tsx` (público).
+5. **Performance** — bugfix: um `dict.get` a mais por iteração do loop (roda a cada 20s sobre no
+   máximo 200 conversas) — desprezível. SQS-61: JSX estático, sem custo de render adicional
+   relevante.
+6. **Segurança** — nenhuma superfície nova nos dois itens. O bugfix só amplia a condição de
+   disparo de uma mensagem que já era enviada (reativamente) — não expõe dado novo, só antecipa a
+   entrega.
+7. **Documentação** — as duas stories atualizadas (Change Log, ACs, File List da SQS-61; nota do
+   bugfix no Change Log da SQS-58).
+
+**Decisão:** **PASS** para os dois itens, seguir ao @devops no mesmo lote.
+
 ---
 
 ## Change Log
@@ -530,3 +573,4 @@ para acompanhar, não motivo de bloqueio.
 | 2026-08-12 | @dev | **Correção de escopo (Junior):** revertido o hijack da opção 4 (voltou a ser upload de arquivo + triagem IA, como era); opção 5 nova criada para o formulário público da SQS-58; `link-assinado` volta a fail-open; telefone do formulário deixa de ser travado ao telefone de origem do link |
 | 2026-08-13 | @dev | **Bugfix pós-produção (achado do Junior em teste real):** candidato escolheu opção 5, informou o nome e o bot "parou". Causa raiz: `ConnectTimeout` transitório pra Graph API ao enviar o link — `_enviar` nunca teve o retorno checado, então a etapa avançava pra `aguardando_confirmacao_candidatura` mesmo com a mensagem nunca tendo saído (confirmado via `mensagens`/`conversas.metadata` em produção, `conversa_id=eae11985-2e0c-4ebf-af97-83c818cd4bd7`). Corrigido com retry único; se as duas tentativas falharem, ainda avança de etapa (com `link_candidatura` salvo) em vez de ficar em `coletando_nome_curriculo_publico`, pra não arriscar interpretar a próxima mensagem do candidato como um nome novo — o fallback de reenvio já existente em `aguardando_confirmacao_candidatura` cobre a entrega. 2 novos testes (76 no total) |
 | 2026-08-13 | @dev | **Ajustes de UX pós-teste (Junior):** (1) máscara automática MM/AAAA nos campos de período de experiência, nos dois formulários (`/empregabilidade/curriculo` público e `criar-curriculo/[id]` interno); (2) botão "Baixar PDF" movido do topo da página pra logo abaixo do botão "Salvar currículo e gerar PDF" (candidato não achava o botão em cima); (3) botão verde "Voltar para o WhatsApp" após o download, usando `window.history.back()` — o link é aberto de dentro do in-app browser do WhatsApp, então volta pra conversa já aberta sem precisar de número fixo (decisão do Junior, confirmada após pergunta de esclarecimento). O "pergunta se quer buscar vaga ou encerrar" ao retornar já era coberto pelo fluxo existente (`aguardando_confirmacao_candidatura`/`curriculo_publico_salvo`), sem necessidade de mudança |
+| 2026-08-13 | @dev | **Bugfix real do "ao encerrar não volta" (achado pós-demo p/ sócio/gestores):** o loop proativo `_empregabilidade_notify_tick` (dispara sem depender de nova mensagem do candidato, mesmo mecanismo usado pra vaga da empresa) só checava `candidatura_criada_id` — o currículo público nunca preenche esse campo, só `curriculo_publico_salvo`. Sem esse branch, a confirmação só chegava se o candidato mandasse outra mensagem (fallback reativo). Corrigido: branch adicionado espelhando o de `candidatura_id`. 1 novo teste (77 no total) |
