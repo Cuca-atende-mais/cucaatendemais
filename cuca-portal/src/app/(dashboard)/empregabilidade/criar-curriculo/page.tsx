@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -68,6 +68,15 @@ function getErrorMessage(error: unknown, fallback: string): string {
 export default function CriarCurriculoListPage() {
     const supabase = createClient()
     const router = useRouter()
+    const searchParams = useSearchParams()
+    // 2026-08-14: currículo recém-salvo no editor (query param ?destaque=<id>),
+    // pra guiar o usuário direto ao ícone de impressão — ver handleSalvar em
+    // criar-curriculo/[id]/page.tsx e DIAGNOSTICO-travamento-salvar-imprimir-
+    // curriculo-2026-08-05.md (por que o editor não abre mais a impressão sozinho).
+    // Copiado pra state (em vez de ler `searchParams` direto na renderização)
+    // porque o param é removido da URL logo abaixo — sem isso o destaque visual
+    // sumiria no mesmo instante em que aparecesse.
+    const [destaque, setDestaque] = useState<string | null>(null)
 
     const [curriculos, setCurriculos] = useState<CurriculoRow[]>([])
     const [loading, setLoading] = useState(true)
@@ -122,6 +131,16 @@ export default function CriarCurriculoListPage() {
     }, [page])
 
     useEffect(() => { fetchCurriculos() }, [fetchCurriculos])
+
+    // Avisa e limpa o param da URL uma vez, pra não reaparecer em reload/paginação.
+    useEffect(() => {
+        const id = searchParams.get("destaque")
+        if (!id) return
+        setDestaque(id)
+        toast.success("Currículo salvo! Clique no ícone de impressão para gerar o PDF.")
+        router.replace("/empregabilidade/criar-curriculo")
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     // ── Criar novo candidato + currículo ──────────────────────────────────────
 
@@ -329,7 +348,10 @@ export default function CriarCurriculoListPage() {
                                             : "—"
                                         const atualizado = format(new Date(c.updated_at), "dd/MM/yyyy", { locale: ptBR })
                                         return (
-                                            <TableRow key={c.id} className="group">
+                                            <TableRow
+                                                key={c.id}
+                                                className={`group ${c.id === destaque ? "bg-cuca-yellow/10 hover:bg-cuca-yellow/15" : ""}`}
+                                            >
                                                 <TableCell>
                                                     <div className="flex items-center gap-3">
                                                         <div className="w-8 h-8 rounded-full bg-cuca-blue/15 text-cuca-blue flex items-center justify-center text-xs font-bold flex-shrink-0">
@@ -365,7 +387,9 @@ export default function CriarCurriculoListPage() {
                                                             <PenLine className="h-4 w-4" />
                                                         </Button>
                                                         <Button
-                                                            variant="ghost" size="icon"
+                                                            variant={c.id === destaque ? "outline" : "ghost"}
+                                                            size="icon"
+                                                            className={c.id === destaque ? "border-cuca-yellow text-cuca-blue animate-pulse" : ""}
                                                             title="Imprimir / Salvar PDF"
                                                             onClick={() => router.push(`/empregabilidade/print/${c.id}`)}
                                                         >

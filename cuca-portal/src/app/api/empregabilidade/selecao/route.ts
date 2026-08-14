@@ -3,6 +3,7 @@
 // NÃO altera nem conflita com /api/empregabilidade/vagas/route.ts
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { createClient as createServerClient } from "@/lib/supabase/server"
 import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 
 export async function POST(request: NextRequest) {
@@ -28,10 +29,30 @@ export async function POST(request: NextRequest) {
         if (!empresa_id) {
             return NextResponse.json({ error: "empresa_id é obrigatório." }, { status: 400 })
         }
-        const linkOk = verificarLinkParams(link_params, { empresa_id })
-        if (!linkOk.valido) {
-            return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
+
+        // 2026-08-14: esta rota é chamada por dois caminhos (achado do Junior — modal
+        // "Novo Processo Seletivo" do dashboard vinha retornando 403 sempre): o
+        // formulário público (worker manda `link_params` do link assinado) e o
+        // SelecaoModal do dashboard interno (`components/empregabilidade/selecao-
+        // modal.tsx`), que nunca enviou `link_params` — ele espera sessão de
+        // colaborador autenticado, não link assinado. Antes, `verificarLinkParams`
+        // era exigido sempre, então a criação pelo dashboard nunca funcionou em
+        // produção (com EMPREGABILIDADE_LINK_SECRET configurado). Mesmo padrão
+        // dual-path já aprovado pelo Junior em 2026-08-13 para
+        // /api/empregabilidade/curriculo/gerar-apresentacao/route.ts.
+        if (link_params) {
+            const linkOk = verificarLinkParams(link_params, { empresa_id })
+            if (!linkOk.valido) {
+                return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
+            }
+        } else {
+            const authClient = await createServerClient()
+            const { data: { user } } = await authClient.auth.getUser()
+            if (!user) {
+                return NextResponse.json({ error: "Não autenticado." }, { status: 401 })
+            }
         }
+
         if (!cargos_lista || !Array.isArray(cargos_lista) || cargos_lista.length === 0) {
             return NextResponse.json({ error: "É necessário informar ao menos um cargo." }, { status: 400 })
         }

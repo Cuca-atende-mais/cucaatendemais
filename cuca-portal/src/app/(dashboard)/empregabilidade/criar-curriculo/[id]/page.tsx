@@ -15,7 +15,7 @@ import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
 import {
-    ChevronDown, ChevronUp, Plus, Trash2, Save, Printer,
+    ChevronDown, ChevronUp, Plus, Trash2, Save,
     ArrowLeft, Loader2, User, Briefcase, GraduationCap,
     BookOpen, Wrench, Link2, Search, FileText, Sparkles,
 } from "lucide-react"
@@ -313,43 +313,24 @@ export default function CriarCurriculoEditorPage() {
         }
     }
 
-    // ── Imprimir (salva antes) ────────────────────────────────────────────────
-
-    const handlePrint = () => {
-        // Abre a aba em branco de forma síncrona, ainda dentro do gesto de clique — depois de um
-        // `await` de rede (o salvamento abaixo), o navegador já não considera mais um `window.open()`
-        // parte da ação do usuário e bloqueia silenciosamente, sem erro visível (ver DIAGNOSTICO-
-        // travamento-salvar-imprimir-curriculo-2026-08-05.md).
-        const printWindow = window.open("", "_blank")
-
-        handleSubmit(async (values) => {
-            const savedId = await onSubmit(values)
-            if (!savedId) {
-                printWindow?.close()
-                return
-            }
-            // Buscar id do currículo recém-salvo
-            const id = savedId || curriculoId || await (async () => {
-                const { data } = await supabase
-                    .from("curriculos")
-                    .select("id")
-                    .eq("talent_id", talentId)
-                    .is("deleted_at", null)
-                    .order("created_at", { ascending: false })
-                    .limit(1)
-                    .maybeSingle()
-                return data?.id
-            })()
-            if (id && printWindow) {
-                printWindow.location.href = `/empregabilidade/print/${id}`
-            } else {
-                printWindow?.close()
-                if (id && !printWindow) {
-                    toast.error("Seu navegador bloqueou a aba de impressão. Permita pop-ups para este site e tente novamente.")
-                }
-            }
-        })()
-    }
+    // ── Salvar e voltar para a lista (2026-08-14) ─────────────────────────────
+    // Antes, "Salvar e Imprimir" abria uma aba em branco e navegava ela via
+    // script depois do `await` de salvar. As duas correções anteriores (ver
+    // DIAGNOSTICO-travamento-salvar-imprimir-curriculo-2026-08-05.md) resolveram
+    // os bugs de então, mas o padrão em si (window.open + redirecionar via JS
+    // sem novo gesto do usuário) caiu na mira da mitigação de "bounce tracking"
+    // do Chrome (aviso no console: "websites without prior user interaction...
+    // Chrome will delete their state") — o navegador passou a tratar isso como
+    // comportamento suspeito e trava/descarta a aba. Solução: eliminar o
+    // window.open() daqui. Salvar aqui só volta pra lista, destacando o
+    // currículo recém-criado; a impressão em si já usa router.push síncrono
+    // (sem gap) no ícone da lista — padrão que nunca teve esse problema.
+    const handleSalvar = handleSubmit(async (values) => {
+        const savedId = await onSubmit(values)
+        if (savedId) {
+            router.push(`/empregabilidade/criar-curriculo?destaque=${savedId}`)
+        }
+    })
 
     // ── Vincular a vaga (RN2) ─────────────────────────────────────────────────
 
@@ -524,12 +505,9 @@ export default function CriarCurriculoEditorPage() {
                     <Button variant="outline" onClick={openVagasDialog}>
                         <Link2 className="h-4 w-4 mr-2 text-cuca-blue" /> Verificar Vagas em Aberto
                     </Button>
-                    <Button variant="outline" onClick={handlePrint}>
-                        <Printer className="h-4 w-4 mr-2" /> Salvar e Imprimir
-                    </Button>
                     <Button
                         className="bg-cuca-blue hover:bg-sky-800 text-white"
-                        onClick={handleSubmit(onSubmit)}
+                        onClick={handleSalvar}
                         disabled={saving}
                     >
                         {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
@@ -538,7 +516,7 @@ export default function CriarCurriculoEditorPage() {
                 </div>
             </div>
 
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            <form onSubmit={handleSalvar} className="space-y-4">
 
                 {/* ── Dados Pessoais ─────────────────────────────────────────── */}
                 <Section icon={<User className="h-4 w-4" />} title="Dados Pessoais">
@@ -870,6 +848,19 @@ export default function CriarCurriculoEditorPage() {
                         <Plus className="h-4 w-4 mr-2" /> Adicionar Habilidade
                     </Button>
                 </Section>
+
+                {/* ── Salvar (rodapé) — mesma ação do botão do topo, pra não obrigar
+                     rolar a página inteira de volta pra cima num formulário longo. ── */}
+                <div className="flex justify-end">
+                    <Button
+                        type="submit"
+                        className="bg-cuca-blue hover:bg-sky-800 text-white"
+                        disabled={saving}
+                    >
+                        {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                        Salvar
+                    </Button>
+                </div>
 
             </form>
 

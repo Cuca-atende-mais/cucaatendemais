@@ -6,7 +6,7 @@
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Vaga } from "@/lib/types/database"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -174,6 +174,11 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                         {isEdit ? "Editar Processo Seletivo" : "Novo Processo Seletivo"}
                         <Badge className="bg-cuca-blue/10 text-cuca-blue border-cuca-blue/30 text-xs ml-1">Evento</Badge>
                     </DialogTitle>
+                    <DialogDescription>
+                        {isEdit
+                            ? "Altere os dados do processo seletivo por evento."
+                            : "Preencha os dados do processo seletivo por evento para a empresa selecionada."}
+                    </DialogDescription>
                 </DialogHeader>
 
                 {fetching ? (
