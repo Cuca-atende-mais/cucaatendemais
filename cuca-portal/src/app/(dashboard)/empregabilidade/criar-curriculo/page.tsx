@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, Suspense } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -65,7 +65,23 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
+// 2026-08-14: useSearchParams() (usado abaixo pro `?destaque=<id>`) exige
+// boundary de Suspense em build estático no Next 16 — sem isso o build
+// quebra com "useSearchParams() should be wrapped in a suspense boundary"
+// (mesmo padrão já usado em empregabilidade/vagas/nova/page.tsx).
 export default function CriarCurriculoListPage() {
+    return (
+        <Suspense fallback={
+            <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-8 w-8 animate-spin text-cuca-blue" />
+            </div>
+        }>
+            <CriarCurriculoListContent />
+        </Suspense>
+    )
+}
+
+function CriarCurriculoListContent() {
     const supabase = createClient()
     const router = useRouter()
     const searchParams = useSearchParams()
