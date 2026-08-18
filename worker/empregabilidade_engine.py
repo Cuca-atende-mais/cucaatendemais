@@ -2540,11 +2540,29 @@ async def _processar_publico(
         vaga_id_ref = fluxo.get("vaga_id_selecionada")
         eh_banco_talentos = fluxo.get("banco_talentos", False)
 
-        await e(
+        # Achado em produção 2026-08-18: mesma classe de bug já corrigida em
+        # coletando_nome_curriculo_publico (2026-08-13, ConnectTimeout esporádico
+        # pra Graph API) — aqui o envio da pergunta "eu ou outra pessoa?" não era
+        # checado, e a etapa avançava pra confirmando_terceiro mesmo se a
+        # mensagem nunca tivesse saído. O candidato ficava esperando uma
+        # pergunta que nunca chegou, sem qualquer sinal de erro (caso real:
+        # lead informou o nome e não recebeu mais nada).
+        # Retry agora é centralizado em `_meta_enviar` (mesmo dia) — cobre
+        # este e todos os outros handlers automaticamente. Aqui só resta
+        # checar o resultado final e logar se, mesmo com o retry interno,
+        # o envio não saiu.
+        enviado = await e(
             f"Obrigado, *{nome_coletado}*!\n\n"
             "Esse currículo é para *você mesmo(a)* ou para outra pessoa?\n\n"
             "Responda *eu* ou *outra pessoa*."
         )
+        if not enviado:
+            logger.error(
+                "[coletando_nome_candidato] Falha ao enviar pergunta eu/outra pessoa (mesmo após retry) para %s — "
+                "avança etapa mesmo assim; qualquer mensagem seguinte do candidato em confirmando_terceiro "
+                "é interpretada como resposta (default 'é pra mim mesmo' se não disser 'outra pessoa').",
+                phone[:6] + "****",
+            )
         await _set_fluxo_async(conversa_id, {
             **fluxo,
             "etapa": "confirmando_terceiro",
@@ -2630,7 +2648,17 @@ async def _processar_publico(
         eh_banco_talentos = fluxo.get("banco_talentos", False)
 
         if any(p in t_lower for p in ("outra", "outro", "outra pessoa", "amigo", "familiar", "parente", "não")):
-            await e("Tudo certo! Informe o *nome completo* da pessoa para quem você está enviando o currículo:")
+            # Mesma mitigação de 2026-08-18 aplicada em coletando_nome_candidato —
+            # sem isso, se o envio falhasse o candidato ficava em
+            # coletando_nome_terceiro sem nunca ter visto o pedido do nome.
+            # Retry agora é centralizado em `_meta_enviar` — aqui só resta logar
+            # se, mesmo com o retry interno, o envio não saiu.
+            enviado = await e("Tudo certo! Informe o *nome completo* da pessoa para quem você está enviando o currículo:")
+            if not enviado:
+                logger.error(
+                    "[confirmando_terceiro] Falha ao enviar pedido de nome do terceiro (mesmo após retry) para %s.",
+                    phone[:6] + "****",
+                )
             await _set_fluxo_async(conversa_id, {
                 **fluxo,
                 "etapa": "coletando_nome_terceiro",
