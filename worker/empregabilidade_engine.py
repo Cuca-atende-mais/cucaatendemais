@@ -928,6 +928,67 @@ async def _quer_sair_semantico(
     return False
 
 
+# S-EMP-AUD-024: nas etapas de coleta de nome (DADO livre), qualquer texto é
+# tratado como nome válido — não dá pra usar o sub-sinal `mudou_de_assunto`
+# do classificador ali (falso-positivo alto em nome incomum, mesmo motivo de
+# `_quer_sair_semantico` acima). Mas frases de troca de rota muito comuns
+# ("quero ver vagas", "sou empresa"...) não são nomes de jeito nenhum — esse
+# fast-path de padrões literais de alta precisão resolve isso SEM tocar no
+# classificador semântico (zero risco de regredir a mitigação já existente
+# pra nome incomum, que continua intocada: só cai aqui se o texto bater
+# exatamente com um destes padrões).
+_FRASES_ROTA_ALTA_PRECISAO_EMPRESA = (
+    "sou empresa", "sou uma empresa", "eu sou empresa", "represento uma empresa",
+    "represento a empresa", "quero divulgar vaga", "quero divulgar uma vaga",
+    "quero cadastrar vaga", "quero cadastrar uma vaga", "sou empregador",
+)
+_FRASES_ROTA_ALTA_PRECISAO_VAGAS = (
+    "ver vagas", "quero ver vagas", "quero ver outras vagas", "outras vagas",
+    "ver outras vagas", "outra vaga", "outras vaga", "quero ver outra vaga",
+    "vagas abertas", "quero ver as vagas", "ver as vagas",
+)
+_FRASES_ROTA_ALTA_PRECISAO_AMBIGUA = ("voltar", "quero voltar", "menu", "menu inicial")
+
+
+def _deteccao_literal_troca_rota(texto: str) -> dict | None:
+    """Reconhece, por comparação literal (sem LLM), frases de troca de rota
+    de alta precisão que não podem ser confundidas com um nome. Retorna um
+    dict no mesmo formato de `avaliar_mensagem_contextual` (pronto pra
+    `_perguntar_confirmacao_troca_rota`) ou None se não bateu com nenhum
+    padrão — nesse caso o chamador segue tratando o texto como nome,
+    normalmente."""
+    t = texto.strip().lower()
+    if t in _FRASES_ROTA_ALTA_PRECISAO_EMPRESA:
+        return {"intencao": "empresa", "quer_sair": False, "mudou_de_assunto": True}
+    if t in _FRASES_ROTA_ALTA_PRECISAO_VAGAS:
+        return {"intencao": "candidato_vaga", "quer_sair": False, "mudou_de_assunto": True}
+    if t in _FRASES_ROTA_ALTA_PRECISAO_AMBIGUA:
+        return {"intencao": "ambiguo", "quer_sair": False, "mudou_de_assunto": True}
+    return None
+
+
+async def _escape_literal_ou_none(
+    texto: str,
+    conversa_id: str,
+    phone: str,
+    instance_name: str,
+    token: str,
+    lead_id: str,
+    unidade_cuca: str = "",
+) -> bool:
+    """Wrapper de conveniência: aplica `_deteccao_literal_troca_rota` e, se
+    bateu, já dispara a pergunta de confirmação de troca de rota (mesmo
+    mecanismo usado pelo classificador semântico). Retorna True se tratou a
+    mensagem — o chamador deve dar `return` em seguida."""
+    sem_literal = _deteccao_literal_troca_rota(texto)
+    if sem_literal is None:
+        return False
+    await _perguntar_confirmacao_troca_rota(
+        sem_literal, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+    )
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Fluxo de EMPRESA
 # ---------------------------------------------------------------------------
@@ -2536,6 +2597,10 @@ async def _processar_publico(
         # incomuns). Checa só quer_sair, de alta precisão, antes de aceitar.
         if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
             return
+        # S-EMP-AUD-024: fast-path literal antes de tratar como nome — ver
+        # `_escape_literal_ou_none`.
+        if await _escape_literal_ou_none(texto, conversa_id, phone, instance_name, token, lead_id, unidade_cuca):
+            return
         nome_coletado = texto.strip()
         vaga_id_ref = fluxo.get("vaga_id_selecionada")
         eh_banco_talentos = fluxo.get("banco_talentos", False)
@@ -2575,6 +2640,9 @@ async def _processar_publico(
     # --- ETAPA: coletando_nome_curriculo_publico (SQS-58, opção 5) ---
     if etapa == "coletando_nome_curriculo_publico":
         if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
+            return
+        # S-EMP-AUD-024: fast-path literal antes de tratar como nome.
+        if await _escape_literal_ou_none(texto, conversa_id, phone, instance_name, token, lead_id, unidade_cuca):
             return
         nome_coletado = texto.strip()
         talent_id = _criar_ou_recuperar_talent_bank(nome_coletado, phone)
@@ -2689,6 +2757,9 @@ async def _processar_publico(
     if etapa == "coletando_nome_terceiro":
         # S-WM-20 Task 5, categoria (b): mesmo tratamento de coletando_nome_candidato.
         if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
+            return
+        # S-EMP-AUD-024: fast-path literal antes de tratar como nome.
+        if await _escape_literal_ou_none(texto, conversa_id, phone, instance_name, token, lead_id, unidade_cuca):
             return
         nome_terceiro = texto.strip()
         vaga_id_ref = fluxo.get("vaga_id_selecionada")
@@ -2810,6 +2881,11 @@ async def _processar_publico(
         # quer_sair, nunca mudou_de_assunto (nome incomum teria falso-positivo
         # alto nesse sinal).
         if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
+            return
+        # S-EMP-AUD-024: fast-path literal antes de tratar como nome — tem
+        # que vir antes da checagem de nome_invalido/tamanho, senão frases
+        # de 2+ palavras ("quero ver vagas") passariam como nome válido.
+        if await _escape_literal_ou_none(texto, conversa_id, phone, instance_name, token, lead_id, unidade_cuca):
             return
 
         texto_limpo = texto.strip()

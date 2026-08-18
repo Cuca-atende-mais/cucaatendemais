@@ -702,6 +702,203 @@ class TestEscapeHatchNomeLivre:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-024 — fast-path literal de troca de rota nas 4 etapas de coleta
+# de nome (DADO livre). Cobre AC1 (frases de alta precisão reroteiam, não são
+# engolidas como nome) e reforça AC2 (nome incomum continua intocado — regra
+# já coberta acima em TestEscapeHatchNomeLivre, aqui só garante que o fast-path
+# não interfere nisso).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestS_EMP_AUD_024EscapeLiteralTrocaRota:
+
+    @pytest.mark.asyncio
+    async def test_coletando_nome_candidato_quero_ver_vagas_reroteia(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "Esse currículo é para" not in texto_enviado  # não engoliu como nome
+        assert "candidatar a uma vaga" in texto_enviado.lower()
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+    @pytest.mark.asyncio
+    async def test_coletando_nome_curriculo_publico_quero_ver_vagas_reroteia(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_curriculo_publico", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "/empregabilidade/curriculo" not in texto_enviado  # não gerou link como se fosse nome
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+    @pytest.mark.asyncio
+    async def test_coletando_nome_terceiro_quero_ver_vagas_reroteia(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_terceiro", {
+            "perfil": "publico", "vaga_id_selecionada": "vaga-1", "banco_talentos": False,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "candidatar a uma vaga" in texto_enviado.lower()
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+    @pytest.mark.asyncio
+    async def test_confirmando_presenca_nome_quero_ver_vagas_reroteia_em_vez_de_virar_nome(self, monkeypatch):
+        """Caso mais sensível: 'quero ver vagas' tem 3 palavras — sem o
+        fast-path, passaria batido pela checagem de nome_invalido (que só
+        rejeita menos de 2 palavras) e seria gravado como se fosse o nome do
+        candidato confirmando presença."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_nome", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 0,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", MagicMock())
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("nome_confirmacao_presenca") is None  # não virou nome
+        assert estado.get("etapa") == "confirmando_troca_rota"
+        assert estado.get("tentativas_confirmacao_presenca", 0) == 0  # não contou como tentativa inválida
+
+    @pytest.mark.asyncio
+    async def test_sou_empresa_reroteia_para_rota_empresa(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "sou empresa", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "divulgar uma vaga" in texto_enviado.lower()
+        assert estado.get("_troca_rota_pendente", {}).get("intencao") == "empresa"
+
+    @pytest.mark.asyncio
+    async def test_voltar_reroteia_com_mensagem_generica(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_terceiro", {
+            "perfil": "publico", "vaga_id_selecionada": "vaga-1", "banco_talentos": False,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "voltar", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "outro assunto" in texto_enviado.lower()
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+    @pytest.mark.asyncio
+    async def test_nome_incomum_com_2_palavras_continua_funcionando_em_confirmando_presenca(self, monkeypatch):
+        """Regressão — garante que o fast-path não bloqueia nome real de 2+
+        palavras (só bate com o conjunto fechado de frases literais)."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_nome", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 0,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", MagicMock())
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "Xisto Wenceslau", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("nome_confirmacao_presenca") == "Xisto Wenceslau"
+        assert estado.get("etapa") == "confirmando_presenca_telefone"
+
+    def test_deteccao_literal_ignora_texto_que_nao_bate_exato(self):
+        """Guard direto na função: substring não é suficiente, precisa bater
+        a frase inteira normalizada — evita falso-positivo em nome que só
+        contém uma dessas palavras (ex.: 'Vagner Voltar' não é 'voltar')."""
+        assert emp._deteccao_literal_troca_rota("Vagner Voltar Souza") is None
+        assert emp._deteccao_literal_troca_rota("Maria das Vagas") is None
+        assert emp._deteccao_literal_troca_rota("voltar") is not None
+        assert emp._deteccao_literal_troca_rota("  Quero Ver Vagas  ") is not None
+
+    @pytest.mark.asyncio
+    async def test_falar_com_atendente_continua_funcionando_em_coletando_nome_candidato(self, monkeypatch, _isola_enviar):
+        """AC3 — o handover por palavra-chave é checado no topo de
+        `processar_mensagem_empregabilidade`, antes de qualquer despacho por
+        etapa (`_processar_publico`/fast-path literal desta story nunca é
+        alcançado). Continua funcionando igual em qualquer uma das 4 etapas
+        de coleta de nome — sem mudança de código aqui, só trava por teste."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        mock_conversas = MagicMock()
+        mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "metadata": {}
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"conversas": mock_conversas}))
+
+        import meta_adapter_inbound
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", AsyncMock(return_value=True))
+
+        await emp.processar_mensagem_empregabilidade(
+            "quero falar com atendente", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3].lower()
+        assert "em breve você será atendido" in texto_enviado
+        assert "Esse currículo é para" not in texto_enviado  # não engoliu como nome
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Achados de auditoria (2026-07-09) — _quer_encerrar por substring sem limite
 # de palavra, sem exceção nenhuma no fluxo de candidato; e negação ignorada em
 # pos_candidatura (mesma classe de bug já corrigida em oferta_banco_talentos).
