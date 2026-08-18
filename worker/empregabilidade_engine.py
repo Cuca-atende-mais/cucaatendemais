@@ -596,20 +596,25 @@ async def _mostrar_menu_opcoes(
     lead_id: str,
     intro: str = "Escolha uma das opções:",
 ) -> None:
-    """Menu numérico de 4 opções, reutilizado pelo branch `ambiguo` de
+    """Menu numérico de 5 opções, reutilizado pelo branch `ambiguo` de
     `_rotear_por_intencao`, pelo bypass global de "menu" e pelo fallback de
     `menu_inicial` — S-WM-20 Task 5 (ajuste 2): antes cada um tinha seu
     próprio texto ligeiramente diferente (ou nenhum), causando comportamento
     inconsistente ("menu" pulava direto pra vagas em vez de reabrir a escolha).
     `intro` permite variar a frase de abertura (ex.: saudação de boas-vindas
-    na 1ª interação vs. "não entendi" numa mensagem ambígua repetida)."""
+    na 1ª interação vs. "não entendi" numa mensagem ambígua repetida).
+
+    S-EMP-AUD-025: copy reescrita a pedido do Junior — separa visualmente a
+    opção 1 (único caminho de empresa) do resto (candidato), com uma linha em
+    branco extra entre elas (em vez do separador de traços original, que
+    quebra estranho em tela pequena de celular)."""
     await _enviar(
         instance_name, token, phone,
         f"{intro}\n\n"
-        "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
-        "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
-        "3️⃣ *Vagas* — Quero ver vagas abertas\n"
-        "4️⃣ *Enviar Currículo* — Quero deixar meu currículo (arquivo pronto) para futuras oportunidades\n"
+        "1️⃣ *Sou Empresa* — Quero divulgar uma vaga ou marcar seleção\n\n\n"
+        "2️⃣ *Verificar como esta minha candidatura* - Quero acompanhar minha candidatura\n\n"
+        "3️⃣ *Ver Vagas Abertas* — Quero ver vagas abertas\n\n"
+        "4️⃣ *Enviar Currículo Banco de Talentos* — Quero deixar meu currículo (arquivo pronto) para futuras oportunidades\n\n"
         "5️⃣ *Criar meu Currículo agora* — Não tenho currículo pronto, quero montar um pelo celular\n\n"
         "Digite *1*, *2*, *3*, *4* ou *5*, ou simplesmente me conte o que você precisa.",
         conversa_id=conversa_id, lead_id=lead_id,
@@ -1346,17 +1351,14 @@ async def _processar_empresa(
             # travava a conversa ao setar etapa="menu_inicial" (match exato,
             # sem entender frase livre). Não define fluxo: a próxima mensagem
             # sempre re-entra na detecção semântica, sem travar.
-            await _enviar(
-                instance_name, token, phone,
-                "Sem problema! 😊 Vamos recomeçar.\n\n"
-                "Como posso te ajudar?\n\n"
-                "1️⃣ *Empresa* — Quero divulgar uma vaga ou marcar seleção\n"
-                "2️⃣ *Candidato* — Quero acompanhar minha candidatura\n"
-                "3️⃣ *Vagas* — Quero ver vagas abertas\n"
-                "4️⃣ *Enviar Currículo* — Quero deixar meu currículo (arquivo pronto) para futuras oportunidades\n"
-                "5️⃣ *Criar meu Currículo agora* — Não tenho currículo pronto, quero montar um pelo celular\n\n"
-                "Responda com o número ou descreva o que precisa.",
-                conversa_id=conversa_id, lead_id=lead_id,
+            # S-EMP-AUD-025: essa era uma 2ª cópia solta do texto do menu,
+            # fora da função centralizada — o mesmo problema que a S-WM-20 já
+            # tinha corrigido uma vez, voltando aqui. Agora chama
+            # `_mostrar_menu_opcoes` (fonte única), prevenindo divergência
+            # futura de novo.
+            await _mostrar_menu_opcoes(
+                instance_name, token, phone, conversa_id, lead_id,
+                intro="Sem problema! 😊 Vamos recomeçar.\n\nComo posso te ajudar?",
             )
             await _set_fluxo_async(conversa_id, {})
             return

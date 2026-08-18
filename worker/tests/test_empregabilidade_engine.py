@@ -407,6 +407,107 @@ class TestFallbackAmbiguoPrimeiroContato:
         assert "1️⃣" in texto_enviado
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-025 — copy do menu principal reescrita (separa Empresa de
+# Candidato), consolidação da 2ª cópia duplicada em aguardando_cnpj.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestS_EMP_AUD_025CopyMenuPrincipal:
+
+    _COPY_FINAL = (
+        "1️⃣ *Sou Empresa* — Quero divulgar uma vaga ou marcar seleção\n\n\n"
+        "2️⃣ *Verificar como esta minha candidatura* - Quero acompanhar minha candidatura\n\n"
+        "3️⃣ *Ver Vagas Abertas* — Quero ver vagas abertas\n\n"
+        "4️⃣ *Enviar Currículo Banco de Talentos* — Quero deixar meu currículo (arquivo pronto) "
+        "para futuras oportunidades\n\n"
+        "5️⃣ *Criar meu Currículo agora* — Não tenho currículo pronto, quero montar um pelo celular\n\n"
+        "Digite *1*, *2*, *3*, *4* ou *5*, ou simplesmente me conte o que você precisa."
+    )
+
+    @pytest.mark.asyncio
+    async def test_texto_exato_da_copy_final_no_menu_inicial(self, monkeypatch):
+        """AC1/AC2 — texto verbatim da versão final da story (seção 2),
+        incluindo a linha em branco dupla entre a opção 1 e a 2, e
+        'Talentos' (não 'Taletos')."""
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._mostrar_menu_opcoes(
+            "PHONE_ID", "token", "558599990000", "conv-1", "lead-1",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert texto_enviado == f"Escolha uma das opções:\n\n{self._COPY_FINAL}"
+        assert "Taletos" not in texto_enviado
+        assert "Talentos" in texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_copia_duplicada_em_aguardando_cnpj_agora_usa_a_mesma_fonte(self, monkeypatch):
+        """AC3 — a 2ª ocorrência (fallback 'não sou empresa' durante coleta
+        de CNPJ) não duplica mais o texto: chama `_mostrar_menu_opcoes`, com
+        a mesma copy final (intro personalizada, resto idêntico)."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        await emp._processar_empresa(
+            "não sou empresa", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert texto_enviado == (
+            "Sem problema! 😊 Vamos recomeçar.\n\nComo posso te ajudar?\n\n" + self._COPY_FINAL
+        )
+        assert estado == {}
+
+    @pytest.mark.asyncio
+    async def test_opcoes_1_2_3_continuam_chamando_o_mesmo_handler(self, monkeypatch):
+        """AC4 — a copy nova não muda quantidade/ordem/roteamento das opções
+        1 (empresa), 2 (candidato) e 3 (vagas), só o texto."""
+        handlers_esperados = {
+            "1": "_processar_empresa",
+            "2": "_processar_candidato",
+            "3": "_processar_publico",
+        }
+        for opcao, nome_handler in handlers_esperados.items():
+            estado, fake_get, fake_set = _fluxo_mock("menu_inicial")
+            monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+            monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+            mock_handler = AsyncMock(return_value=None)
+            monkeypatch.setattr(emp, nome_handler, mock_handler)
+
+            await emp._processar_menu_inicial(
+                opcao, "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+            )
+
+            mock_handler.assert_awaited_once(), f"opção {opcao} não chamou {nome_handler}"
+
+    @pytest.mark.asyncio
+    async def test_opcoes_4_e_5_continuam_indo_pra_etapas_distintas_de_coleta_de_nome(self, monkeypatch):
+        """AC4 — opção 4 (currículo pronto) e 5 (montar currículo) continuam
+        indo pra etapas diferentes entre si (SQS-58), só o texto do menu
+        mudou."""
+        destinos = {
+            "4": "coletando_nome_candidato",
+            "5": "coletando_nome_curriculo_publico",
+        }
+        for opcao, etapa_esperada in destinos.items():
+            estado, fake_get, fake_set = _fluxo_mock("menu_inicial")
+            monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+            monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+            mock_enviar = AsyncMock(return_value=True)
+            monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+            await emp._processar_menu_inicial(
+                opcao, "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+            )
+
+            assert estado.get("etapa") == etapa_esperada, f"opção {opcao} mudou de destino"
+            assert estado.get("perfil") == "publico"
+
+
 class TestMenuInicialFallbackSemantico:
 
     @pytest.mark.asyncio
