@@ -3909,7 +3909,8 @@ async def _empregabilidade_notify_tick():
                 f"📋 *Título:* {vaga_titulo}\n"
                 f"🔢 *Número da vaga:* {numero_ref}\n\n"
                 "Nossa equipe irá revisar e publicar a vaga em breve.\n\n"
-                f"O que deseja fazer agora?\n{_MENU_ACOES_EMPRESA}"
+                f"O que deseja fazer agora?\n{_MENU_ACOES_EMPRESA}",
+                conversa_id=conversa_id, lead_id=lead_id,
             )
             if _ok:
                 await _set_fluxo_async(conversa_id, {
@@ -3938,7 +3939,8 @@ async def _empregabilidade_notify_tick():
                 f"🔢 *Número de referência:* {numero_ref}\n\n"
                 "A seleção já está visível para todas as unidades da rede CUCA. "
                 "Os candidatos poderão se inscrever e a equipe irá gerenciar as candidaturas pelo portal.\n\n"
-                f"O que deseja fazer agora?\n{_MENU_ACOES_EMPRESA}"
+                f"O que deseja fazer agora?\n{_MENU_ACOES_EMPRESA}",
+                conversa_id=conversa_id, lead_id=lead_id,
             )
             if _ok:
                 await _set_fluxo_async(conversa_id, {
@@ -3965,7 +3967,8 @@ async def _empregabilidade_notify_tick():
                 f"✅ *Alterações recebidas com sucesso!*\n\n"
                 f"📋 *Vaga:* {vaga_titulo}\n\n"
                 f"A equipe CUCA {vaga_unidade or unidade_cuca} irá revisar as alterações antes de a vaga voltar a aceitar candidaturas.\n\n"
-                f"O que deseja fazer agora?\n{_MENU_ACOES_EMPRESA}"
+                f"O que deseja fazer agora?\n{_MENU_ACOES_EMPRESA}",
+                conversa_id=conversa_id, lead_id=lead_id,
             )
             if _ok:
                 await _set_fluxo_async(conversa_id, {
@@ -4001,7 +4004,8 @@ async def _empregabilidade_notify_tick():
                     "nossa equipe entrará em contato diretamente por aqui. 🎯\n\n"
                     "Obrigado por confiar na CUCA!\n\n"
                     "Deseja ver as *vagas abertas* ou encerrar por aqui?\n"
-                    "Responda *vagas* para ver oportunidades ou *encerrar*."
+                    "Responda *vagas* para ver oportunidades ou *encerrar*.",
+                    conversa_id=conversa_id, lead_id=lead_id,
                 )
                 if _ok:
                     await _set_fluxo_async(conversa_id, {
@@ -4017,13 +4021,15 @@ async def _empregabilidade_notify_tick():
                     instance_name, token, phone,
                     f"🎉 *Candidatura recebida com sucesso!*\n\n"
                     f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
-                    "Guarde esse número! Com ele você pode verificar o status da sua candidatura a qualquer momento. ✅"
+                    "Guarde esse número! Com ele você pode verificar o status da sua candidatura a qualquer momento. ✅",
+                    conversa_id=conversa_id, lead_id=lead_id,
                 )
                 # S37C-02: Mensagem 2 — oferta de nova candidatura (best-effort)
                 await _enviar(
                     instance_name, token, phone,
                     "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
-                    "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
+                    "Responda *outra* para ver mais vagas ou *encerrar* para finalizar.",
+                    conversa_id=conversa_id, lead_id=lead_id,
                 )
                 # S37C-04/05: salva histórico e prefill somente após envio principal (AC #11)
                 if _ok:

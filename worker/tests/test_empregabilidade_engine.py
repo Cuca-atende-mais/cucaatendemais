@@ -2284,6 +2284,169 @@ class TestBloco6NotifyLoop:
         assert ("leads", "id", ["lead-1"]) in fake.in_calls
         assert mock_enviar.await_count == 1
 
+    # ─────────────────────────────────────────────────────────────────────
+    # S-EMP-AUD-026: as 6 chamadas de _enviar do loop proativo precisam
+    # passar conversa_id/lead_id, senão a mensagem nunca é gravada em
+    # `mensagens` e não aparece no portal, mesmo tendo sido enviada com
+    # sucesso pelo WhatsApp (causa raiz confirmada por leitura de código).
+    # ─────────────────────────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_notify_tick_vaga_criada_passa_conversa_id_e_lead_id(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        fake.conversas = [{
+            "id": "conv-1",
+            "origem_id": "PHONE_ID",
+            "lead_id": "lead-1",
+            "metadata": {"empreg_fluxo": {
+                "etapa": "aguardando_retorno_vaga",
+                "empresa_id": "emp-1",
+                "vaga_criada_id": "00000000-0000-0000-0000-000000000123",
+                "vaga_numero": 7,
+                "vaga_titulo": "Atendente",
+            }},
+        }]
+        fake.leads = [{"id": "lead-1", "telefone": "558599990000"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        _, kwargs = mock_enviar.call_args
+        assert kwargs.get("conversa_id") == "conv-1"
+        assert kwargs.get("lead_id") == "lead-1"
+
+    @pytest.mark.asyncio
+    async def test_notify_tick_selecao_criada_passa_conversa_id_e_lead_id(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        fake.conversas = [{
+            "id": "conv-2",
+            "origem_id": "PHONE_ID",
+            "lead_id": "lead-2",
+            "metadata": {"empreg_fluxo": {
+                "etapa": "aguardando_retorno_selecao",
+                "empresa_id": "emp-2",
+                "vaga_criada_id": "00000000-0000-0000-0000-000000000456",
+                "vaga_numero": 9,
+                "vaga_titulo": "Processo Seletivo Porteiro",
+            }},
+        }]
+        fake.leads = [{"id": "lead-2", "telefone": "558588880000"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        _, kwargs = mock_enviar.call_args
+        assert kwargs.get("conversa_id") == "conv-2"
+        assert kwargs.get("lead_id") == "lead-2"
+
+    @pytest.mark.asyncio
+    async def test_notify_tick_edicao_confirmada_passa_conversa_id_e_lead_id(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        fake.conversas = [{
+            "id": "conv-3",
+            "origem_id": "PHONE_ID",
+            "lead_id": "lead-3",
+            "metadata": {"empreg_fluxo": {
+                "etapa": "aguardando_retorno_edicao",
+                "empresa_id": "emp-3",
+                "vaga_editada_id": "00000000-0000-0000-0000-000000000789",
+                "vaga_editada_titulo": "Atendente",
+                "vaga_editada_unidade": "Pici",
+            }},
+        }]
+        fake.leads = [{"id": "lead-3", "telefone": "558577770000"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        _, kwargs = mock_enviar.call_args
+        assert kwargs.get("conversa_id") == "conv-3"
+        assert kwargs.get("lead_id") == "lead-3"
+
+    @pytest.mark.asyncio
+    async def test_notify_tick_banco_talentos_confirmado_passa_conversa_id_e_lead_id(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        fake.conversas = [{
+            "id": "conv-4",
+            "origem_id": "PHONE_ID",
+            "lead_id": "lead-4",
+            "metadata": {"empreg_fluxo": {
+                "etapa": "aguardando_confirmacao_candidatura",
+                "banco_talentos": True,
+                "candidatura_criada_id": "cand-1",
+            }},
+        }]
+        fake.leads = [{"id": "lead-4", "telefone": "558566660000"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        _, kwargs = mock_enviar.call_args
+        assert kwargs.get("conversa_id") == "conv-4"
+        assert kwargs.get("lead_id") == "lead-4"
+
+    @pytest.mark.asyncio
+    async def test_notify_tick_candidatura_recebida_passa_conversa_id_e_lead_id_nas_2_mensagens(self, monkeypatch):
+        """Etapa 'aguardando_confirmacao_candidatura' (fora do banco de
+        talentos) dispara 2 mensagens (S37C-02) — as duas precisam do
+        conversa_id/lead_id, não só a primeira."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        fake.conversas = [{
+            "id": "conv-5",
+            "origem_id": "PHONE_ID",
+            "lead_id": "lead-5",
+            "metadata": {"empreg_fluxo": {
+                "etapa": "aguardando_confirmacao_candidatura",
+                "banco_talentos": False,
+                "candidatura_criada_id": "cand-2",
+                "candidatura_codigo": "ABC123",
+            }},
+        }]
+        fake.leads = [{"id": "lead-5", "telefone": "558555550000"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 2
+        for call in mock_enviar.await_args_list:
+            _, kwargs = call
+            assert kwargs.get("conversa_id") == "conv-5"
+            assert kwargs.get("lead_id") == "lead-5"
+
 
 def test_consultar_cnpj_mascara_cnpj_em_warning(monkeypatch, caplog):
     class _ClientFake:
