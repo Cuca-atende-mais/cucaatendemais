@@ -1,6 +1,6 @@
 # S-EMP-AUD-025 — Reescreve copy do menu principal (separa Empresa de Candidato)
 
-**Status:** Ready
+**Status:** InReview
 **Epic:** Auditoria Empregabilidade
 **Origem:** demanda direta do Junior, 2026-08-18 ("REFAZER COPY DO MENU PRINCIPAL")
 **Prioridade:** P3 | **Esforço:** P | **Risco:** BAIXO — mudança de texto, sem lógica nova
@@ -117,6 +117,29 @@ de empresa, o resto é candidato.
 - Confirmar visualmente (print/mensagem de teste real, autorizado pelo Junior) como a linha em branco
   extra renderiza num celular real antes de considerar concluído.
 
+## Dev Agent Record
+
+### File List
+
+- `worker/empregabilidade_engine.py`:
+  - `_mostrar_menu_opcoes` — copy final (seção 2) aplicada, com linha em branco dupla entre a opção 1
+    e a 2, e "Talentos" corrigido.
+  - Fallback "não sou empresa" em `aguardando_cnpj` (antiga cópia solta duplicada) — passa a chamar
+    `_mostrar_menu_opcoes` com `intro` personalizada, eliminando a duplicação de texto.
+- `worker/tests/test_empregabilidade_engine.py`: nova classe `TestS_EMP_AUD_025CopyMenuPrincipal`
+  com 4 testes — texto exato da copy final, cópia duplicada consolidada na mesma fonte, opções 1-3
+  continuam chamando o handler certo, opções 4-5 continuam indo pra etapas distintas entre si.
+
+### Completion Notes
+
+- AC1/AC2: cobertos por teste de igualdade de string exata (`test_texto_exato_da_copy_final_no_menu_inicial`).
+- AC3: coberto — fallback duplicado agora delega pra `_mostrar_menu_opcoes`, testado.
+- AC4: coberto — 2 testes de regressão de roteamento (handler chamado certo pra 1-3, etapa certa pra 4-5).
+- Suíte completa: 112 passed (108 pré-existentes + 4 novos), 0 falhas.
+- Item do test plan "confirmar visualmente como a linha em branco extra renderiza num celular real" —
+  não executado (exigiria navegador/WhatsApp real, fora do escopo automatizado e sem autorização
+  específica para teste ao vivo nesta sessão).
+
 ## Change Log
 
 - v0.1 (2026-08-18): Story criada por @sm a partir de demanda direta do Junior.
@@ -130,3 +153,6 @@ de empresa, o resto é candidato.
   verbatim (nada a interpretar), achado de duplicação de código com localização exata e correção
   planejada (unificar num só ponto de fonte, evitando repetir a regressão que S-WM-20 já corrigiu uma
   vez). AC testável, escopo mínimo e bem contido. Status Draft → Ready.
+- v0.5 (2026-08-18): @dev implementou — copy final aplicada em `_mostrar_menu_opcoes`, cópia duplicada
+  em `aguardando_cnpj` consolidada na mesma fonte, 4 testes novos, suíte completa validada
+  (112 passed). Status Ready → InReview, aguardando @qa.
