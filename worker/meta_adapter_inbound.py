@@ -972,8 +972,14 @@ async def _executar_dispatch(
                 # a mensagem pro lead. Enviar as partes seguintes fora de ordem (ex.: pular a
                 # que falhou e mandar só o fechamento) deixaria uma resposta sem sentido — pior
                 # do que a conversa ficar incompleta.
+                #
+                # 2026-08-18: `_meta_enviar` ganhou retry único centralizado (default), pra
+                # cobrir o padrão de silêncio travado achado no fluxo de Empregabilidade. Esse
+                # loop é a ÚNICA exceção deliberada — `retry=False` preserva exatamente o
+                # comportamento acima (decisão S-WM-22 intacta, sem risco novo de duplicar
+                # parte no meio de uma resposta sequencial).
                 for indice, parte in enumerate(partes):
-                    sucesso = await _meta_enviar(phone_number_id, telefone, parte, token)
+                    sucesso = await _meta_enviar(phone_number_id, telefone, parte, token, retry=False)
                     if not sucesso:
                         logger.error(
                             "[meta-inbound] Falha ao enviar parte %d/%d da resposta — abortando as partes "

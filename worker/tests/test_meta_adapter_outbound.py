@@ -210,6 +210,81 @@ class TestMetaEnviar:
         for record in caplog.records:
             assert "TOKEN_SECRETO_TESTE" not in record.message
 
+    @pytest.mark.asyncio
+    async def test_retry_centralizado_recupera_de_falha_pontual(self):
+        """Achado em produção 2026-08-18 (Enf. Álvaro/banco de talentos): retry
+        único e imediato, por padrão, cobrindo qualquer handler que chame
+        `_meta_enviar` sem precisar reimplementar retry manual."""
+        mock_httpx = _make_httpx_mock()
+        mock_resp_ok = MagicMock()
+        mock_resp_ok.status_code = 200
+        mock_client = AsyncMock()
+        # 1ª chamada falha (timeout), 2ª chamada (retry) dá 200.
+        mock_client.post = AsyncMock(side_effect=[Exception("timeout"), mock_resp_ok])
+        mock_httpx.TimeoutException = Exception
+        mock_httpx.RequestError = Exception
+        mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.dict(sys.modules, {"httpx": mock_httpx}):
+            result = await _meta_enviar("PNID", "55859", "msg", "tok")
+
+        assert result is True
+        assert mock_client.post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_centralizado_desiste_apos_duas_falhas(self):
+        """Duas falhas seguidas → False, sem 3ª tentativa (retry único, não loop)."""
+        mock_httpx = _make_httpx_mock()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=Exception("timeout"))
+        mock_httpx.TimeoutException = Exception
+        mock_httpx.RequestError = Exception
+        mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.dict(sys.modules, {"httpx": mock_httpx}):
+            result = await _meta_enviar("PNID", "55859", "msg", "tok")
+
+        assert result is False
+        assert mock_client.post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_false_preserva_comportamento_sem_retry_s_wm_22(self):
+        """S-WM-22 (loop de partes sequenciais em meta_adapter_inbound.py): opt-out
+        explícito preserva o comportamento antigo — 1 tentativa só, sem risco
+        de duplicar conteúdo pro lead numa resposta em várias partes."""
+        mock_httpx = _make_httpx_mock()
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=Exception("timeout"))
+        mock_httpx.TimeoutException = Exception
+        mock_httpx.RequestError = Exception
+        mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.dict(sys.modules, {"httpx": mock_httpx}):
+            result = await _meta_enviar("PNID", "55859", "msg", "tok", retry=False)
+
+        assert result is False
+        assert mock_client.post.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_nao_dispara_em_sucesso_de_primeira(self):
+        """Sucesso na 1ª tentativa não deve gerar 2ª chamada HTTP."""
+        mock_httpx = _make_httpx_mock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.dict(sys.modules, {"httpx": mock_httpx}):
+            result = await _meta_enviar("PNID", "55859", "msg", "tok")
+
+        assert result is True
+        assert mock_client.post.call_count == 1
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AC #5: persistência inbound Meta
