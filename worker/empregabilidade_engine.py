@@ -995,14 +995,22 @@ async def _confirmar_cargos_selecao_evento(
     token: str,
     phone: str,
     lead_id: str,
+    fila_candidaturas_pendentes: list[dict] | None = None,
 ) -> None:
     """Compartilhado entre `listando_cargos_selecao` (SQS-49, escolha de cargo
-    dentro de 1 seleção já aberta) e `listou_ocorrencias_cargo` (S-EMP-AUD-023
-    passo 2, o cargo já vem escolhido desde o Nível 1/2) — decide a rota certa
-    (SQS-56: com ou sem coleta prévia de currículo) depois que o(s) cargo(s)
-    já estão definidos. Extraída sem mudar comportamento do call site
-    original (`listando_cargos_selecao`)."""
+    dentro de 1 seleção já aberta) e `listou_ocorrencias_cargo`/fila
+    (S-EMP-AUD-023 passos 2 e 3, o cargo já vem escolhido desde o Nível 1/2 ou
+    de um item dequeueado da fila) — decide a rota certa (SQS-56: com ou sem
+    coleta prévia de currículo) depois que o(s) cargo(s) já estão definidos.
+    Extraída sem mudar comportamento do call site original
+    (`listando_cargos_selecao`, que nunca passa `fila_candidaturas_pendentes`).
+    `fila_candidaturas_pendentes`, quando não None, é persistida no fluxo pra
+    ser consumida ao final desta rota (seção 5, regra 5, passo 3)."""
     display_str = ", ".join(cargos_escolhidos)
+    campos_fila = (
+        {"fila_candidaturas_pendentes": fila_candidaturas_pendentes}
+        if fila_candidaturas_pendentes is not None else {}
+    )
 
     if coleta_curriculo is False:
         def _buscar_detalhes_convocacao():
@@ -1058,6 +1066,7 @@ async def _confirmar_cargos_selecao_evento(
             "vaga_id_selecionada": vaga_id_ref,
             "empresa_nome_selecao": empresa_nome_conv,
             "tentativas_confirmacao_presenca": 0,
+            **campos_fila,
         })
         return
 
@@ -1072,7 +1081,125 @@ async def _confirmar_cargos_selecao_evento(
         "cargos_escolhidos": cargos_escolhidos,  # lista — AC10 SQS-49
         "vaga_id_selecionada": vaga_id_ref,
         "banco_talentos": False,
+        **campos_fila,
     })
+
+
+async def _rotear_ocorrencia_escolhida(
+    *,
+    ocorrencia: dict,
+    fila_restante: list[dict],
+    fluxo: dict,
+    conversa_id: str,
+    instance_name: str,
+    token: str,
+    phone: str,
+    lead_id: str,
+    usar_prefill: bool = False,
+) -> None:
+    """S-EMP-AUD-023 passo 3 (seção 5, regra 5) — roteia 1 ocorrência (a
+    primeira escolhida no Nível 2, OU um item dequeueado de
+    `fila_candidaturas_pendentes`) pra sua rota completa por tipo (seleção vs.
+    vaga individual), persistindo `fila_restante` no fluxo resultante pra ser
+    consumida automaticamente ao final dessa rota.
+
+    `usar_prefill`: só True pra 1ª ocorrência escolhida no Nível 2 (mantém o
+    atalho de UX já existente — nome já digitado nesta sessão). Itens
+    dequeueados da fila SEMPRE usam False — regra 5 é explícita: "nunca
+    reaproveitando nome/dados entre elas", porque são rotas de candidatura
+    diferentes por tipo (seleção pede nome+telefone própria; vaga individual
+    segue outro link) e reaproveitar dado de uma pra outra mistura contexto."""
+    vaga_id_escolhida = ocorrencia["vaga_id"]
+    cargo_escolhido = ocorrencia["cargo_titulo_original"]
+
+    if ocorrencia["tipo"] == "selecao_evento":
+        def _buscar_coleta_curriculo():
+            res = supabase.table("vagas").select("coleta_curriculo").eq(
+                "id", vaga_id_escolhida
+            ).maybe_single().execute()
+            return (res.data or {}).get("coleta_curriculo", True)
+
+        coleta_curriculo_v = await _supabase_to_thread(_buscar_coleta_curriculo)
+        await _confirmar_cargos_selecao_evento(
+            fluxo=fluxo,
+            vaga_id_ref=vaga_id_escolhida,
+            cargos_escolhidos=[cargo_escolhido],
+            coleta_curriculo=coleta_curriculo_v,
+            conversa_id=conversa_id,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+            fila_candidaturas_pendentes=fila_restante,
+        )
+        return
+
+    # vaga_normal — mesma rota de sempre (SQS-41 Ação 2.3: pergunta unidade
+    # quando a vaga é global; senão coleta nome direto).
+    def _buscar_unidade_destino_e_unidades():
+        v_res = supabase.table("vagas").select("id, unidade_destino").eq(
+            "id", vaga_id_escolhida
+        ).maybe_single().execute()
+        unidade_destino_v = (v_res.data or {}).get("unidade_destino", "")
+        unidades_disp = []
+        if unidade_destino_v == "global":
+            u_res = supabase.table("unidades_cuca").select("id, nome").eq(
+                "ativo", True
+            ).order("nome").execute()
+            unidades_disp = u_res.data or []
+        return unidade_destino_v, unidades_disp
+
+    unidade_destino_v, unidades_disponiveis = await _supabase_to_thread(
+        _buscar_unidade_destino_e_unidades
+    )
+
+    if unidade_destino_v == "global":
+        linhas_unid = [
+            "🌐 *Esta vaga é para toda a Rede CUCA!*\n\n"
+            "Qual unidade fica mais próxima da sua residência?\n"
+        ]
+        for idx_u, u in enumerate(unidades_disponiveis, start=1):
+            linhas_unid.append(f"*{idx_u}.* {u['nome']}")
+        linhas_unid.append("\nDigite *voltar* para ver outras opções.")
+        if await _enviar(
+            instance_name, token, phone, "\n".join(linhas_unid),
+            conversa_id=conversa_id, lead_id=lead_id,
+        ):
+            await _set_fluxo_async(conversa_id, {
+                **_fluxo_sem_falhas_atendente(fluxo),
+                "etapa": "aguardando_escolha_unidade",
+                "vaga_id_selecionada": vaga_id_escolhida,
+                "banco_talentos": False,
+                "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+                "unidades_opcoes": unidades_disponiveis,
+                "fila_candidaturas_pendentes": fila_restante,
+                # Regra 5: item dequeueado da fila (usar_prefill=False) nunca
+                # reaproveita nome de uma candidatura anterior — limpa o
+                # prefill aqui, porque o handler de aguardando_escolha_unidade
+                # (que decide se pula a coleta de nome) não sabe de onde essa
+                # etapa foi alcançada e usaria o prefill antigo por padrão.
+                **({} if usar_prefill else {"nome_candidato_prefill": ""}),
+            })
+        return
+
+    nome_prefill = fluxo.get("nome_candidato_prefill", "") if usar_prefill else ""
+    if nome_prefill:
+        await _enviar_link_candidatura(
+            instance_name, token, phone, conversa_id,
+            {**fluxo, "fila_candidaturas_pendentes": fila_restante},
+            nome_prefill, phone, vaga_id_escolhida, False, lead_id=lead_id,
+        )
+    else:
+        if await _enviar(
+            instance_name, token, phone,
+            "Para finalizar sua candidatura, preciso do seu *nome completo*:",
+            conversa_id=conversa_id, lead_id=lead_id,
+        ):
+            await _set_fluxo_async(conversa_id, {
+                "perfil": "publico",
+                "etapa": "coletando_nome_candidato",
+                "vaga_id_selecionada": vaga_id_escolhida,
+                "banco_talentos": False,
+                "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+                "fila_candidaturas_pendentes": fila_restante,
+            })
 
 
 async def _mostrar_categorias(
@@ -2788,16 +2915,34 @@ async def _processar_publico(
                     f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
                     "Guarde esse número! Com ele você pode verificar o status da sua candidatura a qualquer momento. ✅"
                 )
-                # S37C-02: Mensagem 2 — oferta de nova candidatura (separada para melhor UX)
-                await e(
-                    "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
-                    "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
-                )
                 # S37C-04/05: salva histórico de vagas e prefill do nome para o próximo ciclo
                 vaga_confirmada = fluxo_atual.get("vaga_id_selecionada")
                 historico = list(fluxo_atual.get("historico_vagas_aplicadas") or [])
                 if vaga_confirmada and vaga_confirmada not in historico:
                     historico.append(vaga_confirmada)
+
+                # S-EMP-AUD-023 passo 3 (seção 5, regra 5): se ainda tem
+                # ocorrência(s) escolhidas pendentes na fila, encadeia a
+                # próxima rota automaticamente — sem reaproveitar nome/dados
+                # desta candidatura — em vez de oferecer "outra"/"encerrar".
+                fila = fluxo_atual.get("fila_candidaturas_pendentes") or []
+                if fila:
+                    await e("Show! Agora vamos para a próxima vaga que você escolheu. 👇")
+                    await _rotear_ocorrencia_escolhida(
+                        ocorrencia=fila[0],
+                        fila_restante=fila[1:],
+                        fluxo={**fluxo_atual, "historico_vagas_aplicadas": historico},
+                        conversa_id=conversa_id,
+                        instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+                        usar_prefill=False,
+                    )
+                    return
+
+                # S37C-02: Mensagem 2 — oferta de nova candidatura (separada para melhor UX)
+                await e(
+                    "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
+                    "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
+                )
                 await _set_fluxo_async(conversa_id, {
                     "etapa": "pos_candidatura",  # S37C-01
                     "perfil": "publico",
@@ -3308,6 +3453,23 @@ async def _processar_publico(
         linhas_final = [f"✅ Presença confirmada, *{nome_final}*!\n"]
         if empresa_nome_final:
             linhas_final.append(f"Você está registrado(a) no processo seletivo *{empresa_nome_final}*.")
+
+        # S-EMP-AUD-023 passo 3 (seção 5, regra 5): fila pendente encadeia a
+        # próxima rota automaticamente, sem reaproveitar nome/dados desta.
+        fila = fluxo.get("fila_candidaturas_pendentes") or []
+        if fila:
+            linhas_final.append("\nAgora vamos para a próxima vaga que você escolheu. 👇")
+            await e("\n".join(linhas_final))
+            await _rotear_ocorrencia_escolhida(
+                ocorrencia=fila[0],
+                fila_restante=fila[1:],
+                fluxo=fluxo,
+                conversa_id=conversa_id,
+                instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+                usar_prefill=False,
+            )
+            return
+
         linhas_final.append(
             "\nQuer continuar procurando outras vagas ou prefere encerrar por aqui?\n"
             "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
@@ -3446,94 +3608,27 @@ async def _processar_publico(
             )
             return
 
-        # Seção 5, regra 5 — PARCIAL nesta etapa (passo 2/5 da story): a rota
-        # completa por tipo é processada 1 ocorrência de cada vez. A fila que
-        # encadeia automaticamente as demais escolhas após concluir a 1ª
-        # (mecanismo novo, maior risco da story) é escopo do passo 3, ainda
-        # não implementado — aqui só a 1ª escolha é roteada; se o lead marcou
-        # mais de uma, ele é avisado e escolhe a próxima depois de terminar.
+        # Seção 5, regra 5 (passo 3/5): a rota completa por tipo é processada
+        # 1 ocorrência de cada vez, mas a fila agora encadeia automaticamente
+        # as demais escolhas ao final de cada rota — não precisa mais o lead
+        # escolher manualmente a próxima.
         ocorrencia_escolhida = mapa_ocorrencias_fluxo[numeros_validos[0]]
-        if len(numeros_validos) > 1:
+        fila_restante = [mapa_ocorrencias_fluxo[n] for n in numeros_validos[1:]]
+        if fila_restante:
             await e(
-                f"Vou te ajudar primeiro com *{ocorrencia_escolhida['cargo_exibicao']}* "
-                f"({ocorrencia_escolhida['empresa_nome']}). Ao concluir essa candidatura, "
-                "é só escolher a próxima vaga que você marcou."
+                f"Vou te ajudar com uma vaga de cada vez, começando por "
+                f"*{ocorrencia_escolhida['cargo_exibicao']}* ({ocorrencia_escolhida['empresa_nome']}). "
+                "Assim que essa candidatura terminar, sigo automaticamente para a próxima."
             )
 
-        vaga_id_escolhida = ocorrencia_escolhida["vaga_id"]
-        cargo_escolhido = ocorrencia_escolhida["cargo_titulo_original"]
-
-        if ocorrencia_escolhida["tipo"] == "selecao_evento":
-            def _buscar_coleta_curriculo():
-                res = supabase.table("vagas").select("coleta_curriculo").eq(
-                    "id", vaga_id_escolhida
-                ).maybe_single().execute()
-                return (res.data or {}).get("coleta_curriculo", True)
-
-            coleta_curriculo_v = await _supabase_to_thread(_buscar_coleta_curriculo)
-            await _confirmar_cargos_selecao_evento(
-                fluxo=fluxo,
-                vaga_id_ref=vaga_id_escolhida,
-                cargos_escolhidos=[cargo_escolhido],
-                coleta_curriculo=coleta_curriculo_v,
-                conversa_id=conversa_id,
-                instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
-            )
-            return
-
-        # vaga_normal — mesma rota de sempre (SQS-41 Ação 2.3: pergunta
-        # unidade quando a vaga é global; senão coleta nome direto).
-        def _buscar_unidade_destino_e_unidades():
-            v_res = supabase.table("vagas").select("id, unidade_destino").eq(
-                "id", vaga_id_escolhida
-            ).maybe_single().execute()
-            unidade_destino_v = (v_res.data or {}).get("unidade_destino", "")
-            unidades_disp = []
-            if unidade_destino_v == "global":
-                u_res = supabase.table("unidades_cuca").select("id, nome").eq(
-                    "ativo", True
-                ).order("nome").execute()
-                unidades_disp = u_res.data or []
-            return unidade_destino_v, unidades_disp
-
-        unidade_destino_v, unidades_disponiveis = await _supabase_to_thread(
-            _buscar_unidade_destino_e_unidades
+        await _rotear_ocorrencia_escolhida(
+            ocorrencia=ocorrencia_escolhida,
+            fila_restante=fila_restante,
+            fluxo=fluxo,
+            conversa_id=conversa_id,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+            usar_prefill=True,
         )
-
-        if unidade_destino_v == "global":
-            linhas_unid = [
-                "🌐 *Esta vaga é para toda a Rede CUCA!*\n\n"
-                "Qual unidade fica mais próxima da sua residência?\n"
-            ]
-            for idx_u, u in enumerate(unidades_disponiveis, start=1):
-                linhas_unid.append(f"*{idx_u}.* {u['nome']}")
-            linhas_unid.append("\nDigite *voltar* para ver outras opções.")
-            if await e("\n".join(linhas_unid)):
-                await _set_fluxo_async(conversa_id, {
-                    **_fluxo_sem_falhas_atendente(fluxo),
-                    "etapa": "aguardando_escolha_unidade",
-                    "vaga_id_selecionada": vaga_id_escolhida,
-                    "banco_talentos": False,
-                    "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
-                    "unidades_opcoes": unidades_disponiveis,
-                })
-            return
-
-        nome_prefill = fluxo.get("nome_candidato_prefill", "")
-        if nome_prefill:
-            await _enviar_link_candidatura(
-                instance_name, token, phone, conversa_id, fluxo,
-                nome_prefill, phone, vaga_id_escolhida, False, lead_id=lead_id
-            )
-        else:
-            if await e("Para finalizar sua candidatura, preciso do seu *nome completo*:"):
-                await _set_fluxo_async(conversa_id, {
-                    "perfil": "publico",
-                    "etapa": "coletando_nome_candidato",
-                    "vaga_id_selecionada": vaga_id_escolhida,
-                    "banco_talentos": False,
-                    "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
-                })
         return
 
     # Candidatos veem TODAS as vagas abertas de qualquer unidade.
@@ -3847,6 +3942,10 @@ async def _enviar_link_candidatura(
             "Após o envio, você receberá aqui o *número de acompanhamento* da candidatura. ✅"
         )
     await _enviar(instance_name, token, phone, mensagem_link, conversa_id=conversa_id, lead_id=lead_id)
+    # S-EMP-AUD-023 passo 3: propaga a fila só quando o chamador a passou
+    # explicitamente (fluxo.get retorna None pros callers antigos, que nunca
+    # tinham esse campo — não adiciona ruído no fluxo deles).
+    fila_pendente = fluxo.get("fila_candidaturas_pendentes")
     await _set_fluxo_async(conversa_id, {
         "perfil": "publico",
         "etapa": "aguardando_confirmacao_candidatura",
@@ -3857,6 +3956,7 @@ async def _enviar_link_candidatura(
         # S37C-04/05: preserva histórico e atualiza prefill para o próximo ciclo
         "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
         "nome_candidato_prefill": nome_candidato,
+        **({"fila_candidaturas_pendentes": fila_pendente} if fila_pendente is not None else {}),
     })
 
 

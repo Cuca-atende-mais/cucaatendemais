@@ -2250,6 +2250,15 @@ class _TabelaFake:
         self.select_kwargs = kwargs
         return self
 
+    def insert(self, payload):
+        self.banco.inserts.append((self.nome, dict(payload)))
+        self._insert_payload = payload
+        return self
+
+    def is_(self, coluna, valor):
+        self.filters.append(("is", coluna, valor))
+        return self
+
     def eq(self, coluna, valor):
         self.filters.append(("eq", coluna, valor))
         return self
@@ -2283,6 +2292,8 @@ class _TabelaFake:
 
     def execute(self):
         self.banco.execute_calls.append((self.nome, self.select_cols, list(self.filters), list(self.in_filters), self.limit_value))
+        if getattr(self, "_insert_payload", None) is not None:
+            return _ResultadoFake([self._insert_payload])
         return self.banco.resultado_para(self)
 
 
@@ -2302,6 +2313,8 @@ class _SupabaseFakeBloco6:
         # S-EMP-AUD-023 passo 2
         self.coleta_curriculo_por_vaga = {}
         self.empresas = []
+        # S-EMP-AUD-023 passo 3
+        self.inserts = []
 
     def table(self, nome):
         return _TabelaFake(nome, self)
@@ -2918,6 +2931,212 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         )
 
         assert estado == {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-023 passo 3/5 — fila_candidaturas_pendentes (seção 5, regra 5).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestS_EMP_AUD_023Passo3FilaCandidaturas:
+
+    @pytest.mark.asyncio
+    async def test_escolha_multipla_no_nivel2_popula_a_fila_com_o_restante(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
+            "perfil": "publico",
+            "mapa_ocorrencias": {
+                "1": {"vaga_id": "v1", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                      "quantidade": 30, "empresa_nome": "Empresa A", "rotulo_tipo": "...", "cargo_exibicao": "Porteiro"},
+                "2": {"vaga_id": "v3", "tipo": "vaga_normal", "cargo_titulo_original": "Consultora de Vendas",
+                      "quantidade": 1, "empresa_nome": "Maraponga", "rotulo_tipo": "Vaga individual",
+                      "cargo_exibicao": "Consultora de Vendas"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.coleta_curriculo_por_vaga = {"v1": True}
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("1,2", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        # 1ª ocorrência roteada de imediato (seleção → coletando nome).
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["cargos_escolhidos"] == ["Porteiro"]
+        # 2ª ocorrência guardada na fila, pronta pra ser consumida ao final.
+        fila = estado["fila_candidaturas_pendentes"]
+        assert len(fila) == 1
+        assert fila[0]["vaga_id"] == "v3"
+
+    @pytest.mark.asyncio
+    async def test_conclusao_de_candidatura_por_link_encadeia_proxima_da_fila_automaticamente(self, monkeypatch, _isola_enviar):
+        """Ponto de conclusão: aguardando_confirmacao_candidatura (vaga_normal
+        / link). Com fila pendente, não oferece 'outra/encerrar' — já roteia
+        a próxima ocorrência sozinho."""
+        proxima = {
+            "vaga_id": "v9", "tipo": "vaga_normal", "cargo_titulo_original": "Auxiliar",
+            "quantidade": 2, "empresa_nome": "Empresa X", "rotulo_tipo": "Vaga individual",
+            "cargo_exibicao": "Auxiliar",
+        }
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
+            "perfil": "publico",
+            "banco_talentos": False,
+            "candidatura_criada_id": "cand-1",
+            "candidatura_codigo": "ABC123",
+            "vaga_id_selecionada": "v1",
+            "nome_candidato": "Maria Silva",
+            "historico_vagas_aplicadas": [],
+            "fila_candidaturas_pendentes": [proxima],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [{"id": "v9", "unidade_destino": "unidade-x"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        # Não caiu em pos_candidatura (que ofereceria "outra/encerrar") — foi
+        # direto pra rota da próxima ocorrência (vaga_normal específica → pede nome).
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["vaga_id_selecionada"] == "v9"
+        # Fila consumida — item processado sai da lista.
+        assert estado["fila_candidaturas_pendentes"] == []
+        # Histórico da candidatura concluída foi salvo antes de seguir.
+        assert "v1" in estado["historico_vagas_aplicadas"]
+
+    @pytest.mark.asyncio
+    async def test_fila_nunca_reaproveita_nome_entre_candidaturas_diferentes(self, monkeypatch, _isola_enviar):
+        """Seção 5, regra 5, literal: 'nunca reaproveitando nome/dados entre
+        elas'. Mesmo com nome_candidato_prefill de uma candidatura anterior
+        disponível no fluxo, o item dequeueado da fila pede nome de novo."""
+        proxima = {
+            "vaga_id": "v9", "tipo": "vaga_normal", "cargo_titulo_original": "Auxiliar",
+            "quantidade": 2, "empresa_nome": "Empresa X", "rotulo_tipo": "Vaga individual",
+            "cargo_exibicao": "Auxiliar",
+        }
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
+            "perfil": "publico",
+            "banco_talentos": False,
+            "candidatura_criada_id": "cand-1",
+            "candidatura_codigo": "ABC123",
+            "vaga_id_selecionada": "v1",
+            "nome_candidato": "Maria Silva",
+            "nome_candidato_prefill": "Maria Silva",  # já existia de antes
+            "historico_vagas_aplicadas": [],
+            "fila_candidaturas_pendentes": [proxima],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [{"id": "v9", "unidade_destino": "unidade-x"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        # Se tivesse reaproveitado o prefill, teria ido direto pro link
+        # (_enviar_link_candidatura → aguardando_confirmacao_candidatura),
+        # pulando a coleta de nome. Confirma que pediu nome de novo.
+        assert estado["etapa"] == "coletando_nome_candidato"
+
+    @pytest.mark.asyncio
+    async def test_fila_com_vaga_global_tambem_nao_reaproveita_nome(self, monkeypatch, _isola_enviar):
+        """Achado do @qa (revisão do passo 3): o caso acima só cobria vaga
+        individual de unidade ESPECÍFICA. O branch de vaga GLOBAL (pergunta
+        unidade antes de pedir nome) tem seu próprio ponto de limpeza do
+        prefill — sem este teste, remover essa limpeza não quebrava nenhum
+        teste (confirmado pelo @qa desligando o código na mão). Aqui a
+        próxima ocorrência da fila é uma vaga_normal global; com
+        nome_candidato_prefill de uma candidatura anterior no fluxo, confirma
+        que a etapa seguinte (aguardando_escolha_unidade) NÃO carrega esse
+        prefill — só assim, quando a unidade for escolhida, o handler
+        genérico de aguardando_escolha_unidade vai pedir o nome de novo em
+        vez de pular direto pro link com o nome antigo."""
+        proxima_global = {
+            "vaga_id": "v9", "tipo": "vaga_normal", "cargo_titulo_original": "Auxiliar",
+            "quantidade": 2, "empresa_nome": "Empresa X", "rotulo_tipo": "Vaga individual",
+            "cargo_exibicao": "Auxiliar",
+        }
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
+            "perfil": "publico",
+            "banco_talentos": False,
+            "candidatura_criada_id": "cand-1",
+            "candidatura_codigo": "ABC123",
+            "vaga_id_selecionada": "v1",
+            "nome_candidato": "Maria Silva",
+            "nome_candidato_prefill": "Maria Silva",  # já existia de antes
+            "historico_vagas_aplicadas": [],
+            "fila_candidaturas_pendentes": [proxima_global],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [{"id": "v9", "unidade_destino": "global"}]
+        fake.unidades = [{"id": "u1", "nome": "Barra"}, {"id": "u2", "nome": "Mondubim"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "aguardando_escolha_unidade"
+        # A prova real do achado: se o prefill não fosse limpo aqui, ficaria
+        # "Maria Silva" (herdado da candidatura anterior) — pediria unidade
+        # e, ao escolher, iria direto pro link sem pedir nome de novo.
+        assert estado["nome_candidato_prefill"] == ""
+
+    @pytest.mark.asyncio
+    async def test_conclusao_de_selecao_encadeia_proxima_da_fila_automaticamente(self, monkeypatch, _isola_enviar):
+        """Ponto de conclusão: confirmando_presenca_telefone (SQS-56, seleção
+        sem coleta de currículo). Com fila pendente, encadeia a próxima."""
+        proxima = {
+            "vaga_id": "v9", "tipo": "selecao_evento", "cargo_titulo_original": "Jardineiro",
+            "quantidade": 10, "empresa_nome": "Empresa Y", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede",
+            "cargo_exibicao": "Jardineiro",
+        }
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_telefone", {
+            "perfil": "publico",
+            "nome_confirmacao_presenca": "João Souza",
+            "cargos_escolhidos": ["Porteiro"],
+            "vaga_id_selecionada": "v1",
+            "empresa_nome_selecao": "Empresa A",
+            "historico_vagas_aplicadas": [],
+            "fila_candidaturas_pendentes": [proxima],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.coleta_curriculo_por_vaga = {"v9": True}
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico(
+            "85999998888", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        # Não caiu em pos_candidatura — encadeou a próxima ocorrência da fila
+        # (seleção, coleta_curriculo=True → coletando_nome_candidato).
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["cargos_escolhidos"] == ["Jardineiro"]
+        assert estado["fila_candidaturas_pendentes"] == []
+
+    @pytest.mark.asyncio
+    async def test_sem_fila_mantem_comportamento_antigo_de_outra_ou_encerrar(self, monkeypatch, _isola_enviar):
+        """Regressão: sem fila pendente, o fluxo de conclusão continua
+        oferecendo 'outra'/'encerrar' como sempre — passo 3 não muda o
+        caminho comum (1 candidatura só)."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
+            "perfil": "publico",
+            "banco_talentos": False,
+            "candidatura_criada_id": "cand-1",
+            "candidatura_codigo": "ABC123",
+            "vaga_id_selecionada": "v1",
+            "nome_candidato": "Maria Silva",
+            "historico_vagas_aplicadas": [],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        await emp._processar_publico("oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "pos_candidatura"
 
 
 class TestBloco6PerformanceEParsers:
