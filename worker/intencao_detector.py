@@ -134,9 +134,16 @@ async def avaliar_mensagem_contextual(
     (AC#12).
 
     Retorna sempre {"intencao", "quer_sair", "mudou_de_assunto",
-    "quer_atendente_humano", "quer_voltar", "nome"} — nunca propaga exceção;
-    qualquer falha (JSON malformado, API fora do ar, etc.) cai no default
-    seguro (ambíguo, sem sinais de escape) para nunca travar o fluxo.
+    "quer_atendente_humano", "quer_voltar", "cargo_mencionado", "nome"} — nunca
+    propaga exceção; qualquer falha (JSON malformado, API fora do ar, etc.)
+    cai no default seguro (ambíguo, sem sinais de escape, sem cargo) para
+    nunca travar o fluxo.
+
+    S-EMP-AUD-030: `cargo_mencionado` (texto livre ou `None`) captura quando
+    o lead menciona uma profissão/cargo específico ("tem vaga de
+    enfermeira?"), pra permitir resposta direta em vez de cair na listagem
+    genérica de vagas recentes — campo novo e opcional, `None` em qualquer
+    mock/resposta antiga que não o preencha.
     """
     default = {
         "intencao": "ambiguo",
@@ -144,6 +151,7 @@ async def avaliar_mensagem_contextual(
         "mudou_de_assunto": False,
         "quer_atendente_humano": False,
         "quer_voltar": False,
+        "cargo_mencionado": None,
         "nome": lead_nome,
     }
 
@@ -163,12 +171,16 @@ async def avaliar_mensagem_contextual(
         intencao = data.get("intencao", "ambiguo")
         if intencao not in _CATEGORIAS_VALIDAS:
             intencao = "ambiguo"
+        cargo_mencionado = data.get("cargo_mencionado")
+        if not isinstance(cargo_mencionado, str) or not cargo_mencionado.strip():
+            cargo_mencionado = None
         return {
             "intencao": intencao,
             "quer_sair": bool(data.get("quer_sair", False)),
             "mudou_de_assunto": bool(data.get("mudou_de_assunto", False)),
             "quer_atendente_humano": bool(data.get("quer_atendente_humano", False)),
             "quer_voltar": bool(data.get("quer_voltar", False)),
+            "cargo_mencionado": cargo_mencionado,
             "nome": lead_nome,
         }
     except Exception as exc:
@@ -202,7 +214,12 @@ async def _chamar_gpt_contextual(
                 "(ex.: atendendte, atendete, atendente humano)\n"
                 "- 'quer_voltar': true se o lead quer voltar um passo, rever opções anteriores "
                 "ou ver outras opções/vagas dentro do mesmo assunto, sem encerrar e sem trocar "
-                "para empresa/banco de talentos\n\n"
+                "para empresa/banco de talentos\n"
+                "- 'cargo_mencionado': se o lead menciona uma PROFISSÃO ou CARGO específico "
+                "(ex.: 'tem vaga de enfermeira?', 'vocês precisam de estagiário?'), retorne o "
+                "nome do cargo como string curta (ex.: 'enfermeira', 'estagiário'). Se o pedido "
+                "for genérico, sem cargo específico (ex.: 'vagas', 'quero emprego', 'trabalho'), "
+                "retorne null.\n\n"
                 f"Perfil já declarado: {perfil or 'nenhum'}\n"
                 f"Etapa atual da conversa: {etapa or 'nenhuma'}\n"
                 f"Última mensagem do bot: {ultima_msg_bot or 'nenhuma'}\n"

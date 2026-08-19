@@ -4656,6 +4656,62 @@ async def _rotear_por_intencao(
     elif intencao == "candidato_vaga":
         # AC#1 — lista até 5 vagas abertas (com filtro de setor quando mencionado)
         setor_kw, setor_canonical = extrair_setor_fn(texto) if extrair_setor_fn else (None, None)
+        # S-EMP-AUD-030: cargo/profissão específica ("tem vaga de enfermeira?") é
+        # texto livre, mecanismo separado e complementar ao filtro de setor
+        # (categoria fechada, ~15 opções do portal) — checado antes do setor,
+        # já que é mais específico quando presente.
+        cargo_mencionado = (intencao_res.get("cargo_mencionado") or "").strip()
+
+        if cargo_mencionado:
+            # busca todas as vagas abertas e filtra em Python por titulo OU
+            # cargos_lista (substring case-insensitive, mesmo padrão do setor)
+            # — titulo sozinho não cobre a maioria dos cargos reais hoje.
+            def _buscar_vagas_cargo():
+                return (
+                    supabase.table("vagas").select("id, titulo, descricao, cargos_lista")
+                    .eq("status", "aberta").order("created_at", desc=True).limit(50).execute().data or []
+                )
+
+            vagas_pool = await _supabase_to_thread(_buscar_vagas_cargo)
+            termo_cargo = cargo_mencionado.lower()
+
+            def _vaga_bate_cargo(v: dict) -> bool:
+                if termo_cargo in (v.get("titulo") or "").lower():
+                    return True
+                return any(
+                    termo_cargo in str(item.get("titulo") or "").lower()
+                    for item in (v.get("cargos_lista") or [])
+                    if isinstance(item, dict)
+                )
+
+            vagas = [v for v in vagas_pool if _vaga_bate_cargo(v)][:5]
+
+            if not vagas:
+                await e(
+                    f"No momento não há vagas para *{cargo_mencionado}*. 😕\n\n"
+                    "Você se interessa em deixar seu currículo no nosso Banco de Talentos?"
+                )
+                await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "oferta_banco_talentos"})
+                return
+
+            mapa_vagas_cargo: dict[str, str] = {}
+            linhas_cargo = [f"Olá{saudacao_nome} Encontrei vagas de *{cargo_mencionado}* — digite o número:\n"]
+            for i, v in enumerate(vagas, start=1):
+                descricao_curta = (v.get("descricao") or "")[:60].rstrip()
+                sufixo = "..." if len(v.get("descricao") or "") > 60 else ""
+                linhas_cargo.append(
+                    f"*{i}* - {v['titulo']}" + (f": {descricao_curta}{sufixo}" if descricao_curta else "")
+                )
+                mapa_vagas_cargo[str(i)] = v["id"]
+            linhas_cargo.append("\nDigite o *número da vaga* para se candidatar.")
+            await e("\n".join(linhas_cargo))
+            await _set_fluxo_async(conversa_id, {
+                "perfil": "publico",
+                "etapa": "listou_vagas",
+                "mapa_vagas": mapa_vagas_cargo,
+                "ultima_vaga_id": vagas[-1]["id"] if vagas else None,
+            })
+            return
 
         if setor_canonical:
             # busca mais vagas para filtrar por setor em Python (substring match)

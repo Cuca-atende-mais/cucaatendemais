@@ -204,6 +204,7 @@ def test_contextual_repassa_quer_sair_e_mudou_de_assunto(monkeypatch):
         "mudou_de_assunto": True,
         "quer_atendente_humano": False,
         "quer_voltar": False,
+        "cargo_mencionado": None,
         "nome": None,
     }
     assert capturado == {
@@ -273,8 +274,51 @@ def test_contextual_excecao_vira_default_seguro(monkeypatch):
         "mudou_de_assunto": False,
         "quer_atendente_humano": False,
         "quer_voltar": False,
+        "cargo_mencionado": None,
         "nome": None,
     }
+
+
+def test_contextual_repassa_cargo_mencionado(monkeypatch):
+    """S-EMP-AUD-030 AC1: quando a IA identifica uma profissão/cargo
+    específico na mensagem, o campo é repassado tal como retornado."""
+    import intencao_detector
+
+    async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+        return {
+            "intencao": "candidato_vaga",
+            "quer_sair": False,
+            "mudou_de_assunto": False,
+            "cargo_mencionado": "enfermeira",
+        }
+
+    monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+    res = asyncio.run(avaliar_mensagem_contextual("tem vaga de enfermeira?"))
+    assert res["cargo_mencionado"] == "enfermeira"
+
+
+def test_contextual_cargo_mencionado_ausente_vira_none(monkeypatch):
+    """S-EMP-AUD-030 AC1: mock antigo sem a chave 'cargo_mencionado' (ou com
+    null explícito) não deve quebrar — vira None, comportamento genérico
+    preservado."""
+    import intencao_detector
+
+    async def mock_gpt_sem_campo(texto, perfil, etapa, ultima_msg_bot):
+        return {"intencao": "candidato_vaga", "quer_sair": False, "mudou_de_assunto": False}
+
+    monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt_sem_campo)
+    res = asyncio.run(avaliar_mensagem_contextual("quero vagas"))
+    assert res["cargo_mencionado"] is None
+
+    async def mock_gpt_null(texto, perfil, etapa, ultima_msg_bot):
+        return {
+            "intencao": "candidato_vaga", "quer_sair": False, "mudou_de_assunto": False,
+            "cargo_mencionado": None,
+        }
+
+    monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt_null)
+    res = asyncio.run(avaliar_mensagem_contextual("quero vagas"))
+    assert res["cargo_mencionado"] is None
 
 
 # ─── extrair_setor_da_mensagem ────────────────────────────────────────────────
