@@ -1,6 +1,6 @@
 # S-EMP-AUD-023 — Vaga Direta: consolida listagem de vagas por cargo com seleção múltipla
 
-**Status:** Ready
+**Status:** InProgress (passo 1/5 — ver Dev Agent Record)
 **Epic:** Auditoria Empregabilidade
 **Origem:** demanda direta do Junior, 2026-08-18 ("VAGA DIRETA"), detalhada por ele em 2026-08-18 após
 1ª versão da story ser considerada insuficiente
@@ -304,6 +304,54 @@ reaproveitamento do parser de vírgula existente, normalização semântica via 
 - Voltar em cada nível.
 - Escape semântico disparando corretamente na etapa nova (depende de S-EMP-AUD-024).
 
+## Dev Agent Record
+
+### Correção técnica encontrada antes de codar (bloqueante, resolvida)
+
+A seção 6 (impacto) cita `_buscar_vagas_abertas_e_candidaturas` como base a manter — confirmado que a
+função existe, mas seu `select` hoje busca só
+`id, titulo, tipo_contrato, salario, escolaridade_minima, total_vagas, faixa_etaria, setor,
+unidade_destino` — **não busca `tipo`, `cargos_lista`, `empresa_id`, `unidade_cuca`**, campos que o
+motor de agrupamento por cargo precisa. Isso não é uma decisão de negócio (não voltou pro Junior) — é
+correção de fato de schema. O passo 1 abaixo widen essa busca (dado consumido separadamente pelo motor
+novo, sem remover os campos já usados pela listagem antiga, que continua funcionando até o passo de
+integração — ver nota de escopo abaixo).
+
+### Nota de escopo — story grande demais pra 1 commit só (Esforço G, Risco MÉDIO-ALTO)
+
+Dividida em 5 passos, cada um com commit e revisão próprios (ordem definida com o Advisor, dado o
+tamanho e risco da story):
+
+1. **[ENTREGUE NESTE COMMIT]** Motor de agrupamento por cargo (explode `vaga_normal`/`selecao_evento`,
+   soma quantidade, resolve rótulo de unidade/tipo, exclusão por ocorrência, ordena alfabético). Só o
+   motor de dados — **ainda não plugado no fluxo de conversa ao vivo**, nenhuma etapa chama essas
+   funções ainda. Comportamento do candidato **não muda** com este commit.
+2. Listagem de Nível 1 e Nível 2 com seleção múltipla, integrando o motor no fluxo real (substitui
+   `_mostrar_categorias`) — aqui sim muda o comportamento observável, revisão própria.
+3. `fila_candidaturas_pendentes` — mecanismo novo de fila sequencial por tipo de rota (maior risco da
+   story, commit e teste próprios).
+4. Normalização de cargo via IA (seção 8.1, passo 2) — por último, propositalmente: os passos 1-3
+   funcionam corretamente só com o pré-passo barato (maiúscula/minúscula); se a camada de IA se
+   provar instável, a feature já é entregável sem ela.
+
+### File List (passo 1)
+
+- `worker/empregabilidade_engine.py`: `_normalizar_cargo_basico`, `_resolver_nome_unidade_cuca`,
+  `_gerar_rotulo_tipo_vaga`, `_construir_cargos_consolidados` — funções novas, não chamadas por
+  nenhuma etapa ainda.
+- `worker/tests/test_empregabilidade_engine.py`: `TestS_EMP_AUD_023CargosConsolidados`, 13 testes —
+  fixture verbatim da seção 2.2 (dado real de produção, Porteiro soma 70 de 3 seleções), teste crítico
+  do falso positivo (Auxiliar de Serviços Gerais/Manutenção/Cozinha não se misturam), as 4 regras de
+  rótulo da seção 3, exclusão por ocorrência (pergunta 5), fail-safe de UUID desconhecido.
+
+### Completion Notes (passo 1)
+
+- Suíte completa: 125 passed (112 pré-existentes + 13 novos), 0 falhas.
+- Normalização nesta etapa é só o pré-passo sem IA (seção 8.1, passo 1) — confirmado por teste que
+  erro de digitação real (`menutenção`) **não** unifica ainda (esperado, é o passo 4).
+- Não houve mudança de comportamento observável pro candidato neste commit — seguro pra revisar e
+  mergear isoladamente antes do passo 2.
+
 ## Change Log
 
 - v0.1 (2026-08-18): Story criada por @sm — versão inicial, insuficientemente detalhada.
@@ -339,3 +387,10 @@ reaproveitamento do parser de vírgula existente, normalização semântica via 
   explícito — @dev pode tratar a seção 5 ("Regras de exibição confirmadas") como os ACs reais da
   story. Dependência com S-EMP-AUD-024 (escape semântico nas etapas novas) documentada e deve ser
   sequenciada antes ou junto. Status Draft → Ready.
+- v0.7 (2026-08-18): @dev implementou o **passo 1/5** — motor de agrupamento por cargo, isolado, ainda
+  não plugado no fluxo real (zero mudança de comportamento observável). Achado de schema corrigido
+  (seção 6 citava `_buscar_vagas_abertas_e_candidaturas` sem os campos que o motor precisa — corrigido
+  no código, não é decisão de negócio). 13 testes novos com o fixture real de produção da seção 2.2,
+  incluindo o teste crítico de falso positivo do test plan. Suíte completa: 125 passed. Status
+  Ready → InProgress. Story dividida em 5 passos com commit/revisão próprios dado o tamanho — próximo
+  passo (listagem Nível 1/2 + integração real) só começa após revisão deste.

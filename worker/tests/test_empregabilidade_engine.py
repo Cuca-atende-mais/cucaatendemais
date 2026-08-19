@@ -2335,6 +2335,247 @@ class _SupabaseFakeBloco6:
 _SupabaseFakeBloco6.__module__ = "unittest.mock"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-023 (Vaga Direta) — motor de agrupamento por cargo consolidado.
+# Passo 1 da story: só o motor de dados, ainda não plugado no fluxo de
+# conversa ao vivo. Fixture da seção 2.2 da story — dado real de produção,
+# verbatim (4 seleções abertas em 2026-08-18).
+# ─────────────────────────────────────────────────────────────────────────────
+
+_UUID_UNIDADE_CENTRO = "11111111-1111-1111-1111-111111111111"
+_UUID_UNIDADE_BARRA = "22222222-2222-2222-2222-222222222222"
+
+
+def _vagas_fixture_producao_secao_2_2():
+    """Verbatim da seção 2.2 da story — 4 seleções abertas em produção,
+    2026-08-18. 'Porteiro' aparece 3x (30+20+20=70), mesma empresa
+    SINGULAR, com unidade_cuca em 3 formatos diferentes (texto literal x2,
+    UUID x1) — exatamente o achado 2.4 da story."""
+    return [
+        {
+            "id": "vaga-17", "tipo": "selecao_evento", "empresa_id": "emp-singular",
+            "unidade_cuca": "CUCA Jangurussu",
+            "cargos_lista": [
+                {"titulo": "Auxiliar de Serviços Gerais", "quantidade": 50},
+                {"titulo": "Porteiro", "quantidade": 30},
+                {"titulo": "Auxiliar de Manutenção", "quantidade": 20},
+                {"titulo": "Auxiliar de Cozinha", "quantidade": 20},
+            ],
+        },
+        {
+            "id": "vaga-20", "tipo": "selecao_evento", "empresa_id": "emp-singular",
+            "unidade_cuca": _UUID_UNIDADE_CENTRO,
+            "cargos_lista": [
+                {"titulo": "Auxiliar de serviços gerais", "quantidade": 50},
+                {"titulo": "Auxiliar de menutenção", "quantidade": 20},  # erro de digitação real
+                {"titulo": "Porteiro", "quantidade": 20},
+                {"titulo": "Jardineiro", "quantidade": 20},
+            ],
+        },
+        {
+            "id": "vaga-21", "tipo": "selecao_evento", "empresa_id": "emp-singular",
+            "unidade_cuca": "CUCA Pici",
+            "cargos_lista": [
+                {"titulo": "Auxiliar de serviços gerais", "quantidade": 50},
+                {"titulo": "porteiro", "quantidade": 20},
+                {"titulo": "jardineiro", "quantidade": 20},
+                {"titulo": "auxiliar de manutenção", "quantidade": 20},
+            ],
+        },
+        {
+            "id": "vaga-38", "tipo": "selecao_evento", "empresa_id": "emp-labise",
+            "unidade_cuca": _UUID_UNIDADE_BARRA,
+            "cargos_lista": [
+                {"titulo": "COSTUREIRA  OPERADORA OVERLOCK E GOLERA", "quantidade": "6"},
+            ],
+        },
+    ]
+
+
+_EMPRESAS_POR_ID_FIXTURE = {
+    "emp-singular": "SINGULAR FACILITIES SERVICE S.A.",
+    "emp-labise": "LABISE SERVIÇOS LTDA",
+}
+_UNIDADES_POR_ID_FIXTURE = {
+    _UUID_UNIDADE_CENTRO: "CUCA Centro",
+    _UUID_UNIDADE_BARRA: "CUCA Barra",
+}
+
+
+class TestS_EMP_AUD_023CargosConsolidados:
+
+    def test_porteiro_soma_70_de_3_selecoes_dado_real_producao(self):
+        """Cenário central da story (seção 2.2/pedido original do Junior):
+        'Porteiro' em 3 seleções da mesma empresa, unidades em 3 formatos
+        diferentes (2 literais, 1 UUID) — soma 30+20+20=70."""
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), {}, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+        )
+        porteiro = next(g for g in mapa.values() if g["cargo_exibicao"].lower() == "porteiro")
+        assert porteiro["quantidade_total"] == 70
+        assert len(porteiro["ocorrencias"]) == 3
+        rotulos = {oc["rotulo_tipo"] for oc in porteiro["ocorrencias"]}
+        assert rotulos == {
+            "Processo seletivo Cuca: CUCA Jangurussu",
+            "Processo seletivo Cuca: CUCA Centro",  # UUID resolvido
+            "Processo seletivo Cuca: CUCA Pici",
+        }
+        for oc in porteiro["ocorrencias"]:
+            assert oc["empresa_nome"] == "SINGULAR FACILITIES SERVICE S.A."
+
+    def test_maiuscula_minuscula_unifica_mas_erro_de_digitacao_nao(self):
+        """Achado crítico 2.3 da story: pré-passo (sem IA) unifica só
+        variação de caixa/espaço — 'Auxiliar de menutenção' (erro de
+        digitação real) fica como cargo separado nesta etapa (normalização
+        via IA é escopo de commit futuro)."""
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), {}, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+        )
+        nomes = {g["cargo_exibicao"].lower(): g for g in mapa.values()}
+
+        # Unifica por caixa/espaço (pré-passo)
+        auxiliar_gerais = nomes["auxiliar de serviços gerais"]
+        assert auxiliar_gerais["quantidade_total"] == 150  # 50+50+50
+        assert len(auxiliar_gerais["ocorrencias"]) == 3
+
+        jardineiro = nomes["jardineiro"]
+        assert jardineiro["quantidade_total"] == 40  # 20+20
+        assert len(jardineiro["ocorrencias"]) == 2
+
+        # NÃO unifica erro de digitação (fica separado nesta etapa)
+        assert "auxiliar de manutenção" in nomes
+        assert "auxiliar de menutenção" in nomes  # cargo distinto, esperado
+        assert nomes["auxiliar de manutenção"]["quantidade_total"] == 40  # 20+20
+        assert nomes["auxiliar de menutenção"]["quantidade_total"] == 20
+
+    def test_falso_positivo_critico_auxiliares_diferentes_nao_se_misturam(self):
+        """Teste crítico do test plan (seção 10): Auxiliar de Serviços
+        Gerais, Auxiliar de Manutenção e Auxiliar de Cozinha são cargos
+        DIFERENTES que só compartilham a palavra 'Auxiliar' — não podem
+        virar um grupo só."""
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), {}, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+        )
+        nomes = {g["cargo_exibicao"].lower() for g in mapa.values()}
+        assert "auxiliar de serviços gerais" in nomes
+        assert "auxiliar de manutenção" in nomes
+        assert "auxiliar de cozinha" in nomes
+        assert len(nomes) == 7  # 7 cargos distintos no total do fixture, nenhum se fundiu por engano
+
+    def test_ordem_alfabetica_por_cargo(self):
+        """Pergunta 2 da story — ordem alfabética no Nível 1."""
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), {}, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+        )
+        exibicoes = [mapa[k]["cargo_exibicao"].lower() for k in sorted(mapa, key=int)]
+        assert exibicoes == sorted(exibicoes)
+
+    def test_quantidade_como_string_no_json_e_convertida_sem_quebrar(self):
+        """Dado real (vaga #38, LABISE): quantidade vem como string '6' no
+        jsonb — não pode quebrar a soma."""
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), {}, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+        )
+        costureira = next(g for g in mapa.values() if "costureira" in g["cargo_exibicao"].lower())
+        assert costureira["quantidade_total"] == 6
+
+    def test_selecao_evento_unidade_cuca_nulo_e_toda_a_rede(self):
+        """Seção 3, regra 1 — unidade_cuca NULL → 'Toda a Rede'."""
+        vagas = [{
+            "id": "vaga-x", "tipo": "selecao_evento", "empresa_id": "emp-singular",
+            "unidade_cuca": None,
+            "cargos_lista": [{"titulo": "Atendente", "quantidade": 5}],
+        }]
+        mapa = emp._construir_cargos_consolidados(vagas, {}, set(), _EMPRESAS_POR_ID_FIXTURE, {})
+        atendente = next(iter(mapa.values()))
+        assert atendente["ocorrencias"][0]["rotulo_tipo"] == "Processo seletivo Cuca: Toda a Rede"
+
+    def test_vaga_normal_global_e_vaga_individual_sem_sufixo(self):
+        """Seção 3, regra 3 — vaga_normal + unidade_destino global →
+        'Vaga individual', sem sufixo de unidade."""
+        vagas = [{
+            "id": "vaga-y", "tipo": "vaga_normal", "empresa_id": "emp-singular",
+            "titulo": "Consultora de Vendas", "total_vagas": 1,
+            "unidade_destino": "global",
+        }]
+        mapa = emp._construir_cargos_consolidados(vagas, {}, set(), _EMPRESAS_POR_ID_FIXTURE, {})
+        consultora = next(iter(mapa.values()))
+        assert consultora["ocorrencias"][0]["rotulo_tipo"] == "Vaga individual"
+        assert consultora["quantidade_total"] == 1
+
+    def test_vaga_normal_unidade_especifica_e_vaga_individual_com_sufixo(self):
+        """Seção 3, regra 4 (resposta do Junior 2026-08-18) — vaga_normal +
+        unidade específica → 'Vaga individual — {nome}', ex.: 'CUCA Pici'."""
+        vagas = [{
+            "id": "vaga-z", "tipo": "vaga_normal", "empresa_id": "emp-singular",
+            "titulo": "Auxiliar Administrativo", "total_vagas": 2,
+            "unidade_destino": _UUID_UNIDADE_CENTRO,
+        }]
+        mapa = emp._construir_cargos_consolidados(
+            vagas, {}, set(), _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+        )
+        aux = next(iter(mapa.values()))
+        assert aux["ocorrencias"][0]["rotulo_tipo"] == "Vaga individual — CUCA Centro"
+
+    def test_exclusao_por_ocorrencia_recalcula_quantidade_sem_sumir_cargo_inteiro(self):
+        """Pergunta 5 da story (exemplo literal do Junior): candidato já
+        candidatado a 2 das 3 ocorrências de Porteiro — quantidade
+        recalculada só com a ocorrência restante, cargo NÃO some (ainda tem
+        1 ocorrência disponível)."""
+        cargos_ja_candidatados_por_vaga = {
+            "vaga-17": {"Porteiro"},
+            "vaga-20": {"Porteiro"},
+        }
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), cargos_ja_candidatados_por_vaga, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+        )
+        porteiro = next(g for g in mapa.values() if g["cargo_exibicao"].lower() == "porteiro")
+        assert porteiro["quantidade_total"] == 20  # só a ocorrência da vaga-21 restou
+        assert len(porteiro["ocorrencias"]) == 1
+        assert porteiro["ocorrencias"][0]["vaga_id"] == "vaga-21"
+
+    def test_exclusao_de_todas_as_ocorrencias_faz_cargo_sumir_do_mapa(self):
+        """Pergunta 5 da story — quando TODAS as ocorrências de um cargo já
+        foram candidatadas, o cargo inteiro some do Nível 1 (soma zero)."""
+        cargos_ja_candidatados_por_vaga = {
+            "vaga-17": {"Porteiro"},
+            "vaga-20": {"Porteiro"},
+            "vaga-21": {"porteiro"},
+        }
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), cargos_ja_candidatados_por_vaga, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+        )
+        assert all(g["cargo_exibicao"].lower() != "porteiro" for g in mapa.values())
+
+    def test_vaga_normal_ja_candidatada_e_excluida_inteira(self):
+        """vaga_normal não tem cargo_escolhido — candidatura bloqueia a vaga
+        inteira (mesmo padrão já usado em `_buscar_vagas_abertas_e_candidaturas`)."""
+        vagas = [{
+            "id": "vaga-y", "tipo": "vaga_normal", "empresa_id": "emp-singular",
+            "titulo": "Consultora de Vendas", "total_vagas": 1,
+            "unidade_destino": "global",
+        }]
+        mapa = emp._construir_cargos_consolidados(vagas, {}, {"vaga-y"}, _EMPRESAS_POR_ID_FIXTURE, {})
+        assert mapa == {}
+
+    def test_resolver_nome_unidade_cuca_fail_safe_uuid_nao_encontrado(self):
+        """Fail-safe (seção 2.4/3) — UUID que não bate com nenhuma unidade
+        conhecida cai pro próprio valor bruto, em vez de quebrar."""
+        uuid_desconhecido = "99999999-9999-9999-9999-999999999999"
+        assert emp._resolver_nome_unidade_cuca(uuid_desconhecido, {}) == uuid_desconhecido
+
+    def test_normalizar_cargo_basico_colapsa_espacos_duplos(self):
+        assert emp._normalizar_cargo_basico("Costureira   Overlock") == "costureira overlock"
+        assert emp._normalizar_cargo_basico("  Porteiro  ") == "porteiro"
+
+
 class TestBloco6PerformanceEParsers:
 
     @pytest.mark.asyncio
