@@ -1,6 +1,6 @@
 # S-EMP-AUD-023 — Vaga Direta: consolida listagem de vagas por cargo com seleção múltipla
 
-**Status:** InProgress (passo 3/5 — ver Dev Agent Record)
+**Status:** InProgress (passo 4/4 implementado — ver nota sobre "5 passos" no Dev Agent Record, HALT pro Junior)
 **Epic:** Auditoria Empregabilidade
 **Origem:** demanda direta do Junior, 2026-08-18 ("VAGA DIRETA"), detalhada por ele em 2026-08-18 após
 1ª versão da story ser considerada insuficiente
@@ -497,6 +497,61 @@ anterior — confirma que a etapa `aguardando_escolha_unidade` resultante tem o 
 exatamente como esperado; religuei, voltou a passar) antes de considerar fechado. Suíte completa: 144
 passed (143 + 1 novo).
 
+### File List (passo 4)
+
+- `worker/empregabilidade_engine.py`:
+  - `import json` adicionado (parse da resposta da IA — mesmo padrão de `intencao_detector.py`).
+  - `_chave_cache_normalizacao_cargos`, `_chamar_ia_normalizacao_cargos`, `_normalizar_cargos_via_ia` —
+    funções novas (seção 8.1): pré-passo barato já existia (passo 1); estas cobrem o passo com IA, cache
+    por conteúdo (TTL 90s) e fail-safe. `_chamar_ia_normalizacao_cargos` isolada em função própria pra
+    mock direto nos testes, mesmo padrão de `_chamar_gpt_contextual` em `intencao_detector.py`.
+  - `_construir_cargos_consolidados` (passo 1, frozen) — ganhou parâmetro opcional
+    `mapa_normalizacao_ia` (default `None`, preserva o comportamento exato do passo 1 — os 13 testes
+    originais continuam passando sem alteração). Quando presente, usa o nome canônico (re-normalizado)
+    como chave de agrupamento em vez da chave básica sozinha.
+  - Ponto de entrada ("ver vagas"): monta `mapa_cargos_sem_ia` primeiro (pré-passo puro), extrai os
+    títulos únicos restantes, chama `_normalizar_cargos_via_ia`, e só reconstrói com
+    `mapa_normalizacao_ia` quando a IA de fato retornou algum grupo (evita reconstrução redundante no
+    caso comum de mapa vazio — fail-safe ou nada pra fundir).
+- `worker/tests/test_empregabilidade_engine.py`: `TestS_EMP_AUD_023Passo4NormalizacaoIA`, 10 testes —
+  guard de menos de 2 títulos (não chama IA), aplica grupo retornado, fail-safe contra alucinação
+  (membro fora da lista original é descartado), ignora grupo com 1 membro só, fail-safe quando a IA
+  lança exceção, cache evita 2ª chamada pro mesmo conjunto (ordem diferente), fusão real do erro de
+  digitação de produção (`Auxiliar de menutenção` + `Auxiliar de Manutenção` = 60), **teste crítico do
+  falso positivo** (seção 10 do test plan: `Auxiliar de Serviços Gerais`/`Auxiliar de Cozinha`/`Auxiliar
+  de Manutenção` continuam 3 grupos separados mesmo com o mapa da IA presente), mapa ausente preserva
+  comportamento do passo 1, e 1 teste fim a fim (`_processar_publico` chama a IA de verdade e usa o
+  resultado na listagem mostrada ao lead).
+
+### Completion Notes (passo 4)
+
+- Seção 8.1 (todos os 4 passos do desenho técnico) entregue: pré-passo barato (já existia, passo 1) +
+  passo com IA + cache por conteúdo (item 3) + fail-safe (item 4). Risco a monitorar (item 5, falso
+  positivo) coberto por teste dedicado com o dado real de produção mais perigoso (3 cargos "Auxiliar de
+  ...", só 1 par deveria fundir).
+- Cache implementado como dict em memória de processo (não distribuído) — TTL 90s conforme sugerido na
+  seção 8.1 (60-120s, ajustável). Nota de escala: como é em memória por processo, múltiplos workers em
+  paralelo não compartilham cache entre si (cada um cacheia separado) — não é um problema de
+  corretude (resultado é sempre recomputável, só reduz o quanto a economia de chamadas de IA se
+  acumula entre processos); registrado aqui como nota, não como bloqueio, dado o volume baixo de vagas
+  abertas hoje (seção 2).
+- Suíte completa do arquivo: 154 passed (144 pré-existentes + 10 novos), 0 falhas. Suíte completa do
+  worker (exceto `test_main_retomar_disparo.py`, pré-existente/não relacionado): 332 passed, mesmas 5
+  falhas pré-existentes em `test_meta_adapter_outbound.py`.
+- Escopo da story (seção 9) permanece respeitado.
+
+### ⚠️ Inconsistência encontrada — a "Nota de escopo" diz "5 passos" mas só lista 4
+
+A seção "Nota de escopo" (linha 322, escrita no passo 1, antes desta sessão) diz literalmente "Dividida
+em 5 passos" mas enumera só 4 itens (1: motor de dados: 2: Nível 1/2 + fluxo real; 3: fila; 4:
+normalização via IA). Os 4 itens listados estão **todos implementados** agora (este commit fecha o
+item 4). Não inventei um "passo 5" pra completar o número 5 citado no texto — isso seria inventar
+escopo sem pedido real (Artigo IV da Constitution, "No Invention"), o oposto do que essa story já
+corrigiu uma vez (a 1ª versão foi rejeitada por falta de detalhe, não por excesso). Levanto isso
+explicitamente pro Junior decidir: (a) era só um erro de contagem no texto original e a story está
+funcionalmente completa com os 4 passos, ou (b) havia um 5º passo em mente que não ficou registrado e
+precisa ser descrito. Não presumo nenhuma das duas — HALT aqui.
+
 ## Change Log
 
 - v0.1 (2026-08-18): Story criada por @sm — versão inicial, insuficientemente detalhada.
@@ -564,3 +619,12 @@ passed (143 + 1 novo).
   100% verde — nenhum teste cobria esse branch específico). @dev fechou com
   `test_fila_com_vaga_global_tambem_nao_reaproveita_nome`, confirmado com a mesma técnica (desligar e
   religar). Suíte completa: 144 passed.
+- v0.12 (2026-08-19): PR #106 (passo 3) mergeado em `main`, redeploy do `cuca-worker` feito pelo Junior.
+  @dev implementou o **passo 4/4** — normalização de cargo via IA (seção 8.1), seguindo o mesmo padrão
+  já usado em `intencao_detector.py` (GPT-4o-mini, função de chamada isolada, fail-safe). Cache por
+  conteúdo (TTL 90s) e teste crítico do falso positivo (3 cargos "Auxiliar de..." reais de produção, só
+  1 par deveria fundir) cobertos. `_construir_cargos_consolidados` (passo 1) ganhou parâmetro opcional
+  que preserva o comportamento antigo por padrão — os 13 testes originais continuam intactos. 10 testes
+  novos, suíte completa: 154 passed. **Achado**: a "Nota de escopo" (passo 1) diz "5 passos" mas só
+  lista 4 — os 4 estão completos agora. Não inventei um 5º passo pra fechar o número; HALT pro Junior
+  decidir se é só erro de contagem (story completa) ou se falta algo não registrado.

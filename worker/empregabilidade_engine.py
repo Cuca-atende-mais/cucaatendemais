@@ -7,6 +7,7 @@ Máquina de estados armazenada em conversas.metadata["empreg_fluxo"].
 
 import os
 import re
+import json
 import logging
 import asyncio
 import hashlib
@@ -825,12 +826,110 @@ def _gerar_rotulo_tipo_vaga(vaga: dict, unidades_por_id: dict[str, str]) -> str:
     return f"Vaga individual — {nome_unidade}"
 
 
+# ---------------------------------------------------------------------------
+# S-EMP-AUD-023 passo 4 — normalização de cargo via IA (seção 8.1, passo 2).
+# Só entra em ação pros títulos que sobram ambíguos depois do pré-passo
+# barato (_normalizar_cargo_basico, passo 1) — ex.: "Auxiliar de menutenção"
+# (erro de digitação real, visto em produção) não unifica com "Auxiliar de
+# Manutenção" só com minúsculo/trim. Mesmo padrão de `intencao_detector.py`
+# (`_chamar_gpt_contextual`): função de chamada isolada pra mock direto nos
+# testes, fail-safe que nunca propaga exceção.
+# ---------------------------------------------------------------------------
+
+_TTL_CACHE_NORMALIZACAO_CARGOS_SEGUNDOS = 90
+# Cache por conteúdo (seção 8.1, passo 3) — chave é hash do conjunto de
+# títulos únicos de entrada, não muda entre requisições com o mesmo conjunto
+# de vagas abertas (só varia quando alguém cadastra/edita/fecha vaga).
+_CACHE_NORMALIZACAO_CARGOS: dict[str, tuple[float, dict[str, str]]] = {}
+
+
+def _chave_cache_normalizacao_cargos(titulos_unicos: list[str]) -> str:
+    conteudo = "|".join(sorted(t.strip().lower() for t in titulos_unicos))
+    return hashlib.sha256(conteudo.encode()).hexdigest()
+
+
+async def _chamar_ia_normalizacao_cargos(titulos_unicos: list[str]) -> dict:
+    """Chamada real ao GPT-4o-mini, isolada em função própria pra permitir
+    mock direto nos testes (mesmo padrão de `_chamar_gpt_contextual` em
+    `intencao_detector.py`)."""
+    from openai import AsyncOpenAI  # noqa: PLC0415
+    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": (
+                "Você recebe uma lista de títulos de cargo cadastrados por empresas "
+                "diferentes numa plataforma de vagas de emprego no Brasil. Alguns "
+                "títulos são o MESMO cargo, só com erro de digitação, abreviação "
+                "(ex.: \"aux.\" = \"auxiliar\") ou variação de maiúscula/minúscula. "
+                "Outros são cargos REALMENTE DIFERENTES, mesmo que compartilhem uma "
+                "palavra em comum — por exemplo, \"Auxiliar de Cozinha\" e \"Auxiliar "
+                "de Manutenção\" são cargos diferentes, e NÃO devem ser agrupados só "
+                "por começarem com \"Auxiliar\".\n\n"
+                "Agrupe SOMENTE os títulos que são claramente o mesmo cargo (erro de "
+                "digitação, abreviação ou variação de caixa evidentes). NUNCA agrupe "
+                "por similaridade genérica de palavra ou de categoria de trabalho.\n\n"
+                "Retorne SOMENTE JSON com a chave \"grupos\": uma lista de objetos "
+                "{\"canonico\": <nome de exibição escolhido>, \"membros\": [<títulos "
+                "originais da lista abaixo que pertencem a esse grupo>]}. Inclua "
+                "APENAS grupos com 2 ou mais membros — títulos sem nenhum outro "
+                "título equivalente na lista não devem aparecer no resultado.\n\n"
+                "Títulos:\n" + "\n".join(f"- {t}" for t in titulos_unicos)
+            ),
+        }],
+        response_format={"type": "json_object"},
+        temperature=0.0,
+        max_tokens=800,
+    )
+    return json.loads(response.choices[0].message.content)
+
+
+async def _normalizar_cargos_via_ia(titulos_unicos: list[str]) -> dict[str, str]:
+    """Orquestra cache + chamada de IA + fail-safe (seção 8.1). Retorna
+    `{chave_básica: nome_canônico}` só com entradas pros títulos que a IA
+    de fato juntou em algum grupo de 2+ — títulos não mencionados ficam de
+    fora (o chamador cai pro próprio valor básico, sem merge). Nunca propaga
+    exceção: falha de IA (rede, JSON malformado, resposta vazia) cai pro
+    pré-passo sem IA (passo 1), nunca trava a listagem de vagas."""
+    if len(titulos_unicos) < 2:
+        return {}
+
+    chave_cache = _chave_cache_normalizacao_cargos(titulos_unicos)
+    cache_hit = _CACHE_NORMALIZACAO_CARGOS.get(chave_cache)
+    if cache_hit and (time.time() - cache_hit[0]) < _TTL_CACHE_NORMALIZACAO_CARGOS_SEGUNDOS:
+        return cache_hit[1]
+
+    try:
+        resultado = await _chamar_ia_normalizacao_cargos(titulos_unicos)
+        # Fail-safe: só aceita membro que realmente estava na lista enviada —
+        # impede a IA "inventar" título fora do conjunto original.
+        titulos_validos = {_normalizar_cargo_basico(t) for t in titulos_unicos}
+        mapa: dict[str, str] = {}
+        for grupo in (resultado.get("grupos") or []):
+            canonico = (grupo.get("canonico") or "").strip()
+            membros = grupo.get("membros") or []
+            if not canonico or len(membros) < 2:
+                continue
+            for membro in membros:
+                chave_membro = _normalizar_cargo_basico(str(membro))
+                if chave_membro in titulos_validos:
+                    mapa[chave_membro] = canonico
+    except Exception as exc:
+        logger.warning("[normalizacao-cargo-ia] falha, caindo pro pré-passo sem IA: %s", exc)
+        return {}
+
+    _CACHE_NORMALIZACAO_CARGOS[chave_cache] = (time.time(), mapa)
+    return mapa
+
+
 def _construir_cargos_consolidados(
     vagas_db: list[dict],
     cargos_ja_candidatados_por_vaga: dict[str, set],
     vagas_ja_candidatadas_sem_cargo: set,
     empresas_por_id: dict[str, str],
     unidades_por_id: dict[str, str],
+    mapa_normalizacao_ia: dict[str, str] | None = None,
 ) -> dict:
     """Nível 1 da story: explode cada vaga em ocorrências de cargo (1 por
     `vaga_normal`, N por `cargos_lista` de `selecao_evento`), agrupa por
@@ -838,11 +937,28 @@ def _construir_cargos_consolidados(
     numerado (`"1"`, `"2"`, ...) em ordem alfabética pelo nome de exibição
     (pergunta 2 da story).
 
+    `mapa_normalizacao_ia` (passo 4, seção 8.1 passo 2, opcional — default
+    `None` preserva o comportamento exato do passo 1): mapa
+    `{chave_básica: nome_canônico}` produzido por `_normalizar_cargos_via_ia`.
+    Quando um título tem entrada nesse mapa, o agrupamento usa o nome
+    canônico (re-normalizado) como chave em vez da chave básica sozinha —
+    isso funde erro de digitação/abreviação que o pré-passo sozinho não
+    resolve (ex.: "Auxiliar de menutenção" com "Auxiliar de Manutenção").
+    Títulos sem entrada no mapa continuam exatamente como no passo 1.
+
     Exclusão por ocorrência, não por cargo inteiro (pergunta 5 da story):
     ocorrências já candidatadas pelo lead são removidas ANTES da soma — um
     cargo só some inteiro do mapa quando TODAS as suas ocorrências já foram
     candidatadas (consequência natural: soma zero)."""
     grupos: dict[str, dict] = {}
+    mapa_ia = mapa_normalizacao_ia or {}
+
+    def _chave_e_exibicao(titulo_original: str) -> tuple[str, str]:
+        chave_basica = _normalizar_cargo_basico(titulo_original)
+        canonico = mapa_ia.get(chave_basica)
+        if not canonico:
+            return chave_basica, titulo_original
+        return _normalizar_cargo_basico(canonico), canonico
 
     for vaga in vagas_db:
         vaga_id = vaga["id"]
@@ -860,9 +976,9 @@ def _construir_cargos_consolidados(
                     quantidade = int(item.get("quantidade") or 0)
                 except (TypeError, ValueError):
                     quantidade = 0
-                chave = _normalizar_cargo_basico(titulo_original)
+                chave, cargo_exibicao = _chave_e_exibicao(titulo_original)
                 grupo = grupos.setdefault(chave, {
-                    "cargo_exibicao": titulo_original,
+                    "cargo_exibicao": cargo_exibicao,
                     "quantidade_total": 0,
                     "ocorrencias": [],
                 })
@@ -885,9 +1001,9 @@ def _construir_cargos_consolidados(
                 quantidade = int(vaga.get("total_vagas") or 0)
             except (TypeError, ValueError):
                 quantidade = 0
-            chave = _normalizar_cargo_basico(titulo_original)
+            chave, cargo_exibicao = _chave_e_exibicao(titulo_original)
             grupo = grupos.setdefault(chave, {
-                "cargo_exibicao": titulo_original,
+                "cargo_exibicao": cargo_exibicao,
                 "quantidade_total": 0,
                 "ocorrencias": [],
             })
@@ -3857,9 +3973,21 @@ async def _processar_publico(
     }
     vagas_ja_candidatadas_sem_cargo = db_vagas_ids | historico_vaga_normal
 
-    mapa_cargos = _construir_cargos_consolidados(
+    mapa_cargos_sem_ia = _construir_cargos_consolidados(
         vagas_raw, db_cargos_por_vaga, vagas_ja_candidatadas_sem_cargo,
         empresas_por_id, unidades_por_id,
+    )
+    # S-EMP-AUD-023 passo 4 (seção 8.1, passo 2): IA só entra pros títulos
+    # que sobraram ambíguos depois do pré-passo barato acima — nunca troca a
+    # listagem em si, só pode FUNDIR grupos que o pré-passo deixou separados.
+    titulos_unicos_pos_pre_passo = [g["cargo_exibicao"] for g in mapa_cargos_sem_ia.values()]
+    mapa_normalizacao_ia = await _normalizar_cargos_via_ia(titulos_unicos_pos_pre_passo)
+    mapa_cargos = (
+        _construir_cargos_consolidados(
+            vagas_raw, db_cargos_por_vaga, vagas_ja_candidatadas_sem_cargo,
+            empresas_por_id, unidades_por_id, mapa_normalizacao_ia=mapa_normalizacao_ia,
+        )
+        if mapa_normalizacao_ia else mapa_cargos_sem_ia
     )
 
     if not mapa_cargos:
