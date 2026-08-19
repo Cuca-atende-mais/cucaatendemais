@@ -3766,6 +3766,108 @@ class TestBloco6RotearPorIntencao:
         assert "Atendente" in _isola_enviar.call_args.args[3]
 
     @pytest.mark.asyncio
+    async def test_rota_candidato_vaga_cargo_mencionado_acha_por_titulo(self, monkeypatch, _isola_enviar):
+        """S-EMP-AUD-030 AC2: cargo mencionado bate contra `titulo` da vaga
+        (ex.: selecao_evento, cujo cargo real ainda está só no título)."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {"id": "vaga-enf", "titulo": "Enfermeira Plantonista", "descricao": "Plantão 12x36", "cargos_lista": []},
+            {"id": "vaga-outra", "titulo": "Auxiliar Administrativo", "descricao": "", "cargos_lista": []},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "candidato_vaga", "nome": "Ana", "cargo_mencionado": "enfermeira"},
+            "tem vaga de enfermeira?", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+            lambda _texto: (None, None),
+        )
+
+        assert estado["etapa"] == "listou_vagas"
+        assert estado["mapa_vagas"] == {"1": "vaga-enf"}
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "Enfermeira Plantonista" in texto_enviado
+        assert "Auxiliar Administrativo" not in texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_rota_candidato_vaga_cargo_mencionado_acha_por_cargos_lista(self, monkeypatch, _isola_enviar):
+        """S-EMP-AUD-030 AC2: cargo mencionado bate contra `cargos_lista`
+        (jsonb) — onde o cargo real vive na maioria das vagas hoje, quando o
+        `titulo` é só o nome do processo seletivo, não do cargo."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {
+                "id": "vaga-1", "titulo": "Processo Seletivo LABISE", "descricao": "",
+                "cargos_lista": [{"titulo": "Costureira", "quantidade": 5}, {"titulo": "Enfermeira", "quantidade": 1}],
+            },
+            {"id": "vaga-2", "titulo": "Processo Seletivo XPTO", "descricao": "", "cargos_lista": [{"titulo": "Motorista"}]},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "candidato_vaga", "nome": "Ana", "cargo_mencionado": "enfermeira"},
+            "tem vaga de enfermeira?", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+            lambda _texto: (None, None),
+        )
+
+        assert estado["mapa_vagas"] == {"1": "vaga-1"}
+
+    @pytest.mark.asyncio
+    async def test_rota_candidato_vaga_cargo_mencionado_nao_encontrado_oferece_banco_talentos(
+        self, monkeypatch, _isola_enviar,
+    ):
+        """S-EMP-AUD-030 AC2 — regressão dos 2 casos reais da auditoria
+        (enfermeira/estagiário, conversas 8fc6dfd2/94dbad57): sem vaga do
+        cargo pedido, responde explicitamente 'não temos' e oferece banco de
+        talentos — em vez de mostrar vagas de outra área sem avisar."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {"id": "vaga-1", "titulo": "Auxiliar de Cozinha", "descricao": "", "cargos_lista": []},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "candidato_vaga", "nome": "Ana", "cargo_mencionado": "enfermeira"},
+            "tem vaga de enfermeira?", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+            lambda _texto: (None, None),
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "não há vagas para *enfermeira*" in texto_enviado.lower()
+        assert "banco de talentos" in texto_enviado.lower()
+        assert estado["etapa"] == "oferta_banco_talentos"
+
+    @pytest.mark.asyncio
+    async def test_rota_candidato_vaga_sem_cargo_mencionado_comportamento_atual_intacto(
+        self, monkeypatch, _isola_enviar,
+    ):
+        """S-EMP-AUD-030 AC3: sem cargo_mencionado (campo ausente ou None),
+        comportamento atual (genérico/setor) permanece idêntico — mesmo
+        teste de regressão já existente, reforçado aqui."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [{"id": "vaga-1", "titulo": "Atendente", "descricao": "Atendimento"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "candidato_vaga", "nome": "Ana", "cargo_mencionado": None},
+            "quero vaga", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+            lambda _texto: (None, None),
+        )
+
+        assert estado["mapa_vagas"] == {"1": "vaga-1"}
+
+    @pytest.mark.asyncio
     async def test_rota_banco_talentos_pergunta_contexto(self, monkeypatch, _isola_enviar):
         estado, fake_get, fake_set = _fluxo_mock("", {})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)

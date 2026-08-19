@@ -1,6 +1,6 @@
 # S-EMP-AUD-028 — Classificador de IA dedicado pra troca de rota na coleta de nome (substitui comparação exata)
 
-**Status:** InReview
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** `docs/Auditoria -19-08-26/2026-08-19-empregabilidade-conversas/plans/025-frases-rota-comparacao-exata-falso-negativo.md`
 (auditoria de conversas reais, 18-19/08) — reproduzido ao vivo pelo próprio Junior em teste real
@@ -226,3 +226,5 @@ Pronto pro @devops abrir o PR.
   `coletando_nome_terceiro` também herda o fallback (mesma função compartilhada), confirmado
   funcionando via teste novo. Recomendo @po corrigir o texto do Escopo numa próxima revisão. Status
   permanece InReview — pronto pro @devops abrir o PR.
+- v0.6 (2026-08-19): PR #109 mergeado em `main` (`2a9320e`) e `cuca-worker` redeployado em
+  produção — confirmado pelo Junior. Status InReview → Done.
