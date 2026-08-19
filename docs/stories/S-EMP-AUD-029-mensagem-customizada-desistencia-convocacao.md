@@ -112,6 +112,34 @@ tocado, conforme a story.
 - `worker/empregabilidade_engine.py`
 - `worker/tests/test_empregabilidade_engine.py`
 
+## QA Results
+
+**Veredito: PASS**
+
+1. **Code review** — mudança mínima e aditiva; parâmetro novo com default `None` em ambas as
+   funções; único ponto de uso real é o call site pretendido. Docstrings atualizadas com contexto
+   da story. Sem code smell.
+2. **Testes** — reconfirmados de forma independente: `156 passed` rodando a suíte completa de
+   `test_empregabilidade_engine.py`. Teste de regressão do caso real inspecionado linha a linha.
+3. **Acceptance Criteria** — AC1 (parâmetro opcional em ambas funções) ✅; AC2 (mensagem específica
+   no call site) ✅; AC3 (regressão do caso real LABISE) ✅; AC4 (outro call site sem regressão,
+   reforçado com asserção explícita) ✅; AC5 (suíte completa sem regressão) ✅.
+4. **Regressão** — confirmado via `git diff HEAD^ HEAD` que só os 2 pontos esperados
+   (`_encerrar_fluxo` dentro de `_quer_sair_semantico`, e o call site de `confirmando_presenca_nome`)
+   foram alterados; os outros 11 call sites de `_encerrar_fluxo` e os outros 3 de
+   `_quer_sair_semantico` (linhas 3217/3261/3378, etapas fora de escopo) permanecem intocados.
+   **Teste empírico de causalidade:** reverti temporariamente `empregabilidade_engine.py` pro
+   estado pré-fix (`git show HEAD^:...`) mantendo os testes novos — o teste de regressão falhou
+   exatamente como esperado (`'boa sorte' is contained here`); restaurei e a suíte voltou a 156
+   passed. Prova que o teste testa o comportamento real, não é um passa-sempre.
+5. **Performance** — string estática, zero chamada de rede/IA adicional; sem impacto de latência.
+6. **Segurança** — `mensagem_customizada` é sempre uma string literal definida no código
+   (`mensagem_desistencia_convocacao`), nunca dado do usuário — sem superfície de injeção.
+7. **Documentação** — Dev Agent Record completo, File List correta, Change Log com histórico
+   completo da story.
+
+Nenhum achado. Pronto pro @devops abrir o PR.
+
 ## Change Log
 
 - v0.1 (2026-08-19): Story criada por @sm a partir do Plano 024 da auditoria, reconfirmada com
@@ -128,3 +156,6 @@ tocado, conforme a story.
   `_encerrar_fluxo`/`_quer_sair_semantico`, mensagem específica no call site de
   `confirmando_presenca_nome`. 2 testes novos/reforçados, 156 passed sem regressão. Status Ready →
   InReview. Pronto pro @qa.
+- v0.4 (2026-08-19): @qa revisou — **PASS**. Todos os 7 checks ok, todos os AC confirmados, teste
+  empírico de causalidade confirmou que o teste de regressão falha sem o fix e passa com ele. Sem
+  achados. Status permanece InReview — pronto pro @devops abrir o PR.
