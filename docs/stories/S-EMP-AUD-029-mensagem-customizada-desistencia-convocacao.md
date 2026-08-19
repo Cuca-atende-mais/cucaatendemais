@@ -1,6 +1,6 @@
 # S-EMP-AUD-029 — Desistir de uma convocação de seleção recebe a mesma despedida genérica de "terminei com sucesso"
 
-**Status:** InReview
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** `docs/Auditoria -19-08-26/2026-08-19-empregabilidade-conversas/plans/024-despedida-generica-desistencia-selecao.md`
 (auditoria de conversas reais, 18-19/08) — reproduzido ao vivo em conversa real de outro lead
@@ -159,3 +159,5 @@ Nenhum achado. Pronto pro @devops abrir o PR.
 - v0.4 (2026-08-19): @qa revisou — **PASS**. Todos os 7 checks ok, todos os AC confirmados, teste
   empírico de causalidade confirmou que o teste de regressão falha sem o fix e passa com ele. Sem
   achados. Status permanece InReview — pronto pro @devops abrir o PR.
+- v0.5 (2026-08-19): PR #108 mergeado em `main` (`b92f3f3`) e `cuca-worker` redeployado em
+  produção (EasyPanel) — confirmado pelo Junior. Status InReview → Done.
