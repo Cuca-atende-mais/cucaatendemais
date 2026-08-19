@@ -1,6 +1,6 @@
 # S-EMP-AUD-023 — Vaga Direta: consolida listagem de vagas por cargo com seleção múltipla
 
-**Status:** InProgress (passo 2/5 — ver Dev Agent Record)
+**Status:** InProgress (passo 3/5 — ver Dev Agent Record)
 **Epic:** Auditoria Empregabilidade
 **Origem:** demanda direta do Junior, 2026-08-18 ("VAGA DIRETA"), detalhada por ele em 2026-08-18 após
 1ª versão da story ser considerada insuficiente
@@ -433,6 +433,56 @@ confirma que o fluxo foi de fato encerrado (`estado == {}`) — isso só acontec
 chamado e seu retorno foi honrado, não só se o parser de número falhou. Suíte completa: 138 passed
 (136 + 2 novos).
 
+### File List (passo 3)
+
+- `worker/empregabilidade_engine.py`:
+  - `_confirmar_cargos_selecao_evento` — ganhou parâmetro opcional `fila_candidaturas_pendentes`
+    (default `None`, não muda o call site original em `listando_cargos_selecao`), persistido no fluxo
+    resultante quando presente.
+  - `_enviar_link_candidatura` — passa adiante `fila_candidaturas_pendentes` do fluxo recebido pro
+    fluxo resultante, só quando o chamador explicitamente a incluiu (callers antigos nunca tinham essa
+    chave, então não ganham ruído novo no estado).
+  - `_rotear_ocorrencia_escolhida` — função nova, extraída do que antes era o corpo inline de
+    `listou_ocorrencias_cargo`: roteia 1 ocorrência (seleção ou vaga individual) pra sua rota completa,
+    recebendo `fila_restante` (persistida) e `usar_prefill` (só True pra 1ª ocorrência escolhida no
+    Nível 2 — itens dequeueados da fila são sempre `usar_prefill=False`, nunca reaproveitam nome,
+    conforme regra 5 literal). Corrigido um vazamento de prefill que só aparecia com fila: o branch
+    "vaga é global" perguntava a unidade sem checar `usar_prefill`, e a etapa
+    `aguardando_escolha_unidade` (existente, genérica) reaproveitaria `nome_candidato_prefill` de uma
+    candidatura anterior por padrão — agora esse campo é explicitamente limpo quando `usar_prefill=False`.
+  - `listou_ocorrencias_cargo` (etapa) — refatorada pra chamar `_rotear_ocorrencia_escolhida` em vez de
+    duplicar a lógica de roteamento; monta `fila_restante` a partir das ocorrências escolhidas além da
+    1ª; copy da mensagem de aviso atualizada (antes dizia pra escolher a próxima manualmente, agora diz
+    que a fila continua sozinha).
+  - `aguardando_confirmacao_candidatura` (etapa, branch de sucesso não-banco-de-talentos) — antes de
+    oferecer "outra/encerrar", checa `fila_candidaturas_pendentes`; se não vazia, encadeia a próxima
+    ocorrência via `_rotear_ocorrencia_escolhida` (usar_prefill=False) em vez de perguntar.
+  - `confirmando_presenca_telefone` (etapa, SQS-56 sem coleta de currículo) — mesmo encadeamento, no
+    ponto de conclusão da rota de seleção sem currículo.
+- `worker/tests/test_empregabilidade_engine.py`: `TestS_EMP_AUD_023Passo3FilaCandidaturas`, 5 testes —
+  escolha múltipla no Nível 2 popula a fila com o restante; conclusão de candidatura por link encadeia
+  a próxima automaticamente (e salva histórico antes); a fila nunca reaproveita nome entre candidaturas
+  diferentes (mesmo com prefill disponível); conclusão da rota de seleção sem currículo encadeia a
+  próxima; sem fila, o comportamento antigo de "outra/encerrar" continua intacto (regressão). Fake de
+  teste (`_SupabaseFakeBloco6`/`_TabelaFake`) ganhou suporte a `insert()` e `.is_()`.
+
+### Completion Notes (passo 3)
+
+- Regra 5 (seção 5) agora **entregue por completo**: candidatura múltipla em sequência, rota completa
+  por tipo, sem atalho, sem reaproveitar nome/dados entre candidaturas diferentes — automática, sem o
+  lead precisar escolher a próxima manualmente.
+- Achado corrigido durante a implementação (não estava no plano original, achado ao rastrear o dado até
+  o consumidor real): o branch de vaga global dentro do roteamento de ocorrência não sabia distinguir
+  "1ª ocorrência do Nível 2" de "item da fila" — a etapa `aguardando_escolha_unidade` (compartilhada,
+  pré-existente) reaproveitaria `nome_candidato_prefill` por padrão depois de escolhida a unidade,
+  quebrando a regra 5 pro caso específico "vaga individual global, vinda da fila". Corrigido limpando o
+  prefill nesse caminho quando `usar_prefill=False`. Coberto por
+  `test_fila_nunca_reaproveita_nome_entre_candidaturas_diferentes`.
+- Suíte completa do arquivo: 143 passed (138 pré-existentes + 5 novos), 0 falhas. Suíte completa do
+  worker (exceto `test_main_retomar_disparo.py`, pré-existente/não relacionado): 321 passed, mesmas 5
+  falhas pré-existentes em `test_meta_adapter_outbound.py`.
+- Escopo da story (seção 9) permanece respeitado: não mudou como vagas são cadastradas/criadas.
+
 ## Change Log
 
 - v0.1 (2026-08-18): Story criada por @sm — versão inicial, insuficientemente detalhada.
@@ -487,3 +537,11 @@ chamado e seu retorno foi honrado, não só se o parser de número falhou. Suít
   ponto real: teste do item de test plan "escape semântico na etapa nova" faltando). @dev fechou o
   achado com 2 testes dedicados provando que `_escape_semantico_ou_none` dispara e é honrado nas 2
   etapas novas. Suíte completa: 138 passed.
+- v0.10 (2026-08-19): PR #105 (passo 2) mergeado em `main` pelo @devops, com aprovação do Junior.
+  @dev implementou o **passo 3/5** — `fila_candidaturas_pendentes`: candidatura múltipla em sequência
+  agora encadeia automaticamente (regra 5 da seção 5, entregue por completo). Achado corrigido durante
+  a implementação: vazamento de prefill de nome no caminho "vaga individual global vinda da fila" (a
+  etapa compartilhada `aguardando_escolha_unidade` reaproveitaria nome de candidatura anterior por
+  padrão) — corrigido, limpando o prefill explicitamente quando o item vem da fila. 5 testes novos,
+  suíte completa: 143 passed. Status mantido InProgress — próximo passo (normalização de cargo via IA)
+  só começa após revisão deste.
