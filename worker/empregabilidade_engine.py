@@ -753,6 +753,152 @@ def _limpar_campos_navegacao_publico(fluxo: dict, *, manter_categoria: bool = Tr
     return novo
 
 
+# ---------------------------------------------------------------------------
+# S-EMP-AUD-023 (Vaga Direta) — motor de agrupamento por cargo consolidado.
+#
+# Passo 1 da story: só o motor de dados (agrupar vaga_normal + selecao_evento
+# por cargo, somar quantidade, resolver rótulo de unidade/tipo, ordenar
+# alfabético). AINDA NÃO plugado no fluxo de conversa ao vivo — nenhuma etapa
+# chama essas funções ainda. Isso é intencional: troca de comportamento real
+# do candidato (substituir _mostrar_categorias) é um passo à parte, revisado
+# separadamente, dado o risco MÉDIO-ALTO da story.
+#
+# Normalização de cargo aqui é só o pré-passo barato (seção 8.1, passo 1:
+# minúsculo + trim + espaços colapsados) — a normalização via IA (passo 2 da
+# seção 8.1) é escopo de um commit futuro desta mesma story.
+# ---------------------------------------------------------------------------
+
+_REGEX_UUID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _normalizar_cargo_basico(titulo: str) -> str:
+    """Pré-passo barato de normalização de cargo (seção 8.1, passo 1) — roda
+    sempre, sem custo de IA. Resolve casos óbvios de maiúscula/minúscula e
+    espaçamento ("Porteiro"/"porteiro"), mas NÃO resolve erro de digitação
+    real (ex.: "menutenção" vs "manutenção") — isso é o passo 2 (IA), fora
+    do escopo deste commit."""
+    return re.sub(r"\s+", " ", (titulo or "").strip().lower())
+
+
+def _resolver_nome_unidade_cuca(valor: str | None, unidades_por_id: dict[str, str]) -> str | None:
+    """`unidade_cuca` mistura UUID e texto literal nos dados reais (achado
+    2.4 da story) — testa se parece UUID; se sim, resolve via
+    `unidades_por_id` (pré-buscado em lote pelo chamador); se não, usa o
+    texto direto. None permanece None (caso "Toda a Rede", tratado pelo
+    chamador). Fail-safe: UUID não encontrado no mapa cai pro próprio valor
+    bruto, em vez de quebrar a listagem."""
+    if not valor:
+        return None
+    if _REGEX_UUID.match(valor):
+        return unidades_por_id.get(valor, valor)
+    return valor
+
+
+def _gerar_rotulo_tipo_vaga(vaga: dict, unidades_por_id: dict[str, str]) -> str:
+    """Implementa as 4 regras da seção 3 (story), na ordem:
+    - selecao_evento + unidade_cuca nulo → "Toda a Rede"
+    - selecao_evento + unidade_cuca preenchido → nome resolvido
+    - vaga_normal + unidade_destino == "global" → "Vaga individual"
+    - vaga_normal + unidade_destino específica → "Vaga individual — {nome}"
+    """
+    tipo = vaga.get("tipo")
+    if tipo == "selecao_evento":
+        nome_unidade = _resolver_nome_unidade_cuca(vaga.get("unidade_cuca"), unidades_por_id)
+        if not nome_unidade:
+            return "Processo seletivo Cuca: Toda a Rede"
+        return f"Processo seletivo Cuca: {nome_unidade}"
+    # vaga_normal
+    unidade_destino = vaga.get("unidade_destino") or ""
+    if unidade_destino == "global" or not unidade_destino:
+        return "Vaga individual"
+    nome_unidade = _resolver_nome_unidade_cuca(unidade_destino, unidades_por_id)
+    if not nome_unidade:
+        return "Vaga individual"
+    return f"Vaga individual — {nome_unidade}"
+
+
+def _construir_cargos_consolidados(
+    vagas_db: list[dict],
+    cargos_ja_candidatados_por_vaga: dict[str, set],
+    vagas_ja_candidatadas_sem_cargo: set,
+    empresas_por_id: dict[str, str],
+    unidades_por_id: dict[str, str],
+) -> dict:
+    """Nível 1 da story: explode cada vaga em ocorrências de cargo (1 por
+    `vaga_normal`, N por `cargos_lista` de `selecao_evento`), agrupa por
+    cargo normalizado (pré-passo, seção 8.1), soma quantidade e monta o mapa
+    numerado (`"1"`, `"2"`, ...) em ordem alfabética pelo nome de exibição
+    (pergunta 2 da story).
+
+    Exclusão por ocorrência, não por cargo inteiro (pergunta 5 da story):
+    ocorrências já candidatadas pelo lead são removidas ANTES da soma — um
+    cargo só some inteiro do mapa quando TODAS as suas ocorrências já foram
+    candidatadas (consequência natural: soma zero)."""
+    grupos: dict[str, dict] = {}
+
+    for vaga in vagas_db:
+        vaga_id = vaga["id"]
+        tipo = vaga.get("tipo")
+        empresa_nome = empresas_por_id.get(vaga.get("empresa_id"), "")
+        rotulo_tipo = _gerar_rotulo_tipo_vaga(vaga, unidades_por_id)
+
+        if tipo == "selecao_evento":
+            cargos_ja_desse_lead = cargos_ja_candidatados_por_vaga.get(vaga_id, set())
+            for item in (vaga.get("cargos_lista") or []):
+                titulo_original = (item.get("titulo") or "").strip()
+                if not titulo_original or titulo_original in cargos_ja_desse_lead:
+                    continue
+                try:
+                    quantidade = int(item.get("quantidade") or 0)
+                except (TypeError, ValueError):
+                    quantidade = 0
+                chave = _normalizar_cargo_basico(titulo_original)
+                grupo = grupos.setdefault(chave, {
+                    "cargo_exibicao": titulo_original,
+                    "quantidade_total": 0,
+                    "ocorrencias": [],
+                })
+                grupo["quantidade_total"] += quantidade
+                grupo["ocorrencias"].append({
+                    "vaga_id": vaga_id,
+                    "tipo": tipo,
+                    "cargo_titulo_original": titulo_original,
+                    "quantidade": quantidade,
+                    "empresa_nome": empresa_nome,
+                    "rotulo_tipo": rotulo_tipo,
+                })
+        else:  # vaga_normal
+            if vaga_id in vagas_ja_candidatadas_sem_cargo:
+                continue
+            titulo_original = (vaga.get("titulo") or "").strip()
+            if not titulo_original:
+                continue
+            try:
+                quantidade = int(vaga.get("total_vagas") or 0)
+            except (TypeError, ValueError):
+                quantidade = 0
+            chave = _normalizar_cargo_basico(titulo_original)
+            grupo = grupos.setdefault(chave, {
+                "cargo_exibicao": titulo_original,
+                "quantidade_total": 0,
+                "ocorrencias": [],
+            })
+            grupo["quantidade_total"] += quantidade
+            grupo["ocorrencias"].append({
+                "vaga_id": vaga_id,
+                "tipo": tipo,
+                "cargo_titulo_original": titulo_original,
+                "quantidade": quantidade,
+                "empresa_nome": empresa_nome,
+                "rotulo_tipo": rotulo_tipo,
+            })
+
+    cargos_ordenados = sorted(grupos.values(), key=lambda g: g["cargo_exibicao"].lower())
+    return {str(i): grupo for i, grupo in enumerate(cargos_ordenados, start=1)}
+
+
 async def _mostrar_categorias(
     instance_name: str,
     token: str,
