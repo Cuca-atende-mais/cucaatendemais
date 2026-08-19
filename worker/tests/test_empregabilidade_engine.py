@@ -777,6 +777,9 @@ class TestEscapeHatchNomeLivre:
 
         texto_enviado = mock_enviar.call_args.args[3]
         assert "Esse currículo é para" not in texto_enviado  # não seguiu como se fosse nome
+        # S-EMP-AUD-029 (AC4): este call site não passa mensagem_customizada —
+        # continua recebendo a despedida genérica de sempre, sem regressão.
+        assert "Boa sorte" in texto_enviado
         assert estado == {}
 
     @pytest.mark.asyncio
@@ -1886,6 +1889,32 @@ class TestSelecaoSemColetaCurriculo:
         assert estado.get("etapa") == "confirmando_presenca_telefone"
         assert estado.get("nome_confirmacao_presenca") == "Maria da Silva"
         assert estado.get("tentativas_confirmacao_presenca") == 0
+
+    @pytest.mark.asyncio
+    async def test_confirmando_presenca_nome_desistencia_recebe_mensagem_especifica(self, monkeypatch, _isola_enviar):
+        """S-EMP-AUD-029 — regressão do caso real (conversa 49a165ec, LABISE):
+        'não quero mais, obrigado' logo após 'Você está convocado(a)!' não
+        pode receber a despedida genérica ('Boa sorte! 🎉'), que lê como se a
+        recusa não tivesse sido ouvida."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_nome", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 0,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", MagicMock())
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=True))
+
+        await emp._processar_publico(
+            "nao quero mais, obrigado", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "boa sorte" not in texto_enviado.lower()
+        assert "🎉" not in texto_enviado
+        assert "registrada" in texto_enviado.lower()
+        assert estado == {}  # _encerrar_fluxo limpa o fluxo
 
     @pytest.mark.asyncio
     async def test_confirmando_presenca_telefone_rejeita_numero_fixo(self, monkeypatch, _isola_enviar):

@@ -579,9 +579,17 @@ async def _encerrar_fluxo(
     token: str,
     phone: str,
     perfil: str,
+    mensagem_customizada: str | None = None,
 ):
-    """Envia despedida contextualizada, limpa estado e encerra a conversa."""
-    if perfil == "empresa":
+    """Envia despedida contextualizada, limpa estado e encerra a conversa.
+
+    S-EMP-AUD-029: `mensagem_customizada` permite substituir a despedida
+    genérica em contextos onde ela soa como se a recusa não tivesse sido
+    ouvida (ex.: desistir de uma convocação de seleção) — opcional, não
+    muda nenhum call site existente que não passar o parâmetro."""
+    if mensagem_customizada:
+        msg = mensagem_customizada
+    elif perfil == "empresa":
         msg = (
             "Tudo certo! Quando precisar criar uma nova vaga ou acompanhar candidatos, "
             "é só nos enviar uma mensagem. 👷\n\nAté logo!"
@@ -1509,19 +1517,23 @@ async def _quer_sair_semantico(
     phone: str,
     instance_name: str,
     token: str,
+    mensagem_customizada: str | None = None,
 ) -> bool:
     """Variante de alta precisão para etapas de DADO livre (nome de candidato/
     terceiro): honra só `quer_sair`, nunca `mudou_de_assunto` — um nome
     incomum ou fora do padrão teria falso-positivo alto demais nesse sinal
     (qualquer texto é potencialmente um nome válido, diferente de CNPJ/e-mail/
     telefone, que têm formato verificável). Retorna True se encerrou o fluxo
-    (chamador deve dar `return` em seguida)."""
+    (chamador deve dar `return` em seguida).
+
+    S-EMP-AUD-029: `mensagem_customizada` é repassado direto pra
+    `_encerrar_fluxo` (opcional, não muda nenhum call site existente)."""
     from intencao_detector import avaliar_mensagem_contextual  # noqa: PLC0415
     sem = await avaliar_mensagem_contextual(
         texto, perfil=perfil, etapa=etapa, ultima_msg_bot=await _ultima_mensagem_bot_async(conversa_id),
     )
     if sem["quer_sair"]:
-        await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil)
+        await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil, mensagem_customizada)
         return True
     return False
 
@@ -3443,7 +3455,18 @@ async def _processar_publico(
         # em coletando_nome_candidato/coletando_nome_terceiro: só honra
         # quer_sair, nunca mudou_de_assunto (nome incomum teria falso-positivo
         # alto nesse sinal).
-        if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
+        # S-EMP-AUD-029: mensagem específica de desistência de convocação —
+        # a genérica ("Boa sorte! 🎉") logo depois de "Você está
+        # convocado(a)!" lê como se a recusa não tivesse sido ouvida.
+        mensagem_desistencia_convocacao = (
+            "Tudo bem, entendido! Sua resposta foi registrada e você não será mais "
+            "aguardado(a) para esse processo seletivo.\n\n"
+            "Se precisar de mais alguma coisa, é só chamar. Até logo! 👋"
+        )
+        if await _quer_sair_semantico(
+            texto, "publico", etapa, conversa_id, phone, instance_name, token,
+            mensagem_customizada=mensagem_desistencia_convocacao,
+        ):
             return
         # S-EMP-AUD-024: fast-path literal antes de tratar como nome — tem
         # que vir antes da checagem de nome_invalido/tamanho, senão frases
