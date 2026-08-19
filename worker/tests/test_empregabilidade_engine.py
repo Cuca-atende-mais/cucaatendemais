@@ -3139,6 +3139,212 @@ class TestS_EMP_AUD_023Passo3FilaCandidaturas:
         assert estado["etapa"] == "pos_candidatura"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-023 passo 4/5 — normalização de cargo via IA (seção 8.1, passo 2).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestS_EMP_AUD_023Passo4NormalizacaoIA:
+
+    def setup_method(self):
+        emp._CACHE_NORMALIZACAO_CARGOS.clear()
+
+    @pytest.mark.asyncio
+    async def test_menos_de_2_titulos_nao_chama_ia(self, monkeypatch):
+        mock_ia = AsyncMock()
+        monkeypatch.setattr(emp, "_chamar_ia_normalizacao_cargos", mock_ia)
+
+        resultado = await emp._normalizar_cargos_via_ia(["Porteiro"])
+
+        assert resultado == {}
+        mock_ia.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_aplica_grupo_retornado_pela_ia(self, monkeypatch):
+        mock_ia = AsyncMock(return_value={
+            "grupos": [
+                {"canonico": "Auxiliar de Manutenção", "membros": [
+                    "Auxiliar de Manutenção", "Auxiliar de menutenção",
+                ]},
+            ],
+        })
+        monkeypatch.setattr(emp, "_chamar_ia_normalizacao_cargos", mock_ia)
+
+        resultado = await emp._normalizar_cargos_via_ia(
+            ["Auxiliar de Manutenção", "Auxiliar de menutenção", "Porteiro"]
+        )
+
+        assert resultado["auxiliar de manutenção"] == "Auxiliar de Manutenção"
+        assert resultado["auxiliar de menutenção"] == "Auxiliar de Manutenção"
+        # "Porteiro" não fazia parte de nenhum grupo — não deve aparecer no mapa.
+        assert "porteiro" not in resultado
+
+    @pytest.mark.asyncio
+    async def test_ignora_titulo_que_a_ia_inventou_fora_da_lista_original(self, monkeypatch):
+        """Fail-safe contra alucinação: a IA respondeu com um membro que não
+        estava na lista enviada — esse membro é descartado, não vira uma
+        chave nova e imprevisível no mapa."""
+        mock_ia = AsyncMock(return_value={
+            "grupos": [
+                {"canonico": "Auxiliar de Manutenção", "membros": [
+                    "Auxiliar de Manutenção", "Cargo Que Não Existia Na Lista",
+                ]},
+            ],
+        })
+        monkeypatch.setattr(emp, "_chamar_ia_normalizacao_cargos", mock_ia)
+
+        resultado = await emp._normalizar_cargos_via_ia(["Auxiliar de Manutenção", "Porteiro"])
+
+        assert resultado == {"auxiliar de manutenção": "Auxiliar de Manutenção"}
+
+    @pytest.mark.asyncio
+    async def test_ignora_canonico_sem_relacao_com_titulos_originais(self, monkeypatch):
+        """Fail-safe de conteúdo: a IA juntou 2 títulos reais, mas devolveu um
+        `canonico` sem nenhuma palavra em comum com os títulos originais do
+        grupo — texto sintetizado desconexo do dado enviado, não pode virar
+        nome exibido pro candidato."""
+        mock_ia = AsyncMock(return_value={
+            "grupos": [
+                {"canonico": "Vaga Incrível Imperdível", "membros": [
+                    "Auxiliar de Manutenção", "Auxiliar de Manutençao",
+                ]},
+            ],
+        })
+        monkeypatch.setattr(emp, "_chamar_ia_normalizacao_cargos", mock_ia)
+
+        resultado = await emp._normalizar_cargos_via_ia(
+            ["Auxiliar de Manutenção", "Auxiliar de Manutençao"]
+        )
+
+        assert resultado == {}
+
+    @pytest.mark.asyncio
+    async def test_ignora_grupo_com_menos_de_2_membros(self, monkeypatch):
+        mock_ia = AsyncMock(return_value={
+            "grupos": [{"canonico": "Porteiro", "membros": ["Porteiro"]}],
+        })
+        monkeypatch.setattr(emp, "_chamar_ia_normalizacao_cargos", mock_ia)
+
+        resultado = await emp._normalizar_cargos_via_ia(["Porteiro", "Jardineiro"])
+
+        assert resultado == {}
+
+    @pytest.mark.asyncio
+    async def test_fail_safe_quando_ia_lanca_excecao(self, monkeypatch):
+        async def _falha(titulos):
+            raise RuntimeError("timeout simulado")
+
+        monkeypatch.setattr(emp, "_chamar_ia_normalizacao_cargos", _falha)
+
+        resultado = await emp._normalizar_cargos_via_ia(["Auxiliar de Manutenção", "Porteiro"])
+
+        assert resultado == {}
+
+    @pytest.mark.asyncio
+    async def test_cache_evita_2a_chamada_de_ia_pro_mesmo_conjunto_de_titulos(self, monkeypatch):
+        mock_ia = AsyncMock(return_value={"grupos": []})
+        monkeypatch.setattr(emp, "_chamar_ia_normalizacao_cargos", mock_ia)
+
+        titulos = ["Auxiliar de Manutenção", "Porteiro"]
+        await emp._normalizar_cargos_via_ia(titulos)
+        await emp._normalizar_cargos_via_ia(list(reversed(titulos)))  # mesma lista, ordem diferente
+
+        mock_ia.assert_awaited_once()
+
+    def test_construir_cargos_consolidados_funde_erro_de_digitacao_via_mapa_ia(self):
+        """Cenário real de produção (seção 2.2): 'Auxiliar de Manutenção'
+        (vaga-17, 20) + 'auxiliar de manutenção' (vaga-21, 20, já unificado
+        pelo pré-passo) + 'Auxiliar de menutenção' (vaga-20, 20, erro de
+        digitação real — NÃO unifica só com o pré-passo, precisa da IA) —
+        com o mapa da IA, os 3 somam 60."""
+        mapa_ia = {
+            "auxiliar de manutenção": "Auxiliar de Manutenção",
+            "auxiliar de menutenção": "Auxiliar de Manutenção",
+        }
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), {}, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+            mapa_normalizacao_ia=mapa_ia,
+        )
+        grupo_manutencao = next(g for g in mapa.values() if g["cargo_exibicao"] == "Auxiliar de Manutenção")
+        assert grupo_manutencao["quantidade_total"] == 60
+        assert len(grupo_manutencao["ocorrencias"]) == 3
+
+    def test_construir_cargos_consolidados_falso_positivo_nao_agrupa_auxiliares_diferentes(self):
+        """Teste crítico do test plan (seção 10): mesmo com o mapa da IA
+        presente, 'Auxiliar de Serviços Gerais' e 'Auxiliar de Cozinha'
+        continuam separados de 'Auxiliar de Manutenção' — a IA só juntou o
+        que realmente é o mesmo cargo (erro de digitação), nunca por
+        similaridade genérica de palavra ('Auxiliar')."""
+        mapa_ia = {
+            "auxiliar de manutenção": "Auxiliar de Manutenção",
+            "auxiliar de menutenção": "Auxiliar de Manutenção",
+        }
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), {}, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+            mapa_normalizacao_ia=mapa_ia,
+        )
+        nomes = {g["cargo_exibicao"] for g in mapa.values()}
+        assert "Auxiliar de Serviços Gerais" in nomes
+        assert "Auxiliar de Cozinha" in nomes
+        assert "Auxiliar de Manutenção" in nomes
+        # 3 grupos distintos — nenhum se fundiu com outro só por "Auxiliar".
+        grupo_servicos = next(g for g in mapa.values() if g["cargo_exibicao"] == "Auxiliar de Serviços Gerais")
+        grupo_cozinha = next(g for g in mapa.values() if g["cargo_exibicao"] == "Auxiliar de Cozinha")
+        assert grupo_servicos["quantidade_total"] == 150  # 50+50+50, 3 seleções, pré-passo já unifica caixa
+        assert grupo_cozinha["quantidade_total"] == 20
+
+    def test_mapa_normalizacao_ia_ausente_preserva_comportamento_do_passo1(self):
+        """Sem mapa (default None), o resultado é idêntico ao passo 1 — a
+        'Auxiliar de menutenção' (erro de digitação) continua separada."""
+        mapa = emp._construir_cargos_consolidados(
+            _vagas_fixture_producao_secao_2_2(), {}, set(),
+            _EMPRESAS_POR_ID_FIXTURE, _UNIDADES_POR_ID_FIXTURE,
+        )
+        nomes = {g["cargo_exibicao"].lower() for g in mapa.values()}
+        assert "auxiliar de menutenção" in nomes  # não unificou — sem IA, esperado
+
+    @pytest.mark.asyncio
+    async def test_entrada_fresca_usa_normalizacao_ia_na_listagem(self, monkeypatch, _isola_enviar):
+        """Fim a fim: o ponto de entrada ('ver vagas') chama a IA e usa o
+        resultado — 'Porteiro' e 'porteiro' (grafias diferentes) aparecem
+        consolidados num único cargo com o nome canônico da IA."""
+        estado, fake_get, fake_set = _fluxo_mock("inicio", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {
+                "id": "vaga-1", "tipo": "selecao_evento", "empresa_id": "emp-x",
+                "unidade_cuca": None,
+                "cargos_lista": [{"titulo": "Aux. de Cozinha", "quantidade": 10}],
+            },
+            {
+                "id": "vaga-2", "tipo": "selecao_evento", "empresa_id": "emp-x",
+                "unidade_cuca": None,
+                "cargos_lista": [{"titulo": "Auxiliar de Cozinha", "quantidade": 5}],
+            },
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        mock_ia = AsyncMock(return_value={
+            "grupos": [{"canonico": "Auxiliar de Cozinha", "membros": ["Aux. de Cozinha", "Auxiliar de Cozinha"]}],
+        })
+        monkeypatch.setattr(emp, "_chamar_ia_normalizacao_cargos", mock_ia)
+
+        await emp._processar_publico(
+            "quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mapa_cargos = estado["mapa_cargos_consolidados"]
+        assert len(mapa_cargos) == 1
+        grupo = next(iter(mapa_cargos.values()))
+        assert grupo["cargo_exibicao"] == "Auxiliar de Cozinha"
+        assert grupo["quantidade_total"] == 15
+        mock_ia.assert_awaited_once()
+
+
 class TestBloco6PerformanceEParsers:
 
     @pytest.mark.asyncio
