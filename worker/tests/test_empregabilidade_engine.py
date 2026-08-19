@@ -1176,6 +1176,35 @@ class TestS_EMP_AUD_028ClassificadorIADedicado:
         assert estado.get("etapa") == "confirmando_troca_rota"
 
     @pytest.mark.asyncio
+    async def test_coletando_nome_terceiro_tambem_reroteia_via_ia_qa_verificacao(self, monkeypatch):
+        """Verificação do @qa: _escape_literal_ou_none tem 4 call sites reais
+        (coletando_nome_candidato, coletando_nome_curriculo_publico,
+        coletando_nome_terceiro, confirmando_presenca_nome), não 3 como a
+        story descreve no Escopo — como a mudança está na função
+        compartilhada, o 4º call site (coletando_nome_terceiro) também herda
+        o fallback de IA automaticamente. Confirma que funciona lá também."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_terceiro", {
+            "perfil": "publico", "vaga_id_selecionada": "vaga-1", "banco_talentos": False,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        monkeypatch.setattr(
+            emp, "_chamar_ia_classificar_troca_rota",
+            AsyncMock(return_value={"classificacao": "troca_rota_vagas"}),
+        )
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "Eu quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+    @pytest.mark.asyncio
     async def test_classificar_troca_rota_ia_ignora_valor_fora_do_esperado(self, monkeypatch):
         """Fail-safe adicional: se a IA devolver algo fora das 3 categorias
         válidas (JSON mal formado semanticamente, alucinação), cai pra

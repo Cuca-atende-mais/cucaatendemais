@@ -156,6 +156,49 @@ inclusive o fixture autouse); restaurado, suíte voltou a 163 passed.
 - `worker/empregabilidade_engine.py`
 - `worker/tests/test_empregabilidade_engine.py`
 
+## QA Results
+
+**Veredito: PASS** (com 1 achado documentado, sem impacto funcional)
+
+1. **Code review** — mudança isolada e bem estruturada; prompt calibrado explicitamente pra
+   preferir `nome_valido` na dúvida (mesma calibração de risco da S-EMP-AUD-024); fail-safe duplo
+   (exceção E valor fora do esperado) ambos caem em `nome_valido`. Sem code smell.
+2. **Testes** — reconfirmados de forma independente: **164 passed** em
+   `test_empregabilidade_engine.py` (163 do @dev + 1 teste que adicionei, ver achado abaixo).
+3. **Acceptance Criteria** — AC1 (2 casos reais) ✅; AC2 (frase nova generaliza) ✅; AC3 (nome
+   incomum, com spy confirmando que a IA foi de fato acionada) ✅; AC4 (fail-safe de exceção) ✅;
+   AC5 (spy confirmando zero chamada de IA quando fast-path resolve) ✅; AC6 (suíte completa sem
+   regressão) ✅.
+4. **Regressão** — suíte geral do worker (`--ignore=test_main_retomar_disparo.py`): **342 passed**,
+   mesmas 5 falhas pré-existentes de ambiente em `test_meta_adapter_outbound.py` (já confirmadas em
+   sessões anteriores), nenhuma nova falha. **Achado (severidade baixa, não bloqueia):** a seção
+   Escopo desta story diz "nas 3 etapas já listadas" (`coletando_nome_candidato`,
+   `coletando_nome_curriculo_publico`, `confirmando_presenca_nome`), mas `_escape_literal_ou_none`
+   tem na verdade **4 call sites** — `coletando_nome_terceiro` também usa a mesma função
+   compartilhada e portanto também herda o fallback de IA, sem estar documentado no Escopo nem
+   coberto pelos testes originais do @dev. Como a mudança está inteiramente dentro da função
+   compartilhada (nenhuma branch por etapa), não é um risco funcional novo — testei diretamente
+   (`test_coletando_nome_terceiro_tambem_reroteia_via_ia_qa_verificacao`, adicionado por mim) e
+   confirmei que funciona corretamente lá também. Registro aqui pra @po corrigir o texto do Escopo
+   numa próxima revisão (não bloqueia esta story).
+5. **Performance** — zero chamada de IA extra quando o fast-path já resolve (confirmado por spy);
+   quando cai no fallback, é 1 chamada condicional, mesmo padrão de latência já aceito no projeto
+   pra outras classificações semânticas.
+6. **Segurança** — o texto do usuário é interpolado no prompt da mesma forma que
+   `_chamar_gpt_contextual`/`_chamar_ia_normalizacao_cargos` já fazem (padrão existente no projeto,
+   não é um risco novo introduzido aqui); resposta da IA é sempre validada contra um conjunto
+   fechado de 3 valores antes de qualquer uso — sem superfície de injeção adicional.
+7. **Documentação** — Dev Agent Record completo; File List correta; achado do Escopo documentado
+   acima.
+
+**Teste empírico de causalidade** (reconfirmado por mim, independente do @dev): revertido
+temporariamente `empregabilidade_engine.py` pro estado pré-implementação mantendo os testes — os 8
+testes da classe `TestS_EMP_AUD_028ClassificadorIADedicado` falharam todos na setup
+(`AttributeError: ... has no attribute '_chamar_ia_classificar_troca_rota'`, inclusive o fixture
+autouse); restaurado, suíte voltou a 164 passed.
+
+Pronto pro @devops abrir o PR.
+
 ## Change Log
 
 - v0.1 (2026-08-19): Story criada por @sm a partir do Plano 025 da auditoria, reconfirmada com
@@ -176,3 +219,10 @@ inclusive o fixture autouse); restaurado, suíte voltou a 163 passed.
   `_classificar_troca_rota_ia` novos, fallback dentro de `_escape_literal_ou_none`. 7 testes novos
   + fixture autouse de mock padrão, 163 passed sem regressão. Verificação empírica de causalidade
   confirmou que os testes falham sem a implementação. Status Ready → InReview. Pronto pro @qa.
+- v0.5 (2026-08-19): @qa revisou — **PASS**. Todos os AC confirmados de forma independente (164
+  passed, incluindo 1 teste que adicionei), verificação empírica de causalidade reconfirmada por
+  mim (8 testes falham sem a implementação). 1 achado de severidade baixa sem impacto funcional:
+  Escopo desta story diz "3 etapas", mas `_escape_literal_ou_none` tem 4 call sites reais —
+  `coletando_nome_terceiro` também herda o fallback (mesma função compartilhada), confirmado
+  funcionando via teste novo. Recomendo @po corrigir o texto do Escopo numa próxima revisão. Status
+  permanece InReview — pronto pro @devops abrir o PR.
