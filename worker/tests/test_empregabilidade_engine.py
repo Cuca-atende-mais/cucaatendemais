@@ -2299,11 +2299,20 @@ class _SupabaseFakeBloco6:
         self.unidades = []
         self.conversas = []
         self.leads = []
+        # S-EMP-AUD-023 passo 2
+        self.coleta_curriculo_por_vaga = {}
+        self.empresas = []
 
     def table(self, nome):
         return _TabelaFake(nome, self)
 
     def resultado_para(self, tabela: _TabelaFake):
+        if tabela.nome == "vagas" and tabela.select_cols == "coleta_curriculo":
+            vaga_id = next((valor for tipo, coluna, valor in tabela.filters if tipo == "eq" and coluna == "id"), None)
+            return _ResultadoFake({"coleta_curriculo": self.coleta_curriculo_por_vaga.get(vaga_id, True)})
+        if tabela.nome == "empresas" and tabela.in_filters:
+            ids = set(tabela.in_filters[0][1])
+            return _ResultadoFake([emp for emp in self.empresas if emp["id"] in ids])
         if tabela.nome == "vagas" and "tipo, cargos_lista" in tabela.select_cols:
             return _ResultadoFake({"tipo": "vaga_normal"})
         if tabela.nome == "vagas" and "id, titulo, status, total_vagas, numero_vaga" in tabela.select_cols:
@@ -2574,6 +2583,341 @@ class TestS_EMP_AUD_023CargosConsolidados:
     def test_normalizar_cargo_basico_colapsa_espacos_duplos(self):
         assert emp._normalizar_cargo_basico("Costureira   Overlock") == "costureira overlock"
         assert emp._normalizar_cargo_basico("  Porteiro  ") == "porteiro"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-023 passo 2/5 — plugagem do motor no fluxo real de conversa.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestS_EMP_AUD_023Passo2FluxoReal:
+
+    @pytest.mark.asyncio
+    async def test_entrada_fresca_mostra_nivel1_cargo_consolidado(self, monkeypatch, _isola_enviar):
+        """Ponto de entrada novo: 'ver vagas' não mostra mais categoria/setor
+        — mostra o cargo consolidado direto (Nível 1)."""
+        estado, fake_get, fake_set = _fluxo_mock("inicio", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {
+                "id": "vaga-17", "tipo": "selecao_evento", "empresa_id": "emp-singular",
+                "unidade_cuca": None,
+                "cargos_lista": [{"titulo": "Porteiro", "quantidade": 30}],
+            },
+        ]
+        fake.empresas = [{"id": "emp-singular", "nome": "SINGULAR FACILITIES SERVICE S.A.", "nome_fantasia": ""}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico(
+            "quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "escolha um ou mais cargos" in texto_enviado.lower()
+        assert "porteiro" in texto_enviado.lower()
+        assert "categoria" not in texto_enviado.lower()
+        assert estado["etapa"] == "listou_cargos_consolidados"
+        assert estado["mapa_cargos_consolidados"]["1"]["cargo_exibicao"] == "Porteiro"
+
+    @pytest.mark.asyncio
+    async def test_escolha_nivel1_unico_cargo_mostra_nivel2(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
+            "perfil": "publico",
+            "mapa_cargos_consolidados": {
+                "1": {
+                    "cargo_exibicao": "Porteiro",
+                    "quantidade_total": 30,
+                    "ocorrencias": [{
+                        "vaga_id": "vaga-17", "tipo": "selecao_evento",
+                        "cargo_titulo_original": "Porteiro", "quantidade": 30,
+                        "empresa_nome": "SINGULAR", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede",
+                    }],
+                },
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "*Porteiro*" in texto_enviado
+        assert "SINGULAR" in texto_enviado
+        assert estado["etapa"] == "listou_ocorrencias_cargo"
+        assert estado["mapa_ocorrencias"]["1"]["vaga_id"] == "vaga-17"
+
+    @pytest.mark.asyncio
+    async def test_escolha_nivel1_multipla_numera_ocorrencias_de_forma_continua(self, monkeypatch, _isola_enviar):
+        """Decisão registrada nesta sessão: numeração contínua entre blocos
+        (não reinicia em 1 a cada cargo) — evita ambiguidade de resposta."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
+            "perfil": "publico",
+            "mapa_cargos_consolidados": {
+                "1": {
+                    "cargo_exibicao": "Porteiro", "quantidade_total": 50,
+                    "ocorrencias": [
+                        {"vaga_id": "v1", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                         "quantidade": 30, "empresa_nome": "Empresa A", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede"},
+                        {"vaga_id": "v2", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                         "quantidade": 20, "empresa_nome": "Empresa B", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede"},
+                    ],
+                },
+                "2": {
+                    "cargo_exibicao": "Consultora de Vendas", "quantidade_total": 1,
+                    "ocorrencias": [
+                        {"vaga_id": "v3", "tipo": "vaga_normal", "cargo_titulo_original": "Consultora de Vendas",
+                         "quantidade": 1, "empresa_nome": "Maraponga Mart Moda", "rotulo_tipo": "Vaga individual"},
+                    ],
+                },
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        await emp._processar_publico("1,2", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        mapa_ocorrencias = estado["mapa_ocorrencias"]
+        assert mapa_ocorrencias["1"]["vaga_id"] == "v1"
+        assert mapa_ocorrencias["2"]["vaga_id"] == "v2"
+        # A ocorrência da Consultora continua a numeração (3), não reinicia em 1.
+        assert mapa_ocorrencias["3"]["vaga_id"] == "v3"
+
+    @pytest.mark.asyncio
+    async def test_nivel2_selecao_evento_com_coleta_curriculo_pede_nome(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
+            "perfil": "publico",
+            "mapa_ocorrencias": {
+                "1": {"vaga_id": "vaga-17", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                      "quantidade": 30, "empresa_nome": "SINGULAR", "rotulo_tipo": "...", "cargo_exibicao": "Porteiro"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.coleta_curriculo_por_vaga = {"vaga-17": True}
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["cargos_escolhidos"] == ["Porteiro"]
+        assert estado["vaga_id_selecionada"] == "vaga-17"
+
+    @pytest.mark.asyncio
+    async def test_nivel2_selecao_evento_sem_coleta_curriculo_pede_presenca(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
+            "perfil": "publico",
+            "mapa_ocorrencias": {
+                "1": {"vaga_id": "vaga-17", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                      "quantidade": 30, "empresa_nome": "SINGULAR", "rotulo_tipo": "...", "cargo_exibicao": "Porteiro"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.coleta_curriculo_por_vaga = {"vaga-17": False}
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "confirmando_presenca_nome"
+        assert estado["cargos_escolhidos"] == ["Porteiro"]
+
+    @pytest.mark.asyncio
+    async def test_nivel2_vaga_normal_global_pergunta_unidade(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
+            "perfil": "publico",
+            "mapa_ocorrencias": {
+                "1": {"vaga_id": "v3", "tipo": "vaga_normal", "cargo_titulo_original": "Consultora de Vendas",
+                      "quantidade": 1, "empresa_nome": "Maraponga", "rotulo_tipo": "Vaga individual",
+                      "cargo_exibicao": "Consultora de Vendas"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [{"id": "v3", "unidade_destino": "global"}]
+        fake.unidades = [{"id": "u1", "nome": "Barra"}, {"id": "u2", "nome": "Mondubim"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "aguardando_escolha_unidade"
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "toda a rede" in texto_enviado.lower()
+
+    @pytest.mark.asyncio
+    async def test_nivel2_vaga_normal_unidade_especifica_pede_nome(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
+            "perfil": "publico",
+            "mapa_ocorrencias": {
+                "1": {"vaga_id": "v3", "tipo": "vaga_normal", "cargo_titulo_original": "Consultora de Vendas",
+                      "quantidade": 1, "empresa_nome": "Maraponga", "rotulo_tipo": "Vaga individual — CUCA Pici",
+                      "cargo_exibicao": "Consultora de Vendas"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [{"id": "v3", "unidade_destino": "unidade-pici"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["vaga_id_selecionada"] == "v3"
+
+    @pytest.mark.asyncio
+    async def test_nivel2_escolha_multipla_roteia_a_primeira_e_avisa(self, monkeypatch, _isola_enviar):
+        """Seção 5, regra 5 — PARCIAL no passo 2: só a 1ª ocorrência é
+        roteada; a fila que encadeia as demais é escopo do passo 3."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
+            "perfil": "publico",
+            "mapa_ocorrencias": {
+                "1": {"vaga_id": "v1", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                      "quantidade": 30, "empresa_nome": "Empresa A", "rotulo_tipo": "...", "cargo_exibicao": "Porteiro"},
+                "2": {"vaga_id": "v3", "tipo": "vaga_normal", "cargo_titulo_original": "Consultora de Vendas",
+                      "quantidade": 1, "empresa_nome": "Maraponga", "rotulo_tipo": "Vaga individual",
+                      "cargo_exibicao": "Consultora de Vendas"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.coleta_curriculo_por_vaga = {"v1": True}
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("1,2", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        # 1ª mensagem: avisa que vai processar 1 de cada vez.
+        primeira_msg = _isola_enviar.call_args_list[0].args[3]
+        assert "porteiro" in primeira_msg.lower()
+        # Roteou de fato só a 1ª ocorrência (selecao_evento → coletando nome).
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["cargos_escolhidos"] == ["Porteiro"]
+
+    @pytest.mark.asyncio
+    async def test_voltar_de_ocorrencias_volta_pro_nivel1(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
+            "perfil": "publico",
+            "mapa_cargos_consolidados": {
+                "1": {"cargo_exibicao": "Porteiro", "quantidade_total": 30, "ocorrencias": []},
+            },
+            "mapa_ocorrencias": {"1": {"vaga_id": "v1"}},
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        await emp._processar_publico("voltar", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "listou_cargos_consolidados"
+        assert "mapa_ocorrencias" not in estado
+
+    @pytest.mark.asyncio
+    async def test_voltar_de_cargos_consolidados_volta_pro_menu_inicial(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
+            "perfil": "publico",
+            "mapa_cargos_consolidados": {"1": {"cargo_exibicao": "Porteiro", "quantidade_total": 30, "ocorrencias": []}},
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        await emp._processar_publico("voltar", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "inicio"
+
+    @pytest.mark.asyncio
+    async def test_exclusao_por_ocorrencia_nao_esconde_outros_cargos_da_mesma_selecao(self, monkeypatch, _isola_enviar):
+        """Corretude que o passo 2 corrige em relação ao filtro antigo: o lead
+        já se candidatou ao cargo 'Porteiro' desta seleção (registrado no
+        banco), mas os OUTROS cargos da mesma seleção continuam visíveis —
+        pergunta 5 da story, exclusão por ocorrência, não pela vaga inteira."""
+        estado, fake_get, fake_set = _fluxo_mock("inicio", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {
+                "id": "vaga-17", "tipo": "selecao_evento", "empresa_id": "emp-singular",
+                "unidade_cuca": None,
+                "cargos_lista": [
+                    {"titulo": "Porteiro", "quantidade": 30},
+                    {"titulo": "Jardineiro", "quantidade": 10},
+                ],
+            },
+        ]
+        fake.candidaturas_busca = [
+            {"vaga_id": "vaga-17", "status": "pendente", "cargo_escolhido": "Porteiro"},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico(
+            "quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mapa_cargos = estado["mapa_cargos_consolidados"]
+        nomes = {g["cargo_exibicao"] for g in mapa_cargos.values()}
+        assert "Jardineiro" in nomes
+        assert "Porteiro" not in nomes
+
+    @pytest.mark.asyncio
+    async def test_escape_semantico_dispara_em_listou_cargos_consolidados(self, monkeypatch, _isola_enviar):
+        """Seção 5, regra 7 / item do test plan (seção 10): escape semântico
+        precisa estar ligado desde o nascimento da etapa nova — não repetir o
+        gap que a S-EMP-AUD-024 corrigiu. Entrada não numérica força o parser
+        determinístico a falhar, caindo no classificador semântico; com
+        quer_sair=True, encerra o fluxo em vez de só re-exibir a lista."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
+            "perfil": "publico",
+            "mapa_cargos_consolidados": {
+                "1": {"cargo_exibicao": "Porteiro", "quantidade_total": 30, "ocorrencias": []},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=True))
+
+        await emp._processar_publico(
+            "na verdade desiste, obrigado", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        # _encerrar_fluxo limpa o estado — só acontece se o classificador
+        # semântico foi de fato chamado e seu quer_sair foi honrado (o
+        # parser determinístico de número, sozinho, nunca zera o fluxo).
+        assert estado == {}
+
+    @pytest.mark.asyncio
+    async def test_escape_semantico_dispara_em_listou_ocorrencias_cargo(self, monkeypatch, _isola_enviar):
+        """Mesma cobertura da regra 7 pro Nível 2."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
+            "perfil": "publico",
+            "mapa_ocorrencias": {
+                "1": {"vaga_id": "v1", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                      "quantidade": 30, "empresa_nome": "Empresa A", "rotulo_tipo": "...", "cargo_exibicao": "Porteiro"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=True))
+
+        await emp._processar_publico(
+            "na verdade desiste, obrigado", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado == {}
 
 
 class TestBloco6PerformanceEParsers:
@@ -3222,7 +3566,9 @@ class TestAguardandoConfirmacaoCandidaturaEscapeHatch:
         texto_enviado = _isola_enviar.call_args.args[3]
         assert "vagas abertas" in texto_enviado.lower()
         assert estado["perfil"] == "publico"
-        assert estado["etapa"] == "listou_categorias"
+        # S-EMP-AUD-023 passo 2: ponto de entrada agora é o cargo consolidado
+        # (Nível 1), não mais o menu por categoria/setor.
+        assert estado["etapa"] == "listou_cargos_consolidados"
         assert estado["historico_vagas_aplicadas"] == ["vaga-ja-vista"]
         assert estado["nome_candidato_prefill"] == "Fulano de Tal"
 
