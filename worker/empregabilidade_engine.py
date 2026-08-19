@@ -909,12 +909,24 @@ async def _normalizar_cargos_via_ia(titulos_unicos: list[str]) -> dict[str, str]
         for grupo in (resultado.get("grupos") or []):
             canonico = (grupo.get("canonico") or "").strip()
             membros = grupo.get("membros") or []
-            if not canonico or len(membros) < 2:
+            if not canonico or len(canonico) > 80 or len(membros) < 2:
                 continue
-            for membro in membros:
-                chave_membro = _normalizar_cargo_basico(str(membro))
-                if chave_membro in titulos_validos:
-                    mapa[chave_membro] = canonico
+            membros_validos = [
+                str(m) for m in membros if _normalizar_cargo_basico(str(m)) in titulos_validos
+            ]
+            if not membros_validos:
+                continue
+            # Fail-safe de conteúdo: `canonico` é texto sintetizado pela IA a
+            # partir de dado de empresa (não confiável) e é exibido direto pro
+            # candidato — exige que compartilhe ao menos uma palavra real
+            # (4+ letras) com um dos títulos originais do próprio grupo, pra
+            # impedir a IA devolver um texto desconexo dos dados enviados.
+            palavras_canonico = set(re.findall(r"[a-zà-ú]{4,}", canonico.lower()))
+            palavras_membros = set(re.findall(r"[a-zà-ú]{4,}", " ".join(membros_validos).lower()))
+            if not (palavras_canonico & palavras_membros):
+                continue
+            for membro in membros_validos:
+                mapa[_normalizar_cargo_basico(membro)] = canonico
     except Exception as exc:
         logger.warning("[normalizacao-cargo-ia] falha, caindo pro pré-passo sem IA: %s", exc)
         return {}

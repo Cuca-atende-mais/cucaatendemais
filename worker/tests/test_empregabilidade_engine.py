@@ -3197,6 +3197,27 @@ class TestS_EMP_AUD_023Passo4NormalizacaoIA:
         assert resultado == {"auxiliar de manutenção": "Auxiliar de Manutenção"}
 
     @pytest.mark.asyncio
+    async def test_ignora_canonico_sem_relacao_com_titulos_originais(self, monkeypatch):
+        """Fail-safe de conteúdo: a IA juntou 2 títulos reais, mas devolveu um
+        `canonico` sem nenhuma palavra em comum com os títulos originais do
+        grupo — texto sintetizado desconexo do dado enviado, não pode virar
+        nome exibido pro candidato."""
+        mock_ia = AsyncMock(return_value={
+            "grupos": [
+                {"canonico": "Vaga Incrível Imperdível", "membros": [
+                    "Auxiliar de Manutenção", "Auxiliar de Manutençao",
+                ]},
+            ],
+        })
+        monkeypatch.setattr(emp, "_chamar_ia_normalizacao_cargos", mock_ia)
+
+        resultado = await emp._normalizar_cargos_via_ia(
+            ["Auxiliar de Manutenção", "Auxiliar de Manutençao"]
+        )
+
+        assert resultado == {}
+
+    @pytest.mark.asyncio
     async def test_ignora_grupo_com_menos_de_2_membros(self, monkeypatch):
         mock_ia = AsyncMock(return_value={
             "grupos": [{"canonico": "Porteiro", "membros": ["Porteiro"]}],

@@ -540,6 +540,24 @@ passed (143 + 1 novo).
   falhas pré-existentes em `test_meta_adapter_outbound.py`.
 - Escopo da story (seção 9) permanece respeitado.
 
+### Fechamento do achado do @qa — conteúdo do `canonico` sem validação (CONCERNS → PASS)
+
+O @qa revisou o passo 4 (commit `fbcca75`) e deu **CONCERNS**: o `canonico` retornado pela IA é
+exibido direto pro candidato sem nenhuma validação de conteúdo — só os `membros` eram conferidos
+contra a lista original enviada. Como o título de cargo vem de dado de empresa (não confiável),
+isso abria uma superfície nova (texto sintetizado pela IA sem checagem), mesmo não sendo regressão
+(o texto cru da empresa já era exibido sem validação antes).
+
+Corrigido: `_normalizar_cargos_via_ia` (`worker/empregabilidade_engine.py`) ganhou um fail-safe de
+conteúdo — `canonico` só é aceito se (a) tiver até 80 caracteres e (b) compartilhar pelo menos uma
+palavra real (4+ letras) com um dos títulos originais válidos do próprio grupo. Grupo que falha
+nessa checagem é descartado inteiro (cai pro pré-passo sem IA pros títulos envolvidos, nunca trava
+a listagem). Teste novo
+(`test_ignora_canonico_sem_relacao_com_titulos_originais`) verificado empiricamente: desabilitando
+o guard, só esse teste falha (10 passaram, 1 falhou); religado, 155 passed. Suíte completa do
+worker: 333 passed, mesmas 5 falhas pré-existentes em `test_meta_adapter_outbound.py` (não
+relacionadas).
+
 ### ⚠️ Inconsistência encontrada — a "Nota de escopo" diz "5 passos" mas só lista 4
 
 A seção "Nota de escopo" (linha 322, escrita no passo 1, antes desta sessão) diz literalmente "Dividida
@@ -628,3 +646,11 @@ precisa ser descrito. Não presumo nenhuma das duas — HALT aqui.
   novos, suíte completa: 154 passed. **Achado**: a "Nota de escopo" (passo 1) diz "5 passos" mas só
   lista 4 — os 4 estão completos agora. Não inventei um 5º passo pra fechar o número; HALT pro Junior
   decidir se é só erro de contagem (story completa) ou se falta algo não registrado.
+- v0.13 (2026-08-19): @qa revisou o passo 4 — veredito **CONCERNS** (achado: `canonico` da IA exibido
+  ao candidato sem validação de conteúdo, só os `membros` eram conferidos). @dev fechou com um
+  fail-safe de conteúdo (`canonico` precisa compartilhar palavra real com os títulos originais do
+  grupo, limite de 80 caracteres) + teste dedicado, confirmado empiricamente (desligar → só esse teste
+  falha; religar → 155 passed). Suíte completa do worker: 333 passed, mesmas 5 falhas pré-existentes
+  não relacionadas. Retomado a pedido do Junior após levantamento de auditoria confirmar, com conversa
+  real de produção (`108da528`, 19/08 19:40), que este era exatamente o bug reproduzido ("auxiliar de
+  manutenção" vs "Auxiliar de menutenção" não fundidos). Passo 4/4 pronto pra @devops abrir PR.
