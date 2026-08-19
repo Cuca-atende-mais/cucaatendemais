@@ -421,6 +421,18 @@ antigo continua existindo, mas agora só é consumido pelas etapas legadas manti
   `test_meta_adapter_outbound.py` — confirmadas pré-existentes (mesmas falhas com `git stash`, antes
   desta mudança).
 
+### Fechamento do achado do @qa — teste de escape semântico (regra 7 / test plan seção 10)
+
+@qa (CONCERNS) apontou que o item do test plan "escape semântico disparando corretamente na etapa
+nova" não tinha teste dedicado — a chamada existia no código, mas nada provava que
+`_escape_semantico_ou_none` era de fato invocado e honrado nas 2 etapas novas. Fechado com 2 testes
+novos (`test_escape_semantico_dispara_em_listou_cargos_consolidados`,
+`test_escape_semantico_dispara_em_listou_ocorrencias_cargo`) — entrada não numérica força o parser
+determinístico a falhar, cai no classificador semântico mockado com `quer_sair=True`, e o teste
+confirma que o fluxo foi de fato encerrado (`estado == {}`) — isso só acontece se o classificador foi
+chamado e seu retorno foi honrado, não só se o parser de número falhou. Suíte completa: 138 passed
+(136 + 2 novos).
+
 ## Change Log
 
 - v0.1 (2026-08-18): Story criada por @sm — versão inicial, insuficientemente detalhada.
@@ -471,3 +483,7 @@ antigo continua existindo, mas agora só é consumido pelas etapas legadas manti
   seleção inteira por causa de 1 cargo já candidatado — o motor novo corrige isso usando exclusão por
   ocorrência (pergunta 5). 11 testes novos, suíte completa: 136 passed. Status mantido InProgress —
   próximo passo (fila sequencial) só começa após revisão deste.
+- v0.9 (2026-08-19): @qa revisou o passo 2 — veredito **CONCERNS** (nada crítico, sem regressão; único
+  ponto real: teste do item de test plan "escape semântico na etapa nova" faltando). @dev fechou o
+  achado com 2 testes dedicados provando que `_escape_semantico_ou_none` dispara e é honrado nas 2
+  etapas novas. Suíte completa: 138 passed.

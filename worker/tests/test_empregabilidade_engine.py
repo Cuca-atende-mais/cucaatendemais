@@ -2867,6 +2867,58 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         assert "Jardineiro" in nomes
         assert "Porteiro" not in nomes
 
+    @pytest.mark.asyncio
+    async def test_escape_semantico_dispara_em_listou_cargos_consolidados(self, monkeypatch, _isola_enviar):
+        """Seção 5, regra 7 / item do test plan (seção 10): escape semântico
+        precisa estar ligado desde o nascimento da etapa nova — não repetir o
+        gap que a S-EMP-AUD-024 corrigiu. Entrada não numérica força o parser
+        determinístico a falhar, caindo no classificador semântico; com
+        quer_sair=True, encerra o fluxo em vez de só re-exibir a lista."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
+            "perfil": "publico",
+            "mapa_cargos_consolidados": {
+                "1": {"cargo_exibicao": "Porteiro", "quantidade_total": 30, "ocorrencias": []},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=True))
+
+        await emp._processar_publico(
+            "na verdade desiste, obrigado", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        # _encerrar_fluxo limpa o estado — só acontece se o classificador
+        # semântico foi de fato chamado e seu quer_sair foi honrado (o
+        # parser determinístico de número, sozinho, nunca zera o fluxo).
+        assert estado == {}
+
+    @pytest.mark.asyncio
+    async def test_escape_semantico_dispara_em_listou_ocorrencias_cargo(self, monkeypatch, _isola_enviar):
+        """Mesma cobertura da regra 7 pro Nível 2."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
+            "perfil": "publico",
+            "mapa_ocorrencias": {
+                "1": {"vaga_id": "v1", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                      "quantidade": 30, "empresa_nome": "Empresa A", "rotulo_tipo": "...", "cargo_exibicao": "Porteiro"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=True))
+
+        await emp._processar_publico(
+            "na verdade desiste, obrigado", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado == {}
+
 
 class TestBloco6PerformanceEParsers:
 
