@@ -1577,6 +1577,71 @@ def _deteccao_literal_troca_rota(texto: str) -> dict | None:
     return None
 
 
+# S-EMP-AUD-028: o fast-path literal acima só cobre frases que batem
+# exatamente com uma lista fixa — não generaliza pra formas novas de dizer a
+# mesma coisa ("Eu quero ver vagas", "Quero ver vagas abertas"...), reproduzido
+# ao vivo pelo Junior (conversa 108da528, 19/08). Decisão do Junior: em vez de
+# crescer a lista fixa (público do canal se comunica de formas variadas
+# demais pra mensurar num dicionário), uma camada de IA dedicada assume só
+# quando o fast-path não resolve — condicional, isolada do classificador
+# semântico genérico (`avaliar_mensagem_contextual`, 17+ call sites), pra não
+# arriscar regredir nada lá.
+_CLASSIFICACOES_TROCA_ROTA_VALIDAS = {"troca_rota_empresa", "troca_rota_vagas", "nome_valido"}
+
+
+async def _chamar_ia_classificar_troca_rota(texto: str) -> dict:
+    """Chamada real ao GPT-4o-mini, isolada em função própria pra permitir
+    mock direto nos testes (mesmo padrão de `_chamar_gpt_contextual` em
+    `intencao_detector.py` e `_chamar_ia_normalizacao_cargos` acima)."""
+    from openai import AsyncOpenAI  # noqa: PLC0415
+    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": (
+                "Você interpreta mensagens de WhatsApp de um canal de Empregabilidade "
+                "da rede CUCA, numa etapa em que o bot está pedindo o NOME COMPLETO da "
+                "pessoa (candidato, terceiro indicado, ou confirmação de presença).\n\n"
+                "A pessoa respondeu algo que NÃO é o nome dela — está pedindo pra trocar "
+                "de assunto. Classifique em UMA categoria:\n"
+                "- 'troca_rota_empresa': a pessoa está dizendo que é empresa/empregador e "
+                "quer divulgar ou cadastrar vaga (não é candidato)\n"
+                "- 'troca_rota_vagas': a pessoa está pedindo pra ver vagas/oportunidades "
+                "de emprego disponíveis, em vez de continuar dando o nome\n"
+                "- 'nome_valido': a pessoa deu um nome (comum ou incomum, com ou sem "
+                "sobrenome, mesmo que pareça estranho ou seja um nome que você não "
+                "reconhece) — na dúvida entre um nome incomum e uma troca de assunto, "
+                "prefira SEMPRE 'nome_valido'. Só classifique como troca de rota se a "
+                "frase for claramente um PEDIDO relacionado a vaga/empresa, não um nome "
+                "de pessoa.\n\n"
+                "Retorne SOMENTE JSON com a chave 'classificacao', um dos 3 valores acima.\n\n"
+                f"Mensagem: {texto}"
+            ),
+        }],
+        response_format={"type": "json_object"},
+        temperature=0.0,
+        max_tokens=30,
+    )
+    return json.loads(response.choices[0].message.content)
+
+
+async def _classificar_troca_rota_ia(texto: str) -> str:
+    """Orquestra a chamada de IA + fail-safe. Nunca propaga exceção: qualquer
+    falha (rede, JSON malformado, resposta fora do esperado) cai em
+    'nome_valido' — nunca trava alguém de dar o nome só porque a IA falhou
+    (mesmo padrão de fail-safe já usado na S-EMP-AUD-023 passo 4)."""
+    try:
+        resultado = await _chamar_ia_classificar_troca_rota(texto)
+        classificacao = resultado.get("classificacao")
+        if classificacao not in _CLASSIFICACOES_TROCA_ROTA_VALIDAS:
+            return "nome_valido"
+        return classificacao
+    except Exception as exc:
+        logger.warning("[_classificar_troca_rota_ia] erro, fallback seguro: %s", exc)
+        return "nome_valido"
+
+
 async def _escape_literal_ou_none(
     texto: str,
     conversa_id: str,
@@ -1588,13 +1653,27 @@ async def _escape_literal_ou_none(
 ) -> bool:
     """Wrapper de conveniência: aplica `_deteccao_literal_troca_rota` e, se
     bateu, já dispara a pergunta de confirmação de troca de rota (mesmo
-    mecanismo usado pelo classificador semântico). Retorna True se tratou a
-    mensagem — o chamador deve dar `return` em seguida."""
+    mecanismo usado pelo classificador semântico). Se o fast-path literal não
+    bater, cai pro fallback de IA dedicada (S-EMP-AUD-028) — só chamado nesse
+    caso, custo/latência zero quando o fast-path já resolve. Retorna True se
+    tratou a mensagem — o chamador deve dar `return` em seguida."""
     sem_literal = _deteccao_literal_troca_rota(texto)
-    if sem_literal is None:
+    if sem_literal is not None:
+        await _perguntar_confirmacao_troca_rota(
+            sem_literal, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+        )
+        return True
+
+    classificacao_ia = await _classificar_troca_rota_ia(texto)
+    if classificacao_ia == "nome_valido":
         return False
+    sem_ia = {
+        "intencao": "empresa" if classificacao_ia == "troca_rota_empresa" else "candidato_vaga",
+        "quer_sair": False,
+        "mudou_de_assunto": True,
+    }
     await _perguntar_confirmacao_troca_rota(
-        sem_literal, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+        sem_ia, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
     )
     return True
 

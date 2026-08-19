@@ -40,6 +40,20 @@ if "supabase" not in sys.modules:
 import empregabilidade_engine as emp  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _classificador_troca_rota_ia_default(monkeypatch):
+    """S-EMP-AUD-028: por padrão, em toda a suíte, o fallback de IA de troca de
+    rota (`_classificar_troca_rota_ia`, usado por `_escape_literal_ou_none`
+    quando o fast-path literal não bate) classifica como 'nome_valido' — evita
+    chamada de rede real em testes que não têm relação com esse mecanismo
+    (mesmo padrão do `_debounce_instantaneo` em conftest.py). Testes que
+    efetivamente exercitam a classificação sobrescrevem este mock."""
+    monkeypatch.setattr(
+        emp, "_chamar_ia_classificar_troca_rota",
+        AsyncMock(return_value={"classificacao": "nome_valido"}),
+    )
+
+
 def test_assinar_link_portal_inclui_sig_e_exp(monkeypatch):
     monkeypatch.setattr(emp, "PORTAL_URL", "https://portal.test")
     monkeypatch.setattr(emp, "_LINK_SECRET", "segredo-teste")
@@ -1000,6 +1014,208 @@ class TestS_EMP_AUD_024EscapeLiteralTrocaRota:
         texto_enviado = _isola_enviar.call_args.args[3].lower()
         assert "em breve você será atendido" in texto_enviado
         assert "Esse currículo é para" not in texto_enviado  # não engoliu como nome
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-028 — classificador de IA dedicado pra troca de rota, fallback do
+# fast-path literal (S-EMP-AUD-024) quando ele não bate. Reproduzido ao vivo
+# pelo Junior (conversa 108da528, 19/08): "Eu quero ver vagas" e "Quero ver
+# vagas abertas" não batem com nenhuma frase exata da lista fixa.
+# ─────────────────────────────────────────────────────────────────────────────
+class TestS_EMP_AUD_028ClassificadorIADedicado:
+
+    @pytest.mark.asyncio
+    async def test_eu_quero_ver_vagas_reroteia_via_ia_caso_real_junior(self, monkeypatch):
+        """AC1 — caso real 1 (conversa 108da528): 'Eu quero ver vagas' não bate
+        com a lista fixa (tem 'eu' na frente), mas a IA classifica como troca
+        de rota pra vagas."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        monkeypatch.setattr(
+            emp, "_chamar_ia_classificar_troca_rota",
+            AsyncMock(return_value={"classificacao": "troca_rota_vagas"}),
+        )
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "Eu quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "Esse currículo é para" not in texto_enviado  # não engoliu como nome
+        assert estado.get("etapa") == "confirmando_troca_rota"
+        assert estado.get("_troca_rota_pendente", {}).get("intencao") == "candidato_vaga"
+
+    @pytest.mark.asyncio
+    async def test_quero_ver_vagas_abertas_reroteia_via_ia_caso_real_junior(self, monkeypatch):
+        """AC1 — caso real 2 (conversa 108da528): 'Quero ver vagas abertas'
+        também não bate com nenhum item exato da lista fixa."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_presenca_nome", {
+            "perfil": "publico", "tentativas_confirmacao_presenca": 0,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", MagicMock())
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        monkeypatch.setattr(
+            emp, "_chamar_ia_classificar_troca_rota",
+            AsyncMock(return_value={"classificacao": "troca_rota_vagas"}),
+        )
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "Quero ver vagas abertas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("nome_confirmacao_presenca") is None  # não virou nome
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+    @pytest.mark.asyncio
+    async def test_frase_nova_nunca_vista_generaliza_via_ia(self, monkeypatch):
+        """AC2 — ponto central da story: uma 3ª frase nunca vista antes (fora
+        das listas fixas E diferente dos 2 casos reais) também é reconhecida
+        corretamente — prova que o mecanismo generaliza, não decorou só os 2
+        casos do Junior."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_curriculo_publico", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        monkeypatch.setattr(
+            emp, "_chamar_ia_classificar_troca_rota",
+            AsyncMock(return_value={"classificacao": "troca_rota_empresa"}),
+        )
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "opa, na verdade eu tenho uma empresa e queria botar uma vaga aqui",
+            "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert "/empregabilidade/curriculo" not in mock_enviar.call_args.args[3]
+        assert estado.get("etapa") == "confirmando_troca_rota"
+        assert estado.get("_troca_rota_pendente", {}).get("intencao") == "empresa"
+
+    @pytest.mark.asyncio
+    async def test_nome_incomum_aciona_ia_e_continua_sendo_aceito(self, monkeypatch):
+        """AC3 — regressão com nome incomum, desta vez confirmando que a
+        camada de IA foi de fato acionada (fast-path não bate) e mesmo assim
+        classificou como nome_valido — não travou/rerroteou."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        mock_ia = AsyncMock(return_value={"classificacao": "nome_valido"})
+        monkeypatch.setattr(emp, "_chamar_ia_classificar_troca_rota", mock_ia)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "Xisto Wenceslau", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_ia.assert_awaited_once()  # a camada de IA foi de fato acionada
+        assert estado.get("etapa") == "confirmando_terceiro"  # tratado como nome normalmente
+
+    @pytest.mark.asyncio
+    async def test_falha_da_ia_cai_para_nome_valido_fail_safe(self, monkeypatch):
+        """AC4 — fail-safe: falha da IA (exceção) nunca trava o fluxo, cai
+        pra nome_valido."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        monkeypatch.setattr(
+            emp, "_chamar_ia_classificar_troca_rota",
+            AsyncMock(side_effect=RuntimeError("timeout simulado")),
+        )
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "Fulano da Silva Sauro", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "confirmando_terceiro"  # seguiu como nome, não travou
+
+    @pytest.mark.asyncio
+    async def test_fast_path_literal_nao_chama_ia(self, monkeypatch):
+        """AC5 — quando o fast-path literal já resolve, a camada de IA nunca
+        é chamada (custo/latência zero pro caso comum, mesmo padrão de
+        S-EMP-AUD-024)."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        mock_ia = AsyncMock(return_value={"classificacao": "nome_valido"})
+        monkeypatch.setattr(emp, "_chamar_ia_classificar_troca_rota", mock_ia)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_ia.assert_not_awaited()  # fast-path já resolveu, IA nem foi chamada
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+    @pytest.mark.asyncio
+    async def test_coletando_nome_terceiro_tambem_reroteia_via_ia_qa_verificacao(self, monkeypatch):
+        """Verificação do @qa: _escape_literal_ou_none tem 4 call sites reais
+        (coletando_nome_candidato, coletando_nome_curriculo_publico,
+        coletando_nome_terceiro, confirmando_presenca_nome), não 3 como a
+        story descreve no Escopo — como a mudança está na função
+        compartilhada, o 4º call site (coletando_nome_terceiro) também herda
+        o fallback de IA automaticamente. Confirma que funciona lá também."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_terceiro", {
+            "perfil": "publico", "vaga_id_selecionada": "vaga-1", "banco_talentos": False,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        monkeypatch.setattr(
+            emp, "_chamar_ia_classificar_troca_rota",
+            AsyncMock(return_value={"classificacao": "troca_rota_vagas"}),
+        )
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
+
+        await emp._processar_publico(
+            "Eu quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "confirmando_troca_rota"
+
+    @pytest.mark.asyncio
+    async def test_classificar_troca_rota_ia_ignora_valor_fora_do_esperado(self, monkeypatch):
+        """Fail-safe adicional: se a IA devolver algo fora das 3 categorias
+        válidas (JSON mal formado semanticamente, alucinação), cai pra
+        nome_valido — mesma lógica de `titulos_validos` em
+        `_normalizar_cargos_via_ia`."""
+        monkeypatch.setattr(
+            emp, "_chamar_ia_classificar_troca_rota",
+            AsyncMock(return_value={"classificacao": "categoria_inventada_pela_ia"}),
+        )
+        resultado = await emp._classificar_troca_rota_ia("texto qualquer")
+        assert resultado == "nome_valido"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
