@@ -1,6 +1,6 @@
 # S-EMP-AUD-023 — Vaga Direta: consolida listagem de vagas por cargo com seleção múltipla
 
-**Status:** InProgress (passo 1/5 — ver Dev Agent Record)
+**Status:** InProgress (passo 2/5 — ver Dev Agent Record)
 **Epic:** Auditoria Empregabilidade
 **Origem:** demanda direta do Junior, 2026-08-18 ("VAGA DIRETA"), detalhada por ele em 2026-08-18 após
 1ª versão da story ser considerada insuficiente
@@ -352,6 +352,75 @@ tamanho e risco da story):
 - Não houve mudança de comportamento observável pro candidato neste commit — seguro pra revisar e
   mergear isoladamente antes do passo 2.
 
+### Decisão registrada nesta sessão — numeração do Nível 2 (passo 2)
+
+O exemplo literal do Junior (seção 1) mostra cada bloco de cargo reiniciando a numeração em 1. Isso é
+ambíguo pra responder por texto: com 2+ blocos abertos na mesma mensagem, um "1" digitado pelo lead não
+diz a qual bloco pertence. Perguntado diretamente, o Junior escolheu **numeração única e contínua**
+entre todos os blocos escolhidos (bloco 1 termina em N, bloco 2 continua em N+1, sem reiniciar) — o
+cabeçalho de cada bloco (nome do cargo) continua sendo o separador visual, só a numeração muda do
+exemplo original. Registrado aqui porque já houve atrito nesta story por decisão não documentada
+explicitamente.
+
+### File List (passo 2)
+
+- `worker/empregabilidade_engine.py`:
+  - `_buscar_vagas_abertas_e_candidaturas` (dentro de `_processar_publico`): select ampliado com
+    `tipo, cargos_lista, empresa_id, unidade_cuca` (ordem dos campos deliberada — evita colisão de
+    substring com outra query já existente, ver comentário no código); busca em lote de
+    `empresas_por_id`/`unidades_por_id`; `unidades_cuca` resolvida **sem** filtro `ativo` (é resolução
+    de nome, não oferta de escolha).
+  - `_mostrar_cargos_consolidados`, `_construir_mapa_ocorrencias`, `_mostrar_ocorrencias_cargo` —
+    funções novas de exibição (Nível 1 e Nível 2).
+  - `_confirmar_cargos_selecao_evento` — extraída de `listando_cargos_selecao` (SQS-49) pra ser
+    compartilhada com a etapa nova `listou_ocorrencias_cargo`, sem mudar o comportamento do call site
+    original.
+  - Etapas novas: `listou_cargos_consolidados` (Nível 1) e `listou_ocorrencias_cargo` (Nível 2),
+    registradas em `_ETAPA_ANTERIOR`, `_ETAPAS_OFERTA_ATENDENTE`, `_ETAPAS_PUBLICO` e no guard do "4
+    puro" — escape semântico (S-EMP-AUD-024) ligado desde o nascimento das duas (regra 7).
+  - `_voltar_etapa_publico`: novo branch pra voltar de `listou_ocorrencias_cargo` a
+    `listou_cargos_consolidados`.
+  - Ponto de entrada (antigo bloco "SQS-41 Ação 2.1: Menu dinâmico agrupado por categoria")
+    substituído pelo motor de cargo consolidado — usa a lista **não filtrada** (`vagas_raw`) em vez da
+    filtrada por vaga inteira (`vagas`), porque a exclusão por ocorrência do motor é mais correta (ver
+    Correção de escopo abaixo).
+  - `_mostrar_categorias`/`_mostrar_vagas_da_categoria` e as etapas antigas (`listou_categorias`,
+    `listou_vagas`) **mantidas** — servem só a conversas legadas já em andamento com `mapa_categorias`
+    salvo no fluxo; nenhuma conversa nova entra mais nelas.
+- `worker/tests/test_empregabilidade_engine.py`: `TestS_EMP_AUD_023Passo2FluxoReal`, 11 testes —
+  entrada fresca mostra Nível 1 (não categoria), escolha única abre Nível 2, escolha múltipla no Nível
+  1 numera ocorrências de forma contínua entre blocos, Nível 2 roteia corretamente pros 4 casos
+  (seleção com/sem coleta de currículo, vaga individual global/específica), escolha múltipla no Nível 2
+  roteia só a 1ª e avisa, "voltar" nos 2 níveis novos, e o teste de correção da exclusão por ocorrência
+  (abaixo). Também ajustado 1 teste pré-existente
+  (`test_quero_ver_outras_vagas_reabre_listagem_sem_llm`) cuja asserção esperava a etapa antiga
+  (`listou_categorias`) — comportamento mudou de propósito neste commit, teste atualizado pra refletir
+  a etapa nova (`listou_cargos_consolidados`). Fake de teste (`_SupabaseFakeBloco6`) ganhou suporte a
+  `coleta_curriculo_por_vaga` e tabela `empresas`.
+
+### Correção de escopo encontrada durante a implementação (passo 2)
+
+O filtro antigo (`ids_excluir`, por vaga inteira) escondia a vaga **inteira** de uma `selecao_evento`
+assim que qualquer 1 dos seus cargos entrava no histórico de sessão — isso violava a pergunta 5
+(exclusão deveria ser por ocorrência/cargo, não pela vaga toda). O motor novo evita isso usando a lista
+não filtrada (`vagas_raw`) e fazendo sua própria exclusão por ocorrência (já implementada no passo 1).
+Coberto pelo teste `test_exclusao_por_ocorrencia_nao_esconde_outros_cargos_da_mesma_selecao`. O filtro
+antigo continua existindo, mas agora só é consumido pelas etapas legadas mantidas vivas (acima).
+
+### Completion Notes (passo 2)
+
+- Regra 5 (seção 5) entregue **PARCIALMENTE** — a rota completa por tipo (seleção vs. vaga individual)
+  já funciona corretamente para 1 ocorrência escolhida. Quando o lead escolhe mais de uma ocorrência no
+  Nível 2, só a **primeira** é roteada agora; ele é avisado e escolhe a próxima manualmente depois de
+  concluir. A fila que encadearia isso automaticamente (`fila_candidaturas_pendentes`) é o passo 3,
+  ainda não implementado — decisão de escopo, não bug.
+- Regras 1, 2, 3, 4 (parse), 6 e 7 da seção 5: entregues.
+- Suíte completa do arquivo: 136 passed (125 pré-existentes + 11 novos), 0 falhas. Suíte completa do
+  worker (exceto `test_main_retomar_disparo.py`, que já falha na coleta sem o pacote `openai`
+  instalado neste ambiente — pré-existente, não relacionado): 314 passed, 5 falhas em
+  `test_meta_adapter_outbound.py` — confirmadas pré-existentes (mesmas falhas com `git stash`, antes
+  desta mudança).
+
 ## Change Log
 
 - v0.1 (2026-08-18): Story criada por @sm — versão inicial, insuficientemente detalhada.
@@ -394,3 +463,11 @@ tamanho e risco da story):
   incluindo o teste crítico de falso positivo do test plan. Suíte completa: 125 passed. Status
   Ready → InProgress. Story dividida em 5 passos com commit/revisão próprios dado o tamanho — próximo
   passo (listagem Nível 1/2 + integração real) só começa após revisão deste.
+- v0.8 (2026-08-19): @dev implementou o **passo 2/5** — Nível 1 e Nível 2 plugados no fluxo real,
+  substituindo o menu por categoria/setor. Decisão de numeração do Nível 2 (contínua entre blocos, não
+  reinicia por cargo) registrada explicitamente com o Junior antes de codar. Regra 5 (fila de
+  candidatura múltipla) entregue parcialmente — só a 1ª ocorrência escolhida é roteada; a fila
+  (passo 3) ainda não existe. Correção de escopo encontrada e resolvida: o filtro antigo escondia a
+  seleção inteira por causa de 1 cargo já candidatado — o motor novo corrige isso usando exclusão por
+  ocorrência (pergunta 5). 11 testes novos, suíte completa: 136 passed. Status mantido InProgress —
+  próximo passo (fila sequencial) só começa após revisão deste.

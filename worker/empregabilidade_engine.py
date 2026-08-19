@@ -106,12 +106,18 @@ _ETAPAS_OFERTA_ATENDENTE = {
     "listou_categorias",
     "listando_cargos_selecao",
     "aguardando_escolha_unidade",
+    # S-EMP-AUD-023 passo 2: novas etapas de listagem por cargo consolidado
+    "listou_cargos_consolidados",
+    "listou_ocorrencias_cargo",
 }
 _ETAPA_ANTERIOR = {
     "listou_categorias": "inicio",
     "listou_vagas": "listou_categorias",
     "listando_cargos_selecao": "listou_vagas",
     "aguardando_escolha_unidade": "listou_vagas",
+    # S-EMP-AUD-023 passo 2 (seção 5, regra 6): "voltar" nas etapas novas
+    "listou_cargos_consolidados": "inicio",
+    "listou_ocorrencias_cargo": "listou_cargos_consolidados",
 }
 _RESPOSTAS_ENTREVISTA_BINARIA = ("sim", "s", "não", "nao", "n", "✅", "❌")
 _CONFIRMA_ENTREVISTA = ("sim", "s", "✅")
@@ -899,6 +905,176 @@ def _construir_cargos_consolidados(
     return {str(i): grupo for i, grupo in enumerate(cargos_ordenados, start=1)}
 
 
+# ---------------------------------------------------------------------------
+# S-EMP-AUD-023 passo 2 — plugagem do motor no fluxo real (Nível 1 e Nível 2).
+#
+# Numeração do Nível 2: CONTÍNUA entre os blocos escolhidos (não reinicia em
+# 1 a cada cargo). O exemplo literal do Junior (seção 1 da story) mostra cada
+# bloco reiniciando em 1 — mas isso é ambíguo pra responder por texto: se o
+# lead digitar só "1" com 2 blocos abertos, não dá pra saber qual bloco ele
+# quer. Decisão registrada com o Junior nesta sessão: numeração única e
+# corrida ao longo de todos os blocos (bloco 1 termina em N, bloco 2 continua
+# em N+1...), preservando o cabeçalho por bloco (nome do cargo) como
+# separador visual — só a numeração muda do exemplo original.
+# ---------------------------------------------------------------------------
+
+async def _mostrar_cargos_consolidados(
+    instance_name: str,
+    token: str,
+    phone: str,
+    conversa_id: str,
+    lead_id: str,
+    mapa_cargos: dict,
+) -> None:
+    """Nível 1 (seção 5, regra 1/2): 1 linha por cargo consolidado, com soma
+    de quantidade já calculada por `_construir_cargos_consolidados`."""
+    linhas = ["💼 *Vagas abertas na Rede CUCA — Escolha um ou mais cargos:*\n"]
+    for k, v in mapa_cargos.items():
+        qtd = v["quantidade_total"]
+        linhas.append(f"*{k}.* {v['cargo_exibicao']} — {qtd} vaga{'s' if qtd != 1 else ''}")
+    linhas.append(
+        "\nDigite o *número* do cargo para ver as vagas. Para mais de um, separe por vírgula (ex: *1,3*).\n"
+        "Digite *voltar* para ver outras opções.\n"
+        "Ou diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
+    )
+    await _enviar(instance_name, token, phone, "\n".join(linhas), conversa_id=conversa_id, lead_id=lead_id)
+
+
+def _construir_mapa_ocorrencias(mapa_cargos: dict, chaves_escolhidas: list[str]) -> tuple[dict, list[str]]:
+    """Nível 2 (seção 5, regras 3/4): monta o mapa achatado de ocorrências,
+    numerado de forma contínua entre os blocos escolhidos (ver nota acima), e
+    o texto de cada bloco (cabeçalho = cargo, 1 linha por ocorrência com
+    quantidade, empresa e rótulo de tipo/unidade — seção 3)."""
+    mapa_ocorrencias: dict = {}
+    blocos_txt: list[str] = []
+    contador = 1
+    for chave in chaves_escolhidas:
+        grupo = mapa_cargos.get(chave)
+        if not grupo:
+            continue
+        linhas_bloco = [f"*{grupo['cargo_exibicao']}*\n"]
+        for ocorrencia in grupo["ocorrencias"]:
+            num = str(contador)
+            mapa_ocorrencias[num] = {**ocorrencia, "cargo_exibicao": grupo["cargo_exibicao"]}
+            qtd = ocorrencia["quantidade"]
+            linhas_bloco.append(
+                f"*{num}.* {qtd} vaga{'s' if qtd != 1 else ''} — "
+                f"{ocorrencia['empresa_nome']} — {ocorrencia['rotulo_tipo']}"
+            )
+            contador += 1
+        linhas_bloco.append(
+            "\nEscolha uma ou mais vagas, caso queira mais de uma separe com vírgula (ex: *1,3*)."
+        )
+        blocos_txt.append("\n".join(linhas_bloco))
+    return mapa_ocorrencias, blocos_txt
+
+
+async def _mostrar_ocorrencias_cargo(
+    instance_name: str,
+    token: str,
+    phone: str,
+    conversa_id: str,
+    lead_id: str,
+    mapa_cargos: dict,
+    chaves_escolhidas: list[str],
+) -> dict:
+    mapa_ocorrencias, blocos_txt = _construir_mapa_ocorrencias(mapa_cargos, chaves_escolhidas)
+    corpo = "\n\n".join(blocos_txt) + "\n\nDigite *voltar* para ver outras opções."
+    await _enviar(instance_name, token, phone, corpo, conversa_id=conversa_id, lead_id=lead_id)
+    return {"mapa_ocorrencias": mapa_ocorrencias}
+
+
+async def _confirmar_cargos_selecao_evento(
+    *,
+    fluxo: dict,
+    vaga_id_ref: str,
+    cargos_escolhidos: list[str],
+    coleta_curriculo: bool,
+    conversa_id: str,
+    instance_name: str,
+    token: str,
+    phone: str,
+    lead_id: str,
+) -> None:
+    """Compartilhado entre `listando_cargos_selecao` (SQS-49, escolha de cargo
+    dentro de 1 seleção já aberta) e `listou_ocorrencias_cargo` (S-EMP-AUD-023
+    passo 2, o cargo já vem escolhido desde o Nível 1/2) — decide a rota certa
+    (SQS-56: com ou sem coleta prévia de currículo) depois que o(s) cargo(s)
+    já estão definidos. Extraída sem mudar comportamento do call site
+    original (`listando_cargos_selecao`)."""
+    display_str = ", ".join(cargos_escolhidos)
+
+    if coleta_curriculo is False:
+        def _buscar_detalhes_convocacao():
+            v_res = supabase.table("vagas").select(
+                "observacoes_selecao, datas_selecao, local_entrevista, empresa_id"
+            ).eq("id", vaga_id_ref).maybe_single().execute()
+            v = v_res.data or {}
+            empresa_nome_conv = ""
+            empresa_id_v = v.get("empresa_id")
+            if empresa_id_v:
+                emp_res = supabase.table("empresas").select(
+                    "nome, nome_fantasia"
+                ).eq("id", empresa_id_v).maybe_single().execute()
+                emp = emp_res.data or {}
+                empresa_nome_conv = emp.get("nome_fantasia") or emp.get("nome") or ""
+            return v, empresa_nome_conv
+
+        detalhes_vaga, empresa_nome_conv = await _supabase_to_thread(_buscar_detalhes_convocacao)
+
+        datas = detalhes_vaga.get("datas_selecao") or []
+        data_hora_txt = ""
+        if datas:
+            d0 = datas[0]
+            data_iso = d0.get("data", "")
+            partes_data = data_iso.split("-")
+            data_fmt = f"{partes_data[2]}/{partes_data[1]}/{partes_data[0]}" if len(partes_data) == 3 else data_iso
+            hora_fmt = d0.get("hora", "")
+            data_hora_txt = f"{data_fmt}" + (f" às {hora_fmt}" if hora_fmt else "")
+        local_txt = detalhes_vaga.get("local_entrevista") or ""
+        obs_txt = detalhes_vaga.get("observacoes_selecao") or ""
+
+        linhas_convocacao = [
+            f"🎉 Você está convocado(a) para o processo seletivo"
+            + (f" *{empresa_nome_conv}*!" if empresa_nome_conv else "!") + "\n",
+            f"📋 Cargo(s): *{display_str}*",
+        ]
+        if data_hora_txt:
+            linhas_convocacao.append(f"📅 Data: *{data_hora_txt}*")
+        if local_txt:
+            linhas_convocacao.append(f"📍 Local: *{local_txt}*")
+        if obs_txt:
+            linhas_convocacao.append(f"ℹ️ Observações: {obs_txt}")
+        linhas_convocacao.append("\nPara confirmar sua presença, digite seu *nome completo*:")
+        await _enviar(
+            instance_name, token, phone, "\n".join(linhas_convocacao),
+            conversa_id=conversa_id, lead_id=lead_id,
+        )
+
+        await _set_fluxo_async(conversa_id, {
+            **_fluxo_sem_falhas_atendente(fluxo),
+            "etapa": "confirmando_presenca_nome",
+            "cargos_escolhidos": cargos_escolhidos,
+            "vaga_id_selecionada": vaga_id_ref,
+            "empresa_nome_selecao": empresa_nome_conv,
+            "tentativas_confirmacao_presenca": 0,
+        })
+        return
+
+    await _enviar(
+        instance_name, token, phone,
+        f"Ótimo! Você escolheu: *{display_str}* ✅\n\nPara finalizar, preciso do seu *nome completo*:",
+        conversa_id=conversa_id, lead_id=lead_id,
+    )
+    await _set_fluxo_async(conversa_id, {
+        **_fluxo_sem_falhas_atendente(fluxo),
+        "etapa": "coletando_nome_candidato",
+        "cargos_escolhidos": cargos_escolhidos,  # lista — AC10 SQS-49
+        "vaga_id_selecionada": vaga_id_ref,
+        "banco_talentos": False,
+    })
+
+
 async def _mostrar_categorias(
     instance_name: str,
     token: str,
@@ -1012,6 +1188,22 @@ async def _voltar_etapa_publico(
             "perfil": "publico",
             "etapa": "listou_vagas",
             **meta_vagas,
+        })
+        return True
+
+    # S-EMP-AUD-023 passo 2 (seção 5, regra 6): voltar de listou_ocorrencias_cargo
+    if etapa_anterior == "listou_cargos_consolidados":
+        mapa_cargos = fluxo.get("mapa_cargos_consolidados") or {}
+        if not mapa_cargos:
+            return False
+        await _mostrar_cargos_consolidados(instance_name, token, phone, conversa_id, lead_id, mapa_cargos)
+        novo_fluxo = _limpar_campos_navegacao_publico(fluxo, manter_categoria=False)
+        novo_fluxo.pop("mapa_ocorrencias", None)
+        await _set_fluxo_async(conversa_id, {
+            **novo_fluxo,
+            "perfil": "publico",
+            "etapa": "listou_cargos_consolidados",
+            "mapa_cargos_consolidados": mapa_cargos,
         })
         return True
 
@@ -2472,11 +2664,17 @@ def _quer_banco_talentos(texto: str, etapa: str = "", fluxo: dict | None = None)
         return False
     if etapa == "listando_cargos_selecao" and len(fluxo.get("cargos_disponiveis") or []) >= 4:
         return False
+    # S-EMP-AUD-023 passo 2: mesmas checagens para as etapas novas de cargo consolidado
+    if etapa == "listou_cargos_consolidados" and "4" in (fluxo.get("mapa_cargos_consolidados") or {}):
+        return False
+    if etapa == "listou_ocorrencias_cargo" and "4" in (fluxo.get("mapa_ocorrencias") or {}):
+        return False
 
     return etapa in {
         "inicio", "listou_categorias", "listou_vagas",
         "aguardando_escolha_unidade", "listando_cargos_selecao",
         "pos_candidatura", "candidatura_confirmada", "oferta_banco_talentos",
+        "listou_cargos_consolidados", "listou_ocorrencias_cargo",
     }
 
 
@@ -2949,77 +3147,21 @@ async def _processar_publico(
             linhas_re.append("\nDigite *voltar* para ver outras opções.")
             await e("\n".join(linhas_re))
             return
-        display_str = ", ".join(cargos_escolhidos)
-
-        # SQS-56: seleção sem coleta prévia de currículo — desvia para o fluxo
-        # de confirmação de presença (nome + telefone). NUNCA passa por
-        # coletando_nome_candidato/_enviar_link_candidatura e NUNCA grava
-        # status diferente de "pendente" — é isso que impede os
-        # interceptadores A (convite pós-seleção, SQS-40) e B (presença de
-        # selecionado, SQS-49) de capturarem essa conversa. `is False`
+        # SQS-56: `coleta_curriculo is False` desvia para confirmação de
+        # presença (nome + telefone), sem passar por
+        # coletando_nome_candidato/_enviar_link_candidatura. `is False`
         # explícito: qualquer valor que não seja False (None incluído)
-        # mantém o comportamento atual.
-        if fluxo.get("coleta_curriculo") is False:
-            def _buscar_detalhes_convocacao():
-                v_res = supabase.table("vagas").select(
-                    "observacoes_selecao, datas_selecao, local_entrevista, empresa_id"
-                ).eq("id", vaga_id_ref).maybe_single().execute()
-                v = v_res.data or {}
-                empresa_nome_conv = ""
-                empresa_id_v = v.get("empresa_id")
-                if empresa_id_v:
-                    emp_res = supabase.table("empresas").select(
-                        "nome, nome_fantasia"
-                    ).eq("id", empresa_id_v).maybe_single().execute()
-                    emp = emp_res.data or {}
-                    empresa_nome_conv = emp.get("nome_fantasia") or emp.get("nome") or ""
-                return v, empresa_nome_conv
-
-            detalhes_vaga, empresa_nome_conv = await _supabase_to_thread(_buscar_detalhes_convocacao)
-
-            datas = detalhes_vaga.get("datas_selecao") or []
-            data_hora_txt = ""
-            if datas:
-                d0 = datas[0]
-                data_iso = d0.get("data", "")
-                partes_data = data_iso.split("-")
-                data_fmt = f"{partes_data[2]}/{partes_data[1]}/{partes_data[0]}" if len(partes_data) == 3 else data_iso
-                hora_fmt = d0.get("hora", "")
-                data_hora_txt = f"{data_fmt}" + (f" às {hora_fmt}" if hora_fmt else "")
-            local_txt = detalhes_vaga.get("local_entrevista") or ""
-            obs_txt = detalhes_vaga.get("observacoes_selecao") or ""
-
-            linhas_convocacao = [
-                f"🎉 Você está convocado(a) para o processo seletivo"
-                + (f" *{empresa_nome_conv}*!" if empresa_nome_conv else "!") + "\n",
-                f"📋 Cargo(s): *{display_str}*",
-            ]
-            if data_hora_txt:
-                linhas_convocacao.append(f"📅 Data: *{data_hora_txt}*")
-            if local_txt:
-                linhas_convocacao.append(f"📍 Local: *{local_txt}*")
-            if obs_txt:
-                linhas_convocacao.append(f"ℹ️ Observações: {obs_txt}")
-            linhas_convocacao.append("\nPara confirmar sua presença, digite seu *nome completo*:")
-            await e("\n".join(linhas_convocacao))
-
-            await _set_fluxo_async(conversa_id, {
-                **_fluxo_sem_falhas_atendente(fluxo),
-                "etapa": "confirmando_presenca_nome",
-                "cargos_escolhidos": cargos_escolhidos,
-                "vaga_id_selecionada": vaga_id_ref,
-                "empresa_nome_selecao": empresa_nome_conv,
-                "tentativas_confirmacao_presenca": 0,
-            })
-            return
-
-        await e(f"Ótimo! Você escolheu: *{display_str}* ✅\n\nPara finalizar, preciso do seu *nome completo*:")
-        await _set_fluxo_async(conversa_id, {
-            **_fluxo_sem_falhas_atendente(fluxo),
-            "etapa": "coletando_nome_candidato",
-            "cargos_escolhidos": cargos_escolhidos,  # lista — AC10 SQS-49
-            "banco_talentos": False,
-        })
+        # mantém o comportamento atual. Lógica compartilhada com
+        # `listou_ocorrencias_cargo` (S-EMP-AUD-023 passo 2) via
+        # `_confirmar_cargos_selecao_evento`.
+        await _confirmar_cargos_selecao_evento(
+            fluxo=fluxo,
+            vaga_id_ref=vaga_id_ref,
+            cargos_escolhidos=cargos_escolhidos,
+            coleta_curriculo=fluxo.get("coleta_curriculo") is not False,
+            conversa_id=conversa_id,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+        )
         return
 
     # --- ETAPA: confirmando_presenca_nome (SQS-56) ---
@@ -3254,11 +3396,156 @@ async def _processar_publico(
         await e("\n".join(linhas_re_unid))
         return
 
+    # --- ETAPA: listou_cargos_consolidados (S-EMP-AUD-023 passo 2, Nível 1) ---
+    if etapa == "listou_cargos_consolidados":
+        mapa_cargos_fluxo = fluxo.get("mapa_cargos_consolidados", {})
+        escolhas_raw_n1 = re.findall(r"\d+", texto)
+        chaves_escolhidas = [n for n in escolhas_raw_n1 if n in mapa_cargos_fluxo]
+        if chaves_escolhidas:
+            meta_ocorrencias = await _mostrar_ocorrencias_cargo(
+                instance_name, token, phone, conversa_id, lead_id, mapa_cargos_fluxo, chaves_escolhidas,
+            )
+            await _set_fluxo_async(conversa_id, {
+                **_fluxo_sem_falhas_atendente(fluxo),
+                "etapa": "listou_ocorrencias_cargo",
+                **meta_ocorrencias,
+            })
+            return
+        # S-EMP-AUD-024: escape semântico ligado desde o nascimento da etapa
+        # (seção 5, regra 7 da story — não repetir o gap que a 024 corrigiu).
+        if await _escape_semantico_ou_none(
+            texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+        ):
+            return
+        if await _registrar_falha_e_oferecer_atendente(
+            fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+        ):
+            return
+        await _mostrar_cargos_consolidados(instance_name, token, phone, conversa_id, lead_id, mapa_cargos_fluxo)
+        return
+
+    # --- ETAPA: listou_ocorrencias_cargo (S-EMP-AUD-023 passo 2, Nível 2) ---
+    if etapa == "listou_ocorrencias_cargo":
+        mapa_ocorrencias_fluxo = fluxo.get("mapa_ocorrencias", {})
+        escolhas_raw_n2 = re.findall(r"\d+", texto)
+        numeros_validos = [n for n in escolhas_raw_n2 if n in mapa_ocorrencias_fluxo]
+        if not numeros_validos:
+            if await _escape_semantico_ou_none(
+                texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+            ):
+                return
+            if await _registrar_falha_e_oferecer_atendente(
+                fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
+                instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+            ):
+                return
+            await e(
+                "Não entendi. Digite o *número* da vaga de interesse. Ex: *1* ou *1,3*\n\n"
+                "Digite *voltar* para ver outras opções."
+            )
+            return
+
+        # Seção 5, regra 5 — PARCIAL nesta etapa (passo 2/5 da story): a rota
+        # completa por tipo é processada 1 ocorrência de cada vez. A fila que
+        # encadeia automaticamente as demais escolhas após concluir a 1ª
+        # (mecanismo novo, maior risco da story) é escopo do passo 3, ainda
+        # não implementado — aqui só a 1ª escolha é roteada; se o lead marcou
+        # mais de uma, ele é avisado e escolhe a próxima depois de terminar.
+        ocorrencia_escolhida = mapa_ocorrencias_fluxo[numeros_validos[0]]
+        if len(numeros_validos) > 1:
+            await e(
+                f"Vou te ajudar primeiro com *{ocorrencia_escolhida['cargo_exibicao']}* "
+                f"({ocorrencia_escolhida['empresa_nome']}). Ao concluir essa candidatura, "
+                "é só escolher a próxima vaga que você marcou."
+            )
+
+        vaga_id_escolhida = ocorrencia_escolhida["vaga_id"]
+        cargo_escolhido = ocorrencia_escolhida["cargo_titulo_original"]
+
+        if ocorrencia_escolhida["tipo"] == "selecao_evento":
+            def _buscar_coleta_curriculo():
+                res = supabase.table("vagas").select("coleta_curriculo").eq(
+                    "id", vaga_id_escolhida
+                ).maybe_single().execute()
+                return (res.data or {}).get("coleta_curriculo", True)
+
+            coleta_curriculo_v = await _supabase_to_thread(_buscar_coleta_curriculo)
+            await _confirmar_cargos_selecao_evento(
+                fluxo=fluxo,
+                vaga_id_ref=vaga_id_escolhida,
+                cargos_escolhidos=[cargo_escolhido],
+                coleta_curriculo=coleta_curriculo_v,
+                conversa_id=conversa_id,
+                instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+            )
+            return
+
+        # vaga_normal — mesma rota de sempre (SQS-41 Ação 2.3: pergunta
+        # unidade quando a vaga é global; senão coleta nome direto).
+        def _buscar_unidade_destino_e_unidades():
+            v_res = supabase.table("vagas").select("id, unidade_destino").eq(
+                "id", vaga_id_escolhida
+            ).maybe_single().execute()
+            unidade_destino_v = (v_res.data or {}).get("unidade_destino", "")
+            unidades_disp = []
+            if unidade_destino_v == "global":
+                u_res = supabase.table("unidades_cuca").select("id, nome").eq(
+                    "ativo", True
+                ).order("nome").execute()
+                unidades_disp = u_res.data or []
+            return unidade_destino_v, unidades_disp
+
+        unidade_destino_v, unidades_disponiveis = await _supabase_to_thread(
+            _buscar_unidade_destino_e_unidades
+        )
+
+        if unidade_destino_v == "global":
+            linhas_unid = [
+                "🌐 *Esta vaga é para toda a Rede CUCA!*\n\n"
+                "Qual unidade fica mais próxima da sua residência?\n"
+            ]
+            for idx_u, u in enumerate(unidades_disponiveis, start=1):
+                linhas_unid.append(f"*{idx_u}.* {u['nome']}")
+            linhas_unid.append("\nDigite *voltar* para ver outras opções.")
+            if await e("\n".join(linhas_unid)):
+                await _set_fluxo_async(conversa_id, {
+                    **_fluxo_sem_falhas_atendente(fluxo),
+                    "etapa": "aguardando_escolha_unidade",
+                    "vaga_id_selecionada": vaga_id_escolhida,
+                    "banco_talentos": False,
+                    "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+                    "unidades_opcoes": unidades_disponiveis,
+                })
+            return
+
+        nome_prefill = fluxo.get("nome_candidato_prefill", "")
+        if nome_prefill:
+            await _enviar_link_candidatura(
+                instance_name, token, phone, conversa_id, fluxo,
+                nome_prefill, phone, vaga_id_escolhida, False, lead_id=lead_id
+            )
+        else:
+            if await e("Para finalizar sua candidatura, preciso do seu *nome completo*:"):
+                await _set_fluxo_async(conversa_id, {
+                    "perfil": "publico",
+                    "etapa": "coletando_nome_candidato",
+                    "vaga_id_selecionada": vaga_id_escolhida,
+                    "banco_talentos": False,
+                    "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+                })
+        return
+
     # Candidatos veem TODAS as vagas abertas de qualquer unidade.
     # unidade_destino controla apenas qual equipe CUCA gerencia a candidatura — não a visibilidade pública.
     def _buscar_vagas_abertas_e_candidaturas():
+        # Ordem dos campos deliberada: "cargos_lista" antes de "tipo" evita
+        # colisão de substring com a query de metadado avulso mais abaixo
+        # (`"tipo, cargos_lista, coleta_curriculo"`) nos testes/mocks que
+        # roteiam por conteúdo de `select_cols`.
         vagas_res = supabase.table("vagas").select(
-            "id, titulo, tipo_contrato, salario, escolaridade_minima, total_vagas, faixa_etaria, setor, unidade_destino"
+            "id, titulo, tipo_contrato, salario, escolaridade_minima, total_vagas, faixa_etaria, setor, "
+            "unidade_destino, cargos_lista, tipo, empresa_id, unidade_cuca"
         ).eq("status", "aberta").order("created_at", desc=True).limit(50).execute()
         vagas_db = vagas_res.data or []
 
@@ -3286,9 +3573,46 @@ async def _processar_publico(
             else:
                 # candidatura sem cargo (vaga_normal): bloqueia a vaga normalmente
                 vagas_ids.add(c["vaga_id"])
-        return vagas_db, vagas_ids, cargos_por_vaga
 
-    vagas, db_vagas_ids, db_cargos_por_vaga = await _supabase_to_thread(_buscar_vagas_abertas_e_candidaturas)
+        # S-EMP-AUD-023 passo 2: nome de empresa/unidade em lote, pro rótulo
+        # do Nível 2 (seção 3) e resolução de unidade_cuca (seção 2.4). Nomes
+        # de unidade são resolvidos SEM filtro de "ativo" — aqui é resolução
+        # de rótulo, não oferta de escolha pro candidato (diferente da busca
+        # em aguardando_escolha_unidade, que só oferece unidade ativa).
+        empresa_ids = {v["empresa_id"] for v in vagas_db if v.get("empresa_id")}
+        unidade_ids = set()
+        for v in vagas_db:
+            for campo in ("unidade_cuca", "unidade_destino"):
+                valor = v.get(campo)
+                if valor and _REGEX_UUID.match(valor):
+                    unidade_ids.add(valor)
+
+        empresas_por_id: dict[str, str] = {}
+        if empresa_ids:
+            emp_res = supabase.table("empresas").select("id, nome, nome_fantasia").in_(
+                "id", list(empresa_ids)
+            ).execute()
+            for row in (emp_res.data or []):
+                empresas_por_id[row["id"]] = row.get("nome_fantasia") or row.get("nome") or ""
+
+        unidades_por_id: dict[str, str] = {}
+        if unidade_ids:
+            unid_res = supabase.table("unidades_cuca").select("id, nome").in_(
+                "id", list(unidade_ids)
+            ).execute()
+            for row in (unid_res.data or []):
+                unidades_por_id[row["id"]] = row.get("nome") or ""
+
+        return vagas_db, vagas_ids, cargos_por_vaga, empresas_por_id, unidades_por_id
+
+    (
+        vagas, db_vagas_ids, db_cargos_por_vaga, empresas_por_id, unidades_por_id,
+    ) = await _supabase_to_thread(_buscar_vagas_abertas_e_candidaturas)
+    # Referência ao resultado NÃO filtrado — o motor de cargo consolidado faz
+    # sua própria exclusão por ocorrência (pergunta 5 da story); o filtro
+    # abaixo (`ids_excluir`, por vaga inteira) só serve à listagem antiga
+    # (categoria/setor), mantida viva só pra conversas legadas em andamento.
+    vagas_raw = vagas
 
     # S37C-04: Combinar histórico da sessão com IDs do banco e filtrar vagas
     historico_aplicadas = list(fluxo.get("historico_vagas_aplicadas") or [])
@@ -3426,9 +3750,26 @@ async def _processar_publico(
                 })
         return
 
-    if not vagas:
+    # S-EMP-AUD-023 passo 2: ponto de entrada novo (Nível 1, cargo
+    # consolidado) substitui o menu por categoria/setor (SQS-41 Ação 2.1).
+    # Usa `vagas_raw` (NÃO o `vagas` filtrado por vaga inteira acima) — o
+    # motor de agrupamento já faz exclusão por ocorrência (pergunta 5 da
+    # story), que é mais correta: o filtro por vaga inteira escondia TODOS os
+    # cargos de uma seleção quando só 1 cargo dela já tinha sido aplicado.
+    tipos_por_vaga_id = {v["id"]: v.get("tipo") for v in vagas_raw}
+    historico_vaga_normal = {
+        vid for vid in historico_aplicadas if tipos_por_vaga_id.get(vid) != "selecao_evento"
+    }
+    vagas_ja_candidatadas_sem_cargo = db_vagas_ids | historico_vaga_normal
+
+    mapa_cargos = _construir_cargos_consolidados(
+        vagas_raw, db_cargos_por_vaga, vagas_ja_candidatadas_sem_cargo,
+        empresas_por_id, unidades_por_id,
+    )
+
+    if not mapa_cargos:
         # HF37-06: distingue "sem vagas no sistema" de "candidato já aplicou a todas"
-        if ids_excluir:
+        if vagas_ja_candidatadas_sem_cargo or db_cargos_por_vaga:
             await e(
                 "Você já se candidatou a todas as nossas vagas abertas no momento! 🎉\n\n"
                 "Assim que novas oportunidades surgirem, entraremos em contato pelo WhatsApp.\n\n"
@@ -3449,29 +3790,11 @@ async def _processar_publico(
         })
         return
 
-    # SQS-41 Ação 2.1: Menu dinâmico agrupado por categoria
-    from collections import defaultdict
-    categorias_map: dict = defaultdict(list)
-    for v in vagas:
-        setores = v.get("setor") or []
-        cat = setores[0] if setores else "Geral"
-        categorias_map[cat].append(v)
-
-    mapa_categorias: dict = {}
-    for i, (cat, cat_vagas) in enumerate(categorias_map.items(), start=1):
-        mapa_categorias[str(i)] = {
-            "categoria": cat,
-            "vagas": [
-                {"id": v["id"], "titulo": v["titulo"], "unidade_destino": v.get("unidade_destino", "global")}
-                for v in cat_vagas
-            ],
-        }
-
-    await _mostrar_categorias(instance_name, token, phone, conversa_id, lead_id, mapa_categorias)
+    await _mostrar_cargos_consolidados(instance_name, token, phone, conversa_id, lead_id, mapa_cargos)
     await _set_fluxo_async(conversa_id, {
         "perfil": "publico",
-        "etapa": "listou_categorias",
-        "mapa_categorias": mapa_categorias,
+        "etapa": "listou_cargos_consolidados",
+        "mapa_cargos_consolidados": mapa_cargos,
         # HF37-02: propaga histórico para que ciclos seguintes não reofereçam vagas já aplicadas
         "historico_vagas_aplicadas": historico_aplicadas,
         "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
@@ -3566,6 +3889,8 @@ _ETAPAS_PUBLICO = {
     "confirmando_presenca_nome",     # SQS-56: seleção sem coleta de currículo
     "confirmando_presenca_telefone", # SQS-56: seleção sem coleta de currículo
     "coletando_nome_curriculo_publico", # SQS-58: opção 5, montar currículo pelo celular
+    "listou_cargos_consolidados", # S-EMP-AUD-023 passo 2: Nível 1, cargo consolidado
+    "listou_ocorrencias_cargo",   # S-EMP-AUD-023 passo 2: Nível 2, ocorrências do(s) cargo(s) escolhido(s)
 }
 
 
