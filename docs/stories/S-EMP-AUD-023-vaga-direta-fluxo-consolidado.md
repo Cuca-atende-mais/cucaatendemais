@@ -476,12 +476,26 @@ chamado e seu retorno foi honrado, não só se o parser de número falhou. Suít
   "1ª ocorrência do Nível 2" de "item da fila" — a etapa `aguardando_escolha_unidade` (compartilhada,
   pré-existente) reaproveitaria `nome_candidato_prefill` por padrão depois de escolhida a unidade,
   quebrando a regra 5 pro caso específico "vaga individual global, vinda da fila". Corrigido limpando o
-  prefill nesse caminho quando `usar_prefill=False`. Coberto por
-  `test_fila_nunca_reaproveita_nome_entre_candidaturas_diferentes`.
+  prefill nesse caminho quando `usar_prefill=False`.
+  ~~Coberto por `test_fila_nunca_reaproveita_nome_entre_candidaturas_diferentes`.~~ **Impreciso — ver
+  fechamento do achado do @qa abaixo:** esse teste cobre só o branch de unidade específica, não o de
+  vaga global — o branch global ficou sem teste até a revisão seguinte.
 - Suíte completa do arquivo: 143 passed (138 pré-existentes + 5 novos), 0 falhas. Suíte completa do
   worker (exceto `test_main_retomar_disparo.py`, pré-existente/não relacionado): 321 passed, mesmas 5
   falhas pré-existentes em `test_meta_adapter_outbound.py`.
 - Escopo da story (seção 9) permanece respeitado: não mudou como vagas são cadastradas/criadas.
+
+### Fechamento do achado do @qa — cobertura do branch "vaga global vinda da fila"
+
+@qa (CONCERNS) verificou empiricamente — desligando a linha da correção na mão e rodando a suíte
+inteira — que a suíte continuava 100% verde sem ela. Ou seja, a correção do prefill pro branch de vaga
+**global** (distinto do branch de unidade específica, já coberto) não tinha nenhum teste garantindo que
+continuaria lá. Fechado com `test_fila_com_vaga_global_tambem_nao_reaproveita_nome`: fila com uma
+ocorrência `vaga_normal` de unidade `"global"`, fluxo com `nome_candidato_prefill` de uma candidatura
+anterior — confirma que a etapa `aguardando_escolha_unidade` resultante tem o prefill limpo
+(`""`). Repeti a mesma verificação empírica do @qa (desliguei a correção, o novo teste falhou
+exatamente como esperado; religuei, voltou a passar) antes de considerar fechado. Suíte completa: 144
+passed (143 + 1 novo).
 
 ## Change Log
 
@@ -545,3 +559,8 @@ chamado e seu retorno foi honrado, não só se o parser de número falhou. Suít
   padrão) — corrigido, limpando o prefill explicitamente quando o item vem da fila. 5 testes novos,
   suíte completa: 143 passed. Status mantido InProgress — próximo passo (normalização de cargo via IA)
   só começa após revisão deste.
+- v0.11 (2026-08-19): @qa revisou o passo 3 — veredito **CONCERNS**, achado verificado empiricamente
+  (desligou o código da correção do prefill no branch "vaga global" na mão, suíte inteira continuou
+  100% verde — nenhum teste cobria esse branch específico). @dev fechou com
+  `test_fila_com_vaga_global_tambem_nao_reaproveita_nome`, confirmado com a mesma técnica (desligar e
+  religar). Suíte completa: 144 passed.

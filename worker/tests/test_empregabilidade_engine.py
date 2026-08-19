@@ -3039,6 +3039,50 @@ class TestS_EMP_AUD_023Passo3FilaCandidaturas:
         assert estado["etapa"] == "coletando_nome_candidato"
 
     @pytest.mark.asyncio
+    async def test_fila_com_vaga_global_tambem_nao_reaproveita_nome(self, monkeypatch, _isola_enviar):
+        """Achado do @qa (revisão do passo 3): o caso acima só cobria vaga
+        individual de unidade ESPECÍFICA. O branch de vaga GLOBAL (pergunta
+        unidade antes de pedir nome) tem seu próprio ponto de limpeza do
+        prefill — sem este teste, remover essa limpeza não quebrava nenhum
+        teste (confirmado pelo @qa desligando o código na mão). Aqui a
+        próxima ocorrência da fila é uma vaga_normal global; com
+        nome_candidato_prefill de uma candidatura anterior no fluxo, confirma
+        que a etapa seguinte (aguardando_escolha_unidade) NÃO carrega esse
+        prefill — só assim, quando a unidade for escolhida, o handler
+        genérico de aguardando_escolha_unidade vai pedir o nome de novo em
+        vez de pular direto pro link com o nome antigo."""
+        proxima_global = {
+            "vaga_id": "v9", "tipo": "vaga_normal", "cargo_titulo_original": "Auxiliar",
+            "quantidade": 2, "empresa_nome": "Empresa X", "rotulo_tipo": "Vaga individual",
+            "cargo_exibicao": "Auxiliar",
+        }
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
+            "perfil": "publico",
+            "banco_talentos": False,
+            "candidatura_criada_id": "cand-1",
+            "candidatura_codigo": "ABC123",
+            "vaga_id_selecionada": "v1",
+            "nome_candidato": "Maria Silva",
+            "nome_candidato_prefill": "Maria Silva",  # já existia de antes
+            "historico_vagas_aplicadas": [],
+            "fila_candidaturas_pendentes": [proxima_global],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [{"id": "v9", "unidade_destino": "global"}]
+        fake.unidades = [{"id": "u1", "nome": "Barra"}, {"id": "u2", "nome": "Mondubim"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "aguardando_escolha_unidade"
+        # A prova real do achado: se o prefill não fosse limpo aqui, ficaria
+        # "Maria Silva" (herdado da candidatura anterior) — pediria unidade
+        # e, ao escolher, iria direto pro link sem pedir nome de novo.
+        assert estado["nome_candidato_prefill"] == ""
+
+    @pytest.mark.asyncio
     async def test_conclusao_de_selecao_encadeia_proxima_da_fila_automaticamente(self, monkeypatch, _isola_enviar):
         """Ponto de conclusão: confirmando_presenca_telefone (SQS-56, seleção
         sem coleta de currículo). Com fila pendente, encadeia a próxima."""
