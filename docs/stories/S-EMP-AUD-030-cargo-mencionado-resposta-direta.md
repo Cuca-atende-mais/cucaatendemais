@@ -140,6 +140,43 @@ Out do Escopo.
 - `worker/tests/test_intencao_detector.py`
 - `worker/tests/test_empregabilidade_engine.py`
 
+## QA Results
+
+**Veredito: PASS** (com 1 achado de hardening recomendado, não bloqueia)
+
+1. **Code review** — mudança bem isolada, checada antes do filtro de setor por especificidade;
+   reaproveita corretamente as chaves de fluxo (`mapa_vagas`, `ultima_vaga_id`,
+   `oferta_banco_talentos`) já usadas pelos outros 2 caminhos do mesmo branch; `isinstance(item,
+   dict)` defensivo ao iterar `cargos_lista` (jsonb pode conter formato inesperado).
+2. **Testes** — reconfirmados de forma independente: **204 passed** em
+   `test_empregabilidade_engine.py` + `test_intencao_detector.py`.
+3. **Acceptance Criteria** — AC1 (campo novo, `None` em pedido genérico) ✅; AC2 (busca por
+   `titulo` OU `cargos_lista`, achou/não achou) ✅; AC3 (sem cargo, comportamento atual intacto) ✅;
+   AC4 (suíte completa sem regressão nos outros 15+ call sites do classificador) ✅.
+4. **Regressão** — suíte geral do worker: **348 passed**, mesmas 5 falhas pré-existentes de
+   ambiente, nenhuma nova. Os 2 testes existentes que o @dev precisou corrigir
+   (`test_contextual_repassa_quer_sair_e_mudou_de_assunto`,
+   `test_contextual_excecao_vira_default_seguro`) — confirmei que a correção foi só adicionar a
+   chave nova ao dict esperado, sem alterar o que a asserção original verificava.
+5. **Performance** — filtro em Python sobre até 50 vagas (mesmo limite já usado pro filtro de
+   setor) — sem impacto de latência perceptível.
+6. **Segurança** — sem SQL injection (filtro client-side, não interpolado em query); **achado de
+   hardening (severidade baixa, não bloqueia):** `cargo_mencionado` é interpolado direto na
+   mensagem exibida (`f"vagas de *{cargo_mencionado}*"`) sem cap de tamanho — o prompt instrui a IA
+   a devolver "string curta", mas isso não é uma garantia server-side (mesma classe de risco já
+   tratada com fail-safe de conteúdo na S-EMP-AUD-023 passo 4, ali para texto *sintetizado*; aqui é
+   texto extraído/curto, risco bem menor, mas não nulo). Recomendo ao @dev adicionar um cap simples
+   (ex.: 40-50 caracteres) como hardening numa próxima iteração — não é regressão nem quebra AC,
+   registro apenas como melhoria defensiva.
+7. **Documentação** — Dev Agent Record completo, File List correta, achado documentado acima.
+
+**Teste empírico de causalidade** (refeito por mim, independente do @dev): revertidos
+temporariamente `empregabilidade_engine.py` e `intencao_detector.py` pro estado pré-implementação
+mantendo os testes — os 5 testes novos falharam exatamente como esperado (`KeyError:
+'cargo_mencionado'` nos 2 de contrato); restaurado, suíte voltou a 204 passed.
+
+Pronto pro @devops abrir o PR — a última das 3 stories desta auditoria.
+
 ## Change Log
 
 - v0.1 (2026-08-19): Story criada por @sm a partir do Plano 023 da auditoria — 2 conversas reais de
@@ -160,3 +197,8 @@ Out do Escopo.
   Suíte completa do worker rodada a cada etapa intermediária, conforme recomendado pelo @po — 204
   passed, 348 na suíte geral, sem regressão. Verificação empírica de causalidade confirmou que os
   testes falham sem a implementação. Status Ready → InReview. Pronto pro @qa.
+- v0.4 (2026-08-19): @qa revisou — **PASS**. Todos os AC confirmados de forma independente (204
+  passed), verificação empírica de causalidade reconfirmada por mim. 1 achado de hardening
+  recomendado (sem cap de tamanho em `cargo_mencionado` antes de exibir na mensagem) — não bloqueia,
+  registrado pro @dev considerar numa próxima iteração. Status permanece InReview — pronto pro
+  @devops abrir o PR.
