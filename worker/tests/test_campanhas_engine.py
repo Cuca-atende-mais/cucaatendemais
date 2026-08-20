@@ -1005,6 +1005,140 @@ async def test_retomada_resolve_daily_limit_por_numero(monkeypatch):
     mock_resolver.assert_called_once_with("phone-retomada-1")
 
 
+# ─── S-WM-67: teto diário efetivo (configurado × tier) + soma cumulativa do dia ─────────
+
+def _mock_supabase_multi_tabela():
+    """Mesmo padrão de _mock_supabase_disparo_pontual (tabelas independentes por nome via
+    side_effect em .table()), reaproveitado aqui pra testar _contar_enviados_hoje_sync, que
+    consulta 3 tabelas diferentes (disparos, disparos_divulgacao, logs_disparo)."""
+    mock_sb = MagicMock()
+    tabelas: dict[str, MagicMock] = {}
+
+    def _table(nome):
+        if nome not in tabelas:
+            tabelas[nome] = MagicMock()
+        return tabelas[nome]
+
+    mock_sb.table = MagicMock(side_effect=_table)
+    return mock_sb, tabelas
+
+
+def test_daily_limit_efetivo_usa_tier_quando_menor(monkeypatch):
+    """S-WM-67 AC1: daily_limit configurado (2000) acima do messaging_limit_tier confirmado
+    (500) — antes só logava um aviso e seguia com 2000; agora o teto efetivo É o tier (500)."""
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"daily_limit": 2000, "messaging_limit_tier": 500}
+    ]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    assert camp._get_daily_limit_by_phone_sync("phone-tier-baixo") == 500
+
+
+def test_daily_limit_efetivo_mantem_configurado_quando_tier_maior_ou_igual(monkeypatch):
+    """Regressão: tier confirmado (2000) igual/maior que o daily_limit configurado (100) —
+    o teto efetivo continua sendo o configurado, sem capar à toa."""
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"daily_limit": 100, "messaging_limit_tier": 2000}
+    ]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    assert camp._get_daily_limit_by_phone_sync("phone-tier-alto") == 100
+
+
+def test_daily_limit_efetivo_ignora_tier_null(monkeypatch):
+    """S-WM-67 AC3: tier ainda não confirmado (NULL) é 'não sei', não 'inconsistente' — não
+    capa o daily_limit configurado."""
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"daily_limit": 300, "messaging_limit_tier": None}
+    ]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    assert camp._get_daily_limit_by_phone_sync("phone-tier-null") == 300
+
+
+def test_contar_enviados_hoje_soma_disparos_e_divulgacao(monkeypatch):
+    """S-WM-67 AC2 (base): a contagem do dia cruza os 2 caminhos de disparo que existem
+    (eventos_pontuais/ouvidoria via 'disparos', mensal via 'disparos_divulgacao') pro mesmo
+    phone_number_id — um número usado pelos dois não pode ter metade do teto ignorada."""
+    mock_sb, tabelas = _mock_supabase_multi_tabela()
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    tabelas.setdefault("disparos", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = [
+        {"id": "disparo-1"}, {"id": "disparo-2"}
+    ]
+    tabelas.setdefault("disparos_divulgacao", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = [
+        {"id": "div-1"}
+    ]
+
+    # 2 chamadas a logs_disparo (uma por caminho) — diferenciadas por qual .in_ foi usado.
+    logs_mock = tabelas.setdefault("logs_disparo", MagicMock())
+
+    def _select(*_a, **_kw):
+        chain = MagicMock()
+
+        def _in(campo, valores):
+            sub = MagicMock()
+            if campo == "disparo_id":
+                sub.gte.return_value.neq.return_value.execute.return_value.count = 12
+            else:
+                sub.gte.return_value.neq.return_value.execute.return_value.count = 3
+            return sub
+
+        chain.in_ = MagicMock(side_effect=_in)
+        return chain
+
+    logs_mock.select = MagicMock(side_effect=_select)
+
+    assert camp._contar_enviados_hoje_sync("phone-cumulativo") == 15
+
+
+def test_contar_enviados_hoje_sem_disparos_cadastrados_retorna_zero(monkeypatch):
+    """Fail-safe/borda: número sem nenhum disparo próprio hoje (0 linhas em disparos e
+    disparos_divulgacao) não deve nem consultar logs_disparo — soma 0, sem erro."""
+    mock_sb, tabelas = _mock_supabase_multi_tabela()
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    tabelas.setdefault("disparos", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = []
+    tabelas.setdefault("disparos_divulgacao", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = []
+
+    assert camp._contar_enviados_hoje_sync("phone-sem-disparo") == 0
+    assert "logs_disparo" not in tabelas
+
+
+def test_resolver_limite_restante_desconta_enviados_hoje(monkeypatch):
+    """S-WM-67 AC2: duas execuções no mesmo dia, cada uma dentro do próprio teto isolado —
+    a 2ª precisa enxergar o que a 1ª já mandou e descontar do que resta."""
+    monkeypatch.setattr(camp, "_get_daily_limit_by_phone_sync", lambda phone: 100)
+    monkeypatch.setattr(camp, "_contar_enviados_hoje_sync", lambda phone: 30)
+
+    assert camp._resolver_limite_restante_hoje_sync("phone-x", None) == 70
+
+
+def test_resolver_limite_restante_nao_fica_negativo(monkeypatch):
+    """Se o teto do dia já foi ultrapassado (ex.: tier caiu após confirmação), o restante
+    é 0 — nunca negativo, o que faria `i >= daily_limit` nunca pausar (bug pior que o
+    original: um daily_limit negativo nunca seria alcançado pelo índice do loop)."""
+    monkeypatch.setattr(camp, "_get_daily_limit_by_phone_sync", lambda phone: 50)
+    monkeypatch.setattr(camp, "_contar_enviados_hoje_sync", lambda phone: 999)
+
+    assert camp._resolver_limite_restante_hoje_sync("phone-estourado", None) == 0
+
+
+def test_resolver_limite_restante_usa_daily_limit_ja_resolvido_pelo_chamador(monkeypatch):
+    """Quando o chamador já resolveu o daily_limit (não é None — ex.: retomada manual que
+    recebeu o valor por parâmetro), não busca de novo em meta_phone_numbers, só desconta o
+    que já saiu hoje."""
+    resolver_mock = MagicMock()
+    monkeypatch.setattr(camp, "_get_daily_limit_by_phone_sync", resolver_mock)
+    monkeypatch.setattr(camp, "_contar_enviados_hoje_sync", lambda phone: 10)
+
+    assert camp._resolver_limite_restante_hoje_sync("phone-y", 40) == 30
+    resolver_mock.assert_not_called()
+
+
 def test_fetch_all_lead_ids_tentados_sync_pagina_alem_do_limite_padrao(monkeypatch):
     """Achado da revisão pré-QA (pré-gate): um .select() sem .range() é sujeito ao limite
     padrão de linhas do PostgREST/Supabase — com daily_limit podendo chegar a milhares por

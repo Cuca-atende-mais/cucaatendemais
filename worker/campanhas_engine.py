@@ -295,31 +295,114 @@ def _get_phone_by_canal_tipo_sync(canal_tipo: str) -> tuple[str, str] | None:
 # ser por phone_number_id (meta_phone_numbers) — resolvido aqui, não mais 1x por tick do loop.
 _DAILY_LIMIT_FALLBACK = 500  # decisão confirmada com Junior (2026-07-29): conservador, não bloqueia.
 
+# S-WM-67: timezone única pra "hoje" na contagem cumulativa de envio diário — mesmo
+# deslocamento (-3h, America/Fortaleza) já usado localmente nos dois pontos de breadcrumb
+# deste arquivo (linhas de _enviar_para_leads_pendentes/_enviar_divulgacao_para_leads_pendentes).
+_TZ_FORTALEZA = timezone(timedelta(hours=-3))
+
 
 def _get_daily_limit_by_phone_sync(phone_number_id: str) -> int:
-    """daily_limit do número; cai no fallback conservador se não configurado (NULL) ou em
-    caso de erro de leitura — mesmo padrão de fail-safe já usado por _get_config_sync/
-    _get_phone_by_canal_tipo_sync neste arquivo (nunca deixa uma falha de leitura travar
-    o disparo inteiro)."""
+    """Teto diário EFETIVO do número: mínimo entre o daily_limit configurado e o
+    messaging_limit_tier confirmado pela Meta (S-WM-67 — antes disso, um daily_limit acima
+    do tier real só gerava um log de aviso e o disparo seguia sem travar; agora o tier vira
+    o teto de fato quando é o mais restritivo). Cai no fallback conservador se daily_limit
+    não estiver configurado (NULL) ou em caso de erro de leitura — mesmo padrão de fail-safe
+    já usado por _get_config_sync/_get_phone_by_canal_tipo_sync neste arquivo (nunca deixa
+    uma falha de leitura travar o disparo inteiro). Quando o tier ainda não foi confirmado
+    (NULL), isso é "não sei", não "inconsistente" — não capa nada."""
     try:
         res = (
             supabase.table("meta_phone_numbers")
-            .select("daily_limit")
+            .select("daily_limit, messaging_limit_tier")
             .eq("phone_number_id", phone_number_id)
             .limit(1)
             .execute()
         )
         if res.data and res.data[0].get("daily_limit") is not None:
-            return int(res.data[0]["daily_limit"])
+            efetivo = int(res.data[0]["daily_limit"])
+            tier = res.data[0].get("messaging_limit_tier")
+            if tier is not None and int(tier) < efetivo:
+                logger.warning(
+                    f"[Campanhas] daily_limit ({efetivo}) do phone_number_id={phone_number_id} está acima da "
+                    f"camada de mensageria confirmada ({tier}) — usando o tier como teto efetivo (S-WM-67)."
+                )
+                efetivo = int(tier)
+            return efetivo
     except Exception as exc:
-        logger.warning(f"[Campanhas] Erro ao ler daily_limit de meta_phone_numbers ({phone_number_id}): {exc}")
+        logger.warning(f"[Campanhas] Erro ao ler daily_limit/messaging_limit_tier de meta_phone_numbers ({phone_number_id}): {exc}")
     return _DAILY_LIMIT_FALLBACK
 
 
+def _contar_enviados_hoje_sync(phone_number_id: str) -> int:
+    """S-WM-67 (problema 2): soma quantas mensagens já saíram HOJE (fuso America/Fortaleza)
+    para este phone_number_id, cruzando logs_disparo com os dois caminhos de disparo que já
+    existem — disparos.instancia_uazapi e disparos_divulgacao.instancia_uazapi guardam o
+    phone_number_id de fato (nome legado da coluna, sem relação com uazapi; uazapi está
+    desligado). Sem isso, duas execuções no mesmo dia, cada uma dentro do próprio teto,
+    podiam somar mais do que a Meta libera — o teto era por execução, não por dia real.
+    Convenção de contagem igual à já usada em usar_contagem_cumulativa (linha ~776):
+    enviados = status <> 'falhou'. Fail-safe: erro de leitura conta como 0 (não bloqueia
+    disparo, mesmo padrão das demais funções deste arquivo)."""
+    hoje_inicio_utc = (
+        datetime.now(_TZ_FORTALEZA)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .astimezone(timezone.utc)
+        .isoformat()
+    )
+    total = 0
+    try:
+        disparos_res = (
+            supabase.table("disparos").select("id").eq("instancia_uazapi", phone_number_id).execute()
+        )
+        ids_disparos = [row["id"] for row in (disparos_res.data or []) if row.get("id")]
+        if ids_disparos:
+            res = (
+                supabase.table("logs_disparo")
+                .select("id", count="exact")
+                .in_("disparo_id", ids_disparos)
+                .gte("enviado_em", hoje_inicio_utc)
+                .neq("status", "falhou")
+                .execute()
+            )
+            total += res.count or 0
+    except Exception as exc:
+        logger.warning(f"[Campanhas] Erro ao contar enviados hoje via disparos ({phone_number_id}): {exc}")
+    try:
+        div_res = (
+            supabase.table("disparos_divulgacao").select("id").eq("instancia_uazapi", phone_number_id).execute()
+        )
+        ids_div = [row["id"] for row in (div_res.data or []) if row.get("id")]
+        if ids_div:
+            res = (
+                supabase.table("logs_disparo")
+                .select("id", count="exact")
+                .in_("disparo_divulgacao_id", ids_div)
+                .gte("enviado_em", hoje_inicio_utc)
+                .neq("status", "falhou")
+                .execute()
+            )
+            total += res.count or 0
+    except Exception as exc:
+        logger.warning(f"[Campanhas] Erro ao contar enviados hoje via disparos_divulgacao ({phone_number_id}): {exc}")
+    return total
+
+
+def _resolver_limite_restante_hoje_sync(phone_number_id: str, daily_limit: int | None) -> int:
+    """S-WM-67: combina o teto efetivo (configurado × tier) com quanto já saiu hoje neste
+    número, devolvendo quantas mensagens esta execução ainda pode enviar. Se `daily_limit`
+    já veio resolvido pelo chamador (ex.: retomada manual), usa-o como teto efetivo — só a
+    parte cumulativa (já enviados hoje) é recalculada aqui, sempre."""
+    if daily_limit is None:
+        daily_limit = _get_daily_limit_by_phone_sync(phone_number_id)
+    ja_enviados_hoje = _contar_enviados_hoje_sync(phone_number_id)
+    return max(0, daily_limit - ja_enviados_hoje)
+
+
 def _warn_if_daily_limit_above_tier_sync(phone_number_id: str, daily_limit: int) -> None:
-    """Log de observabilidade (não bloqueia disparo): daily_limit configurado acima da
-    camada de mensageria confirmada no Business Manager pra este número. Silencioso quando
-    messaging_limit_tier ainda não foi registrado (NULL) — isso é "não sei", não "inconsistente"."""
+    """@deprecated (S-WM-67) — a checagem/capagem do tier foi incorporada em
+    _get_daily_limit_by_phone_sync, que agora usa o tier como teto de fato em vez de só
+    avisar. Função mantida (sem uso interno) só para não quebrar quem ainda a referencia
+    externamente; não remover sem checar consumidores primeiro."""
     try:
         res = (
             supabase.table("meta_phone_numbers")
@@ -631,9 +714,9 @@ async def _enviar_para_leads_pendentes(
 
     phone_number_id, meta_token = canal_info
 
-    if daily_limit is None:
-        daily_limit = await asyncio.to_thread(_get_daily_limit_by_phone_sync, phone_number_id)
-        await asyncio.to_thread(_warn_if_daily_limit_above_tier_sync, phone_number_id, daily_limit)
+    # S-WM-67: teto efetivo (configurado × tier) menos quanto já saiu hoje neste número —
+    # substitui o "só avisa" antigo e fecha a lacuna de teto por execução (não por dia real).
+    daily_limit = await asyncio.to_thread(_resolver_limite_restante_hoje_sync, phone_number_id, daily_limit)
 
     automacao_filtro = '{' + ','.join(f'"{tag}"' for tag in automacao_tags) + '}'
     _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto, variaveis") \
@@ -1093,9 +1176,8 @@ async def _enviar_divulgacao_para_leads_pendentes(
 
     phone_number_id, meta_token = canal_info
 
-    if daily_limit is None:
-        daily_limit = await asyncio.to_thread(_get_daily_limit_by_phone_sync, phone_number_id)
-        await asyncio.to_thread(_warn_if_daily_limit_above_tier_sync, phone_number_id, daily_limit)
+    # S-WM-67: mesma lógica do lado pontual — teto efetivo menos quanto já saiu hoje.
+    daily_limit = await asyncio.to_thread(_resolver_limite_restante_hoje_sync, phone_number_id, daily_limit)
 
     _tpl_div = await asyncio.to_thread(
         lambda: supabase.table("meta_templates").select("nome, corpo_texto, variaveis, header_tipo, header_media_id")
