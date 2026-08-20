@@ -933,6 +933,21 @@ async def _executar_dispatch(
         except Exception as exc:
             logger.error(f"[meta-inbound] Erro no dispatch Empregabilidade: {exc}")
 
+    elif agente_tipo == "academia_enem":
+        # S-AE-04: engine PRÓPRIO (sem menu, saudação humanizada + coleta de nome), depois
+        # hand-off ao classificador da S-AE-10. Aditivo — não altera os ramos acima.
+        try:
+            from academia_enem_engine import processar_mensagem_academia_enem  # noqa: PLC0415
+            await processar_mensagem_academia_enem(
+                texto=mensagem,
+                phone=telefone,
+                phone_number_id=phone_number_id,
+                lead_id=lead_id,
+                conversa_id=conversa_id,
+            )
+        except Exception as exc:
+            logger.error(f"[meta-inbound] Erro no dispatch Academia Enem: {exc}")
+
     elif agente_tipo in _AGENTES_MOTOR_AGENTE:
         # S-WM-24 Task 2 (AUD-08, escopo ampliado 2026-08-07): mídia sem interpretação
         # (sticker, video, document, location, contacts, reaction, ...) é IGNORADA em
