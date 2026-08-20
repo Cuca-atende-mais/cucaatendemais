@@ -1,6 +1,6 @@
 # S-EMP-AUD-030 — "Tem vaga de enfermeira?" cai num menu genérico em vez de resposta direta sobre o cargo
 
-**Status:** InReview
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** `docs/Auditoria -19-08-26/2026-08-19-empregabilidade-conversas/plans/023-cargo-especifico-mencionado-nao-respondido.md`
 (auditoria de conversas reais, 18/08) — 2 conversas reais confirmadas (`8fc6dfd2`, `94dbad57`),
@@ -202,3 +202,6 @@ Pronto pro @devops abrir o PR — a última das 3 stories desta auditoria.
   recomendado (sem cap de tamanho em `cargo_mencionado` antes de exibir na mensagem) — não bloqueia,
   registrado pro @dev considerar numa próxima iteração. Status permanece InReview — pronto pro
   @devops abrir o PR.
+- v0.5 (2026-08-19): PR #110 mergeado em `main` (`b5a1f05`) e `cuca-worker` redeployado em
+  produção — confirmado pelo Junior. Status InReview → Done. Última das 3 stories da auditoria
+  `2026-08-19-empregabilidade-conversas` — todas fechadas (028, 029, 030).
