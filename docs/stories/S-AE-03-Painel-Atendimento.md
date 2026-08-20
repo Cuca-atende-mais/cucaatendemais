@@ -1,7 +1,7 @@
 # S-AE-03 — Painel de Atendimento Academia Enem
 
 ## Status
-Ready for Review
+Done
 
 ## ⚠️ Story reaberta e reescrita em 2026-08-20 — mudança de arquitetura
 Implementação anterior (Ready for Review, commit `7539e9a`) foi construída sobre as tabelas próprias `ae_conversas`/`ae_mensagens` e o provider AuctaFlux. Essa arquitetura foi abandonada (decisão do Junior, 2026-08-20): o painel passa a operar sobre as tabelas **compartilhadas** `conversas`/`mensagens` (as mesmas de Institucional/Empregabilidade), filtradas por canal — só a conexão com a Meta (credenciais/webhook) é isolada no serviço `cuca-academia-enem` (S-AE-02). Dev Agent Record e QA Results anteriores (abaixo) descrevem a implementação **obsoleta** — mantidos como histórico, não como estado atual.
@@ -45,7 +45,7 @@ Reaproveita **diretamente** os componentes de chat já existentes e validados (`
 ## Tasks
 - [x] Rota/página de atendimento do módulo (lista + chat realtime), reaproveitando `components/chat/*`, filtrada por canal Academia Enem.
 - [x] Envio manual via `meta_adapter_outbound` — **achado bloqueante resolvido** (ver Completion Notes): a rota de envio compartilhada mandava tudo pro `cuca-worker` padrão; corrigido pra rotear pro serviço da Academia Enem quando `agente_tipo='academia_enem'`.
-- [~] **Indicador/bloqueio de janela de 24h — NÃO implementado.** Achado: não existe nenhuma regra de janela de 24h reaproveitável nos canais Meta diretos hoje (Institucional/Empregabilidade não têm isso implementado, nem client nem server-side) — a única lógica de janela do repositório é exclusiva do AuctaFlux (código a apagar). Implementar do zero seria inventar escopo novo, não "reaproveitar" — decisão levada ao @po/Junior, ver Completion Notes.
+- [x] **Indicador/bloqueio de janela de 24h — DESISTÊNCIA (decisão do Junior, 2026-08-20).** Não existe regra de janela de 24h reaproveitável nos canais Meta diretos hoje; implementar seria inventar escopo novo. Junior decidiu: não se aplica mais, não será construído (nem agora, nem como débito futuro). AC3/AC4 considerados encerrados sem implementação — não é lacuna pendente.
 - [x] Respeitar `awaiting_human` — já vem de graça do `ChatWindow` compartilhado (mesma lógica usada por Institucional/Empregabilidade).
 - [x] Apagar `ae-chat-sidebar.tsx`/`ae-chat-window.tsx` e qualquer referência a `ae_conversas`/`ae_mensagens` nesta rota.
 
@@ -98,6 +98,8 @@ Dex (@dev) — claude-sonnet-5
 | 2026-08-20 | @po (Pax) | Validação (GO, 8/10) → Status Draft→Ready. |
 | 2026-08-20 | @dev (Dex) | **Implementação completa (Status Ready→Ready for Review).** Nova página reaproveitando `ChatSidebar`/`ChatWindow` com `filterCanalTipo="academia_enem"`. Achado bloqueante corrigido: `send-message/route.ts` (compartilhado) agora roteia pro worker certo por `agente_tipo`, sem afetar os outros canais — nova env `WORKER_URL_ACADEMIA_ENEM` documentada. Achado sinalizado, não implementado: janela de 24h não existe pra nenhum canal Meta direto hoje (não é "reaproveitar", seria inventar) — decisão levada ao @po/Junior. `ae-chat-*` apagados. `tsc`/`eslint` OK. |
 | 2026-08-20 | @po (Pax) | **Validação (GO, 8/10) → Status Draft→Ready.** Consistente com S-AE-02 (depende do serviço/número). Ponto de atenção não-bloqueante levado ao Dev Notes da própria story: confirmar que o filtro por `agente_tipo` já é aplicado por todas as telas que hoje leem `conversas`/`mensagens`, para não vazar dados entre módulos. |
+| 2026-08-20 | @devops (Gage) | Merge do PR #114 na `main`, aprovado pelo Junior. |
+| 2026-08-20 | Junior | **Decisão de produto:** pendência da janela de 24h (AC3/AC4) marcada como **desistência** — não se aplica mais, não será implementada nem tratada como débito futuro. Item encerrado. |
 
 ## QA Results (implementação atual — arquitetura Meta direta)
 
@@ -128,7 +130,7 @@ Dex (@dev) — claude-sonnet-5
 |-----|-----|-----------|--------------|
 | Low | perf | Query extra a `conversas` em todo envio, para todos os canais (não só Academia Enem) | Aceitável agora; se algum dia o volume de envio manual crescer muito, considerar cachear o `agente_tipo` no client e passar como parâmetro |
 | Low | ux | Mensagem de erro genérica quando `WORKER_URL_ACADEMIA_ENEM` não está configurada | Sem consumidor real hoje (S-AE-02 pendente); melhorar a mensagem quando o serviço entrar em uso |
-| — | decisão | AC4 (janela de 24h) não implementado — decisão de produto pendente | Levar ao Junior: construir agora só para Academia Enem, ou tratar como débito cross-canal |
+| — | decisão | AC4 (janela de 24h) — **RESOLVIDO 2026-08-20:** Junior decidiu desistência, não se aplica mais | Nenhuma ação — encerrado |
 
 ### Decisão de Gate
 **PASS.** Regressão investigada com o cuidado extra pedido — único consumidor real da rota compartilhada rastreado, comportamento idêntico preservado para os canais já em produção. Achados de nuance são Low, não-bloqueantes. AC4 é uma decisão de produto em aberto, corretamente não resolvida sozinha pelo @dev. Liberado para @devops.
