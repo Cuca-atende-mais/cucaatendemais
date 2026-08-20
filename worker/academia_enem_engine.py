@@ -1,28 +1,38 @@
 """
-S-AE-04 — Automação de Entrada Humanizada (Academia Enem / WhatsApp Oficial via AuctaFlux).
+S-AE-04 — Automação de Entrada Humanizada (Academia Enem / WhatsApp oficial Meta direta).
 
-Engine PRÓPRIO, independente do worker/main.py do uazapi (camada uazapi BLINDADA).
-- Acionado pelo webhook AuctaFlux do portal (POST /academia-enem/process com {ae_conversa_id}).
-- Estado da conversa em ae_conversas.estado + metadata['ae_fluxo'] (espelha a mecânica de empreg_fluxo).
-- Envio via AuctaFlux REST (mesmo contrato de cuca-portal/src/lib/auctaflux/client.ts: POST
-  /workspaces/{id}/messages {to, text}, Bearer reseller key) e gravação em ae_mensagens (remetente='ia').
-- SEM menu numérico: saudação humanizada + coleta de nome. Após o nome, hand-off ao classificador
-  (S-AE-10) pelo seam classificar() — SEM responder dúvida aqui (no-invention; o "cérebro" é a S-AE-10).
+Reescrito em 2026-08-20 (decisão do Junior, migração Meta direta — abandono do AuctaFlux):
+- Roda DENTRO do mesmo código-base do worker (`main.py`/`meta_adapter_inbound.py`), só que
+  implantado como o serviço separado `cuca-academia-enem` (S-AE-02), com credenciais Meta
+  próprias (`META_SYSTEM_USER_TOKEN` desse serviço = token da BM da Academia Enem, não a "Ivida").
+- Estado da conversa em `conversas.metadata.ae_fluxo` (mesmo padrão de `empreg_fluxo` do
+  `empregabilidade_engine.py`) — `conversas` NÃO tem coluna `estado` própria; a etapa vive
+  inteira dentro do metadata, igual Empregabilidade.
+- Mensagens em `mensagens` (tabela compartilhada, `remetente` in {'lead','agente'}).
+- Envio via `meta_adapter_outbound._meta_enviar` (Graph API), o mesmo adapter usado por
+  Institucional/Empregabilidade/motor-agente.
+- SEM menu numérico: saudação humanizada + coleta de nome. Após o nome, hand-off ao
+  classificador (S-AE-10) pelo seam `classificar()` — SEM responder dúvida aqui (no-invention;
+  o "cérebro" de roteamento disparo-vs-RAG é a S-AE-10, ainda não implementada).
+
+A máquina de estados pura `decidir()` abaixo é INALTERADA em relação à implementação anterior
+(AuctaFlux) — já era testável sem IO e desacoplada de tabela/provider; só a camada de I/O
+(persistência/envio) mudou de `ae_conversas`/`ae_mensagens`/AuctaFlux para `conversas`/
+`mensagens`/Meta.
 """
 
 import os
 import re
+import asyncio
 import logging
-import httpx
 from datetime import datetime, timezone
+
 from supabase import create_client, Client
 
 logger = logging.getLogger("academia_enem_engine")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
-AUCTAFLUX_BASE_URL = os.getenv("AUCTAFLUX_BASE_URL", "https://api-flux.aucta.tech/api/v1/reseller/v1").rstrip("/")
-AUCTAFLUX_KEY = os.getenv("AUCTAFLUX_RESELLER_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -67,7 +77,8 @@ def _extrair_nome(texto: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Máquina de estados — FUNÇÃO PURA (testável sem IO). Decide a ação a partir do
-# estado atual + texto recebido. Não faz rede nem banco.
+# estado atual + texto recebido. Não faz rede nem banco. INALTERADA desde a
+# implementação AuctaFlux (a lógica de conversa não depende de tabela/provider).
 # ---------------------------------------------------------------------------
 
 def decidir(estado: str | None, texto: str, fluxo: dict | None) -> dict:
@@ -82,12 +93,10 @@ def decidir(estado: str | None, texto: str, fluxo: dict | None) -> dict:
     texto_norm = (texto or "").strip()
 
     # Encerramento só faz sentido depois do diálogo ter começado.
-    # 'encerrada' é ciclo de vida → vai em `status` (não em `estado`, que é a etapa do fluxo).
     if estado in ("aguardando_nome", "ativo") and _quer_encerrar(texto_norm):
         return {
             "acao": "encerrar",
-            "proximo_estado": "ativo",
-            "proximo_status": "encerrada",
+            "proximo_estado": "encerrada",
             "mensagem": "Tudo certo! Quando quiser falar sobre o Enem, é só me chamar por aqui. 👋",
             "fluxo": {**fluxo, "etapa": "encerrada"},
         }
@@ -120,147 +129,111 @@ def decidir(estado: str | None, texto: str, fluxo: dict | None) -> dict:
 # NÃO adicionar lógica de RAG/disparo/transbordo aqui: isso é a S-AE-10 (integrador).
 # ---------------------------------------------------------------------------
 
-async def classificar(ae_conversa_id: str) -> None:
+async def classificar(conversa_id: str) -> None:
     """Hand-off ao classificador disparo-vs-RAG (S-AE-10). No-op por enquanto (silêncio proposital)."""
     logger.info(
-        f"[AE engine] seam classificar() acionado p/ conversa {ae_conversa_id} — "
-        "roteamento será implementado na S-AE-10 (no-op no momento)."
+        "[AE engine] seam classificar() acionado p/ conversa %s — "
+        "roteamento será implementado na S-AE-10 (no-op no momento).",
+        conversa_id,
     )
     return None
 
 
 # ---------------------------------------------------------------------------
-# Envio via AuctaFlux (mesmo contrato do client.ts) + gravação em ae_mensagens.
+# I/O — fluxo (metadata.ae_fluxo em `conversas`, mesmo padrão de empreg_fluxo).
 # ---------------------------------------------------------------------------
 
-async def _enviar(ae_conversa_id: str, workspace_id: str, to: str, texto: str) -> bool:
-    """Envia texto via AuctaFlux e grava em ae_mensagens. Retorna True só se enviou de fato."""
-    if not AUCTAFLUX_KEY:
-        logger.error("[AE engine] AUCTAFLUX_RESELLER_API_KEY não configurada — envio abortado (configure no worker).")
-        return False
-    resultado: dict = {}
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            res = await client.post(
-                f"{AUCTAFLUX_BASE_URL}/workspaces/{workspace_id}/messages",
-                headers={
-                    "Authorization": f"Bearer {AUCTAFLUX_KEY}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                json={"to": to, "text": texto},
-            )
-            res.raise_for_status()
-            resultado = res.json() if res.content else {}
-    except Exception as e:
-        logger.error(f"[AE engine] Falha ao enviar via AuctaFlux (conversa {ae_conversa_id}): {e}", exc_info=True)
-        return False
-
-    # Grava a mensagem enviada para o painel (S-AE-03). remetente='ia' (enum ae_mensagens).
-    try:
-        supabase.table("ae_mensagens").insert({
-            "ae_conversa_id": ae_conversa_id,
-            "wa_message_id": resultado.get("wamid"),
-            "remetente": "ia",
-            "tipo": "text",
-            "conteudo": texto,
-            "status": resultado.get("status"),
-            "metadata": {"passthrough_id": resultado.get("passthrough_id")},
-        }).execute()
-        # Agregados: outbound atualiza ultima_mensagem_em/updated_at — NÃO ultima_entrada_em (só inbound).
-        agora = datetime.now(timezone.utc).isoformat()
-        supabase.table("ae_conversas").update(
-            {"ultima_mensagem_em": agora, "updated_at": agora}
-        ).eq("id", ae_conversa_id).execute()
-    except Exception as e:
-        logger.error(f"[AE engine] Falha ao gravar mensagem da IA (conversa {ae_conversa_id}): {e}", exc_info=True)
-    return True
+def _get_fluxo(conversa_id: str) -> dict:
+    res = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
+    metadata = (res.data or {}).get("metadata") or {}
+    return metadata.get("ae_fluxo", {})
 
 
-def _persistir_estado(ae_conversa_id: str, estado: str, fluxo: dict, status: str | None = None) -> None:
-    """Atualiza a etapa do fluxo (`estado`) + `metadata.ae_fluxo`. `status` (ciclo de vida:
-    ativa|encerrada|awaiting_human) só é tocado quando informado — não confundir com `estado`."""
-    res = supabase.table("ae_conversas").select("metadata").eq("id", ae_conversa_id).single().execute()
+def _persistir_estado(conversa_id: str, fluxo: dict) -> None:
+    """Atualiza `metadata.ae_fluxo` (etapa da conversa vive inteira no metadata — `conversas`
+    não tem coluna `estado` própria, mesmo padrão do `empreg_fluxo` de Empregabilidade)."""
+    res = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
     metadata = (res.data or {}).get("metadata") or {}
     metadata["ae_fluxo"] = fluxo
-    update: dict = {"estado": estado, "metadata": metadata, "updated_at": datetime.now(timezone.utc).isoformat()}
-    if status is not None:
-        update["status"] = status
-    supabase.table("ae_conversas").update(update).eq("id", ae_conversa_id).execute()
+    supabase.table("conversas").update(
+        {"metadata": metadata, "updated_at": datetime.now(timezone.utc).isoformat()}
+    ).eq("id", conversa_id).execute()
 
 
-# ---------------------------------------------------------------------------
-# Entrada do engine — relê o estado FRESCO do banco (fonte única; lida com 2 triggers seguidos).
-# ---------------------------------------------------------------------------
-
-async def processar_mensagem_academia_enem(ae_conversa_id: str) -> None:
-    # 1) Carrega a conversa (estado/metadata/contato/instância).
-    try:
-        conv_res = (
-            supabase.table("ae_conversas")
-            .select("id, wa_contact, status, estado, metadata, lead_id, ae_instancia_id")
-            .eq("id", ae_conversa_id)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        logger.error(f"[AE engine] Conversa {ae_conversa_id} não carregada: {e}")
-        return
-    conv = conv_res.data
-    if not conv:
-        logger.warning(f"[AE engine] Conversa {ae_conversa_id} inexistente.")
-        return
-
-    # awaiting_human: humano assumiu (S-AE-03/S-AE-06) — IA silenciada.
-    # CRÍTICO: takeover vive em `status` (o painel S-AE-03 grava status), NÃO em `estado` (etapa do fluxo).
-    if conv.get("status") == "awaiting_human":
-        logger.info(f"[AE engine] Conversa {ae_conversa_id} em awaiting_human — IA silenciada.")
-        return
-
-    # 2) Última mensagem: só age sobre inbound de lead (evita loop com o próprio outbound).
-    msg_res = (
-        supabase.table("ae_mensagens")
+def _ultima_mensagem_lead(conversa_id: str) -> tuple[str, str]:
+    """Retorna (remetente, conteudo) da última mensagem da conversa."""
+    res = (
+        supabase.table("mensagens")
         .select("remetente, conteudo")
-        .eq("ae_conversa_id", ae_conversa_id)
+        .eq("conversa_id", conversa_id)
         .order("created_at", desc=True)
         .limit(1)
         .execute()
     )
-    ultima = (msg_res.data or [{}])[0]
-    if ultima.get("remetente") != "lead":
-        logger.info(f"[AE engine] Última mensagem não é do lead (conversa {ae_conversa_id}) — nada a fazer.")
+    ultima = (res.data or [{}])[0]
+    return ultima.get("remetente", ""), ultima.get("conteudo") or ""
+
+
+# ---------------------------------------------------------------------------
+# Envio via Meta (Graph API, mesmo adapter dos demais canais diretos) + gravação em `mensagens`.
+# ---------------------------------------------------------------------------
+
+async def _enviar(conversa_id: str, phone_number_id: str, telefone: str, texto: str, lead_id: str = "") -> bool:
+    """Envia texto via Meta e grava em `mensagens` (remetente='agente'). Retorna True só se
+    enviou de fato — evita "consumir" a saudação sem o lead receber quando a Graph API falha."""
+    from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+
+    token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+    ok = await _meta_enviar(phone_number_id, telefone, texto, token)
+    if not ok:
+        return False
+
+    try:
+        supabase.table("mensagens").insert({
+            "conversa_id": conversa_id,
+            "lead_id": lead_id or None,
+            "remetente": "agente",
+            "tipo": "text",
+            "conteudo": texto,
+        }).execute()
+    except Exception as exc:
+        logger.error("[AE engine] Falha ao gravar mensagem da IA (conversa %s): %s", conversa_id, exc, exc_info=True)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Entrada do engine — chamado por `meta_adapter_inbound._executar_dispatch` quando
+# agente_tipo == 'academia_enem'. `awaiting_human` já foi checado ali, antes do dispatch
+# (mesma checagem central usada por todos os agente_tipo) — não repetido aqui.
+# ---------------------------------------------------------------------------
+
+async def processar_mensagem_academia_enem(
+    texto: str,
+    phone: str,
+    phone_number_id: str,
+    lead_id: str,
+    conversa_id: str,
+) -> None:
+    # 1) Relê a última mensagem da própria conversa — só age sobre inbound do lead
+    #    (evita loop com o próprio outbound, mesmo cuidado do empregabilidade_engine).
+    remetente, _conteudo = await asyncio.to_thread(_ultima_mensagem_lead, conversa_id)
+    if remetente != "lead":
+        logger.info("[AE engine] Última mensagem não é do lead (conversa %s) — nada a fazer.", conversa_id)
         return
-    texto = ultima.get("conteudo") or ""
 
-    # 3) workspace_id da instância (para enviar).
-    ws_res = (
-        supabase.table("ae_instancias")
-        .select("workspace_id")
-        .eq("id", conv["ae_instancia_id"])
-        .single()
-        .execute()
-    )
-    workspace_id = (ws_res.data or {}).get("workspace_id")
+    # 2) Decide (puro) a partir do fluxo fresco (metadata.ae_fluxo).
+    fluxo = await asyncio.to_thread(_get_fluxo, conversa_id)
+    decisao = decidir(fluxo.get("etapa"), texto, fluxo)
 
-    # 4) Decide (puro) a partir do estado fresco.
-    fluxo = (conv.get("metadata") or {}).get("ae_fluxo") or {}
-    decisao = decidir(conv.get("estado"), texto, fluxo)
-
-    # 5) Seam de roteamento (sem envio): só avança o fluxo e chama a S-AE-10.
+    # 3) Hand-off ao classificador (S-AE-10): sem envio, só avança o fluxo e delega.
     if decisao["acao"] == "classificar":
-        _persistir_estado(ae_conversa_id, decisao["proximo_estado"], decisao["fluxo"])
-        await classificar(ae_conversa_id)
+        await asyncio.to_thread(_persistir_estado, conversa_id, decisao["fluxo"])
+        await classificar(conversa_id)
         return
 
-    # 6) Ações com mensagem: ENVIA primeiro; só avança o estado se o envio funcionou
-    #    (evita "consumir" a saudação sem o lead receber quando a key/serviço falha).
+    # 4) Ações com mensagem: ENVIA primeiro; só avança o fluxo se o envio funcionou.
     if not decisao.get("mensagem"):
         return
-    if not workspace_id:
-        logger.error(f"[AE engine] Conversa {ae_conversa_id} sem workspace_id — não há como enviar.")
-        return
-    enviado = await _enviar(ae_conversa_id, workspace_id, conv["wa_contact"], decisao["mensagem"])
+    enviado = await _enviar(conversa_id, phone_number_id, phone, decisao["mensagem"], lead_id)
     if enviado:
-        _persistir_estado(
-            ae_conversa_id, decisao["proximo_estado"], decisao["fluxo"], status=decisao.get("proximo_status")
-        )
+        await asyncio.to_thread(_persistir_estado, conversa_id, decisao["fluxo"])
