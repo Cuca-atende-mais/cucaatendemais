@@ -1,48 +1,39 @@
 "use client";
 
 import { useState } from "react";
-import { useUser } from "@/lib/auth/user-provider";
+import ChatSidebar from "@/components/chat/chat-sidebar";
+import ChatWindow from "@/components/chat/chat-window";
 import { Badge } from "@/components/ui/badge";
-import { ShieldAlert } from "lucide-react";
-import AeChatSidebar from "./_components/ae-chat-sidebar";
-import AeChatWindow from "./_components/ae-chat-window";
+
+// Constante estável fora do componente — evita recriar canal Realtime a cada render.
+// "academia_enem" é o canal_tipo cadastrado em meta_phone_numbers pela S-AE-02.
+const CANAL_ACADEMIA_ENEM = "academia_enem";
 
 export default function AcademiaEnemMensagensPage() {
-    const { hasPermission, loading: authLoading } = useUser();
-    const canRead = hasPermission("atendimentos_academia_enem", "read");
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-
-    if (authLoading) return null;
-
-    if (!canRead) {
-        return (
-            <div className="flex flex-col items-center justify-center gap-2 py-24 text-muted-foreground">
-                <ShieldAlert className="h-10 w-10" />
-                <p>Você não tem permissão para acessar o atendimento da Academia Enem.</p>
-            </div>
-        );
-    }
 
     return (
         <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-background">
             <div className="px-6 py-4 border-b bg-card">
                 <h1 className="text-2xl font-bold tracking-tight flex items-center gap-3">
                     Atendimento — Academia Enem
-                    <Badge variant="secondary" className="bg-cuca-blue/10 text-cuca-blue hover:bg-cuca-blue/20">WhatsApp Oficial</Badge>
+                    <Badge variant="secondary">WhatsApp oficial</Badge>
                 </h1>
                 <p className="text-muted-foreground text-sm mt-1">
-                    Conversas do número instanciado (AuctaFlux / WhatsApp Oficial Meta) em tempo real.
+                    Conversas e transbordos do canal Meta oficial da Academia Enem.
                 </p>
             </div>
             <div className="flex flex-1 overflow-hidden">
                 <div className="w-80 lg:w-96 h-full flex-shrink-0 border-r border-[#E5E7EB]">
-                    <AeChatSidebar
+                    <ChatSidebar
+                        title="Academia Enem"
                         activeConversationId={activeConversationId}
                         onSelectConversation={setActiveConversationId}
+                        filterCanalTipo={CANAL_ACADEMIA_ENEM}
                     />
                 </div>
                 <div className="flex-1 h-full relative">
-                    <AeChatWindow conversationId={activeConversationId} />
+                    <ChatWindow conversationId={activeConversationId} moduloAtendimento="atendimentos_academia_enem" />
                 </div>
             </div>
         </div>
