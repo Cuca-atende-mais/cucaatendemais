@@ -42,6 +42,37 @@ _PALAVRAS_ENCERRAR = {
     "obrigada", "valeu", "pronto", "pode fechar", "nada mais", "só isso", "era isso",
 }
 
+# S-AE-06: mesmo conjunto de expressões de pedido explícito de humano usado por
+# `empregabilidade_engine._CONTAINS_HANDOVER` — detecção por substring, não regex, igual lá.
+_CONTAINS_HANDOVER = {
+    "falar com humano", "falar com um humano", "atendente humano", "falar com atendente",
+    "falar com o atendente", "falar com um atendente", "falar com a atendente",
+    "quero atendente", "quero humano", "humano por favor", "pessoa real",
+    "quero falar com atendente", "quero falar com o atendente",
+    "preciso de atendente", "chamar atendente", "atendente por favor",
+    "falar com pessoa", "atendimento humano", "preciso de ajuda humana",
+    "falar com alguem", "falar com alguém", "falar com um alguem", "falar com um alguém",
+    "quero falar com alguem", "quero falar com alguém", "quero falar com um humano",
+    "me passa para humano", "me passa para atendente", "falar com uma pessoa",
+    "quero atendimento", "preciso de atendimento", "falar com suporte",
+    "passa para atendente", "passa pra atendente", "passa para um atendente",
+    "passa pra um atendente", "não entendi", "nao entendi",
+}
+
+_MSG_TRANSBORDO_SUCESSO = (
+    "Certo! Já chamei alguém da nossa equipe pra te ajudar por aqui. 🙋 "
+    "Só um instante que já te respondem."
+)
+_MSG_TRANSBORDO_FALHOU = (
+    "Tentei chamar nossa equipe agora, mas não consegui confirmar o encaminhamento automático. "
+    "Por favor, tente novamente em alguns minutos."
+)
+
+
+def _quer_humano(texto: str) -> bool:
+    t = (texto or "").strip().lower()
+    return any(p in t for p in _CONTAINS_HANDOVER)
+
 SAUDACAO = (
     "Olá! 👋 Seja muito bem-vindo(a) à Academia Enem. "
     "Pra te atender direitinho, como você se chama?"
@@ -202,6 +233,65 @@ async def _enviar(conversa_id: str, phone_number_id: str, telefone: str, texto: 
 
 
 # ---------------------------------------------------------------------------
+# Transbordo (S-AE-06) — reaproveita `_notificar_transbordo` (genérico, já filtra por
+# `modulo` corretamente — ver de-risk na story) em vez de recriar a lógica de notificação.
+# NÃO cria tabela nova: usa `transbordo_humano` com `modulo='academia_enem'`.
+# ---------------------------------------------------------------------------
+
+async def acionar_transbordo(
+    conversa_id: str,
+    phone_number_id: str,
+    telefone: str,
+    lead_id: str = "",
+) -> bool:
+    """Marca a conversa em `awaiting_human` (silenciando a IA) e notifica o responsável
+    cadastrado em `transbordo_humano` para `modulo='academia_enem'`. Reverte o status se a
+    notificação falhar (mesmo padrão de `empregabilidade_engine._acionar_transbordo_empregabilidade`)
+    — evita deixar a conversa "presa" em awaiting_human sem ninguém avisado.
+
+    Público (não prefixado com `_`): a S-AE-10 (classificador) vai chamar esta função quando o
+    lead aceitar transferência após o RAG não encontrar resposta (AC3) — seam já pronto, sem
+    reimplementar a notificação lá."""
+    def _marcar_awaiting_human():
+        supabase.table("conversas").update(
+            {"status": "awaiting_human", "updated_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", conversa_id).execute()
+
+    def _restaurar_ativa():
+        supabase.table("conversas").update(
+            {"status": "ativa", "updated_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", conversa_id).execute()
+
+    try:
+        await asyncio.to_thread(_marcar_awaiting_human)
+    except Exception as exc:
+        logger.error("[AE engine] Falha ao marcar awaiting_human (conversa %s): %s", conversa_id, exc, exc_info=True)
+        return False
+
+    from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
+    try:
+        # AC4: modulo FIXO 'academia_enem' — nunca cai no contato de outro módulo mesmo sem
+        # contato configurado (_notificar_transbordo filtra estrito por modulo, sem fallback
+        # cruzado; loga warning e retorna False — tratado abaixo).
+        notificado = await _notificar_transbordo(conversa_id, "academia_enem", None, phone_number_id, telefone)
+    except Exception as exc:
+        logger.error("[AE engine] Erro ao notificar transbordo (conversa %s): %s", conversa_id, exc, exc_info=True)
+        notificado = False
+
+    if not notificado:
+        try:
+            await asyncio.to_thread(_restaurar_ativa)
+        except Exception as exc:
+            logger.error("[AE engine] Falha ao reverter awaiting_human (conversa %s): %s", conversa_id, exc, exc_info=True)
+        await _enviar(conversa_id, phone_number_id, telefone, _MSG_TRANSBORDO_FALHOU, lead_id)
+        return False
+
+    await _enviar(conversa_id, phone_number_id, telefone, _MSG_TRANSBORDO_SUCESSO, lead_id)
+    logger.info("[AE engine] Transbordo acionado com sucesso (conversa %s)", conversa_id)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Entrada do engine — chamado por `meta_adapter_inbound._executar_dispatch` quando
 # agente_tipo == 'academia_enem'. `awaiting_human` já foi checado ali, antes do dispatch
 # (mesma checagem central usada por todos os agente_tipo) — não repetido aqui.
@@ -219,6 +309,12 @@ async def processar_mensagem_academia_enem(
     remetente, _conteudo = await asyncio.to_thread(_ultima_mensagem_lead, conversa_id)
     if remetente != "lead":
         logger.info("[AE engine] Última mensagem não é do lead (conversa %s) — nada a fazer.", conversa_id)
+        return
+
+    # 1.5) AC1: pedido explícito de humano tem prioridade sobre a máquina de estados —
+    # o lead pode pedir transbordo em qualquer etapa da conversa (não só em 'ativo').
+    if _quer_humano(texto):
+        await acionar_transbordo(conversa_id, phone_number_id, phone, lead_id)
         return
 
     # 2) Decide (puro) a partir do fluxo fresco (metadata.ae_fluxo).

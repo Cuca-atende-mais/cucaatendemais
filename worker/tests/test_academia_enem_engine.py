@@ -197,6 +197,26 @@ async def test_processar_mensagem_ativo_delega_ao_classificador_sem_enviar(monke
 
 
 @pytest.mark.asyncio
+async def test_processar_mensagem_pedido_humano_aciona_transbordo_antes_do_fluxo(monkeypatch):
+    """S-AE-06/AC1: pedido explícito de humano tem prioridade sobre a máquina de estados,
+    mesmo em qualquer etapa — não precisa chegar em 'ativo' primeiro."""
+    sb = _mock_supabase_tabelas({
+        "mensagens": [{"remetente": "lead", "conteudo": "quero falar com alguém"}],
+        "conversas": {"metadata": {}},
+    })
+    monkeypatch.setattr(ae, "supabase", sb)
+    acionar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "acionar_transbordo", acionar_mock)
+
+    await ae.processar_mensagem_academia_enem(
+        texto="quero falar com alguém", phone="5585999999999", phone_number_id="123",
+        lead_id="lead-1", conversa_id="conv-1",
+    )
+
+    acionar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "lead-1")
+
+
+@pytest.mark.asyncio
 async def test_processar_mensagem_nao_avanca_estado_se_envio_falhar(monkeypatch):
     """Se o envio falhar (Graph API fora), o fluxo NÃO avança — evita "consumir" a saudação
     sem o lead ter recebido nada."""
@@ -217,3 +237,79 @@ async def test_processar_mensagem_nao_avanca_estado_se_envio_falhar(monkeypatch)
     # update() não deve ter sido chamado em conversas (persistência de estado pulada).
     conversas_tbl = sb.table("conversas")
     conversas_tbl.update.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _quer_humano — detecção de pedido explícito de transbordo (AC1)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("texto", [
+    "quero falar com alguém",
+    "passa para um atendente",
+    "não entendi",
+    "quero atendimento",
+    "Preciso de Ajuda Humana, por favor",
+])
+def test_quer_humano_detecta_pedidos_explicitos(texto):
+    assert ae._quer_humano(texto) is True
+
+
+@pytest.mark.parametrize("texto", [
+    "quanto custa o curso?",
+    "quero saber mais sobre o enem",
+    "obrigado",
+])
+def test_quer_humano_nao_dispara_em_mensagem_normal(texto):
+    assert ae._quer_humano(texto) is False
+
+
+# ---------------------------------------------------------------------------
+# acionar_transbordo — S-AE-06 (reaproveita _notificar_transbordo, genérico)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_acionar_transbordo_sucesso_marca_awaiting_human_e_notifica(monkeypatch):
+    import meta_adapter_inbound as mai
+
+    sb = _mock_supabase_tabelas({"mensagens": [], "conversas": {}})
+    monkeypatch.setattr(ae, "supabase", sb)
+    notificar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(mai, "_notificar_transbordo", notificar_mock)
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+
+    resultado = await ae.acionar_transbordo("conv-1", "123", "5585999999999", "lead-1")
+
+    assert resultado is True
+    conversas_tbl = sb.table("conversas")
+    # 1ª chamada de update() marca awaiting_human; nenhuma reversão pra 'ativa'.
+    primeira_chamada = conversas_tbl.update.call_args_list[0]
+    assert primeira_chamada.args[0]["status"] == "awaiting_human"
+    assert all(c.args[0].get("status") != "ativa" for c in conversas_tbl.update.call_args_list)
+    # AC2: modulo FIXO 'academia_enem' — nunca outro módulo.
+    notificar_mock.assert_awaited_once_with("conv-1", "academia_enem", None, "123", "5585999999999")
+    enviar_mock.assert_awaited_once()
+    assert "chamei" in enviar_mock.await_args.args[3].lower()
+
+
+@pytest.mark.asyncio
+async def test_acionar_transbordo_sem_contato_reverte_status_e_avisa_lead(monkeypatch):
+    """AC4: sem contato configurado para modulo='academia_enem', não deve deixar a conversa
+    travada em awaiting_human nem cair silenciosamente no contato de outro módulo —
+    _notificar_transbordo já garante o filtro estrito; aqui confirmamos a reversão local."""
+    import meta_adapter_inbound as mai
+
+    sb = _mock_supabase_tabelas({"mensagens": [], "conversas": {}})
+    monkeypatch.setattr(ae, "supabase", sb)
+    notificar_mock = AsyncMock(return_value=False)
+    monkeypatch.setattr(mai, "_notificar_transbordo", notificar_mock)
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+
+    resultado = await ae.acionar_transbordo("conv-1", "123", "5585999999999", "lead-1")
+
+    assert resultado is False
+    conversas_tbl = sb.table("conversas")
+    status_chamados = [c.args[0]["status"] for c in conversas_tbl.update.call_args_list]
+    assert status_chamados == ["awaiting_human", "ativa"]
+    assert "não consegui" in enviar_mock.await_args.args[3].lower()

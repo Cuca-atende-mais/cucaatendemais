@@ -307,6 +307,12 @@ MODULO_AUTOMACAO_MAP: dict[str, str] = {
     "ouvidoria":       "Ouvidoria",
     "acesso_cuca":     "Acesso CUCA",
     "Acesso":          "Acesso CUCA",
+    # S-AE-06: sem esta entrada, o fallback `MODULO_AUTOMACAO_MAP.get(modulo, modulo)` usaria
+    # o próprio valor de `modulo` ("academia_enem", snake_case) como tag de automação — mas o
+    # `meta_templates.automacoes` cadastrado pela S-AE-02 usa "Academia Enem" (capitalizado,
+    # mesmo padrão dos demais módulos). Sem o mapeamento, `_notificar_transbordo` nunca
+    # encontraria o template aprovado (lookup por `.contains("automacoes", [automacao, ...])`).
+    "academia_enem":   "Academia Enem",
 }
 
 
