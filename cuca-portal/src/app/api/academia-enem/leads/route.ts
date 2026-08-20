@@ -59,16 +59,17 @@ export async function GET(req: NextRequest) {
             })
         }
 
-        // mode = recorte (público): mesma lógica de _query_leads_sync (bloqueado=false; opt_in conforme filtro; unidade)
+        // mode = recorte: leads matriculados (S-AE-13 — inclui bloqueados, pra permitir gerenciar/
+        // desbloquear na tela; quem monta o público de disparo em si filtra bloqueado no cliente,
+        // igual à lógica de _query_leads_sync que já exclui bloqueado=true nesse ponto).
         if (matriculadoIds.size === 0) return NextResponse.json({ leads: [] })
         const unidade = url.searchParams.get("unidade") || ""
         const somenteOptIn = url.searchParams.get("optIn") !== "false" // default: só opt-in
 
         let query = admin
             .from("leads")
-            .select("id, nome, telefone, unidade_cuca, opt_in, bloqueado")
+            .select("id, nome, telefone, unidade_cuca, opt_in, bloqueado, motivo_bloqueio")
             .in("id", [...matriculadoIds])
-            .eq("bloqueado", false)
         if (somenteOptIn) query = query.eq("opt_in", true)
         if (unidade) query = query.eq("unidade_cuca", unidade)
         const { data: leads } = await query.order("nome", { ascending: true })
@@ -111,6 +112,59 @@ export async function POST(req: NextRequest) {
     } catch (e) {
         const msg = e instanceof Error ? e.message : "Erro interno"
         console.error("[academia-enem/leads POST]", e)
+        return NextResponse.json({ error: msg }, { status: 500 })
+    }
+}
+
+// PATCH { ids, acao: 'editar'|'bloquear'|'desbloquear', nome?, telefone?, motivo? }
+// S-AE-13: CRUD/status do lead, mesma semântica de campos (bloqueado/motivo_bloqueio) já usada
+// pela tela geral de Leads (cuca-portal/src/app/(dashboard)/leads/page.tsx) — não existe uma
+// função/API compartilhada pra importar de lá (a tela geral escreve direto via client Supabase,
+// inline no componente), então o reaproveito aqui é de campo/valor, não de função importada.
+export async function PATCH(req: NextRequest) {
+    try {
+        const gate = await checkAuth("ae_leads_filtro", "update")
+        if (gate.error) return NextResponse.json({ error: gate.error }, { status: gate.status })
+
+        const body = await req.json() as {
+            ids?: string[]; acao?: string; nome?: string; telefone?: string; motivo?: string
+        }
+        const ids = (body.ids ?? []).filter(Boolean)
+        if (ids.length === 0) return NextResponse.json({ error: "ids obrigatório" }, { status: 400 })
+
+        const admin = createAdminClient()
+
+        if (body.acao === "editar") {
+            if (ids.length !== 1) return NextResponse.json({ error: "Edição é só por lead individual" }, { status: 400 })
+            const update: Record<string, string> = {}
+            if (body.nome !== undefined) update.nome = body.nome.trim()
+            if (body.telefone !== undefined) {
+                const tel = body.telefone.replace(/\D/g, "")
+                if (!tel) return NextResponse.json({ error: "Telefone inválido" }, { status: 400 })
+                update.telefone = tel
+            }
+            if (Object.keys(update).length === 0) return NextResponse.json({ error: "Nada para atualizar" }, { status: 400 })
+            const { error } = await admin.from("leads").update(update).eq("id", ids[0])
+            if (error) throw error
+        } else if (body.acao === "bloquear") {
+            const { error } = await admin
+                .from("leads")
+                .update({ bloqueado: true, motivo_bloqueio: body.motivo || null })
+                .in("id", ids)
+            if (error) throw error
+        } else if (body.acao === "desbloquear") {
+            const { error } = await admin
+                .from("leads")
+                .update({ bloqueado: false, motivo_bloqueio: null })
+                .in("id", ids)
+            if (error) throw error
+        } else {
+            return NextResponse.json({ error: "acao inválida (use editar|bloquear|desbloquear)" }, { status: 400 })
+        }
+        return NextResponse.json({ ok: true })
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : "Erro interno"
+        console.error("[academia-enem/leads PATCH]", e)
         return NextResponse.json({ error: msg }, { status: 500 })
     }
 }
