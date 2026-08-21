@@ -1,7 +1,7 @@
 # S-AE-06 — Transbordo para Atendente Humano
 
 ## Status
-Ready for Review
+Done
 
 ## ⚠️ Story reescrita em 2026-08-20 — mudança de arquitetura
 Versão anterior previa criar uma tabela própria `ae_transbordo_contatos`. Decisão do Junior (2026-08-20, confirmando a recomendação técnica do levantamento de migração): **não criar tabela nova**. O mecanismo genérico já existente (`transbordo_humano`, usado por Institucional/Empregabilidade/Ouvidoria/Acesso Cuca) já suporta contato/config **por módulo** — só precisa de uma linha nova para `modulo='academia_enem'`, com o telefone/responsável **próprio** da Academia Enem (confirmado pelo Junior: quem recebe o alerta de transbordo da Academia Enem é diferente de quem recebe o de Institucional/Empregabilidade — isso já é possível sem tabela nova).
@@ -118,3 +118,4 @@ O template `academia_enem_transbordo_v1` semeado pela S-AE-02 está com `status=
 
 ### Decisão de Gate
 **PASS.** Implementação correta, testada de forma independente e sem regressão. Os 2 achados são Low e não bloqueiam nenhuma AC — registrados como follow-up. A decisão de arquitetura mais arriscada desta story (tela dedicada em vez de reaproveitar o componente compartilhado) foi verificada com evidência real (leitura da migration de RLS), não aceita de forma cega. Liberado para @devops.
+| 2026-08-20 | @devops (Gage) | Merge do PR #116 na `main`, aprovado pelo Junior → Status Ready for Review→Done. |
