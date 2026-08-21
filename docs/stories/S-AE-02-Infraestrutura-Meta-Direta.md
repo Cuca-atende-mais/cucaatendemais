@@ -235,3 +235,34 @@ Dex (@dev) — claude-sonnet-5
 
 ### Decisão de Gate
 **PASS.** Todo o trabalho autorizado nesta rodada foi verificado de forma independente e bate com o relatado. Nenhuma regressão real. As duas issues são Low/não-bloqueantes. Os itens que restam (infraestrutura EasyPanel/Meta) são ação humana, fora do escopo de qualquer revisão de código.
+
+## QA Results — rodada 2026-08-20 (telas `meta-numeros`/`meta-templates`)
+
+**Revisor:** Quinn (@qa) · **Data:** 2026-08-20 · **Veredito do gate: PASS**
+
+### Verificação independente (não me baseei só no relato do @dev)
+1. **`meta-numeros/page.tsx`:** confirmado por leitura do diff que `"academia_enem"` (minúsculo) foi adicionado a `AGENTES_META`, `CANAL_TIPOS_META` e `CANAL_BADGE_COLORS` — bate com a correção do @po.
+2. **Achado do @dev na 2ª Task — confirmado como real, não uma formalidade:** rodei `grep -n "canal_tipo\|automacoes:"` em `meta-templates/page.tsx` e confirmei que existe exatamente **1** ponto de gravação de `automacoes` (criação de template), e que ele de fato usava o valor cru de `canal_tipo` antes da correção. Confirmei separadamente, por leitura direta dos 3 arquivos citados pelo @dev, que a cadeia de fatos bate: `worker/meta_adapter_inbound.py` linha 315 tem `"academia_enem": "Academia Enem"` em `MODULO_AUTOMACAO_MAP`; `academia-enem/mensagens/page.tsx` linha 10 tem `CANAL_ACADEMIA_ENEM = "academia_enem"`; a migration seed tem `canal_tipo='academia_enem'`. A correção (`CANAL_TIPO_PARA_AUTOMACAO` + `automacaoParaCanal`) fecha exatamente esse gap — sem ela, um template criado pela tela para a Academia Enem realmente nunca seria encontrado por `_notificar_transbordo`.
+3. **Nenhum outro ponto de gravação de `automacoes` ficou sem a correção:** confirmado — o único outro uso de `canal_tipo` no arquivo (linha ~508) é um `<Input readOnly>` só exibindo o valor como referência visual, não grava nada.
+4. **`eslint`/`tsc`:** rodei de forma independente — mesmos 5 erros pré-existentes em `meta-numeros/page.tsx` (confirmei via `git log -p` que já existiam antes desta mudança, só deslocaram de linha), nenhum erro novo, `tsc --noEmit` limpo nos 2 arquivos tocados.
+5. **Sem verificação em navegador** — regra do projeto respeitada por dev e por mim.
+
+### Achado não reportado pelo @dev (Low, nitpick)
+`automacaoParaCanal(canalTipo: string)` tem o nome invertido em relação ao que a função faz: ela recebe um **canal** e devolve uma **automação** ("canal para automação"), não o contrário. Funcionalmente correto, só confunde leitura futura do código.
+
+### 7 Quality Checks
+1. **Code review** — ✅ Mudança pequena e cirúrgica, bem documentada com comentário explicando o "porquê" (não just "o quê").
+2. **Testes** — N/A (mudança de configuração de UI, sem lógica nova além do mapa trivial; sem suíte de testes de front neste projeto para essas telas — mesmo padrão já aceito nas stories anteriores desta sessão).
+3. **Acceptance Criteria** — As 2 Tasks novas da S-AE-02 foram cumpridas conforme especificado (e corrigido) pelo @po.
+4. **Regressão** — ✅ Nenhuma: os 4 módulos já em produção (Institucional/Empregabilidade/Ouvidoria/Acesso) mantêm `canal_tipo` capitalizado, então `automacaoParaCanal` retorna o valor inalterado para eles (fallback `?? canalTipo`) — comportamento idêntico ao de antes da mudança.
+5. **Performance** — N/A.
+6. **Segurança** — N/A (sem dado sensível nas telas alteradas).
+7. **Documentação** — ✅ Comentários no código e Completion Notes da story completos e precisos, batendo com o que o código realmente faz.
+
+### Issues
+| Sev | Cat | Descrição | Recomendação |
+|-----|-----|-----------|--------------|
+| Low | naming | `automacaoParaCanal` tem nome invertido (recebe canal, devolve automação) | Renomear para `canalParaAutomacao` num follow-up — cosmético, sem urgência |
+
+### Decisão de Gate
+**PASS.** Achado real corretamente identificado e corrigido pelo @dev — não era uma validação de formalidade, evitaria uma falha silenciosa de notificação de transbordo em produção. Sem regressão nos módulos já existentes. Único achado é Low/cosmético. Liberado para @devops.
