@@ -1,7 +1,7 @@
 # S-AE-09 — Disparo de Avisos Próprio da Academia Enem (fila, público e envio)
 
 ## Status
-Ready
+InProgress
 
 ## ⚠️ Story reescrita em 2026-08-20 — escopo reduzido (split em 3 stories)
 Escopo original media 3 blocos de tamanho e risco bem diferentes: (1) fila própria + seleção de
@@ -131,6 +131,14 @@ atendimentos da Academia Enem distintos, mesmo usando o mesmo banco de dados por
    por frequência fica como "não disponível ainda" na tela, sem simular dado que não existe.
 
 ## Tasks
+- [x] **Pré-requisito bloqueante, achado em 2026-08-21 (antes de qualquer código desta story):**
+  gate `WORKER_SCOPE` em `worker/main.py` — sem ele, o serviço `cuca-academia-enem` (mesma
+  imagem/código do `cuca-worker`, por decisão da S-AE-02) iniciaria `campanhas_loop`/
+  `empregabilidade_notify_loop`/`ocr_pending_loop` e tentaria reivindicar/enviar disparos do
+  Institucional/Empregabilidade/Ouvidoria/Divulgação com o token Meta da Academia Enem —
+  achado, confirmado e corrigido antes de escrever a fila nova (ver Dev Notes item 1 e Change
+  Log). A fila `disparos_academia_enem` desta story, quando implementada, entra num bloco
+  condicionado a `WORKER_SCOPE == "academia_enem"`, nunca dentro do `campanhas_loop` existente.
 - [ ] Migration: tabela `disparos_academia_enem` (fila) + `ALTER TABLE logs_disparo ADD COLUMN
   disparo_academia_enem_id uuid NULL REFERENCES disparos_academia_enem(id)`.
 - [ ] `_contar_enviados_hoje_sync`: 3º bloco de contagem via `disparo_academia_enem_id` (aditivo).
@@ -158,7 +166,10 @@ submissão de template, nova) — nenhuma das duas bloqueia esta story.
   com `disparos_divulgacao`/`eventos_pontuais`.
 
 ## File List
-_A preencher pelo @dev._
+- `worker/main.py` (modificado) — gate `WORKER_SCOPE` no `startup_event`.
+- `worker/.env.example` (modificado) — documenta `WORKER_SCOPE`.
+- `docs/stories/S-AE-02-Infraestrutura-Meta-Direta.md` (modificado) — `WORKER_SCOPE=academia_enem` adicionada como variável **obrigatória** na tabela de ambiente do serviço novo.
+- `worker/tests/test_main_worker_scope.py` (novo) — 3 testes: `WORKER_SCOPE=principal` inicia os 3 loops de sempre; `WORKER_SCOPE=academia_enem` não inicia nenhum; fallback de `os.getenv`.
 
 ## Change Log
 | Data | Autor | Mudança |
@@ -170,3 +181,4 @@ _A preencher pelo @dev._
 | 2026-08-20 | Junior | **Decisão de escopo:** dividir em 3 stories. Esta (S-AE-09) reduzida a fila/público/envio/teto, com template já aprovado como pré-condição. Duas novas: S-AE-14 (IA validadora) e S-AE-15 (ciclo de submissão de template). |
 | 2026-08-20 | @sm (River) | **Reescrita com escopo reduzido**, renomeada de `S-AE-09-Disparo-Validador-Template.md` para `S-AE-09-Disparo-Proprio-Academia-Enem.md`. Desenho da FK nova em `logs_disparo` (em vez de tabela de log isolada) incorporado à Task 1, resolvendo o achado do teto diário na própria story, não como débito. Status resetado para Draft, aguardando @po. |
 | 2026-08-20 | @po (Pax) | **Validação (GO, 9/10) → Status Draft→Ready.** Achado do teto diário resolvido no próprio desenho, não deixado como débito — exatamente o padrão certo de responder a análise de impacto antes da aprovação. Task de migration corretamente colocada como bloqueante (Task 1) antes das demais. Único ponto não-bloqueante: a story assume "template já aprovado" como pré-condição, mas hoje não existe nenhum template aprovado para o número da Academia Enem (S-AE-02 ainda pendente de pareamento) — isso é um bloqueio **operacional** de teste ponta-a-ponta, não de implementação (o @dev pode e deve implementar com testes mockados); registrar isso não é uma lacuna da story, é a realidade do estado atual do projeto. |
+| 2026-08-21 | @dev (Dex) | **Status Ready→InProgress.** Antes de iniciar a fila propriamente dita, investigação de `campanhas_loop()` (`worker/campanhas_engine.py`) revelou achado bloqueante independente: por decisão da S-AE-02 (mesma imagem/`Dockerfile` do worker para o serviço `cuca-academia-enem`), esse loop de 30s — que hoje processa `eventos_pontuais`/`ouvidoria_eventos`/`disparos_divulgacao` sem nenhum filtro de escopo — rodaria também no serviço novo e tentaria reivindicar/enviar disparos de outros módulos com o token Meta errado. Corrigido com um gate `WORKER_SCOPE` em `worker/main.py::startup_event` (padrão `"principal"` = comportamento idêntico ao atual nos 4 módulos já em produção; `"academia_enem"` = nenhum desses loops inicia). Documentado como variável obrigatória na tabela de ambiente da S-AE-02. 3 testes novos cobrindo os dois valores; suíte completa confirmada sem regressão (382 passando, as 5 falhas em `test_meta_adapter_outbound.py` são pré-existentes, sem relação com esta mudança). A fila `disparos_academia_enem` desta story vai nascer já condicionada a este gate. |

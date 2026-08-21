@@ -52,6 +52,16 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# WORKER_SCOPE: distingue qual serviço está rodando esta MESMA imagem/código (S-AE-02 implanta
+# cuca-academia-enem a partir do mesmo Dockerfile do worker, só com credenciais Meta diferentes).
+# Sem isolamento explícito, os loops de fundo abaixo (campanhas_loop, empregabilidade_notify_loop)
+# reivindicariam e tentariam enviar disparos de OUTROS módulos (Institucional/Empregabilidade/
+# Ouvidoria/Divulgação) usando o token Meta errado — falha silenciosa em produção.
+# Não-setada (padrão) = "principal" = comportamento idêntico ao de sempre (cuca-worker).
+# "academia_enem" = nenhum desses loops inicia neste serviço (a fila própria da Academia Enem,
+# quando existir, ganha seu próprio bloco condicionado a este mesmo valor).
+WORKER_SCOPE = os.getenv("WORKER_SCOPE", "principal")
+
 
 # ─── Rate Limiter em Memória ─────────────────────────────────────────────────
 # Estrutura: {ip: [timestamps]}
@@ -152,15 +162,23 @@ async def ocr_pending_loop():
 
 @app.on_event("startup")
 async def startup_event():
-    from campanhas_engine import campanhas_loop
-    from empregabilidade_engine import empregabilidade_notify_loop
     import asyncio
-    logger.info("Agendando motor de Campanhas...")
-    asyncio.create_task(campanhas_loop())
-    logger.info("Agendando loop de notificação de vagas (Empregabilidade)...")
-    asyncio.create_task(empregabilidade_notify_loop())
-    logger.info("Agendando loop de OCR pendente...")
-    asyncio.create_task(ocr_pending_loop())
+    if WORKER_SCOPE == "principal":
+        from campanhas_engine import campanhas_loop
+        from empregabilidade_engine import empregabilidade_notify_loop
+        logger.info("Agendando motor de Campanhas...")
+        asyncio.create_task(campanhas_loop())
+        logger.info("Agendando loop de notificação de vagas (Empregabilidade)...")
+        asyncio.create_task(empregabilidade_notify_loop())
+        logger.info("Agendando loop de OCR pendente...")
+        asyncio.create_task(ocr_pending_loop())
+    else:
+        logger.info(
+            f"[startup] WORKER_SCOPE={WORKER_SCOPE!r} — loops de Institucional/Empregabilidade/"
+            "OCR (campanhas_loop, empregabilidade_notify_loop, ocr_pending_loop) NÃO iniciados "
+            "neste serviço, para não reivindicar/enviar disparos de outros módulos com "
+            "credenciais Meta erradas."
+        )
 
 # ─── Exception Handlers Globais ──────────────────────────────────────────────
 # Garante que TODOS os erros retornem CORS headers (sem isso, exceções não tratadas
