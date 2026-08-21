@@ -20,7 +20,11 @@ Substitui o AuctaFlux por completo (nenhum dado real de conversa existe hoje par
 2. **Cadastrar as credenciais da conta Meta da Academia Enem** nas variáveis de ambiente desse serviço (já recebidas pelo Junior): `META_APP_SECRET`, `META_VERIFY_TOKEN` (a definir por nós, mesma lógica do worker principal), `META_SYSTEM_USER_TOKEN`, mais `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` apontando para o **mesmo banco `cuca`** já usado pelo `cuca-worker`.
 3. **Configurar o endereço de webhook** desse serviço (domínio/subdomínio próprio) e registrá-lo do lado da conta Meta da Academia Enem (verificação handshake `GET`, challenge/token).
 4. **Testar a conexão** via terminal/`curl` antes de considerar pronto (ver Critérios de Aceite 4-5).
-5. **Cadastrar o número/WABA da Academia Enem** em `meta_phone_numbers` (`phone_number_id`, `waba_id`, `agente_tipo='academia_enem'`, `canal_tipo='academia_enem'`) e os templates da Academia Enem em `meta_templates`.
+5. **Cadastrar o número/WABA da Academia Enem** em `meta_phone_numbers` e os templates da Academia
+   Enem em `meta_templates` — **via as telas já existentes** `/developer/meta-numeros` e
+   `/developer/meta-templates` (mesmo mecanismo usado hoje por Institucional/Empregabilidade/
+   Ouvidoria/Acesso CUCA), **não** por migration SQL manual. Ver seção "Cadastro do número/
+   templates" abaixo para o porquê e o ajuste necessário antes de usar essas telas.
 
 ### OUT
 - Lógica de conversa/automação (S-AE-04), painel de atendimento (S-AE-03), RAG (S-AE-05), disparo (S-AE-09), upload de leads (S-AE-13) — todos dependem desta story, mas não são feitos aqui.
@@ -83,6 +87,38 @@ Substitui o AuctaFlux por completo (nenhum dado real de conversa existe hoje par
    ```
    Esperado: resposta JSON com um `id` de mensagem (`wamid...`), sem erro de autenticação/permissão.
 
+## Cadastro do número/templates — mecanismo atualizado (2026-08-20)
+
+**Decisão do Junior, a pedido dele mesmo, após pergunta direta sobre as telas já existentes:**
+o projeto já tem duas telas prontas para gerenciar `meta_phone_numbers`/`meta_templates` —
+`/developer/meta-numeros` e `/developer/meta-templates` — usadas hoje por Institucional/
+Empregabilidade/Ouvidoria/Acesso CUCA. Investigação confirmou que **o serviço de backend
+separado da Academia Enem (`cuca-academia-enem`) não é um obstáculo**: essas telas só editam o
+mapeamento nas tabelas compartilhadas do banco (via `/api/admin/meta-phone-numbers`, sem enum/
+CHECK no servidor restringindo `agente_tipo`/`canal_tipo`), nunca conversam diretamente com o
+serviço/worker em si — qualquer worker (principal ou o da Academia Enem) lê essas tabelas do
+mesmo banco, do mesmo jeito. Nenhum token/segredo é gravado por essas telas.
+
+**O único obstáculo real:** `cuca-portal/src/app/(dashboard)/developer/meta-numeros/page.tsx`
+tem os valores possíveis de "Agente" e "Canal" **hardcoded** em dois arrays TypeScript
+(`AGENTES_META`, `CANAL_TIPOS_META`) que ainda não incluem a Academia Enem. A tela de templates
+(`meta-templates/page.tsx`) **não** tem esse hardcode — deriva a lista de automações
+dinamicamente a partir do que já existe, então já funciona para a Academia Enem assim que o
+número dela puder ser cadastrado pela tela de números.
+
+**Efeito nesta story:** o cadastro real do número/templates passa a ser feito pelas telas, **não
+mais** pela migration SQL manual (`20260820000000_ae_meta_phone_numbers_templates_seed.sql`).
+Essa migration fica só como **registro histórico** de que os valores foram levantados/preparados
+naquele momento — não será aplicada. O AC4/AC5 (linha existir em `meta_phone_numbers`/
+`meta_templates`) **não muda** — é sobre o resultado final nas tabelas, indiferente a qual
+mecanismo o preencheu.
+
+**Efeito na S-AE-09 (disparo próprio):** nenhum negativo — confirmado explicitamente ao Junior.
+A S-AE-09 lê `meta_phone_numbers`/`meta_templates` do mesmo jeito independente de como as linhas
+foram criadas. O ganho é resolver mais cedo o ponto de atenção que o @po já tinha registrado na
+validação da S-AE-09 (falta de template aprovado hoje) — com a tela ajustada, o cadastro fica tão
+rápido quanto o de qualquer outro módulo.
+
 ## Critérios de Aceite (Given/When/Then)
 1. **Given** o serviço `cuca-academia-enem` criado no EasyPanel, **when** se acessa `/health`, **then** responde 200.
 2. **Given** as variáveis de ambiente cadastradas, **when** a Meta salva a configuração do webhook apontando para o domínio do serviço, **then** o handshake (`GET /webhook/meta`) responde o challenge corretamente.
@@ -107,9 +143,12 @@ Substitui o AuctaFlux por completo (nenhum dado real de conversa existe hoje par
 - [ ] **(Ação humana — Junior)** Cadastrar variáveis de ambiente (tabela acima — @dev conferiu contra `worker/Dockerfile`/`worker/.env.example`, ver Dev Agent Record).
 - [ ] **(Ação humana — Junior)** Configurar webhook do lado da Meta (conta da Academia Enem) apontando para o domínio novo.
 - [ ] **(Ação humana — Junior)** Rodar os 3 testes via `curl`/terminal (healthcheck, handshake, envio).
-- [x] Preparar migration de `meta_phone_numbers` (número/WABA da Academia Enem) — **não aplicada** (placeholder até o número real existir).
-- [x] Preparar migration de `meta_templates` (templates da Academia Enem, `status='pendente'`) — **não aplicada** (idem).
+- [x] Preparar migration de `meta_phone_numbers` (número/WABA da Academia Enem) — **não aplicada**, mantida só como registro histórico (ver Task nova abaixo — caminho real de cadastro mudou).
+- [x] Preparar migration de `meta_templates` (templates da Academia Enem, `status='pendente'`) — **não aplicada**, idem.
 - [x] Renomear o recurso RBAC `ae_instancia` → `ae_infra_meta` — **autorizado pelo Junior e concluído**: `UPDATE sys_permissions` (3 linhas) + rename em `constants.ts`/`perfis/page.tsx`.
+- [x] **NOVO (2026-08-20, corrigido pelo @po):** ajustar `developer/meta-numeros/page.tsx` — incluído `"academia_enem"` em `AGENTES_META` **e** em `CANAL_TIPOS_META` (minúsculo, snake_case, conforme correção do @po), mais a entrada correspondente em `CANAL_BADGE_COLORS`.
+- [x] **NOVO (2026-08-20):** confirmado que `developer/meta-templates/page.tsx` **precisava, sim, de ajuste** — achado real, ver Completion Notes.
+- [ ] **(Ação humana — Junior/sócio)** Cadastrar o número/WABA da Academia Enem via `/developer/meta-numeros` e os templates via `/developer/meta-templates`, assim que o pareamento real acontecer — substitui a aplicação da migration placeholder.
 
 ## Dependências
 Fundação de todo o módulo migrado. Bloqueia S-AE-03, S-AE-04, S-AE-06, S-AE-09, S-AE-13 (todas dependem do serviço/número existirem).
@@ -124,6 +163,8 @@ Fundação de todo o módulo migrado. Bloqueia S-AE-03, S-AE-04, S-AE-06, S-AE-0
 **Modificados:**
 - `cuca-portal/src/lib/constants.ts` — item de menu "Instâncias WhatsApp" agora usa `recurso: "ae_infra_meta"`.
 - `cuca-portal/src/app/(dashboard)/configuracoes/perfis/page.tsx` — catálogo de perfis atualizado (`ae_instancia`→`ae_infra_meta`, rótulo sem menção a "AuctaFlux").
+- `cuca-portal/src/app/(dashboard)/developer/meta-numeros/page.tsx` — `AGENTES_META`/`CANAL_TIPOS_META`/`CANAL_BADGE_COLORS` agora incluem `"academia_enem"` (minúsculo).
+- `cuca-portal/src/app/(dashboard)/developer/meta-templates/page.tsx` — novo mapa `CANAL_TIPO_PARA_AUTOMACAO` (`academia_enem`→`"Academia Enem"`) aplicado ao criar template, para bater com `MODULO_AUTOMACAO_MAP` do worker (achado, ver Completion Notes).
 
 **Migration de banco:**
 - Aplicada via `apply_migration` (`rename_ae_instancia_to_ae_infra_meta`): `UPDATE sys_permissions SET module='ae_infra_meta' WHERE module='ae_instancia'` — 3 linhas afetadas, confirmado 0 restantes em `ae_instancia`.
@@ -144,6 +185,11 @@ Dex (@dev) — claude-sonnet-5
 - **Variáveis de ambiente da story conferidas contra o código real:** `worker/.env.example` e `worker/Dockerfile` confirmam que o worker lê exatamente `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, `META_SYSTEM_USER_TOKEN`, roda na porta `8000` com `gunicorn`/`uvicorn` e expõe `/health` — a tabela de variáveis e os testes via `curl` na story batem com o código real, nenhum ajuste necessário.
 - **Migration de `meta_phone_numbers`/`meta_templates` preparada, não aplicada:** criada como placeholder explícito (`SUBSTITUIR_PHONE_NUMBER_ID`/`SUBSTITUIR_WABA_ID`), idempotente (`ON CONFLICT DO NOTHING`), aditiva — confirmado por leitura que não colide com as linhas já existentes de Institucional (`1233832826470497`) / Empregabilidade (`1245704551949387`). Não usei `apply_migration` porque os valores reais ainda não existem (dependem do pareamento, ação humana pendente).
 - **Passos de infraestrutura (criação do serviço, webhook do lado da Meta, testes curl):** fora do alcance de qualquer agente — nenhuma ferramenta de EasyPanel/Meta Business Suite disponível. A story já documenta o passo a passo completo para o Junior executar manualmente; não há nada a "implementar" nessa parte além de revisar o texto, que já fiz.
+- **Tasks novas (mecanismo de cadastro via tela) implementadas nesta rodada:**
+  - `developer/meta-numeros/page.tsx`: `"academia_enem"` adicionado a `AGENTES_META`/`CANAL_TIPOS_META`/`CANAL_BADGE_COLORS` — minúsculo, conforme a correção do @po (bate com `CANAL_ACADEMIA_ENEM` do painel de atendimento e com a migration seed).
+  - **⚠️ Achado real, confirmando que a Task 2 estava certa em pedir validação (não era formalidade):** `developer/meta-templates/page.tsx` **precisava, sim, de ajuste** — a criação de template grava `automacoes: [selectedPhone.canal_tipo]` (valor cru do banco). Para os módulos já existentes isso sempre bateu, porque `canal_tipo` já é gravado capitalizado (`"Institucional"`, `"Empregabilidade"` etc.), igual ao `modulo` usado pelo worker nas chamadas de transbordo. A Academia Enem quebra esse padrão por decisão da própria S-AE-02/03 (`canal_tipo='academia_enem'`, minúsculo, para não quebrar o filtro do painel) — mas o worker busca template de transbordo pela tag **capitalizada** `'Academia Enem'` (`MODULO_AUTOMACAO_MAP`, `worker/meta_adapter_inbound.py`, adicionado na S-AE-06). Sem correção, um template criado por essa tela para a Academia Enem nunca seria encontrado por `_notificar_transbordo` — falharia silenciosamente (loga warning, não quebra o fluxo, mas ninguém seria notificado). Corrigido com um mapa local `CANAL_TIPO_PARA_AUTOMACAO` na própria tela, replicando em TypeScript a mesma correção já feita em Python na S-AE-06 — mesma decisão, duas linguagens.
+- `eslint`/`tsc --noEmit` rodados nos 2 arquivos tocados: mesmos erros pré-existentes de antes da mudança (confirmado via `git stash`/reaplicar), nenhum novo.
+- Verificação em navegador **não feita** (regra do projeto de não subir dev server/navegador sem autorização) — verificação foi estática (leitura de código, `tsc`, `eslint`, comparação com o padrão real dos outros módulos).
 
 ### Debug Log References
 - `execute_sql` (projeto `svzkrkfzpiqcesloukgb`): `SELECT ... FROM sys_permissions WHERE module='ae_instancia'` → 3 linhas (Developer, Super Admin Cuca, Atendente Geral). `SELECT id, name FROM sys_roles WHERE id IN (...)` → confirmou os 3 papéis acima.
@@ -157,6 +203,9 @@ Dex (@dev) — claude-sonnet-5
 | 2026-08-20 | @po (Pax) | **Validação (GO, 8/10) → Status Draft→Ready.** Achado: `ae_instancia` já existe em código (não atribuído a nenhuma role) — task adicionada para renomear (não duplicar) e checar `sys_permissions` antes. Nenhuma referência residual a AuctaFlux/`ae_*` encontrada no texto. Dependência corretamente registrada como bloqueante de S-AE-03/04/06/09/13. |
 | 2026-08-20 | @dev (Dex) | **Implementação parcial (Status Ready→InProgress).** Checagem `execute_sql` **corrigiu** a suposição do @po: existem 3 linhas em `sys_permissions` para `ae_instancia` (Developer/Super Admin Cuca = bypass esperado; Atendente Geral = negado). Rename **não executado**, aguarda decisão do Junior (ver Completion Notes). Migration placeholder de `meta_phone_numbers`/`meta_templates` criada e **não aplicada** (pendente do número real). Variáveis de ambiente da story conferidas contra `worker/.env.example`/`Dockerfile`, sem ajuste necessário. Passos de EasyPanel/Meta seguem pendentes de execução humana (fora do alcance de agente). |
 | 2026-08-20 | @dev (Dex) | **Rename autorizado pelo Junior e concluído.** `apply_migration` renomeou as 3 linhas em `sys_permissions` (`ae_instancia`→`ae_infra_meta`); `constants.ts`/`perfis/page.tsx` atualizados. Confirmado, por leitura do SQL de `has_permission`, que não há regressão de acesso (bypass Developer ocorre antes de checar `module`; único outro perfil já estava negado). Achado adicional reportado: 6 arquivos de rotas/página do admin antigo de "Instâncias AuctaFlux" ainda referenciam a string antiga — código morto a apagar quando a implementação completa da S-AE-02 (serviço real) acontecer, não corrigido agora por estar fora do escopo desta rodada. Status permanece **InProgress** — falta a parte de infraestrutura (EasyPanel/Meta), que é ação exclusiva do Junior. |
+| 2026-08-20 | @sm (River) | **Ajuste de mecanismo, a pedido direto do Junior** (durante conversa sobre a S-AE-09): confirmado por leitura de código que `/developer/meta-numeros`/`/developer/meta-templates` (telas já usadas por Institucional/Empregabilidade/Ouvidoria/Acesso CUCA) conseguem cadastrar o número/templates da Academia Enem sem obstáculo do backend separado — só faltam 2 valores num array hardcoded no front. Escopo IN item 5 e Tasks atualizados: cadastro real passa a ser via essas telas, não mais via migration SQL manual (migration placeholder mantida só como registro histórico, não será aplicada). Sem impacto negativo na S-AE-09 (confirmado — ela lê o resultado final nas tabelas, indiferente ao mecanismo de cadastro). Status **mantido InProgress** (mudança pontual de mecanismo, não reabre o progresso já feito/QA PASS do rename RBAC) — Task nova requer validação do @po antes do @dev pegar. |
+| 2026-08-20 | @po (Pax) | **Validação do ajuste (GO, com correção) → Task corrigida antes de aprovar.** Confirmei de forma independente (grep) que os arrays `AGENTES_META`/`CANAL_TIPOS_META` realmente não incluem a Academia Enem — claim do @sm procede. **Achado real, corrigido antes de liberar para @dev:** a Task nova sugeria `"Academia Enem"` (capitalizado) como exemplo de valor para `CANAL_TIPOS_META`, mas o valor de fato usado no projeto é `"academia_enem"` (minúsculo) — confirmado tanto na migration seed (`canal_tipo='academia_enem'`) quanto no painel de atendimento já implementado (`CANAL_ACADEMIA_ENEM = "academia_enem"` em `academia-enem/mensagens/page.tsx`, S-AE-03). Se o @dev seguisse o texto original literalmente, o cadastro via tela usaria um valor diferente do que o painel já espera, quebrando o filtro `filterCanalTipo` do painel de atendimento em produção — regressão real, silenciosa, só perceptível quando alguém testasse o painel depois do pareamento. Task corrigida para exigir o valor minúsculo, com a fonte de verdade citada. Restante da mudança (escopo, dependência, impacto na S-AE-09) validado sem ressalvas. Liberado para @dev pegar as 2 Tasks novas. |
+| 2026-08-20 | @dev (Dex) | **2 Tasks novas concluídas.** `meta-numeros/page.tsx` ajustado exatamente como corrigido pelo @po (`"academia_enem"` minúsculo). **Achado real na 2ª Task** (confirmando que a validação pedida não era formalidade): `meta-templates/page.tsx` gravava `automacoes` com o valor cru de `canal_tipo` — para a Academia Enem isso geraria `automacoes:["academia_enem"]` (minúsculo), mas o worker busca template de transbordo pela tag capitalizada `'Academia Enem'` (`MODULO_AUTOMACAO_MAP`, S-AE-06). Sem correção, um template criado por essa tela para a Academia Enem nunca seria encontrado na busca de transbordo. Corrigido com um mapa local (`CANAL_TIPO_PARA_AUTOMACAO`), replicando em TypeScript a mesma correção já feita em Python. `eslint`/`tsc` sem erros novos (confirmado contra o estado anterior via `git stash`). Sem verificação em navegador (regra do projeto). |
 
 ## QA Results
 
@@ -186,3 +235,34 @@ Dex (@dev) — claude-sonnet-5
 
 ### Decisão de Gate
 **PASS.** Todo o trabalho autorizado nesta rodada foi verificado de forma independente e bate com o relatado. Nenhuma regressão real. As duas issues são Low/não-bloqueantes. Os itens que restam (infraestrutura EasyPanel/Meta) são ação humana, fora do escopo de qualquer revisão de código.
+
+## QA Results — rodada 2026-08-20 (telas `meta-numeros`/`meta-templates`)
+
+**Revisor:** Quinn (@qa) · **Data:** 2026-08-20 · **Veredito do gate: PASS**
+
+### Verificação independente (não me baseei só no relato do @dev)
+1. **`meta-numeros/page.tsx`:** confirmado por leitura do diff que `"academia_enem"` (minúsculo) foi adicionado a `AGENTES_META`, `CANAL_TIPOS_META` e `CANAL_BADGE_COLORS` — bate com a correção do @po.
+2. **Achado do @dev na 2ª Task — confirmado como real, não uma formalidade:** rodei `grep -n "canal_tipo\|automacoes:"` em `meta-templates/page.tsx` e confirmei que existe exatamente **1** ponto de gravação de `automacoes` (criação de template), e que ele de fato usava o valor cru de `canal_tipo` antes da correção. Confirmei separadamente, por leitura direta dos 3 arquivos citados pelo @dev, que a cadeia de fatos bate: `worker/meta_adapter_inbound.py` linha 315 tem `"academia_enem": "Academia Enem"` em `MODULO_AUTOMACAO_MAP`; `academia-enem/mensagens/page.tsx` linha 10 tem `CANAL_ACADEMIA_ENEM = "academia_enem"`; a migration seed tem `canal_tipo='academia_enem'`. A correção (`CANAL_TIPO_PARA_AUTOMACAO` + `automacaoParaCanal`) fecha exatamente esse gap — sem ela, um template criado pela tela para a Academia Enem realmente nunca seria encontrado por `_notificar_transbordo`.
+3. **Nenhum outro ponto de gravação de `automacoes` ficou sem a correção:** confirmado — o único outro uso de `canal_tipo` no arquivo (linha ~508) é um `<Input readOnly>` só exibindo o valor como referência visual, não grava nada.
+4. **`eslint`/`tsc`:** rodei de forma independente — mesmos 5 erros pré-existentes em `meta-numeros/page.tsx` (confirmei via `git log -p` que já existiam antes desta mudança, só deslocaram de linha), nenhum erro novo, `tsc --noEmit` limpo nos 2 arquivos tocados.
+5. **Sem verificação em navegador** — regra do projeto respeitada por dev e por mim.
+
+### Achado não reportado pelo @dev (Low, nitpick)
+`automacaoParaCanal(canalTipo: string)` tem o nome invertido em relação ao que a função faz: ela recebe um **canal** e devolve uma **automação** ("canal para automação"), não o contrário. Funcionalmente correto, só confunde leitura futura do código.
+
+### 7 Quality Checks
+1. **Code review** — ✅ Mudança pequena e cirúrgica, bem documentada com comentário explicando o "porquê" (não just "o quê").
+2. **Testes** — N/A (mudança de configuração de UI, sem lógica nova além do mapa trivial; sem suíte de testes de front neste projeto para essas telas — mesmo padrão já aceito nas stories anteriores desta sessão).
+3. **Acceptance Criteria** — As 2 Tasks novas da S-AE-02 foram cumpridas conforme especificado (e corrigido) pelo @po.
+4. **Regressão** — ✅ Nenhuma: os 4 módulos já em produção (Institucional/Empregabilidade/Ouvidoria/Acesso) mantêm `canal_tipo` capitalizado, então `automacaoParaCanal` retorna o valor inalterado para eles (fallback `?? canalTipo`) — comportamento idêntico ao de antes da mudança.
+5. **Performance** — N/A.
+6. **Segurança** — N/A (sem dado sensível nas telas alteradas).
+7. **Documentação** — ✅ Comentários no código e Completion Notes da story completos e precisos, batendo com o que o código realmente faz.
+
+### Issues
+| Sev | Cat | Descrição | Recomendação |
+|-----|-----|-----------|--------------|
+| Low | naming | `automacaoParaCanal` tem nome invertido (recebe canal, devolve automação) | Renomear para `canalParaAutomacao` num follow-up — cosmético, sem urgência |
+
+### Decisão de Gate
+**PASS.** Achado real corretamente identificado e corrigido pelo @dev — não era uma validação de formalidade, evitaria uma falha silenciosa de notificação de transbordo em produção. Sem regressão nos módulos já existentes. Único achado é Low/cosmético. Liberado para @devops.

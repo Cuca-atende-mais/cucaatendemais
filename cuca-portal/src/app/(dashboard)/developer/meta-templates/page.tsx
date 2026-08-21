@@ -362,6 +362,21 @@ const INITIAL_FORM: CreateForm = {
 
 const CATEGORIAS = ["UTILITY", "MARKETING", "AUTHENTICATION"]
 
+// S-AE-02: para Institucional/Empregabilidade/Ouvidoria/Acesso, `canal_tipo` já é gravado
+// capitalizado (mesmo valor usado como `modulo` no worker) — usar `canal_tipo` cru como tag de
+// automação sempre bateu. A Academia Enem quebra esse padrão: `canal_tipo='academia_enem'`
+// (minúsculo, para não quebrar o filtro do painel de atendimento, ver meta-numeros/page.tsx),
+// mas o worker busca template de transbordo pela tag capitalizada `'Academia Enem'`
+// (`MODULO_AUTOMACAO_MAP` em `worker/meta_adapter_inbound.py`). Sem este mapa, um template criado
+// aqui para a Academia Enem nunca seria encontrado por `_notificar_transbordo`.
+const CANAL_TIPO_PARA_AUTOMACAO: Record<string, string> = {
+    academia_enem: "Academia Enem",
+}
+
+function automacaoParaCanal(canalTipo: string): string {
+    return CANAL_TIPO_PARA_AUTOMACAO[canalTipo] ?? canalTipo
+}
+
 function CreateTemplateModal({ open, onClose, onCreated }: CreateTemplateModalProps) {
     const [form, setForm] = useState<CreateForm>(INITIAL_FORM)
     const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([])
@@ -400,7 +415,7 @@ function CreateTemplateModal({ open, onClose, onCreated }: CreateTemplateModalPr
                     nome: form.nome.trim(),
                     categoria: form.categoria || null,
                     status: form.status,
-                    automacoes: [selectedPhone.canal_tipo],
+                    automacoes: [automacaoParaCanal(selectedPhone.canal_tipo)],
                     phone_number_ids: [selectedPhone.phone_number_id],
                     waba_ids: [selectedPhone.waba_id],
                     corpo_texto: form.corpo_texto.trim() || null,
