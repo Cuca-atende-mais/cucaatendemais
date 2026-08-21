@@ -1,7 +1,7 @@
 # S-AE-14 — IA Validadora de Compliance (categoria `UTILITY`) do Texto de Aviso
 
 ## Status
-Draft
+Ready
 
 ## Contexto (por que esta story existe)
 Nasceu de um split da **S-AE-09** (2026-08-20, decisão do Junior): a story original misturava 3
@@ -93,3 +93,4 @@ _A preencher pelo @dev._
 | Data | Autor | Mudança |
 |------|-------|---------|
 | 2026-08-20 | @sm (River) | Criação da story — extraída da S-AE-09 original por decisão do Junior (split de escopo, ver Change Log da S-AE-09). Status: Draft, aguardando @po. |
+| 2026-08-20 | @po (Pax) | **Validação (GO, 9/10) → Status Draft→Ready.** Escopo bem isolado (só valida, não submete), reuso correto do padrão de LLM já existente (`intencao_detector.py`) sinalizado explicitamente, com o cuidado de import lazy já registrado como requisito (evita quebrar a suíte de testes, mesma lição já aprendida em stories anteriores desta sessão). Ponto não-bloqueante: AC4 deixa a decisão binário-vs-3-estados para o @dev/@architect documentarem na implementação — aceitável, é uma decisão técnica sem impacto de escopo/segurança. Dependência de ordem com a S-AE-09 (Dev Notes item 2) já está corretamente refletida em Dependências. |

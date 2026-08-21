@@ -1,7 +1,7 @@
 # S-AE-15 — Ciclo de Submissão e Rastreio de Template Meta (Academia Enem)
 
 ## Status
-Draft
+Ready
 
 ## Contexto (por que esta story existe)
 Nasceu de um split da **S-AE-09** (2026-08-20, decisão do Junior) — ver Change Log da S-AE-09
@@ -113,3 +113,4 @@ _A preencher pelo @dev._
 | Data | Autor | Mudança |
 |------|-------|---------|
 | 2026-08-20 | @sm (River) | Criação da story — extraída da S-AE-09 original por decisão do Junior (split de escopo, ver Change Log da S-AE-09). Status: Draft, aguardando @po. |
+| 2026-08-20 | @po (Pax) | **Validação (GO, 9/10) → Status Draft→Ready.** Boa prática destacada: a story explicitamente NÃO assume webhook vs. polling — deixa como decisão do @architect, a ser confirmada contra a documentação oficial da Meta, em vez de inventar o mecanismo. AC4 (sem registro fantasma em falha de submissão) e o de-risk do filtro por `waba_id` (não só nome de template) cobrem exatamente o risco de vazamento cruzado entre módulos que uma tabela compartilhada como `meta_templates` carrega. Ponto de atenção não-bloqueante: a Task 1 (@architect decide webhook vs. polling) é pré-requisito de fato para as demais Tasks — o Quality Gate já reflete isso corretamente (@architect + @qa). |
