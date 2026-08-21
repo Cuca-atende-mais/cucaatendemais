@@ -61,3 +61,19 @@ def test_worker_scope_env_var_ausente_cai_no_padrao_principal():
     'principal', não None/"" (evita quebrar silenciosamente cuca-worker se a env var for
     esquecida em algum redeploy)."""
     assert os.getenv("WORKER_SCOPE_INEXISTENTE_TESTE", "principal") == "principal"
+
+
+@pytest.mark.parametrize("valor_inesperado", ["", "Academia_Enem", " academia_enem", "typo-qualquer"])
+def test_worker_scope_valor_inesperado_falha_a_favor_do_comportamento_atual(monkeypatch, valor_inesperado):
+    """Achado do @qa (2026-08-21): o gate deve testar o valor de OPT-IN
+    ('academia_enem' exato desliga os loops) — qualquer outro valor, incluindo vazio/typo/
+    capitalização diferente por erro de configuração no EasyPanel, tem que manter os 3 loops
+    do cuca-worker ligados (comportamento já validado em produção), nunca desligar
+    silenciosamente o Institucional/Empregabilidade/Ouvidoria/Divulgação."""
+    monkeypatch.setattr(worker_main, "WORKER_SCOPE", valor_inesperado)
+
+    agendadas = _rodar_startup_capturando_tasks(monkeypatch)
+
+    assert any("campanhas_loop" in nome for nome in agendadas)
+    assert any("empregabilidade_notify_loop" in nome for nome in agendadas)
+    assert any("ocr_pending_loop" in nome for nome in agendadas)

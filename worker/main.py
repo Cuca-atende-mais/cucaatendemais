@@ -57,9 +57,10 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Sem isolamento explícito, os loops de fundo abaixo (campanhas_loop, empregabilidade_notify_loop)
 # reivindicariam e tentariam enviar disparos de OUTROS módulos (Institucional/Empregabilidade/
 # Ouvidoria/Divulgação) usando o token Meta errado — falha silenciosa em produção.
-# Não-setada (padrão) = "principal" = comportamento idêntico ao de sempre (cuca-worker).
-# "academia_enem" = nenhum desses loops inicia neste serviço (a fila própria da Academia Enem,
-# quando existir, ganha seu próprio bloco condicionado a este mesmo valor).
+# Gate testado pelo valor de OPT-IN ("academia_enem" desliga), não pelo de opt-out — qualquer
+# erro de configuração no cuca-worker (variável ausente, typo, vazio, capitalização diferente)
+# cai no `else` e mantém o comportamento de produção já validado, em vez de desligar os 4
+# módulos existentes silenciosamente (achado do @qa em 2026-08-21, S-AE-09).
 WORKER_SCOPE = os.getenv("WORKER_SCOPE", "principal")
 
 
@@ -163,7 +164,14 @@ async def ocr_pending_loop():
 @app.on_event("startup")
 async def startup_event():
     import asyncio
-    if WORKER_SCOPE == "principal":
+    if WORKER_SCOPE == "academia_enem":
+        logger.info(
+            f"[startup] WORKER_SCOPE={WORKER_SCOPE!r} — loops de Institucional/Empregabilidade/"
+            "OCR (campanhas_loop, empregabilidade_notify_loop, ocr_pending_loop) NÃO iniciados "
+            "neste serviço, para não reivindicar/enviar disparos de outros módulos com "
+            "credenciais Meta erradas."
+        )
+    else:
         from campanhas_engine import campanhas_loop
         from empregabilidade_engine import empregabilidade_notify_loop
         logger.info("Agendando motor de Campanhas...")
@@ -172,13 +180,6 @@ async def startup_event():
         asyncio.create_task(empregabilidade_notify_loop())
         logger.info("Agendando loop de OCR pendente...")
         asyncio.create_task(ocr_pending_loop())
-    else:
-        logger.info(
-            f"[startup] WORKER_SCOPE={WORKER_SCOPE!r} — loops de Institucional/Empregabilidade/"
-            "OCR (campanhas_loop, empregabilidade_notify_loop, ocr_pending_loop) NÃO iniciados "
-            "neste serviço, para não reivindicar/enviar disparos de outros módulos com "
-            "credenciais Meta erradas."
-        )
 
 # ─── Exception Handlers Globais ──────────────────────────────────────────────
 # Garante que TODOS os erros retornem CORS headers (sem isso, exceções não tratadas
