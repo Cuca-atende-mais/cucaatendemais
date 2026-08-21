@@ -20,7 +20,11 @@ Substitui o AuctaFlux por completo (nenhum dado real de conversa existe hoje par
 2. **Cadastrar as credenciais da conta Meta da Academia Enem** nas variáveis de ambiente desse serviço (já recebidas pelo Junior): `META_APP_SECRET`, `META_VERIFY_TOKEN` (a definir por nós, mesma lógica do worker principal), `META_SYSTEM_USER_TOKEN`, mais `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` apontando para o **mesmo banco `cuca`** já usado pelo `cuca-worker`.
 3. **Configurar o endereço de webhook** desse serviço (domínio/subdomínio próprio) e registrá-lo do lado da conta Meta da Academia Enem (verificação handshake `GET`, challenge/token).
 4. **Testar a conexão** via terminal/`curl` antes de considerar pronto (ver Critérios de Aceite 4-5).
-5. **Cadastrar o número/WABA da Academia Enem** em `meta_phone_numbers` (`phone_number_id`, `waba_id`, `agente_tipo='academia_enem'`, `canal_tipo='academia_enem'`) e os templates da Academia Enem em `meta_templates`.
+5. **Cadastrar o número/WABA da Academia Enem** em `meta_phone_numbers` e os templates da Academia
+   Enem em `meta_templates` — **via as telas já existentes** `/developer/meta-numeros` e
+   `/developer/meta-templates` (mesmo mecanismo usado hoje por Institucional/Empregabilidade/
+   Ouvidoria/Acesso CUCA), **não** por migration SQL manual. Ver seção "Cadastro do número/
+   templates" abaixo para o porquê e o ajuste necessário antes de usar essas telas.
 
 ### OUT
 - Lógica de conversa/automação (S-AE-04), painel de atendimento (S-AE-03), RAG (S-AE-05), disparo (S-AE-09), upload de leads (S-AE-13) — todos dependem desta story, mas não são feitos aqui.
@@ -83,6 +87,38 @@ Substitui o AuctaFlux por completo (nenhum dado real de conversa existe hoje par
    ```
    Esperado: resposta JSON com um `id` de mensagem (`wamid...`), sem erro de autenticação/permissão.
 
+## Cadastro do número/templates — mecanismo atualizado (2026-08-20)
+
+**Decisão do Junior, a pedido dele mesmo, após pergunta direta sobre as telas já existentes:**
+o projeto já tem duas telas prontas para gerenciar `meta_phone_numbers`/`meta_templates` —
+`/developer/meta-numeros` e `/developer/meta-templates` — usadas hoje por Institucional/
+Empregabilidade/Ouvidoria/Acesso CUCA. Investigação confirmou que **o serviço de backend
+separado da Academia Enem (`cuca-academia-enem`) não é um obstáculo**: essas telas só editam o
+mapeamento nas tabelas compartilhadas do banco (via `/api/admin/meta-phone-numbers`, sem enum/
+CHECK no servidor restringindo `agente_tipo`/`canal_tipo`), nunca conversam diretamente com o
+serviço/worker em si — qualquer worker (principal ou o da Academia Enem) lê essas tabelas do
+mesmo banco, do mesmo jeito. Nenhum token/segredo é gravado por essas telas.
+
+**O único obstáculo real:** `cuca-portal/src/app/(dashboard)/developer/meta-numeros/page.tsx`
+tem os valores possíveis de "Agente" e "Canal" **hardcoded** em dois arrays TypeScript
+(`AGENTES_META`, `CANAL_TIPOS_META`) que ainda não incluem a Academia Enem. A tela de templates
+(`meta-templates/page.tsx`) **não** tem esse hardcode — deriva a lista de automações
+dinamicamente a partir do que já existe, então já funciona para a Academia Enem assim que o
+número dela puder ser cadastrado pela tela de números.
+
+**Efeito nesta story:** o cadastro real do número/templates passa a ser feito pelas telas, **não
+mais** pela migration SQL manual (`20260820000000_ae_meta_phone_numbers_templates_seed.sql`).
+Essa migration fica só como **registro histórico** de que os valores foram levantados/preparados
+naquele momento — não será aplicada. O AC4/AC5 (linha existir em `meta_phone_numbers`/
+`meta_templates`) **não muda** — é sobre o resultado final nas tabelas, indiferente a qual
+mecanismo o preencheu.
+
+**Efeito na S-AE-09 (disparo próprio):** nenhum negativo — confirmado explicitamente ao Junior.
+A S-AE-09 lê `meta_phone_numbers`/`meta_templates` do mesmo jeito independente de como as linhas
+foram criadas. O ganho é resolver mais cedo o ponto de atenção que o @po já tinha registrado na
+validação da S-AE-09 (falta de template aprovado hoje) — com a tela ajustada, o cadastro fica tão
+rápido quanto o de qualquer outro módulo.
+
 ## Critérios de Aceite (Given/When/Then)
 1. **Given** o serviço `cuca-academia-enem` criado no EasyPanel, **when** se acessa `/health`, **then** responde 200.
 2. **Given** as variáveis de ambiente cadastradas, **when** a Meta salva a configuração do webhook apontando para o domínio do serviço, **then** o handshake (`GET /webhook/meta`) responde o challenge corretamente.
@@ -107,9 +143,12 @@ Substitui o AuctaFlux por completo (nenhum dado real de conversa existe hoje par
 - [ ] **(Ação humana — Junior)** Cadastrar variáveis de ambiente (tabela acima — @dev conferiu contra `worker/Dockerfile`/`worker/.env.example`, ver Dev Agent Record).
 - [ ] **(Ação humana — Junior)** Configurar webhook do lado da Meta (conta da Academia Enem) apontando para o domínio novo.
 - [ ] **(Ação humana — Junior)** Rodar os 3 testes via `curl`/terminal (healthcheck, handshake, envio).
-- [x] Preparar migration de `meta_phone_numbers` (número/WABA da Academia Enem) — **não aplicada** (placeholder até o número real existir).
-- [x] Preparar migration de `meta_templates` (templates da Academia Enem, `status='pendente'`) — **não aplicada** (idem).
+- [x] Preparar migration de `meta_phone_numbers` (número/WABA da Academia Enem) — **não aplicada**, mantida só como registro histórico (ver Task nova abaixo — caminho real de cadastro mudou).
+- [x] Preparar migration de `meta_templates` (templates da Academia Enem, `status='pendente'`) — **não aplicada**, idem.
 - [x] Renomear o recurso RBAC `ae_instancia` → `ae_infra_meta` — **autorizado pelo Junior e concluído**: `UPDATE sys_permissions` (3 linhas) + rename em `constants.ts`/`perfis/page.tsx`.
+- [ ] **NOVO (2026-08-20):** ajustar `developer/meta-numeros/page.tsx` — incluir `"academia_enem"` em `AGENTES_META` e um valor de canal (ex.: `"Academia Enem"`) em `CANAL_TIPOS_META`, mais a entrada correspondente em `CANAL_BADGE_COLORS`. Bloqueante antes do cadastro real do número via tela (substitui a migration manual como mecanismo).
+- [ ] **NOVO (2026-08-20):** confirmar que `developer/meta-templates/page.tsx` funciona sem ajuste adicional para a automação "Academia Enem" (esperado que sim, já que deriva a lista dinamicamente — validar na prática assim que houver ao menos 1 número cadastrado).
+- [ ] **(Ação humana — Junior/sócio)** Cadastrar o número/WABA da Academia Enem via `/developer/meta-numeros` e os templates via `/developer/meta-templates`, assim que o pareamento real acontecer — substitui a aplicação da migration placeholder.
 
 ## Dependências
 Fundação de todo o módulo migrado. Bloqueia S-AE-03, S-AE-04, S-AE-06, S-AE-09, S-AE-13 (todas dependem do serviço/número existirem).
@@ -157,6 +196,7 @@ Dex (@dev) — claude-sonnet-5
 | 2026-08-20 | @po (Pax) | **Validação (GO, 8/10) → Status Draft→Ready.** Achado: `ae_instancia` já existe em código (não atribuído a nenhuma role) — task adicionada para renomear (não duplicar) e checar `sys_permissions` antes. Nenhuma referência residual a AuctaFlux/`ae_*` encontrada no texto. Dependência corretamente registrada como bloqueante de S-AE-03/04/06/09/13. |
 | 2026-08-20 | @dev (Dex) | **Implementação parcial (Status Ready→InProgress).** Checagem `execute_sql` **corrigiu** a suposição do @po: existem 3 linhas em `sys_permissions` para `ae_instancia` (Developer/Super Admin Cuca = bypass esperado; Atendente Geral = negado). Rename **não executado**, aguarda decisão do Junior (ver Completion Notes). Migration placeholder de `meta_phone_numbers`/`meta_templates` criada e **não aplicada** (pendente do número real). Variáveis de ambiente da story conferidas contra `worker/.env.example`/`Dockerfile`, sem ajuste necessário. Passos de EasyPanel/Meta seguem pendentes de execução humana (fora do alcance de agente). |
 | 2026-08-20 | @dev (Dex) | **Rename autorizado pelo Junior e concluído.** `apply_migration` renomeou as 3 linhas em `sys_permissions` (`ae_instancia`→`ae_infra_meta`); `constants.ts`/`perfis/page.tsx` atualizados. Confirmado, por leitura do SQL de `has_permission`, que não há regressão de acesso (bypass Developer ocorre antes de checar `module`; único outro perfil já estava negado). Achado adicional reportado: 6 arquivos de rotas/página do admin antigo de "Instâncias AuctaFlux" ainda referenciam a string antiga — código morto a apagar quando a implementação completa da S-AE-02 (serviço real) acontecer, não corrigido agora por estar fora do escopo desta rodada. Status permanece **InProgress** — falta a parte de infraestrutura (EasyPanel/Meta), que é ação exclusiva do Junior. |
+| 2026-08-20 | @sm (River) | **Ajuste de mecanismo, a pedido direto do Junior** (durante conversa sobre a S-AE-09): confirmado por leitura de código que `/developer/meta-numeros`/`/developer/meta-templates` (telas já usadas por Institucional/Empregabilidade/Ouvidoria/Acesso CUCA) conseguem cadastrar o número/templates da Academia Enem sem obstáculo do backend separado — só faltam 2 valores num array hardcoded no front. Escopo IN item 5 e Tasks atualizados: cadastro real passa a ser via essas telas, não mais via migration SQL manual (migration placeholder mantida só como registro histórico, não será aplicada). Sem impacto negativo na S-AE-09 (confirmado — ela lê o resultado final nas tabelas, indiferente ao mecanismo de cadastro). Status **mantido InProgress** (mudança pontual de mecanismo, não reabre o progresso já feito/QA PASS do rename RBAC) — Task nova requer validação do @po antes do @dev pegar. |
 
 ## QA Results
 
