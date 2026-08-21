@@ -26,8 +26,12 @@ import { unidadesCuca } from "@/lib/constants"
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
-const AGENTES_META = ["Empregabilidade", "Institucional", "maria", "sofia", "ana"] as const
-const CANAL_TIPOS_META = ["Empregabilidade", "Institucional", "Divulgação", "Ouvidoria", "Acesso"] as const
+// S-AE-02: "academia_enem" segue o padrão minúsculo/snake_case já usado por "maria"/"sofia"/"ana"
+// (persona/módulo, não nome de canal capitalizado) — mesmo valor gravado por meta_phone_numbers
+// (migration seed) e já lido pelo painel de atendimento (CANAL_ACADEMIA_ENEM, S-AE-03). Um valor
+// capitalizado aqui quebraria o filtro do painel.
+const AGENTES_META = ["Empregabilidade", "Institucional", "maria", "sofia", "ana", "academia_enem"] as const
+const CANAL_TIPOS_META = ["Empregabilidade", "Institucional", "Divulgação", "Ouvidoria", "Acesso", "academia_enem"] as const
 
 type AgenteMetaTipo = typeof AGENTES_META[number]
 type CanalMetaTipo = typeof CANAL_TIPOS_META[number]
@@ -59,6 +63,7 @@ const CANAL_BADGE_COLORS: Record<string, string> = {
     "Empregabilidade": "bg-blue-500/10 text-blue-600 border-blue-200",
     "Institucional":   "bg-purple-500/10 text-purple-600 border-purple-200",
     "Divulgação":      "bg-orange-500/10 text-orange-600 border-orange-200",
+    "academia_enem":   "bg-teal-500/10 text-teal-600 border-teal-200",
     "Ouvidoria":       "bg-red-500/10 text-red-600 border-red-200",
     "Acesso":          "bg-green-500/10 text-green-600 border-green-200",
 }
