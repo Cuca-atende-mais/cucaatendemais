@@ -202,3 +202,8 @@ submissão de template, nova) — nenhuma das duas bloqueia esta story.
 
 ### Decisão de Gate
 **CONCERNS.** A correção resolve exatamente o achado que motivou (comportamento por trás dos testes está certo, sem regressão), mas a direção do `if` cria um novo ponto único de falha silenciosa para os 4 módulos que já funcionam em produção. Não bloqueia esta correção pontual de ser válida, mas não deve seguir para o `@devops` sem esse ajuste de polaridade — é uma troca de uma linha (`==` invertido), risco de reintroduzir regressão é baixo, e o custo de não corrigir é alto (produção).
+
+### Reverificação — 2026-08-21 (rodada 2)
+Confirmei o ajuste de forma independente (`git show HEAD -- worker/main.py`, commit `00e7ce6`): o gate agora testa o valor de opt-in (`if WORKER_SCOPE == "academia_enem":` desliga; qualquer outro valor, incluindo ausente/vazio/typo/capitalização diferente, cai no `else` e mantém os 3 loops do `cuca-worker` ligados) — exatamente a inversão recomendada. Rodei a suíte de novo, do zero: `test_main_worker_scope.py` com 7 testes (os 3 originais + 4 novos parametrizados cobrindo `""`, `"Academia_Enem"`, `" academia_enem"`, `"typo-qualquer"`) — todos passando. Suíte completa: 397 passando, mesmas 5 falhas pré-existentes em `test_meta_adapter_outbound.py`, sem relação.
+
+**Veredito atualizado: PASS.** Achado resolvido, sem regressão. Liberado para `@devops`.
