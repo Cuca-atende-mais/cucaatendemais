@@ -193,7 +193,7 @@ async def test_processar_mensagem_ativo_delega_ao_classificador_sem_enviar(monke
     )
 
     enviar_mock.assert_not_awaited()
-    classificar_mock.assert_awaited_once_with("conv-1")
+    classificar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "lead-1", "quanto custa?")
 
 
 @pytest.mark.asyncio
@@ -313,3 +313,72 @@ async def test_acionar_transbordo_sem_contato_reverte_status_e_avisa_lead(monkey
     status_chamados = [c.args[0]["status"] for c in conversas_tbl.update.call_args_list]
     assert status_chamados == ["awaiting_human", "ativa"]
     assert "não consegui" in enviar_mock.await_args.args[3].lower()
+
+
+# ---------------------------------------------------------------------------
+# classificar() — S-AE-10 (reconstrução, 2026-08-23): chama a Edge Function PRÓPRIA
+# (academia-enem-agente), NUNCA o motor-agente compartilhado. Isolamento total confirmado
+# pelos testes: nenhum deles toca `meta_adapter_inbound` (diferente da versão anterior).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_classificar_chama_edge_function_propria_com_dados_corretos(monkeypatch):
+    chamar_mock = AsyncMock(return_value={"resposta": "A prova é dia 10/11.", "handover": False})
+    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", chamar_mock)
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "quando é a prova?")
+
+    chamar_mock.assert_awaited_once_with("quando é a prova?", "5585999999999", "conv-1", "lead-1")
+    enviar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "A prova é dia 10/11.", "lead-1")
+
+
+@pytest.mark.asyncio
+async def test_classificar_sem_resposta_usa_fallback_tecnico(monkeypatch):
+    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", AsyncMock(return_value=None))
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "oi")
+
+    enviar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", ae._FALLBACK_TECNICO, "lead-1")
+
+
+@pytest.mark.asyncio
+async def test_classificar_handover_aciona_transbordo_sem_duplicar_mensagem(monkeypatch):
+    """Quando a Edge Function sinaliza handover=true, só a mensagem de `acionar_transbordo`
+    vai pro lead — o texto que o GPT gerou antes da tag [[HANDOVER]] não é enviado separado
+    (evita 2 confirmações seguidas)."""
+    monkeypatch.setattr(
+        ae, "_chamar_academia_enem_agente",
+        AsyncMock(return_value={"resposta": "Vou te transferir!", "handover": True}),
+    )
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+    transbordo_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "acionar_transbordo", transbordo_mock)
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "quero falar com atendente")
+
+    transbordo_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "lead-1")
+    enviar_mock.assert_not_awaited()  # o texto "Vou te transferir!" nunca é enviado direto
+
+
+@pytest.mark.asyncio
+async def test_classificar_nao_importa_nem_toca_meta_adapter_inbound(monkeypatch):
+    """Confirma isolamento: `classificar()` não depende de `meta_adapter_inbound` (onde vive
+    `_chamar_motor_agente`, usado pelo Institucional) — nenhuma chamada nesse módulo compartilhado."""
+    import meta_adapter_inbound as mai
+
+    chamar_motor_agente_mock = AsyncMock()
+    monkeypatch.setattr(mai, "_chamar_motor_agente", chamar_motor_agente_mock)
+    monkeypatch.setattr(
+        ae, "_chamar_academia_enem_agente",
+        AsyncMock(return_value={"resposta": "ok", "handover": False}),
+    )
+    monkeypatch.setattr(ae, "_enviar", AsyncMock(return_value=True))
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "oi")
+
+    chamar_motor_agente_mock.assert_not_awaited()

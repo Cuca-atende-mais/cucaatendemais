@@ -28,8 +28,9 @@ import toast from "react-hot-toast"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
-// S-AE-05: discriminador de canal deste módulo no pipeline RAG (documentos_rag / motor-agente).
-const SOURCE_TYPE = "academia_enem"
+// S-AE-10 (reconstrução, 2026-08-23): a base de RAG da Academia Enem vive numa tabela própria
+// (`ae_documentos_rag`), nunca em `documentos_rag` (compartilhada) — isolamento é da tabela em
+// si, sem precisar de um discriminador `source_type`.
 
 type Documento = {
     id: string
@@ -94,11 +95,11 @@ export default function AcademiaEnemRagPage() {
 
     const fetchDocs = async () => {
         setLoading(true)
-        // Filtra apenas os documentos deste módulo pelo source_type (evita vazar/herdar docs de outros canais).
+        // Tabela EXCLUSIVA da Academia Enem (S-AE-10, reconstrução) — sem filtro de source_type,
+        // a isolação vem da tabela em si, não mais de um valor de metadados compartilhado.
         const { data, error } = await supabase
-            .from("documentos_rag")
+            .from("ae_documentos_rag")
             .select("*")
-            .contains("metadados", { source_type: SOURCE_TYPE })
             .order("created_at", { ascending: false })
         if (error) toast.error("Erro ao carregar documentos")
         else setDocs(data || [])
@@ -115,11 +116,11 @@ export default function AcademiaEnemRagPage() {
         setUploadandoPdf(true)
         try {
             let pdfUrl: string | null = null
-            let metadados: Record<string, unknown> = { source_type: SOURCE_TYPE }
+            let metadados: Record<string, unknown> = {}
 
             // Upload do PDF se necessário
             if (form.modo === "pdf" && pdfFile) {
-                const path = `${SOURCE_TYPE}/${Date.now()}_${pdfFile.name.replace(/\s+/g, "_")}`
+                const path = `academia-enem/${Date.now()}_${pdfFile.name.replace(/\s+/g, "_")}`
                 const { error: uploadError } = await supabase.storage
                     .from("rag-documentos")
                     .upload(path, pdfFile, { contentType: "application/pdf", upsert: false })
@@ -134,19 +135,18 @@ export default function AcademiaEnemRagPage() {
                 titulo: form.titulo,
                 tipo: form.tipo,
                 conteudo: form.modo === "pdf" ? (pdfUrl ?? "") : form.conteudo,
-                unidade_cuca: null,
                 ativo: form.ativo,
                 metadados: editing
-                    ? { ...(editing.metadados ?? {}), source_type: SOURCE_TYPE, ...(pdfUrl ? { pdf_path: metadados.pdf_path, pdf_nome: metadados.pdf_nome } : {}) }
+                    ? { ...(editing.metadados ?? {}), ...(pdfUrl ? { pdf_path: metadados.pdf_path, pdf_nome: metadados.pdf_nome } : {}) }
                     : metadados,
             }
 
             if (editing) {
-                const { error } = await supabase.from("documentos_rag").update(payload).eq("id", editing.id)
+                const { error } = await supabase.from("ae_documentos_rag").update(payload).eq("id", editing.id)
                 if (error) throw error
                 toast.success("Documento atualizado!")
             } else {
-                const { error } = await supabase.from("documentos_rag").insert(payload)
+                const { error } = await supabase.from("ae_documentos_rag").insert(payload)
                 if (error) throw error
                 toast.success("Documento criado! Clique em Indexar para processar no RAG.")
             }
@@ -166,8 +166,9 @@ export default function AcademiaEnemRagPage() {
             const { data: { session } } = await supabase.auth.getSession()
             const pdfPath = doc.metadados?.pdf_path as string | null
 
+            // Edge Function EXCLUSIVA da Academia Enem — nunca a compartilhada processar-documento.
             const res = await fetch(
-                `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/processar-documento`,
+                `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/academia-enem-processar-documento`,
                 {
                     method: "POST",
                     headers: {
@@ -176,8 +177,6 @@ export default function AcademiaEnemRagPage() {
                     },
                     body: JSON.stringify({
                         documento_id: doc.id,
-                        source_type: SOURCE_TYPE,
-                        cuca_unit_id: null,
                         ...(pdfPath && { pdf_path: pdfPath }),
                     }),
                 }
@@ -201,7 +200,7 @@ export default function AcademiaEnemRagPage() {
         if (pdfPath) {
             await supabase.storage.from("rag-documentos").remove([pdfPath])
         }
-        const { error } = await supabase.from("documentos_rag").delete().eq("id", doc.id)
+        const { error } = await supabase.from("ae_documentos_rag").delete().eq("id", doc.id)
         if (error) toast.error("Erro ao deletar")
         else { toast.success("Documento removido"); fetchDocs() }
     }
@@ -308,7 +307,7 @@ export default function AcademiaEnemRagPage() {
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold text-primary">{totalChunks}</div>
-                        <p className="text-xs text-muted-foreground">source_type: {SOURCE_TYPE}</p>
+                        <p className="text-xs text-muted-foreground">tabela própria: ae_documentos_rag</p>
                     </CardContent>
                 </Card>
             </div>
@@ -317,8 +316,8 @@ export default function AcademiaEnemRagPage() {
             <div className="flex items-start gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-foreground text-sm">
                 <GraduationCap className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
                 <span>
-                    Estes documentos são indexados com <code className="bg-primary/10 px-1 rounded text-xs">source_type = &apos;{SOURCE_TYPE}&apos;</code> e
-                    usados apenas pela automação da Academia Enem (assuntos do Enem). Suporte a texto livre ou upload de PDF (até 50 MB).
+                    Estes documentos ficam numa base RAG <strong>própria e isolada</strong> da Academia Enem
+                    (nunca compartilhada com outros canais). Suporte a texto livre ou upload de PDF (até 50 MB).
                     Após criar, clique em <strong>Indexar</strong> para processar no RAG.
                 </span>
             </div>

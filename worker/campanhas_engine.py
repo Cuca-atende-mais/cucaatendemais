@@ -395,26 +395,9 @@ def _contar_enviados_hoje_sync(phone_number_id: str) -> int:
             total += res.count or 0
     except Exception as exc:
         logger.warning(f"[Campanhas] Erro ao contar enviados hoje via disparos_divulgacao ({phone_number_id}): {exc}")
-    try:
-        # S-AE-09: 3º caminho — fila própria da Academia Enem (disparos_academia_enem), mesmo
-        # padrão dos 2 blocos acima (achado documentado na story: sem isso, o teto diário do
-        # número da Academia Enem nunca contaria os envios já feitos, sempre lendo "0 hoje").
-        ae_res = (
-            supabase.table("disparos_academia_enem").select("id").eq("instancia_uazapi", phone_number_id).execute()
-        )
-        ids_ae = [row["id"] for row in (ae_res.data or []) if row.get("id")]
-        if ids_ae:
-            res = (
-                supabase.table("logs_disparo")
-                .select("id", count="exact")
-                .in_("disparo_academia_enem_id", ids_ae)
-                .gte("enviado_em", hoje_inicio_utc)
-                .neq("status", "falhou")
-                .execute()
-            )
-            total += res.count or 0
-    except Exception as exc:
-        logger.warning(f"[Campanhas] Erro ao contar enviados hoje via disparos_academia_enem ({phone_number_id}): {exc}")
+    # S-AE-10 (reconstrução, 2026-08-23): a Academia Enem NÃO soma aqui — decisão do Junior de
+    # isolamento total. O teto diário dela é contado à parte, em `logs_disparo_academia_enem`
+    # (tabela própria, nunca cruza com `logs_disparo`) — ver `_contar_enviados_academia_enem_hoje_sync`.
     return total
 
 
@@ -1132,7 +1115,7 @@ def _fetch_all_telefones_tentados_academia_enem_sync(disparo_id: str) -> set:
     offset = 0
     while True:
         res = (
-            supabase.table("logs_disparo")
+            supabase.table("logs_disparo_academia_enem")
             .select("telefone")
             .eq("disparo_academia_enem_id", disparo_id)
             .range(offset, offset + _POSTGREST_PAGE_SIZE - 1)
@@ -1146,20 +1129,62 @@ def _fetch_all_telefones_tentados_academia_enem_sync(disparo_id: str) -> set:
     return telefones
 
 
+def _contar_enviados_academia_enem_hoje_sync(phone_number_id: str) -> int:
+    """S-AE-10 (reconstrução, 2026-08-23) — equivalente a `_contar_enviados_hoje_sync`, mas
+    100% isolado: só lê `logs_disparo_academia_enem` (tabela própria), nunca `logs_disparo`
+    (compartilhada com Institucional/Divulgação/Ouvidoria). Decisão do Junior: teto diário da
+    Academia Enem nunca cruza dado nem lógica com os outros módulos."""
+    hoje_inicio_utc = (
+        datetime.now(_TZ_FORTALEZA)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .astimezone(timezone.utc)
+        .isoformat()
+    )
+    try:
+        ae_res = (
+            supabase.table("disparos_academia_enem").select("id").eq("instancia_uazapi", phone_number_id).execute()
+        )
+        ids_ae = [row["id"] for row in (ae_res.data or []) if row.get("id")]
+        if not ids_ae:
+            return 0
+        res = (
+            supabase.table("logs_disparo_academia_enem")
+            .select("id", count="exact")
+            .in_("disparo_academia_enem_id", ids_ae)
+            .gte("enviado_em", hoje_inicio_utc)
+            .neq("status", "falhou")
+            .execute()
+        )
+        return res.count or 0
+    except Exception as exc:
+        logger.warning(f"[Academia Enem] Erro ao contar enviados hoje ({phone_number_id}): {exc}")
+        return 0
+
+
+def _resolver_limite_restante_hoje_academia_enem_sync(phone_number_id: str, daily_limit: int | None) -> int:
+    """Equivalente isolado a `_resolver_limite_restante_hoje_sync` — reaproveita só
+    `_get_daily_limit_by_phone_sync` (leitura de `meta_phone_numbers`, tabela de controle de
+    número/template que o Junior confirmou como a única exceção de reaproveitamento)."""
+    if daily_limit is None:
+        daily_limit = _get_daily_limit_by_phone_sync(phone_number_id)
+    ja_enviados_hoje = _contar_enviados_academia_enem_hoje_sync(phone_number_id)
+    return max(0, daily_limit - ja_enviados_hoje)
+
+
 async def _contar_totais_academia_enem_cumulativo(disparo_id: str) -> tuple[int, int]:
     """Conta o total real (histórico completo: caminho fresco + qualquer retomada anterior)
-    direto de `logs_disparo` — mesma convenção já validada em
+    direto de `logs_disparo_academia_enem` (tabela própria) — mesma convenção já validada em
     _enviar_para_leads_pendentes/usar_contagem_cumulativa: enviados = status <> 'falhou',
     erros = status IN ('falhou', 'aviso'). Extraído (achado QA B-1, 2026-08-23) pra ser
     reaproveitado tanto no fechamento por sucesso quanto nas 2 pausas (teto diário / taxa de
     erro) — antes só o fechamento por sucesso usava contagem real; uma retomada que pausasse
     de novo gravava só o contador local desta chamada, regredindo o total exibido."""
     enviados_res = await asyncio.to_thread(
-        lambda: supabase.table("logs_disparo").select("id", count="exact")
+        lambda: supabase.table("logs_disparo_academia_enem").select("id", count="exact")
         .eq("disparo_academia_enem_id", disparo_id).neq("status", "falhou").execute()
     )
     erros_res = await asyncio.to_thread(
-        lambda: supabase.table("logs_disparo").select("id", count="exact")
+        lambda: supabase.table("logs_disparo_academia_enem").select("id", count="exact")
         .eq("disparo_academia_enem_id", disparo_id).in_("status", ["falhou", "aviso"]).execute()
     )
     return enviados_res.count or 0, erros_res.count or 0
@@ -1228,7 +1253,7 @@ async def _processar_disparo_academia_enem_interno(
 
     # Revalidação no momento do envio (defesa em profundidade — mesmo princípio já usado no
     # resto do arquivo: nunca confiar só na checagem feita na criação da fila).
-    tpl_res = supabase.table("meta_templates").select("variaveis") \
+    tpl_res = supabase.table("meta_templates").select("variaveis, corpo_texto_aprovado, corpo_texto") \
         .eq("nome", template_nome) \
         .contains("phone_number_ids", [phone_number_id]) \
         .eq("ativo", True).eq("status", "aprovado") \
@@ -1241,6 +1266,9 @@ async def _processar_disparo_academia_enem_interno(
         await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {"status": "pausada"})
         return {"status": "pausada", "motivo": "template não aprovado"}
     variaveis_item = tpl_res.data[0].get("variaveis") or []
+    # S-AE-10: texto completo do aviso (não só o título truncado), pra Edge Function
+    # `academia-enem-agente` responder perguntas sobre o aviso sem depender só do título.
+    texto_aviso = tpl_res.data[0].get("corpo_texto_aprovado") or tpl_res.data[0].get("corpo_texto") or ""
 
     # Achado QA A-4 (2026-08-23): o envio só preenche 1 variável (nome). Se o template
     # aprovado tiver mais de 1 posição, faltariam parâmetros e a Meta rejeitaria 100% dos
@@ -1257,9 +1285,9 @@ async def _processar_disparo_academia_enem_interno(
         await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {"status": "pausada"})
         return {"status": "pausada", "motivo": "template exige mais de 1 variável"}
 
-    # S-WM-67: teto efetivo (configurado × tier) menos quanto já saiu hoje neste número — a
-    # contagem (_contar_enviados_hoje_sync) já enxerga os envios desta própria fila (3º bloco).
-    daily_limit = await asyncio.to_thread(_resolver_limite_restante_hoje_sync, phone_number_id, None)
+    # Teto efetivo (configurado × tier) menos quanto já saiu hoje — versão 100% isolada
+    # (_resolver_limite_restante_hoje_academia_enem_sync só lê logs_disparo_academia_enem).
+    daily_limit = await asyncio.to_thread(_resolver_limite_restante_hoje_academia_enem_sync, phone_number_id, None)
 
     sucessos = 0
     erros = 0
@@ -1302,6 +1330,7 @@ async def _processar_disparo_academia_enem_interno(
                     "tipo": "academia_enem",
                     "id": str(disparo_id),
                     "titulo": titulo[:80],
+                    "texto": texto_aviso[:1000],
                     "enviado_em": datetime.now(tz_fortaleza).isoformat(),
                 }}
                 try:
@@ -1311,11 +1340,11 @@ async def _processar_disparo_academia_enem_interno(
         else:
             erros += 1
 
-        # Ledger por destinatário (logs_disparo) — mesma tabela compartilhada, FK própria
-        # (disparo_academia_enem_id), nunca deixa uma falha de gravação parar o loop.
+        # Ledger por destinatário — tabela PRÓPRIA (logs_disparo_academia_enem), nunca a
+        # compartilhada. Falha de gravação nunca para o loop.
         try:
             await asyncio.to_thread(
-                lambda: supabase.table("logs_disparo").insert({
+                lambda: supabase.table("logs_disparo_academia_enem").insert({
                     "disparo_academia_enem_id": disparo_id,
                     "lead_id": lead_id,
                     "telefone": numero,

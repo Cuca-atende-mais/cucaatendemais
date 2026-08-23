@@ -53,53 +53,52 @@ def _mock_supabase_multi_tabela():
     return mock_sb, tabelas
 
 
-# ─── _contar_enviados_hoje_sync — 3º bloco (disparos_academia_enem) ────────────────────────
+# ─── _contar_enviados_academia_enem_hoje_sync — 100% isolado (S-AE-10, reconstrução) ───────
+# Decisão do Junior (2026-08-23): a Academia Enem nunca soma/cruza dado com `logs_disparo`
+# (compartilhada) — `_contar_enviados_hoje_sync` (função dos outros 3 módulos) voltou a ter só
+# os 2 blocos originais; a Academia Enem tem sua própria função, lendo só
+# `logs_disparo_academia_enem`.
 
-def test_contar_enviados_hoje_soma_tambem_academia_enem(monkeypatch):
-    """S-AE-09 Dev Notes item 1: sem este bloco, o teto diário do número da Academia Enem
-    nunca contaria os envios já feitos por ela (sempre '0 hoje') — este teste garante que o
-    3º caminho (disparos_academia_enem) é somado junto dos 2 já existentes."""
+def test_contar_enviados_academia_enem_hoje_isolado(monkeypatch):
     mock_sb, tabelas = _mock_supabase_multi_tabela()
     monkeypatch.setattr(camp, "supabase", mock_sb)
 
-    tabelas.setdefault("disparos", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = []
-    tabelas.setdefault("disparos_divulgacao", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = []
     tabelas.setdefault("disparos_academia_enem", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = [
         {"id": "ae-disparo-1"}
     ]
+    logs_mock = tabelas.setdefault("logs_disparo_academia_enem", MagicMock())
+    logs_mock.select.return_value.in_.return_value.gte.return_value.neq.return_value.execute.return_value.count = 8
 
-    logs_mock = tabelas.setdefault("logs_disparo", MagicMock())
-
-    def _select(*_a, **_kw):
-        chain = MagicMock()
-
-        def _in(campo, _valores):
-            sub = MagicMock()
-            if campo == "disparo_academia_enem_id":
-                sub.gte.return_value.neq.return_value.execute.return_value.count = 8
-            else:
-                sub.gte.return_value.neq.return_value.execute.return_value.count = 0
-            return sub
-
-        chain.in_ = MagicMock(side_effect=_in)
-        return chain
-
-    logs_mock.select = MagicMock(side_effect=_select)
-
-    assert camp._contar_enviados_hoje_sync("phone-academia-enem") == 8
+    assert camp._contar_enviados_academia_enem_hoje_sync("phone-academia-enem") == 8
 
 
-def test_contar_enviados_hoje_sem_fila_academia_enem_nao_quebra(monkeypatch):
-    """Número sem nenhuma linha em disparos_academia_enem (fila ainda vazia) — soma 0 nesse
-    bloco, sem erro, sem sequer consultar logs_disparo por essa FK."""
+def test_contar_enviados_academia_enem_hoje_nunca_toca_logs_disparo_compartilhado(monkeypatch):
+    """Confirma que a função isolada não consulta `logs_disparo` (a tabela compartilhada) em
+    hipótese nenhuma — só `disparos_academia_enem`/`logs_disparo_academia_enem`."""
     mock_sb, tabelas = _mock_supabase_multi_tabela()
     monkeypatch.setattr(camp, "supabase", mock_sb)
 
-    tabelas.setdefault("disparos", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = []
-    tabelas.setdefault("disparos_divulgacao", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = []
+    tabelas.setdefault("disparos_academia_enem", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = [
+        {"id": "ae-disparo-1"}
+    ]
+    logs_ae_mock = tabelas.setdefault("logs_disparo_academia_enem", MagicMock())
+    logs_ae_mock.select.return_value.in_.return_value.gte.return_value.neq.return_value.execute.return_value.count = 3
+
+    resultado = camp._contar_enviados_academia_enem_hoje_sync("phone-x")
+
+    assert resultado == 3
+    assert "logs_disparo" not in tabelas  # só "logs_disparo_academia_enem" foi criada pelo side_effect
+
+
+def test_contar_enviados_academia_enem_hoje_sem_fila_nao_quebra(monkeypatch):
+    """Número sem nenhuma linha em disparos_academia_enem (fila ainda vazia) — 0, sem erro,
+    sem sequer consultar o ledger."""
+    mock_sb, tabelas = _mock_supabase_multi_tabela()
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
     tabelas.setdefault("disparos_academia_enem", MagicMock()).select.return_value.eq.return_value.execute.return_value.data = []
 
-    assert camp._contar_enviados_hoje_sync("phone-sem-fila-ae") == 0
+    assert camp._contar_enviados_academia_enem_hoje_sync("phone-sem-fila-ae") == 0
 
 
 # ─── _processar_disparo_academia_enem_interno ──────────────────────────────────────────────
@@ -129,7 +128,7 @@ async def test_envia_para_todos_grava_ledger_e_breadcrumb_so_com_lead_id(monkeyp
     mock_sb.table.return_value.insert.return_value.execute = logs_insert
     monkeypatch.setattr(camp, "supabase", mock_sb)
     monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "token-fake")
-    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_sync", lambda phone, daily_limit: 10)
+    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_academia_enem_sync", lambda phone, daily_limit: 10)
     monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.X")))
     breadcrumb_mock = MagicMock()
     monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", breadcrumb_mock)
@@ -215,7 +214,7 @@ async def test_teto_diario_atingido_pausa_com_totais_parciais(monkeypatch):
     ]
     monkeypatch.setattr(camp, "supabase", mock_sb)
     monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "token-fake")
-    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_sync", lambda phone, daily_limit: 1)
+    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_academia_enem_sync", lambda phone, daily_limit: 1)
     monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.Y")))
     monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
     update_mock = MagicMock()
@@ -265,7 +264,7 @@ async def test_template_com_exatamente_1_variavel_no_guard_nao_bloqueia(monkeypa
     ]
     monkeypatch.setattr(camp, "supabase", mock_sb)
     monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "token-fake")
-    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_sync", lambda phone, daily_limit: 10)
+    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_academia_enem_sync", lambda phone, daily_limit: 10)
     enviar_mock = AsyncMock(return_value=(True, "wamid.Z"))
     monkeypatch.setattr(camp, "_enviar_template_meta", enviar_mock)
     monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
@@ -358,7 +357,7 @@ async def test_continuar_retomada_envia_so_pendentes_e_fecha_cumulativo(monkeypa
     mock_sb.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value.count = 1
     monkeypatch.setattr(camp, "supabase", mock_sb)
     monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "token-fake")
-    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_sync", lambda phone, daily_limit: 10)
+    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_academia_enem_sync", lambda phone, daily_limit: 10)
     enviar_mock = AsyncMock(return_value=(True, "wamid.R"))
     monkeypatch.setattr(camp, "_enviar_template_meta", enviar_mock)
     monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
@@ -396,7 +395,7 @@ async def test_retomada_que_pausa_de_novo_grava_totais_cumulativos_nao_locais(mo
     mock_sb.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value.count = 3
     monkeypatch.setattr(camp, "supabase", mock_sb)
     monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "token-fake")
-    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_sync", lambda phone, daily_limit: 0)  # teto já zerado
+    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_academia_enem_sync", lambda phone, daily_limit: 0)  # teto já zerado
     enviar_mock = AsyncMock()
     monkeypatch.setattr(camp, "_enviar_template_meta", enviar_mock)
     update_mock = MagicMock()
