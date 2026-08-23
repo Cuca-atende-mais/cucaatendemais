@@ -649,6 +649,27 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             except Exception as exc:
                 logger.warning(f"[meta-inbound] Erro ao atualizar status de wamid={wamid_status!r}: {exc}")
 
+            # S-AE-10 (reconstrução, 2026-08-23): a Academia Enem tem ledger PRÓPRIO
+            # (logs_disparo_academia_enem, nunca logs_disparo) — decisão do Junior de
+            # isolamento total. Tenta a atualização nessa tabela também (best-effort, try
+            # isolado); em qualquer outro módulo isso é um no-op (0 linhas afetadas, wamid
+            # não existe lá), sem custo real. Roda sempre (não só no serviço isolado) porque
+            # este arquivo é o mesmo código-fonte deployado nos dois serviços (S-AE-02).
+            try:
+                query_ae = supabase_status.table("logs_disparo_academia_enem").update({
+                    "status": _STATUS_MAP[status_meta],
+                    "erro": erro_codigo,
+                    "atualizado_em": datetime.now(timezone.utc).isoformat(),
+                    "status_timestamp_meta": status_timestamp_meta,
+                }).eq("wamid", wamid_status)
+                if status_timestamp_meta:
+                    query_ae = query_ae.or_(
+                        f"status_timestamp_meta.is.null,status_timestamp_meta.lte.{status_timestamp_meta}"
+                    )
+                query_ae.execute()
+            except Exception as exc:
+                logger.warning(f"[meta-inbound] Erro ao atualizar status (Academia Enem) de wamid={wamid_status!r}: {exc}")
+
     # Ignorar eventos de status (delivery, read) sem messages[]
     if not messages:
         logger.info("[meta-inbound] Evento sem messages[] (status update) — ignorado")

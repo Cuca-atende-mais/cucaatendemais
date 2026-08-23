@@ -12,8 +12,11 @@ Reescrito em 2026-08-20 (decisão do Junior, migração Meta direta — abandono
 - Envio via `meta_adapter_outbound._meta_enviar` (Graph API), o mesmo adapter usado por
   Institucional/Empregabilidade/motor-agente.
 - SEM menu numérico: saudação humanizada + coleta de nome. Após o nome, hand-off ao
-  classificador (S-AE-10) pelo seam `classificar()` — SEM responder dúvida aqui (no-invention;
-  o "cérebro" de roteamento disparo-vs-RAG é a S-AE-10, ainda não implementada).
+  classificador (S-AE-10) via `classificar()`, que chama a Edge Function PRÓPRIA
+  `academia-enem-agente` (supabase/functions/academia-enem-agente/index.ts) — NUNCA o
+  `motor-agente` compartilhado (que atende o Institucional em produção). Decisão do Junior
+  (2026-08-23): a Academia Enem é um canal totalmente desacoplado — Edge Function, RAG e log
+  de disparo próprios, sem processo/deploy/tabela compartilhados com os outros módulos.
 
 A máquina de estados pura `decidir()` abaixo é INALTERADA em relação à implementação anterior
 (AuctaFlux) — já era testável sem IO e desacoplada de tabela/provider; só a camada de I/O
@@ -156,18 +159,63 @@ def decidir(estado: str | None, texto: str, fluxo: dict | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# SEAM de roteamento (S-AE-10) — interface estável, no-op até a S-AE-10 existir.
-# NÃO adicionar lógica de RAG/disparo/transbordo aqui: isso é a S-AE-10 (integrador).
+# Roteamento (S-AE-10) — chama a Edge Function PRÓPRIA da Academia Enem
+# (academia-enem-agente), nunca o motor-agente compartilhado. Isolamento total: Edge Function,
+# RAG e persona próprios (decisão do Junior, 2026-08-23).
 # ---------------------------------------------------------------------------
 
-async def classificar(conversa_id: str) -> None:
-    """Hand-off ao classificador disparo-vs-RAG (S-AE-10). No-op por enquanto (silêncio proposital)."""
-    logger.info(
-        "[AE engine] seam classificar() acionado p/ conversa %s — "
-        "roteamento será implementado na S-AE-10 (no-op no momento).",
-        conversa_id,
-    )
-    return None
+_FALLBACK_TECNICO = "Ih, deu um problema técnico aqui do meu lado 😅 Pode mandar de novo pra mim?"
+
+
+async def _chamar_academia_enem_agente(mensagem: str, telefone: str, conversa_id: str, lead_id: str) -> dict | None:
+    """Chama a Edge Function EXCLUSIVA da Academia Enem — nunca o motor-agente compartilhado.
+    Retorna {"resposta": str, "handover": bool} ou None em qualquer falha (HTTP, rede, erro
+    reportado pela function). Extraído em função própria (mesmo padrão de `_chamar_motor_agente`
+    em meta_adapter_inbound.py, mas SEM importar de lá) pra ser mockável em teste sem precisar
+    interceptar httpx internamente."""
+    import httpx  # noqa: PLC0415
+
+    url = f"{SUPABASE_URL}/functions/v1/academia-enem-agente"
+    body = {"mensagem": mensagem, "telefone": telefone, "conversa_id": conversa_id, "lead_id": lead_id}
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+                json=body,
+            )
+        if not resp.is_success:
+            logger.error(f"[AE engine] academia-enem-agente HTTP {resp.status_code}: {resp.text[:200]}")
+            return None
+        data = resp.json()
+        if not data.get("success"):
+            logger.error(f"[AE engine] academia-enem-agente retornou erro: {data.get('error')}")
+            return None
+        return {"resposta": data.get("resposta"), "handover": bool(data.get("handover"))}
+    except Exception as exc:
+        logger.error(f"[AE engine] Erro ao chamar academia-enem-agente: {type(exc).__name__}: {exc}")
+        return None
+
+
+async def classificar(conversa_id: str, phone_number_id: str, telefone: str, lead_id: str, texto: str) -> None:
+    """S-AE-10 — chama a Edge Function exclusiva `academia-enem-agente` (RAG isolado, persona
+    própria, no-invention e handover próprios — nada reaproveitado do motor-agente que atende
+    o Institucional). O worker só decide o que fazer com a resposta (enviar via Meta, acionar
+    transbordo se `handover=true`) — a Edge Function não sabe nada sobre Meta/telefone/envio."""
+    resultado = await _chamar_academia_enem_agente(texto, telefone, conversa_id, lead_id)
+
+    if not resultado or not resultado.get("resposta"):
+        await _enviar(conversa_id, phone_number_id, telefone, _FALLBACK_TECNICO, lead_id)
+        return
+
+    if resultado["handover"]:
+        # Mesmo padrão do pedido explícito de humano (_quer_humano acima): só a mensagem de
+        # confirmação de `acionar_transbordo` vai pro lead — não duplica com o texto que o GPT
+        # gerou antes da tag [[HANDOVER]] (evitaria 2 mensagens de confirmação seguidas).
+        await acionar_transbordo(conversa_id, phone_number_id, telefone, lead_id)
+        return
+
+    await _enviar(conversa_id, phone_number_id, telefone, resultado["resposta"], lead_id)
 
 
 # ---------------------------------------------------------------------------
@@ -321,10 +369,10 @@ async def processar_mensagem_academia_enem(
     fluxo = await asyncio.to_thread(_get_fluxo, conversa_id)
     decisao = decidir(fluxo.get("etapa"), texto, fluxo)
 
-    # 3) Hand-off ao classificador (S-AE-10): sem envio, só avança o fluxo e delega.
+    # 3) Hand-off ao classificador (S-AE-10): avança o fluxo e delega à Edge Function própria.
     if decisao["acao"] == "classificar":
         await asyncio.to_thread(_persistir_estado, conversa_id, decisao["fluxo"])
-        await classificar(conversa_id)
+        await classificar(conversa_id, phone_number_id, phone, lead_id, texto)
         return
 
     # 4) Ações com mensagem: ENVIA primeiro; só avança o fluxo se o envio funcionou.
