@@ -1,7 +1,7 @@
 # S-AE-09 — Disparo de Avisos Próprio da Academia Enem (fila, público e envio)
 
 ## Status
-Ready for Review
+InReview
 
 ## ⚠️ Story reescrita em 2026-08-20 — escopo reduzido (split em 3 stories)
 Escopo original media 3 blocos de tamanho e risco bem diferentes: (1) fila própria + seleção de
@@ -213,6 +213,7 @@ submissão de template, nova) — nenhuma das duas bloqueia esta story.
 | 2026-08-23 | @dev (Dex) | **Feature completa implementada (fila/tela/público/envio/teto).** Migration aplicada em produção via MCP; worker com fila+loop dedicados (`academia_enem_disparo_loop`, gated por `WORKER_SCOPE`); API + tela do portal; RBAC `ae_disparo` + menu. Status InProgress→Ready for Review. Ver Dev Agent Record abaixo pros detalhes de desenho. |
 | 2026-08-23 | @qa (Quinn) | **QA Rodada 2 (feature completa) → CONCERNS.** 7 ACs verificados com evidência; 4 achados (A-1 a A-4, ver QA Results). Recomendado corrigir A-2 (paginação — mesma classe de bug já documentada em `_query_leads_sync`) antes do @devops. Status Ready for Review→InReview. |
 | 2026-08-23 | @dev (Dex) | **Correção de todos os achados (A-1 a A-4), a pedido do Junior — sem ambiente de testes disponível, decisão de corrigir tudo agora e validar quando o disparo valendo acontecer.** A-1: `agente_tipo` parametrizado em `_gravar_breadcrumb_disparo`. A-2: `resolverPublicoDefault` migrado pra RPC `buscar_leads_por_categoria`; `resolverLeadIds` paginado (lotes de 200). A-3: retomada manual completa (worker + endpoint + rota do portal + botão). A-4: guard simétrico (rejeita/pausa template com >1 variável, não inventa suporte a múltiplas variáveis). **Achado adicional, fora dos 4 reportados:** `meta_phone_numbers.agente_tipo`/`canal_tipo` da Academia Enem estavam cadastrados como `"AcademiaEnem"` (PascalCase, autoinduzido nesta mesma sessão) — mismatch real contra o valor canônico `"academia_enem"` usado em todo o resto do projeto; sem essa correção o bot nunca responderia a mensagem real nem apareceria no painel de Atendimento. Corrigido via `UPDATE` direto em produção (MCP) + a constante equivalente na rota. **Investigação de observabilidade** (pedido do Junior, não construído): confirmado que o painel dedicado "Acompanhamento de Envios" (S-WM-58/S-WM-59) não cobre a Academia Enem hoje — a RPC `listar_disparos_acompanhamento` só tem 2 CTEs (`disparos`/`disparos_divulgacao`); adicionar a Academia Enem é uma 3ª CTE, viável porque a fila desta story já reaproveita `logs_disparo` (ao contrário do que a investigação original da S-WM-58 previu). Registrado como story futura, não construído agora. Suíte: 369 passando (+14 na Academia Enem). Status InReview→Ready for Review. |
+| 2026-08-23 | @qa (Quinn) | **QA Rodada 3 (verificação da correção) → CONCERNS.** A-1 a A-4 e o bug de `canal_tipo` confirmados corrigidos (inclusive verificado ao vivo no banco). 1 achado novo (B-1, MEDIUM, reproduzido empiricamente): retomada que pausa de novo grava totais locais em vez de cumulativos — sem risco de duplicidade, só de exibição errada. Não bloqueante. Status Ready for Review→InReview. |
 
 ## Dev Agent Record
 
@@ -324,3 +325,37 @@ Quando esse painel foi desenhado (2026-07-28), a Academia Enem foi **explicitame
 
 ### Validação
 Suíte Python: **369 passando** (355 base + 14 da Academia Enem, incluindo os 7 novos de retomada/guard). `tsc --noEmit`/`eslint` limpos em todos os arquivos tocados/criados nesta correção. Migration não mudou (nenhuma alteração de schema nesta rodada — só código + 1 correção de dado via UPDATE).
+
+---
+
+## QA Results — Rodada 3 (verificação da correção)
+
+**Revisor:** Quinn (@qa) · **Data:** 2026-08-23 · **Escopo:** commit `786f16e` (correção de A-1 a A-4 + fix do `canal_tipo`/`agente_tipo`) — não reexaminei os 7 ACs originais (já cobertos na Rodada 2), só a correção em si.
+
+### Verificação independente
+- Reli o diff completo (`git show 786f16e`), não só o changelog do @dev.
+- Rodei a suíte de novo, do zero: **369 passando**, 0 regressão.
+- `tsc --noEmit`/`eslint` independentes nos 7 arquivos tocados: limpos.
+- **Conferi o `UPDATE` em produção diretamente** (`execute_sql`): `meta_phone_numbers.agente_tipo`/`canal_tipo` = `academia_enem` (minúsculo), confirmado — o achado crítico foi de fato corrigido, não só relatado.
+- Segui o dado até o consumidor real pra validar cada achado (não só reli o código alterado):
+
+| Achado | Correção | Verificação |
+|---|---|---|
+| A-1 | `agente_tipo` parametrizado, default preserva os 3 chamadores antigos | ✅ Confirmado no diff + teste (`agente_tipo="academia_enem"` explícito no caller novo) |
+| A-2 | RPC `buscar_leads_por_categoria` + paginação em lotes de 200 | ✅ Mesma RPC já validada no projeto; sem `.in()` sem paginação em nenhum dos 2 pontos |
+| A-3 | Retomada manual completa (worker + endpoint + rota + botão) | ✅ Presente e funcional nos testes — **mas ver achado B-1 abaixo** |
+| A-4 | Guard simétrico (API + worker), rejeita template com >1 variável | ✅ Confirmado — não inventou suporte a múltiplas variáveis, só parou a falha silenciosa |
+| Extra (`canal_tipo`) | UPDATE em produção + constante corrigida | ✅ Confirmado ao vivo no banco |
+
+### Achado novo (B-1, MEDIUM — não bloqueante, mas real)
+
+**Reproduzi empiricamente** (script isolado, fora da suíte, chamando `_processar_disparo_academia_enem_interno` diretamente): quando uma **retomada** (`usar_contagem_cumulativa=True`) é pausada de novo — por teto diário ou por taxa de erro — **antes** de esgotar os pendentes, os 2 pontos de pausa (`pausada_limite_diario` e `pausada` por erro) gravam `total_enviados`/`total_erros` usando só os contadores **locais desta chamada**, não a contagem cumulativa real. Só o caminho de sucesso total (`concluida`) e o caminho "sem contatos pendentes" usam `_fechar_disparo_academia_enem_cumulativo`.
+
+**Efeito concreto:** disparo original envia 100, pausa por teto diário (`total_enviados=100`, correto — é a 1ª execução). No dia seguinte, retomada envia mais 50 e pausa de novo por teto diário → grava `total_enviados=50` (sobrescrevendo os 100 anteriores), quando o real é 150. **Não é um risco de duplicidade** — o dedup da retomada (`_fetch_all_telefones_tentados_academia_enem_sync`) lê direto de `logs_disparo`, não da coluna `total_enviados`, então ninguém recebe 2x. É um problema de **exibição/observabilidade**: o número que aparece na tela fica errado exatamente no cenário mais provável de acontecer de verdade (número recém-pareado, tier baixo, teto batendo em dias seguidos) — e é justamente a métrica que você pediu pra garantir que existisse.
+
+**Por que não veio coberto pelos testes:** os 7 testes novos de retomada cobrem o caminho feliz (retomada conclui) e os 4 casos de `reivindicar_retomada` (404/409×2/sucesso) — nenhum cobre "retomada que pausa de novo".
+
+**Recomendação:** os 2 branches de pausa (`pausada_limite_diario`, `pausada` por erro) devem checar `usar_contagem_cumulativa` e, se `True`, ler os totais reais de `logs_disparo` antes de gravar — mesmo princípio já usado no caminho de sucesso, só falta aplicar aos 2 caminhos de pausa. É uma mudança pequena e localizada (mesmo padrão, 2 lugares a mais).
+
+### Decisão de Gate
+**CONCERNS.** Os 4 achados originais (A-1 a A-4) e o bug crítico de `canal_tipo` estão genuinamente corrigidos e verificados — inclusive o mais grave (sem ele, o módulo simplesmente não funcionaria). B-1 é uma correção pequena, isolada, sem risco de segurança/duplicidade — só afeta a precisão do número exibido num cenário específico (retomada que pausa de novo). Dado que vocês vão validar isso na prática só quando o disparo valendo acontecer (sem ambiente de teste agora), não bloqueia — mas registro pra não ser esquecido antes desse momento.
