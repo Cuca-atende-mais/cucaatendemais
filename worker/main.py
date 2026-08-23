@@ -171,6 +171,12 @@ async def startup_event():
             "neste serviço, para não reivindicar/enviar disparos de outros módulos com "
             "credenciais Meta erradas."
         )
+        # S-AE-09: fila própria da Academia Enem — só roda neste serviço isolado, nunca
+        # dentro do campanhas_loop() genérico (evita o mesmo problema de credencial errada
+        # que motivou o gate acima).
+        from campanhas_engine import academia_enem_disparo_loop
+        logger.info("Agendando loop de disparos da Academia Enem...")
+        asyncio.create_task(academia_enem_disparo_loop())
     else:
         from campanhas_engine import campanhas_loop
         from empregabilidade_engine import empregabilidade_notify_loop

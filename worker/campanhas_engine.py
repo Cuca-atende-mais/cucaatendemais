@@ -384,6 +384,26 @@ def _contar_enviados_hoje_sync(phone_number_id: str) -> int:
             total += res.count or 0
     except Exception as exc:
         logger.warning(f"[Campanhas] Erro ao contar enviados hoje via disparos_divulgacao ({phone_number_id}): {exc}")
+    try:
+        # S-AE-09: 3º caminho — fila própria da Academia Enem (disparos_academia_enem), mesmo
+        # padrão dos 2 blocos acima (achado documentado na story: sem isso, o teto diário do
+        # número da Academia Enem nunca contaria os envios já feitos, sempre lendo "0 hoje").
+        ae_res = (
+            supabase.table("disparos_academia_enem").select("id").eq("instancia_uazapi", phone_number_id).execute()
+        )
+        ids_ae = [row["id"] for row in (ae_res.data or []) if row.get("id")]
+        if ids_ae:
+            res = (
+                supabase.table("logs_disparo")
+                .select("id", count="exact")
+                .in_("disparo_academia_enem_id", ids_ae)
+                .gte("enviado_em", hoje_inicio_utc)
+                .neq("status", "falhou")
+                .execute()
+            )
+            total += res.count or 0
+    except Exception as exc:
+        logger.warning(f"[Campanhas] Erro ao contar enviados hoje via disparos_academia_enem ({phone_number_id}): {exc}")
     return total
 
 
@@ -1057,6 +1077,189 @@ async def campanhas_loop():
 
         except Exception as e:
             logger.error(f"Erro no loop de disparos: {str(e)}")
+
+        await asyncio.sleep(30)
+
+
+# ─── Disparo Próprio da Academia Enem (fila isolada, S-AE-09) ─────────────────
+# Loop dedicado, NUNCA chamado por campanhas_loop() — só roda no serviço isolado
+# cuca-academia-enem (WORKER_SCOPE=academia_enem, gate em worker/main.py::startup_event).
+# Diferente dos caminhos acima (eventos_pontuais/ouvidoria_eventos/divulgacao), aqui o
+# template e o público já foram resolvidos e validados na CRIAÇÃO da fila (API do portal,
+# academia-enem/disparo/route.ts) — o worker revalida o template no momento do envio (pode
+# ter sido desativado entre a criação e o processamento) mas não faz lookup por automação/
+# canal_tipo: phone_number_id e template_nome já vêm gravados na linha de
+# disparos_academia_enem.
+
+def _claim_disparo_academia_enem_sync():
+    return supabase.rpc("claim_disparo_academia_enem").execute()
+
+
+async def processar_disparo_academia_enem(
+    disparo: dict, delay_min: int, delay_max: int, error_threshold: int
+):
+    disparo_id = disparo.get("id")
+    try:
+        await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
+            "iniciado_em": datetime.now(timezone.utc).isoformat(),
+        })
+        await _processar_disparo_academia_enem_interno(disparo, delay_min, delay_max, error_threshold)
+    except Exception as exc:
+        logger.exception(f"[Academia Enem] Erro inesperado processando disparo {disparo_id}: {exc}")
+        await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {"status": "pausada"})
+
+
+async def _processar_disparo_academia_enem_interno(
+    disparo: dict, delay_min: int, delay_max: int, error_threshold: int
+):
+    disparo_id = disparo["id"]
+    phone_number_id = disparo["instancia_uazapi"]
+    template_nome = disparo["template_nome"]
+    contatos = disparo.get("contatos") or []
+    titulo = disparo.get("titulo") or ""
+
+    token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+    if not token:
+        logger.error(f"[Academia Enem] META_SYSTEM_USER_TOKEN não configurado — pausando disparo {disparo_id}")
+        await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {"status": "pausada"})
+        return
+
+    if not contatos:
+        logger.info(f"[Academia Enem] Disparo {disparo_id} sem contatos. Marcando como concluída.")
+        await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
+            "status": "concluida",
+            "total_enviados": 0,
+            "total_erros": 0,
+            "concluido_em": datetime.now(timezone.utc).isoformat(),
+        })
+        return
+
+    # Revalidação no momento do envio (defesa em profundidade — mesmo princípio já usado no
+    # resto do arquivo: nunca confiar só na checagem feita na criação da fila).
+    tpl_res = supabase.table("meta_templates").select("variaveis") \
+        .eq("nome", template_nome) \
+        .contains("phone_number_ids", [phone_number_id]) \
+        .eq("ativo", True).eq("status", "aprovado") \
+        .limit(1).execute()
+    if not tpl_res.data:
+        logger.warning(
+            f"[Academia Enem] Template {template_nome!r} não está mais aprovado/ativo para "
+            f"phone_number_id={phone_number_id!r} — pausando disparo {disparo_id}"
+        )
+        await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {"status": "pausada"})
+        return
+    variaveis_item = tpl_res.data[0].get("variaveis")
+
+    # S-WM-67: teto efetivo (configurado × tier) menos quanto já saiu hoje neste número — a
+    # contagem (_contar_enviados_hoje_sync) já enxerga os envios desta própria fila (3º bloco).
+    daily_limit = await asyncio.to_thread(_resolver_limite_restante_hoje_sync, phone_number_id, None)
+
+    sucessos = 0
+    erros = 0
+
+    for i, contato in enumerate(contatos):
+        if i >= daily_limit:
+            logger.warning(f"[Academia Enem] Limite diário atingido ({daily_limit}). Pausando disparo {disparo_id}.")
+            await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
+                "status": "pausada_limite_diario",
+                "total_enviados": sucessos,
+                "total_erros": erros,
+            })
+            return
+
+        sleep_time = random.uniform(delay_min / 1000.0, delay_max / 1000.0)
+        await asyncio.sleep(sleep_time)
+
+        nome_contato = contato.get("nome") or "cidadão"
+        numero = normalizar_telefone(contato.get("telefone", ""))
+        lead_id = contato.get("lead_id")
+
+        components = [{
+            "type": "body",
+            "parameters": _montar_parametros_named(variaveis_item, [nome_contato]),
+        }]
+
+        ok, wamid = await _enviar_template_meta(phone_number_id, numero, token, template_nome, components)
+        if ok:
+            sucessos += 1
+            # Breadcrumb do último aviso (consumido pela S-AE-10, classificador) — só quando o
+            # contato foi resolvido a um lead_id real na criação da fila (ver Dev Notes da story:
+            # o público vindo de sessionStorage carrega só {nome, telefone}, re-resolvido pra
+            # lead_id na API de criação, telefone como chave de identidade).
+            if lead_id:
+                tz_fortaleza = timezone(timedelta(hours=-3))
+                breadcrumb = {"ultimo_disparo": {
+                    "tipo": "academia_enem",
+                    "id": str(disparo_id),
+                    "titulo": titulo[:80],
+                    "enviado_em": datetime.now(tz_fortaleza).isoformat(),
+                }}
+                try:
+                    _gravar_breadcrumb_disparo(lead_id, phone_number_id, breadcrumb)
+                except Exception as bc_err:
+                    logger.warning(f"[Academia Enem][Breadcrumb] Erro ao gravar contexto: {bc_err}")
+        else:
+            erros += 1
+
+        # Ledger por destinatário (logs_disparo) — mesma tabela compartilhada, FK própria
+        # (disparo_academia_enem_id), nunca deixa uma falha de gravação parar o loop.
+        try:
+            await asyncio.to_thread(
+                lambda: supabase.table("logs_disparo").insert({
+                    "disparo_academia_enem_id": disparo_id,
+                    "lead_id": lead_id,
+                    "telefone": numero,
+                    "wamid": wamid,
+                    "status": "enviado" if ok else "falhou",
+                }).execute()
+            )
+        except Exception as ledger_err:
+            logger.warning(f"[Academia Enem][Ledger] Erro ao gravar logs_disparo: {ledger_err}")
+
+        if (i + 1) > 5:
+            taxa_erro = (erros / (i + 1)) * 100
+            if taxa_erro > error_threshold:
+                logger.error(f"[Academia Enem] Taxa de erro {taxa_erro:.1f}% > {error_threshold}%. Pausando disparo {disparo_id}!")
+                await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
+                    "status": "pausada",
+                    "total_enviados": sucessos,
+                    "total_erros": erros,
+                })
+                return
+
+    await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
+        "status": "concluida",
+        "total_enviados": sucessos,
+        "total_erros": erros,
+        "concluido_em": datetime.now(timezone.utc).isoformat(),
+    })
+    logger.info(f"[Academia Enem] Disparo {disparo_id} concluído. Sucessos: {sucessos} | Erros: {erros}")
+
+
+async def academia_enem_disparo_loop():
+    """Loop dedicado à fila própria da Academia Enem — só é agendado por
+    worker/main.py::startup_event quando WORKER_SCOPE=='academia_enem'. Não reaproveita
+    campanhas_loop() porque aquele resolve o canal Meta por canal_tipo (Institucional) —
+    rodar aqui enviaria com o token/número errado (achado que motivou o gate WORKER_SCOPE,
+    ver Dev Notes/Change Log da S-AE-09)."""
+    logger.info("[Academia Enem] Iniciando loop de disparos próprios...")
+    await asyncio.sleep(5)
+
+    while True:
+        try:
+            delay_min = await get_config("anti_ban_delay_min", 2000)
+            delay_max = await get_config("anti_ban_delay_max", 5000)
+            error_threshold = await get_config("anti_ban_error_threshold", 10)
+
+            while True:
+                res = await asyncio.to_thread(_claim_disparo_academia_enem_sync)
+                itens = res.data or []
+                if not itens:
+                    break
+                await processar_disparo_academia_enem(itens[0], delay_min, delay_max, error_threshold)
+
+        except Exception as e:
+            logger.error(f"[Academia Enem] Erro no loop de disparos: {str(e)}")
 
         await asyncio.sleep(30)
 

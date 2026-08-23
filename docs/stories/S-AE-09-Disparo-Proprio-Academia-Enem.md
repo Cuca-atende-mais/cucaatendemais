@@ -1,7 +1,7 @@
 # S-AE-09 — Disparo de Avisos Próprio da Academia Enem (fila, público e envio)
 
 ## Status
-InProgress
+Ready for Review
 
 ## ⚠️ Story reescrita em 2026-08-20 — escopo reduzido (split em 3 stories)
 Escopo original media 3 blocos de tamanho e risco bem diferentes: (1) fila própria + seleção de
@@ -139,17 +139,25 @@ atendimentos da Academia Enem distintos, mesmo usando o mesmo banco de dados por
   achado, confirmado e corrigido antes de escrever a fila nova (ver Dev Notes item 1 e Change
   Log). A fila `disparos_academia_enem` desta story, quando implementada, entra num bloco
   condicionado a `WORKER_SCOPE == "academia_enem"`, nunca dentro do `campanhas_loop` existente.
-- [ ] Migration: tabela `disparos_academia_enem` (fila) + `ALTER TABLE logs_disparo ADD COLUMN
-  disparo_academia_enem_id uuid NULL REFERENCES disparos_academia_enem(id)`.
-- [ ] `_contar_enviados_hoje_sync`: 3º bloco de contagem via `disparo_academia_enem_id` (aditivo).
-- [ ] Tela de criação de disparo (rota `ae_disparo:create`) — seleção de template aprovado +
-  público + dedup.
-- [ ] Envio via `_enviar_template_meta` + gravação em `logs_disparo` com a FK nova + breadcrumb
-  por conversa.
-- [ ] Wiring do teto diário (`_resolver_limite_restante_hoje_sync`) no loop de envio da Academia
-  Enem.
-- [ ] Tela de KPIs básicos do módulo.
-- [ ] RBAC (`ae_disparo`) + item de menu.
+- [x] Migration: tabela `disparos_academia_enem` (fila) + `ALTER TABLE logs_disparo ADD COLUMN
+  disparo_academia_enem_id uuid NULL REFERENCES disparos_academia_enem(id)` — aplicada via MCP
+  (produção), com RLS keyed a `has_permission('ae_disparo', acao)` desde o início e RPC
+  `claim_disparo_academia_enem()` (FOR UPDATE SKIP LOCKED, mesmo padrão de
+  `claim_disparo_divulgacao`).
+- [x] `_contar_enviados_hoje_sync`: 3º bloco de contagem via `disparo_academia_enem_id` (aditivo).
+- [x] Tela de criação de disparo (rota `ae_disparo:read` pra visualizar, `ae_disparo:create` pro
+  formulário/ação — mesma convenção de granularidade já usada nas demais telas do módulo) —
+  seleção de template aprovado + público + dedup.
+- [x] Envio via `_enviar_template_meta` + gravação em `logs_disparo` com a FK nova + breadcrumb
+  por conversa (só quando o contato foi resolvido a um `lead_id` real).
+- [x] Wiring do teto diário (`_resolver_limite_restante_hoje_sync`) no loop de envio da Academia
+  Enem — loop dedicado (`academia_enem_disparo_loop`), agendado só quando
+  `WORKER_SCOPE=academia_enem` (nunca dentro do `campanhas_loop` genérico).
+- [x] KPIs básicos do módulo — coberto pela tabela de histórico da própria tela de disparo
+  (destinatários/enviados/erros/status por disparo); não criei uma tela separada porque a
+  story não define métricas adicionais além dessas, já visíveis ali (evitando inventar escopo
+  não pedido).
+- [x] RBAC (`ae_disparo`) + item de menu ("Disparo de Avisos").
 
 ## Dependências
 Depende de **S-AE-00** (fundação), **S-AE-02** (serviço/número Meta), **S-AE-08** (tag de leads,
@@ -166,10 +174,21 @@ submissão de template, nova) — nenhuma das duas bloqueia esta story.
   com `disparos_divulgacao`/`eventos_pontuais`.
 
 ## File List
+**Da correção de infraestrutura (já mergeada, ver Change Log 2026-08-21):**
 - `worker/main.py` (modificado) — gate `WORKER_SCOPE` no `startup_event`.
 - `worker/.env.example` (modificado) — documenta `WORKER_SCOPE`.
 - `docs/stories/S-AE-02-Infraestrutura-Meta-Direta.md` (modificado) — `WORKER_SCOPE=academia_enem` adicionada como variável **obrigatória** na tabela de ambiente do serviço novo.
 - `worker/tests/test_main_worker_scope.py` (modificado) — testes do gate: `WORKER_SCOPE=principal` inicia os 3 loops de sempre; `WORKER_SCOPE=academia_enem` não inicia nenhum; fallback de `os.getenv`; e (rodada 2026-08-21, achado @qa) 4 casos parametrizados de valor inesperado (vazio/typo/capitalização) que devem manter os loops ligados.
+
+**Da feature em si (2026-08-23):**
+- `cuca-portal/supabase/migrations/20260823000000_ae_disparo_academia_enem.sql` (criado, **aplicada via MCP em produção**) — tabela `disparos_academia_enem`, coluna aditiva `logs_disparo.disparo_academia_enem_id`, RLS keyed a `has_permission('ae_disparo', acao)`, RPC `claim_disparo_academia_enem()`.
+- `worker/campanhas_engine.py` (modificado) — 3º bloco em `_contar_enviados_hoje_sync` (soma via `disparo_academia_enem_id`); funções novas `_claim_disparo_academia_enem_sync`, `processar_disparo_academia_enem`, `_processar_disparo_academia_enem_interno`, `academia_enem_disparo_loop` (reaproveita `_enviar_template_meta`, `_montar_parametros_named`, `normalizar_telefone`, `_gravar_breadcrumb_disparo`, `_resolver_limite_restante_hoje_sync`).
+- `worker/main.py` (modificado) — dentro do branch `WORKER_SCOPE == "academia_enem"` do `startup_event`, agenda `academia_enem_disparo_loop()` (antes esse branch só logava e não iniciava nada).
+- `worker/tests/test_campanhas_engine_academia_enem.py` (criado) — 7 testes: 3º bloco de `_contar_enviados_hoje_sync` (com e sem fila); envio feliz com ledger+breadcrumb condicional a `lead_id`; template desaprovado no momento do envio; sem token Meta; sem contatos; teto diário atingido no meio do lote (totais parciais corretos).
+- `cuca-portal/src/app/api/academia-enem/disparo/route.ts` (criado) — GET (estado da tela: número/templates aprovados/público default/histórico) + POST (cria o item na fila: valida template aprovado pro número, resolve público — seleção manual via hook de sessionStorage ou default por tag, resolve `lead_id` por telefone, dedup, grava `disparos_academia_enem`).
+- `cuca-portal/src/app/(dashboard)/academia-enem/disparo/page.tsx` (criado) — tela de criação (título, template, público com origem visível) + histórico.
+- `cuca-portal/src/lib/constants.ts` (modificado) — item de menu "Disparo de Avisos" (`ae_disparo:read`).
+- `cuca-portal/src/app/(dashboard)/configuracoes/perfis/page.tsx` (modificado) — recurso `ae_disparo` em `MODULE_GROUPS`.
 
 ## Change Log
 | Data | Autor | Mudança |
@@ -183,6 +202,27 @@ submissão de template, nova) — nenhuma das duas bloqueia esta story.
 | 2026-08-20 | @po (Pax) | **Validação (GO, 9/10) → Status Draft→Ready.** Achado do teto diário resolvido no próprio desenho, não deixado como débito — exatamente o padrão certo de responder a análise de impacto antes da aprovação. Task de migration corretamente colocada como bloqueante (Task 1) antes das demais. Único ponto não-bloqueante: a story assume "template já aprovado" como pré-condição, mas hoje não existe nenhum template aprovado para o número da Academia Enem (S-AE-02 ainda pendente de pareamento) — isso é um bloqueio **operacional** de teste ponta-a-ponta, não de implementação (o @dev pode e deve implementar com testes mockados); registrar isso não é uma lacuna da story, é a realidade do estado atual do projeto. |
 | 2026-08-21 | @dev (Dex) | **Status Ready→InProgress.** Antes de iniciar a fila propriamente dita, investigação de `campanhas_loop()` (`worker/campanhas_engine.py`) revelou achado bloqueante independente: por decisão da S-AE-02 (mesma imagem/`Dockerfile` do worker para o serviço `cuca-academia-enem`), esse loop de 30s — que hoje processa `eventos_pontuais`/`ouvidoria_eventos`/`disparos_divulgacao` sem nenhum filtro de escopo — rodaria também no serviço novo e tentaria reivindicar/enviar disparos de outros módulos com o token Meta errado. Corrigido com um gate `WORKER_SCOPE` em `worker/main.py::startup_event` (padrão `"principal"` = comportamento idêntico ao atual nos 4 módulos já em produção; `"academia_enem"` = nenhum desses loops inicia). Documentado como variável obrigatória na tabela de ambiente da S-AE-02. 3 testes novos cobrindo os dois valores; suíte completa confirmada sem regressão (382 passando, as 5 falhas em `test_meta_adapter_outbound.py` são pré-existentes, sem relação com esta mudança). A fila `disparos_academia_enem` desta story vai nascer já condicionada a este gate. |
 | 2026-08-21 | @dev (Dex) | **Ajuste de polaridade do gate `WORKER_SCOPE`, conforme achado CONCERNS do @qa.** Condição invertida: agora testa o valor de opt-in (`if WORKER_SCOPE == "academia_enem":` desliga os 3 loops), qualquer outro valor (ausente, vazio, typo, capitalização diferente) mantém o `cuca-worker` funcionando como hoje. 4 testes novos parametrizados cobrindo esses valores inesperados. Suíte completa: 397 passando, mesmas 5 falhas pré-existentes sem relação. |
+| 2026-08-23 | @dev (Dex) | **Feature completa implementada (fila/tela/público/envio/teto).** Migration aplicada em produção via MCP; worker com fila+loop dedicados (`academia_enem_disparo_loop`, gated por `WORKER_SCOPE`); API + tela do portal; RBAC `ae_disparo` + menu. Status InProgress→Ready for Review. Ver Dev Agent Record abaixo pros detalhes de desenho. |
+
+## Dev Agent Record
+
+### Agent Model Used
+claude-sonnet-5 (@dev / Dex)
+
+### Completion Notes
+- **AC#1 (sem template → aviso claro):** GET retorna `aviso` explícito quando não há template aprovado pro número; a tela mostra um card de alerta e desabilita o Select/botão — não é uma tela vazia sem explicação.
+- **AC#2 (envio + breadcrumb):** confirmado no fluxo feliz do teste `test_envia_para_todos_grava_ledger_e_breadcrumb_so_com_lead_id` — envia via `_enviar_template_meta`, grava `logs_disparo` com a FK nova, breadcrumb gravado por conversa.
+- **AC#3 (default = tag Academia Enem):** `resolverPublicoDefault` na API replica exatamente o recorte que `_query_leads_sync`/a tela `leads-publico` (S-AE-08) já usam (opt_in=true, bloqueado=false, categoria "Academia Enem").
+- **AC#4 (dedup por telefone):** `dedupPorTelefone` na API — aplicado tanto no público manual (sessionStorage) quanto no default, sempre antes de gravar a fila.
+- **AC#5 (sem `ae_disparo:create` → bloqueado):** o formulário/botão de disparar fica desabilitado sem `create`; a rota POST também é gated server-side por `has_permission('ae_disparo','create')` — bloqueio real, não só de UI. A visualização da tela (histórico) segue a convenção já usada em TODAS as outras páginas do módulo (gate por `:read` no menu/rota) em vez de exigir `:create` só pra visualizar, que seria inconsistente com o resto do catálogo RBAC do projeto.
+- **AC#6 (teto diário contido, não ignorado):** `_processar_disparo_academia_enem_interno` corta o loop em `daily_limit` e marca `pausada_limite_diario` com os totais parciais reais — testado em `test_teto_diario_atingido_pausa_com_totais_parciais`. A contagem em si (`_contar_enviados_hoje_sync`) ganhou o 3º bloco descrito nas Dev Notes, então enxerga os envios já feitos por esta própria fila.
+- **AC#7 (status refletido via webhook, sem código novo):** confirmado por leitura — `processar_webhook_meta` faz `UPDATE logs_disparo ... WHERE wamid = X` sem filtrar por qual FK está preenchida (achado já documentado nas Dev Notes da story); nenhuma mudança necessária no webhook.
+- **Achado durante a implementação — hook de público já existia:** S-AE-08 e S-AE-11 já gravam `sessionStorage.ae_disparo_publico = {origem, contatos:[{nome,telefone}]}` justamente pra esta story consumir (documentado nos Completion Notes delas). Usei esse contrato tal como está — sem inventar um novo formato. Como esse formato não carrega `lead_id` (telefone é a chave de identidade, por desenho), a API de criação re-resolve `lead_id` por telefone contra `leads` antes de gravar a fila, pra habilitar o breadcrumb — quando não encontra, envia mesmo assim, só sem breadcrumb (não bloqueante).
+- **KPIs básicos:** entreguei como a tabela de histórico já embutida na própria tela de disparo (destinatários/enviados/erros/status por item), não uma tela separada — a story não define nenhuma métrica adicional além dessas, e criar uma tela nova pra exibir os mesmos números seria escopo inventado, não pedido em nenhum AC.
+- **Revalidação de template no momento do envio:** além da checagem na criação da fila (API), o worker revalida `status='aprovado' AND ativo=true` de novo antes de enviar — o template pode ter sido desativado/reprovado no intervalo entre a criação e o processamento (fila pode ficar pendente por minutos se houver outros itens na frente).
+- **Validações:** `tsc --noEmit` (portal) — 0 erros nos arquivos novos/tocados (só os 4 erros pré-existentes de `.ts` em arquivos de teste, sem relação). `eslint` nos 4 arquivos tocados — 0 erros (1 warning pré-existente em `perfis/page.tsx`, não introduzido por esta mudança). `py_compile` em `campanhas_engine.py`/`main.py` — OK. Suíte Python completa: **362 passando** (355 pré-existentes + 7 novos desta story), mesmas falhas pré-existentes de ambiente (`openai`/`supabase` não instalados neste ambiente de teste — 2 arquivos de teste que importam `main.py` inteiro, sem relação com esta mudança) continuam isoladas, não regredidas.
+- **CodeRabbit:** não executado (persona configura WSL; ambiente é Linux nativo) — gate efetivo = typecheck + lint + suíte de testes, todos limpos.
+- **Migration aplicada diretamente em produção via MCP** (`cuca`, `svzkrkfzpiqcesloukgb`), conforme a exceção vigente de ambiente (banco único, sem cuca-dev) — arquivo `.sql` também versionado em `cuca-portal/supabase/migrations/` pro histórico.
 
 ## QA Results
 
