@@ -372,3 +372,40 @@ async def test_continuar_retomada_envia_so_pendentes_e_fecha_cumulativo(monkeypa
     assert enviados_numeros == {"5585999990002", "5585999990003"}
     # fechamento usou a contagem cumulativa real (5 enviados, 1 erro), não só os 2 desta chamada
     assert resultado["status"] == "concluida"
+
+
+@pytest.mark.asyncio
+async def test_retomada_que_pausa_de_novo_grava_totais_cumulativos_nao_locais(monkeypatch):
+    """B-1 (achado QA, 2026-08-23 — reproduzido antes da correção, agora regressão coberta):
+    disparo original já tinha enviado 100 (histórico real em logs_disparo). Retomada tenta 2
+    pendentes, mas o teto diário já está zerado (0 restante) — pausa de novo IMEDIATAMENTE.
+    Antes da correção, isso gravava total_enviados=0 (só o local desta chamada), regredindo o
+    valor real (100) pra 0. Depois da correção, deve gravar o total cumulativo real (100)."""
+    disparo = _disparo_base(contatos=[
+        {"lead_id": "lead-1", "nome": "Ana", "telefone": "5585999990001"},
+        {"lead_id": "lead-2", "nome": "Beto", "telefone": "5585999990002"},
+    ])
+    monkeypatch.setattr(camp, "_fetch_all_telefones_tentados_academia_enem_sync", lambda disparo_id: set())
+
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.contains.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"variaveis": []}
+    ]
+    # Contagem cumulativa real: 100 enviados, 3 erros (histórico completo, não desta chamada)
+    mock_sb.table.return_value.select.return_value.eq.return_value.neq.return_value.execute.return_value.count = 100
+    mock_sb.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value.count = 3
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "token-fake")
+    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_sync", lambda phone, daily_limit: 0)  # teto já zerado
+    enviar_mock = AsyncMock()
+    monkeypatch.setattr(camp, "_enviar_template_meta", enviar_mock)
+    update_mock = MagicMock()
+    monkeypatch.setattr(camp, "_update_db_sync", update_mock)
+
+    resultado = await camp.continuar_retomada_academia_enem(disparo, 0, 0, 100)
+
+    enviar_mock.assert_not_called()  # daily_limit=0 pausa antes de tentar qualquer envio
+    assert resultado["status"] == "pausada_limite_diario"
+    ultima_chamada = update_mock.call_args_list[-1]
+    assert ultima_chamada.args[2]["total_enviados"] == 100  # cumulativo real, não 0 (local desta chamada)
+    assert ultima_chamada.args[2]["total_erros"] == 3

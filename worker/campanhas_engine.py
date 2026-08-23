@@ -1146,11 +1146,14 @@ def _fetch_all_telefones_tentados_academia_enem_sync(disparo_id: str) -> set:
     return telefones
 
 
-async def _fechar_disparo_academia_enem_cumulativo(disparo_id: str) -> None:
-    """Fecha o disparo usando a contagem cumulativa real de logs_disparo (histórico completo:
-    caminho fresco + qualquer retomada anterior) — mesma convenção já validada em
+async def _contar_totais_academia_enem_cumulativo(disparo_id: str) -> tuple[int, int]:
+    """Conta o total real (histórico completo: caminho fresco + qualquer retomada anterior)
+    direto de `logs_disparo` — mesma convenção já validada em
     _enviar_para_leads_pendentes/usar_contagem_cumulativa: enviados = status <> 'falhou',
-    erros = status IN ('falhou', 'aviso')."""
+    erros = status IN ('falhou', 'aviso'). Extraído (achado QA B-1, 2026-08-23) pra ser
+    reaproveitado tanto no fechamento por sucesso quanto nas 2 pausas (teto diário / taxa de
+    erro) — antes só o fechamento por sucesso usava contagem real; uma retomada que pausasse
+    de novo gravava só o contador local desta chamada, regredindo o total exibido."""
     enviados_res = await asyncio.to_thread(
         lambda: supabase.table("logs_disparo").select("id", count="exact")
         .eq("disparo_academia_enem_id", disparo_id).neq("status", "falhou").execute()
@@ -1159,12 +1162,30 @@ async def _fechar_disparo_academia_enem_cumulativo(disparo_id: str) -> None:
         lambda: supabase.table("logs_disparo").select("id", count="exact")
         .eq("disparo_academia_enem_id", disparo_id).in_("status", ["falhou", "aviso"]).execute()
     )
+    return enviados_res.count or 0, erros_res.count or 0
+
+
+async def _fechar_disparo_academia_enem_cumulativo(disparo_id: str) -> None:
+    """Fecha (status='concluida') usando a contagem cumulativa real."""
+    total_enviados, total_erros = await _contar_totais_academia_enem_cumulativo(disparo_id)
     await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
         "status": "concluida",
-        "total_enviados": enviados_res.count or 0,
-        "total_erros": erros_res.count or 0,
+        "total_enviados": total_enviados,
+        "total_erros": total_erros,
         "concluido_em": datetime.now(timezone.utc).isoformat(),
     })
+
+
+async def _resolver_totais_para_gravar(
+    disparo_id: str, sucessos_local: int, erros_local: int, usar_contagem_cumulativa: bool
+) -> tuple[int, int]:
+    """Acesso único pros 2 pontos de pausa (teto diário / taxa de erro): quando
+    `usar_contagem_cumulativa` (chamado a partir de uma retomada), relê o total real de
+    `logs_disparo` em vez de gravar só o que ESTA chamada enviou — mesmo princípio já aplicado
+    no fechamento por sucesso (achado QA B-1)."""
+    if usar_contagem_cumulativa:
+        return await _contar_totais_academia_enem_cumulativo(disparo_id)
+    return sucessos_local, erros_local
 
 
 async def _processar_disparo_academia_enem_interno(
@@ -1246,10 +1267,13 @@ async def _processar_disparo_academia_enem_interno(
     for i, contato in enumerate(contatos):
         if i >= daily_limit:
             logger.warning(f"[Academia Enem] Limite diário atingido ({daily_limit}). Pausando disparo {disparo_id}.")
+            total_enviados, total_erros = await _resolver_totais_para_gravar(
+                disparo_id, sucessos, erros, usar_contagem_cumulativa
+            )
             await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
                 "status": "pausada_limite_diario",
-                "total_enviados": sucessos,
-                "total_erros": erros,
+                "total_enviados": total_enviados,
+                "total_erros": total_erros,
             })
             return {"status": "pausada_limite_diario", "sucessos": sucessos, "erros": erros}
 
@@ -1306,10 +1330,13 @@ async def _processar_disparo_academia_enem_interno(
             taxa_erro = (erros / (i + 1)) * 100
             if taxa_erro > error_threshold:
                 logger.error(f"[Academia Enem] Taxa de erro {taxa_erro:.1f}% > {error_threshold}%. Pausando disparo {disparo_id}!")
+                total_enviados, total_erros = await _resolver_totais_para_gravar(
+                    disparo_id, sucessos, erros, usar_contagem_cumulativa
+                )
                 await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
                     "status": "pausada",
-                    "total_enviados": sucessos,
-                    "total_erros": erros,
+                    "total_enviados": total_enviados,
+                    "total_erros": total_erros,
                 })
                 return {"status": "pausada", "sucessos": sucessos, "erros": erros}
 
