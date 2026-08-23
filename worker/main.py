@@ -536,6 +536,39 @@ async def retomar_disparo_endpoint(origem: str, item_id: str, request: Request, 
     return {"status": "retomada_iniciada"}
 
 
+@app.post("/academia-enem/disparo/{disparo_id}/retomar")
+async def retomar_disparo_academia_enem_endpoint(disparo_id: str, request: Request, background_tasks: BackgroundTasks):
+    """S-AE-09 (achado QA A-3, 2026-08-23): retomada manual de disparo pausado por teto
+    diário/erro — mesmo padrão de auth M2M e de claim síncrono + continuação em background
+    já usado por /retomar-disparo/{origem}/{item_id} acima. O portal SEMPRE chama este
+    endpoint via WORKER_URL_ACADEMIA_ENEM (nunca WORKER_URL) — só o serviço isolado tem o
+    META_SYSTEM_USER_TOKEN certo pro número da Academia Enem."""
+    expected = os.getenv("WEBHOOK_INTERNAL_TOKEN")
+    if not expected:
+        logger.error("[academia-enem/retomar] WEBHOOK_INTERNAL_TOKEN não configurada no worker — rejeitando.")
+        return Response(status_code=503, content="internal token not configured")
+    if request.headers.get("x-internal-token") != expected:
+        logger.warning("[academia-enem/retomar] token interno inválido — requisição rejeitada (403).")
+        return Response(status_code=403, content="Token inválido")
+
+    from campanhas_engine import (  # noqa: PLC0415
+        get_config,
+        reivindicar_retomada_academia_enem,
+        continuar_retomada_academia_enem,
+    )
+    delay_min = await get_config("anti_ban_delay_min", 2000)
+    delay_max = await get_config("anti_ban_delay_max", 5000)
+    error_threshold = await get_config("anti_ban_error_threshold", 10)
+
+    claim = await reivindicar_retomada_academia_enem(disparo_id)
+    if not claim["ok"]:
+        return Response(status_code=claim["status_code"], content=claim["motivo"])
+    background_tasks.add_task(
+        continuar_retomada_academia_enem, claim["disparo"], delay_min, delay_max, error_threshold
+    )
+    return {"status": "retomada_iniciada"}
+
+
 @app.post("/buscar-vagas")
 async def buscar_vagas_endpoint(request: Request):
     """S18-02: Busca vagas abertas em todas as CUCAs para o motor-agente."""

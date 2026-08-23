@@ -141,6 +141,8 @@ async def test_envia_para_todos_grava_ledger_e_breadcrumb_so_com_lead_id(monkeyp
     # breadcrumb só pro contato com lead_id (Ana) — Beto (lead_id=None) não gera breadcrumb
     assert breadcrumb_mock.call_count == 1
     assert breadcrumb_mock.call_args[0][0] == "lead-1"
+    # A-1 (achado QA): agente_tipo explícito, não o default "Institucional" da função compartilhada
+    assert breadcrumb_mock.call_args.kwargs["agente_tipo"] == "academia_enem"
 
     ultima_chamada = update_mock.call_args_list[-1]
     assert ultima_chamada.args[0] == "disparos_academia_enem"
@@ -230,3 +232,143 @@ async def test_teto_diario_atingido_pausa_com_totais_parciais(monkeypatch):
     assert ultima_chamada.args[2]["status"] == "pausada_limite_diario"
     assert ultima_chamada.args[2]["total_enviados"] == 1
     assert ultima_chamada.args[2]["total_erros"] == 0
+
+
+@pytest.mark.asyncio
+async def test_template_com_mais_de_1_variavel_pausa_sem_tentar_nenhum_envio(monkeypatch):
+    """A-4 (achado QA, 2026-08-23): o envio só preenche 1 variável (nome) — template com 2+
+    exigiria mais parâmetros do que o código monta, e a Meta rejeitaria 100% dos envios
+    silenciosamente. Guard explícito: pausa ANTES de gastar o público."""
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.contains.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"variaveis": [{"posicao": 1, "descricao": "nome"}, {"posicao": 2, "descricao": "mes"}]}
+    ]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "token-fake")
+    enviar_mock = AsyncMock()
+    monkeypatch.setattr(camp, "_enviar_template_meta", enviar_mock)
+    update_mock = MagicMock()
+    monkeypatch.setattr(camp, "_update_db_sync", update_mock)
+
+    await camp._processar_disparo_academia_enem_interno(_disparo_base(), 0, 0, 100)
+
+    enviar_mock.assert_not_called()
+    update_mock.assert_called_once_with("disparos_academia_enem", "disparo-ae-1", {"status": "pausada"})
+
+
+@pytest.mark.asyncio
+async def test_template_com_exatamente_1_variavel_no_guard_nao_bloqueia(monkeypatch):
+    """Regressão: 0 ou 1 variável continua liberado (não é uma restrição nova indevida)."""
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.contains.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"variaveis": [{"posicao": 1, "descricao": "nome"}]}
+    ]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "token-fake")
+    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_sync", lambda phone, daily_limit: 10)
+    enviar_mock = AsyncMock(return_value=(True, "wamid.Z"))
+    monkeypatch.setattr(camp, "_enviar_template_meta", enviar_mock)
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+    monkeypatch.setattr(camp, "_update_db_sync", MagicMock())
+
+    resultado = await camp._processar_disparo_academia_enem_interno(_disparo_base(), 0, 0, 100)
+
+    assert enviar_mock.call_count == 2
+    assert resultado["status"] == "concluida"
+
+
+# ─── Retomada manual (achado QA A-3) ───────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_reivindicar_retomada_disparo_nao_encontrado(monkeypatch):
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    resultado = await camp.reivindicar_retomada_academia_enem("disparo-inexistente")
+
+    assert resultado == {"ok": False, "status_code": 404, "motivo": "disparo não encontrado"}
+
+
+@pytest.mark.asyncio
+async def test_reivindicar_retomada_status_nao_pausado_rejeita(monkeypatch):
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"id": "disparo-ae-1", "status": "concluida"}
+    ]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+
+    resultado = await camp.reivindicar_retomada_academia_enem("disparo-ae-1")
+
+    assert resultado["ok"] is False
+    assert resultado["status_code"] == 409
+
+
+@pytest.mark.asyncio
+async def test_reivindicar_retomada_corrida_perdida_retorna_409(monkeypatch):
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"id": "disparo-ae-1", "status": "pausada_limite_diario"}
+    ]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_claim_retomada_sync", lambda *_a, **_kw: False)
+
+    resultado = await camp.reivindicar_retomada_academia_enem("disparo-ae-1")
+
+    assert resultado["ok"] is False
+    assert resultado["status_code"] == 409
+
+
+@pytest.mark.asyncio
+async def test_reivindicar_retomada_sucesso(monkeypatch):
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"id": "disparo-ae-1", "status": "pausada"}
+    ]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_claim_retomada_sync", lambda *_a, **_kw: True)
+
+    resultado = await camp.reivindicar_retomada_academia_enem("disparo-ae-1")
+
+    assert resultado["ok"] is True
+    assert resultado["disparo"]["id"] == "disparo-ae-1"
+
+
+@pytest.mark.asyncio
+async def test_continuar_retomada_envia_so_pendentes_e_fecha_cumulativo(monkeypatch):
+    """3 contatos na fila original, 1 já tentado (telefone já em logs_disparo) — só os outros
+    2 devem ser reenviados; o fechamento relê o total cumulativo real, não só desta chamada."""
+    disparo = _disparo_base(contatos=[
+        {"lead_id": "lead-1", "nome": "Ana", "telefone": "5585999990001"},
+        {"lead_id": "lead-2", "nome": "Beto", "telefone": "5585999990002"},
+        {"lead_id": "lead-3", "nome": "Caio", "telefone": "5585999990003"},
+    ])
+
+    monkeypatch.setattr(
+        camp, "_fetch_all_telefones_tentados_academia_enem_sync",
+        lambda disparo_id: {"5585999990001"},
+    )
+
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.eq.return_value.contains.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"variaveis": [{"posicao": 1, "descricao": "nome"}]}
+    ]
+    # Fechamento cumulativo: 2 chamadas a logs_disparo (enviados/erros) via .eq().neq()/.in_()
+    mock_sb.table.return_value.select.return_value.eq.return_value.neq.return_value.execute.return_value.count = 5
+    mock_sb.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value.count = 1
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setenv("META_SYSTEM_USER_TOKEN", "token-fake")
+    monkeypatch.setattr(camp, "_resolver_limite_restante_hoje_sync", lambda phone, daily_limit: 10)
+    enviar_mock = AsyncMock(return_value=(True, "wamid.R"))
+    monkeypatch.setattr(camp, "_enviar_template_meta", enviar_mock)
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+    monkeypatch.setattr(camp, "_update_db_sync", MagicMock())
+
+    resultado = await camp.continuar_retomada_academia_enem(disparo, 0, 0, 100)
+
+    assert resultado["pendentes_encontrados"] == 2
+    assert enviar_mock.call_count == 2
+    enviados_numeros = {c.args[1] for c in enviar_mock.call_args_list}
+    assert enviados_numeros == {"5585999990002", "5585999990003"}
+    # fechamento usou a contagem cumulativa real (5 enviados, 1 erro), não só os 2 desta chamada
+    assert resultado["status"] == "concluida"

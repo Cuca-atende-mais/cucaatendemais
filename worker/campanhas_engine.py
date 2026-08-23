@@ -61,13 +61,24 @@ def _claim_ouvidoria_evento_sync():
     return supabase.rpc("claim_ouvidoria_evento").execute()
 
 
-def _gravar_breadcrumb_disparo(lead_id: str, origem_id: str, breadcrumb: dict) -> None:
+def _gravar_breadcrumb_disparo(
+    lead_id: str, origem_id: str, breadcrumb: dict, agente_tipo: str = "Institucional"
+) -> None:
     """
     Grava o breadcrumb do disparo na conversa do lead sem apagar o estado que o
     motor-agente gerencia em metadata (conversa_engajada, unidade_selecionada,
     aguardando_unidade — S-WM-31). Um upsert com "metadata" completo substitui a
     coluna inteira (Postgrest não faz merge de jsonb) — por isso lê o metadata
     atual e mescla em memória antes de escrever.
+
+    `agente_tipo` (achado QA S-AE-09, 2026-08-23): default `"Institucional"` preserva o
+    comportamento dos 3 chamadores pré-existentes (eventos_pontuais/ouvidoria_eventos/
+    divulgação — todos usam o número Institucional, então o valor fixo sempre foi
+    coincidentemente correto pra eles). O disparo próprio da Academia Enem usa um número
+    diferente — passar `agente_tipo="academia_enem"` explicitamente evita criar uma
+    conversa nova já nascendo com o `agente_tipo` errado (só importa pra quem nunca
+    respondeu: no 1º inbound real, `meta_adapter_inbound.py` sobrescreve `agente_tipo`
+    de qualquer forma).
 
     Usa .limit(1) em vez do modo "single object" do Postgrest: com 0 linhas, esse
     modo devolve None como o próprio retorno de .execute() (não um objeto com
@@ -107,7 +118,7 @@ def _gravar_breadcrumb_disparo(lead_id: str, origem_id: str, breadcrumb: dict) -
         supabase.table("conversas").insert({
             "lead_id": lead_id,
             "origem_id": origem_id,
-            "agente_tipo": "Institucional",
+            "agente_tipo": agente_tipo,
             "canal_ativo": "meta",
             "status": "ativa",
             "metadata": breadcrumb,
@@ -1109,30 +1120,90 @@ async def processar_disparo_academia_enem(
         await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {"status": "pausada"})
 
 
+def _fetch_all_telefones_tentados_academia_enem_sync(disparo_id: str) -> set:
+    """Mesmo padrão de paginação de _fetch_all_lead_ids_tentados_sync, mas por TELEFONE, não
+    lead_id — achado QA/retomada (2026-08-23): nem todo contato da fila tem lead_id resolvido
+    (público vindo de sessionStorage pode não bater com nenhum lead cadastrado), então usar
+    lead_id como chave de "já tentado" perderia esses contatos (lead_id NULL não distingue
+    "já tentei este" de "nunca tentei nenhum sem lead_id"). Telefone é a chave de identidade
+    real do ledger (sempre gravado, nunca NULL) — mesmo princípio já usado no hook de público
+    (S-AE-08/S-AE-11)."""
+    telefones: set = set()
+    offset = 0
+    while True:
+        res = (
+            supabase.table("logs_disparo")
+            .select("telefone")
+            .eq("disparo_academia_enem_id", disparo_id)
+            .range(offset, offset + _POSTGREST_PAGE_SIZE - 1)
+            .execute()
+        )
+        rows = res.data or []
+        telefones.update(row["telefone"] for row in rows if row.get("telefone"))
+        if len(rows) < _POSTGREST_PAGE_SIZE:
+            break
+        offset += _POSTGREST_PAGE_SIZE
+    return telefones
+
+
+async def _fechar_disparo_academia_enem_cumulativo(disparo_id: str) -> None:
+    """Fecha o disparo usando a contagem cumulativa real de logs_disparo (histórico completo:
+    caminho fresco + qualquer retomada anterior) — mesma convenção já validada em
+    _enviar_para_leads_pendentes/usar_contagem_cumulativa: enviados = status <> 'falhou',
+    erros = status IN ('falhou', 'aviso')."""
+    enviados_res = await asyncio.to_thread(
+        lambda: supabase.table("logs_disparo").select("id", count="exact")
+        .eq("disparo_academia_enem_id", disparo_id).neq("status", "falhou").execute()
+    )
+    erros_res = await asyncio.to_thread(
+        lambda: supabase.table("logs_disparo").select("id", count="exact")
+        .eq("disparo_academia_enem_id", disparo_id).in_("status", ["falhou", "aviso"]).execute()
+    )
+    await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
+        "status": "concluida",
+        "total_enviados": enviados_res.count or 0,
+        "total_erros": erros_res.count or 0,
+        "concluido_em": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 async def _processar_disparo_academia_enem_interno(
-    disparo: dict, delay_min: int, delay_max: int, error_threshold: int
-):
+    disparo: dict,
+    delay_min: int,
+    delay_max: int,
+    error_threshold: int,
+    contatos_override: list | None = None,
+    usar_contagem_cumulativa: bool = False,
+) -> dict:
+    """`contatos_override`/`usar_contagem_cumulativa` (achado QA, 2026-08-23 — retomada manual
+    de disparo pausado): quando vem de `continuar_retomada_academia_enem`, `contatos_override`
+    é só os pendentes (ainda não tentados) e o fechamento por sucesso relê o total real de
+    `logs_disparo` (histórico completo), não só o que ESTA chamada enviou — mesmo princípio já
+    usado em `_enviar_para_leads_pendentes`."""
     disparo_id = disparo["id"]
     phone_number_id = disparo["instancia_uazapi"]
     template_nome = disparo["template_nome"]
-    contatos = disparo.get("contatos") or []
+    contatos = contatos_override if contatos_override is not None else (disparo.get("contatos") or [])
     titulo = disparo.get("titulo") or ""
 
     token = os.getenv("META_SYSTEM_USER_TOKEN", "")
     if not token:
         logger.error(f"[Academia Enem] META_SYSTEM_USER_TOKEN não configurado — pausando disparo {disparo_id}")
         await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {"status": "pausada"})
-        return
+        return {"status": "pausada", "motivo": "sem META_SYSTEM_USER_TOKEN"}
 
     if not contatos:
-        logger.info(f"[Academia Enem] Disparo {disparo_id} sem contatos. Marcando como concluída.")
-        await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
-            "status": "concluida",
-            "total_enviados": 0,
-            "total_erros": 0,
-            "concluido_em": datetime.now(timezone.utc).isoformat(),
-        })
-        return
+        logger.info(f"[Academia Enem] Disparo {disparo_id} sem contatos pendentes. Marcando como concluída.")
+        if usar_contagem_cumulativa:
+            await _fechar_disparo_academia_enem_cumulativo(disparo_id)
+        else:
+            await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
+                "status": "concluida",
+                "total_enviados": 0,
+                "total_erros": 0,
+                "concluido_em": datetime.now(timezone.utc).isoformat(),
+            })
+        return {"status": "concluida", "sucessos": 0, "erros": 0}
 
     # Revalidação no momento do envio (defesa em profundidade — mesmo princípio já usado no
     # resto do arquivo: nunca confiar só na checagem feita na criação da fila).
@@ -1147,8 +1218,23 @@ async def _processar_disparo_academia_enem_interno(
             f"phone_number_id={phone_number_id!r} — pausando disparo {disparo_id}"
         )
         await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {"status": "pausada"})
-        return
-    variaveis_item = tpl_res.data[0].get("variaveis")
+        return {"status": "pausada", "motivo": "template não aprovado"}
+    variaveis_item = tpl_res.data[0].get("variaveis") or []
+
+    # Achado QA A-4 (2026-08-23): o envio só preenche 1 variável (nome). Se o template
+    # aprovado tiver mais de 1 posição, faltariam parâmetros e a Meta rejeitaria 100% dos
+    # envios (HTTP 400) — silenciosamente, contabilizado como "erro" sem explicação clara.
+    # Guard explícito: pausa ANTES de gastar o público, com motivo diagnosticável nos logs
+    # (a validação simétrica também roda na criação da fila, ver academia-enem/disparo/
+    # route.ts — isto aqui é defesa em profundidade, não a única barreira).
+    if len(variaveis_item) > 1:
+        logger.error(
+            f"[Academia Enem] Template {template_nome!r} exige {len(variaveis_item)} variáveis "
+            f"— o envio da Academia Enem hoje só preenche 1 (nome). Pausando disparo {disparo_id} "
+            "sem tentar nenhum envio."
+        )
+        await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {"status": "pausada"})
+        return {"status": "pausada", "motivo": "template exige mais de 1 variável"}
 
     # S-WM-67: teto efetivo (configurado × tier) menos quanto já saiu hoje neste número — a
     # contagem (_contar_enviados_hoje_sync) já enxerga os envios desta própria fila (3º bloco).
@@ -1165,7 +1251,7 @@ async def _processar_disparo_academia_enem_interno(
                 "total_enviados": sucessos,
                 "total_erros": erros,
             })
-            return
+            return {"status": "pausada_limite_diario", "sucessos": sucessos, "erros": erros}
 
         sleep_time = random.uniform(delay_min / 1000.0, delay_max / 1000.0)
         await asyncio.sleep(sleep_time)
@@ -1195,7 +1281,7 @@ async def _processar_disparo_academia_enem_interno(
                     "enviado_em": datetime.now(tz_fortaleza).isoformat(),
                 }}
                 try:
-                    _gravar_breadcrumb_disparo(lead_id, phone_number_id, breadcrumb)
+                    _gravar_breadcrumb_disparo(lead_id, phone_number_id, breadcrumb, agente_tipo="academia_enem")
                 except Exception as bc_err:
                     logger.warning(f"[Academia Enem][Breadcrumb] Erro ao gravar contexto: {bc_err}")
         else:
@@ -1225,15 +1311,69 @@ async def _processar_disparo_academia_enem_interno(
                     "total_enviados": sucessos,
                     "total_erros": erros,
                 })
-                return
+                return {"status": "pausada", "sucessos": sucessos, "erros": erros}
 
-    await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
-        "status": "concluida",
-        "total_enviados": sucessos,
-        "total_erros": erros,
-        "concluido_em": datetime.now(timezone.utc).isoformat(),
-    })
+    if usar_contagem_cumulativa:
+        await _fechar_disparo_academia_enem_cumulativo(disparo_id)
+    else:
+        await asyncio.to_thread(_update_db_sync, "disparos_academia_enem", disparo_id, {
+            "status": "concluida",
+            "total_enviados": sucessos,
+            "total_erros": erros,
+            "concluido_em": datetime.now(timezone.utc).isoformat(),
+        })
     logger.info(f"[Academia Enem] Disparo {disparo_id} concluído. Sucessos: {sucessos} | Erros: {erros}")
+    return {"status": "concluida", "sucessos": sucessos, "erros": erros}
+
+
+# ─── Retomada manual de disparo pausado (S-AE-09, achado QA A-3, 2026-08-23) ───────────────
+# Mesmo padrão de reivindicar_retomada_pontual/continuar_retomada_pontual (claim síncrono +
+# continuação separada, nunca reexecutar o claim dentro da continuação — ver docstring de
+# continuar_retomada_pontual). Endpoint HTTP correspondente em worker/main.py, chamado pelo
+# portal via WORKER_URL_ACADEMIA_ENEM (mesma env já usada por chat/send-message/route.ts pra
+# alcançar especificamente o serviço isolado, nunca o cuca-worker principal).
+
+async def reivindicar_retomada_academia_enem(disparo_id: str) -> dict:
+    item_res = await asyncio.to_thread(
+        lambda: supabase.table("disparos_academia_enem").select("*").eq("id", disparo_id).limit(1).execute()
+    )
+    if not item_res.data:
+        return {"ok": False, "status_code": 404, "motivo": "disparo não encontrado"}
+    disparo = item_res.data[0]
+    status_atual = disparo.get("status")
+    if status_atual not in ("pausada_limite_diario", "pausada"):
+        return {
+            "ok": False, "status_code": 409,
+            "motivo": f"disparo não está pausado (status atual: {status_atual!r})",
+        }
+
+    claimed = await asyncio.to_thread(_claim_retomada_sync, "disparos_academia_enem", disparo_id, status_atual, "em_andamento")
+    if not claimed:
+        return {
+            "ok": False, "status_code": 409,
+            "motivo": "disparo já reivindicado por outra retomada concorrente — corrida evitada, nada enviado por esta chamada",
+        }
+
+    return {"ok": True, "disparo": disparo}
+
+
+async def continuar_retomada_academia_enem(
+    disparo: dict, delay_min: int, delay_max: int, error_threshold: int
+) -> dict:
+    """CRÍTICO: assume que o claim já aconteceu (reivindicar_retomada_academia_enem) — não
+    reexecuta a checagem de status/claim (mesma armadilha documentada em
+    continuar_retomada_pontual: rechamar o claim aqui faria no-op silencioso)."""
+    disparo_id = disparo["id"]
+    contatos = disparo.get("contatos") or []
+
+    tentados = await asyncio.to_thread(_fetch_all_telefones_tentados_academia_enem_sync, disparo_id)
+    pendentes = [c for c in contatos if normalizar_telefone(c.get("telefone", "")) not in tentados]
+
+    resultado = await _processar_disparo_academia_enem_interno(
+        disparo, delay_min, delay_max, error_threshold,
+        contatos_override=pendentes, usar_contagem_cumulativa=True,
+    )
+    return {"pendentes_encontrados": len(pendentes), **(resultado or {})}
 
 
 async def academia_enem_disparo_loop():

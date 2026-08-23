@@ -25,6 +25,7 @@ type Template = {
     categoria: string | null
     corpo_texto_aprovado: string | null
     variaveis: { posicao?: number; descricao?: string }[] | null
+    suportado: boolean
 }
 
 type DisparoHistorico = {
@@ -66,6 +67,7 @@ export default function DisparoAcademiaEnemPage() {
     const { isDeveloper, hasPermission, loading: authLoading } = useUser()
     const canRead = isDeveloper || hasPermission("ae_disparo", "read")
     const canCreate = isDeveloper || hasPermission("ae_disparo", "create")
+    const canUpdate = isDeveloper || hasPermission("ae_disparo", "update")
 
     const [estado, setEstado] = useState<EstadoTela | null>(null)
     const [loading, setLoading] = useState(true)
@@ -73,6 +75,7 @@ export default function DisparoAcademiaEnemPage() {
     const [titulo, setTitulo] = useState("")
     const [templateNome, setTemplateNome] = useState("")
     const [enviando, setEnviando] = useState(false)
+    const [retomando, setRetomando] = useState<string | null>(null)
 
     const carregar = useCallback(async () => {
         const res = await fetch("/api/academia-enem/disparo")
@@ -124,6 +127,20 @@ export default function DisparoAcademiaEnemPage() {
             await carregar()
         } finally {
             setEnviando(false)
+        }
+    }
+
+    // A-3 (achado QA): "Reenviar pendentes" pra disparo pausado por teto diário/erro.
+    const retomar = async (disparoId: string) => {
+        setRetomando(disparoId)
+        try {
+            const res = await fetch(`/api/academia-enem/disparo/${disparoId}/retomar`, { method: "POST" })
+            const json = await res.json()
+            if (!res.ok) { toast.error(json.error || "Erro ao retomar disparo"); return }
+            toast.success("Retomada iniciada — os pendentes vão sair respeitando o teto diário.")
+            await carregar()
+        } finally {
+            setRetomando(null)
         }
     }
 
@@ -196,7 +213,9 @@ export default function DisparoAcademiaEnemPage() {
                             </SelectTrigger>
                             <SelectContent>
                                 {estado?.templates.map(t => (
-                                    <SelectItem key={t.id} value={t.nome}>{t.nome}</SelectItem>
+                                    <SelectItem key={t.id} value={t.nome} disabled={!t.suportado}>
+                                        {t.nome}{!t.suportado ? " (exige mais de 1 variável — indisponível)" : ""}
+                                    </SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>
@@ -254,15 +273,17 @@ export default function DisparoAcademiaEnemPage() {
                                 <TableHead className="text-right">Enviados</TableHead>
                                 <TableHead className="text-right">Erros</TableHead>
                                 <TableHead>Criado em</TableHead>
+                                <TableHead />
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {(estado?.disparos ?? []).length === 0 && (
-                                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Nenhum disparo ainda.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">Nenhum disparo ainda.</TableCell></TableRow>
                             )}
                             {estado?.disparos.map(d => {
                                 const cfg = STATUS_CFG[d.status] ?? { label: d.status, color: "bg-slate-100 text-slate-700 border-slate-200", icon: XCircle }
                                 const Icon = cfg.icon
+                                const podeRetomar = d.status === "pausada" || d.status === "pausada_limite_diario"
                                 return (
                                     <TableRow key={d.id}>
                                         <TableCell className="font-medium">{d.titulo}</TableCell>
@@ -276,6 +297,18 @@ export default function DisparoAcademiaEnemPage() {
                                         <TableCell className="text-right">{d.total_enviados}</TableCell>
                                         <TableCell className="text-right">{d.total_erros}</TableCell>
                                         <TableCell className="text-xs text-muted-foreground">{fmtData(d.created_at)}</TableCell>
+                                        <TableCell>
+                                            {podeRetomar && canUpdate && (
+                                                <Button
+                                                    variant="outline" size="sm"
+                                                    disabled={retomando === d.id}
+                                                    onClick={() => retomar(d.id)}
+                                                >
+                                                    <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                                                    {retomando === d.id ? "Retomando..." : "Reenviar pendentes"}
+                                                </Button>
+                                            )}
+                                        </TableCell>
                                     </TableRow>
                                 )
                             })}
