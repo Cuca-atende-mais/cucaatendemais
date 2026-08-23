@@ -1,7 +1,7 @@
 # S-AE-09 — Disparo de Avisos Próprio da Academia Enem (fila, público e envio)
 
 ## Status
-Ready for Review
+Done
 
 ## ⚠️ Story reescrita em 2026-08-20 — escopo reduzido (split em 3 stories)
 Escopo original media 3 blocos de tamanho e risco bem diferentes: (1) fila própria + seleção de
@@ -216,6 +216,7 @@ submissão de template, nova) — nenhuma das duas bloqueia esta story.
 | 2026-08-23 | @qa (Quinn) | **QA Rodada 3 (verificação da correção) → CONCERNS.** A-1 a A-4 e o bug de `canal_tipo` confirmados corrigidos (inclusive verificado ao vivo no banco). 1 achado novo (B-1, MEDIUM, reproduzido empiricamente): retomada que pausa de novo grava totais locais em vez de cumulativos — sem risco de duplicidade, só de exibição errada. Não bloqueante. Status Ready for Review→InReview. |
 | 2026-08-23 | @dev (Dex) | **Correção do B-1, a pedido do Junior.** Extraído `_contar_totais_academia_enem_cumulativo` + novo `_resolver_totais_para_gravar`, aplicado nos 2 pontos de pausa (teto diário, taxa de erro) — agora leem o total real de `logs_disparo` quando a chamada vem de uma retomada, em vez do contador local. Teste novo reproduz o cenário exato do achado (100 já enviados, retomada pausa de novo, grava 100 e não 0). Suíte: 370 passando. |
 | 2026-08-23 | @qa (Quinn) | **QA Rodada 4 (verificação do B-1) → PASS.** Correção verificada de forma independente: sem custo extra no caminho fresco, sem corrida entre os `inserts` do ledger e a recontagem, teste de regressão real (não tautológico). Ciclo completo de QA desta story (Rodadas 1-4) encerrado sem achados pendentes. **Liberado para `@devops`.** |
+| 2026-08-23 | @devops (Gage) | **PR #119 aberto contra `main`** (branch `feat/academia-enem-disparo-fila-publico`, 6 commits — feature + 4 rodadas de QA + 2 correções), quality gates reconferidos do zero (370 testes, `tsc`/`eslint` limpos) antes do push. **Aprovado e mergeado pelo Junior** (commit `7564d30`). Redeploy confirmado pelo Junior sem erros em `cuca-worker`, `cuca-academia-enem` e `portal`. Status Ready for Review→Done. |
 
 ## Dev Agent Record
 
