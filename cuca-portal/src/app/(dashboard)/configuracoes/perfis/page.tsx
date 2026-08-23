@@ -95,6 +95,7 @@ const MODULE_GROUPS = [
             { id: 'ae_kpis', label: 'Academia Enem: KPIs / Dashboard de Presença' },
             { id: 'ae_leads_filtro', label: 'Academia Enem: Filtro de Leads / Tag de Matrícula' },
             { id: 'ae_leads_upload', label: 'Academia Enem: Upload de Planilha de Leads' },
+            { id: 'ae_disparo', label: 'Academia Enem: Disparo de Avisos (fila própria)' },
             { id: 'ae_transbordo_config', label: 'Academia Enem: Configuração de Transbordo' },
         ]
     },
