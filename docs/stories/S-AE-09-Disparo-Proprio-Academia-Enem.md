@@ -1,7 +1,7 @@
 # S-AE-09 — Disparo de Avisos Próprio da Academia Enem (fila, público e envio)
 
 ## Status
-Ready for Review
+InReview
 
 ## ⚠️ Story reescrita em 2026-08-20 — escopo reduzido (split em 3 stories)
 Escopo original media 3 blocos de tamanho e risco bem diferentes: (1) fila própria + seleção de
@@ -247,3 +247,41 @@ claude-sonnet-5 (@dev / Dex)
 Confirmei o ajuste de forma independente (`git show HEAD -- worker/main.py`, commit `00e7ce6`): o gate agora testa o valor de opt-in (`if WORKER_SCOPE == "academia_enem":` desliga; qualquer outro valor, incluindo ausente/vazio/typo/capitalização diferente, cai no `else` e mantém os 3 loops do `cuca-worker` ligados) — exatamente a inversão recomendada. Rodei a suíte de novo, do zero: `test_main_worker_scope.py` com 7 testes (os 3 originais + 4 novos parametrizados cobrindo `""`, `"Academia_Enem"`, `" academia_enem"`, `"typo-qualquer"`) — todos passando. Suíte completa: 397 passando, mesmas 5 falhas pré-existentes em `test_meta_adapter_outbound.py`, sem relação.
 
 **Veredito atualizado: PASS.** Achado resolvido, sem regressão. Liberado para `@devops`.
+
+---
+
+## QA Results — Rodada 2 (feature completa)
+
+**Revisor:** Quinn (@qa) · **Data:** 2026-08-23 · **Escopo:** implementação completa da fila/tela/público/envio (commit `a241092`) — a correção `WORKER_SCOPE` já revisada na Rodada 1 não foi reexaminada aqui.
+
+### Verificação independente
+- Li o diff completo (`git show a241092`), não só o resumo do @dev.
+- Rodei a suíte Python de novo, do zero: **362 passando** (355 pré-existentes + 7 novos), mesmas 3 falhas de ambiente pré-existentes (`openai`/módulos ausentes neste ambiente de teste, isoladas em `test_main_retomar_disparo.py`/`test_main_worker_scope.py`, sem relação com esta mudança).
+- `tsc --noEmit`/`eslint` independentes nos arquivos novos do portal: 0 erros.
+- Migration: confirmei o schema real de `disparos_academia_enem` e as 4 policies de `disparos_academia_enem` **diretamente no banco de produção** (`execute_sql`/`pg_policies`) — batem exatamente com o `.sql` do commit, RLS keyed a `has_permission('ae_disparo', ...)` em vez de role-name (evita repetir o achado C-1 da S-AE-07). `get_advisors(security)`: nenhum novo alerta pra esta tabela.
+- Segui o dado até o consumidor real, não só o arquivo alterado (regra de análise de impacto): rastreei `agente_tipo`/`origem_id` através de `chat-sidebar.tsx` e `meta_adapter_inbound.py` pra confirmar o achado A-1 abaixo, e contei o volume real de leads tagueados "Academia Enem" em produção pra confirmar o achado A-2 (0 hoje — dormant, não visível nos testes/demo atual).
+
+### Rastreabilidade dos ACs
+| AC | Resultado | Evidência |
+|----|-----------|-----------|
+| 1 — sem template aprovado → aviso claro, não disparo | ✅ PASS | GET retorna `aviso`; tela mostra card de alerta e desabilita o formulário |
+| 2 — envia + breadcrumb por conversa | ✅ PASS | `test_envia_para_todos_grava_ledger_e_breadcrumb_so_com_lead_id`; leitura do código confirma `_enviar_template_meta`/`logs_disparo`/`_gravar_breadcrumb_disparo` |
+| 3 — sem público → default tag Academia Enem | ⚠️ **PASS só na escala atual (0 leads tagueados) — ver A-2** | Mecanismo correto, mas quebra na escala real que a própria S-AE-13 existe para alimentar |
+| 4 — dedup por telefone entre fontes | ✅ PASS | `dedupPorTelefone` aplicado sempre antes de gravar a fila |
+| 5 — sem `ae_disparo:create` → bloqueado | ✅ PASS | Gate server-side real na API (`checkAuth`), não só UI |
+| 6 — teto diário contido, não ignorado | ✅ PASS (envio) / ⚠️ **ver A-3 (retomada)** | `test_teto_diario_atingido_pausa_com_totais_parciais`; contagem enxerga a própria fila (3º bloco) |
+| 7 — status refletido via webhook sem código novo | ✅ PASS | Confirmado por leitura: `processar_webhook_meta` faz `UPDATE logs_disparo ... WHERE wamid=X` sem filtrar por FK |
+
+### Achados
+
+**A-1 (LOW, não bloqueante, pré-existente — não introduzido por esta story):** `_gravar_breadcrumb_disparo` (compartilhada, não tocada neste diff) hardcoda `"agente_tipo": "Institucional"` ao criar uma `conversa` nova. Pros 3 chamadores já existentes (eventos_pontuais/ouvidoria/divulgação) isso é inofensivo por coincidência — o número deles É o Institucional. Pra Academia Enem (número próprio), um lead que nunca teve conversa e nunca responde ao aviso fica com `agente_tipo="Institucional"` numa conversa cujo `origem_id` é o número da Academia Enem. **Rastreei o consumidor real antes de reportar:** os painéis (Institucional e Academia Enem) filtram por `origem_id`/`canal_tipo` via `chat-sidebar.tsx`, não por `agente_tipo` — então isso **não** aparece no painel errado. E assim que o lead responde de verdade, `meta_adapter_inbound.py` sobrescreve `agente_tipo` com o valor correto vindo de `meta_phone_numbers`. Impacto real: só inconsistência de dado num registro dormente, sem efeito funcional observado. Registro como débito de limpeza (corrigir a função compartilhada pra aceitar `agente_tipo` como parâmetro), não bloqueante.
+
+**A-2 (MEDIUM-HIGH, achado real com precedente confirmado no próprio projeto):** `resolverPublicoDefault()` (GET e POST) faz `admin.from("leads").select(...).in("id", ids)` com **todos** os ids de `lead_interesses` da categoria "Academia Enem", sem paginação nem RPC. Esse é exatamente o mesmo padrão de falha que o próprio `worker/campanhas_engine.py::_query_leads_sync` documenta ter corrigido em 2026-07-24 (URL do GET do PostgREST estoura o limite do gateway com centenas de ids, resposta vem corpo vazio/inválido, quebra o parse JSON no cliente) — ali a correção foi trocar por uma RPC (`buscar_leads_por_categoria`) que só manda os poucos UUIDs de categoria, nunca a lista de leads. Aqui o padrão antigo (pré-correção) foi reintroduzido copiando o mesmo formato já usado em `academia-enem/leads/route.ts` (S-AE-08, também com esse mesmo problema, já mergeada). **Por que importa pra ESTA story especificamente:** o AC#3 (default = tag Academia Enem) é exatamente o caminho que dispara essa query — e o volume real que o módulo existe para atender é o CSV de 7.950 linhas (`docs/envio-enem-pontual/jovens-enem-ajust01.csv`, referenciado na própria S-AE-13). Confirmei ao vivo no banco de produção: **0 leads tagueados hoje** — por isso os testes e a demo atual não revelam o problema; ele fica dormente até o primeiro upload real da planilha via S-AE-13, quando quebra a tela inteira (GET falha ao carregar `publico_default_count`, POST falha ao montar o público default).
+**Recomendação:** aplicar a mesma correção já validada no projeto — paginar em lotes (~200, como já faz `academia-enem/leads/upload/route.ts`) ou criar uma RPC equivalente a `buscar_leads_por_categoria` pro contexto do portal. Não bloqueia a demo atual (0 leads), mas bloqueia o uso real do módulo — a S-AE-13 (import da planilha) e a S-AE-09 (disparo) juntas são precisamente o cenário que reproduz a falha já documentada no próprio código.
+
+**A-3 (MEDIUM, gap de escopo não coberto por nenhum AC, mas real):** quando o teto diário pausa um disparo (`pausada_limite_diario`), não existe nenhum mecanismo de retomada — nem reclaim automático (a RPC `claim_disparo_academia_enem` só pega `status='pendente'`), nem endpoint/botão manual (diferente de `retomar_disparo_pausado`/`reivindicar_retomada_pontual`, que os fluxos de eventos_pontuais/divulgação já têm). Os destinatários que não foram tentados ficam presos indefinidamente até alguém resetar o status manualmente no banco. Criar um disparo novo pro mesmo público não é seguro como contorno: o dedup desta story é só dentro da criação de UM disparo, não entre disparos diferentes — reenviar pra quem já recebeu no disparo pausado é um risco real de duplicidade. Nenhum AC pede retomada explicitamente, então não trato como FAIL — mas como a story cita `disparos_divulgacao`/S-WM-60 como referência de padrão de envio, vale registrar que esse pedaço do padrão não foi replicado.
+
+**A-4 (LOW-MEDIUM, risco a confirmar amanhã):** o envio só preenche uma variável (`nome`) no template — `_montar_parametros_named(variaveis_item, [nome_contato])`. Se o template que for aprovado amanhã tiver mais de 1 variável (outros templates do projeto têm até 6), o envio vai falhar silenciosamente pra 100% do público (HTTP 400 da Meta, contabilizado como erro, sem crash) porque as posições além da 1ª não recebem valor. Não é um bug em si — a story não define quantas variáveis o template tem — mas é uma dependência direta da call de amanhã que vale confirmar antes de usar em produção.
+
+### Decisão de Gate
+**CONCERNS.** Nenhum AC falha na escala e no cenário de teste/demo atual — a suíte automatizada e a verificação manual confirmam os 7 ACs. Mas A-2 é um achado real, não hipotético (mesma classe de bug já documentada e corrigida uma vez neste projeto, confirmada contra o volume de dado real que a própria S-AE-13 existe para importar) que vai quebrar a funcionalidade central desta story assim que o módulo for usado de verdade — não é um "nice to have", é o caminho default do AC#3. Recomendo **corrigir A-2 antes do @devops** (troca pequena e localizada — mesma solução já pronta em `buscar_leads_por_categoria` a reaproveitar/adaptar). A-1, A-3 e A-4 ficam documentados como débito/risco conhecido, não bloqueantes — A-4 vale confirmar na call de amanhã antes de considerar o módulo pronto pra uso real.
