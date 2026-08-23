@@ -1,7 +1,7 @@
 # S-AE-09 — Disparo de Avisos Próprio da Academia Enem (fila, público e envio)
 
 ## Status
-InReview
+Ready for Review
 
 ## ⚠️ Story reescrita em 2026-08-20 — escopo reduzido (split em 3 stories)
 Escopo original media 3 blocos de tamanho e risco bem diferentes: (1) fila própria + seleção de
@@ -215,6 +215,7 @@ submissão de template, nova) — nenhuma das duas bloqueia esta story.
 | 2026-08-23 | @dev (Dex) | **Correção de todos os achados (A-1 a A-4), a pedido do Junior — sem ambiente de testes disponível, decisão de corrigir tudo agora e validar quando o disparo valendo acontecer.** A-1: `agente_tipo` parametrizado em `_gravar_breadcrumb_disparo`. A-2: `resolverPublicoDefault` migrado pra RPC `buscar_leads_por_categoria`; `resolverLeadIds` paginado (lotes de 200). A-3: retomada manual completa (worker + endpoint + rota do portal + botão). A-4: guard simétrico (rejeita/pausa template com >1 variável, não inventa suporte a múltiplas variáveis). **Achado adicional, fora dos 4 reportados:** `meta_phone_numbers.agente_tipo`/`canal_tipo` da Academia Enem estavam cadastrados como `"AcademiaEnem"` (PascalCase, autoinduzido nesta mesma sessão) — mismatch real contra o valor canônico `"academia_enem"` usado em todo o resto do projeto; sem essa correção o bot nunca responderia a mensagem real nem apareceria no painel de Atendimento. Corrigido via `UPDATE` direto em produção (MCP) + a constante equivalente na rota. **Investigação de observabilidade** (pedido do Junior, não construído): confirmado que o painel dedicado "Acompanhamento de Envios" (S-WM-58/S-WM-59) não cobre a Academia Enem hoje — a RPC `listar_disparos_acompanhamento` só tem 2 CTEs (`disparos`/`disparos_divulgacao`); adicionar a Academia Enem é uma 3ª CTE, viável porque a fila desta story já reaproveita `logs_disparo` (ao contrário do que a investigação original da S-WM-58 previu). Registrado como story futura, não construído agora. Suíte: 369 passando (+14 na Academia Enem). Status InReview→Ready for Review. |
 | 2026-08-23 | @qa (Quinn) | **QA Rodada 3 (verificação da correção) → CONCERNS.** A-1 a A-4 e o bug de `canal_tipo` confirmados corrigidos (inclusive verificado ao vivo no banco). 1 achado novo (B-1, MEDIUM, reproduzido empiricamente): retomada que pausa de novo grava totais locais em vez de cumulativos — sem risco de duplicidade, só de exibição errada. Não bloqueante. Status Ready for Review→InReview. |
 | 2026-08-23 | @dev (Dex) | **Correção do B-1, a pedido do Junior.** Extraído `_contar_totais_academia_enem_cumulativo` + novo `_resolver_totais_para_gravar`, aplicado nos 2 pontos de pausa (teto diário, taxa de erro) — agora leem o total real de `logs_disparo` quando a chamada vem de uma retomada, em vez do contador local. Teste novo reproduz o cenário exato do achado (100 já enviados, retomada pausa de novo, grava 100 e não 0). Suíte: 370 passando. |
+| 2026-08-23 | @qa (Quinn) | **QA Rodada 4 (verificação do B-1) → PASS.** Correção verificada de forma independente: sem custo extra no caminho fresco, sem corrida entre os `inserts` do ledger e a recontagem, teste de regressão real (não tautológico). Ciclo completo de QA desta story (Rodadas 1-4) encerrado sem achados pendentes. **Liberado para `@devops`.** |
 
 ## Dev Agent Record
 
@@ -370,3 +371,22 @@ Extraído `_contar_totais_academia_enem_cumulativo` (helper único, reaproveitad
 **Teste novo que reproduz o cenário exato do B-1** (`test_retomada_que_pausa_de_novo_grava_totais_cumulativos_nao_locais`): disparo com 100 já enviados no histórico, retomada pausa de novo imediatamente (teto zerado) — antes da correção gravaria `total_enviados=0`; depois, grava `100` (o real). Suíte: **370 passando** (369 + 1 novo). `py_compile` OK.
 
 Status: mantido `InReview` — aguardando @qa reverificar esta correção específica antes de liberar pro @devops.
+
+---
+
+## QA Results — Rodada 4 (verificação do B-1)
+
+**Revisor:** Quinn (@qa) · **Data:** 2026-08-23 · **Escopo:** commit `8da3c23` (correção do B-1) — os demais achados já foram verificados nas Rodadas 2/3.
+
+### Verificação independente
+- Reli o diff completo (`git show 8da3c23`), não só o resumo do @dev.
+- Rastreei a chamada nos 2 pontos de pausa (teto diário e taxa de erro): ambos agora passam por `_resolver_totais_para_gravar`, que só faz o round-trip extra a `logs_disparo` quando `usar_contagem_cumulativa=True` (ou seja, só numa retomada) — confirmei que o caminho fresco (disparo novo, não-retomada) continua idêntico a antes, sem custo extra.
+- Confirmei que a ordem de execução é segura: o guard de pausa (`i >= daily_limit`) roda **antes** de processar o item `i`, e a checagem de taxa de erro roda **depois** do `insert` em `logs_disparo` do item corrente — em ambos os casos, todos os `inserts` referentes aos itens já processados nesta chamada já foram concluídos (`await`) antes da recontagem, então o valor lido de `logs_disparo` no momento da pausa reflete a realidade, sem corrida.
+- Rodei a suíte de novo, do zero: **370 passando**, 0 regressão. O teste novo (`test_retomada_que_pausa_de_novo_grava_totais_cumulativos_nao_locais`) reproduz o cenário exato do achado (histórico real de 100, retomada pausa de novo, grava 100 — não 0) e é uma regressão real, não tautológica (o mock distingue claramente valor local de valor cumulativo).
+- `py_compile` OK.
+
+### Decisão de Gate
+**PASS.** B-1 corrigido corretamente, sem efeitos colaterais no caminho não-retomada, com teste de regressão real cobrindo o cenário exato. Não há achados pendentes desta rodada.
+
+### Resumo do ciclo completo (Rodadas 1-4)
+Todos os achados levantados nas 4 rodadas de QA desta story estão corrigidos e verificados de forma independente: gate `WORKER_SCOPE` (Rodada 1), A-1 a A-4 + bug crítico de `canal_tipo`/`agente_tipo` (Rodadas 2-3), e B-1 (Rodada 4). **Liberado para `@devops`.**
