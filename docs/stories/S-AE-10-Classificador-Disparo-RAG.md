@@ -1,7 +1,7 @@
 # S-AE-10 — Classificador Disparo-vs-RAG com Regra No-Invention
 
 ## Status
-Ready for Review
+Done
 
 ## Story
 **Como** lead que recebeu um aviso da Academia Enem,
@@ -169,6 +169,7 @@ SEPARADO"):**
 | 2026-08-23 | Junior | **Decisão definitiva: isolamento total.** "TUDO SEPARADO, ABSOLUTAMENTE SEPARADO" — Edge Function própria, RAG próprio, log de disparo próprio; persona pode copiar a estrutura/regras do Institucional (idêntica, com outro nome), mas nunca reaproveitar o mesmo processo/tabela. Única exceção confirmada: template + número Meta (infraestrutura de credencial, não lógica de canal). `leads`/`conversas`/`mensagens` ficam fora de escopo (decisão de sessões anteriores, já em produção) — sinalizado, não alterado sem confirmação explícita. |
 | 2026-08-23 | @dev (Dex) | **Reconstrução completa com isolamento total.** Edge Function própria (`academia-enem-agente`, persona hardcoded, sem `[[ENCAMINHAR]]`), RAG próprio (`ae_documentos_rag`/`ae_chunks_documentos`/`ae_buscar_chunks_similares`, RLS sem OR cruzado), log de disparo próprio (`logs_disparo_academia_enem`, coluna aditiva removida de `logs_disparo` compartilhada), ingestão própria (`academia-enem-processar-documento`). Suíte: 375 passando. `tsc`/`eslint` limpos. Status InProgress→Ready for Review. |
 | 2026-08-23 | @qa (Quinn) | **QA → PASS.** Foco da revisão (pedido do Junior): confirmar zero toque na infraestrutura do Institucional. Confirmado de forma independente: `motor-agente/index.ts` com 0 linhas de diff contra `main`; `buscar_chunks_similares` idêntica; `_contar_enviados_hoje_sync` de volta à forma original (2 blocos); nenhuma rota do portal tocada; `academia_enem_engine.py` sem nenhum import de `_chamar_motor_agente`; DB conferido ao vivo (0 linhas da Academia Enem nas tabelas compartilhadas, tabelas/RPC próprias existem, RLS sem OR cruzado). 1 achado (B-1, LOW, não bloqueante): `meta_adapter_inbound.py` roda uma query extra (no-op, sem gate por `WORKER_SCOPE`) no `cuca-worker` a cada webhook de status — recomendado gatear, mas sem risco funcional. Liberado para `@devops`. |
+| 2026-08-23 | @devops (Gage) | **Edge Functions `academia-enem-agente`/`academia-enem-processar-documento` deployadas no Supabase (produção) antes do push** — conferidas contra o arquivo local sem drift; `motor-agente` confirmado na mesma versão de antes. PR #121 aberto contra `main`, quality gates reconferidos (375 testes, `tsc`/`eslint` limpos). **Aprovado e mergeado pelo Junior** (commit `112dc3d`). Redeploy confirmado sem erros em `cuca-worker`, `cuca-academia-enem` e `portal`. Status Ready for Review→Done. |
 
 ## QA Results
 
