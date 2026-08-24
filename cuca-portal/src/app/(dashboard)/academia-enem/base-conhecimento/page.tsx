@@ -120,7 +120,16 @@ export default function AcademiaEnemRagPage() {
 
             // Upload do PDF se necessário
             if (form.modo === "pdf" && pdfFile) {
-                const path = `academia-enem/${Date.now()}_${pdfFile.name.replace(/\s+/g, "_")}`
+                // Sanitiza o nome para uma chave de Storage válida: o Supabase rejeita chaves
+                // com caracteres não-ASCII/especiais (ex.: travessão "–", acentos) com
+                // "Invalid key". Normaliza acentos, troca espaços por "_" e remove o resto.
+                const nomeSanitizado = pdfFile.name
+                    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                    .replace(/\s+/g, "_")
+                    .replace(/[^A-Za-z0-9._-]/g, "")
+                    .replace(/_+/g, "_")
+                    || "documento.pdf"
+                const path = `academia-enem/${Date.now()}_${nomeSanitizado}`
                 const { error: uploadError } = await supabase.storage
                     .from("rag-documentos")
                     .upload(path, pdfFile, { contentType: "application/pdf", upsert: false })
