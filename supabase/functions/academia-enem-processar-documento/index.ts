@@ -15,6 +15,22 @@ const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 const CHUNK_SIZE = 800;
 const CHUNK_OVERLAP = 100;
 
+// CORS: esta function é chamada direto do navegador (portal cliente). Sem tratar o preflight
+// OPTIONS e sem devolver Access-Control-*, o navegador bloqueia a chamada cross-origin e o
+// portal recebe "TypeError: Failed to fetch" antes de o POST sequer ser enviado.
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 export function chunkarTexto(texto: string, tamanho: number, overlap: number): string[] {
   const chunks: string[] = [];
   let inicio = 0;
@@ -49,11 +65,12 @@ async function extrairTextoPdf(supabase: ReturnType<typeof createClient>, pdfPat
 }
 
 async function handler(req: Request): Promise<Response> {
-  if (req.method !== "POST") return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405 });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
   try {
     const body = await req.json();
     const { documento_id, pdf_path: pdfPathBody } = body;
-    if (!documento_id) return new Response(JSON.stringify({ error: "documento_id é obrigatório" }), { status: 400 });
+    if (!documento_id) return jsonResponse({ error: "documento_id é obrigatório" }, 400);
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { data: keyData } = await supabase.rpc("get_openai_key");
@@ -63,7 +80,7 @@ async function handler(req: Request): Promise<Response> {
     const { data: documento, error: docError } = await supabase
       .from("ae_documentos_rag").select("*").eq("id", documento_id).single();
     if (docError || !documento) {
-      return new Response(JSON.stringify({ error: "Documento não encontrado", details: docError }), { status: 404 });
+      return jsonResponse({ error: "Documento não encontrado", details: docError }, 404);
     }
 
     const pdfPath: string | null = pdfPathBody || (documento.metadados?.pdf_path as string | null) || null;
@@ -103,15 +120,15 @@ async function handler(req: Request): Promise<Response> {
       },
     }).eq("id", documento_id);
 
-    return new Response(JSON.stringify({
+    return jsonResponse({
       success: true, documento_id, titulo: documento.titulo,
       total_chunks: chunksSalvos.length, fonte: pdfPath ? "pdf" : "texto",
-    }), { headers: { "Content-Type": "application/json" }, status: 200 });
+    }, 200);
   } catch (error) {
     console.error("[academia-enem-processar-documento] Erro:", error);
-    return new Response(JSON.stringify({
+    return jsonResponse({
       error: "Erro interno", details: error instanceof Error ? error.message : String(error),
-    }), { status: 500 });
+    }, 500);
   }
 }
 
