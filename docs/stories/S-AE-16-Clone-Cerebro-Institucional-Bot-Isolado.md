@@ -1,6 +1,6 @@
 # S-AE-16 — Clonar o cérebro do Institucional para um bot isolado da Academia Enem
 
-- **Status:** InProgress (tasks 1-4 e 6 concluídas; task 5 pendente — dados de transbordo aguardando o Junior; task 7 em preparação, deploy coordenado)
+- **Status:** Done (QA PASS — ver seção 9). Tasks 1-4, 6 e 7 concluídas: PR #124 mergeado em `main` (2026-08-25 16:41 UTC), Edge Function deployada no Supabase e serviço `cuca-academia-enem` redeployado no EasyPanel, ambos confirmados. Task 5 (transbordo) segue **pendente** — dados aguardando o Junior; não bloqueia o Done da story (é config de dado, não código).
 - **Módulo:** Academia Enem
 - **Autor:** @dev (Dex)
 - **Depende de:** S-AE-02 (tabelas `ae_conversas`/`ae_mensagens`/`ae_instancias`), S-AE-10 (Edge Function `academia-enem-agente`, RAG `ae_*`)
@@ -152,9 +152,10 @@ por bot**.
    desvio (`TestDesvioAcademiaEnem`) e regressão de Institucional/Empregabilidade no mesmo
    arquivo. `deno lint` da Edge Function sem problemas novos (só os 2 avisos pré-existentes de
    estilo de import). `get_advisors` do banco checado — nenhum problema novo introduzido.
-7. [ ] **Deploy da Edge Function** em produção (`cuca`) ANTES do push/PR; conferir com
-   `get_edge_function`; confirmar que `motor-agente` não mudou de versão. **Em preparação** — ver
-   nota de janela de corte no Change Log antes de executar.
+7. [x] **Deploy da Edge Function** em produção (`cuca`) ANTES do push/PR — feito, conferido com
+   `get_edge_function` (zero drift contra o arquivo local), `motor-agente` confirmado inalterado
+   (v49). PR #124 mergeado em `main` (2026-08-25 16:41 UTC) e serviço `cuca-academia-enem`
+   redeployado no EasyPanel — confirmado pelo Junior.
 
 ---
 
@@ -230,6 +231,28 @@ por bot**.
 
 ---
 
+## 8. QA Results (@qa)
+
+**Veredito: PASS.** Verificação independente contra o que está de fato em `main` (`cdd98dd`) e
+em produção (Edge Function v2, `motor-agente` v49 confirmado inalterado) — não apenas conferindo
+o relatado pelo @dev/@devops.
+
+| # | Check | Resultado |
+|---|-------|-----------|
+| 1 | Code review | ✅ Sem código morto/referências órfãs à máquina de nome removida (`grep` — zero fora do próprio docstring). `main.py` só consome `processar_mensagem_academia_enem` (assinatura estável, nenhum outro ponto do worker depende da API removida). |
+| 2 | Testes unitários | ✅ 291 passaram; 5 falhas em `test_meta_adapter_outbound.py` confirmadas **pré-existentes** (mesmo resultado rodando no commit `1a0a3eb`, anterior ao PR #124 — `ModuleNotFoundError: No module named 'worker'`, ambiente, não regressão). |
+| 3 | Critérios de aceite | ✅ AC1 (`grep`: zero `.from("conversas")`/`.from("mensagens")` na function e no engine). AC1b (`grep`: zero `prompts_agentes`). AC2 (`motor-agente` v49, hash idêntico antes/depois do deploy). AC3/AC7 (testes provam envio sem gravação dupla, `gravar=False`). AC4 (desvio na entrada confirmado). AC8 (deploy v1→v2 confirmado anterior ao push, por timestamp). **AC6 (transbordo) não atendido** — pendência de dado já registrada como não-bloqueante pela própria story (task 5). |
+| 4 | Regressão | ✅ Suíte de Institucional/Empregabilidade/motor-agente passa integralmente no mesmo arquivo de teste do inbound. |
+| 5 | Performance | ✅ Nenhuma operação nova custosa; perfil de custo do desvio equivalente ao caminho compartilhado. |
+| 6 | Segurança | ✅ RLS confirmada ativa em `ae_conversas`/`ae_mensagens` (`relrowsecurity=true`, consulta direta ao catálogo). `verify_jwt=true` preservado na function. `ae_increment_nao_lidas` com a mesma postura de segurança da função irmã `increment_nao_lidas` (nenhuma das duas usa `SECURITY DEFINER` — padrão pré-existente do projeto, não uma regressão introduzida aqui). Design fail-closed confirmado: sem `ae_instancia_id` resolvido, descarta em vez de gravar dado inconsistente. |
+| 7 | Documentação | ✅ Story com estado real, análise de impacto item a item, Change Log completo e honesto (inclui a janela de corte e o achado do registro órfão em `ae_instancias`). |
+
+**Ressalva não-bloqueante:** AC6 (transbordo) segue pendente — dado (contato + template Meta),
+não código. Recomendo abrir/acompanhar como item de follow-up assim que o Junior fornecer os
+dados; não impede o Done desta story.
+
+---
+
 ## Dev Agent Record
 
 ### File List
@@ -242,10 +265,12 @@ por bot**.
 
 ---
 
-## 8. Change Log
+## 9. Change Log
 | Data | Autor | Mudança |
 |------|-------|---------|
 | 2026-08-25 | @dev (Dex) | Draft inicial da story, com estado atual levantado no código e análise de impacto item a item. |
 | 2026-08-25 | @dev (Dex) | Revisão pós-NO-GO do @po: Opção 1 (portar só a camada de comportamento, manter RAG plano da AE), persona isolada (AC1b), entrada espontânea sem gate, task 4 expandida com as proteções a replicar. |
 | 2026-08-25 | @dev (Dex) | GO do @po (10/10). Implementação das tasks 1-4 e 6: cérebro portado, engine sem coleta de nome, desvio na entrada replicando as proteções, tabelas próprias confirmadas, migration de dado em `ae_instancias` aplicada, suíte completa verde (264/264). Task 5 (transbordo) registrada como PENDENTE — aguardando contato/template do Junior, não bloqueia o restante. Task 7 (deploy) em preparação — ver nota de janela de corte abaixo. |
 | 2026-08-25 | @dev (Dex) | **Nota de risco levantada antes do deploy (impacto):** a Edge Function e o worker (engine/inbound) precisam entrar em produção **juntos** — a Edge Function nova só entende `ae_conversas`/`ae_mensagens`, o worker antigo (ainda em produção até o merge+redeploy no EasyPanel) só conhece `conversas`/`mensagens`. Deployar a Edge Function ANTES do worker redeployar cria uma janela onde o bot da Academia Enem responde só o fallback técnico ("deu um problema aqui, manda de novo") — sem quebra de dado, sem vazar pro Institucional, só o bot fora do ar até o merge+redeploy do worker. Duração da janela depende de quando o Junior aprova o PR. Decisão de timing levada ao Junior antes de executar o deploy. |
+| 2026-08-25 | @devops (Gage) | Regra inegociável reafirmada pelo Junior: deploy no Supabase sempre antes do push/PR, sem exceção. Branch `feat/academia-enem-s-ae-16-clone-cerebro` criada a partir de `origin/main` (branch anterior `fix/ae-base-conhecimento-cors-upload` já estava com PR #123 mergeado, descartada). Edge Function `academia-enem-agente` deployada (v1→v2) — achado durante a conferência: drift real entre o cabeçalho comentado do arquivo local e o conteúdo deployado (só comentário, sem afetar comportamento); corrigido no arquivo local e reconferido, zero diferença. `motor-agente` confirmado inalterado (v49). Commit cirúrgico só dos 7 arquivos da S-AE-16 (working tree tinha dezenas de arquivos soltos de outras sessões, não tocados). PR #124 aberto contra `main`, aprovado e mergeado pelo Junior (2026-08-25 16:41 UTC). Serviço `cuca-academia-enem` redeployado no EasyPanel — confirmado pelo Junior. |
+| 2026-08-25 | @qa (Quinn) | Gate de qualidade (7 checks) executado com verificação independente contra `main`/produção (não só o relatado por @dev/@devops): 291/291 testes relevantes passam (5 falhas em `test_meta_adapter_outbound.py` confirmadas pré-existentes via comparação com o commit anterior ao PR); isolamento confirmado por `grep` (zero referência a `conversas`/`mensagens`/`prompts_agentes`); RLS ativa em `ae_conversas`/`ae_mensagens` confirmada via catálogo; `motor-agente` v49 inalterado. **Veredito: PASS**, com ressalva não-bloqueante (AC6/transbordo pendente, é dado — não código). Status → Done. |
