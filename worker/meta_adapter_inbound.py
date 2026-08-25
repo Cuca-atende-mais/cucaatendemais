@@ -46,6 +46,204 @@ def _get_instancia_by_phone_number_id(phone_number_id: str) -> dict | None:
         return None
 
 
+# S-AE-16: cache simples em memória de processo (phone_number_id -> ae_instancia_id) — a config
+# do canal muda raríssimo, não vale consultar o banco a cada mensagem.
+_ae_instancia_cache: dict[str, str] = {}
+
+
+def _get_ae_instancia_id(phone_number_id: str) -> str | None:
+    """Resolve o id de `ae_instancias` a partir do `phone_number_id` (S-AE-16). `ae_conversas.
+    ae_instancia_id` é NOT NULL — sem esse id não dá pra gravar em ae_conversas; fail-closed
+    (descarta e loga em vez de gravar dado inconsistente)."""
+    if phone_number_id in _ae_instancia_cache:
+        return _ae_instancia_cache[phone_number_id]
+    try:
+        res = _get_supabase().table("ae_instancias").select("id").eq(
+            "phone_number_id", phone_number_id
+        ).maybe_single().execute()
+        instancia_id = (res.data or {}).get("id")
+        if instancia_id:
+            _ae_instancia_cache[phone_number_id] = instancia_id
+        return instancia_id
+    except Exception as exc:
+        logger.error("[meta-inbound][AE] Erro ao buscar ae_instancias para %s: %s", phone_number_id, exc)
+        return None
+
+
+async def _processar_webhook_academia_enem(
+    *,
+    phone_number_id: str,
+    telefone: str,
+    push_name: str,
+    mensagem: str,
+    midia_tipo: str,
+    wamid: str,
+) -> None:
+    """S-AE-16 — caminho ISOLADO da Academia Enem: grava em `ae_conversas`/`ae_mensagens`
+    (isolamento total, decisão 4 da story), nunca em `conversas`/`mensagens` compartilhadas.
+    Replica, na mesma ordem, TODAS as proteções do caminho compartilhado (dedup por wamid,
+    bloqueio permanente, opt-out, guard awaiting_human — na chegada e reconferido no dispatch
+    adiado, debounce) — só o destino da persistência muda. `leads` continua compartilhada
+    (decisão: isolamento é de conversa/mensagem, não de lead — telefone bloqueado/opt-out é
+    igual em qualquer canal)."""
+    supabase = _get_supabase()
+
+    ae_instancia_id = _get_ae_instancia_id(phone_number_id)
+    if not ae_instancia_id:
+        logger.error(
+            "[meta-inbound][AE] Sem ae_instancias para phone_number_id=%s — mensagem descartada.",
+            phone_number_id,
+        )
+        return
+
+    # Dedup por wamid — mesma regra do caminho compartilhado, contra a tabela PRÓPRIA.
+    if wamid:
+        try:
+            ja_processado = supabase.table("ae_mensagens").select("id").eq(
+                "wa_message_id", wamid
+            ).limit(1).execute()
+            if ja_processado.data:
+                logger.info("[meta-inbound][AE] wamid=%r já processado — reentrega descartada", wamid)
+                return
+        except Exception as exc:
+            logger.warning("[meta-inbound][AE] Erro ao checar dedupe de wamid=%r: %s", wamid, exc)
+
+    # Bloqueio permanente — tabela compartilhada por telefone (não é dado de conversa).
+    try:
+        bloqueio_perm = supabase.table("numeros_bloqueados_permanente") \
+            .select("telefone").eq("telefone", telefone).limit(1).execute()
+        if bloqueio_perm.data:
+            logger.info("[meta-inbound][AE] Numero %s com bloqueio permanente — descartado", telefone)
+            return
+    except Exception as exc:
+        logger.warning("[meta-inbound][AE] Erro ao checar bloqueio permanente de %s: %s", telefone, exc)
+
+    # Lead — tabela compartilhada `leads` (decisão: isolamento é de conversa/mensagem, não de lead).
+    try:
+        lead_result = supabase.table("leads").upsert(
+            {"telefone": telefone, "nome": push_name, "updated_at": "now()"},
+            on_conflict="telefone",
+        ).execute()
+        lead_id: str = lead_result.data[0]["id"]
+        _fresh = supabase.table("leads").select("bloqueado").eq("id", lead_id).single().execute()
+        bloqueado: bool = (_fresh.data or {}).get("bloqueado", False)
+    except Exception as exc:
+        logger.error("[meta-inbound][AE] Erro ao gerenciar Lead: %s", exc)
+        return
+
+    if bloqueado:
+        logger.info("[meta-inbound][AE] Lead %s está bloqueado — mensagem ignorada", telefone)
+        return
+
+    # Conversa PRÓPRIA — upsert atômico por (ae_instancia_id, wa_contact), mesma mecânica do
+    # caminho compartilhado (evita a corrida select-então-insert entre 2 webhooks quase simultâneos).
+    try:
+        supabase.table("ae_conversas").upsert(
+            {
+                "ae_instancia_id": ae_instancia_id,
+                "wa_contact": telefone,
+                "lead_id": lead_id,
+                "push_name": push_name,
+                "updated_at": "now()",
+            },
+            on_conflict="ae_instancia_id,wa_contact",
+        ).execute()
+        conv_fresh = supabase.table("ae_conversas").select("id, status").match(
+            {"ae_instancia_id": ae_instancia_id, "wa_contact": telefone}
+        ).execute()
+        conversa_id: str = conv_fresh.data[0]["id"]
+        conversa_status = conv_fresh.data[0].get("status")
+    except Exception as exc:
+        logger.error("[meta-inbound][AE] Erro ao gerenciar Conversa: %s", exc)
+        return
+
+    # Mensagem inbound + não-lidas (RPC própria: increment_nao_lidas é hardcoded em `conversas`).
+    try:
+        supabase.table("ae_mensagens").insert({
+            "ae_conversa_id": conversa_id,
+            "wa_message_id": wamid or None,
+            "remetente": "lead",
+            "tipo": midia_tipo,
+            "conteudo": mensagem or _texto_historico_para_midia_vazia(midia_tipo),
+        }).execute()
+        supabase.rpc("ae_increment_nao_lidas", {"conv_id": conversa_id}).execute()
+    except Exception as exc:
+        logger.critical(
+            "[meta-inbound][AE][DATA-LOSS] Falha ao salvar Mensagem do lead — conteudo perdido, "
+            "dispatch vai continuar mesmo assim. conversa_id=%s telefone=%s erro=%s",
+            conversa_id, telefone, exc,
+        )
+
+    # Opt-out — registrar_opt_out só toca `leads`/`historico_opt_in` (compartilhadas por
+    # natureza: telefone é telefone em qualquer canal); a confirmação grava em ae_mensagens.
+    if _eh_pedido_opt_out(mensagem):
+        try:
+            supabase.rpc("registrar_opt_out", {"p_telefone": telefone}).execute()
+            logger.info("[meta-inbound][AE] Opt-out registrado para telefone=%s", telefone)
+        except Exception as exc:
+            logger.error("[meta-inbound][AE] Erro ao registrar opt-out para telefone=%s: %s", telefone, exc)
+
+        resposta_opt_out = (
+            "Prontinho! Você não vai mais receber nossas campanhas e avisos em massa. 😊 "
+            "Se quiser voltar a receber ou tiver alguma dúvida, é só me chamar por aqui."
+        )
+        try:
+            supabase.table("ae_mensagens").insert({
+                "ae_conversa_id": conversa_id,
+                "remetente": "agente",
+                "tipo": "text",
+                "conteudo": resposta_opt_out,
+            }).execute()
+        except Exception as exc:
+            logger.error("[meta-inbound][AE] Erro ao salvar confirmação de opt-out: %s", exc)
+
+        from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+        token = os.getenv("META_SYSTEM_USER_TOKEN", "")
+        await _meta_enviar(phone_number_id, telefone, resposta_opt_out, token)
+        return
+
+    # Guard awaiting_human — mesma checagem, na tabela própria.
+    if conversa_status == "awaiting_human":
+        logger.info(
+            "[awaiting_human][AE] IA silenciada — conversa %s em atendimento humano. Descartando inbound.",
+            conversa_id,
+        )
+        return
+
+    # Dispatch adiado por debounce — mesmo mecanismo (_agendar_dispatch_debounced), keyed pelo id
+    # da ae_conversa (namespace diferente de `conversas.id` — sem risco de colisão real).
+    async def _dispatch() -> None:
+        # Cuidado 1 (mesmo do caminho compartilhado): reconferir awaiting_human no momento do
+        # dispatch adiado — o status pode ter mudado durante a espera do debounce.
+        try:
+            status_result = supabase.table("ae_conversas").select("status").eq("id", conversa_id).single().execute()
+            status_no_dispatch = (status_result.data or {}).get("status")
+        except Exception as exc:
+            logger.warning("[debounce][AE] Erro ao reconferir status antes do dispatch adiado: %s", exc)
+            status_no_dispatch = None
+
+        if status_no_dispatch == "awaiting_human":
+            logger.info(
+                "[awaiting_human][AE] IA silenciada no momento do dispatch adiado — conversa %s "
+                "passou a atendimento humano enquanto aguardava o debounce.", conversa_id,
+            )
+            return
+
+        from academia_enem_engine import processar_mensagem_academia_enem  # noqa: PLC0415
+        try:
+            await processar_mensagem_academia_enem(
+                texto=mensagem,
+                phone=telefone,
+                phone_number_id=phone_number_id,
+                lead_id=lead_id,
+                conversa_id=conversa_id,
+            )
+        except Exception as exc:
+            logger.error("[meta-inbound][AE] Erro no dispatch Academia Enem: %s", exc)
+
+    await _agendar_dispatch_debounced(conversa_id, _dispatch)
+
+
 # ─── Validação HMAC-SHA256 ─────────────────────────────────────────────────────
 def validar_hmac_meta(raw_body: bytes, signature_header: str | None, app_secret: str) -> bool:
     """Valida X-Hub-Signature-256 do webhook Meta (formato: sha256=<hex>)."""
@@ -679,6 +877,29 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
     instancia_data = _get_instancia_by_phone_number_id(phone_number_id)
     if instancia_data is None:
         logger.warning(f"[meta-inbound] phone_number_id desconhecido: {phone_number_id} — descartado")
+        return
+
+    # S-AE-16: desvio da Academia Enem O MAIS CEDO POSSÍVEL — antes de qualquer escrita
+    # compartilhada (dedupe/lead/conversa/mensagem). Isolamento total de conversa/mensagem
+    # (decisão 4); TUDO abaixo deste bloco (Institucional/Empregabilidade) fica intocado —
+    # nenhuma linha do caminho compartilhado foi editada por esta mudança.
+    if instancia_data["agente_tipo"] == "academia_enem":
+        contacts_ae = value.get("contacts", [])
+        push_name_ae = (contacts_ae[0].get("profile", {}).get("name") or "Cidadão") if contacts_ae else "Cidadão"
+        wamid_ae: str = messages[0].get("id", "")
+        try:
+            contrato_v2_ae = await build_contrato_v2(payload, instancia_data)
+        except Exception as exc:
+            logger.error(f"[meta-inbound][AE] Erro ao processar Contrato v2: {exc}")
+            return
+        await _processar_webhook_academia_enem(
+            phone_number_id=phone_number_id,
+            telefone=contrato_v2_ae["telefone"],
+            push_name=push_name_ae,
+            mensagem=contrato_v2_ae["mensagem"],
+            midia_tipo=contrato_v2_ae["midia_tipo"],
+            wamid=wamid_ae,
+        )
         return
 
     supabase = _get_supabase()

@@ -2139,3 +2139,191 @@ class TestNormalizacaoTelefoneContratoV2:
         }
         contrato = await build_contrato_v2(payload, instancia_data)
         assert contrato["telefone"] == "5585986902920"
+
+
+# ─── S-AE-16: desvio da Academia Enem na entrada — isolamento total de conversa/mensagem ──────
+class TestDesvioAcademiaEnem:
+    """Prova que o agente_tipo='academia_enem' NUNCA toca `conversas`/`mensagens` compartilhadas
+    — grava só em `ae_conversas`/`ae_mensagens` — e que replica as proteções do caminho
+    compartilhado (dedup por wamid, bloqueio permanente, lead bloqueado, opt-out,
+    awaiting_human)."""
+
+    @staticmethod
+    def _mock_supabase_ae(wamid_ja_existe=False, lead_bloqueado=False, conversa_status="ativa"):
+        from unittest.mock import MagicMock
+        mock_sb = MagicMock()
+        # ae_instancias: select().eq().maybe_single().execute() -> resolve ae_instancia_id
+        mock_sb.table.return_value.select.return_value.eq.return_value.maybe_single.return_value \
+            .execute.return_value.data = {"id": "ae-instancia-1"}
+        # leads: upsert().execute() -> [{"id": ...}]; select().eq().single().execute() -> bloqueado
+        mock_sb.table.return_value.upsert.return_value.execute.return_value.data = [{"id": "lead-ae-1"}]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"bloqueado": lead_bloqueado}
+        # dedup (ae_mensagens) / bloqueio permanente: ambos select().eq().limit().execute()
+        mock_sb.table.return_value.select.return_value.eq.return_value.limit.return_value \
+            .execute.return_value.data = [{"id": "msg-existente"}] if wamid_ja_existe else []
+        # ae_conversas: select().match().execute() -> conversa atual
+        mock_sb.table.return_value.select.return_value.match.return_value.execute.return_value.data = [
+            {"id": "ae-conv-1", "status": conversa_status}
+        ]
+        mock_sb.table.return_value.insert.return_value.execute.return_value = MagicMock()
+        mock_sb.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        mock_sb.rpc.return_value.execute.return_value = MagicMock()
+        return mock_sb
+
+    @staticmethod
+    def _instancia_academia_enem():
+        return {
+            "canal_origem": "AE_ID", "agente_tipo": "academia_enem",
+            "canal_tipo": "academia_enem", "unidade_cuca": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_fluxo_normal_grava_em_ae_conversas_e_ae_mensagens_nunca_compartilhadas(self, monkeypatch):
+        import sys, types
+        from unittest.mock import patch, AsyncMock
+
+        mock_sb = self._mock_supabase_ae()
+        fake_engine = types.ModuleType("academia_enem_engine")
+        processar_mock = AsyncMock()
+        fake_engine.processar_mensagem_academia_enem = processar_mock
+        payload = _payload_texto(phone_number_id="AE_ID", texto="quando é a prova?")
+        raw = json.dumps(payload).encode()
+
+        with patch.dict(sys.modules, {"academia_enem_engine": fake_engine}), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
+                   return_value=self._instancia_academia_enem()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
+            await processar_webhook_meta(raw)
+
+        processar_mock.assert_awaited_once()
+        tabelas_chamadas = {c.args[0] for c in mock_sb.table.call_args_list}
+        assert "ae_conversas" in tabelas_chamadas
+        assert "ae_mensagens" in tabelas_chamadas
+        assert "conversas" not in tabelas_chamadas
+        assert "mensagens" not in tabelas_chamadas
+        # leads continua compartilhada (decisão: isolamento é de conversa/mensagem, não de lead).
+        assert "leads" in tabelas_chamadas
+        mock_sb.rpc.assert_any_call("ae_increment_nao_lidas", {"conv_id": "ae-conv-1"})
+
+    @pytest.mark.asyncio
+    async def test_reentrega_mesmo_wamid_e_descartada_sem_dispatch(self, monkeypatch):
+        import sys, types
+        from unittest.mock import patch, AsyncMock
+
+        mock_sb = self._mock_supabase_ae(wamid_ja_existe=True)
+        fake_engine = types.ModuleType("academia_enem_engine")
+        processar_mock = AsyncMock()
+        fake_engine.processar_mensagem_academia_enem = processar_mock
+        payload = _payload_texto(phone_number_id="AE_ID", texto="oi de novo")
+        raw = json.dumps(payload).encode()
+
+        with patch.dict(sys.modules, {"academia_enem_engine": fake_engine}), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
+                   return_value=self._instancia_academia_enem()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
+            await processar_webhook_meta(raw)
+
+        processar_mock.assert_not_awaited()
+        for call in mock_sb.table.call_args_list:
+            assert call.args[0] != "leads", "Reentrega não deveria chegar a tocar em 'leads'"
+
+    @pytest.mark.asyncio
+    async def test_lead_bloqueado_descarta_sem_dispatch(self, monkeypatch):
+        import sys, types
+        from unittest.mock import patch, AsyncMock
+
+        mock_sb = self._mock_supabase_ae(lead_bloqueado=True)
+        fake_engine = types.ModuleType("academia_enem_engine")
+        processar_mock = AsyncMock()
+        fake_engine.processar_mensagem_academia_enem = processar_mock
+        payload = _payload_texto(phone_number_id="AE_ID", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        with patch.dict(sys.modules, {"academia_enem_engine": fake_engine}), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
+                   return_value=self._instancia_academia_enem()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
+            await processar_webhook_meta(raw)
+
+        processar_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_awaiting_human_descarta_sem_dispatch(self, monkeypatch):
+        import sys, types
+        from unittest.mock import patch, AsyncMock
+
+        mock_sb = self._mock_supabase_ae(conversa_status="awaiting_human")
+        fake_engine = types.ModuleType("academia_enem_engine")
+        processar_mock = AsyncMock()
+        fake_engine.processar_mensagem_academia_enem = processar_mock
+        payload = _payload_texto(phone_number_id="AE_ID", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        with patch.dict(sys.modules, {"academia_enem_engine": fake_engine}), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
+                   return_value=self._instancia_academia_enem()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
+            await processar_webhook_meta(raw)
+
+        processar_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_opt_out_grava_confirmacao_em_ae_mensagens_e_nao_despacha(self, monkeypatch):
+        import sys, types
+        from unittest.mock import patch, AsyncMock
+
+        mock_sb = self._mock_supabase_ae()
+        fake_engine = types.ModuleType("academia_enem_engine")
+        processar_mock = AsyncMock()
+        fake_engine.processar_mensagem_academia_enem = processar_mock
+        fake_outbound = types.ModuleType("meta_adapter_outbound")
+        meta_enviar_mock = AsyncMock(return_value=True)
+        fake_outbound._meta_enviar = meta_enviar_mock
+        payload = _payload_texto(phone_number_id="AE_ID", texto="SAIR")
+        raw = json.dumps(payload).encode()
+
+        with patch.dict(sys.modules, {
+                "academia_enem_engine": fake_engine,
+                "meta_adapter_outbound": fake_outbound,
+             }), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
+                   return_value=self._instancia_academia_enem()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
+            await processar_webhook_meta(raw)
+
+        processar_mock.assert_not_awaited()
+        meta_enviar_mock.assert_awaited_once()
+        # Telefone default do payload de teste (_payload_texto) já começa com "9" na parte
+        # local — o normalizador (pré-existente) só insere o 9º dígito quando ele falta,
+        # então fica inalterado (comportamento diferente do caso testado em
+        # TestNormalizacaoTelefoneContratoV2, cujo telefone de entrada não começa com 9).
+        mock_sb.rpc.assert_any_call("registrar_opt_out", {"p_telefone": "558599999999"})
+
+    @pytest.mark.asyncio
+    async def test_sem_ae_instancias_descarta_fail_closed(self, monkeypatch):
+        """Sem `ae_instancias` resolvível pro phone_number_id, descarta em vez de gravar
+        ae_conversas com ae_instancia_id inconsistente (fail-closed)."""
+        import sys, types
+        from unittest.mock import patch, AsyncMock
+
+        mock_sb = self._mock_supabase_ae()
+        mock_sb.table.return_value.select.return_value.eq.return_value.maybe_single.return_value \
+            .execute.return_value.data = None
+        fake_engine = types.ModuleType("academia_enem_engine")
+        processar_mock = AsyncMock()
+        fake_engine.processar_mensagem_academia_enem = processar_mock
+        payload = _payload_texto(phone_number_id="AE_ID_DESCONHECIDO", texto="oi")
+        raw = json.dumps(payload).encode()
+
+        with patch.dict(sys.modules, {"academia_enem_engine": fake_engine}), \
+             patch("meta_adapter_inbound._get_instancia_by_phone_number_id",
+                   return_value=self._instancia_academia_enem()), \
+             patch("meta_adapter_inbound._get_supabase", return_value=mock_sb):
+            import meta_adapter_inbound as mai
+            mai._ae_instancia_cache.clear()
+            await processar_webhook_meta(raw)
+
+        processar_mock.assert_not_awaited()
+        for call in mock_sb.table.call_args_list:
+            assert call.args[0] != "leads", "Sem instancia resolvida, nem deveria chegar em 'leads'"
