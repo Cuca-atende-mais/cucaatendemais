@@ -1,31 +1,26 @@
 """
-S-AE-04 — Automação de Entrada Humanizada (Academia Enem / WhatsApp oficial Meta direta).
+S-AE-04 / S-AE-16 — Automação de entrada da Academia Enem (WhatsApp oficial Meta direta).
 
-Reescrito em 2026-08-20 (decisão do Junior, migração Meta direta — abandono do AuctaFlux):
-- Roda DENTRO do mesmo código-base do worker (`main.py`/`meta_adapter_inbound.py`), só que
-  implantado como o serviço separado `cuca-academia-enem` (S-AE-02), com credenciais Meta
-  próprias (`META_SYSTEM_USER_TOKEN` desse serviço = token da BM da Academia Enem, não a "Ivida").
-- Estado da conversa em `conversas.metadata.ae_fluxo` (mesmo padrão de `empreg_fluxo` do
-  `empregabilidade_engine.py`) — `conversas` NÃO tem coluna `estado` própria; a etapa vive
-  inteira dentro do metadata, igual Empregabilidade.
-- Mensagens em `mensagens` (tabela compartilhada, `remetente` in {'lead','agente'}).
-- Envio via `meta_adapter_outbound._meta_enviar` (Graph API), o mesmo adapter usado por
-  Institucional/Empregabilidade/motor-agente.
-- SEM menu numérico: saudação humanizada + coleta de nome. Após o nome, hand-off ao
-  classificador (S-AE-10) via `classificar()`, que chama a Edge Function PRÓPRIA
-  `academia-enem-agente` (supabase/functions/academia-enem-agente/index.ts) — NUNCA o
-  `motor-agente` compartilhado (que atende o Institucional em produção). Decisão do Junior
-  (2026-08-23): a Academia Enem é um canal totalmente desacoplado — Edge Function, RAG e log
-  de disparo próprios, sem processo/deploy/tabela compartilhados com os outros módulos.
-
-A máquina de estados pura `decidir()` abaixo é INALTERADA em relação à implementação anterior
-(AuctaFlux) — já era testável sem IO e desacoplada de tabela/provider; só a camada de I/O
-(persistência/envio) mudou de `ae_conversas`/`ae_mensagens`/AuctaFlux para `conversas`/
-`mensagens`/Meta.
+Reescrito na S-AE-16 (2026-08-25, decisão do Junior — clonar o comportamento do Institucional):
+- SEM etapa de coleta de nome. Toda mensagem do lead vai DIRETO ao cérebro (Edge Function
+  própria `academia-enem-agente`), igual o Institucional fala direto com o `motor-agente`. A
+  máquina de estados de nome (saudar/aguardando_nome/coletar_nome) foi REMOVIDA.
+- O cérebro INSERE a resposta (1 linha por parte) e devolve `mensagens[]`; o worker SÓ ENVIA
+  cada parte, nunca insere de novo — elimina a inserção dupla que existia antes.
+- Handover: quando o cérebro sinaliza [[HANDOVER]], o texto do próprio cérebro é enviado ao
+  lead, a conversa é marcada `awaiting_human` e o responsável de `modulo='academia_enem'` é
+  notificado (mesmo padrão do Institucional em `meta_adapter_inbound._chamar_motor_agente`). O
+  atalho de segurança `_quer_humano` (pedido explícito de humano, ANTES de chamar o cérebro)
+  usa a mensagem fixa de confirmação via `acionar_transbordo`.
+- Persistência ainda em `conversas`/`mensagens` compartilhadas NESTA etapa; a troca para
+  `ae_conversas`/`ae_mensagens` (isolamento total, decisão 4 da S-AE-16) é feita na task 4
+  (desvio na entrada), num deploy coordenado.
+- Envio via `meta_adapter_outbound._meta_enviar` (Graph API), o mesmo adapter dos demais canais.
+- Serviço `cuca-academia-enem` (S-AE-02), credenciais Meta próprias
+  (`META_SYSTEM_USER_TOKEN` = token da BM da Academia Enem).
 """
 
 import os
-import re
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -39,14 +34,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANO
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Reuso da mecânica do empregabilidade_engine — palavras de encerramento.
-_PALAVRAS_ENCERRAR = {
-    "tchau", "até mais", "até logo", "encerrar", "finalizar", "obrigado",
-    "obrigada", "valeu", "pronto", "pode fechar", "nada mais", "só isso", "era isso",
-}
-
-# S-AE-06: mesmo conjunto de expressões de pedido explícito de humano usado por
-# `empregabilidade_engine._CONTAINS_HANDOVER` — detecção por substring, não regex, igual lá.
+# S-AE-06: expressões de pedido explícito de humano (detecção por substring, igual
+# empregabilidade_engine._CONTAINS_HANDOVER). Atalho de segurança: encaminha ao transbordo
+# ANTES de chamar o cérebro, garantindo que "quero falar com humano" nunca dependa do LLM.
 _CONTAINS_HANDOVER = {
     "falar com humano", "falar com um humano", "atendente humano", "falar com atendente",
     "falar com o atendente", "falar com um atendente", "falar com a atendente",
@@ -70,109 +60,25 @@ _MSG_TRANSBORDO_FALHOU = (
     "Tentei chamar nossa equipe agora, mas não consegui confirmar o encaminhamento automático. "
     "Por favor, tente novamente em alguns minutos."
 )
+_FALLBACK_TECNICO = "Ih, deu um problema técnico aqui do meu lado 😅 Pode mandar de novo pra mim?"
 
 
 def _quer_humano(texto: str) -> bool:
     t = (texto or "").strip().lower()
     return any(p in t for p in _CONTAINS_HANDOVER)
 
-SAUDACAO = (
-    "Olá! 👋 Seja muito bem-vindo(a) à Academia Enem. "
-    "Pra te atender direitinho, como você se chama?"
-)
-
-# Prefixos comuns que o lead usa ao dizer o nome ("meu nome é joão" -> "joão").
-_PREFIXOS_NOME = re.compile(
-    r"^\s*(?:"
-    r"meu nome\s+(?:é|e|eh)?\s*|"
-    r"me chamo\s+|"
-    r"(?:eu\s+)?sou\s+(?:o|a)?\s*|"
-    r"aqui\s+(?:é|e)\s+(?:o|a)?\s*|"
-    r"nome\s*:?\s*"
-    r")",
-    re.IGNORECASE,
-)
-
-
-def _quer_encerrar(texto: str) -> bool:
-    t = (texto or "").strip().lower()
-    return t in _PALAVRAS_ENCERRAR or any(p in t for p in _PALAVRAS_ENCERRAR)
-
-
-def _extrair_nome(texto: str) -> str:
-    """Extrai um nome legível da mensagem do lead (sem inventar — só limpa/normaliza)."""
-    bruto = _PREFIXOS_NOME.sub("", (texto or "").strip())
-    bruto = bruto.splitlines()[0] if bruto else ""
-    # Mantém só a primeira parte curta (evita capturar uma frase inteira como "nome").
-    palavras = [p for p in re.split(r"\s+", bruto) if p][:3]
-    nome = " ".join(palavras).strip(" .,!?-")[:60]
-    return nome.title() if nome else ""
-
 
 # ---------------------------------------------------------------------------
-# Máquina de estados — FUNÇÃO PURA (testável sem IO). Decide a ação a partir do
-# estado atual + texto recebido. Não faz rede nem banco. INALTERADA desde a
-# implementação AuctaFlux (a lógica de conversa não depende de tabela/provider).
-# ---------------------------------------------------------------------------
-
-def decidir(estado: str | None, texto: str, fluxo: dict | None) -> dict:
-    """
-    Retorna a decisão da máquina de estados:
-      { acao: 'saudar'|'coletar_nome'|'classificar'|'encerrar',
-        proximo_estado: str, mensagem: str|None, fluxo: dict }
-    'classificar' tem mensagem=None: hand-off SILENCIOSO ao seam (S-AE-10 responde, não aqui).
-    """
-    estado = estado or "novo"
-    fluxo = dict(fluxo or {})
-    texto_norm = (texto or "").strip()
-
-    # Encerramento só faz sentido depois do diálogo ter começado.
-    if estado in ("aguardando_nome", "ativo") and _quer_encerrar(texto_norm):
-        return {
-            "acao": "encerrar",
-            "proximo_estado": "encerrada",
-            "mensagem": "Tudo certo! Quando quiser falar sobre o Enem, é só me chamar por aqui. 👋",
-            "fluxo": {**fluxo, "etapa": "encerrada"},
-        }
-
-    if estado in ("novo", "", None):
-        return {
-            "acao": "saudar",
-            "proximo_estado": "aguardando_nome",
-            "mensagem": SAUDACAO,
-            "fluxo": {**fluxo, "etapa": "aguardando_nome"},
-        }
-
-    if estado == "aguardando_nome":
-        nome = _extrair_nome(texto_norm)
-        saud = f"Prazer, {nome}!" if nome else "Prazer!"
-        return {
-            "acao": "coletar_nome",
-            "proximo_estado": "ativo",
-            "mensagem": f"{saud} 😊 Pode me mandar sua dúvida sobre o Enem que eu te ajudo.",
-            "fluxo": {**fluxo, "nome": nome, "etapa": "ativo"},
-        }
-
-    # estado 'ativo' (ou qualquer estado pós-nome): hand-off ao classificador (S-AE-10).
-    # Seam SILENCIOSO — a S-AE-04 não responde dúvidas (no-invention). A S-AE-10 assume o roteamento.
-    return {"acao": "classificar", "proximo_estado": "ativo", "mensagem": None, "fluxo": fluxo}
-
-
-# ---------------------------------------------------------------------------
-# Roteamento (S-AE-10) — chama a Edge Function PRÓPRIA da Academia Enem
+# Roteamento (S-AE-16) — chama a Edge Function PRÓPRIA da Academia Enem
 # (academia-enem-agente), nunca o motor-agente compartilhado. Isolamento total: Edge Function,
-# RAG e persona próprios (decisão do Junior, 2026-08-23).
+# RAG e persona próprios. O cérebro insere a(s) mensagem(ns); o worker só envia.
 # ---------------------------------------------------------------------------
-
-_FALLBACK_TECNICO = "Ih, deu um problema técnico aqui do meu lado 😅 Pode mandar de novo pra mim?"
-
 
 async def _chamar_academia_enem_agente(mensagem: str, telefone: str, conversa_id: str, lead_id: str) -> dict | None:
     """Chama a Edge Function EXCLUSIVA da Academia Enem — nunca o motor-agente compartilhado.
-    Retorna {"resposta": str, "handover": bool} ou None em qualquer falha (HTTP, rede, erro
-    reportado pela function). Extraído em função própria (mesmo padrão de `_chamar_motor_agente`
-    em meta_adapter_inbound.py, mas SEM importar de lá) pra ser mockável em teste sem precisar
-    interceptar httpx internamente."""
+    Retorna {"mensagens": list[str], "handover": bool, "encerrado": bool} ou None em qualquer
+    falha (HTTP, rede, erro reportado). `mensagens` é a resposta já dividida em 1+ partes
+    (S-AE-16 task 1); cai pra `[resposta]` se o campo vier ausente/mal formado (compat)."""
     import httpx  # noqa: PLC0415
 
     url = f"{SUPABASE_URL}/functions/v1/academia-enem-agente"
@@ -191,60 +97,67 @@ async def _chamar_academia_enem_agente(mensagem: str, telefone: str, conversa_id
         if not data.get("success"):
             logger.error(f"[AE engine] academia-enem-agente retornou erro: {data.get('error')}")
             return None
-        return {"resposta": data.get("resposta"), "handover": bool(data.get("handover"))}
+        mensagens = data.get("mensagens")
+        if not (isinstance(mensagens, list) and mensagens and all(isinstance(m, str) and m for m in mensagens)):
+            resposta = data.get("resposta")
+            mensagens = [resposta] if resposta else []
+        return {
+            "mensagens": mensagens,
+            "handover": bool(data.get("handover")),
+            "encerrado": bool(data.get("encerrado")),
+        }
     except Exception as exc:
         logger.error(f"[AE engine] Erro ao chamar academia-enem-agente: {type(exc).__name__}: {exc}")
         return None
 
 
 async def classificar(conversa_id: str, phone_number_id: str, telefone: str, lead_id: str, texto: str) -> None:
-    """S-AE-10 — chama a Edge Function exclusiva `academia-enem-agente` (RAG isolado, persona
-    própria, no-invention e handover próprios — nada reaproveitado do motor-agente que atende
-    o Institucional). O worker só decide o que fazer com a resposta (enviar via Meta, acionar
-    transbordo se `handover=true`) — a Edge Function não sabe nada sobre Meta/telefone/envio."""
+    """S-AE-16 — chama a Edge Function exclusiva `academia-enem-agente` e despacha a resposta,
+    espelhando o padrão do Institucional (`_chamar_motor_agente` + loop de envio):
+
+    - O cérebro JÁ GRAVOU cada parte no histórico — o worker SÓ ENVIA (gravar=False).
+    - Handover: envia o texto do próprio cérebro, marca `awaiting_human` e notifica o
+      responsável de `modulo='academia_enem'` (não usa a mensagem fixa — essa é só do atalho
+      explícito `_quer_humano`, em que o cérebro nem é chamado).
+    - Sem resposta do cérebro: fallback técnico (aí sim gravado, porque o cérebro não gravou)."""
     resultado = await _chamar_academia_enem_agente(texto, telefone, conversa_id, lead_id)
 
-    if not resultado or not resultado.get("resposta"):
+    if not resultado or not resultado["mensagens"]:
         await _enviar(conversa_id, phone_number_id, telefone, _FALLBACK_TECNICO, lead_id)
         return
 
     if resultado["handover"]:
-        # Mesmo padrão do pedido explícito de humano (_quer_humano acima): só a mensagem de
-        # confirmação de `acionar_transbordo` vai pro lead — não duplica com o texto que o GPT
-        # gerou antes da tag [[HANDOVER]] (evitaria 2 mensagens de confirmação seguidas).
-        await acionar_transbordo(conversa_id, phone_number_id, telefone, lead_id)
-        return
+        await _marcar_awaiting_e_notificar(conversa_id, phone_number_id, telefone, lead_id)
+    elif resultado["encerrado"]:
+        await asyncio.to_thread(_atualizar_status, conversa_id, "encerrada")
 
-    await _enviar(conversa_id, phone_number_id, telefone, resultado["resposta"], lead_id)
+    # Envia 1 parte por vez, na ordem. O cérebro já inseriu cada parte → gravar=False (sem
+    # inserção dupla). Aborta as restantes na 1ª falha de envio (mesma regra do Institucional:
+    # sem retry, sem mandar fora de ordem).
+    for parte in resultado["mensagens"]:
+        enviado = await _enviar(conversa_id, phone_number_id, telefone, parte, lead_id, gravar=False)
+        if not enviado:
+            logger.error("[AE engine] Falha ao enviar parte da resposta — abortando as restantes (conversa %s)", conversa_id)
+            break
 
 
 # ---------------------------------------------------------------------------
-# I/O — fluxo (metadata.ae_fluxo em `conversas`, mesmo padrão de empreg_fluxo).
+# I/O — status da conversa (`conversas`, compartilhada nesta etapa).
 # ---------------------------------------------------------------------------
 
-def _get_fluxo(conversa_id: str) -> dict:
-    res = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
-    metadata = (res.data or {}).get("metadata") or {}
-    return metadata.get("ae_fluxo", {})
-
-
-def _persistir_estado(conversa_id: str, fluxo: dict) -> None:
-    """Atualiza `metadata.ae_fluxo` (etapa da conversa vive inteira no metadata — `conversas`
-    não tem coluna `estado` própria, mesmo padrão do `empreg_fluxo` de Empregabilidade)."""
-    res = supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
-    metadata = (res.data or {}).get("metadata") or {}
-    metadata["ae_fluxo"] = fluxo
-    supabase.table("conversas").update(
-        {"metadata": metadata, "updated_at": datetime.now(timezone.utc).isoformat()}
+def _atualizar_status(conversa_id: str, status: str) -> None:
+    supabase.table("ae_conversas").update(
+        {"status": status, "updated_at": datetime.now(timezone.utc).isoformat()}
     ).eq("id", conversa_id).execute()
 
 
 def _ultima_mensagem_lead(conversa_id: str) -> tuple[str, str]:
-    """Retorna (remetente, conteudo) da última mensagem da conversa."""
+    """Retorna (remetente, conteudo) da última mensagem da conversa (ae_mensagens — isolamento
+    total, decisão 4 da S-AE-16)."""
     res = (
-        supabase.table("mensagens")
+        supabase.table("ae_mensagens")
         .select("remetente, conteudo")
-        .eq("conversa_id", conversa_id)
+        .eq("ae_conversa_id", conversa_id)
         .order("created_at", desc=True)
         .limit(1)
         .execute()
@@ -254,12 +167,23 @@ def _ultima_mensagem_lead(conversa_id: str) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Envio via Meta (Graph API, mesmo adapter dos demais canais diretos) + gravação em `mensagens`.
+# Envio via Meta (Graph API, mesmo adapter dos demais canais diretos).
+# `gravar=True` grava em `mensagens` (mensagens geradas pelo worker: fallback, transbordo).
+# `gravar=False` só envia (respostas do cérebro, que ele já gravou — evita inserção dupla).
 # ---------------------------------------------------------------------------
 
-async def _enviar(conversa_id: str, phone_number_id: str, telefone: str, texto: str, lead_id: str = "") -> bool:
-    """Envia texto via Meta e grava em `mensagens` (remetente='agente'). Retorna True só se
-    enviou de fato — evita "consumir" a saudação sem o lead receber quando a Graph API falha."""
+async def _enviar(
+    conversa_id: str,
+    phone_number_id: str,
+    telefone: str,
+    texto: str,
+    lead_id: str = "",
+    gravar: bool = True,
+) -> bool:
+    """Envia texto via Meta. Se `gravar`, grava em `ae_mensagens` (remetente='agente';
+    isolamento total, decisão 4 da S-AE-16 — tabela SEM coluna `lead_id`, diferente de
+    `mensagens`). Retorna True só se enviou de fato — evita "consumir" a mensagem sem o lead
+    receber quando a Graph API falha."""
     from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
 
     token = os.getenv("META_SYSTEM_USER_TOKEN", "")
@@ -267,24 +191,55 @@ async def _enviar(conversa_id: str, phone_number_id: str, telefone: str, texto: 
     if not ok:
         return False
 
-    try:
-        supabase.table("mensagens").insert({
-            "conversa_id": conversa_id,
-            "lead_id": lead_id or None,
-            "remetente": "agente",
-            "tipo": "text",
-            "conteudo": texto,
-        }).execute()
-    except Exception as exc:
-        logger.error("[AE engine] Falha ao gravar mensagem da IA (conversa %s): %s", conversa_id, exc, exc_info=True)
+    if gravar:
+        try:
+            supabase.table("ae_mensagens").insert({
+                "ae_conversa_id": conversa_id,
+                "remetente": "agente",
+                "tipo": "text",
+                "conteudo": texto,
+            }).execute()
+        except Exception as exc:
+            logger.error("[AE engine] Falha ao gravar mensagem da IA (conversa %s): %s", conversa_id, exc, exc_info=True)
     return True
 
 
 # ---------------------------------------------------------------------------
 # Transbordo (S-AE-06) — reaproveita `_notificar_transbordo` (genérico, já filtra por
-# `modulo` corretamente — ver de-risk na story) em vez de recriar a lógica de notificação.
-# NÃO cria tabela nova: usa `transbordo_humano` com `modulo='academia_enem'`.
+# `modulo='academia_enem'`). NÃO cria tabela nova: usa `transbordo_humano`.
 # ---------------------------------------------------------------------------
+
+async def _marcar_awaiting_e_notificar(
+    conversa_id: str,
+    phone_number_id: str,
+    telefone: str,
+    lead_id: str = "",
+) -> None:
+    """Handover sinalizado PELO CÉREBRO ([[HANDOVER]]): marca `awaiting_human` e notifica o
+    responsável de `modulo='academia_enem'`. NÃO envia mensagem fixa (o texto do próprio cérebro
+    é enviado por `classificar`, mesmo padrão do Institucional) e NÃO reverte o status se a
+    notificação falhar — o lead pediu humano; deixar a IA voltar a responder seria pior. Só loga.
+    Status vive em `ae_conversas` (isolamento total, decisão 4 da S-AE-16)."""
+    try:
+        await asyncio.to_thread(_atualizar_status, conversa_id, "awaiting_human")
+    except Exception as exc:
+        logger.error("[AE engine] Falha ao marcar awaiting_human (conversa %s): %s", conversa_id, exc, exc_info=True)
+        return
+
+    from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
+    try:
+        notificado = await _notificar_transbordo(conversa_id, "academia_enem", None, phone_number_id, telefone)
+    except Exception as exc:
+        logger.error("[AE engine] Erro ao notificar transbordo (conversa %s): %s", conversa_id, exc, exc_info=True)
+        notificado = False
+
+    if not notificado:
+        logger.warning(
+            "[AE engine] Handover do cérebro sem contato de transbordo configurado para "
+            "modulo='academia_enem' (conversa %s) — conversa fica awaiting_human aguardando "
+            "atendimento manual.", conversa_id,
+        )
+
 
 async def acionar_transbordo(
     conversa_id: str,
@@ -292,21 +247,18 @@ async def acionar_transbordo(
     telefone: str,
     lead_id: str = "",
 ) -> bool:
-    """Marca a conversa em `awaiting_human` (silenciando a IA) e notifica o responsável
-    cadastrado em `transbordo_humano` para `modulo='academia_enem'`. Reverte o status se a
-    notificação falhar (mesmo padrão de `empregabilidade_engine._acionar_transbordo_empregabilidade`)
-    — evita deixar a conversa "presa" em awaiting_human sem ninguém avisado.
-
-    Público (não prefixado com `_`): a S-AE-10 (classificador) vai chamar esta função quando o
-    lead aceitar transferência após o RAG não encontrar resposta (AC3) — seam já pronto, sem
-    reimplementar a notificação lá."""
+    """Atalho de pedido EXPLÍCITO de humano (`_quer_humano`, antes de chamar o cérebro). Marca
+    `awaiting_human`, notifica o responsável de `modulo='academia_enem'` e envia a mensagem fixa
+    de confirmação. Reverte o status e avisa o lead se a notificação falhar — mesmo padrão de
+    `empregabilidade_engine._acionar_transbordo_empregabilidade` (evita conversa "presa" em
+    awaiting_human sem ninguém avisado)."""
     def _marcar_awaiting_human():
-        supabase.table("conversas").update(
+        supabase.table("ae_conversas").update(
             {"status": "awaiting_human", "updated_at": datetime.now(timezone.utc).isoformat()}
         ).eq("id", conversa_id).execute()
 
     def _restaurar_ativa():
-        supabase.table("conversas").update(
+        supabase.table("ae_conversas").update(
             {"status": "ativa", "updated_at": datetime.now(timezone.utc).isoformat()}
         ).eq("id", conversa_id).execute()
 
@@ -318,9 +270,6 @@ async def acionar_transbordo(
 
     from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
     try:
-        # AC4: modulo FIXO 'academia_enem' — nunca cai no contato de outro módulo mesmo sem
-        # contato configurado (_notificar_transbordo filtra estrito por modulo, sem fallback
-        # cruzado; loga warning e retorna False — tratado abaixo).
         notificado = await _notificar_transbordo(conversa_id, "academia_enem", None, phone_number_id, telefone)
     except Exception as exc:
         logger.error("[AE engine] Erro ao notificar transbordo (conversa %s): %s", conversa_id, exc, exc_info=True)
@@ -335,7 +284,7 @@ async def acionar_transbordo(
         return False
 
     await _enviar(conversa_id, phone_number_id, telefone, _MSG_TRANSBORDO_SUCESSO, lead_id)
-    logger.info("[AE engine] Transbordo acionado com sucesso (conversa %s)", conversa_id)
+    logger.info("[AE engine] Transbordo (pedido explícito) acionado com sucesso (conversa %s)", conversa_id)
     return True
 
 
@@ -359,25 +308,10 @@ async def processar_mensagem_academia_enem(
         logger.info("[AE engine] Última mensagem não é do lead (conversa %s) — nada a fazer.", conversa_id)
         return
 
-    # 1.5) AC1: pedido explícito de humano tem prioridade sobre a máquina de estados —
-    # o lead pode pedir transbordo em qualquer etapa da conversa (não só em 'ativo').
+    # 2) Pedido explícito de humano tem prioridade e nem passa pelo cérebro (atalho de segurança).
     if _quer_humano(texto):
         await acionar_transbordo(conversa_id, phone_number_id, phone, lead_id)
         return
 
-    # 2) Decide (puro) a partir do fluxo fresco (metadata.ae_fluxo).
-    fluxo = await asyncio.to_thread(_get_fluxo, conversa_id)
-    decisao = decidir(fluxo.get("etapa"), texto, fluxo)
-
-    # 3) Hand-off ao classificador (S-AE-10): avança o fluxo e delega à Edge Function própria.
-    if decisao["acao"] == "classificar":
-        await asyncio.to_thread(_persistir_estado, conversa_id, decisao["fluxo"])
-        await classificar(conversa_id, phone_number_id, phone, lead_id, texto)
-        return
-
-    # 4) Ações com mensagem: ENVIA primeiro; só avança o fluxo se o envio funcionou.
-    if not decisao.get("mensagem"):
-        return
-    enviado = await _enviar(conversa_id, phone_number_id, phone, decisao["mensagem"], lead_id)
-    if enviado:
-        await asyncio.to_thread(_persistir_estado, conversa_id, decisao["fluxo"])
+    # 3) Todo o resto vai DIRETO ao cérebro (sem etapa de nome, igual Institucional).
+    await classificar(conversa_id, phone_number_id, phone, lead_id, texto)

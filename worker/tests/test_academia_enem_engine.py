@@ -1,13 +1,13 @@
 """
-Testes — Academia Enem Engine (S-AE-04: automação de entrada humanizada, Meta direta).
+Testes — Academia Enem Engine (S-AE-16: clone do comportamento do Institucional).
 
-Cobre:
-- A máquina de estados pura `decidir()` (sem IO) — os 4 cenários dos ACs da story
-  (saudação sem menu, coleta de nome, hand-off ao classificador, encerramento).
-- A camada de I/O (`processar_mensagem_academia_enem`) com Supabase mockado — confirma que
-  grava em `conversas`/`mensagens` (compartilhadas), não em `ae_conversas`/`ae_mensagens`, e
-  que só envia mensagem quando a última mensagem da conversa é do lead (evita loop com o
-  próprio outbound).
+Cobre o comportamento novo:
+- SEM etapa de coleta de nome: toda mensagem do lead vai direto ao cérebro (`classificar`).
+- O cérebro grava a resposta; o worker SÓ ENVIA cada parte (gravar=False) — sem inserção dupla.
+- Handover pelo cérebro → envia o texto do cérebro + marca awaiting_human + notifica.
+- Pedido explícito de humano (`_quer_humano`) → atalho `acionar_transbordo` (mensagem fixa),
+  sem passar pelo cérebro.
+- Guard anti-loop: só reage quando a última mensagem da conversa é do lead.
 
 `academia_enem_engine.py` faz `from supabase import create_client, Client` no topo do módulo —
 mesma limitação de ambiente já documentada em test_empregabilidade_engine.py/
@@ -32,80 +32,10 @@ if "supabase" not in sys.modules:
 import academia_enem_engine as ae  # noqa: E402
 
 
-# ---------------------------------------------------------------------------
-# decidir() — máquina de estados pura
-# ---------------------------------------------------------------------------
-
-def test_decidir_lead_novo_saudacao_sem_menu():
-    decisao = ae.decidir(None, "oi", None)
-    assert decisao["acao"] == "saudar"
-    assert decisao["proximo_estado"] == "aguardando_nome"
-    assert "como você se chama" in decisao["mensagem"]
-    # AC1: sem menu numérico — garante que a saudação não lista opções "1)/2)/3)".
-    assert not any(f"{n})" in decisao["mensagem"] for n in range(1, 4))
-
-
-def test_decidir_coleta_nome_persiste_e_avanca_para_ativo():
-    decisao = ae.decidir("aguardando_nome", "meu nome é João Silva", {"etapa": "aguardando_nome"})
-    assert decisao["acao"] == "coletar_nome"
-    assert decisao["proximo_estado"] == "ativo"
-    assert decisao["fluxo"]["nome"] == "João Silva"
-    assert "João" in decisao["mensagem"]
-
-
-def test_decidir_coleta_nome_sem_nome_extraivel_nao_quebra():
-    decisao = ae.decidir("aguardando_nome", "??", {})
-    assert decisao["acao"] == "coletar_nome"
-    assert decisao["fluxo"]["nome"] == ""
-    assert "Prazer!" in decisao["mensagem"]
-
-
-def test_decidir_estado_ativo_handoff_classificador_silencioso():
-    decisao = ae.decidir("ativo", "quanto custa o curso?", {"nome": "João"})
-    assert decisao["acao"] == "classificar"
-    assert decisao["mensagem"] is None
-    # fluxo preservado (nome não é perdido no hand-off)
-    assert decisao["fluxo"]["nome"] == "João"
-
-
-@pytest.mark.parametrize("estado", ["aguardando_nome", "ativo"])
-def test_decidir_encerramento_por_palavra_chave(estado):
-    decisao = ae.decidir(estado, "tchau, obrigado", {"nome": "João"})
-    assert decisao["acao"] == "encerrar"
-    assert decisao["fluxo"]["etapa"] == "encerrada"
-    assert "Quando quiser falar sobre o Enem" in decisao["mensagem"]
-
-
-def test_decidir_encerramento_nao_dispara_no_estado_novo():
-    # "obrigado" antes de qualquer diálogo real não deve ser tratado como despedida.
-    decisao = ae.decidir(None, "obrigado por aceitar meu pedido de amizade", None)
-    assert decisao["acao"] == "saudar"
-
-
-# ---------------------------------------------------------------------------
-# _extrair_nome — normalização
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("entrada,esperado", [
-    ("João", "João"),
-    ("me chamo Maria Souza", "Maria Souza"),
-    ("sou o Pedro", "Pedro"),
-    ("", ""),
-])
-def test_extrair_nome(entrada, esperado):
-    assert ae._extrair_nome(entrada) == esperado
-
-
-# ---------------------------------------------------------------------------
-# processar_mensagem_academia_enem — camada de I/O (Supabase mockado)
-# ---------------------------------------------------------------------------
-
 def _mock_supabase_tabelas(conteudos_por_tabela: dict):
-    """Monta um supabase mock cujo .table(nome) retorna SEMPRE o mesmo MagicMock por
-    tabela (memoizado, como o client real reaproveitaria a mesma referência lógica),
-    com .execute() devolvendo .data = conteudos_por_tabela[nome]. Memoização é o que
-    permite inspecionar depois (ex.: `.update.assert_not_called()`) o que o código
-    sob teste efetivamente chamou, não uma instância nova e sempre "limpa"."""
+    """Monta um supabase mock cujo .table(nome) retorna SEMPRE o mesmo MagicMock por tabela
+    (memoizado), com .execute() devolvendo .data = conteudos_por_tabela[nome]. Memoização
+    permite inspecionar depois (ex.: `.update.assert_not_called()`) o que o código chamou."""
     sb = MagicMock()
     tabelas_criadas: dict = {}
 
@@ -115,8 +45,6 @@ def _mock_supabase_tabelas(conteudos_por_tabela: dict):
         tbl = MagicMock()
         resultado = MagicMock()
         resultado.data = conteudos_por_tabela.get(nome)
-        # Encadeamentos usados pelo módulo: select().eq().order().limit().execute(),
-        # select().eq().single().execute(), update().eq().execute(), insert().execute()
         for metodo in ("select", "eq", "order", "limit", "single", "update", "insert"):
             getattr(tbl, metodo).return_value = tbl
         tbl.execute.return_value = resultado
@@ -127,63 +55,56 @@ def _mock_supabase_tabelas(conteudos_por_tabela: dict):
     return sb
 
 
+# ---------------------------------------------------------------------------
+# processar_mensagem_academia_enem — roteamento (Supabase mockado)
+# ---------------------------------------------------------------------------
+
 @pytest.mark.asyncio
 async def test_processar_mensagem_ignora_quando_ultima_mensagem_nao_e_do_lead(monkeypatch):
     """Evita loop: se a última mensagem gravada foi da própria IA (nosso outbound), não reage."""
     sb = _mock_supabase_tabelas({
-        "mensagens": [{"remetente": "agente", "conteudo": "oi"}],
+        "ae_mensagens": [{"remetente": "agente", "conteudo": "oi"}],
     })
     monkeypatch.setattr(ae, "supabase", sb)
-    enviar_mock = AsyncMock()
-    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+    classificar_mock = AsyncMock()
+    monkeypatch.setattr(ae, "classificar", classificar_mock)
+    transbordo_mock = AsyncMock()
+    monkeypatch.setattr(ae, "acionar_transbordo", transbordo_mock)
 
     await ae.processar_mensagem_academia_enem(
         texto="oi", phone="5585999999999", phone_number_id="123",
         lead_id="lead-1", conversa_id="conv-1",
     )
 
-    enviar_mock.assert_not_awaited()
+    classificar_mock.assert_not_awaited()
+    transbordo_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_processar_mensagem_lead_novo_envia_saudacao_via_conversas_mensagens(monkeypatch):
-    """AC1/AC5: lead novo recebe saudação sem menu; grava em conversas/mensagens
-    (compartilhadas) — nunca ae_conversas/ae_mensagens."""
+async def test_processar_mensagem_lead_vai_direto_ao_cerebro_sem_etapa_de_nome(monkeypatch):
+    """S-AE-16: qualquer mensagem do lead (inclusive a primeira) vai DIRETO ao cérebro —
+    não há mais saudação/coleta de nome."""
     sb = _mock_supabase_tabelas({
-        "mensagens": [{"remetente": "lead", "conteudo": "oi"}],
-        "conversas": {"metadata": {}},
+        "ae_mensagens": [{"remetente": "lead", "conteudo": "oi"}],
     })
     monkeypatch.setattr(ae, "supabase", sb)
-    enviar_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+    classificar_mock = AsyncMock()
+    monkeypatch.setattr(ae, "classificar", classificar_mock)
 
     await ae.processar_mensagem_academia_enem(
         texto="oi", phone="5585999999999", phone_number_id="123",
         lead_id="lead-1", conversa_id="conv-1",
     )
 
-    enviar_mock.assert_awaited_once()
-    _conv_id, _pnid, _phone, mensagem, _lead_id = enviar_mock.await_args.args
-    assert "como você se chama" in mensagem
-    # Nenhuma tabela ae_* foi tocada.
-    tabelas_chamadas = {c.args[0] for c in sb.table.call_args_list}
-    assert "ae_conversas" not in tabelas_chamadas
-    assert "ae_mensagens" not in tabelas_chamadas
-    assert "conversas" in tabelas_chamadas
-    assert "mensagens" in tabelas_chamadas
+    classificar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "lead-1", "oi")
 
 
 @pytest.mark.asyncio
-async def test_processar_mensagem_ativo_delega_ao_classificador_sem_enviar(monkeypatch):
-    """AC2: após o nome, a conversa avança para roteamento (seam classificar()) — sem a
-    S-AE-04 responder a dúvida diretamente (no-invention)."""
+async def test_processar_mensagem_pergunta_delega_ao_cerebro(monkeypatch):
     sb = _mock_supabase_tabelas({
-        "mensagens": [{"remetente": "lead", "conteudo": "quanto custa?"}],
-        "conversas": {"metadata": {"ae_fluxo": {"etapa": "ativo", "nome": "João"}}},
+        "ae_mensagens": [{"remetente": "lead", "conteudo": "quanto custa?"}],
     })
     monkeypatch.setattr(ae, "supabase", sb)
-    enviar_mock = AsyncMock()
-    monkeypatch.setattr(ae, "_enviar", enviar_mock)
     classificar_mock = AsyncMock()
     monkeypatch.setattr(ae, "classificar", classificar_mock)
 
@@ -192,21 +113,20 @@ async def test_processar_mensagem_ativo_delega_ao_classificador_sem_enviar(monke
         lead_id="lead-1", conversa_id="conv-1",
     )
 
-    enviar_mock.assert_not_awaited()
     classificar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "lead-1", "quanto custa?")
 
 
 @pytest.mark.asyncio
-async def test_processar_mensagem_pedido_humano_aciona_transbordo_antes_do_fluxo(monkeypatch):
-    """S-AE-06/AC1: pedido explícito de humano tem prioridade sobre a máquina de estados,
-    mesmo em qualquer etapa — não precisa chegar em 'ativo' primeiro."""
+async def test_processar_mensagem_pedido_humano_aciona_transbordo_sem_passar_pelo_cerebro(monkeypatch):
+    """Pedido explícito de humano tem prioridade e nem chama o cérebro (atalho de segurança)."""
     sb = _mock_supabase_tabelas({
-        "mensagens": [{"remetente": "lead", "conteudo": "quero falar com alguém"}],
-        "conversas": {"metadata": {}},
+        "ae_mensagens": [{"remetente": "lead", "conteudo": "quero falar com alguém"}],
     })
     monkeypatch.setattr(ae, "supabase", sb)
     acionar_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(ae, "acionar_transbordo", acionar_mock)
+    classificar_mock = AsyncMock()
+    monkeypatch.setattr(ae, "classificar", classificar_mock)
 
     await ae.processar_mensagem_academia_enem(
         texto="quero falar com alguém", phone="5585999999999", phone_number_id="123",
@@ -214,33 +134,11 @@ async def test_processar_mensagem_pedido_humano_aciona_transbordo_antes_do_fluxo
     )
 
     acionar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "lead-1")
-
-
-@pytest.mark.asyncio
-async def test_processar_mensagem_nao_avanca_estado_se_envio_falhar(monkeypatch):
-    """Se o envio falhar (Graph API fora), o fluxo NÃO avança — evita "consumir" a saudação
-    sem o lead ter recebido nada."""
-    sb = _mock_supabase_tabelas({
-        "mensagens": [{"remetente": "lead", "conteudo": "oi"}],
-        "conversas": {"metadata": {}},
-    })
-    monkeypatch.setattr(ae, "supabase", sb)
-    enviar_mock = AsyncMock(return_value=False)
-    monkeypatch.setattr(ae, "_enviar", enviar_mock)
-
-    await ae.processar_mensagem_academia_enem(
-        texto="oi", phone="5585999999999", phone_number_id="123",
-        lead_id="lead-1", conversa_id="conv-1",
-    )
-
-    enviar_mock.assert_awaited_once()
-    # update() não deve ter sido chamado em conversas (persistência de estado pulada).
-    conversas_tbl = sb.table("conversas")
-    conversas_tbl.update.assert_not_called()
+    classificar_mock.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
-# _quer_humano — detecção de pedido explícito de transbordo (AC1)
+# _quer_humano — detecção de pedido explícito de transbordo
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("texto", [
@@ -264,14 +162,155 @@ def test_quer_humano_nao_dispara_em_mensagem_normal(texto):
 
 
 # ---------------------------------------------------------------------------
-# acionar_transbordo — S-AE-06 (reaproveita _notificar_transbordo, genérico)
+# classificar() — despacho da resposta do cérebro (envio em partes, sem inserção dupla)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_classificar_chama_edge_function_propria_com_dados_corretos(monkeypatch):
+    chamar_mock = AsyncMock(return_value={"mensagens": ["A prova é dia 10/11."], "handover": False, "encerrado": False})
+    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", chamar_mock)
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "quando é a prova?")
+
+    chamar_mock.assert_awaited_once_with("quando é a prova?", "5585999999999", "conv-1", "lead-1")
+    # cérebro já gravou → worker só envia (gravar=False), sem inserção dupla.
+    enviar_mock.assert_awaited_once()
+    assert enviar_mock.await_args.args == ("conv-1", "123", "5585999999999", "A prova é dia 10/11.", "lead-1")
+    assert enviar_mock.await_args.kwargs.get("gravar") is False
+
+
+@pytest.mark.asyncio
+async def test_classificar_envia_todas_as_partes_na_ordem_sem_gravar(monkeypatch):
+    """S-AE-16: resposta dividida em partes pelo cérebro é enviada parte a parte, na ordem,
+    e nenhuma é gravada de novo pelo worker (o cérebro já gravou)."""
+    chamar_mock = AsyncMock(return_value={
+        "mensagens": ["Olha só as datas:", "Prova - 10/11", "Quer detalhes de alguma?"],
+        "handover": False, "encerrado": False,
+    })
+    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", chamar_mock)
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "quais as datas?")
+
+    assert enviar_mock.await_count == 3
+    textos = [c.args[3] for c in enviar_mock.await_args_list]
+    assert textos == ["Olha só as datas:", "Prova - 10/11", "Quer detalhes de alguma?"]
+    assert all(c.kwargs.get("gravar") is False for c in enviar_mock.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_classificar_aborta_partes_restantes_na_primeira_falha(monkeypatch):
+    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", AsyncMock(return_value={
+        "mensagens": ["parte 1", "parte 2", "parte 3"], "handover": False, "encerrado": False,
+    }))
+    # 1ª envia ok, 2ª falha → 3ª não é tentada.
+    enviar_mock = AsyncMock(side_effect=[True, False, True])
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "oi")
+
+    assert enviar_mock.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_classificar_sem_resposta_usa_fallback_tecnico_e_grava(monkeypatch):
+    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", AsyncMock(return_value=None))
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "oi")
+
+    # fallback é gerado pelo worker (cérebro não gravou) → gravar=True (default, sem kwarg).
+    enviar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", ae._FALLBACK_TECNICO, "lead-1")
+
+
+@pytest.mark.asyncio
+async def test_classificar_handover_envia_texto_do_cerebro_e_notifica(monkeypatch):
+    """S-AE-16: no handover sinalizado pelo cérebro, o lead vê o TEXTO DO PRÓPRIO CÉREBRO
+    (não uma frase fixa), e por trás marca awaiting_human + notifica — igual Institucional."""
+    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", AsyncMock(return_value={
+        "mensagens": ["Com certeza, vou te passar para um humano."], "handover": True, "encerrado": False,
+    }))
+    marcar_mock = AsyncMock()
+    monkeypatch.setattr(ae, "_marcar_awaiting_e_notificar", marcar_mock)
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "quero um humano")
+
+    marcar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "lead-1")
+    enviar_mock.assert_awaited_once()
+    assert enviar_mock.await_args.args[3] == "Com certeza, vou te passar para um humano."
+    assert enviar_mock.await_args.kwargs.get("gravar") is False
+
+
+@pytest.mark.asyncio
+async def test_classificar_encerrado_marca_status_encerrada(monkeypatch):
+    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", AsyncMock(return_value={
+        "mensagens": ["Tudo certo, até mais! 😊"], "handover": False, "encerrado": True,
+    }))
+    enviar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(ae, "_enviar", enviar_mock)
+    status_mock = MagicMock()
+    monkeypatch.setattr(ae, "_atualizar_status", status_mock)
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "obrigado, tchau")
+
+    status_mock.assert_called_once_with("conv-1", "encerrada")
+    enviar_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_classificar_nao_importa_nem_toca_meta_adapter_inbound_motor_agente(monkeypatch):
+    """Isolamento: `classificar()` nunca chama o motor-agente compartilhado do Institucional."""
+    import meta_adapter_inbound as mai
+
+    chamar_motor_agente_mock = AsyncMock()
+    monkeypatch.setattr(mai, "_chamar_motor_agente", chamar_motor_agente_mock)
+    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", AsyncMock(return_value={
+        "mensagens": ["ok"], "handover": False, "encerrado": False,
+    }))
+    monkeypatch.setattr(ae, "_enviar", AsyncMock(return_value=True))
+
+    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "oi")
+
+    chamar_motor_agente_mock.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _marcar_awaiting_e_notificar — handover pelo cérebro (sem mensagem fixa, sem reversão)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_marcar_awaiting_e_notificar_marca_status_e_notifica_modulo_correto(monkeypatch):
+    import meta_adapter_inbound as mai
+
+    sb = _mock_supabase_tabelas({"ae_conversas": {}})
+    monkeypatch.setattr(ae, "supabase", sb)
+    notificar_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(mai, "_notificar_transbordo", notificar_mock)
+
+    await ae._marcar_awaiting_e_notificar("conv-1", "123", "5585999999999", "lead-1")
+
+    conversas_tbl = sb.table("ae_conversas")
+    assert conversas_tbl.update.call_args_list[0].args[0]["status"] == "awaiting_human"
+    # nunca reverte para 'ativa' (diferente do atalho explícito acionar_transbordo).
+    assert all(c.args[0].get("status") != "ativa" for c in conversas_tbl.update.call_args_list)
+    notificar_mock.assert_awaited_once_with("conv-1", "academia_enem", None, "123", "5585999999999")
+
+
+# ---------------------------------------------------------------------------
+# acionar_transbordo — atalho de pedido EXPLÍCITO de humano (mensagem fixa)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_acionar_transbordo_sucesso_marca_awaiting_human_e_notifica(monkeypatch):
     import meta_adapter_inbound as mai
 
-    sb = _mock_supabase_tabelas({"mensagens": [], "conversas": {}})
+    sb = _mock_supabase_tabelas({"ae_mensagens": [], "ae_conversas": {}})
     monkeypatch.setattr(ae, "supabase", sb)
     notificar_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(mai, "_notificar_transbordo", notificar_mock)
@@ -281,12 +320,10 @@ async def test_acionar_transbordo_sucesso_marca_awaiting_human_e_notifica(monkey
     resultado = await ae.acionar_transbordo("conv-1", "123", "5585999999999", "lead-1")
 
     assert resultado is True
-    conversas_tbl = sb.table("conversas")
-    # 1ª chamada de update() marca awaiting_human; nenhuma reversão pra 'ativa'.
+    conversas_tbl = sb.table("ae_conversas")
     primeira_chamada = conversas_tbl.update.call_args_list[0]
     assert primeira_chamada.args[0]["status"] == "awaiting_human"
     assert all(c.args[0].get("status") != "ativa" for c in conversas_tbl.update.call_args_list)
-    # AC2: modulo FIXO 'academia_enem' — nunca outro módulo.
     notificar_mock.assert_awaited_once_with("conv-1", "academia_enem", None, "123", "5585999999999")
     enviar_mock.assert_awaited_once()
     assert "chamei" in enviar_mock.await_args.args[3].lower()
@@ -294,12 +331,11 @@ async def test_acionar_transbordo_sucesso_marca_awaiting_human_e_notifica(monkey
 
 @pytest.mark.asyncio
 async def test_acionar_transbordo_sem_contato_reverte_status_e_avisa_lead(monkeypatch):
-    """AC4: sem contato configurado para modulo='academia_enem', não deve deixar a conversa
-    travada em awaiting_human nem cair silenciosamente no contato de outro módulo —
-    _notificar_transbordo já garante o filtro estrito; aqui confirmamos a reversão local."""
+    """Sem contato configurado para modulo='academia_enem', não deixa a conversa travada em
+    awaiting_human — reverte para 'ativa' e avisa o lead."""
     import meta_adapter_inbound as mai
 
-    sb = _mock_supabase_tabelas({"mensagens": [], "conversas": {}})
+    sb = _mock_supabase_tabelas({"ae_mensagens": [], "ae_conversas": {}})
     monkeypatch.setattr(ae, "supabase", sb)
     notificar_mock = AsyncMock(return_value=False)
     monkeypatch.setattr(mai, "_notificar_transbordo", notificar_mock)
@@ -309,76 +345,7 @@ async def test_acionar_transbordo_sem_contato_reverte_status_e_avisa_lead(monkey
     resultado = await ae.acionar_transbordo("conv-1", "123", "5585999999999", "lead-1")
 
     assert resultado is False
-    conversas_tbl = sb.table("conversas")
+    conversas_tbl = sb.table("ae_conversas")
     status_chamados = [c.args[0]["status"] for c in conversas_tbl.update.call_args_list]
     assert status_chamados == ["awaiting_human", "ativa"]
     assert "não consegui" in enviar_mock.await_args.args[3].lower()
-
-
-# ---------------------------------------------------------------------------
-# classificar() — S-AE-10 (reconstrução, 2026-08-23): chama a Edge Function PRÓPRIA
-# (academia-enem-agente), NUNCA o motor-agente compartilhado. Isolamento total confirmado
-# pelos testes: nenhum deles toca `meta_adapter_inbound` (diferente da versão anterior).
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_classificar_chama_edge_function_propria_com_dados_corretos(monkeypatch):
-    chamar_mock = AsyncMock(return_value={"resposta": "A prova é dia 10/11.", "handover": False})
-    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", chamar_mock)
-    enviar_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(ae, "_enviar", enviar_mock)
-
-    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "quando é a prova?")
-
-    chamar_mock.assert_awaited_once_with("quando é a prova?", "5585999999999", "conv-1", "lead-1")
-    enviar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "A prova é dia 10/11.", "lead-1")
-
-
-@pytest.mark.asyncio
-async def test_classificar_sem_resposta_usa_fallback_tecnico(monkeypatch):
-    monkeypatch.setattr(ae, "_chamar_academia_enem_agente", AsyncMock(return_value=None))
-    enviar_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(ae, "_enviar", enviar_mock)
-
-    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "oi")
-
-    enviar_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", ae._FALLBACK_TECNICO, "lead-1")
-
-
-@pytest.mark.asyncio
-async def test_classificar_handover_aciona_transbordo_sem_duplicar_mensagem(monkeypatch):
-    """Quando a Edge Function sinaliza handover=true, só a mensagem de `acionar_transbordo`
-    vai pro lead — o texto que o GPT gerou antes da tag [[HANDOVER]] não é enviado separado
-    (evita 2 confirmações seguidas)."""
-    monkeypatch.setattr(
-        ae, "_chamar_academia_enem_agente",
-        AsyncMock(return_value={"resposta": "Vou te transferir!", "handover": True}),
-    )
-    enviar_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(ae, "_enviar", enviar_mock)
-    transbordo_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(ae, "acionar_transbordo", transbordo_mock)
-
-    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "quero falar com atendente")
-
-    transbordo_mock.assert_awaited_once_with("conv-1", "123", "5585999999999", "lead-1")
-    enviar_mock.assert_not_awaited()  # o texto "Vou te transferir!" nunca é enviado direto
-
-
-@pytest.mark.asyncio
-async def test_classificar_nao_importa_nem_toca_meta_adapter_inbound(monkeypatch):
-    """Confirma isolamento: `classificar()` não depende de `meta_adapter_inbound` (onde vive
-    `_chamar_motor_agente`, usado pelo Institucional) — nenhuma chamada nesse módulo compartilhado."""
-    import meta_adapter_inbound as mai
-
-    chamar_motor_agente_mock = AsyncMock()
-    monkeypatch.setattr(mai, "_chamar_motor_agente", chamar_motor_agente_mock)
-    monkeypatch.setattr(
-        ae, "_chamar_academia_enem_agente",
-        AsyncMock(return_value={"resposta": "ok", "handover": False}),
-    )
-    monkeypatch.setattr(ae, "_enviar", AsyncMock(return_value=True))
-
-    await ae.classificar("conv-1", "123", "5585999999999", "lead-1", "oi")
-
-    chamar_motor_agente_mock.assert_not_awaited()
