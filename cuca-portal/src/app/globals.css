@@ -187,8 +187,8 @@
 
 /* Scrollbar customizado (do dashboard de referência) */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -197,7 +197,6 @@
 
 ::-webkit-scrollbar-thumb {
   @apply bg-gray-300 dark:bg-gray-600 rounded;
-  min-height: 40px;
 }
 
 ::-webkit-scrollbar-thumb:hover {

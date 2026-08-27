@@ -579,7 +579,7 @@ export default function EmpresasPage() {
                                                     onClick={() => handleEdit(emp)}
                                                 >
                                                     <Pencil className="h-4 w-4 text-cuca-blue" />
-                                                    <span className="hidden xl:inline">Editar</span>
+                                                    <span className="hidden sm:inline">Editar</span>
                                                 </Button>
                                                 {canAuthorizeWhatsapp && (
                                                     <Button
@@ -589,7 +589,7 @@ export default function EmpresasPage() {
                                                         onClick={() => handleOpenWhatsappDialog(emp)}
                                                     >
                                                         <ShieldCheck className="h-4 w-4 text-green-700" />
-                                                        <span className="hidden xl:inline">WhatsApp</span>
+                                                        <span className="hidden sm:inline">WhatsApp</span>
                                                     </Button>
                                                 )}
                                                 <Button
@@ -599,7 +599,7 @@ export default function EmpresasPage() {
                                                     onClick={() => setDeletingEmpresa(emp)}
                                                 >
                                                     <Trash2 className="h-4 w-4" />
-                                                    <span className="hidden xl:inline">Excluir</span>
+                                                    <span className="hidden sm:inline">Excluir</span>
                                                 </Button>
                                             </div>
                                         </TableCell>
