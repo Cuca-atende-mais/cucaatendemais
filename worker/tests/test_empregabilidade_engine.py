@@ -4502,6 +4502,39 @@ class TestTransbordoHumanoFlexivelAud022:
         assert "falhas_atendente_nome_etapa" not in estado
         assert "seguimos por aqui" in _isola_enviar.call_args.args[3].lower()
 
+    @pytest.mark.asyncio
+    async def test_voltar_na_oferta_restaura_etapa_anterior_em_vez_de_repetir_pergunta(self, monkeypatch, _isola_enviar):
+        """Regressão do loop relatado em 2026-08-27: lead digitava 'voltar' na
+        etapa oferecendo_atendente_humano e o bot só repetia 'quer que eu
+        chame nossa equipe... sim ou não', pra sempre — 'voltar' não era
+        reconhecido como recusa do transbordo (só 'não' era)."""
+        estado, fake_get, fake_set = _fluxo_mock("oferecendo_atendente_humano", {
+            "perfil": "publico",
+            "_oferta_atendente_contexto": {
+                "etapa_anterior": "listou_ocorrencias_cargo",
+                "fluxo_anterior": {
+                    "perfil": "publico",
+                    "etapa": "listou_ocorrencias_cargo",
+                    "mapa_ocorrencias": {"1": {"vaga_id": "vaga-1"}},
+                },
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_transbordo = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_acionar_transbordo_empregabilidade", mock_transbordo)
+
+        await emp._processar_publico(
+            "voltar", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_transbordo.assert_not_awaited()
+        assert estado["etapa"] == "listou_ocorrencias_cargo"
+        assert "seguimos por aqui" in _isola_enviar.call_args.args[3].lower()
+        # Não pode ter voltado a perguntar "quer que eu chame nossa equipe" —
+        # esse era exatamente o loop.
+        assert "quer que eu chame" not in _isola_enviar.call_args.args[3].lower()
+
 
 def _nav_mapa_categorias():
     return {

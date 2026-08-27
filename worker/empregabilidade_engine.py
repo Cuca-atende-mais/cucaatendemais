@@ -101,7 +101,12 @@ _AFIRMATIVO_CONFIRMACAO_DETALHADA = (
 _AFIRMATIVO_CANCELAMENTO = (*_AFIRMATIVO_CONFIRMACAO, "yes")
 _AFIRMATIVO_CRIAR_VAGA = ("sim", "s", "quero", "vou", "yes", "ok", "1")
 _AFIRMATIVO_ROTA = (*_AFIRMATIVO_CONFIRMACAO_DETALHADA, "exato")
-_NEGATIVO_ATENDENTE_HUMANO = ("não", "nao", "n", "negativo")
+# "voltar"/"volta" entram aqui de propósito: na etapa oferecendo_atendente_humano
+# o lead que digita "voltar" quer exatamente o mesmo efeito de um "não" (recusar
+# o transbordo e retomar a etapa anterior) — antes disso a mensagem "voltar"
+# caía no fallback genérico e repetia a pergunta pra sempre (loop reportado
+# pelo Junior em 2026-08-27).
+_NEGATIVO_ATENDENTE_HUMANO = ("não", "nao", "n", "negativo", "voltar", "volta")
 _LIMIAR_FALHAS_OFERTA_ATENDENTE = 2
 _ETAPAS_OFERTA_ATENDENTE = {
     "listou_categorias",
