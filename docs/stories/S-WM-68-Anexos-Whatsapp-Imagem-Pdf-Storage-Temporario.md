@@ -1,7 +1,7 @@
 # S-WM-68 — Anexos de Imagem/PDF do WhatsApp: captura e armazenamento temporário (Supabase, 15 dias)
 
 ## Status
-Ready for Review
+Done
 
 ## Story
 **Como** colaborador do CUCA atendendo pelo WhatsApp (Institucional/Empregabilidade),
@@ -104,6 +104,8 @@ Nenhuma story bloqueia esta. Toca o mesmo arquivo (`meta_adapter_inbound.py`) de
 | 2026-08-27 | @sm (River) | Criação da story (Draft) — a partir da investigação do @dev sobre o gap real (mídia descartada silenciosamente hoje) e das decisões do Junior: Supabase Storage (não R2, por já estar cabeado no worker) e retenção uniforme de 15 dias. Pendência explícita sobre manifesto de auditoria deixada para o @po levantar com o Junior antes da validação. |
 | 2026-08-27 | @po (Pax) | **Validação (GO, 10/10) → Status Draft→Ready.** Adicionada Estimativa de Complexidade (M) — item 6 do checklist estava faltando. Verificação extra: nenhum código do portal faz switch/case sobre `mensagens.tipo`, então introduzir `"document"` é seguro. Pendência do manifesto de auditoria resolvida diretamente com o Junior: **sem manifesto, apaga direto** — Escopo OUT e Quality Gate atualizados para refletir a decisão fechada (deixa de ser pendência). |
 | 2026-08-27 | @dev (Dex) | **Implementação completa (Status Ready→Ready for Review).** Todos os ACs implementados e testados. Ver Dev Agent Record para o relato completo, inclusive 2 achados não previstos na story original (Academia Enem também ganhou `midia_url`; bug pré-existente não relacionado em `mensagens.tipo='voz'`, flagado à parte). |
+| 2026-08-27 | @qa (Quinn) | **Revisão independente → PASS.** Banco reconferido do zero, suíte de testes rodada pela própria QA, teste de causalidade (reverteu/confirmou falha/restaurou/confirmou sucesso). 1 achado LOW não-bloqueante (edge case raro de arquivo órfão no Storage se a remoção falhar de verdade). Liberado para @devops. |
+| 2026-08-27 | @devops (Gage) | **Deploy da Edge Function `expirar-anexos-conversas` (verify_jwt, conferida byte-a-byte contra o arquivo local, smoke test HTTP 200) → push → PR #129 → merge em `main` (aprovação do Junior).** Pós-merge, @dev investigou um relato do Junior de "nada mudou" após teste em produção — banco confirmou que o worker capturou os anexos corretamente (`midia_url` preenchido nas 3 mensagens de teste); causa era o serviço `portal` ainda não ter sido redeployado no momento do teste. Junior confirmou funcionando após redeploy do `portal` — **Status Ready for Review→Done.** |
 
 ## Dev Agent Record
 
