@@ -12,6 +12,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone, timedelta
+from uuid import uuid4
 
 from meta_adapter_outbound import _normalizar_telefone_br
 
@@ -77,6 +78,7 @@ async def _processar_webhook_academia_enem(
     push_name: str,
     mensagem: str,
     midia_tipo: str,
+    midia_url: str | None = None,
     wamid: str,
 ) -> None:
     """S-AE-16 — caminho ISOLADO da Academia Enem: grava em `ae_conversas`/`ae_mensagens`
@@ -165,6 +167,7 @@ async def _processar_webhook_academia_enem(
             "remetente": "lead",
             "tipo": midia_tipo,
             "conteudo": mensagem or _texto_historico_para_midia_vazia(midia_tipo),
+            "midia_url": midia_url,
         }).execute()
         supabase.rpc("ae_increment_nao_lidas", {"conv_id": conversa_id}).execute()
     except Exception as exc:
@@ -277,22 +280,6 @@ async def _baixar_midia_meta(media_id: str, token: str) -> bytes | None:
         return None
 
 
-async def _obter_url_midia_meta(media_id: str, token: str) -> str | None:
-    """Obtém URL pública temporária de mídia Meta (sem baixar o conteúdo)."""
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(
-                f"https://graph.facebook.com/v19.0/{media_id}",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            r.raise_for_status()
-            return r.json().get("url")
-    except Exception as exc:
-        logger.error(f"[meta-inbound] Erro ao obter URL media_id={media_id}: {exc}")
-        return None
-
-
 # ─── Transcrição Whisper ────────────────────────────────────────────────────────
 async def _transcrever_audio_meta(audio_bytes: bytes, mimetype: str) -> str | None:
     """Transcreve áudio via Whisper (mesmo padrão de main.py:492-497)."""
@@ -319,6 +306,8 @@ async def _transcrever_audio_meta(audio_bytes: bytes, mimetype: str) -> str | No
 def _texto_historico_para_midia_vazia(midia_tipo: str) -> str:
     if midia_tipo == "image":
         return "[Imagem enviada sem legenda]"
+    if midia_tipo == "document":
+        return "[Documento enviado]"
     if midia_tipo in ("voz", "audio", "ptt"):
         return "[Áudio enviado]"
     return "[Mídia enviada]"
@@ -395,10 +384,28 @@ async def _parse_mensagem_meta(msg: dict) -> tuple[str, str | None, str]:
     elif msg_type == "image":
         image = msg.get("image", {})
         media_id = image.get("id", "")
+        mimetype = image.get("mime_type", "image/jpeg")
         midia_url: str | None = None
         if token and media_id:
-            midia_url = await _obter_url_midia_meta(media_id, token)
+            conteudo = await _baixar_midia_meta(media_id, token)
+            if conteudo is not None:
+                midia_url = await _subir_anexo_supabase(conteudo, mimetype, "image")
         return "", midia_url, "image"
+
+    elif msg_type == "document":
+        # S-WM-68: antes caía direto no `else` genérico (sem captura de conteúdo).
+        # O guard de _executar_dispatch (_MIDIA_TIPOS_COM_INTERPRETACAO, S-WM-24) não
+        # muda — motor-agente continua sem chamar/interpretar PDF, só passa a ficar
+        # disponível pro colaborador ver/baixar no painel.
+        document = msg.get("document", {})
+        media_id = document.get("id", "")
+        mimetype = document.get("mime_type", "application/pdf")
+        midia_url = None
+        if token and media_id:
+            conteudo = await _baixar_midia_meta(media_id, token)
+            if conteudo is not None:
+                midia_url = await _subir_anexo_supabase(conteudo, mimetype, "document")
+        return "", midia_url, "document"
 
     else:
         logger.info(f"[meta-inbound] Tipo '{msg_type}' não suportado — ignorado")
@@ -457,6 +464,53 @@ def _get_supabase():
             os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY"),
         )
     return _supabase_client
+
+
+# ─── Anexos de conversa (S-WM-68) ───────────────────────────────────────────────
+# Bucket privado — conteúdo enviado pelo lead sem curadoria nossa (diferente de
+# `curriculos`/`programacao`, que são públicos). Acesso só via signed URL, gerada
+# sob demanda pelo portal (nunca URL pública crua). Expira em 15 dias via job
+# agendado (Edge Function `expirar-anexos-conversas` + pg_cron) — não faz parte
+# deste módulo, só consome o que é gravado aqui.
+_BUCKET_ANEXOS_CONVERSAS = "anexos-conversas"
+_TAMANHO_MAXIMO_ANEXO_BYTES = 10 * 1024 * 1024  # 10MB — mesmo limite do /api/upload-cv (portal)
+_EXTENSAO_POR_MIME = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "application/pdf": "pdf",
+}
+
+
+async def _subir_anexo_supabase(conteudo: bytes, mimetype: str, midia_tipo: str) -> str | None:
+    """Sobe imagem/PDF recebido do WhatsApp para o bucket privado `anexos-conversas`.
+
+    Retorna o CAMINHO no bucket (não a URL pública — o bucket é privado, o portal
+    gera signed URL sob demanda quando o colaborador abre a conversa), ou None se
+    exceder o limite de tamanho ou a subida falhar. Nunca propaga exceção: o
+    processamento da mensagem (texto, roteamento, histórico) continua normalmente
+    mesmo sem o anexo — só a mídia em si fica indisponível pro colaborador.
+    """
+    if len(conteudo) > _TAMANHO_MAXIMO_ANEXO_BYTES:
+        logger.warning(
+            "[meta-inbound] Anexo (%s) excede %d bytes (recebido: %d) — não será salvo no Storage.",
+            midia_tipo, _TAMANHO_MAXIMO_ANEXO_BYTES, len(conteudo),
+        )
+        return None
+
+    mimetype_limpo = (mimetype or "").split(";")[0].strip().lower()
+    ext = _EXTENSAO_POR_MIME.get(mimetype_limpo, "bin")
+    caminho = f"{midia_tipo}/{datetime.now(timezone.utc):%Y/%m/%d}/{uuid4()}.{ext}"
+
+    try:
+        supabase = _get_supabase()
+        supabase.storage.from_(_BUCKET_ANEXOS_CONVERSAS).upload(
+            caminho, conteudo, {"content-type": mimetype_limpo or "application/octet-stream", "upsert": "false"},
+        )
+        return caminho
+    except Exception as exc:
+        logger.error(f"[meta-inbound] Erro ao subir anexo ({midia_tipo}) pro Storage: {exc}")
+        return None
 
 
 # S-WM-24 Task 2 (AUD-08, escopo ampliado a pedido do Junior em 2026-08-07): tipos de
@@ -898,6 +952,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             push_name=push_name_ae,
             mensagem=contrato_v2_ae["mensagem"],
             midia_tipo=contrato_v2_ae["midia_tipo"],
+            midia_url=contrato_v2_ae.get("midia_url"),
             wamid=wamid_ae,
         )
         return
@@ -1052,6 +1107,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             "remetente": "lead",
             "created_at": "now()",
             "wamid": contrato_v2.get("wamid") or None,
+            "midia_url": contrato_v2.get("midia_url"),
         }).execute()
         supabase.rpc("increment_nao_lidas", {"conv_id": conversa_id}).execute()
     except Exception as exc:

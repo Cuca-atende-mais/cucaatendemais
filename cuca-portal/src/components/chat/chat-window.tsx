@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useUser } from "@/lib/auth/user-provider";
+import AnexoMensagem from "./anexo-mensagem";
 
 interface ChatWindowProps {
     conversationId: string | null;
@@ -37,6 +38,7 @@ type ChatMessage = {
     tipo: string;
     conteudo: string | null;
     created_at: string;
+    midia_url?: string | null;
 };
 
 function errorMessage(error: unknown): string {
@@ -328,6 +330,9 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                                             : "bg-[#f2eee6] border border-stone-300/70 text-slate-950 rounded-br-none"
                                     )}>
                                         <p className="leading-relaxed whitespace-pre-wrap">{msg.conteudo}</p>
+                                        {msg.midia_url && (msg.tipo === "image" || msg.tipo === "document") && (
+                                            <AnexoMensagem path={msg.midia_url} tipo={msg.tipo} />
+                                        )}
                                         <div className={cn(
                                             "text-[9px] mt-1.5 flex items-center gap-1 opacity-60",
                                             msg.remetente === 'lead' ? "text-muted-foreground" : "text-slate-700"
