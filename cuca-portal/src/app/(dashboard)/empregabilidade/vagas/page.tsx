@@ -20,9 +20,11 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, FileSignature, MapPin, Globe, MessageSquare, Loader2, Trash2 } from "lucide-react"
+import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, Globe, Trash2, Pencil } from "lucide-react"
 import { VagaModal } from "@/components/empregabilidade/vaga-modal"
 import toast from "react-hot-toast"
+import { format } from "date-fns"
+import { ptBR } from "date-fns/locale"
 import { useUser } from "@/lib/auth/user-provider"
 import { VAGAS_KEY } from "@/hooks/queries/use-vagas"
 
@@ -32,7 +34,6 @@ export default function VagasPage() {
     const supabase = createClient()
     const qc = useQueryClient()
 
-    const [feedbackLoadingId, setFeedbackLoadingId] = useState<string | null>(null)
     const [deletingVaga, setDeletingVaga] = useState<Vaga | null>(null)
     const [deleteLoading, setDeleteLoading] = useState(false)
     const [searchTerm, setSearchTerm] = useState("")
@@ -120,21 +121,6 @@ export default function VagasPage() {
     // ─── Mutations ───────────────────────────────────────────────────────────
     const invalidate = () => qc.invalidateQueries({ queryKey: VAGAS_KEY })
 
-    const solicitarFeedback = async (vagaId: string) => {
-        setFeedbackLoadingId(vagaId)
-        try {
-            const res = await fetch(`/api/empregabilidade/vagas/${vagaId}/solicitar-feedback`, { method: "POST" })
-            const responseData = await res.json()
-            if (!res.ok) throw new Error(responseData.error || "Erro ao solicitar feedback")
-            toast.success("Solicitação de feedback enviada via WhatsApp!")
-            invalidate() // ✅ Antes estava faltando
-        } catch (err: any) {
-            toast.error(err.message || "Falha ao solicitar feedback")
-        } finally {
-            setFeedbackLoadingId(null)
-        }
-    }
-
     const handleDeleteVaga = async () => {
         if (!deletingVaga) return
         setDeleteLoading(true)
@@ -173,7 +159,7 @@ export default function VagasPage() {
     return (
         <>
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
                         <Briefcase className="h-8 w-8 text-cuca-blue" />
@@ -210,12 +196,12 @@ export default function VagasPage() {
                     <p className="text-xs text-muted-foreground">Visualização somente-leitura das vagas de outras unidades.</p>
                 )}
 
-                <div className="flex items-center gap-2 flex-wrap">
-                    <div className="relative">
+                <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+                    <div className="relative w-full sm:w-72">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
                             placeholder="Buscar vaga ou empresa..."
-                            className="pl-10 w-72 h-9"
+                            className="pl-10 w-full h-9"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
@@ -232,92 +218,87 @@ export default function VagasPage() {
 
             <Card className="border-none shadow-sm overflow-hidden mt-4">
                 <CardContent className="p-0">
-                    <Table>
+                    {/* table-fixed + larguras em % (padrão da página de Seleções):
+                        sem isso, nome de empresa/cargo longo empurra a tabela
+                        para fora da tela em vez de truncar dentro da coluna. */}
+                    <Table className="table-fixed w-full">
                         <TableHeader className="bg-muted/30">
                             <TableRow>
-                                <TableHead className="w-16 text-center">#</TableHead>
-                                <TableHead>Oportunidade</TableHead>
-                                <TableHead>Empresa Parceira</TableHead>
-                                <TableHead>Unidade Base</TableHead>
-                                <TableHead>Detalhes</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead className="text-center">Candidatos</TableHead>
-                                <TableHead className="text-center">Feedback</TableHead>
-                                <TableHead className="text-center w-12"></TableHead>
+                                <TableHead className="w-[6%] text-center">#</TableHead>
+                                <TableHead className="w-[22%]">Cargo</TableHead>
+                                <TableHead className="w-[16%]">Empresa Parceira</TableHead>
+                                <TableHead className="w-[10%]">Data do Cadastro</TableHead>
+                                <TableHead className="w-[14%]">Unidade Base</TableHead>
+                                <TableHead className="w-[12%]">Status</TableHead>
+                                <TableHead className="w-[10%] text-center">Candidaturas</TableHead>
+                                <TableHead className="w-[10%] text-center">Editar Status</TableHead>
+                                <TableHead className="w-10"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {isLoading ? (
-                                <TableRow><TableCell colSpan={8} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={9} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
                             ) : vagas.length === 0 ? (
-                                <TableRow><TableCell colSpan={8} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={9} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
                             ) : vagas.map(v => (
-                                <TableRow
-                                    key={v.id}
-                                    className={abaFiltro === "todas" ? "hover:bg-muted/30" : "cursor-pointer hover:bg-muted/30"}
-                                    onClick={() => abaFiltro === "minhas" && openEditModal(v)}
-                                >
+                                <TableRow key={v.id} className="hover:bg-muted/30">
                                     <TableCell className="text-center">
                                         {v.numero_vaga
                                             ? <span className="text-xs font-mono font-semibold text-muted-foreground">#{v.numero_vaga}</span>
                                             : <span className="text-xs text-muted-foreground/40">—</span>}
                                     </TableCell>
-                                    <TableCell>
-                                        <div className="flex flex-col">
-                                            <span className="font-semibold flex items-center gap-2">
-                                                {v.titulo}
-                                                {v.expansiva && <Badge className="bg-cuca-yellow text-[10px] h-4 px-1">Global</Badge>}
+                                    <TableCell className="max-w-0">
+                                        <div className="flex flex-col min-w-0">
+                                            <span className="font-semibold truncate flex items-center gap-2">
+                                                <span className="truncate">{v.titulo}</span>
+                                                {v.expansiva && <Badge className="bg-cuca-yellow text-[10px] h-4 px-1 flex-shrink-0">Global</Badge>}
                                             </span>
                                             <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                                <Users className="h-3 w-3" /> {v.total_vagas} vaga(s) | {v.faixa_etaria}
+                                                <Users className="h-3 w-3 flex-shrink-0" /> {v.total_vagas} vaga(s) | {v.faixa_etaria}
                                             </span>
                                         </div>
                                     </TableCell>
-                                    <TableCell>
-                                        <div className="flex flex-col gap-0.5">
-                                            <span className="font-medium text-sm">{empresasMap[v.empresa_id]?.nome || "Desconhecida"}</span>
-                                            {v.setor?.length > 0
-                                                ? <span className="text-xs text-muted-foreground">{v.setor.join(" · ")}</span>
-                                                : <span className="text-xs text-muted-foreground/50">Sem área</span>}
-                                        </div>
+                                    <TableCell className="max-w-0">
+                                        <span className="font-medium text-sm truncate block">{empresasMap[v.empresa_id]?.nome || "Desconhecida"}</span>
                                     </TableCell>
-                                    <TableCell>
+                                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                                        {format(new Date(v.created_at), "dd/MM/yyyy", { locale: ptBR })}
+                                    </TableCell>
+                                    <TableCell className="max-w-0">
                                         {v.unidade_destino === "global" ? (
-                                            <Badge className="bg-cuca-blue/10 text-cuca-blue border-cuca-blue/30 gap-1"><Globe className="h-3 w-3" /> Toda a Rede</Badge>
+                                            <Badge className="bg-cuca-blue/10 text-cuca-blue border-cuca-blue/30 gap-1"><Globe className="h-3 w-3 flex-shrink-0" /> <span className="truncate">Toda a Rede</span></Badge>
                                         ) : v.unidade_destino && unidadesMap[v.unidade_destino] ? (
-                                            <Badge variant="outline" className="bg-muted/50">{unidadesMap[v.unidade_destino]}</Badge>
+                                            <Badge variant="outline" className="bg-muted/50 max-w-full"><span className="truncate">{unidadesMap[v.unidade_destino]}</span></Badge>
                                         ) : (
                                             <Badge variant="outline" className="text-amber-600 border-amber-500/40 bg-amber-50/50">Não definida</Badge>
                                         )}
                                     </TableCell>
-                                    <TableCell>
-                                        <div className="flex flex-col space-y-1 text-xs text-muted-foreground">
-                                            <span className="flex items-center gap-1"><FileSignature className="h-3 w-3" /> {v.tipo_contrato?.toUpperCase() || "N/A"}</span>
-                                            <span className="flex items-center gap-1"><MapPin className="h-3 w-3" /> Entrevista {v.local_entrevista?.replace("_", " ")}</span>
-                                        </div>
-                                    </TableCell>
                                     <TableCell>{getStatusBadge(v.status)}</TableCell>
-                                    <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
-                                        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 px-2" onClick={() => router.push(`/empregabilidade/vagas/${v.id}`)}>
+                                    <TableCell className="text-center">
+                                        <Button
+                                            size="sm"
+                                            className="h-7 text-xs gap-1 px-2 bg-green-600 hover:bg-green-700 text-white border-none"
+                                            onClick={() => router.push(`/empregabilidade/vagas/${v.id}`)}
+                                        >
                                             <Users className="h-3 w-3" />
                                             {candidaturasCount[v.id] ?? 0}
                                         </Button>
                                     </TableCell>
-                                    <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
-                                        <Button
-                                            variant="outline" size="sm"
-                                            className="h-7 text-xs gap-1 px-2 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
-                                            onClick={() => solicitarFeedback(v.id)}
-                                            disabled={feedbackLoadingId === v.id}
-                                            title="Solicitar feedback da empresa sobre os candidatos"
-                                        >
-                                            {feedbackLoadingId === v.id
-                                                ? <Loader2 className="h-3 w-3 animate-spin" />
-                                                : <MessageSquare className="h-3 w-3" />}
-                                        </Button>
+                                    <TableCell className="text-center">
+                                        {abaFiltro === "minhas" ? (
+                                            <Button
+                                                variant="outline" size="sm"
+                                                className="h-7 text-xs gap-1 px-2"
+                                                onClick={() => openEditModal(v)}
+                                            >
+                                                <Pencil className="h-3 w-3" /> Editar
+                                            </Button>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground/40">—</span>
+                                        )}
                                     </TableCell>
-                                    {abaFiltro === "minhas" && hasPermission("empreg_vagas", "delete") && (
-                                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                                    <TableCell className="text-center">
+                                        {abaFiltro === "minhas" && hasPermission("empreg_vagas", "delete") && (
                                             <Button
                                                 variant="ghost" size="sm"
                                                 className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
@@ -326,8 +307,8 @@ export default function VagasPage() {
                                             >
                                                 <Trash2 className="h-3.5 w-3.5" />
                                             </Button>
-                                        </TableCell>
-                                    )}
+                                        )}
+                                    </TableCell>
                                 </TableRow>
                             ))}
                         </TableBody>

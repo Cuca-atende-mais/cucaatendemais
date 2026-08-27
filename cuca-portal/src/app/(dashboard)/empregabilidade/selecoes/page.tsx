@@ -18,7 +18,7 @@ import {
     Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
-    Loader2, Plus, CalendarDays, Users, Globe, FileText, FileX2, Search, ChevronRight, Building2,
+    Loader2, Plus, CalendarDays, Users, Globe, FileText, FileX2, Search, Building2, ArrowRight,
 } from "lucide-react"
 import { SelecaoModal } from "@/components/empregabilidade/selecao-modal"
 import { useUser } from "@/lib/auth/user-provider"
@@ -173,8 +173,8 @@ export default function SelecoesPage() {
                                 <TableHead className="w-[14%]">Data</TableHead>
                                 <TableHead className="w-[14%]">Currículo</TableHead>
                                 <TableHead className="w-[10%]">Status</TableHead>
-                                <TableHead className="w-[6%] text-center">Conf.</TableHead>
-                                <TableHead className="w-14"></TableHead>
+                                <TableHead className="w-[10%] text-center">Candidatura</TableHead>
+                                <TableHead className="w-28"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -262,13 +262,23 @@ export default function SelecoesPage() {
                                         </TableCell>
                                         <TableCell><StatusBadge status={v.status} /></TableCell>
                                         <TableCell className="text-center">
-                                            <span className="inline-flex items-center gap-1 text-sm font-medium">
-                                                <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                                            <Button
+                                                size="sm"
+                                                className="h-7 text-xs gap-1 px-2 bg-green-600 hover:bg-green-700 text-white border-none"
+                                                onClick={(e) => { e.stopPropagation(); router.push(`/empregabilidade/selecoes/${v.id}`) }}
+                                            >
+                                                <Users className="h-3 w-3" />
                                                 {confirmadosCount[v.id] ?? 0}
-                                            </span>
+                                            </Button>
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <ChevronRight className="h-4 w-4 text-muted-foreground inline-block" />
+                                            <Button
+                                                variant="outline" size="sm"
+                                                className="h-7 text-xs gap-1 px-2"
+                                                onClick={(e) => { e.stopPropagation(); router.push(`/empregabilidade/selecoes/${v.id}`) }}
+                                            >
+                                                Ver Vaga <ArrowRight className="h-3 w-3" />
+                                            </Button>
                                         </TableCell>
                                     </TableRow>
                                 )
