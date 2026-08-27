@@ -218,15 +218,61 @@ class TestParseMensagem:
         assert midia_tipo == "voz"
 
     @pytest.mark.asyncio
-    async def test_parse_mensagem_imagem(self):
-        """AC #7: imagem → midia_tipo='image'."""
+    async def test_parse_mensagem_imagem_sem_token_nao_baixa(self):
+        """Sem META_SYSTEM_USER_TOKEN no ambiente, midia_url fica None (não tenta
+        baixar) — mesmo comportamento de antes, midia_tipo continua 'image'."""
         msg = {
             "type": "image",
             "from": "558599999999",
             "image": {"mime_type": "image/jpeg", "sha256": "x", "id": "IMG_ID"},
         }
-        _, _, midia_tipo = await _parse_mensagem_meta(msg)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("META_SYSTEM_USER_TOKEN", None)
+            _, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
         assert midia_tipo == "image"
+        assert midia_url is None
+
+    @pytest.mark.asyncio
+    async def test_parse_mensagem_imagem_baixa_e_sobe_pro_storage(self):
+        """S-WM-68: imagem passa a ser baixada de verdade (não só resolver URL
+        temporária da Meta) e subida pro bucket privado do Supabase Storage —
+        midia_url vira o caminho retornado por _subir_anexo_supabase."""
+        from unittest.mock import AsyncMock
+        msg = {
+            "type": "image",
+            "from": "558599999999",
+            "image": {"mime_type": "image/jpeg", "sha256": "x", "id": "IMG_ID"},
+        }
+        imagem_falsa = b"FAKE_IMAGE_BYTES"
+
+        with patch("meta_adapter_inbound._baixar_midia_meta", new_callable=AsyncMock, return_value=imagem_falsa) as mock_baixar, \
+             patch("meta_adapter_inbound._subir_anexo_supabase", new_callable=AsyncMock, return_value="image/2026/08/27/uuid.jpg") as mock_subir, \
+             patch.dict(os.environ, {"META_SYSTEM_USER_TOKEN": "token_fake"}):
+            _, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
+
+        assert midia_tipo == "image"
+        assert midia_url == "image/2026/08/27/uuid.jpg"
+        mock_baixar.assert_awaited_once_with("IMG_ID", "token_fake")
+        mock_subir.assert_awaited_once_with(imagem_falsa, "image/jpeg", "image")
+
+    @pytest.mark.asyncio
+    async def test_parse_mensagem_imagem_download_falha_midia_url_none(self):
+        """Se o download falhar (_baixar_midia_meta retorna None), midia_url fica
+        None e nada quebra — não tenta subir bytes inexistentes pro Storage."""
+        from unittest.mock import AsyncMock
+        msg = {
+            "type": "image",
+            "from": "558599999999",
+            "image": {"mime_type": "image/jpeg", "sha256": "x", "id": "IMG_ID"},
+        }
+        with patch("meta_adapter_inbound._baixar_midia_meta", new_callable=AsyncMock, return_value=None), \
+             patch("meta_adapter_inbound._subir_anexo_supabase", new_callable=AsyncMock) as mock_subir, \
+             patch.dict(os.environ, {"META_SYSTEM_USER_TOKEN": "token_fake"}):
+            _, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
+
+        assert midia_url is None
+        assert midia_tipo == "image"
+        mock_subir.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_parse_mensagem_imagem_descarta_legenda(self):
@@ -240,17 +286,137 @@ class TestParseMensagem:
         mensagem, _, _ = await _parse_mensagem_meta(msg)
         assert mensagem == ""
 
-    @pytest.mark.parametrize("tipo", ["sticker", "video", "document", "location", "contacts"])
+    @pytest.mark.asyncio
+    async def test_parse_mensagem_document_baixa_e_sobe_pro_storage(self):
+        """S-WM-68 (AC2): PDF/documento antes caía no `else` genérico sem captura de
+        conteúdo nenhuma — agora segue o mesmo caminho de download+upload da imagem."""
+        from unittest.mock import AsyncMock
+        msg = {
+            "type": "document",
+            "from": "558599999999",
+            "document": {"mime_type": "application/pdf", "sha256": "x", "id": "DOC_ID", "filename": "curriculo.pdf"},
+        }
+        pdf_falso = b"FAKE_PDF_BYTES"
+
+        with patch("meta_adapter_inbound._baixar_midia_meta", new_callable=AsyncMock, return_value=pdf_falso) as mock_baixar, \
+             patch("meta_adapter_inbound._subir_anexo_supabase", new_callable=AsyncMock, return_value="document/2026/08/27/uuid.pdf") as mock_subir, \
+             patch.dict(os.environ, {"META_SYSTEM_USER_TOKEN": "token_fake"}):
+            mensagem, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
+
+        assert mensagem == ""
+        assert midia_tipo == "document"
+        assert midia_url == "document/2026/08/27/uuid.pdf"
+        mock_baixar.assert_awaited_once_with("DOC_ID", "token_fake")
+        mock_subir.assert_awaited_once_with(pdf_falso, "application/pdf", "document")
+
+    @pytest.mark.parametrize("tipo", ["sticker", "video", "location", "contacts"])
     @pytest.mark.asyncio
     async def test_parse_mensagem_tipo_sem_interpretacao(self, tipo):
         """S-WM-24 Task 2 (AUD-08): tipos sem extração de texto caem no `else` —
         mensagem="", midia_url=None, midia_tipo preserva o `type` cru do webhook
-        (usado pelo guard de _executar_dispatch pra decidir ignorar em silêncio)."""
+        (usado pelo guard de _executar_dispatch pra decidir ignorar em silêncio).
+        'document' saiu desta lista (S-WM-68): ganhou ramo próprio, com captura real."""
         msg = {"type": tipo, "from": "558599999999", tipo: {"id": "X"}}
         mensagem, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
         assert mensagem == ""
         assert midia_url is None
         assert midia_tipo == tipo
+
+
+# ─── Anexos de conversa (S-WM-68) ──────────────────────────────────────────────
+class TestSubirAnexoSupabase:
+    @pytest.mark.asyncio
+    async def test_sobe_com_sucesso_retorna_caminho(self):
+        """Caminho feliz: sobe pro bucket privado e retorna o caminho (não URL)."""
+        from meta_adapter_inbound import _subir_anexo_supabase
+        from unittest.mock import MagicMock
+
+        mock_bucket = MagicMock()
+        mock_storage = MagicMock()
+        mock_storage.from_.return_value = mock_bucket
+        mock_client = MagicMock()
+        mock_client.storage = mock_storage
+
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_client):
+            caminho = await _subir_anexo_supabase(b"conteudo", "image/jpeg", "image")
+
+        assert caminho is not None
+        assert caminho.startswith("image/")
+        assert caminho.endswith(".jpg")
+        mock_storage.from_.assert_called_once_with("anexos-conversas")
+        mock_bucket.upload.assert_called_once()
+        args, _ = mock_bucket.upload.call_args
+        assert args[0] == caminho
+        assert args[1] == b"conteudo"
+
+    @pytest.mark.asyncio
+    async def test_excede_tamanho_maximo_nao_sobe(self):
+        """Acima de 10MB, não tenta subir — retorna None sem chamar o Storage."""
+        from meta_adapter_inbound import _subir_anexo_supabase
+        from unittest.mock import MagicMock
+
+        mock_client = MagicMock()
+        conteudo_grande = b"x" * (10 * 1024 * 1024 + 1)
+
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_client):
+            caminho = await _subir_anexo_supabase(conteudo_grande, "application/pdf", "document")
+
+        assert caminho is None
+        mock_client.storage.from_.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_erro_no_upload_retorna_none_sem_propagar(self):
+        """Storage indisponível/erro: não propaga exceção, retorna None (mensagem
+        continua sendo processada normalmente, só o anexo fica indisponível)."""
+        from meta_adapter_inbound import _subir_anexo_supabase
+        from unittest.mock import MagicMock
+
+        mock_bucket = MagicMock()
+        mock_bucket.upload.side_effect = Exception("Storage indisponível")
+        mock_storage = MagicMock()
+        mock_storage.from_.return_value = mock_bucket
+        mock_client = MagicMock()
+        mock_client.storage = mock_storage
+
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_client):
+            caminho = await _subir_anexo_supabase(b"conteudo", "image/png", "image")
+
+        assert caminho is None
+
+    @pytest.mark.asyncio
+    async def test_mimetype_desconhecido_usa_extensao_bin(self):
+        from meta_adapter_inbound import _subir_anexo_supabase
+        from unittest.mock import MagicMock
+
+        mock_bucket = MagicMock()
+        mock_storage = MagicMock()
+        mock_storage.from_.return_value = mock_bucket
+        mock_client = MagicMock()
+        mock_client.storage = mock_storage
+
+        with patch("meta_adapter_inbound._get_supabase", return_value=mock_client):
+            caminho = await _subir_anexo_supabase(b"x", "application/octet-stream", "document")
+
+        assert caminho.endswith(".bin")
+
+
+class TestTextoHistoricoParaMidiaVazia:
+    def test_imagem(self):
+        from meta_adapter_inbound import _texto_historico_para_midia_vazia
+        assert _texto_historico_para_midia_vazia("image") == "[Imagem enviada sem legenda]"
+
+    def test_documento(self):
+        """S-WM-68: PDF ganha texto próprio, diferente do genérico '[Mídia enviada]'."""
+        from meta_adapter_inbound import _texto_historico_para_midia_vazia
+        assert _texto_historico_para_midia_vazia("document") == "[Documento enviado]"
+
+    def test_audio(self):
+        from meta_adapter_inbound import _texto_historico_para_midia_vazia
+        assert _texto_historico_para_midia_vazia("voz") == "[Áudio enviado]"
+
+    def test_tipo_desconhecido_cai_no_generico(self):
+        from meta_adapter_inbound import _texto_historico_para_midia_vazia
+        assert _texto_historico_para_midia_vazia("sticker") == "[Mídia enviada]"
 
 
 # ─── Contrato v2 ──────────────────────────────────────────────────────────────
