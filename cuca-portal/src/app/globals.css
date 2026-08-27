@@ -203,6 +203,13 @@
   @apply bg-gray-400 dark:bg-gray-500;
 }
 
+/* Tabelas com rolagem horizontal (ex.: empregabilidade/vagas, /empresas):
+   a barra fina do padrão acima ficava difícil de "pegar" no rodapé de
+   tabelas largas — aqui ela recebe uma altura maior, só para esse caso. */
+[data-slot="table-container"]::-webkit-scrollbar {
+  height: 14px;
+}
+
 /* ── Animações do Dashboard ──────────────────────────────── */
 @keyframes shimmer {
   0% { background-position: -200% 0; }

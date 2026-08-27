@@ -323,14 +323,14 @@ export default function EmpresasPage() {
     return (
         <>
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Empresas Parceiras</h1>
                     <p className="text-muted-foreground">
                         Gerencie os convênios e cadastro de empresas mantenedoras de vagas.
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                     <Button variant="outline" size="sm" onClick={exportarCSV} disabled={empresas.length === 0}>
                         <Download className="mr-2 h-4 w-4" />
                         Exportar CSV
@@ -508,25 +508,25 @@ export default function EmpresasPage() {
 
             <Card>
                 <CardHeader>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
                         <div>
                             <CardTitle>Listagem de Empresas</CardTitle>
                             <CardDescription>
                                 Visualize as empresas parceiras do módulo de Empregabilidade.
                             </CardDescription>
                         </div>
-                        <div className="relative">
+                        <div className="relative w-full sm:w-80">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input
                                 placeholder="Buscar empresas..."
-                                className="pl-10 w-80"
+                                className="pl-10 w-full"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
                     </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="px-0 sm:px-6">
                     {loading ? (
                         <div className="text-center py-8 text-muted-foreground">
                             Carregando empresas...
@@ -536,29 +536,29 @@ export default function EmpresasPage() {
                             Nenhuma empresa encontrada.
                         </div>
                     ) : (
-                        <Table>
+                        <Table className="table-fixed w-full">
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>Nome</TableHead>
-                                    <TableHead>CNPJ</TableHead>
-                                    <TableHead>Setor</TableHead>
-                                    <TableHead>Contato RH</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead className="text-right">Ações</TableHead>
+                                    <TableHead className="w-[22%]">Nome</TableHead>
+                                    <TableHead className="w-[14%]">CNPJ</TableHead>
+                                    <TableHead className="w-[14%]">Setor</TableHead>
+                                    <TableHead className="w-[20%]">Contato RH</TableHead>
+                                    <TableHead className="w-[10%]">Status</TableHead>
+                                    <TableHead className="w-[20%] text-right">Ações</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {filteredEmpresas.map((emp) => (
                                     <TableRow key={emp.id}>
-                                        <TableCell className="font-medium">{emp.nome}</TableCell>
+                                        <TableCell className="font-medium max-w-0"><span className="block truncate">{emp.nome}</span></TableCell>
                                         <TableCell className="text-muted-foreground">
                                             {emp.cnpj || "-"}
                                         </TableCell>
-                                        <TableCell className="text-muted-foreground">{emp.setor || "-"}</TableCell>
-                                        <TableCell>
-                                            <div className="text-sm">
-                                                <div>{emp.contato_responsavel || "-"}</div>
-                                                <div className="text-xs text-muted-foreground">{emp.email || emp.telefone || ""}</div>
+                                        <TableCell className="text-muted-foreground max-w-0"><span className="block truncate">{emp.setor || "-"}</span></TableCell>
+                                        <TableCell className="max-w-0">
+                                            <div className="text-sm min-w-0">
+                                                <div className="truncate">{emp.contato_responsavel || "-"}</div>
+                                                <div className="text-xs text-muted-foreground truncate">{emp.email || emp.telefone || ""}</div>
                                             </div>
                                         </TableCell>
                                         <TableCell>
@@ -571,7 +571,7 @@ export default function EmpresasPage() {
                                             )}
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <div className="flex items-center justify-end gap-2">
+                                            <div className="flex items-center justify-end gap-2 flex-wrap">
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
