@@ -479,6 +479,13 @@ export default function VagaDetalhesPage() {
         entrevista_confirmada: candidatosPorAba.filter(c => c.status === "entrevista_confirmada").length,
     }
 
+    // SQS-64 (fix pós-QA): "Convocar em Lote" é uma feature anterior a esta story, independente da
+    // aba "A Enviar"/"Enviados" — precisa contar sobre a vaga inteira (candidatos), não sobre
+    // candidatosPorAba. `contadores` acima fica reservado pros chips de status (esses sim devem
+    // refletir a aba ativa). Usar `contadores` aqui escondia/subcontava o botão quando os candidatos
+    // aprovados/selecionados já tinham currículo enviado (fluxo normal: envia → aprova → convoca).
+    const aprovadosOuSelecionadosTotal = candidatos.filter(c => c.status === "aprovado_empresa" || c.status === "selecionado").length
+
     const empresaNome = (vaga as any)?.empresas?.nome_fantasia || (vaga as any)?.empresas?.nome || null
 
     if (loading) {
@@ -666,14 +673,14 @@ export default function VagaDetalhesPage() {
                         <Badge variant="outline">{candidatos.length}</Badge>
                     </div>
                     <div className="flex items-center gap-2">
-                        {(contadores.aprovado_empresa + contadores.selecionado) > 0 && (
+                        {aprovadosOuSelecionadosTotal > 0 && (
                             <Button
                                 size="sm"
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
                                 onClick={abrirSummonLote}
                             >
                                 <Send className="h-3.5 w-3.5" />
-                                Convocar em Lote ({contadores.aprovado_empresa + contadores.selecionado})
+                                Convocar em Lote ({aprovadosOuSelecionadosTotal})
                             </Button>
                         )}
                         <Button size="sm" variant="outline" onClick={() => setModalInscricao(true)}>
@@ -1152,11 +1159,11 @@ export default function VagaDetalhesPage() {
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Send className="h-5 w-5 text-indigo-400" />
-                            {summonIsLote ? `Convocar em Lote (${contadores.aprovado_empresa + contadores.selecionado})` : "Convocar Candidato"}
+                            {summonIsLote ? `Convocar em Lote (${aprovadosOuSelecionadosTotal})` : "Convocar Candidato"}
                         </DialogTitle>
                         <DialogDescription>
                             {summonIsLote
-                                ? `Defina data, hora e local únicos para convocar todos os ${contadores.aprovado_empresa + contadores.selecionado} candidato(s) selecionados/aprovados. Cada um receberá o convite via WhatsApp.`
+                                ? `Defina data, hora e local únicos para convocar todos os ${aprovadosOuSelecionadosTotal} candidato(s) selecionados/aprovados. Cada um receberá o convite via WhatsApp.`
                                 : <>Agende a entrevista para <strong>{selectedCand?.nome}</strong>. O candidato receberá o convite via WhatsApp.</>
                             }
                         </DialogDescription>
@@ -1291,11 +1298,14 @@ function CandidatoCard({
                 </div>
             )}
 
-            {/* SQS-64: status de envio à empresa */}
+            {/* SQS-64: status de envio à empresa — AC5 pede data E destino */}
             {candidato.email_enviado_em && (
-                <div className="flex items-center gap-1.5 text-xs text-cuca-blue bg-cuca-blue/10 border border-cuca-blue/20 rounded-lg px-2.5 py-1.5 mb-3">
-                    <Mail className="h-3 w-3 flex-shrink-0" />
-                    <span>Enviado à empresa em {format(new Date(candidato.email_enviado_em), "dd/MM/yy HH:mm", { locale: ptBR })}</span>
+                <div className="flex items-start gap-1.5 text-xs text-cuca-blue bg-cuca-blue/10 border border-cuca-blue/20 rounded-lg px-2.5 py-1.5 mb-3">
+                    <Mail className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                    <span>
+                        Enviado à empresa em {format(new Date(candidato.email_enviado_em), "dd/MM/yy HH:mm", { locale: ptBR })}
+                        {candidato.email_enviado_para && <> — para <strong>{candidato.email_enviado_para}</strong></>}
+                    </span>
                 </div>
             )}
 

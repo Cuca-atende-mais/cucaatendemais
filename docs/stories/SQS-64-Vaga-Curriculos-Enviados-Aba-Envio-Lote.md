@@ -189,3 +189,76 @@ individual replicado na listagem (chama a rota `enviar-cv` já existente); açã
   regra do projeto exige autorização explícita do Junior antes de subir dev server ou navegar
   (`.claude/rules/qa-testes-sem-navegador-ao-vivo.md`); verificação foi só estática (leitura de
   código + lint/typecheck). Status Ready → InReview.
+- v0.5 (2026-08-27): @qa revisou — **FAIL**. 1 achado HIGH (regressão em feature existente),
+  1 achado MEDIUM (gap de AC). Devolvida ao @dev. Status InReview → InProgress. Ver "QA Results"
+  abaixo.
+- v0.6 (2026-08-27): @dev corrigiu os 2 achados do gate.
+  - **HIGH (item 4):** criado `aprovadosOuSelecionadosTotal`, calculado sobre `candidatos`
+    completo (vaga inteira, sem escopo de aba) — substituído nos 4 pontos que alimentavam o botão/
+    label "Convocar em Lote" (antes lendo `contadores.aprovado_empresa + contadores.selecionado`,
+    que ficou escopado à aba ativa). `contadores` (escopado por aba) continua intocado e serve só
+    aos chips de status, como pretendido originalmente. Contagem exibida agora sempre bate com quem
+    `handleSummon` de fato convoca, e o botão não some mais por causa da aba selecionada.
+  - **MEDIUM (AC5):** card em "Currículos Enviados" agora mostra também `email_enviado_para`
+    ("Enviado à empresa em DD/MM/AA HH:mm — para X@Y"), não só a data.
+  - `eslint`/`tsc` re-rodados no arquivo: mesma contagem de antes (30 erros `no-explicit-any`
+    pré-existentes, 6 warnings pré-existentes) — nenhum problema novo introduzido pelo fix.
+  - Não testado em navegador (mesma regra do projeto já registrada na v0.4). Status InProgress →
+    InReview — pronta para novo gate do @qa.
+
+## QA Results
+
+### Review em 2026-08-27 — @qa Quinn
+
+**Gate: FAIL** (1 achado HIGH bloqueia; 1 achado MEDIUM deve ser corrigido junto)
+
+**7 checks:**
+
+1. **Code review** — padrão consistente com o resto do arquivo (mesmo formato de `fetch` +
+   `toast` já usado em `enviarCVporEmail` na tela de detalhe do candidato). Comentários
+   explicam as decisões (SQS-64, "sem lote"). OK, sem objeção de estilo.
+2. **Testes** — nenhum teste automatizado adicionado; mesmo padrão já aceito no projeto para
+   esta área (sem suíte pra `vagas/[id]/page.tsx` antes desta story também). Não-bloqueante.
+3. **Acceptance Criteria** — AC1 a AC4, AC6 e AC7 verificados por leitura de código, atendidos.
+   **AC5 parcialmente atendido:** pede que o card em "Currículos Enviados" mostre "quando foi
+   enviado (`email_enviado_em`) **e para qual e-mail** (`email_enviado_para`)". A implementação
+   só renderiza a data — o e-mail de destino nunca aparece no card. Sem isso, a aba não responde
+   a uma pergunta razoável do colaborador ("pra que e-mail isso foi mesmo?"). Fácil de corrigir
+   (só falta uma linha), mas é um AC explícito não cumprido — não é nitpick de estilo.
+4. **Regressão — achado HIGH:** ao escopar `contadores` para `candidatosPorAba` (linha ~625 do
+   diff), o botão **"Convocar em Lote"** (já existente, não faz parte desta story) foi quebrado
+   de 2 formas, confirmadas por leitura de código (não só suposição):
+   - A visibilidade do botão (`(contadores.aprovado_empresa + contadores.selecionado) > 0`) e o
+     `handleSummon` continuam operando sobre `candidatos` completo (todos os candidatos aprovados/
+     selecionados da vaga), mas a *contagem exibida* no botão agora reflete só quem está na aba
+     ativa. Resultado: se todos os candidatos aprovados/selecionados já tiverem currículo enviado
+     (ex.: fluxo normal — manda o CV, empresa aprova, aí convoca), o botão **some** quando o
+     colaborador está na aba "A Enviar" — mesmo havendo candidatos prontos pra convocar na aba
+     "Currículos Enviados". Não é um cenário raro, é o caminho mais comum (envia → aprova →
+     convoca), então é bem provável de acontecer em uso real.
+   - Onde o botão continua visível, o **número mostrado não bate com quem de fato recebe o
+     convite**: `handleSummon` (linha 356-361) usa `candidatos.filter(...)` sem escopo de aba,
+     então clicar em "Convocar em Lote (2)" pode na prática convocar mais gente do que os 2
+     anunciados — o colaborador não teria como prever quantos convites realmente saem.
+   - "Convocar em Lote" também é visível no modo **Kanban** (não está dentro do `viewMode ===
+     "grid"` que protege a aba nova) — nesse modo a aba fica "presa" no último valor selecionado
+     no grid, então o bug de contagem também aparece ali, mesmo essa tela nem mostrando a aba
+     "A Enviar"/"Enviados" pro usuário perceber por quê o número está errado.
+   - **Causa raiz:** `contadores` era, antes desta story, um objeto vaga-wide (todos os
+     candidatos). Esta story reescreveu sua fonte para `candidatosPorAba` pra alimentar os chips
+     de status (uso correto, pretendido) — mas 3 outros pontos do arquivo (linhas 669, 676, 1155,
+     1159), que não têm nada a ver com a aba nova, também leem `contadores.aprovado_empresa`/
+     `contadores.selecionado` e ficaram afetados como efeito colateral.
+   - **Correção recomendada:** manter um `contadores` vaga-wide separado (ex.: `contadoresGlobais`,
+     calculado sobre `candidatos` sem filtro de aba) só pra alimentar o botão/label de "Convocar em
+     Lote" nas 4 linhas citadas; os chips de status da aba nova continuam usando o `contadores`
+     escopado por aba, sem mudança aí.
+5. **Performance** — sem impacto perceptível (filtragem em memória sobre listas já carregadas).
+6. **Segurança** — nenhuma superfície nova; mesma rota (`enviar-cv`) já em produção, mesmo
+   payload, sem novo dado sensível exposto no client.
+7. **Documentação** — story com File List e Change Log atualizados. OK.
+
+**Resumo para o @dev:** 2 correções antes de reenviar para gate — (a) separar a contagem do
+"Convocar em Lote" da contagem por aba (achado HIGH, item 4), (b) mostrar `email_enviado_para`
+no card da aba "Currículos Enviados" (achado MEDIUM, AC5). Nenhum dos dois exige revisar o
+resto da implementação — os ACs 1-4, 6, 7 estão corretos.
