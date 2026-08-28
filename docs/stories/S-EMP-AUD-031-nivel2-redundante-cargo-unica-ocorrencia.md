@@ -1,6 +1,6 @@
 # S-EMP-AUD-031 — Nível 2 redundante trava o lead quando o cargo tem só 1 ocorrência
 
-**Status:** InReview
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** demanda direta do Junior, 2026-08-28 — achado a partir de análise de print de conversa
 real, aprofundado com investigação de logs de produção
@@ -192,3 +192,7 @@ S-EMP-AUD-023 de numeração corrida própria do Nível 2 continua valendo); mex
 **Resumo:** aprovado para seguir. O achado de teste (item 2) é uma recomendação de qualidade sobre
 uma parte já verificada manualmente como correta — fica a critério do @dev/Junior adicionar antes
 ou depois do push.
+- v0.3 (2026-08-28): @devops abriu o PR #135 (`fix/s-emp-aud-031-nivel2-redundante-cargo-unico` →
+  `main`). Junior aprovou, mergeou, confirmou o redeploy do `cuca-worker` no EasyPanel **e testou
+  em produção com sucesso** — a correção do achado original (cargo com 1 ocorrência não trava mais
+  o lead) está validada com uso real, não só com testes automatizados. Status InReview → **Done**.
