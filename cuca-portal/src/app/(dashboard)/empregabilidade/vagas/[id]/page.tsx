@@ -102,6 +102,10 @@ export default function VagaDetalhesPage() {
     const [loading, setLoading] = useState(true)
     const [filtroStatus, setFiltroStatus] = useState("todos")
     const [viewMode, setViewMode] = useState<"grid" | "kanban">("grid")
+    // SQS-64: aba "A Enviar" / "Currículos Enviados" — eixo independente do status (kanban).
+    // Só se aplica ao modo grid (AC7 — kanban continua mostrando todos, enviados ou não).
+    const [abaCandidatos, setAbaCandidatos] = useState<"a_enviar" | "enviados">("a_enviar")
+    const [enviandoCvIds, setEnviandoCvIds] = useState<Set<string>>(new Set())
 
     // Banco de Talentos — resultados persistidos em localStorage para sobreviver à navegação
     const storageKey = `talent_triagem_${id}`
@@ -421,26 +425,66 @@ export default function VagaDetalhesPage() {
         }
     }
 
+    // SQS-64: envio (ou reenvio) individual de currículo para a empresa — reaproveita a mesma rota
+    // já usada na tela de detalhe do candidato (POST /api/empregabilidade/enviar-cv). Sem lote —
+    // decisão explícita do Junior (ver SQS-64, "Task explícita — sem envio em lote").
+    const enviarCurriculoEmpresa = async (candidato: Candidatura) => {
+        setEnviandoCvIds(prev => new Set(prev).add(candidato.id))
+        try {
+            const res = await fetch("/api/empregabilidade/enviar-cv", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ candidatura_id: candidato.id, vaga_id: id }),
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro ao enviar currículo")
+            const agora = new Date().toISOString()
+            setCandidatos(prev => prev.map(c => c.id === candidato.id
+                ? { ...c, email_enviado_em: agora, email_enviado_para: (vaga as any)?.email_responsavel || vaga?.email_contato_empresa || null }
+                : c))
+            toast.success(`Currículo de ${candidato.nome} enviado para a empresa!`)
+        } catch (err: any) {
+            toast.error(err.message || "Erro ao enviar currículo")
+        } finally {
+            setEnviandoCvIds(prev => { const next = new Set(prev); next.delete(candidato.id); return next })
+        }
+    }
+
     const tipoFollowupLabel = (tipo: string) => {
         if (tipo === "empresa") return { label: "Empresa", color: "bg-blue-500/15 text-blue-400", icon: Building2 }
         if (tipo === "candidato") return { label: "Candidato", color: "bg-green-500/15 text-green-400", icon: User }
         return { label: "Interno", color: "bg-muted text-muted-foreground", icon: Info }
     }
 
+    // SQS-64: pool de candidatos da aba ativa — "A Enviar" (sem email_enviado_em) ou "Currículos
+    // Enviados" (com email_enviado_em). Só entra em jogo no modo grid (AC7 — Kanban ignora a aba).
+    const candidatosPorAba = abaCandidatos === "enviados"
+        ? candidatos.filter(c => !!c.email_enviado_em)
+        : candidatos.filter(c => !c.email_enviado_em)
+    const contagemAEnviar = candidatos.filter(c => !c.email_enviado_em && c.status !== "rejeitado").length
+    const contagemEnviados = candidatos.filter(c => !!c.email_enviado_em).length
+
     const candidatosFiltrados = filtroStatus === "todos"
-        ? candidatos.filter(c => c.status !== "rejeitado")
-        : candidatos.filter(c => c.status === filtroStatus)
+        ? candidatosPorAba.filter(c => c.status !== "rejeitado")
+        : candidatosPorAba.filter(c => c.status === filtroStatus)
 
     const contadores = {
-        todos: candidatos.length,
-        pendente: candidatos.filter(c => c.status === "pendente").length,
-        selecionado: candidatos.filter(c => c.status === "selecionado").length,
-        contratado: candidatos.filter(c => c.status === "contratado").length,
-        rejeitado: candidatos.filter(c => c.status === "rejeitado").length,
-        aprovado_empresa: candidatos.filter(c => c.status === "aprovado_empresa").length,
-        convite_enviado: candidatos.filter(c => c.status === "convite_enviado").length,
-        entrevista_confirmada: candidatos.filter(c => c.status === "entrevista_confirmada").length,
+        todos: candidatosPorAba.length,
+        pendente: candidatosPorAba.filter(c => c.status === "pendente").length,
+        selecionado: candidatosPorAba.filter(c => c.status === "selecionado").length,
+        contratado: candidatosPorAba.filter(c => c.status === "contratado").length,
+        rejeitado: candidatosPorAba.filter(c => c.status === "rejeitado").length,
+        aprovado_empresa: candidatosPorAba.filter(c => c.status === "aprovado_empresa").length,
+        convite_enviado: candidatosPorAba.filter(c => c.status === "convite_enviado").length,
+        entrevista_confirmada: candidatosPorAba.filter(c => c.status === "entrevista_confirmada").length,
     }
+
+    // SQS-64 (fix pós-QA): "Convocar em Lote" é uma feature anterior a esta story, independente da
+    // aba "A Enviar"/"Enviados" — precisa contar sobre a vaga inteira (candidatos), não sobre
+    // candidatosPorAba. `contadores` acima fica reservado pros chips de status (esses sim devem
+    // refletir a aba ativa). Usar `contadores` aqui escondia/subcontava o botão quando os candidatos
+    // aprovados/selecionados já tinham currículo enviado (fluxo normal: envia → aprova → convoca).
+    const aprovadosOuSelecionadosTotal = candidatos.filter(c => c.status === "aprovado_empresa" || c.status === "selecionado").length
 
     const empresaNome = (vaga as any)?.empresas?.nome_fantasia || (vaga as any)?.empresas?.nome || null
 
@@ -629,14 +673,14 @@ export default function VagaDetalhesPage() {
                         <Badge variant="outline">{candidatos.length}</Badge>
                     </div>
                     <div className="flex items-center gap-2">
-                        {(contadores.aprovado_empresa + contadores.selecionado) > 0 && (
+                        {aprovadosOuSelecionadosTotal > 0 && (
                             <Button
                                 size="sm"
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
                                 onClick={abrirSummonLote}
                             >
                                 <Send className="h-3.5 w-3.5" />
-                                Convocar em Lote ({contadores.aprovado_empresa + contadores.selecionado})
+                                Convocar em Lote ({aprovadosOuSelecionadosTotal})
                             </Button>
                         )}
                         <Button size="sm" variant="outline" onClick={() => setModalInscricao(true)}>
@@ -665,6 +709,26 @@ export default function VagaDetalhesPage() {
                         </div>
                     </div>
                 </div>
+
+                {/* SQS-64: aba "A Enviar" / "Currículos Enviados" — só no modo grid (AC7: Kanban
+                    continua mostrando todos, "enviado à empresa" e status de entrevista são eixos
+                    independentes) */}
+                {viewMode === "grid" && (
+                    <div className="flex items-center gap-1 bg-muted p-1 rounded-lg w-fit">
+                        <button
+                            onClick={() => setAbaCandidatos("a_enviar")}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${abaCandidatos === "a_enviar" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                            A Enviar ({contagemAEnviar})
+                        </button>
+                        <button
+                            onClick={() => setAbaCandidatos("enviados")}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${abaCandidatos === "enviados" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                            Currículos Enviados ({contagemEnviados})
+                        </button>
+                    </div>
+                )}
 
                 {/* Filtros por status — só no modo grid */}
                 {viewMode === "grid" && (
@@ -778,9 +842,11 @@ export default function VagaDetalhesPage() {
                     <div className="text-center py-12 text-muted-foreground border border-dashed rounded-xl">
                         <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
                         <p className="text-sm">
-                            {filtroStatus === "todos"
-                                ? "Nenhum currículo recebido até o momento."
-                                : `Nenhum candidato com status "${filtroStatus}".`}
+                            {filtroStatus !== "todos"
+                                ? `Nenhum candidato com status "${filtroStatus}".`
+                                : abaCandidatos === "enviados"
+                                    ? "Nenhum currículo enviado para a empresa ainda."
+                                    : "Nenhum currículo pendente de envio — tudo em dia."}
                         </p>
                     </div>
                 ) : (
@@ -799,6 +865,9 @@ export default function VagaDetalhesPage() {
                                     onAbrirFollowup={() => abrirFollowup(c)}
                                     onConvocar={() => abrirSummon(c)}
                                     onClick={() => router.push(`/empregabilidade/vagas/${id}/candidatos/${c.id}`)}
+                                    onEnviarCv={() => enviarCurriculoEmpresa(c)}
+                                    enviandoCv={enviandoCvIds.has(c.id)}
+                                    podeEnviarCv={vaga?.coleta_curriculo !== false}
                                 />
                             )
                         })}
@@ -1090,11 +1159,11 @@ export default function VagaDetalhesPage() {
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Send className="h-5 w-5 text-indigo-400" />
-                            {summonIsLote ? `Convocar em Lote (${contadores.aprovado_empresa + contadores.selecionado})` : "Convocar Candidato"}
+                            {summonIsLote ? `Convocar em Lote (${aprovadosOuSelecionadosTotal})` : "Convocar Candidato"}
                         </DialogTitle>
                         <DialogDescription>
                             {summonIsLote
-                                ? `Defina data, hora e local únicos para convocar todos os ${contadores.aprovado_empresa + contadores.selecionado} candidato(s) selecionados/aprovados. Cada um receberá o convite via WhatsApp.`
+                                ? `Defina data, hora e local únicos para convocar todos os ${aprovadosOuSelecionadosTotal} candidato(s) selecionados/aprovados. Cada um receberá o convite via WhatsApp.`
                                 : <>Agende a entrevista para <strong>{selectedCand?.nome}</strong>. O candidato receberá o convite via WhatsApp.</>
                             }
                         </DialogDescription>
@@ -1145,7 +1214,8 @@ export default function VagaDetalhesPage() {
 
 // ── Componente: Card de candidato inscrito ──
 function CandidatoCard({
-    candidato, ocr, idade, score, onAbrirFollowup, onConvocar, onClick
+    candidato, ocr, idade, score, onAbrirFollowup, onConvocar, onClick,
+    onEnviarCv, enviandoCv, podeEnviarCv
 }: {
     candidato: Candidatura
     ocr: any
@@ -1154,6 +1224,9 @@ function CandidatoCard({
     onAbrirFollowup: () => void
     onConvocar: () => void
     onClick: () => void
+    onEnviarCv?: () => void
+    enviandoCv?: boolean
+    podeEnviarCv?: boolean
 }) {
     const ehBancoTalentos = candidato.observacoes?.toLowerCase().includes("banco_talentos")
     // semOcr: tem CV em arquivo aguardando análise, OU é banco de talentos (análise textual disparada)
@@ -1225,6 +1298,17 @@ function CandidatoCard({
                 </div>
             )}
 
+            {/* SQS-64: status de envio à empresa — AC5 pede data E destino */}
+            {candidato.email_enviado_em && (
+                <div className="flex items-start gap-1.5 text-xs text-cuca-blue bg-cuca-blue/10 border border-cuca-blue/20 rounded-lg px-2.5 py-1.5 mb-3">
+                    <Mail className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                    <span>
+                        Enviado à empresa em {format(new Date(candidato.email_enviado_em), "dd/MM/yy HH:mm", { locale: ptBR })}
+                        {candidato.email_enviado_para && <> — para <strong>{candidato.email_enviado_para}</strong></>}
+                    </span>
+                </div>
+            )}
+
             {/* Rodapé: telefone + data + ações */}
             <div className="flex items-center justify-between pt-2.5 border-t border-border">
                 <div className="space-y-0.5">
@@ -1249,6 +1333,27 @@ function CandidatoCard({
                         >
                             <Send className="h-3.5 w-3.5" />
                             Convocar
+                        </Button>
+                    )}
+                    {/* SQS-64: envio individual do currículo pra empresa — sem lote (decisão do Junior).
+                        AC6: seleções com coleta_curriculo=false ficam com o botão desabilitado
+                        (não escondido) — a rota já bloqueia no servidor (AC15 da SQS-56), aqui só
+                        evita o clique que resultaria em erro. */}
+                    {onEnviarCv && (
+                        <Button
+                            size="sm"
+                            variant={candidato.email_enviado_em ? "outline" : "default"}
+                            onClick={e => { e.stopPropagation(); onEnviarCv() }}
+                            disabled={enviandoCv || podeEnviarCv === false}
+                            className={candidato.email_enviado_em
+                                ? "h-8 text-xs gap-1.5"
+                                : "bg-cuca-blue hover:bg-sky-800 text-white h-8 text-xs gap-1.5"}
+                            title={podeEnviarCv === false
+                                ? "Esta seleção não coleta currículo — envio desativado"
+                                : candidato.email_enviado_em ? "Reenviar currículo para a empresa" : "Enviar currículo para a empresa"}
+                        >
+                            {enviandoCv ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+                            {candidato.email_enviado_em ? "Reenviar" : "Enviar"}
                         </Button>
                     )}
                     <button
