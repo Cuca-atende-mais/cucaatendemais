@@ -205,6 +205,13 @@ individual replicado na listagem (chama a rota `enviar-cv` já existente); açã
     pré-existentes, 6 warnings pré-existentes) — nenhum problema novo introduzido pelo fix.
   - Não testado em navegador (mesma regra do projeto já registrada na v0.4). Status InProgress →
     InReview — pronta para novo gate do @qa.
+- v0.7 (2026-08-27): @qa revisou de novo — **PASS**. Os 2 achados do gate anterior conferidos por
+  diff linha a linha: `aprovadosOuSelecionadosTotal` calculado sobre `candidatos` completo (não
+  `candidatosPorAba`), substituído nos 4 pontos que alimentavam "Convocar em Lote" — nenhuma
+  referência antiga sobrou. `email_enviado_para` agora aparece no card junto da data. `eslint`
+  reconferido de forma independente: mesma contagem de antes (30 erros/6 avisos pré-existentes,
+  zero novos). Demais ACs (1-4, 6, 7) inalterados desde o gate anterior, já tinham passado. Status permanece
+  **InReview** — próxima etapa é @devops (push/PR), aguardando o Junior autorizar.
 
 ## QA Results
 
@@ -262,3 +269,24 @@ individual replicado na listagem (chama a rota `enviar-cv` já existente); açã
 "Convocar em Lote" da contagem por aba (achado HIGH, item 4), (b) mostrar `email_enviado_para`
 no card da aba "Currículos Enviados" (achado MEDIUM, AC5). Nenhum dos dois exige revisar o
 resto da implementação — os ACs 1-4, 6, 7 estão corretos.
+
+### Re-review em 2026-08-27 — @qa Quinn
+
+**Gate: PASS.**
+
+- **Achado HIGH (item 4) — corrigido, confirmado por diff.** `aprovadosOuSelecionadosTotal` é
+  calculado sobre `candidatos` (vaga inteira), não `candidatosPorAba`. Substituiu
+  `contadores.aprovado_empresa + contadores.selecionado` nos 4 pontos identificados (botão, label
+  do dialog, descrição do dialog — linhas 676/683/1162/1166 do arquivo atual). `grep` confirma zero
+  ocorrências remanescentes do padrão antigo. "Convocar em Lote" volta a refletir a vaga inteira,
+  igual antes desta story, independente de qual aba está selecionada — e o número exibido agora
+  bate com quem `handleSummon` de fato convoca.
+- **Achado MEDIUM (AC5) — corrigido.** Card em "Currículos Enviados" mostra
+  `email_enviado_para` condicionalmente (só quando presente, sem quebrar quando nulo). AC5
+  totalmente atendido agora.
+- `eslint` reconferido nesta revisão, de forma independente da alegação do @dev: 36 problemas
+  (30 erros/6 avisos), mesma contagem da primeira revisão — nenhum novo.
+- Demais checks (regressão geral, segurança, performance, documentação) sem mudança desde o gate
+  anterior — já estavam OK.
+
+**Sem pendências.** Pronta para @devops (push/PR), assim que o Junior autorizar essa etapa.
