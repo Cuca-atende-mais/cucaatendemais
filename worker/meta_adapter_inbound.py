@@ -685,8 +685,19 @@ async def _notificar_transbordo(
     unidade_cuca: str | None,
     phone_number_id_origem: str,
     lead_identificacao: str,
+    tag_finalidade: str = "Transbordo",
+    parametros_override: list[str] | None = None,
 ) -> bool:
-    """Notifica colaboradores configurados sobre transbordo via template Meta."""
+    """Notifica colaboradores configurados sobre transbordo via template Meta.
+
+    S-EMP-AUD-027: `tag_finalidade` e `parametros_override` são aditivos (default preserva o
+    comportamento original para os 3 chamadores existentes — pedido de atendente humano em
+    Institucional/Empregabilidade/Ouvidoria/Acesso CUCA/Academia Enem). Permitem reaproveitar a
+    mesma infra (contatos de `transbordo_humano` + lookup de template) para outra finalidade que
+    usa o mesmo phone_number_id mas um template com corpo/variáveis diferentes — aqui, o aviso de
+    vaga/seleção criada (`transbordo_vaga_00`, tag "VagaCriada", 2 variáveis: empresa e vaga, sem
+    o nome do colaborador como variável — diferente do template de "Transbordo", que tem 3).
+    """
     try:
         sb = _get_supabase()
         contacts: list = []
@@ -705,19 +716,20 @@ async def _notificar_transbordo(
             )
             return False
         automacao = MODULO_AUTOMACAO_MAP.get(modulo, modulo)
-        # Lookup relacional (automação + número + tag "Transbordo" — zero nome hardcoded).
-        # A 2ª tag "Transbordo" desambigua de outros templates que também usam o mesmo
-        # canal/número (ex.: programação mensal, evento pontual), já que várias finalidades
-        # podem compartilhar a mesma automação + phone_number_id.
+        # Lookup relacional (automação + número + tag de finalidade — zero nome hardcoded).
+        # A 2ª tag desambigua de outros templates que também usam o mesmo canal/número (ex.:
+        # programação mensal, evento pontual, ou — S-EMP-AUD-027 — o aviso de vaga criada
+        # compartilhando o mesmo phone_number_id do template de "Transbordo"), já que várias
+        # finalidades podem compartilhar a mesma automação + phone_number_id.
         tpl_res = sb.table("meta_templates").select("nome, corpo_texto, variaveis") \
-            .contains("automacoes", [automacao, "Transbordo"]) \
+            .contains("automacoes", [automacao, tag_finalidade]) \
             .contains("phone_number_ids", [phone_number_id_origem]) \
             .eq("ativo", True).eq("status", "aprovado") \
             .limit(1).maybe_single().execute()
         if not tpl_res.data:
             logger.warning(
-                "[transbordo] Nenhum template aprovado para automacao=%s phone_number_id=%s — notificação não enviada",
-                automacao, phone_number_id_origem,
+                "[transbordo] Nenhum template aprovado para automacao=%s tag=%s phone_number_id=%s — notificação não enviada",
+                automacao, tag_finalidade, phone_number_id_origem,
             )
             return False
         template_name = tpl_res.data["nome"]
@@ -729,12 +741,13 @@ async def _notificar_transbordo(
         for contato in contacts:
             nome = contato.get("responsavel") or "Equipe"
             telefone_destino = contato["telefone"]
+            parametros = parametros_override if parametros_override is not None else [nome, lead_identificacao, modulo]
             components = [{
                 "type": "body",
-                "parameters": _montar_parametros_named(variaveis_transbordo, [nome, lead_identificacao, modulo]),
+                "parameters": _montar_parametros_named(variaveis_transbordo, parametros),
             }]
             if corpo_texto:
-                preview = _render_template(corpo_texto, {1: nome, 2: lead_identificacao, 3: modulo})
+                preview = _render_template(corpo_texto, {i + 1: v for i, v in enumerate(parametros)})
                 logger.debug("[transbordo] preview: %s", preview[:120])
             ok, _wamid = await _enviar_template_meta(
                 phone_number_id_origem, telefone_destino, token,
