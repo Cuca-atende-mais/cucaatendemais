@@ -274,9 +274,14 @@ export default function BancoTalentosPage() {
                     // Extrai o termo principal antes de " / " e "(" para suportar tanto
                     // o texto longo ("Administrativo / Escritório (...)") quanto o curto
                     // ("Administrativo") que podem estar salvos em registros de origens distintas.
-                    // O cast ::text converte o array para string permitindo o ilike.
+                    // Filtra na coluna area_interesse_busca (text, mantida por trigger a partir
+                    // do array) em vez de castar area_interesse::text na URL — o PostgREST só
+                    // aplica um cast declarado no filtro quando ele também está no `select`;
+                    // como aqui o select é "*", o cast era ignorado e o ilike caía direto na
+                    // coluna array, gerando 42883/404 em produção (ver migration
+                    // 20260828120000_talent_bank_area_interesse_busca.sql).
                     const termoPrincipal = filtroArea.split(" / ")[0].split("(")[0].trim()
-                    query = query.filter("area_interesse::text", "ilike", `%${termoPrincipal}%`)
+                    query = query.ilike("area_interesse_busca", `%${termoPrincipal}%`)
                 }
             }
             if (filtroEscolaridade) query = query.eq("escolaridade_normalizada", filtroEscolaridade)
