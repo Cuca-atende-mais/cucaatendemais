@@ -4903,6 +4903,21 @@ async def _empregabilidade_notify_tick():
                     "ultima_vaga_id": vaga_criada_id,
                 }, etapa_esperada=etapa_c)
                 logger.info(f"[empreg-notify] Notificação de criação enviada para conversa {conversa_id} — vaga {numero_ref}")
+                # S-EMP-AUD-027: avisa o contato de transbordo da Empregabilidade (mesmo contato
+                # que já recebe pedido de atendente humano, modulo="Empregabilidade") pra equipe
+                # decidir publicar a vaga ou contatar a empresa. Best-effort — _notificar_transbordo
+                # nunca propaga exceção, então uma falha aqui não afeta a confirmação já enviada
+                # acima nem o avanço de etapa já persistido.
+                from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
+                await _notificar_transbordo(
+                    conversa_id=conversa_id,
+                    modulo="Empregabilidade",
+                    unidade_cuca=unidade_cuca or None,
+                    phone_number_id_origem=instance_name,
+                    lead_identificacao="",
+                    tag_finalidade="VagaCriada",
+                    parametros_override=[empresa_nome, vaga_titulo],
+                )
 
         # --- SQS-49: Notificação de seleção por evento criada ---
         elif etapa_c == "aguardando_retorno_selecao":
@@ -4933,6 +4948,17 @@ async def _empregabilidade_notify_tick():
                     "ultima_vaga_id": selecao_criada_id,
                 }, etapa_esperada=etapa_c)
                 logger.info(f"[empreg-notify] Seleção por evento confirmada para conversa {conversa_id} — ref {numero_ref}")
+                # S-EMP-AUD-027: mesmo aviso de transbordo do caso "vaga criada" acima.
+                from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
+                await _notificar_transbordo(
+                    conversa_id=conversa_id,
+                    modulo="Empregabilidade",
+                    unidade_cuca=unidade_cuca or None,
+                    phone_number_id_origem=instance_name,
+                    lead_identificacao="",
+                    tag_finalidade="VagaCriada",
+                    parametros_override=[empresa_nome, selecao_titulo],
+                )
 
         # --- Notificação de edição confirmada ---
         elif etapa_c == "aguardando_retorno_edicao":
