@@ -1,6 +1,6 @@
 # S-EMP-AUD-027 — Notifica número de transbordo quando uma vaga/seleção é criada
 
-**Status:** InReview
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** demanda direta do Junior, 2026-08-18 ("NOTIFICAÇÃO DE VAGA CRIADA")
 **Prioridade:** P2 | **Esforço:** M | **Risco:** MÉDIO — depende de aprovação de novo template Meta
@@ -243,3 +243,7 @@ um bloqueio — fica a critério do @dev/Junior decidir se vale adicionar antes 
 risco residual sobre o formato de variável do template (já levantado pelo @dev) só é verificável
 com uma vaga real sendo criada em produção — recomendo acompanhar o log do primeiro disparo real
 depois do deploy.
+- v0.9 (2026-08-27): @devops abriu o PR #133 (`fix/s-emp-aud-027-notificacao-vaga-criada` → `main`).
+  Junior aprovou, mergeou e confirmou o redeploy do serviço `cuca-worker` no EasyPanel. Status
+  InReview → **Done**. Risco residual (variável nomeada vs. posicional no template) fica em
+  observação — sem novo achado até o momento desta atualização.
