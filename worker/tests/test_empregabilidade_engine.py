@@ -2879,8 +2879,17 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         assert estado["etapa"] == "listou_cargos_consolidados"
         assert estado["mapa_cargos_consolidados"]["1"]["cargo_exibicao"] == "Porteiro"
 
+    # ─────────────────────────────────────────────────────────────────────
+    # Achado do Junior (2026-08-28): cargo com 1 única ocorrência não deve
+    # mais mostrar o Nível 2 — era um 2º passo sem propósito real, confundia
+    # o lead (reusava o número do Nível 1, inválido na numeração própria do
+    # Nível 2, e travava o fluxo — confirmado em produção: 60% dos Níveis 2
+    # mostrados eram esse caso, 27,5% deles geravam confusão visível).
+    # ─────────────────────────────────────────────────────────────────────
+
     @pytest.mark.asyncio
-    async def test_escolha_nivel1_unico_cargo_mostra_nivel2(self, monkeypatch, _isola_enviar):
+    async def test_escolha_nivel1_unico_cargo_pula_nivel2(self, monkeypatch, _isola_enviar):
+        """Cargo com 1 ocorrência: pula direto pro roteamento, sem Nível 2."""
         estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
             "perfil": "publico",
             "mapa_cargos_consolidados": {
@@ -2897,20 +2906,140 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         })
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.coleta_curriculo_por_vaga = {"vaga-17": True}
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        # Nunca passa pela etapa listou_ocorrencias_cargo — vai direto pro
+        # próximo passo do fluxo (coleta de nome, já que coleta_curriculo=True).
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["cargos_escolhidos"] == ["Porteiro"]
+        assert estado["vaga_id_selecionada"] == "vaga-17"
+
+    @pytest.mark.asyncio
+    async def test_escolha_nivel1_cargo_multiplas_ocorrencias_ainda_mostra_nivel2(self, monkeypatch, _isola_enviar):
+        """Cargo com 2+ ocorrências: Nível 2 continua aparecendo — é
+        genuinamente necessário pra desambiguar entre as empresas."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
+            "perfil": "publico",
+            "mapa_cargos_consolidados": {
+                "1": {
+                    "cargo_exibicao": "Porteiro", "quantidade_total": 50,
+                    "ocorrencias": [
+                        {"vaga_id": "v1", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                         "quantidade": 30, "empresa_nome": "Empresa A", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede"},
+                        {"vaga_id": "v2", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                         "quantidade": 20, "empresa_nome": "Empresa B", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede"},
+                    ],
+                },
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
         monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
 
         await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
 
         texto_enviado = _isola_enviar.call_args.args[3]
         assert "*Porteiro*" in texto_enviado
-        assert "SINGULAR" in texto_enviado
+        assert "Empresa A" in texto_enviado and "Empresa B" in texto_enviado
         assert estado["etapa"] == "listou_ocorrencias_cargo"
-        assert estado["mapa_ocorrencias"]["1"]["vaga_id"] == "vaga-17"
+        assert estado["mapa_ocorrencias"]["1"]["vaga_id"] == "v1"
+        assert estado["mapa_ocorrencias"]["2"]["vaga_id"] == "v2"
+        assert estado["ocorrencias_auto_pendentes"] == []
+
+    @pytest.mark.asyncio
+    async def test_escolha_nivel1_multiplos_cargos_unicos_enfileira_sem_nivel2(self, monkeypatch, _isola_enviar):
+        """2 cargos escolhidos juntos, cada um com 1 ocorrência só: nenhum
+        Nível 2 aparece — a 1ª ocorrência é roteada, a 2ª entra na fila
+        automática (mesmo mecanismo já usado pra múltipla escolha no Nível 2)."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
+            "perfil": "publico",
+            "mapa_cargos_consolidados": {
+                "1": {
+                    "cargo_exibicao": "Porteiro", "quantidade_total": 30,
+                    "ocorrencias": [{"vaga_id": "v1", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                                      "quantidade": 30, "empresa_nome": "Empresa A", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede"}],
+                },
+                "2": {
+                    "cargo_exibicao": "Consultora de Vendas", "quantidade_total": 1,
+                    "ocorrencias": [{"vaga_id": "v3", "tipo": "vaga_normal", "cargo_titulo_original": "Consultora de Vendas",
+                                      "quantidade": 1, "empresa_nome": "Maraponga Mart Moda", "rotulo_tipo": "Vaga individual"}],
+                },
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.coleta_curriculo_por_vaga = {"v1": True}
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._processar_publico("1,2", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        # Nunca passa por listou_ocorrencias_cargo — roteia a 1ª (Porteiro) e
+        # guarda a 2ª (Consultora) na fila automática.
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["cargos_escolhidos"] == ["Porteiro"]
+        assert estado["fila_candidaturas_pendentes"][0]["vaga_id"] == "v3"
+
+    @pytest.mark.asyncio
+    async def test_escolha_nivel1_mistura_unico_e_multiplo_mostra_nivel2_so_pro_que_precisa(self, monkeypatch, _isola_enviar):
+        """Mistura: 1 cargo com 1 ocorrência (auto-resolvido, guardado na
+        fila) + 1 cargo com 2+ ocorrências (Nível 2 aparece só pra esse)."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
+            "perfil": "publico",
+            "mapa_cargos_consolidados": {
+                "1": {
+                    "cargo_exibicao": "Consultora de Vendas", "quantidade_total": 1,
+                    "ocorrencias": [{"vaga_id": "v3", "tipo": "vaga_normal", "cargo_titulo_original": "Consultora de Vendas",
+                                      "quantidade": 1, "empresa_nome": "Maraponga Mart Moda", "rotulo_tipo": "Vaga individual"}],
+                },
+                "2": {
+                    "cargo_exibicao": "Porteiro", "quantidade_total": 50,
+                    "ocorrencias": [
+                        {"vaga_id": "v1", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                         "quantidade": 30, "empresa_nome": "Empresa A", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede"},
+                        {"vaga_id": "v2", "tipo": "selecao_evento", "cargo_titulo_original": "Porteiro",
+                         "quantidade": 20, "empresa_nome": "Empresa B", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede"},
+                    ],
+                },
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        await emp._processar_publico("1,2", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        # Nível 2 mostrado só pro cargo "Porteiro" (2 ocorrências) — numeração
+        # começa em 1 de novo (só ele entrou no mapa), Consultora não aparece.
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "Porteiro" in texto_enviado
+        assert "Consultora" not in texto_enviado
+        assert estado["etapa"] == "listou_ocorrencias_cargo"
+        assert estado["mapa_ocorrencias"]["1"]["vaga_id"] == "v1"
+        assert estado["mapa_ocorrencias"]["2"]["vaga_id"] == "v2"
+        # A ocorrência auto-resolvida (Consultora) fica guardada pra entrar
+        # na fila assim que o lead responder o Nível 2.
+        assert estado["ocorrencias_auto_pendentes"][0]["vaga_id"] == "v3"
+
+        # Lead escolhe "1" no Nível 2 → Porteiro/Empresa A roteado, e a
+        # Consultora (auto) entra na fila automática, sem exigir escolha nova.
+        await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+        assert estado["fila_candidaturas_pendentes"][-1]["vaga_id"] == "v3"
 
     @pytest.mark.asyncio
     async def test_escolha_nivel1_multipla_numera_ocorrencias_de_forma_continua(self, monkeypatch, _isola_enviar):
         """Decisão registrada nesta sessão: numeração contínua entre blocos
-        (não reinicia em 1 a cada cargo) — evita ambiguidade de resposta."""
+        (não reinicia em 1 a cada cargo) — evita ambiguidade de resposta.
+
+        Achado do Junior (2026-08-28): os 2 cargos aqui precisam ter 2+
+        ocorrências cada — se um deles tivesse só 1, ele seria auto-resolvido
+        e nem entraria no Nível 2 (ver `test_escolha_nivel1_mistura_unico_e_
+        multiplo_mostra_nivel2_so_pro_que_precisa`), o que invalidaria este
+        teste de numeração contínua entre blocos."""
         estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
             "perfil": "publico",
             "mapa_cargos_consolidados": {
@@ -2924,10 +3053,12 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
                     ],
                 },
                 "2": {
-                    "cargo_exibicao": "Consultora de Vendas", "quantidade_total": 1,
+                    "cargo_exibicao": "Consultora de Vendas", "quantidade_total": 2,
                     "ocorrencias": [
                         {"vaga_id": "v3", "tipo": "vaga_normal", "cargo_titulo_original": "Consultora de Vendas",
                          "quantidade": 1, "empresa_nome": "Maraponga Mart Moda", "rotulo_tipo": "Vaga individual"},
+                        {"vaga_id": "v4", "tipo": "vaga_normal", "cargo_titulo_original": "Consultora de Vendas",
+                         "quantidade": 1, "empresa_nome": "Outra Empresa", "rotulo_tipo": "Vaga individual"},
                     ],
                 },
             },
@@ -2943,6 +3074,8 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         assert mapa_ocorrencias["2"]["vaga_id"] == "v2"
         # A ocorrência da Consultora continua a numeração (3), não reinicia em 1.
         assert mapa_ocorrencias["3"]["vaga_id"] == "v3"
+        assert mapa_ocorrencias["4"]["vaga_id"] == "v4"
+        assert estado["ocorrencias_auto_pendentes"] == []
 
     @pytest.mark.asyncio
     async def test_nivel2_selecao_evento_com_coleta_curriculo_pede_nome(self, monkeypatch, _isola_enviar):
