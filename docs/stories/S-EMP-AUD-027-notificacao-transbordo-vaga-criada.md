@@ -190,3 +190,56 @@ mudar `_notificar_transbordo` pra outros usos.
     falhar com erro de formato de parâmetro, é esse o primeiro lugar a checar. Não dá pra verificar
     isso sem uma vaga real sendo criada em produção (fora do alcance de teste estático).
   - Status Ready → InReview.
+- v0.8 (2026-08-27): @qa revisou — **CONCERNS** (aprovado, com 1 observação a considerar antes do
+  push). Ver "QA Results" abaixo.
+
+## QA Results
+
+### Review em 2026-08-27 — @qa Quinn
+
+**Gate: CONCERNS** (aprovado — nenhum achado bloqueia, mas 1 ponto deveria ser considerado)
+
+**7 checks:**
+
+1. **Code review** — mudança aditiva bem justificada (comentário explica por que generalizar em
+   vez de duplicar). `tag_finalidade`/`parametros_override` com defaults que preservam o
+   comportamento anterior. OK.
+2. **Testes — achado MEDIUM.** Nenhum teste automatizado novo para os 2 pontos de disparo
+   adicionados em `_empregabilidade_notify_tick`, nem para os parâmetros novos de
+   `_notificar_transbordo`. O @dev registrou isso como "mesmo padrão do projeto" — **não procede
+   pra este arquivo especificamente**: `test_empregabilidade_engine.py` já tem testes dedicados
+   pros mesmos 2 blocos (`aguardando_retorno_vaga`/`aguardando_retorno_selecao`) da S-EMP-AUD-026
+   (`test_notify_tick_vaga_criada_passa_conversa_id_e_lead_id` e o par de seleção), usando
+   `monkeypatch` + fakes já existentes (`_SupabaseFakeBloco6`). Seria mecânico estender esse mesmo
+   padrão pra confirmar que `_notificar_transbordo` é chamado com `tag_finalidade="VagaCriada"` e
+   `parametros_override=[empresa_nome, titulo]` corretos — hoje isso só está coberto por leitura de
+   código, não por teste que pegaria uma regressão futura (ex.: alguém remove a chamada sem querer
+   num refactor do loop). **Não bloqueia** porque: (a) os 253 testes existentes confirmam que nada
+   quebrou nos 3 chamadores antigos, (b) a lógica nova é só passagem de parâmetros, sem branch
+   condicional complexo, (c) verificação por leitura de código foi possível e conferida linha a
+   linha. Mas registro como recomendação real, não só nota de rodapé.
+3. **Acceptance Criteria** — AC1-AC4 verificados por leitura de código, atendidos. AC2 (2
+   variáveis) bate com o que o `parametros_override` monta.
+4. **Regressão** — confirmado que o chamador posicional em `academia_enem_engine.py`
+   (`_notificar_transbordo(conversa_id, "academia_enem", None, phone_number_id, telefone)`, 5 args
+   posicionais) continua compatível — os 2 parâmetros novos vêm depois, com default. `_render_template`
+   trocou o dict hardcoded por um montado a partir de `parametros` — matematicamente idêntico pros
+   3 chamadores antigos (`enumerate([nome, lead, modulo])` → `{1:nome,2:lead,3:modulo}`, mesmo
+   resultado). Rodei a suíte de novo, de forma independente: `test_meta_adapter_inbound.py` +
+   `test_empregabilidade_engine.py`, 253 testes, zero falhas — confirma a alegação do @dev.
+5. **Performance** — 1 lookup + 1 chamada Meta a mais por evento de criação, não bloqueia a
+   confirmação (já enviada antes). Sem impacto relevante.
+6. **Segurança** — sem superfície nova; dados enviados como parâmetros de template (não
+   concatenação em texto livre), mesmo mecanismo já usado pelos outros templates. Conferido via
+   MCP (`execute_sql`, read-only) que o template gravado bate exatamente com o corpo confirmado
+   pelo Junior — sem drift — e que o match por `automacao + tag + phone_number_id` é único (só 1
+   linha ativa/aprovada bate com essa combinação), então `.limit(1).maybe_single()` não corre risco
+   de pegar o template errado.
+7. **Documentação** — File List, Change Log e o risco residual (variável nomeada vs. posicional no
+   lado da Meta) documentados com clareza. OK.
+
+**Resumo:** aprovado para seguir. O achado de testes (item 2) é uma recomendação de qualidade, não
+um bloqueio — fica a critério do @dev/Junior decidir se vale adicionar antes do push ou depois. O
+risco residual sobre o formato de variável do template (já levantado pelo @dev) só é verificável
+com uma vaga real sendo criada em produção — recomendo acompanhar o log do primeiro disparo real
+depois do deploy.
