@@ -144,3 +144,51 @@ S-EMP-AUD-023 de numeração corrida própria do Nível 2 continua valendo); mex
   enriquecido pra cargo de 1 ocorrência, handler roteia direto nesse caso, caso misto tratado via
   fila `ocorrencias_auto_pendentes`. 4 testes novos + 1 ajustado, suíte completa sem falhas novas
   (256 testes). Status Draft → InReview (aguardando @qa).
+- v0.2 (2026-08-28): @qa revisou — **CONCERNS** (aprovado, com 1 recomendação não-bloqueante). Ver
+  "QA Results" abaixo.
+
+## QA Results
+
+### Review em 2026-08-28 — @qa Quinn
+
+**Gate: CONCERNS** (aprovado — nenhum achado bloqueia, mas 1 ponto deveria ser considerado)
+
+**7 checks:**
+
+1. **Code review** — mudança bem contida (2 funções + 1 handler), comentários explicam a decisão e
+   citam os números da investigação. Reaproveita `_rotear_ocorrencia_escolhida` sem duplicar lógica
+   de roteamento por tipo de vaga. OK.
+2. **Testes — achado MEDIUM, não-bloqueante.** Nenhum dos testes (novos ou existentes) faz uma
+   asserção direta sobre o **texto renderizado** do Nível 1 enriquecido (AC5 — "mostra empresa +
+   unidade na linha quando o cargo tem só 1 ocorrência"). Os 4 testes novos partem já da etapa
+   `listou_cargos_consolidados` com `mapa_cargos_consolidados` pré-montado — testam a *decisão* do
+   handler (pular ou não o Nível 2), não a *renderização* do Nível 1 em si. O único teste que
+   renderiza o Nível 1 com cargo de 1 ocorrência (`test_entrada_fresca_mostra_nivel1_cargo_
+   consolidado`, pré-existente) não foi atualizado pra checar o texto novo. Rodei manualmente
+   `_mostrar_cargos_consolidados` com um cargo de 1 ocorrência e um de 2 — confirmei que a linha
+   enriquecida sai correta (`*1.* JOVEM APRENDIZ (AREZZO&CO) - DOM LUIS — 5 vagas — MEIA SOLA
+   ACESSORIOS DE MODA LTDA — Vaga individual — CUCA Jangurussu`, e a linha de 2 ocorrências continua
+   resumida) — a implementação está certa, só falta a asserção automatizada que pegaria uma
+   regressão futura nessa linha específica. Recomendo adicionar 1 assert em
+   `test_entrada_fresca_mostra_nivel1_cargo_consolidado` (`"SINGULAR" in texto_enviado`) antes do
+   push, é barato.
+3. **Acceptance Criteria** — AC1-4 verificados por leitura de código + testes, atendidos. AC5
+   verificado manualmente (ver achado 2) — comportamento correto, só falta o teste automatizado.
+4. **Regressão** — rodei a suíte de novo, de forma independente: `test_empregabilidade_engine.py` +
+   `test_meta_adapter_inbound.py`, 256 testes, zero falhas. Tracing manual do fluxo de dados
+   confirma que `_rotear_ocorrencia_escolhida` (não tocada nesta mudança) se comporta de forma
+   idêntica sendo chamada mais cedo (direto do Nível 1) ou como antes (depois do Nível 2) — a
+   sanitização de fluxo (`_fluxo_sem_falhas_atendente`) acontece dentro dela mesma nos dois casos
+   onde já acontecia antes, sem gap novo. Conferido que `ocorrencias_auto_pendentes` não colide com
+   nenhum campo de fluxo já em uso (grep no arquivo).
+5. **Performance** — sem impacto; é reorganização de um fluxo síncrono já rápido, sem chamada nova
+   a banco ou API externa.
+6. **Segurança** — sem superfície nova; dado que passa a aparecer no Nível 1 (empresa/unidade) já
+   era público (aparecia no Nível 2 hoje), só mudou de tela.
+7. **Documentação** — story completa com investigação, decisão de design, impacto por item, File
+   List e Change Log. Nota de processo sobre o fluxo comprimido (sem @sm/@po) registrada com
+   transparência. OK.
+
+**Resumo:** aprovado para seguir. O achado de teste (item 2) é uma recomendação de qualidade sobre
+uma parte já verificada manualmente como correta — fica a critério do @dev/Junior adicionar antes
+ou depois do push.
