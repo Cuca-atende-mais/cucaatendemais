@@ -1068,11 +1068,28 @@ async def _mostrar_cargos_consolidados(
     mapa_cargos: dict,
 ) -> None:
     """Nível 1 (seção 5, regra 1/2): 1 linha por cargo consolidado, com soma
-    de quantidade já calculada por `_construir_cargos_consolidados`."""
+    de quantidade já calculada por `_construir_cargos_consolidados`.
+
+    Achado do Junior (2026-08-28): quando um cargo tem só 1 ocorrência por
+    trás, o Nível 2 (`_mostrar_ocorrencias_cargo`) virava um 2º passo sem
+    propósito real — só repetia a mesma vaga com outra numeração, confundindo
+    o lead (que reusava o número do Nível 1, inválido no Nível 2, e travava
+    o fluxo — confirmado em produção: 60% dos Níveis 2 mostrados eram esse
+    caso, 27,5% deles geravam confusão visível). Correção: quando só existe
+    1 ocorrência, a linha do Nível 1 já mostra empresa/unidade — não sobra
+    nada pra esclarecer num 2º passo (ver `listou_cargos_consolidados` no
+    handler, que pula o Nível 2 quando a escolha resolve pra 1 ocorrência só).
+    Cargos com 2+ ocorrências continuam com a linha resumida — o Nível 2
+    continua necessário pra esses."""
     linhas = ["💼 *Vagas abertas na Rede CUCA — Escolha um ou mais cargos:*\n"]
     for k, v in mapa_cargos.items():
         qtd = v["quantidade_total"]
-        linhas.append(f"*{k}.* {v['cargo_exibicao']} — {qtd} vaga{'s' if qtd != 1 else ''}")
+        linha = f"*{k}.* {v['cargo_exibicao']} — {qtd} vaga{'s' if qtd != 1 else ''}"
+        ocorrencias = v.get("ocorrencias") or []
+        if len(ocorrencias) == 1:
+            unica = ocorrencias[0]
+            linha += f" — {unica['empresa_nome']} — {unica['rotulo_tipo']}"
+        linhas.append(linha)
     linhas.append(
         "\nDigite o *número* do cargo para ver as vagas. Para mais de um, separe por vírgula (ex: *1,3*).\n"
         "Digite *voltar* para ver outras opções.\n"
@@ -3799,13 +3816,64 @@ async def _processar_publico(
         escolhas_raw_n1 = re.findall(r"\d+", texto)
         chaves_escolhidas = [n for n in escolhas_raw_n1 if n in mapa_cargos_fluxo]
         if chaves_escolhidas:
+            # Achado do Junior (2026-08-28): quando um cargo escolhido tem só 1
+            # ocorrência (1 empresa/vaga por trás), o Nível 2 não tem mais nada a
+            # esclarecer pra esse cargo — o Nível 1 já mostrou empresa/unidade
+            # nesse caso (`_mostrar_cargos_consolidados`). Confirmado o problema em
+            # produção: 60% dos Níveis 2 mostrados eram esse caso, e 27,5% deles
+            # geravam confusão visível (o lead reusava o número do Nível 1,
+            # inválido na numeração própria do Nível 2, e travava o fluxo).
+            #
+            # Cargos com 1 ocorrência só entram direto na fila de roteamento
+            # automático (mesmo mecanismo de `listou_ocorrencias_cargo`/regra 5).
+            # Cargos com 2+ ocorrências continuam precisando do Nível 2 — mas
+            # SÓ pra esses (não repete os de 1 ocorrência que já foram resolvidos).
+            ocorrencias_auto: list[dict] = []
+            chaves_precisam_nivel_2: list[str] = []
+            for chave in chaves_escolhidas:
+                grupo = mapa_cargos_fluxo.get(chave)
+                if not grupo:
+                    continue
+                ocorrencias_grupo = grupo.get("ocorrencias") or []
+                if len(ocorrencias_grupo) == 1:
+                    ocorrencias_auto.append({**ocorrencias_grupo[0], "cargo_exibicao": grupo["cargo_exibicao"]})
+                else:
+                    chaves_precisam_nivel_2.append(chave)
+
+            if not chaves_precisam_nivel_2:
+                # Nenhum cargo escolhido precisa de Nível 2 — enfileira tudo e
+                # roteia direto (caso confirmado como o mais comum, 60%).
+                if ocorrencias_auto:
+                    ocorrencia_escolhida = ocorrencias_auto[0]
+                    fila_restante = ocorrencias_auto[1:]
+                    if fila_restante:
+                        await e(
+                            f"Vou te ajudar com uma vaga de cada vez, começando por "
+                            f"*{ocorrencia_escolhida['cargo_exibicao']}* ({ocorrencia_escolhida['empresa_nome']}). "
+                            "Assim que essa candidatura terminar, sigo automaticamente para a próxima."
+                        )
+                    await _rotear_ocorrencia_escolhida(
+                        ocorrencia=ocorrencia_escolhida,
+                        fila_restante=fila_restante,
+                        fluxo=fluxo,
+                        conversa_id=conversa_id,
+                        instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+                        usar_prefill=True,
+                    )
+                    return
+
+            # Pelo menos 1 cargo precisa de Nível 2 — mostra só pra esses.
+            # Os de 1 ocorrência já resolvidos acima (`ocorrencias_auto`) ficam
+            # guardados no fluxo pra serem enfileirados automaticamente depois
+            # que o lead escolher no Nível 2 (ver `listou_ocorrencias_cargo`).
             meta_ocorrencias = await _mostrar_ocorrencias_cargo(
-                instance_name, token, phone, conversa_id, lead_id, mapa_cargos_fluxo, chaves_escolhidas,
+                instance_name, token, phone, conversa_id, lead_id, mapa_cargos_fluxo, chaves_precisam_nivel_2,
             )
             await _set_fluxo_async(conversa_id, {
                 **_fluxo_sem_falhas_atendente(fluxo),
                 "etapa": "listou_ocorrencias_cargo",
                 **meta_ocorrencias,
+                "ocorrencias_auto_pendentes": ocorrencias_auto,
             })
             return
         # S-EMP-AUD-024: escape semântico ligado desde o nascimento da etapa
@@ -3848,7 +3916,13 @@ async def _processar_publico(
         # as demais escolhas ao final de cada rota — não precisa mais o lead
         # escolher manualmente a próxima.
         ocorrencia_escolhida = mapa_ocorrencias_fluxo[numeros_validos[0]]
-        fila_restante = [mapa_ocorrencias_fluxo[n] for n in numeros_validos[1:]]
+        # Achado do Junior (2026-08-28): quando a escolha do Nível 1 misturava
+        # cargos de 1 ocorrência (auto-resolvidos, sem precisar de Nível 2) com
+        # cargos de 2+ ocorrências (que mostraram Nível 2 aqui), os primeiros
+        # ficaram guardados em `ocorrencias_auto_pendentes` — entram no fim da
+        # fila agora, sem exigir escolha nova do lead pra eles.
+        fila_restante = [mapa_ocorrencias_fluxo[n] for n in numeros_validos[1:]] + \
+            list(fluxo.get("ocorrencias_auto_pendentes") or [])
         if fila_restante:
             await e(
                 f"Vou te ajudar com uma vaga de cada vez, começando por "
