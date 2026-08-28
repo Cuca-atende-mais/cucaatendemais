@@ -2,7 +2,7 @@
 
 ## Status
 
-InReview
+Done
 
 **Prioridade:** Alta (pedido direto do Junior, 2026-08-27)
 **Esforço:** P/M — reaproveita rota de envio (`enviar-cv`) e colunas já existentes
@@ -212,6 +212,9 @@ individual replicado na listagem (chama a rota `enviar-cv` já existente); açã
   reconferido de forma independente: mesma contagem de antes (30 erros/6 avisos pré-existentes,
   zero novos). Demais ACs (1-4, 6, 7) inalterados desde o gate anterior, já tinham passado. Status permanece
   **InReview** — próxima etapa é @devops (push/PR), aguardando o Junior autorizar.
+- v0.8 (2026-08-27): @devops abriu o PR #131 (`feat/sqs-64-curriculos-enviados` → `main`). Junior
+  aprovou e mergeou, e confirmou o redeploy do serviço `portal` no EasyPanel. Status InReview →
+  **Done**.
 
 ## QA Results
 
