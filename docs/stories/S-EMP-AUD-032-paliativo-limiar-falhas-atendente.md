@@ -1,6 +1,6 @@
 # S-EMP-AUD-032 — Paliativo: sobe limiar de falhas antes de oferecer atendente humano (2 → 3)
 
-**Status:** InReview
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** Auditoria `AUDITORIA-empregabilidade-2026-08-27.md` (achado BUG-04) + Plano
 `029-expirar-etapa-conversa-apos-inatividade.md`, análise do @dev em sessão de leitura da
@@ -139,3 +139,7 @@ muda.
 
 **Resumo:** aprovado sem ressalvas — é a story mais simples da leva e entregou exatamente o que
 prometeu, sem gerar nenhum achado novo.
+
+- v0.5 (2026-08-28): @devops abriu o PR #139 (`fix/s-emp-aud-032-paliativo-limiar-falhas` →
+  `main`). Junior aprovou, mergeou, confirmou o redeploy do `cuca-worker` no EasyPanel **com
+  sucesso**. Status: InReview → **Done**.

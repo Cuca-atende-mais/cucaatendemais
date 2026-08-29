@@ -1,6 +1,6 @@
 # S-EMP-AUD-033 — Expira etapa/contador de conversa dormente após inatividade
 
-**Status:** Ready for Review
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** Auditoria `AUDITORIA-empregabilidade-2026-08-27.md` (achado BUG-04) + Plano
 `029-expirar-etapa-conversa-apos-inatividade.md`
@@ -259,3 +259,8 @@ parte desta story).
 mesma prova de integração que os outros 3 ACs já têm. Fica a critério do Junior decidir se isso
 vira ajuste antes do push ou fica documentado como débito, dado que a S-EMP-AUD-033 já é a 3ª
 story consecutiva desta leva a fechar com esse tipo de achado não-bloqueante.
+
+- v0.6 (2026-08-28): @devops abriu o PR #140 (`fix/s-emp-aud-033-expira-etapa-conversa-inatividade`
+  → `main`). Junior aprovou, mergeou, confirmou o redeploy do `cuca-worker` no EasyPanel **com
+  sucesso**. Achado do @qa (falta teste ponta a ponta pra exceção do link válido) fica registrado
+  como débito conhecido, não tratado nesta versão. Status: Ready for Review → **Done**.
