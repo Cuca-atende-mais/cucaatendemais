@@ -107,7 +107,11 @@ _AFIRMATIVO_ROTA = (*_AFIRMATIVO_CONFIRMACAO_DETALHADA, "exato")
 # caía no fallback genérico e repetia a pergunta pra sempre (loop reportado
 # pelo Junior em 2026-08-27).
 _NEGATIVO_ATENDENTE_HUMANO = ("não", "nao", "n", "negativo", "voltar", "volta")
-_LIMIAR_FALHAS_OFERTA_ATENDENTE = 2
+# S-EMP-AUD-032: subido de 2 pra 3 como paliativo — o BUG-04 da auditoria de 27/08 mostrou uma
+# conversa dormente há 9 dias sendo escalada na 1ª mensagem de retorno, porque o contador de
+# falha não expira com o tempo (só a S-EMP-AUD-033 resolve a causa raiz). 1 tentativa a mais dá
+# mais margem em qualquer cenário de "quase-limiar", não só o de retorno tardio.
+_LIMIAR_FALHAS_OFERTA_ATENDENTE = 3
 _ETAPAS_OFERTA_ATENDENTE = {
     "listou_categorias",
     "listando_cargos_selecao",
