@@ -17,7 +17,7 @@ import contextvars
 import threading
 from contextlib import asynccontextmanager
 from datetime import date
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, parse_qs
 from supabase import create_client, Client
 
 logger = logging.getLogger("empregabilidade_engine")
@@ -120,6 +120,15 @@ _ETAPAS_OFERTA_ATENDENTE = {
     "listou_cargos_consolidados",
     "listou_ocorrencias_cargo",
 }
+# S-EMP-AUD-033: BUG-04 da auditoria de 27/08 — uma conversa dormente há 9 dias voltou e foi
+# escalada pra atendente na 1ª mensagem, porque nenhuma etapa/contador tinha noção de tempo.
+# Decisão do Junior (2026-08-28): 24h de inatividade reseta a etapa. Aplica-se às 5 etapas de
+# `_ETAPAS_OFERTA_ATENDENTE` (reset total pro início) + `aguardando_confirmacao_candidatura`
+# (reset só se o link (HMAC, `_assinar_link_portal`) já tiver vencido — ver
+# `_resetar_fluxo_por_inatividade`). Fora dessas 6 etapas, não se aplica — fora do escopo desta
+# story (ver maintenance notes do Plano 029, `docs/.../029-expirar-etapa-...md`).
+_LIMIAR_INATIVIDADE_HORAS = 24
+_ETAPAS_EXPIRAM_POR_INATIVIDADE = _ETAPAS_OFERTA_ATENDENTE | {"aguardando_confirmacao_candidatura"}
 _ETAPA_ANTERIOR = {
     "listou_categorias": "inicio",
     "listou_vagas": "listou_categorias",
@@ -159,6 +168,22 @@ def _assinar_link_portal(path: str, params: dict, ttl_horas: int = 48) -> str:
     canonical = urlencode(sorted(signed_params.items()))
     sig = hmac.new(_LINK_SECRET.encode(), canonical.encode(), hashlib.sha256).hexdigest()
     return f"{PORTAL_URL}{path}?{urlencode({**signed_params, 'sig': sig})}"
+
+
+def _link_candidatura_ainda_valido(link: str) -> bool:
+    """S-EMP-AUD-033: só confere o prazo `exp` (HMAC, `_assinar_link_portal`) — não revalida a
+    assinatura em si (isso já acontece no portal quando o candidato abre o link). Usado por
+    `_resetar_fluxo_por_inatividade` pra decidir se `aguardando_confirmacao_candidatura` merece a
+    exceção (não resetar enquanto o link ainda funciona) ou se já não faz mais sentido manter."""
+    if not link:
+        return False
+    try:
+        exp_valores = parse_qs(urlparse(link).query).get("exp")
+        if not exp_valores:
+            return False
+        return int(exp_valores[0]) > int(time.time())
+    except (ValueError, TypeError):
+        return False
 
 
 def _criar_ou_recuperar_talent_bank(nome: str, telefone: str) -> str:
@@ -436,6 +461,57 @@ async def _set_fluxo_async(conversa_id: str, fluxo: dict, etapa_esperada: str | 
             return True
         await asyncio.to_thread(_set_fluxo, conversa_id, fluxo)
         return True
+
+
+def _parse_timestamp_pg(valor: str | None):
+    """Parseia o formato de timestamp que o PostgREST devolve (ex.
+    "2026-08-28 22:17:26.481904+00") — `datetime.fromisoformat` do Python 3.11+ já lida com o
+    offset de 2 dígitos sem `:`, só normaliza o `Z` (não usado pelo Supabase, mas por segurança)."""
+    if not valor:
+        return None
+    from datetime import datetime  # noqa: PLC0415 — import local, mesmo padrão já usado no arquivo
+    try:
+        return datetime.fromisoformat(valor.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+async def _obter_ultima_interacao_anterior(conversa_id: str):
+    """S-EMP-AUD-033: `conversas.ultima_mensagem_em` está sempre `null` no canal Empregabilidade
+    (confirmado em produção, 2026-08-28, 100% das 20 conversas mais recentes) — calcula direto
+    via `mensagens`. A mensagem que disparou este processamento já foi inserida ANTES deste
+    handler rodar (`meta_adapter_inbound.py`, bloco "DB C — inserir Mensagem inbound"), então a
+    mais recente é sempre a mensagem atual — queremos a PENÚLTIMA, que é o que de fato mede
+    quanto tempo a conversa ficou parada antes dela chegar. Retorna `None` se não houver
+    mensagem anterior (conversa nova de fato, nada a medir)."""
+    def _query():
+        return (
+            supabase.table("mensagens")
+            .select("created_at")
+            .eq("conversa_id", conversa_id)
+            .order("created_at", desc=True)
+            .limit(2)
+            .execute()
+        )
+    res = await _supabase_to_thread(_query)
+    linhas = res.data or []
+    if len(linhas) < 2:
+        return None
+    return _parse_timestamp_pg(linhas[1].get("created_at"))
+
+
+def _resetar_fluxo_por_inatividade(fluxo: dict, etapa_atual: str) -> dict:
+    """S-EMP-AUD-033: decisão do Junior (2026-08-28) — reset total pro início nas 5 etapas de
+    `_ETAPAS_OFERTA_ATENDENTE`; em `aguardando_confirmacao_candidatura`, só reseta se o link já
+    tiver vencido (progresso recuperável enquanto ele funciona, não faz sentido descartar). Fora
+    dessas 6 etapas, não faz nada (fora do escopo desta story)."""
+    if etapa_atual == "aguardando_confirmacao_candidatura":
+        if _link_candidatura_ainda_valido(fluxo.get("link_candidatura", "")):
+            return fluxo
+        return {"perfil": fluxo.get("perfil"), "etapa": "inicio"}
+    if etapa_atual in _ETAPAS_OFERTA_ATENDENTE:
+        return {"perfil": fluxo.get("perfil"), "etapa": "inicio"}
+    return fluxo
 
 
 async def _ultima_mensagem_bot_async(conversa_id: str) -> str | None:
@@ -4360,11 +4436,27 @@ async def _processar_mensagem_empregabilidade_locked(
     Identifica o perfil e roteia para o fluxo correto.
     """
     fluxo = await _get_fluxo_async(conversa_id)
+
+    # S-EMP-AUD-033: conversa "esquecida" há mais de 24h reseta ANTES de rotear — evita o BUG-04
+    # da auditoria de 27/08 (conversa dormente há 9 dias escalada pra atendente na 1ª mensagem
+    # de retorno, contador de falha "velho" contando como se fosse da sessão atual). Só roda
+    # quando há etapa salva — conversa nova não tem o que resetar.
+    from datetime import datetime, timedelta, timezone
+    etapa_salva = fluxo.get("etapa", "")
+    if etapa_salva in _ETAPAS_EXPIRAM_POR_INATIVIDADE:
+        ultima_interacao = await _obter_ultima_interacao_anterior(conversa_id)
+        if ultima_interacao is not None:
+            if ultima_interacao.tzinfo is None:
+                ultima_interacao = ultima_interacao.replace(tzinfo=timezone.utc)
+            agora = datetime.now(timezone.utc)
+            if (agora - ultima_interacao) > timedelta(hours=_LIMIAR_INATIVIDADE_HORAS):
+                fluxo = _resetar_fluxo_por_inatividade(fluxo, etapa_salva)
+                await _set_fluxo_async(conversa_id, fluxo)
+
     perfil_atual = fluxo.get("perfil")
     etapa_atual = fluxo.get("etapa", "")
 
     # SQS-40 Task 3.3: Handover por Dúvida
-    from datetime import datetime, timezone
     def _buscar_metadata_conversa():
         return supabase.table("conversas").select("metadata").eq("id", conversa_id).single().execute()
 

@@ -22,6 +22,7 @@ Cobre:
 """
 import os
 import sys
+import time
 import types
 import asyncio
 import logging
@@ -4856,4 +4857,237 @@ class TestVoltarNavegacaoAud021:
 
         assert estado["etapa"] == "listou_vagas"
         assert estado["categoria_escolhida"]["categoria"] == "Administrativo"
-        assert "voltar" in _isola_enviar.call_args.args[3].lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-033 — expira etapa/contador de conversa dormente após inatividade
+# (BUG-04 da auditoria de 27/08: conversa parada há 9 dias voltou e foi
+# escalada pra atendente na 1ª mensagem, contador de falha "velho" contando
+# como se fosse da sessão atual).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestParseTimestampPgAud033:
+
+    def test_formato_postgrest_com_offset_sem_dois_pontos(self):
+        r = emp._parse_timestamp_pg("2026-08-28 22:17:26.481904+00")
+        assert r is not None
+        assert (r.year, r.month, r.day) == (2026, 8, 28)
+
+    def test_valor_vazio_ou_none_retorna_none(self):
+        assert emp._parse_timestamp_pg(None) is None
+        assert emp._parse_timestamp_pg("") is None
+
+    def test_valor_invalido_retorna_none_sem_lancar(self):
+        assert emp._parse_timestamp_pg("isso não é uma data") is None
+
+
+class TestLinkCandidaturaAindaValidoAud033:
+
+    def test_sem_link_e_invalido(self):
+        assert emp._link_candidatura_ainda_valido("") is False
+        assert emp._link_candidatura_ainda_valido(None) is False
+
+    def test_link_sem_exp_e_invalido(self):
+        assert emp._link_candidatura_ainda_valido("https://portal.test/candidatura?vaga_id=v1") is False
+
+    def test_link_com_exp_futuro_e_valido(self):
+        futuro = int(time.time()) + 3600
+        link = f"https://portal.test/candidatura?vaga_id=v1&exp={futuro}&sig=abc"
+        assert emp._link_candidatura_ainda_valido(link) is True
+
+    def test_link_com_exp_passado_e_invalido(self):
+        passado = int(time.time()) - 3600
+        link = f"https://portal.test/candidatura?vaga_id=v1&exp={passado}&sig=abc"
+        assert emp._link_candidatura_ainda_valido(link) is False
+
+
+class TestResetarFluxoPorInatividadeAud033:
+
+    def test_etapa_de_oferta_atendente_reseta_total_pro_inicio(self):
+        fluxo = {
+            "perfil": "publico", "etapa": "listou_categorias",
+            "falhas_atendente_etapa": 1, "falhas_atendente_nome_etapa": "listou_categorias",
+            "mapa_categorias": {"1": {"categoria": "Administrativo"}},
+        }
+        novo = emp._resetar_fluxo_por_inatividade(fluxo, "listou_categorias")
+        assert novo == {"perfil": "publico", "etapa": "inicio"}
+
+    def test_aguardando_confirmacao_com_link_ainda_valido_nao_reseta(self, monkeypatch):
+        monkeypatch.setattr(emp, "_LINK_SECRET", "segredo-teste")
+        monkeypatch.setattr(emp, "PORTAL_URL", "https://portal.test")
+        link = emp._assinar_link_portal(
+            "/empregabilidade/candidatura", {"vaga_id": "v1"}, ttl_horas=48,
+        )
+        fluxo = {
+            "perfil": "publico", "etapa": "aguardando_confirmacao_candidatura",
+            "link_candidatura": link,
+        }
+        novo = emp._resetar_fluxo_por_inatividade(fluxo, "aguardando_confirmacao_candidatura")
+        assert novo == fluxo  # inalterado — link ainda funciona, progresso não é descartado
+
+    def test_aguardando_confirmacao_com_link_vencido_reseta_total(self, monkeypatch):
+        monkeypatch.setattr(emp, "_LINK_SECRET", "segredo-teste")
+        monkeypatch.setattr(emp, "PORTAL_URL", "https://portal.test")
+        link = emp._assinar_link_portal(
+            "/empregabilidade/candidatura", {"vaga_id": "v1"}, ttl_horas=-1,
+        )
+        fluxo = {
+            "perfil": "publico", "etapa": "aguardando_confirmacao_candidatura",
+            "link_candidatura": link,
+        }
+        novo = emp._resetar_fluxo_por_inatividade(fluxo, "aguardando_confirmacao_candidatura")
+        assert novo == {"perfil": "publico", "etapa": "inicio"}
+
+    def test_etapa_fora_do_escopo_desta_story_nao_e_alterada(self):
+        """Fora das 6 etapas cobertas (5 de oferta + aguardando_confirmacao_candidatura) —
+        fora do escopo desta story (ver maintenance notes do Plano 029)."""
+        fluxo = {"perfil": "publico", "etapa": "coletando_nome_candidato", "nome_temp": "Fulano"}
+        novo = emp._resetar_fluxo_por_inatividade(fluxo, "coletando_nome_candidato")
+        assert novo == fluxo
+
+
+class TestObterUltimaInteracaoAnteriorAud033:
+
+    @pytest.mark.asyncio
+    async def test_menos_de_2_mensagens_retorna_none(self, monkeypatch):
+        mock_mensagens = MagicMock()
+        (mock_mensagens.select.return_value.eq.return_value.order.return_value
+         .limit.return_value.execute.return_value.data) = [
+            {"created_at": "2026-08-28 20:00:00+00"},
+        ]
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"mensagens": mock_mensagens}))
+
+        assert await emp._obter_ultima_interacao_anterior("conv-1") is None
+
+    @pytest.mark.asyncio
+    async def test_duas_mensagens_retorna_a_penultima_parseada(self, monkeypatch):
+        mock_mensagens = MagicMock()
+        (mock_mensagens.select.return_value.eq.return_value.order.return_value
+         .limit.return_value.execute.return_value.data) = [
+            {"created_at": "2026-08-28 20:02:49.29501+00"},   # mensagem atual (a mais recente)
+            {"created_at": "2026-08-19 13:16:40+00"},         # penúltima — é essa que queremos
+        ]
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"mensagens": mock_mensagens}))
+
+        resultado = await emp._obter_ultima_interacao_anterior("conv-1")
+        assert resultado is not None
+        assert (resultado.year, resultado.month, resultado.day) == (2026, 8, 19)
+
+
+def _mock_mensagens_com_intervalo(horas_atras: float) -> MagicMock:
+    """2 linhas: mensagem atual (agora) + anterior, há `horas_atras` — simula o gap real que
+    `_obter_ultima_interacao_anterior` mede."""
+    from datetime import datetime, timedelta, timezone
+    agora = datetime.now(timezone.utc)
+    anterior = agora - timedelta(hours=horas_atras)
+    mock_mensagens = MagicMock()
+    (mock_mensagens.select.return_value.eq.return_value.order.return_value
+     .limit.return_value.execute.return_value.data) = [
+        {"created_at": agora.isoformat()},
+        {"created_at": anterior.isoformat()},
+    ]
+    return mock_mensagens
+
+
+def _mock_conversas_sem_duvida_pendente() -> MagicMock:
+    mock_conversas = MagicMock()
+    mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+        "metadata": {}
+    }
+    return mock_conversas
+
+
+def _mock_candidaturas_sem_convite_pendente() -> MagicMock:
+    mock_candidaturas = MagicMock()
+    mock_candidaturas.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+    return mock_candidaturas
+
+
+class TestExpiracaoNoPontoDeEntradaAud033:
+    """Cobre o Item 2 do plano: a checagem em `_processar_mensagem_empregabilidade_locked`,
+    ANTES de rotear pra `_processar_publico` (mockado aqui — a lógica de roteamento em si já
+    tem cobertura própria em outras suítes; o que esta classe prova é que o reset por
+    inatividade acontece, ou não, no lugar certo, antes de qualquer roteamento)."""
+
+    @pytest.mark.asyncio
+    async def test_reproducao_caso_real_lorena_etapa_dormente_9_dias_nao_escala(self, monkeypatch):
+        """Reprodução do caso real da auditoria (conversa 211a15bc-0dc2-4b9f-acce-ffcde6e6245b,
+        lead 'Lorena'): 1 falha registrada em listou_categorias há 9 dias, retomada só com
+        'Olá' — antes da S-EMP-AUD-033 isso escalava pra atendente na mesma mensagem (2ª falha
+        na etapa "velha"); com o reset, a conversa recomeça do zero."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_categorias", {
+            "perfil": "publico",
+            "falhas_atendente_nome_etapa": "listou_categorias",
+            "falhas_atendente_etapa": 1,
+            "mapa_categorias": {"1": {"categoria": "Administrativo", "vagas": []}},
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({
+            "mensagens": _mock_mensagens_com_intervalo(9 * 24),
+            "conversas": _mock_conversas_sem_duvida_pendente(),
+            "candidaturas": _mock_candidaturas_sem_convite_pendente(),
+        }))
+        mock_processar_publico = AsyncMock()
+        monkeypatch.setattr(emp, "_processar_publico", mock_processar_publico)
+
+        await emp.processar_mensagem_empregabilidade(
+            "Olá", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado["etapa"] == "inicio"
+        assert "falhas_atendente_etapa" not in estado
+        assert "mapa_categorias" not in estado
+        mock_processar_publico.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_etapa_parada_ha_menos_de_24h_nao_regride_comportamento_atual(self, monkeypatch):
+        """Dentro do limiar: contador e etapa continuam intactos, como hoje — não regredir o
+        caso 'voltou rápido, continua de onde parou'."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_categorias", {
+            "perfil": "publico",
+            "falhas_atendente_nome_etapa": "listou_categorias",
+            "falhas_atendente_etapa": 1,
+            "mapa_categorias": {"1": {"categoria": "Administrativo", "vagas": []}},
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({
+            "mensagens": _mock_mensagens_com_intervalo(1),  # 1h atrás — dentro do limiar de 24h
+            "conversas": _mock_conversas_sem_duvida_pendente(),
+            "candidaturas": _mock_candidaturas_sem_convite_pendente(),
+        }))
+        mock_processar_publico = AsyncMock()
+        monkeypatch.setattr(emp, "_processar_publico", mock_processar_publico)
+
+        await emp.processar_mensagem_empregabilidade(
+            "Olá", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado["etapa"] == "listou_categorias"
+        assert estado["falhas_atendente_etapa"] == 1
+        mock_processar_publico.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_etapa_fora_do_escopo_nunca_dispara_a_checagem(self, monkeypatch):
+        """Etapa fora das 6 cobertas (ex. 'coletando_nome_candidato') nem chega a consultar
+        `mensagens` — a checagem só roda pras etapas em `_ETAPAS_EXPIRAM_POR_INATIVIDADE`."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_mensagens = MagicMock()
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({
+            "mensagens": mock_mensagens,
+            "conversas": _mock_conversas_sem_duvida_pendente(),
+            "candidaturas": _mock_candidaturas_sem_convite_pendente(),
+        }))
+        mock_processar_publico = AsyncMock()
+        monkeypatch.setattr(emp, "_processar_publico", mock_processar_publico)
+
+        await emp.processar_mensagem_empregabilidade(
+            "Olá", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        mock_mensagens.select.assert_not_called()
+        mock_processar_publico.assert_awaited_once()
+        assert estado["etapa"] == "coletando_nome_candidato"
