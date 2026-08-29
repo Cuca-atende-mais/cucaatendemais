@@ -1,6 +1,6 @@
 # S-EMP-AUD-034 — Observabilidade de erro no formulário público de candidatura (Sentry)
 
-**Status:** InReview
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** Auditoria `AUDITORIA-empregabilidade-2026-08-27.md` (achado BUG-03) + Plano
 `028-heic-e-observabilidade-envio-curriculo-publico.md` (Steps 3-4), separada da
@@ -241,3 +241,6 @@ como débito conhecido.
   explícito, nunca `undefined` silencioso). `npx tsc --noEmit` limpo nos 2 arquivos. Achado 5
   (testes automatizados ausentes) fica como débito documentado, sem ajuste — não foi pedido.
   Status: InReview (achado tratado, aguardando decisão de push).
+- v0.6 (2026-08-28): @devops abriu o PR #138 (`fix/s-emp-aud-034-observabilidade-erro-candidatura`
+  → `main`). Junior aprovou, mergeou, confirmou o redeploy do `portal` no EasyPanel **com
+  sucesso**. Status: InReview → **Done**.

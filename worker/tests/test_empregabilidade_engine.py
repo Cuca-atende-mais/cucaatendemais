@@ -4534,7 +4534,9 @@ class TestTransbordoHumanoFlexivelAud022:
             }),
         ],
     )
-    async def test_duas_falhas_na_mesma_etapa_oferecem_atendente(self, etapa, extra, monkeypatch, _isola_enviar):
+    async def test_tres_falhas_na_mesma_etapa_oferecem_atendente(self, etapa, extra, monkeypatch, _isola_enviar):
+        """S-EMP-AUD-032: limiar subiu de 2 pra 3 (paliativo do BUG-04) — 2 falhas ainda não
+        escala, só a 3ª. Nome do teste ajustado de "duas" pra "tres" pra continuar descritivo."""
         estado, fake_get, fake_set = _fluxo_mock(etapa, extra)
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
@@ -4548,6 +4550,13 @@ class TestTransbordoHumanoFlexivelAud022:
         )
         assert estado["etapa"] == etapa
         assert estado["falhas_atendente_etapa"] == 1
+
+        _isola_enviar.reset_mock()
+        await emp._processar_publico(
+            "resposta inválida", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+        assert estado["etapa"] == etapa
+        assert estado["falhas_atendente_etapa"] == 2
 
         _isola_enviar.reset_mock()
         await emp._processar_publico(
