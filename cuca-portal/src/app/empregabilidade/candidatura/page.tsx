@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Briefcase, Building2, CheckCircle2, Loader2, AlertTriangle, DollarSign, Gift, ShieldCheck, ChevronRight, Bookmark, Camera, Upload, X, Tag, Home } from "lucide-react"
 import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
+import * as Sentry from "@sentry/nextjs"
 
 const AREAS_INTERESSE = [
     "Serviços Gerais (limpeza, portaria, zeladoria)",
@@ -147,6 +148,15 @@ function CandidaturaContent() {
             .substring(0, 15)
     }
 
+    // S-EMP-AUD-034 (achado @qa): nome de arquivo de currículo costuma carregar o nome real do
+    // candidato (ex. "curriculo_joao_silva.pdf") — dado pessoal. Loga só a extensão, que é o que
+    // importa pra diagnosticar formato, sem mandar o nome completo pro Sentry.
+    const extensaoArquivo = (nome: string | undefined): string => {
+        if (!nome) return "sem_nome"
+        const partes = nome.split(".")
+        return partes.length > 1 ? partes[partes.length - 1].toLowerCase() : "sem_extensao"
+    }
+
     const calcularIdade = (dataNasc: string): number => {
         const nasc = new Date(dataNasc)
         const hoje = new Date()
@@ -274,6 +284,20 @@ function CandidaturaContent() {
             toast.success("Candidatura enviada com sucesso!")
         } catch (error: any) {
             console.error("Erro no envio:", error)
+            // S-EMP-AUD-034: sem isto, uma falha aqui só aparece no console do navegador do
+            // próprio candidato — inacessível pra equipe. Contexto suficiente pra diagnosticar
+            // sem depender de sorte com uma conversa ao vivo (ver AUDITORIA-empregabilidade-2026-08-27, BUG-03).
+            Sentry.captureException(error, {
+                tags: { fluxo: "empregabilidade_candidatura_publica" },
+                extra: {
+                    vagaId,
+                    conversaId,
+                    bancoTalentos: bancoTalentosParam,
+                    extensaoArquivo: extensaoArquivo(arquivo?.name),
+                    tipoArquivo: arquivo?.type,
+                    tamanhoArquivo: arquivo?.size,
+                },
+            })
             toast.error(error.message || "Não foi possível enviar sua candidatura agora.")
         } finally {
             setLoadingSubmit(false)
