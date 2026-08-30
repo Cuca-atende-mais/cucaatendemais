@@ -30,17 +30,29 @@ export async function POST(request: NextRequest) {
         if (!nome || !telefone) {
             return NextResponse.json({ error: "Campos obrigatórios ausentes." }, { status: 400 })
         }
-        const linkOk = verificarLinkParams(link_params, {
-            vaga_id,
-            conversa_id,
-        })
-        if (!linkOk.valido) {
-            return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
-        }
 
-        const origemTelMatch = parseLinkParams(link_params)?.get("origem_tel")
-        if (origemTelMatch && normalizarTelefone(origemTelMatch) !== normalizarTelefone(telefone)) {
-            return NextResponse.json({ error: "Telefone não confere com o link recebido." }, { status: 403 })
+        // S-EMP-FSL-01: o worker (fluxo sem link) autentica por token interno M2M em vez do link
+        // assinado — mesmo padrão do triar-banco-talentos (SOL-06). O caminho do FORMULÁRIO web
+        // continua exigindo link assinado válido: as duas checagens derivadas de `link_params`
+        // (validade do link + confronto de telefone de origem) ficam SÓ no ramo não-worker, pra
+        // não enfraquecer a proteção do formulário nem depender de `parseLinkParams(undefined)`.
+        const internalTokenHeader = request.headers.get("x-internal-token")
+        const expectedToken = process.env.WEBHOOK_INTERNAL_TOKEN
+        const isWorkerRequest = Boolean(expectedToken) && internalTokenHeader === expectedToken
+
+        if (!isWorkerRequest) {
+            const linkOk = verificarLinkParams(link_params, {
+                vaga_id,
+                conversa_id,
+            })
+            if (!linkOk.valido) {
+                return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
+            }
+
+            const origemTelMatch = parseLinkParams(link_params)?.get("origem_tel")
+            if (origemTelMatch && normalizarTelefone(origemTelMatch) !== normalizarTelefone(telefone)) {
+                return NextResponse.json({ error: "Telefone não confere com o link recebido." }, { status: 403 })
+            }
         }
 
         // Trava etária: se vaga exige "Maior de 18 anos", bloquear candidatos < 18
