@@ -300,7 +300,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
             {/* Mensagens */}
             <div
                 ref={scrollRef}
-                className="flex-1 overflow-y-auto p-6 space-y-4 relative z-10 scrollbar-thin scrollbar-thumb-primary/10"
+                className="flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-4 relative z-10 scrollbar-thin scrollbar-thumb-primary/10"
             >
                 {loading ? (
                     <div className="flex flex-col items-center justify-center h-full space-y-4 opacity-50">
@@ -323,7 +323,11 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                                 )}
                             >
                                 <div className={cn(
-                                    "max-w-[75%] flex items-end gap-2 group",
+                                    // min-w-0 é o que falta pro flexbox de fato respeitar o max-w-[75%]: sem
+                                    // isso, um item flex não encolhe abaixo da largura "natural" do conteúdo
+                                    // (o texto sem quebrar), e a bolha empurra a página inteira pra largura
+                                    // maior que a tela — foi o que causou o scroll horizontal no mobile.
+                                    "max-w-[75%] min-w-0 flex items-end gap-2 group",
                                     msg.remetente === 'lead' ? "flex-row" : "flex-row-reverse"
                                 )}>
                                     <Avatar className={cn(
@@ -338,12 +342,12 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                                         </AvatarFallback>
                                     </Avatar>
                                     <div className={cn(
-                                        "px-4 py-2.5 rounded-2xl text-[13px] shadow-sm relative transition-all",
+                                        "px-4 py-2.5 rounded-2xl text-[13px] shadow-sm relative transition-all min-w-0",
                                         msg.remetente === 'lead'
                                             ? "bg-muted border border-border/50 rounded-bl-none text-foreground"
                                             : "bg-[#f2eee6] border border-stone-300/70 text-slate-950 rounded-br-none"
                                     )}>
-                                        <p className="leading-relaxed whitespace-pre-wrap">{msg.conteudo}</p>
+                                        <p className="leading-relaxed whitespace-pre-wrap break-words">{msg.conteudo}</p>
                                         {msg.midia_url && (msg.tipo === "image" || msg.tipo === "document") && (
                                             <AnexoMensagem path={msg.midia_url} tipo={msg.tipo} />
                                         )}
