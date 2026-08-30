@@ -216,11 +216,12 @@ export default function VagasPage() {
                 </div>
             </div>
 
-            <Card className="border-none shadow-sm overflow-hidden mt-4">
+            {/* Desktop/tablet: tabela (md+). table-fixed + larguras em % (padrão da página de
+                Seleções): sem isso, nome de empresa/cargo longo empurra a tabela pra fora da
+                tela em vez de truncar dentro da coluna. Abaixo de md, 9 colunas não cabem de
+                jeito nenhum (nem truncadas) — vira a lista de cards logo abaixo. */}
+            <Card className="hidden md:block border-none shadow-sm overflow-hidden mt-4">
                 <CardContent className="p-0">
-                    {/* table-fixed + larguras em % (padrão da página de Seleções):
-                        sem isso, nome de empresa/cargo longo empurra a tabela
-                        para fora da tela em vez de truncar dentro da coluna. */}
                     <Table className="table-fixed w-full">
                         <TableHeader className="bg-muted/30">
                             <TableRow>
@@ -315,6 +316,82 @@ export default function VagasPage() {
                     </Table>
                 </CardContent>
             </Card>
+
+            {/* Mobile (< md): cada vaga vira um card, sem colunas disputando espaço horizontal. */}
+            <div className="md:hidden space-y-3 mt-4">
+                {isLoading ? (
+                    <p className="text-center py-10 text-muted-foreground text-sm">Carregando...</p>
+                ) : vagas.length === 0 ? (
+                    <p className="text-center py-10 text-muted-foreground text-sm">Nenhuma vaga encontrada.</p>
+                ) : vagas.map(v => (
+                    <Card key={v.id} className="border shadow-sm">
+                        <CardContent className="p-4 space-y-3">
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        {v.numero_vaga && (
+                                            <span className="text-xs font-mono font-semibold text-muted-foreground">#{v.numero_vaga}</span>
+                                        )}
+                                        <span className="font-semibold text-sm break-words">{v.titulo}</span>
+                                        {v.expansiva && <Badge className="bg-cuca-yellow text-[10px] h-4 px-1 shrink-0">Global</Badge>}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                                        <Users className="h-3 w-3 shrink-0" /> {v.total_vagas} vaga(s) | {v.faixa_etaria}
+                                    </p>
+                                </div>
+                                {abaFiltro === "minhas" && hasPermission("empreg_vagas", "delete") && (
+                                    <Button
+                                        variant="ghost" size="sm"
+                                        className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 shrink-0"
+                                        title="Excluir vaga e candidatos"
+                                        onClick={() => setDeletingVaga(v)}
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                )}
+                            </div>
+
+                            <p className="text-sm font-medium truncate">
+                                {empresasMap[v.empresa_id]?.nome || "Desconhecida"}
+                            </p>
+
+                            <div className="flex items-center gap-2 flex-wrap text-xs">
+                                <span className="text-muted-foreground whitespace-nowrap">
+                                    {format(new Date(v.created_at), "dd/MM/yyyy", { locale: ptBR })}
+                                </span>
+                                {v.unidade_destino === "global" ? (
+                                    <Badge className="bg-cuca-blue/10 text-cuca-blue border-cuca-blue/30 gap-1"><Globe className="h-3 w-3 shrink-0" /> Toda a Rede</Badge>
+                                ) : v.unidade_destino && unidadesMap[v.unidade_destino] ? (
+                                    <Badge variant="outline" className="bg-muted/50">{unidadesMap[v.unidade_destino]}</Badge>
+                                ) : (
+                                    <Badge variant="outline" className="text-amber-600 border-amber-500/40 bg-amber-50/50">Não definida</Badge>
+                                )}
+                                {getStatusBadge(v.status)}
+                            </div>
+
+                            <div className="flex items-center gap-2 pt-1">
+                                <Button
+                                    size="sm"
+                                    className="h-8 text-xs gap-1 px-2.5 bg-green-600 hover:bg-green-700 text-white border-none flex-1"
+                                    onClick={() => router.push(`/empregabilidade/vagas/${v.id}`)}
+                                >
+                                    <Users className="h-3.5 w-3.5" />
+                                    {candidaturasCount[v.id] ?? 0} candidatura(s)
+                                </Button>
+                                {abaFiltro === "minhas" && (
+                                    <Button
+                                        variant="outline" size="sm"
+                                        className="h-8 text-xs gap-1 px-2.5"
+                                        onClick={() => openEditModal(v)}
+                                    >
+                                        <Pencil className="h-3.5 w-3.5" /> Editar
+                                    </Button>
+                                )}
+                            </div>
+                        </CardContent>
+                    </Card>
+                ))}
+            </div>
         </div>
 
         <AlertDialog open={deletingVaga !== null} onOpenChange={(isOpen) => { if (!isOpen) setDeletingVaga(null) }}>
