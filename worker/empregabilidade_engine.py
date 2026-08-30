@@ -2927,7 +2927,7 @@ async def _processar_candidato(
                 ids_candidatos = [c["id"] for c in (cand_pessoa.data or [])]
                 if ids_candidatos:
                     cand_res = supabase.table("candidaturas").select(
-                        "id, status, vaga_id, created_at, observacoes"
+                        "id, status, vaga_id, created_at, observacoes, email_enviado_em"
                     ).in_("candidato_id", ids_candidatos).order("created_at", desc=True).limit(5).execute()
                     candidaturas = cand_res.data or []
 
@@ -2935,7 +2935,7 @@ async def _processar_candidato(
             elif re.match(r"^[A-Za-z0-9]{6}$", texto_limpo):
                 ref = texto_limpo.upper()
                 todas = supabase.table("candidaturas").select(
-                    "id, status, vaga_id, created_at, observacoes"
+                    "id, status, vaga_id, created_at, observacoes, email_enviado_em"
                 ).order("created_at", desc=True).limit(500).execute()
                 candidaturas = [
                     c for c in (todas.data or [])
@@ -2954,7 +2954,7 @@ async def _processar_candidato(
             elif len(apenas_digitos) in (10, 11):
                 telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
                 cand_res = supabase.table("candidaturas").select(
-                    "id, status, vaga_id, created_at, observacoes, telefone"
+                    "id, status, vaga_id, created_at, observacoes, telefone, email_enviado_em"
                 ).order("created_at", desc=True).limit(500).execute()
                 candidaturas = [
                     c for c in (cand_res.data or [])
@@ -2966,7 +2966,7 @@ async def _processar_candidato(
             # (mesma normalização dos 2 lados usada na busca por telefone acima).
             elif len(texto_limpo) >= 5 and " " in texto_limpo:
                 cand_res = supabase.table("candidaturas").select(
-                    "id, status, vaga_id, created_at, observacoes, nome, telefone"
+                    "id, status, vaga_id, created_at, observacoes, nome, telefone, email_enviado_em"
                 ).ilike("nome", f"%{texto_limpo}%").order("created_at", desc=True).limit(5).execute()
                 telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
                 candidaturas = [
@@ -3020,6 +3020,15 @@ async def _processar_candidato(
                     "contratado": ("🎉", "Contratado"),
                 }
                 status_emoji, status_label = status_map.get(c.get("status", "pendente"), ("⏳", "Pendente"))
+                # Demanda real (2026-08-29, verificado no caso Lara Sales/candidatura 64180A):
+                # "pendente" sozinho não distingue quem já teve o currículo enviado pra empresa
+                # de quem ainda não. Se já foi enviado (`email_enviado_em` preenchido), avisa —
+                # é uma informação a mais, tranquiliza o candidato. Se NÃO foi enviado ainda,
+                # não dizemos nada sobre isso (nunca "ainda não foi enviado") — só o "Pendente"
+                # genérico, que já é a mensagem de hoje; não é uma alegação nova, é omissão do
+                # que não teria valor informar.
+                if c.get("status", "pendente") == "pendente" and c.get("email_enviado_em"):
+                    status_label = "Pendente — currículo enviado para a empresa"
             linhas.append(
                 f"{status_emoji} *{titulo_vaga}*\n"
                 f"   Status: {status_label}\n"

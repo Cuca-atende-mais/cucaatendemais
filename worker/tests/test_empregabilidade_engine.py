@@ -5091,3 +5091,105 @@ class TestExpiracaoNoPontoDeEntradaAud033:
         mock_mensagens.select.assert_not_called()
         mock_processar_publico.assert_awaited_once()
         assert estado["etapa"] == "coletando_nome_candidato"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Demanda real (2026-08-29, achado verificado no caso Lara Sales/telefone
+# 5585986138391, candidatura 64180A): "Pendente" sozinho não distingue quem já
+# teve o currículo enviado pra empresa (email_enviado_em preenchido) de quem
+# ainda não — informar o envio quando ele já ocorreu, nunca dizer que NÃO
+# ocorreu quando ainda não ocorreu.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestStatusCandidaturaIndicaEnvioParaEmpresa:
+    @pytest.mark.asyncio
+    async def test_pendente_com_email_enviado_indica_envio_para_empresa(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.order.return_value.limit.return_value \
+            .execute.return_value.data = [
+                {"id": "99d70c20-131e-4ce3-9cfc-dec86064180a", "status": "pendente", "vaga_id": "v1",
+                 "created_at": "2026-08-27", "observacoes": "", "telefone": "8599990000",
+                 "email_enviado_em": "2026-08-27T18:32:29+00:00"},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Vaga Teste"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "8599990000", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "currículo enviado para a empresa" in todo_texto
+        assert "64180a" in todo_texto
+
+    @pytest.mark.asyncio
+    async def test_pendente_sem_email_enviado_nao_menciona_envio(self, monkeypatch):
+        """Sem email_enviado_em, a mensagem continua sendo o "Pendente" genérico de hoje —
+        nunca afirma que o currículo NÃO foi enviado."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.order.return_value.limit.return_value \
+            .execute.return_value.data = [
+                {"id": "c1", "status": "pendente", "vaga_id": "v1", "created_at": "2026-08-27",
+                 "observacoes": "", "telefone": "8599990000", "email_enviado_em": None},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Vaga Teste"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "8599990000", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "pendente" in todo_texto
+        assert "enviado" not in todo_texto  # nem "enviado" nem "não enviado" — omissão, não alegação
+
+    @pytest.mark.asyncio
+    async def test_selecionado_com_email_enviado_nao_altera_label(self, monkeypatch):
+        """A indicação de envio é só pra status "pendente" — outros status já comunicam progresso
+        suficiente por si (selecionado/rejeitado/contratado)."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.order.return_value.limit.return_value \
+            .execute.return_value.data = [
+                {"id": "c1", "status": "selecionado", "vaga_id": "v1", "created_at": "2026-08-27",
+                 "observacoes": "", "telefone": "8599990000", "email_enviado_em": "2026-08-27T18:32:29+00:00"},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Vaga Teste"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "8599990000", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "selecionado" in todo_texto
+        assert "currículo enviado para a empresa" not in todo_texto
