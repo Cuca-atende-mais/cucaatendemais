@@ -15,6 +15,7 @@ import {
     ScanSearch,
     Phone,
     FileText,
+    MessageSquare,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -81,6 +82,15 @@ const consoleModules = [
         icon: FileText,
         href: "/developer/meta-templates",
         badge: "S-WM-13",
+        badgeVariant: "default" as const,
+        status: "active",
+    },
+    {
+        title: "Fluxo sem link (Empregabilidade)",
+        description: "Interruptor do fluxo do candidato 100% no WhatsApp — liga/desliga sem deploy, com rollback imediato para o link do formulário",
+        icon: MessageSquare,
+        href: "/developer/fluxo-sem-link",
+        badge: "S-EMP-FSL-01",
         badgeVariant: "default" as const,
         status: "active",
     },

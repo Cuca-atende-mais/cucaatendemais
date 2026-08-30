@@ -815,9 +815,11 @@ class TestEscapeHatchNomeLivre:
             "Xisto Wenceslau", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
         )
 
+        # S-EMP-FSL-05-REV (2026-08-29): candidatura de terceiro foi eliminada — o nome
+        # coletado segue direto pra finalização self (link, já que o flag está off no teste).
         texto_enviado = mock_enviar.call_args.args[3]
         assert "Xisto Wenceslau" in texto_enviado
-        assert estado.get("etapa") == "confirmando_terceiro"
+        assert estado.get("etapa") == "aguardando_confirmacao_candidatura"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -870,27 +872,6 @@ class TestS_EMP_AUD_024EscapeLiteralTrocaRota:
         assert estado.get("etapa") == "confirmando_troca_rota"
 
     @pytest.mark.asyncio
-    async def test_coletando_nome_terceiro_quero_ver_vagas_reroteia(self, monkeypatch):
-        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_terceiro", {
-            "perfil": "publico", "vaga_id_selecionada": "vaga-1", "banco_talentos": False,
-        })
-        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
-        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
-        mock_enviar = AsyncMock(return_value=True)
-        monkeypatch.setattr(emp, "_enviar", mock_enviar)
-
-        import intencao_detector
-        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
-
-        await emp._processar_publico(
-            "quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
-        )
-
-        texto_enviado = mock_enviar.call_args.args[3]
-        assert "candidatar a uma vaga" in texto_enviado.lower()
-        assert estado.get("etapa") == "confirmando_troca_rota"
-
-    @pytest.mark.asyncio
     async def test_confirmando_presenca_nome_quero_ver_vagas_reroteia_em_vez_de_virar_nome(self, monkeypatch):
         """Caso mais sensível: 'quero ver vagas' tem 3 palavras — sem o
         fast-path, passaria batido pela checagem de nome_invalido (que só
@@ -937,9 +918,9 @@ class TestS_EMP_AUD_024EscapeLiteralTrocaRota:
 
     @pytest.mark.asyncio
     async def test_voltar_reroteia_com_mensagem_generica(self, monkeypatch):
-        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_terceiro", {
-            "perfil": "publico", "vaga_id_selecionada": "vaga-1", "banco_talentos": False,
-        })
+        # S-EMP-FSL-05-REV (2026-08-29): coletando_nome_terceiro foi removida — adaptado pra
+        # coletando_nome_candidato, a etapa de coleta de nome que ainda existe.
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
         mock_enviar = AsyncMock(return_value=True)
@@ -1128,7 +1109,9 @@ class TestS_EMP_AUD_028ClassificadorIADedicado:
         )
 
         mock_ia.assert_awaited_once()  # a camada de IA foi de fato acionada
-        assert estado.get("etapa") == "confirmando_terceiro"  # tratado como nome normalmente
+        # S-EMP-FSL-05-REV: candidatura de terceiro eliminada — nome aceito segue direto
+        # pra finalização self (link, flag off no teste).
+        assert estado.get("etapa") == "aguardando_confirmacao_candidatura"
 
     @pytest.mark.asyncio
     async def test_falha_da_ia_cai_para_nome_valido_fail_safe(self, monkeypatch):
@@ -1151,7 +1134,8 @@ class TestS_EMP_AUD_028ClassificadorIADedicado:
             "Fulano da Silva Sauro", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
         )
 
-        assert estado.get("etapa") == "confirmando_terceiro"  # seguiu como nome, não travou
+        # S-EMP-FSL-05-REV: candidatura de terceiro eliminada — segue direto pra self.
+        assert estado.get("etapa") == "aguardando_confirmacao_candidatura"  # seguiu como nome, não travou
 
     @pytest.mark.asyncio
     async def test_fast_path_literal_nao_chama_ia(self, monkeypatch):
@@ -1174,35 +1158,6 @@ class TestS_EMP_AUD_028ClassificadorIADedicado:
         )
 
         mock_ia.assert_not_awaited()  # fast-path já resolveu, IA nem foi chamada
-        assert estado.get("etapa") == "confirmando_troca_rota"
-
-    @pytest.mark.asyncio
-    async def test_coletando_nome_terceiro_tambem_reroteia_via_ia_qa_verificacao(self, monkeypatch):
-        """Verificação do @qa: _escape_literal_ou_none tem 4 call sites reais
-        (coletando_nome_candidato, coletando_nome_curriculo_publico,
-        coletando_nome_terceiro, confirmando_presenca_nome), não 3 como a
-        story descreve no Escopo — como a mudança está na função
-        compartilhada, o 4º call site (coletando_nome_terceiro) também herda
-        o fallback de IA automaticamente. Confirma que funciona lá também."""
-        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_terceiro", {
-            "perfil": "publico", "vaga_id_selecionada": "vaga-1", "banco_talentos": False,
-        })
-        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
-        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
-        mock_enviar = AsyncMock(return_value=True)
-        monkeypatch.setattr(emp, "_enviar", mock_enviar)
-        monkeypatch.setattr(
-            emp, "_chamar_ia_classificar_troca_rota",
-            AsyncMock(return_value={"classificacao": "troca_rota_vagas"}),
-        )
-
-        import intencao_detector
-        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt(quer_sair=False))
-
-        await emp._processar_publico(
-            "Eu quero ver vagas", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
-        )
-
         assert estado.get("etapa") == "confirmando_troca_rota"
 
     @pytest.mark.asyncio
@@ -4016,7 +3971,8 @@ class TestBloco6RotearPorIntencao:
         assert "Banco de Talentos" in _isola_enviar.call_args.args[3]
 
     @pytest.mark.asyncio
-    async def test_rota_upload_pergunta_contexto_e_marca_arquivo_pendente(self, monkeypatch, _isola_enviar):
+    async def test_rota_upload_sem_url_nao_grava_pendente(self, monkeypatch, _isola_enviar):
+        # S-EMP-FSL-02: sem midia_url, o estado é o de hoje (sem o booleano morto arquivo_pendente).
         estado, fake_get, fake_set = _fluxo_mock("", {})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
@@ -4026,8 +3982,43 @@ class TestBloco6RotearPorIntencao:
             "segue curriculo", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
         )
 
-        assert estado == {"perfil": "publico", "etapa": "inicio", "arquivo_pendente": True}
+        assert estado == {"perfil": "publico", "etapa": "inicio"}
+        assert "arquivo_pendente" not in estado
         assert "subir seu currículo" in _isola_enviar.call_args.args[3]
+
+    @pytest.mark.asyncio
+    async def test_rota_upload_com_url_guarda_arquivo_pendente_url(self, monkeypatch, _isola_enviar):
+        # S-EMP-FSL-02: com midia_url, guarda a URL real no estado (substitui o bool morto).
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "upload"},
+            "segue curriculo", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+            midia_url="https://storage/anexo-1.pdf",
+        )
+
+        assert estado == {
+            "perfil": "publico", "etapa": "inicio",
+            "arquivo_pendente_url": "https://storage/anexo-1.pdf",
+        }
+
+    @pytest.mark.asyncio
+    async def test_rota_upload_reenvio_sobrescreve_url(self, monkeypatch, _isola_enviar):
+        # S-EMP-FSL-02 AC3: 2 arquivos seguidos → fica o último.
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        for url in ("https://storage/primeiro.pdf", "https://storage/segundo.pdf"):
+            await emp._rotear_por_intencao(
+                {"intencao": "upload"},
+                "segue curriculo", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+                midia_url=url,
+            )
+
+        assert estado["arquivo_pendente_url"] == "https://storage/segundo.pdf"
 
 
 class TestBloco6NotifyLoop:
@@ -4816,7 +4807,10 @@ class TestVoltarNavegacaoAud021:
 
     @pytest.mark.asyncio
     async def test_quer_voltar_semantico_fora_do_mapa_nao_intercepta_escape(self, monkeypatch, _isola_enviar):
-        estado, fake_get, fake_set = _fluxo_mock("confirmando_terceiro", {
+        # S-EMP-FSL-05-REV (2026-08-29): "confirmando_terceiro" foi removida do motor — troquei
+        # pra "coletando_nome_candidato" como exemplo de etapa real fora do _ETAPA_ANTERIOR (o
+        # teste é sobre o comportamento genérico do escape semântico, não sobre essa etapa em si).
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {
             "perfil": "publico",
             "nome_candidato": "Fulano de Tal",
             "vaga_id_selecionada": "vaga-1",
@@ -4824,7 +4818,7 @@ class TestVoltarNavegacaoAud021:
         })
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
-        monkeypatch.setattr(emp, "_ultima_mensagem_bot", lambda conversa_id: "Esse currículo é para você?")
+        monkeypatch.setattr(emp, "_ultima_mensagem_bot", lambda conversa_id: "Qual seu nome completo?")
 
         import intencao_detector
         monkeypatch.setattr(
@@ -4834,12 +4828,12 @@ class TestVoltarNavegacaoAud021:
         )
 
         tratado = await emp._escape_semantico_ou_none(
-            "quero voltar", "publico", "confirmando_terceiro",
+            "quero voltar", "publico", "coletando_nome_candidato",
             "conv-1", "558599990000", "PHONE_ID", "token", "lead-1", "Barra",
         )
 
         assert tratado is False
-        assert estado["etapa"] == "confirmando_terceiro"
+        assert estado["etapa"] == "coletando_nome_candidato"
         _isola_enviar.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -5091,3 +5085,1271 @@ class TestExpiracaoNoPontoDeEntradaAud033:
         mock_mensagens.select.assert_not_called()
         mock_processar_publico.assert_awaited_once()
         assert estado["etapa"] == "coletando_nome_candidato"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-FSL-03 — Fluxo do candidato 100% no WhatsApp (sem link)
+# ─────────────────────────────────────────────────────────────────────────────
+
+from empregabilidade_portal_client import ResultadoPortal  # noqa: E402
+
+
+class TestInterpretarSimNao:
+    def test_sim(self):
+        assert emp._interpretar_sim_nao("sim") is True
+        assert emp._interpretar_sim_nao("sou sim") is True
+        assert emp._interpretar_sim_nao("tenho deficiência") is True
+
+    def test_nao_tem_prioridade(self):
+        assert emp._interpretar_sim_nao("não") is False
+        assert emp._interpretar_sim_nao("não sou") is False  # negação vence a palavra "sou"
+        assert emp._interpretar_sim_nao("nao, obrigado") is False
+
+    def test_ambiguo(self):
+        assert emp._interpretar_sim_nao("talvez") is None
+        assert emp._interpretar_sim_nao("") is None
+
+
+class TestDispatcherFinalizarSelf:
+    @pytest.mark.asyncio
+    async def test_off_envia_link(self, monkeypatch, _isola_enviar):
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=False))
+        link = AsyncMock()
+        coleta = AsyncMock()
+        monkeypatch.setattr(emp, "_enviar_link_candidatura", link)
+        monkeypatch.setattr(emp, "_iniciar_coleta_chat", coleta)
+
+        await emp._finalizar_candidatura_self(
+            "PID", "tok", "5585999", "conv-1", {}, "Maria", "5585999", "vaga-1", False, lead_id="l1",
+        )
+        link.assert_awaited_once()
+        coleta.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_on_vaga_self_inicia_coleta(self, monkeypatch, _isola_enviar):
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=True))
+        link = AsyncMock()
+        coleta = AsyncMock()
+        monkeypatch.setattr(emp, "_enviar_link_candidatura", link)
+        monkeypatch.setattr(emp, "_iniciar_coleta_chat", coleta)
+
+        await emp._finalizar_candidatura_self(
+            "PID", "tok", "5585999", "conv-1", {}, "Maria", "5585999", "vaga-1", False, lead_id="l1",
+        )
+        coleta.assert_awaited_once()
+        link.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_on_banco_talentos_tambem_vai_pro_chat_fsl07(self, monkeypatch, _isola_enviar):
+        """S-EMP-FSL-07: banco de talentos passou a ir pro chat também (antes só vaga específica
+        ia; banco sempre caía no link). Gate: `(vaga_id or banco_talentos) and flag_on`."""
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=True))
+        link = AsyncMock()
+        coleta = AsyncMock()
+        monkeypatch.setattr(emp, "_enviar_link_candidatura", link)
+        monkeypatch.setattr(emp, "_iniciar_coleta_chat", coleta)
+
+        await emp._finalizar_candidatura_self(
+            "PID", "tok", "5585999", "conv-1", {}, "Maria", "5585999", None, True, lead_id="l1",
+        )
+        coleta.assert_awaited_once()
+        link.assert_not_awaited()
+        assert coleta.call_args.kwargs.get("banco_talentos") is True
+
+    @pytest.mark.asyncio
+    async def test_on_sem_vaga_envia_link(self, monkeypatch, _isola_enviar):
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=True))
+        link = AsyncMock()
+        coleta = AsyncMock()
+        monkeypatch.setattr(emp, "_enviar_link_candidatura", link)
+        monkeypatch.setattr(emp, "_iniciar_coleta_chat", coleta)
+
+        await emp._finalizar_candidatura_self(
+            "PID", "tok", "5585999", "conv-1", {}, "Maria", "5585999", None, False, lead_id="l1",
+        )
+        link.assert_awaited_once()
+        coleta.assert_not_awaited()
+
+
+class TestColetaChatEtapas:
+    @pytest.mark.asyncio
+    async def test_data_nascimento_segue_pra_pcd(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_data_nascimento", {"perfil": "publico", "vaga_id_selecionada": "v1"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+
+        await emp._processar_publico("25/03/2005", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+        assert estado["etapa"] == "coletando_pcd"
+        assert estado["data_nascimento"] == "2005-03-25"  # convertido pra ISO (fix review #1)
+
+    @pytest.mark.asyncio
+    async def test_pcd_sim_sem_arquivo_pede_curriculo(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_pcd", {"perfil": "publico", "vaga_id_selecionada": "v1"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("sim", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+        assert estado["etapa"] == "coletando_ou_confirmando_curriculo"
+        assert estado["pcd_candidato"] is True
+
+    @pytest.mark.asyncio
+    async def test_curriculo_arquivo_novo_finaliza(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {"perfil": "publico", "vaga_id_selecionada": "v1"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        finalizar = AsyncMock()
+        monkeypatch.setattr(emp, "_finalizar_candidatura_chat", finalizar)
+
+        await emp._processar_publico("", "5585999", "PID", "tok", "l1", "conv-1", "Barra", midia_url="document/2026/08/29/cv.pdf")
+        finalizar.assert_awaited_once()
+        # a URL nova entrou no fluxo passado ao finalizar
+        fluxo_passado = finalizar.call_args.args[4]
+        assert fluxo_passado["arquivo_pendente_url"] == "document/2026/08/29/cv.pdf"
+
+
+class TestFinalizarCandidaturaChat:
+    def _patch_portal(self, monkeypatch, cand_result, up_result=None):
+        import empregabilidade_portal_client as pc
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=b"%PDF-1.4 x"))
+        monkeypatch.setattr(pc, "enviar_curriculo_para_r2",
+                            AsyncMock(return_value=up_result or ResultadoPortal("ok", 200, {"url": "https://r2/cv.pdf"})))
+        monkeypatch.setattr(pc, "criar_candidatura", AsyncMock(return_value=cand_result))
+
+    @pytest.mark.asyncio
+    async def test_sucesso_emite_codigo_e_pos_candidatura(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        self._patch_portal(monkeypatch, ResultadoPortal("ok", 200, {"id": "abc-def", "codigo": "ABC123"}))
+
+        fluxo = {"vaga_id_selecionada": "v1", "nome_candidato": "Maria", "arquivo_pendente_url": "document/x.pdf", "data_nascimento": "25/03/2005"}
+        await emp._finalizar_candidatura_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
+
+        assert estado["etapa"] == "pos_candidatura"
+        enviado = " ".join(str(c.args[3]) for c in _isola_enviar.call_args_list)
+        assert "ABC123" in enviado
+
+    @pytest.mark.asyncio
+    async def test_fila_encadeia_proxima(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        self._patch_portal(monkeypatch, ResultadoPortal("ok", 200, {"id": "abc-def", "codigo": "ABC123"}))
+        rotear = AsyncMock()
+        monkeypatch.setattr(emp, "_rotear_ocorrencia_escolhida", rotear)
+
+        fluxo = {"vaga_id_selecionada": "v1", "nome_candidato": "Maria",
+                 "fila_candidaturas_pendentes": [{"vaga_id": "v2"}], "arquivo_pendente_url": "document/x.pdf"}
+        await emp._finalizar_candidatura_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
+        rotear.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_retry_manda_espera_e_retenta(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp.asyncio, "sleep", AsyncMock(return_value=None))
+        import empregabilidade_portal_client as pc
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+        # 1ª retry, 2ª ok
+        monkeypatch.setattr(pc, "criar_candidatura", AsyncMock(side_effect=[
+            ResultadoPortal("retry", None, None, "timeout"),
+            ResultadoPortal("ok", 200, {"id": "abc-def", "codigo": "ZZZ999"}),
+        ]))
+
+        fluxo = {"vaga_id_selecionada": "v1", "nome_candidato": "Maria"}
+        await emp._finalizar_candidatura_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
+        enviado = " ".join(str(c.args[3]) for c in _isola_enviar.call_args_list)
+        assert "finalizando" in enviado.lower()
+        assert "ZZZ999" in enviado
+
+    @pytest.mark.asyncio
+    async def test_ja_inscrito(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+        import empregabilidade_portal_client as pc
+        monkeypatch.setattr(pc, "criar_candidatura",
+                            AsyncMock(return_value=ResultadoPortal("ja_inscrito", 409, {"error": "Você já está inscrito nesta vaga."})))
+
+        fluxo = {"vaga_id_selecionada": "v1", "nome_candidato": "Maria"}
+        await emp._finalizar_candidatura_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
+        assert estado["etapa"] == "pos_candidatura"
+
+    @pytest.mark.asyncio
+    async def test_rejeitado_volta_inicio(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+        import empregabilidade_portal_client as pc
+        monkeypatch.setattr(pc, "criar_candidatura",
+                            AsyncMock(return_value=ResultadoPortal("rejeitado", 400, {"error": "Esta vaga exige idade mínima de 18 anos."})))
+
+        fluxo = {"vaga_id_selecionada": "v1", "nome_candidato": "Maria"}
+        await emp._finalizar_candidatura_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
+        assert estado["etapa"] == "inicio"
+
+
+class TestFSL03CorrecoesReview:
+    def test_data_br_para_iso(self):
+        assert emp._data_br_para_iso("25/03/2005") == "2005-03-25"
+        assert emp._data_br_para_iso("nasci em 01-12-1999 acho") == "1999-12-01"
+        assert emp._data_br_para_iso("tenho 17") is None
+        assert emp._data_br_para_iso("32/13/2020") is None
+        assert emp._data_br_para_iso("") is None
+
+    @pytest.mark.asyncio
+    async def test_data_nascimento_guarda_iso(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_data_nascimento", {"perfil": "publico", "vaga_id_selecionada": "v1"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        await emp._processar_publico("25/03/2005", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+        assert estado["data_nascimento"] == "2005-03-25"
+
+    @pytest.mark.asyncio
+    async def test_payload_data_nascimento_em_iso(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+        import empregabilidade_portal_client as pc
+        cand = AsyncMock(return_value=ResultadoPortal("ok", 200, {"id": "abc-def", "codigo": "ABC123"}))
+        monkeypatch.setattr(pc, "criar_candidatura", cand)
+
+        fluxo = {"vaga_id_selecionada": "v1", "nome_candidato": "Maria", "data_nascimento": "2005-03-25"}
+        await emp._finalizar_candidatura_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
+        payload = cand.call_args.args[0]
+        import re as _re
+        assert _re.match(r"^\d{4}-\d{2}-\d{2}$", payload["data_nascimento"])
+
+    @pytest.mark.asyncio
+    async def test_download_falho_nao_finaliza_pede_reenvio(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))  # download falhou
+        import empregabilidade_portal_client as pc
+        cand = AsyncMock(return_value=ResultadoPortal("ok", 200, {"id": "x", "codigo": "AAA111"}))
+        monkeypatch.setattr(pc, "criar_candidatura", cand)
+
+        # caminho presente (havia arquivo), mas download falhou → NÃO pode criar candidatura
+        fluxo = {"vaga_id_selecionada": "v1", "nome_candidato": "Maria", "arquivo_pendente_url": "document/x.pdf"}
+        await emp._finalizar_candidatura_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
+        cand.assert_not_awaited()
+        assert estado["etapa"] == "coletando_ou_confirmando_curriculo"
+
+    @pytest.mark.asyncio
+    async def test_ambiguo_preserva_curriculo(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock(
+            "coletando_ou_confirmando_curriculo",
+            {"perfil": "publico", "vaga_id_selecionada": "v1", "arquivo_pendente_url": "document/x.pdf"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        finalizar = AsyncMock()
+        monkeypatch.setattr(emp, "_finalizar_candidatura_chat", finalizar)
+
+        await emp._processar_publico("pode ser", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+        # não finalizou, e o arquivo NÃO foi apagado
+        finalizar.assert_not_awaited()
+        assert estado.get("arquivo_pendente_url") == "document/x.pdf"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-FSL-04 — Corte de idade na conversa → Banco de Talentos + data tolerante
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDataNascimentoTolerante:
+    def test_data_exata_tem_prioridade(self):
+        assert emp._data_nascimento_tolerante("25/03/2005") == ("2005-03-25", False)
+
+    def test_idade_solta_com_tenho(self):
+        iso, aproximada = emp._data_nascimento_tolerante("tenho 19 anos")
+        assert aproximada is True
+        assert iso.endswith("-01-01")
+        ano_esperado = emp.date.today().year - 19
+        assert iso == f"{ano_esperado}-01-01"
+
+    def test_idade_solta_numero_puro(self):
+        iso, aproximada = emp._data_nascimento_tolerante("19")
+        assert aproximada is True
+        assert iso is not None
+
+    def test_data_torta_com_barra_nao_vira_idade(self):
+        # "32/13/2020" já falha como data exata — não deve virar idade 32 por acidente.
+        assert emp._data_nascimento_tolerante("32/13/2020") == (None, False)
+
+    def test_texto_sem_numero_nenhum(self):
+        assert emp._data_nascimento_tolerante("não sei bem") == (None, False)
+
+    def test_numero_fora_da_faixa_plausivel_de_idade(self):
+        assert emp._data_nascimento_tolerante("200") == (None, False)
+
+
+class TestIdadeAPartirDeIso:
+    def test_idade_calculada_corretamente(self):
+        ano_passado = emp.date.today().year - 20
+        data_iso = f"{ano_passado}-01-01"
+        idade = emp._idade_a_partir_de_iso(data_iso)
+        assert idade in (19, 20)  # depende só do dia/mês de hoje vs 1º de janeiro
+
+    def test_data_invalida_retorna_none(self):
+        assert emp._idade_a_partir_de_iso("lixo") is None
+        assert emp._idade_a_partir_de_iso("") is None
+        assert emp._idade_a_partir_de_iso(None) is None
+
+
+class TestVagaExigeMaioridade:
+    @pytest.mark.asyncio
+    async def test_faixa_maior_de_18_retorna_true(self, monkeypatch):
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "faixa_etaria": "Maior de 18 anos",
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"vagas": mock_vagas}))
+        assert await emp._vaga_exige_maioridade("v1") is True
+
+    @pytest.mark.asyncio
+    async def test_faixa_a_partir_de_14_retorna_false(self, monkeypatch):
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "faixa_etaria": "A partir de 14 anos",
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"vagas": mock_vagas}))
+        assert await emp._vaga_exige_maioridade("v1") is False
+
+    @pytest.mark.asyncio
+    async def test_sem_vaga_id_retorna_false(self):
+        assert await emp._vaga_exige_maioridade(None) is False
+        assert await emp._vaga_exige_maioridade("") is False
+
+    @pytest.mark.asyncio
+    async def test_erro_de_consulta_falha_aberto(self, monkeypatch):
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.side_effect = Exception("boom")
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"vagas": mock_vagas}))
+        assert await emp._vaga_exige_maioridade("v1") is False
+
+
+class TestCorteIdadeOfertaBanco:
+    @pytest.mark.asyncio
+    async def test_menor_de_idade_em_vaga_18_mais_oferece_banco(self, monkeypatch, _isola_enviar):
+        ano_menor = emp.date.today().year - 16
+        estado, fake_get, fake_set = _fluxo_mock(
+            "coletando_data_nascimento",
+            {"perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "faixa_etaria": "Maior de 18 anos",
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"vagas": mock_vagas}))
+
+        await emp._processar_publico(f"01/01/{ano_menor}", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "oferta_banco_idade_fsl"
+        texto_enviado = _isola_enviar.call_args.args[3].lower()
+        assert "banco de talentos" in texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_maior_de_idade_segue_fluxo_normal_pra_pcd(self, monkeypatch, _isola_enviar):
+        ano_maior = emp.date.today().year - 25
+        estado, fake_get, fake_set = _fluxo_mock(
+            "coletando_data_nascimento",
+            {"perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "faixa_etaria": "Maior de 18 anos",
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"vagas": mock_vagas}))
+
+        await emp._processar_publico(f"01/01/{ano_maior}", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "coletando_pcd"
+
+    @pytest.mark.asyncio
+    async def test_vaga_sem_corte_de_idade_nao_e_afetada(self, monkeypatch, _isola_enviar):
+        ano_menor = emp.date.today().year - 16
+        estado, fake_get, fake_set = _fluxo_mock(
+            "coletando_data_nascimento",
+            {"perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "faixa_etaria": "A partir de 14 anos",
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"vagas": mock_vagas}))
+
+        await emp._processar_publico(f"01/01/{ano_menor}", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        # menor de 18, mas a vaga não exige — segue fluxo normal, não a oferta de banco
+        assert estado["etapa"] == "coletando_pcd"
+
+    @pytest.mark.asyncio
+    async def test_data_aproximada_marcada_no_fluxo(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock(
+            "coletando_data_nascimento",
+            {"perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "faixa_etaria": "A partir de 14 anos",
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"vagas": mock_vagas}))
+
+        await emp._processar_publico("tenho 25 anos", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["data_nascimento_aproximada"] is True
+        assert estado["etapa"] == "coletando_pcd"
+
+
+class TestOfertaBancoIdadeFsl:
+    @pytest.mark.asyncio
+    async def test_sim_cai_no_fluxo_de_banco_de_talentos_existente(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock(
+            "oferta_banco_idade_fsl",
+            {"perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("sim", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["banco_talentos"] is True
+
+    @pytest.mark.asyncio
+    async def test_nao_oferece_outras_vagas(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock(
+            "oferta_banco_idade_fsl",
+            {"perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("não", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "pos_candidatura"
+
+    @pytest.mark.asyncio
+    async def test_resposta_ambigua_repergunta(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock(
+            "oferta_banco_idade_fsl",
+            {"perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("talvez", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "oferta_banco_idade_fsl"
+
+
+class TestComplementoDataAproximada:
+    @pytest.mark.asyncio
+    async def test_sucesso_com_data_aproximada_pede_complemento(self, monkeypatch, _isola_enviar):
+        _, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fluxo_atual = {
+            "vaga_id_selecionada": "v1", "nome_candidato": "Ana",
+            "data_nascimento_aproximada": True,
+        }
+        await emp._emitir_sucesso_candidatura_vaga(
+            codigo="ABC123", fluxo_atual=fluxo_atual, conversa_id="conv-1",
+            instance_name="PID", token="tok", phone="5585999", lead_id="l1",
+        )
+        mensagens = [c.args[3] for c in _isola_enviar.call_args_list]
+        assert any("não é obrigatório" in m.lower() for m in mensagens)
+
+    @pytest.mark.asyncio
+    async def test_sucesso_com_data_exata_nao_pede_complemento(self, monkeypatch, _isola_enviar):
+        _, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fluxo_atual = {
+            "vaga_id_selecionada": "v1", "nome_candidato": "Ana",
+            "data_nascimento_aproximada": False,
+        }
+        await emp._emitir_sucesso_candidatura_vaga(
+            codigo="ABC123", fluxo_atual=fluxo_atual, conversa_id="conv-1",
+            instance_name="PID", token="tok", phone="5585999", lead_id="l1",
+        )
+        mensagens = [c.args[3] for c in _isola_enviar.call_args_list]
+        assert not any("não é obrigatório" in m.lower() for m in mensagens)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-FSL-05-REV — Eliminação da candidatura "pra outra pessoa" (decisão do
+# Junior, 2026-08-29): o lead só pode se candidatar por si mesmo. A pergunta
+# "é pra você ou pra outra pessoa?" e as etapas confirmando_terceiro/
+# coletando_nome_terceiro deixaram de existir.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestEliminacaoCandidaturaTerceiro:
+    @pytest.mark.asyncio
+    async def test_coletando_nome_candidato_nao_pergunta_mais_eu_ou_outra_pessoa(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {
+            "perfil": "publico", "vaga_id_selecionada": "v1",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+
+        await emp._processar_publico("Maria Souza", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        mensagens = [c.args[3] for c in _isola_enviar.call_args_list]
+        assert not any("outra pessoa" in m.lower() for m in mensagens)
+        # segue direto pra finalização self (link, já que o flag está off no teste)
+        assert estado["etapa"] == "aguardando_confirmacao_candidatura"
+        assert estado["nome_candidato"] == "Maria Souza"
+
+    def test_etapas_terceiro_nao_existem_mais_no_conjunto_publico(self):
+        assert "confirmando_terceiro" not in emp._ETAPAS_PUBLICO
+        assert "coletando_nome_terceiro" not in emp._ETAPAS_PUBLICO
+
+    @pytest.mark.asyncio
+    async def test_conversa_dormente_em_etapa_removida_cai_no_fallback_de_vagas(self, monkeypatch, _isola_enviar):
+        """Rede de segurança: uma conversa que ficou parada em confirmando_terceiro (etapa
+        agora removida) não trava — cai no fallback padrão (fora do bloco if/elif de etapas
+        reconhecidas, o motor trata como "vagas")."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_terceiro", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = []
+        mock_candidaturas = MagicMock()
+        mock_candidaturas.select.return_value.eq.return_value.execute.return_value.data = []
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({
+            "vagas": mock_vagas, "candidaturas": mock_candidaturas,
+        }))
+
+        await emp._processar_publico("oi", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        # não levantou exceção — o fallback de "vagas" rodou (mensagem enviada)
+        assert _isola_enviar.await_count >= 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-FSL-06 — Reaproveitamento de dados + currículo canônico (só prevenção,
+# sem apagar nada do R2).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mock_tabela_lista(linhas: list) -> MagicMock:
+    """Mock de uma tabela cuja query encadeada (.select().eq().order().limit().execute())
+    devolve `linhas` em `.data`."""
+    m = MagicMock()
+    m.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = linhas
+    return m
+
+
+class TestBuscarDadosAnterioresSelf:
+    @pytest.mark.asyncio
+    async def test_encontra_match_por_telefone_e_nome_em_candidaturas(self, monkeypatch):
+        mock_cand = _mock_tabela_lista([
+            {"nome": "Maria Souza", "data_nascimento": "2000-05-10", "arquivo_cv_url": "https://r2/x.pdf"},
+        ])
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"candidaturas": mock_cand}))
+
+        resultado = await emp._buscar_dados_anteriores_self("558599990000", "Maria Souza")
+        assert resultado["data_nascimento"] == "2000-05-10"
+        assert resultado["arquivo_cv_url"] == "https://r2/x.pdf"
+
+    @pytest.mark.asyncio
+    async def test_nome_diferente_nao_e_tratado_como_match(self, monkeypatch):
+        # Mesmo telefone, nome digitado agora não bate com o registro — não oferece nada
+        # (evita reaproveitar dado da pessoa errada, mesmo número compartilhado).
+        mock_cand = _mock_tabela_lista([
+            {"nome": "Outra Pessoa", "data_nascimento": "1990-01-01", "arquivo_cv_url": ""},
+        ])
+        mock_talent = _mock_tabela_lista([])
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({
+            "candidaturas": mock_cand, "talent_bank": mock_talent,
+        }))
+
+        resultado = await emp._buscar_dados_anteriores_self("558599990000", "Maria Souza")
+        assert resultado is None
+
+    @pytest.mark.asyncio
+    async def test_cai_pro_talent_bank_quando_nao_acha_em_candidaturas(self, monkeypatch):
+        mock_cand = _mock_tabela_lista([])
+        mock_talent = _mock_tabela_lista([
+            {"nome": "maria souza", "data_nascimento": "1999-07-01", "arquivo_cv_url": ""},
+        ])
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({
+            "candidaturas": mock_cand, "talent_bank": mock_talent,
+        }))
+
+        resultado = await emp._buscar_dados_anteriores_self("558599990000", "Maria Souza")
+        assert resultado["data_nascimento"] == "1999-07-01"
+
+    @pytest.mark.asyncio
+    async def test_sem_telefone_ou_nome_retorna_none_sem_consultar(self, monkeypatch):
+        assert await emp._buscar_dados_anteriores_self("", "Maria") is None
+        assert await emp._buscar_dados_anteriores_self("558599990000", "") is None
+
+    @pytest.mark.asyncio
+    async def test_erro_de_consulta_falha_fechado_retorna_none(self, monkeypatch):
+        mock_cand = MagicMock()
+        mock_cand.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.side_effect = Exception("boom")
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"candidaturas": mock_cand}))
+
+        resultado = await emp._buscar_dados_anteriores_self("558599990000", "Maria Souza")
+        assert resultado is None
+
+
+class TestReaproveitamentoDadosFluxoChat:
+    @pytest.mark.asyncio
+    async def test_com_dados_anteriores_oferece_reaproveitar(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {
+            "perfil": "publico", "vaga_id_selecionada": "v1",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=True))
+        monkeypatch.setattr(
+            emp, "_buscar_dados_anteriores_self",
+            AsyncMock(return_value={"data_nascimento": "2000-05-10", "arquivo_cv_url": "https://r2/x.pdf"}),
+        )
+
+        await emp._processar_publico("Maria Souza", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "confirmando_reaproveitamento_dados"
+        assert estado["_reaproveitamento_data_nascimento"] == "2000-05-10"
+        assert estado["curriculo_r2_url"] == "https://r2/x.pdf"  # currículo pré-carregado quieto
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "10/05/2000" in texto_enviado
+        assert "atualizar" in texto_enviado.lower()
+
+    @pytest.mark.asyncio
+    async def test_sem_dados_anteriores_segue_fluxo_normal_fsl03(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {
+            "perfil": "publico", "vaga_id_selecionada": "v1",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=True))
+        monkeypatch.setattr(emp, "_buscar_dados_anteriores_self", AsyncMock(return_value=None))
+
+        await emp._processar_publico("Novo Lead", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "coletando_data_nascimento"
+        assert "curriculo_r2_url" not in estado
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "qual a sua" in texto_enviado.lower()
+
+    @pytest.mark.asyncio
+    async def test_sim_aplica_dados_reaproveitados_e_segue_pra_pcd(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_reaproveitamento_dados", {
+            "perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Maria Souza",
+            "curriculo_r2_url": "https://r2/x.pdf",
+            "_reaproveitamento_data_nascimento": "2000-05-10",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({}))  # vaga sem corte de idade
+
+        await emp._processar_publico("sim", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "coletando_pcd"
+        assert estado["data_nascimento"] == "2000-05-10"
+        assert estado["curriculo_r2_url"] == "https://r2/x.pdf"  # preservado
+        assert estado["_reaproveitamento_data_nascimento"] == ""  # limpo
+
+    @pytest.mark.asyncio
+    async def test_quero_atualizar_descarta_e_pede_data_de_novo(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_reaproveitamento_dados", {
+            "perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Maria Souza",
+            "_reaproveitamento_data_nascimento": "2000-05-10",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("quero atualizar", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "coletando_data_nascimento"
+        assert estado["_reaproveitamento_data_nascimento"] == ""
+
+    @pytest.mark.asyncio
+    async def test_resposta_ambigua_repergunta(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_reaproveitamento_dados", {
+            "perfil": "publico", "_reaproveitamento_data_nascimento": "2000-05-10",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("talvez", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "confirmando_reaproveitamento_dados"
+        assert estado["_reaproveitamento_data_nascimento"] == "2000-05-10"
+
+    @pytest.mark.asyncio
+    async def test_sim_com_data_reaproveitada_que_fere_corte_de_idade_oferece_banco(self, monkeypatch, _isola_enviar):
+        ano_menor = emp.date.today().year - 16
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_reaproveitamento_dados", {
+            "perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana",
+            "_reaproveitamento_data_nascimento": f"{ano_menor}-01-01",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "faixa_etaria": "Maior de 18 anos",
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"vagas": mock_vagas}))
+
+        await emp._processar_publico("sim", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        # mesma checagem de corte de idade da coleta nova — dado antigo não fura a trava
+        assert estado["etapa"] == "oferta_banco_idade_fsl"
+
+    def test_nenhuma_chamada_de_delecao_de_r2_no_motor(self):
+        """Verificação de segurança explícita da STOP condition: nenhuma chamada de deleção de
+        arquivo em lugar nenhum do motor (decisão do Junior: nada é apagado nesta fase)."""
+        import inspect
+        codigo_fonte = inspect.getsource(emp).lower()
+        assert "deletefromr2" not in codigo_fonte
+        assert "delete_from_r2" not in codigo_fonte
+
+
+class TestTelefoneNormalizadoParaBuscaDeReaproveitamento:
+    """Achado do @qa no gate da FSL-06: `_finalizar_candidatura_chat` gravava
+    `candidaturas.telefone` COM o "55", enquanto toda busca por telefone no sistema (incluindo
+    `_buscar_dados_anteriores_self`, a checagem de "vagas já candidatadas", e o formulário web)
+    espera SEM "55" — as duas nunca batiam. Fix: normalizar o "55" na origem
+    (`_iniciar_coleta_chat`), mesmo padrão já usado em `phone_local_grav` (SQS-56)."""
+
+    @pytest.mark.asyncio
+    async def test_iniciar_coleta_chat_normaliza_telefone_candidato_sem_55(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("qualquer", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_buscar_dados_anteriores_self", AsyncMock(return_value=None))
+
+        await emp._iniciar_coleta_chat(
+            "PID", "tok", "5585981733321", "conv-1", {},
+            "Maria Souza", "5585981733321", "v1", lead_id="l1",
+        )
+
+        assert estado["telefone_candidato"] == "85981733321"  # sem "55", 11 dígitos
+
+    @pytest.mark.asyncio
+    async def test_telefone_gravado_pelo_chat_bate_com_o_formato_da_busca_de_reaproveitamento(self, monkeypatch, _isola_enviar):
+        """Prova ponta a ponta: o telefone gravado por `_finalizar_candidatura_chat` (escrita) é
+        EXATAMENTE o mesmo valor que `_buscar_dados_anteriores_self` (leitura) usaria pra
+        consultar, dado o mesmo `phone` de entrada bruto (com "55", formato canônico da Meta)."""
+        phone_bruto = "5585981733321"
+
+        estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {
+            "vaga_id_selecionada": "v1", "nome_candidato": "Maria Souza",
+            "telefone_candidato": "85981733321",  # já normalizado por _iniciar_coleta_chat
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+
+        import empregabilidade_portal_client as pc
+        cand = AsyncMock(return_value=ResultadoPortal("ok", 200, {"id": "abc-def", "codigo": "ABC123"}))
+        monkeypatch.setattr(pc, "criar_candidatura", cand)
+
+        await emp._finalizar_candidatura_chat(
+            "PID", "tok", phone_bruto, "conv-1",
+            {"vaga_id_selecionada": "v1", "nome_candidato": "Maria Souza", "telefone_candidato": "85981733321"},
+            lead_id="l1",
+        )
+
+        telefone_gravado = cand.call_args.args[0]["telefone"]
+
+        # Mesma normalização que _buscar_dados_anteriores_self aplica na leitura
+        telefone_busca = phone_bruto.replace("+", "")
+        if telefone_busca.startswith("55") and len(telefone_busca) > 11:
+            telefone_busca = telefone_busca[2:]
+
+        assert telefone_gravado == telefone_busca == "85981733321"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-FSL-07 — Banco de Talentos no chat (áreas de interesse)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestEscolhendoAreasInteresse:
+    @pytest.mark.asyncio
+    async def test_pcd_desvia_pra_areas_quando_banco_talentos(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_pcd", {
+            "perfil": "publico", "banco_talentos": True, "nome_candidato": "Ana",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("sim", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "escolhendo_areas_interesse"
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "Serviços Gerais" in texto_enviado
+        assert "10." in texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_pcd_vaga_especifica_nao_desvia_pra_areas(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_pcd", {
+            "perfil": "publico", "banco_talentos": False, "vaga_id_selecionada": "v1",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("sim", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "coletando_ou_confirmando_curriculo"
+
+    @pytest.mark.asyncio
+    async def test_selecao_multipla_grava_strings_completas(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("escolhendo_areas_interesse", {
+            "perfil": "publico", "banco_talentos": True, "nome_candidato": "Ana",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("1,2,5", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["area_interesse"] == [
+            "Serviços Gerais (limpeza, portaria, zeladoria)",
+            "Construção Civil (pedreiro, ajudante, eletricista, encanador)",
+            "Alimentação (cozinha, garçom, lanchonete)",
+        ]
+        assert estado["etapa"] == "coletando_ou_confirmando_curriculo"
+
+    @pytest.mark.asyncio
+    async def test_selecao_alem_de_3_e_limitada_as_3_primeiras(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("escolhendo_areas_interesse", {
+            "perfil": "publico", "banco_talentos": True,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("1,2,3,4,5", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert len(estado["area_interesse"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_numero_invalido_nao_e_incluido(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("escolhendo_areas_interesse", {
+            "perfil": "publico", "banco_talentos": True,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico("1,99,2", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["area_interesse"] == [
+            "Serviços Gerais (limpeza, portaria, zeladoria)",
+            "Construção Civil (pedreiro, ajudante, eletricista, encanador)",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_nenhum_numero_reconhecido_repete_o_menu(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("escolhendo_areas_interesse", {
+            "perfil": "publico", "banco_talentos": True,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_escape_semantico_ou_none", AsyncMock(return_value=False))
+
+        await emp._processar_publico("não sei", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "escolhendo_areas_interesse"
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "Não entendi" in texto_enviado
+
+    def test_areas_identicas_ao_formulario(self):
+        """Verificação de segurança da STOP condition: as 10 áreas do worker são cópia EXATA do
+        formulário (`candidatura/page.tsx`), incluindo pontuação e parênteses — qualquer
+        divergência quebraria o filtro por área do Portal em silêncio."""
+        esperado = (
+            "Serviços Gerais (limpeza, portaria, zeladoria)",
+            "Construção Civil (pedreiro, ajudante, eletricista, encanador)",
+            "Logística e Entregas (estoque, separação, entregador, motorista)",
+            "Comércio e Vendas (vendedor, caixa, atendimento)",
+            "Alimentação (cozinha, garçom, lanchonete)",
+            "Tecnologia (suporte técnico, programação, dados)",
+            "Criativo / Digital (design, vídeo, redes sociais)",
+            "Beleza e Estética (barbeiro, manicure, cabeleireiro)",
+            "Cuidados Pessoais (babá, cuidador de idosos)",
+            "Administrativo / Escritório (recepção, auxiliar administrativo)",
+        )
+        assert emp._AREAS_INTERESSE_BANCO_TALENTOS == esperado
+
+
+class TestFinalizarBancoTalentosChat:
+    @pytest.mark.asyncio
+    async def test_sucesso_grava_com_observacoes_banco_talentos_e_areas(self, monkeypatch, _isola_enviar):
+        _, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+
+        import empregabilidade_portal_client as pc
+        cand = AsyncMock(return_value=ResultadoPortal("ok", 200, {"id": "abc-def"}))
+        monkeypatch.setattr(pc, "criar_candidatura", cand)
+
+        fluxo = {
+            "nome_candidato": "Ana", "telefone_candidato": "85999998888",
+            "area_interesse": ["Serviços Gerais (limpeza, portaria, zeladoria)"],
+            "pcd_candidato": True,
+        }
+        await emp._finalizar_banco_talentos_chat("PID", "tok", "5585999998888", "conv-1", fluxo, lead_id="l1")
+
+        payload = cand.call_args.args[0]
+        assert payload["vaga_id"] is None
+        assert "banco_talentos" in payload["observacoes"]
+        assert payload["area_interesse"] == ["Serviços Gerais (limpeza, portaria, zeladoria)"]
+        assert payload["pcd_candidato"] is True
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "banco de talentos" in texto_enviado.lower()
+
+    @pytest.mark.asyncio
+    async def test_reusa_curriculo_r2_sem_novo_upload(self, monkeypatch, _isola_enviar):
+        _, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        baixar = AsyncMock()
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", baixar)
+
+        import empregabilidade_portal_client as pc
+        cand = AsyncMock(return_value=ResultadoPortal("ok", 200, {"id": "abc-def"}))
+        monkeypatch.setattr(pc, "criar_candidatura", cand)
+
+        fluxo = {"nome_candidato": "Ana", "curriculo_r2_url": "https://r2/existente.pdf"}
+        await emp._finalizar_banco_talentos_chat("PID", "tok", "5585999998888", "conv-1", fluxo, lead_id="l1")
+
+        baixar.assert_not_awaited()
+        assert cand.call_args.args[0]["arquivo_cv_url"] == "https://r2/existente.pdf"
+
+
+class TestFinalizarColetaCurriculoChatDispatcher:
+    @pytest.mark.asyncio
+    async def test_banco_talentos_chama_finalizar_banco(self, monkeypatch):
+        banco = AsyncMock()
+        vaga = AsyncMock()
+        monkeypatch.setattr(emp, "_finalizar_banco_talentos_chat", banco)
+        monkeypatch.setattr(emp, "_finalizar_candidatura_chat", vaga)
+
+        await emp._finalizar_coleta_curriculo_chat("PID", "tok", "5585999", "conv-1", {"banco_talentos": True}, lead_id="l1")
+
+        banco.assert_awaited_once()
+        vaga.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_vaga_chama_finalizar_candidatura(self, monkeypatch):
+        banco = AsyncMock()
+        vaga = AsyncMock()
+        monkeypatch.setattr(emp, "_finalizar_banco_talentos_chat", banco)
+        monkeypatch.setattr(emp, "_finalizar_candidatura_chat", vaga)
+
+        await emp._finalizar_coleta_curriculo_chat("PID", "tok", "5585999", "conv-1", {"banco_talentos": False}, lead_id="l1")
+
+        vaga.assert_awaited_once()
+        banco.assert_not_awaited()
+
+
+class TestReaproveitamentoAposCorteDeIdadeFsl07:
+    @pytest.mark.asyncio
+    async def test_sim_com_flag_on_pula_pra_pcd_preservando_dados(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("oferta_banco_idade_fsl", {
+            "perfil": "publico", "nome_candidato": "Ana", "data_nascimento": "2015-01-01",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=True))
+
+        await emp._processar_publico("sim", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "coletando_pcd"
+        assert estado["banco_talentos"] is True
+        assert estado["nome_candidato"] == "Ana"  # preservado, não recoletado
+        assert estado["data_nascimento"] == "2015-01-01"  # preservado, não recoletado
+
+    @pytest.mark.asyncio
+    async def test_sim_com_flag_off_cai_no_banco_de_talentos_existente(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("oferta_banco_idade_fsl", {
+            "perfil": "publico", "nome_candidato": "Ana", "data_nascimento": "2015-01-01",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=False))
+
+        await emp._processar_publico("sim", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        # Fluxo antigo: recoleta o nome (link)
+        assert estado["etapa"] == "coletando_nome_candidato"
+        assert estado["banco_talentos"] is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-FSL-08 — Rede de segurança: observabilidade + validação do rollback
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mock_sb_sem_convite_entrevista() -> MagicMock:
+    """`processar_mensagem_empregabilidade` sempre checa convite de entrevista pendente
+    (`candidaturas` .select().eq().eq().execute().data) antes de rotear — sem configurar isso, um
+    `supabase` mockado genérico devolve um MagicMock truthy em `.data`, fazendo o código entender
+    (por engano) que HÁ um convite pendente e desviar pra esse fluxo em vez do normal."""
+    mock_candidaturas = MagicMock()
+    mock_candidaturas.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+    return _mock_multi_tabela({"candidaturas": mock_candidaturas})
+
+
+class TestRollbackSeguroEtapaNovaOrfa:
+    @pytest.mark.asyncio
+    async def test_flag_desligado_no_meio_da_coleta_reinicia_no_fluxo_do_link(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_data_nascimento", {
+            "perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=False))
+        monkeypatch.setattr(emp, "supabase", _mock_sb_sem_convite_entrevista())
+
+        await emp.processar_mensagem_empregabilidade(
+            "25/03/2005", "558599990000", "PID", "tok", "lead-1", "conv-1", "Barra",
+        )
+
+        # O reset acontece e a MESMA mensagem segue processada contra o novo estado (sem
+        # round-trip perdido) — por isso a etapa final não é necessariamente "inicio" parada, mas
+        # já não é mais a etapa nova órfã, e o estado antigo (vaga selecionada) não sobrevive.
+        assert estado["etapa"] != "coletando_data_nascimento"
+        assert estado["etapa"] in emp._ETAPAS_PUBLICO
+        assert "vaga_id_selecionada" not in estado  # estado órfão não sobrevive ao reset
+
+    @pytest.mark.asyncio
+    async def test_flag_ligado_no_meio_da_coleta_nao_reinicia(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("coletando_data_nascimento", {
+            "perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", AsyncMock(return_value=True))
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        monkeypatch.setattr(emp, "supabase", _mock_sb_sem_convite_entrevista())
+
+        await emp.processar_mensagem_empregabilidade(
+            "25/03/2005", "558599990000", "PID", "tok", "lead-1", "conv-1", "Barra",
+        )
+
+        # segue a coleta normalmente — não foi reiniciada
+        assert estado["etapa"] == "coletando_pcd"
+        assert estado["data_nascimento"] == "2005-03-25"
+
+    @pytest.mark.asyncio
+    async def test_etapa_fora_da_coleta_chat_nao_e_afetada_mesmo_com_flag_off(self, monkeypatch, _isola_enviar):
+        """Etapas do fluxo do link/legado (não fazem parte de `_ETAPAS_COLETA_CHAT_FSL`) não
+        passam pela checagem nova — sem custo extra, sem interferência."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_vagas", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        checagem = AsyncMock(return_value=False)
+        monkeypatch.setattr(emp, "_fluxo_sem_link_ativo", checagem)
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({}))
+
+        await emp.processar_mensagem_empregabilidade(
+            "oi", "558599990000", "PID", "tok", "lead-1", "conv-1", "Barra",
+        )
+
+        checagem.assert_not_awaited()  # nem chega a consultar o flag
+
+
+class TestObservabilidadeDecisao8:
+    @pytest.mark.asyncio
+    async def test_retry_esgotado_loga_error_com_contexto_sem_dado_pessoal(self, caplog):
+        caplog.set_level(logging.ERROR, logger="empregabilidade_engine")
+        sempre_retry = AsyncMock(return_value=ResultadoPortal("retry", 503, {}))
+        enviado = []
+
+        async def fake_e(msg):
+            enviado.append(msg)
+            return True
+
+        res = await emp._com_decisao8(
+            lambda t: sempre_retry(),
+            e=fake_e, holding_msg="aguarde...",
+            contexto={"conversa_id": "conv-1", "vaga_id": "v1", "fase": "teste"},
+        )
+
+        assert res.status == "retry"
+        assert "retry esgotado" in caplog.text
+        assert "conv-1" in caplog.text
+        # nunca nome/telefone no log — só as chaves técnicas do contexto
+        assert "nome" not in caplog.text.lower() or "nome_candidato" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_recupera_apos_retry_loga_info(self, caplog):
+        caplog.set_level(logging.INFO, logger="empregabilidade_engine")
+        chamadas = [ResultadoPortal("retry", 503, {}), ResultadoPortal("ok", 200, {"id": "abc"})]
+
+        async def fake_fazer(t):
+            return chamadas.pop(0)
+
+        async def fake_e(msg):
+            return True
+
+        res = await emp._com_decisao8(
+            fake_fazer, e=fake_e, holding_msg="aguarde...",
+            contexto={"conversa_id": "conv-1", "vaga_id": None, "fase": "teste"},
+        )
+
+        assert res.status == "ok"
+        assert "recuperou após retry" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_sem_retry_nenhum_nao_loga_nada(self, caplog):
+        caplog.set_level(logging.INFO, logger="empregabilidade_engine")
+        direto_ok = AsyncMock(return_value=ResultadoPortal("ok", 200, {"id": "abc"}))
+
+        async def fake_e(msg):
+            return True
+
+        await emp._com_decisao8(
+            lambda t: direto_ok(), e=fake_e, holding_msg="aguarde...",
+            contexto={"conversa_id": "conv-1", "vaga_id": None, "fase": "teste"},
+        )
+
+        assert "decisao8" not in caplog.text  # sucesso de primeira não gera log
+
+
+class TestObservabilidadeCorteDeIdade:
+    @pytest.mark.asyncio
+    async def test_corte_de_idade_loga_info_com_contexto(self, monkeypatch, _isola_enviar, caplog):
+        caplog.set_level(logging.INFO, logger="empregabilidade_engine")
+        ano_menor = emp.date.today().year - 16
+        estado, fake_get, fake_set = _fluxo_mock(
+            "coletando_data_nascimento",
+            {"perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        mock_vagas = MagicMock()
+        mock_vagas.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value.data = {
+            "faixa_etaria": "Maior de 18 anos",
+        }
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"vagas": mock_vagas}))
+
+        await emp._processar_publico(f"01/01/{ano_menor}", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        assert "corte-idade" in caplog.text
+        assert "conv-1" in caplog.text
+        assert "Ana" not in caplog.text  # sem nome do lead no log
+
+
+class TestObservabilidadeFalhasRejeitadas:
+    @pytest.mark.asyncio
+    async def test_candidatura_rejeitada_loga_warning(self, monkeypatch, _isola_enviar, caplog):
+        caplog.set_level(logging.WARNING, logger="empregabilidade_engine")
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+        import empregabilidade_portal_client as pc
+        cand = AsyncMock(return_value=ResultadoPortal("rejeitado", 400, {"error": "idade mínima"}))
+        monkeypatch.setattr(pc, "criar_candidatura", cand)
+        _, fake_get, fake_set = _fluxo_mock("qualquer")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        fluxo = {"vaga_id_selecionada": "v1", "nome_candidato": "Fulano de Tal"}
+        await emp._finalizar_candidatura_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
+
+        assert "rejeitada" in caplog.text.lower()
+        assert "Fulano de Tal" not in caplog.text  # sem nome do lead no log
+
+    @pytest.mark.asyncio
+    async def test_banco_talentos_rejeitado_loga_warning(self, monkeypatch, _isola_enviar, caplog):
+        caplog.set_level(logging.WARNING, logger="empregabilidade_engine")
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+        import empregabilidade_portal_client as pc
+        cand = AsyncMock(return_value=ResultadoPortal("rejeitado", 400, {"error": "dado inválido"}))
+        monkeypatch.setattr(pc, "criar_candidatura", cand)
+        _, fake_get, fake_set = _fluxo_mock("qualquer")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        fluxo = {"nome_candidato": "Fulano de Tal"}
+        await emp._finalizar_banco_talentos_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
+
+        assert "rejeitado" in caplog.text.lower()
+        assert "Fulano de Tal" not in caplog.text
+
+
+class TestFluxoSemLinkAtivoFailDefault:
+    """Achado do @qa no gate da FSL-08: `_fluxo_sem_link_ativo` precisa se comportar diferente em
+    erro dependendo de quem chama — fail-closed no ponto de entrada (não perde nada, só usa o
+    link já provado), fail-open no guard de rollback (não descarta progresso já coletado por
+    causa de uma falha transiente)."""
+
+    @pytest.mark.asyncio
+    async def test_erro_de_consulta_fail_closed_por_padrao(self, monkeypatch):
+        mock_sc = MagicMock()
+        mock_sc.select.return_value.eq.return_value.limit.return_value.execute.side_effect = Exception("boom")
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"system_config": mock_sc}))
+
+        assert await emp._fluxo_sem_link_ativo() is False
+
+    @pytest.mark.asyncio
+    async def test_erro_de_consulta_fail_open_quando_pedido(self, monkeypatch):
+        mock_sc = MagicMock()
+        mock_sc.select.return_value.eq.return_value.limit.return_value.execute.side_effect = Exception("boom")
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"system_config": mock_sc}))
+
+        assert await emp._fluxo_sem_link_ativo(fail_default=True) is True
+
+    @pytest.mark.asyncio
+    async def test_flag_realmente_desligado_fail_open_nao_interfere(self, monkeypatch):
+        """fail_default só se aplica em ERRO — com a linha lida normalmente e valor "false", o
+        resultado é False independente de fail_default (não é um jeito de ignorar o flag real)."""
+        mock_sc = MagicMock()
+        mock_sc.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [{"valor": "false"}]
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"system_config": mock_sc}))
+
+        assert await emp._fluxo_sem_link_ativo(fail_default=True) is False
+
+    @pytest.mark.asyncio
+    async def test_rollback_com_erro_transiente_nao_descarta_progresso(self, monkeypatch, _isola_enviar):
+        """Cenário do achado: falha transiente na leitura do flag (não um desligamento real) NÃO
+        pode resetar uma conversa em andamento — com fail-open, o guard de rollback não dispara."""
+        estado, fake_get, fake_set = _fluxo_mock("coletando_data_nascimento", {
+            "perfil": "publico", "vaga_id_selecionada": "v1", "nome_candidato": "Ana",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_quer_sair_semantico", AsyncMock(return_value=False))
+        mock_sc = MagicMock()
+        mock_sc.select.return_value.eq.return_value.limit.return_value.execute.side_effect = Exception("boom transiente")
+        monkeypatch.setattr(emp, "supabase", _mock_sb_multi_com_system_config_falho(mock_sc))
+
+        await emp.processar_mensagem_empregabilidade(
+            "25/03/2005", "558599990000", "PID", "tok", "lead-1", "conv-1", "Barra",
+        )
+
+        # NÃO foi reiniciada — a falha transiente foi tratada como "ainda ligado"
+        assert estado["etapa"] == "coletando_pcd"
+        assert estado.get("vaga_id_selecionada") == "v1"  # progresso preservado
+
+
+def _mock_sb_multi_com_system_config_falho(mock_system_config: MagicMock) -> MagicMock:
+    mock_candidaturas = MagicMock()
+    mock_candidaturas.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+    return _mock_multi_tabela({"system_config": mock_system_config, "candidaturas": mock_candidaturas})
