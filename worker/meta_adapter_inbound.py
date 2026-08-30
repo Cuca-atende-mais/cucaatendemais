@@ -1246,6 +1246,10 @@ async def _executar_dispatch(
                 unidade_cuca=unidade_cuca or "",
                 push_name=push_name,
                 midia_tipo=midia_tipo,
+                # S-EMP-FSL-02: a URL real do anexo (mesma fonte já usada no INSERT da mensagem,
+                # linha ~1123, e no ramo Academia Enem) passa agora ao motor de Empregabilidade,
+                # que antes só recebia `midia_tipo` e jogava a URL fora.
+                midia_url=contrato_v2.get("midia_url") or "",
             )
         except Exception as exc:
             logger.error(f"[meta-inbound] Erro no dispatch Empregabilidade: {exc}")

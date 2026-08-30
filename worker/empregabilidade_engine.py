@@ -128,7 +128,17 @@ _ETAPAS_OFERTA_ATENDENTE = {
 # `_resetar_fluxo_por_inatividade`). Fora dessas 6 etapas, não se aplica — fora do escopo desta
 # story (ver maintenance notes do Plano 029, `docs/.../029-expirar-etapa-...md`).
 _LIMIAR_INATIVIDADE_HORAS = 24
-_ETAPAS_EXPIRAM_POR_INATIVIDADE = _ETAPAS_OFERTA_ATENDENTE | {"aguardando_confirmacao_candidatura"}
+# S-EMP-FSL-03 (AC6): as 3 etapas de coleta no chat também expiram por inatividade — conversa
+# parada no meio da coleta reseta como as demais, sem tratamento especial.
+# S-EMP-FSL-04: `oferta_banco_idade_fsl` (oferta de banco de talentos por corte de idade) entra no
+# mesmo raciocínio — sem tratamento especial.
+# S-EMP-FSL-06: `confirmando_reaproveitamento_dados` idem.
+# S-EMP-FSL-07: `escolhendo_areas_interesse` idem.
+_ETAPAS_EXPIRAM_POR_INATIVIDADE = _ETAPAS_OFERTA_ATENDENTE | {
+    "aguardando_confirmacao_candidatura",
+    "coletando_data_nascimento", "coletando_pcd", "coletando_ou_confirmando_curriculo",
+    "oferta_banco_idade_fsl", "confirmando_reaproveitamento_dados", "escolhendo_areas_interesse",
+}
 _ETAPA_ANTERIOR = {
     "listou_categorias": "inicio",
     "listou_vagas": "listou_categorias",
@@ -436,6 +446,58 @@ async def _supabase_to_thread(fn):
     return await asyncio.to_thread(fn)
 
 
+# S-EMP-FSL-01: interruptor do fluxo do candidato 100% no WhatsApp (sem link), guardado em
+# `system_config.chave='empreg_fluxo_sem_link'` e controlado pelo menu Developer. Só valores
+# EXPLICITAMENTE verdadeiros ligam o fluxo — assim "True", "0", " false ", vazio ou qualquer
+# lixo caem no comportamento de hoje (link). A tela genérica de configurações do portal expõe
+# esta linha como campo de texto livre, então a tolerância aqui é a proteção contra "ligar sem
+# querer".
+_FLUXO_SEM_LINK_CHAVE = "empreg_fluxo_sem_link"
+_FLUXO_SEM_LINK_VALORES_LIGADOS = {"true", "1", "on", "sim"}
+
+
+async def _fluxo_sem_link_ativo(*, fail_default: bool = False) -> bool:
+    """Lê o flag do fluxo sem link (S-EMP-FSL-01). Ausência da linha ou valor que não seja
+    explicitamente verdadeiro sempre retorna ``False`` (fluxo do link, o de hoje) — só o
+    comportamento em ERRO de leitura é configurável via `fail_default`:
+
+    - **Fail-closed (`fail_default=False`, padrão)** — usado nos pontos que decidem se uma
+      candidatura NOVA entra no chat (`_finalizar_candidatura_self`, `oferta_banco_idade_fsl`):
+      uma falha transiente aqui só faz cair no link, o caminho já provado — sem prejuízo real.
+    - **Fail-open (`fail_default=True`)** — usado no guard de rollback (S-EMP-FSL-08,
+      `_processar_mensagem_empregabilidade_locked`), que decide se REINICIA uma conversa **já em
+      andamento** no chat. Reusar fail-closed aqui teria uma consequência bem mais séria que nos
+      outros pontos: uma falha transiente de leitura seria lida como "botão desligado" por
+      engano, descartando nome/data/PCD já coletados sem o admin ter desligado nada de verdade.
+      Fail-open assume "ainda ligado" em caso de erro — o pior caso vira "não reiniciou desta
+      vez", não "perdeu o progresso à toa" (achado do @qa no gate desta story).
+
+    Nunca levanta exceção — é chamada no caminho quente de cada conversa e não pode derrubar o
+    processamento."""
+    try:
+        def _query():
+            return (
+                supabase.table("system_config")
+                .select("valor")
+                .eq("chave", _FLUXO_SEM_LINK_CHAVE)
+                .limit(1)
+                .execute()
+            )
+        res = await _supabase_to_thread(_query)
+        linhas = getattr(res, "data", None) or []
+        if not linhas:
+            return False
+        valor = str(linhas[0].get("valor", "")).strip().lower()
+        return valor in _FLUXO_SEM_LINK_VALORES_LIGADOS
+    except Exception:
+        logger.warning(
+            "[fluxo-sem-link] Falha ao ler flag empreg_fluxo_sem_link; assumindo %s",
+            "LIGADO (fail-open)" if fail_default else "DESLIGADO (fail-closed)",
+            exc_info=True,
+        )
+        return fail_default
+
+
 async def _get_fluxo_async(conversa_id: str) -> dict:
     if _get_fluxo is not _GET_FLUXO_SYNC or _supabase_mockado_em_teste():
         return _get_fluxo(conversa_id)
@@ -510,6 +572,10 @@ def _resetar_fluxo_por_inatividade(fluxo: dict, etapa_atual: str) -> dict:
             return fluxo
         return {"perfil": fluxo.get("perfil"), "etapa": "inicio"}
     if etapa_atual in _ETAPAS_OFERTA_ATENDENTE:
+        return {"perfil": fluxo.get("perfil"), "etapa": "inicio"}
+    # S-EMP-FSL-03 (AC6): coleta no chat parada há 24h → reset total pro início (não há link a
+    # preservar como no caso acima; o anexo pendente, se houver, expira sozinho no bucket).
+    if etapa_atual in _ETAPAS_COLETA_CHAT_FSL:
         return {"perfil": fluxo.get("perfil"), "etapa": "inicio"}
     return fluxo
 
@@ -1419,7 +1485,7 @@ async def _rotear_ocorrencia_escolhida(
 
     nome_prefill = fluxo.get("nome_candidato_prefill", "") if usar_prefill else ""
     if nome_prefill:
-        await _enviar_link_candidatura(
+        await _finalizar_candidatura_self(
             instance_name, token, phone, conversa_id,
             {**fluxo, "fila_candidaturas_pendentes": fila_restante},
             nome_prefill, phone, vaga_id_escolhida, False, lead_id=lead_id,
@@ -1621,8 +1687,8 @@ async def _quer_sair_semantico(
     token: str,
     mensagem_customizada: str | None = None,
 ) -> bool:
-    """Variante de alta precisão para etapas de DADO livre (nome de candidato/
-    terceiro): honra só `quer_sair`, nunca `mudou_de_assunto` — um nome
+    """Variante de alta precisão para etapas de DADO livre (nome de candidato):
+    honra só `quer_sair`, nunca `mudou_de_assunto` — um nome
     incomum ou fora do padrão teria falso-positivo alto demais nesse sinal
     (qualquer texto é potencialmente um nome válido, diferente de CNPJ/e-mail/
     telefone, que têm formato verificável). Retorna True se encerrou o fluxo
@@ -1704,7 +1770,7 @@ async def _chamar_ia_classificar_troca_rota(texto: str) -> dict:
             "content": (
                 "Você interpreta mensagens de WhatsApp de um canal de Empregabilidade "
                 "da rede CUCA, numa etapa em que o bot está pedindo o NOME COMPLETO da "
-                "pessoa (candidato, terceiro indicado, ou confirmação de presença).\n\n"
+                "pessoa (candidato ou confirmação de presença).\n\n"
                 "A pessoa respondeu algo que NÃO é o nome dela — está pedindo pra trocar "
                 "de assunto. Classifique em UMA categoria:\n"
                 "- 'troca_rota_empresa': a pessoa está dizendo que é empresa/empregador e "
@@ -3134,6 +3200,7 @@ async def _processar_publico(
     lead_id: str,
     conversa_id: str,
     unidade_cuca: str,
+    midia_url: str = "",
 ):
     fluxo = await _get_fluxo_async(conversa_id)
     etapa = fluxo.get("etapa", "inicio")
@@ -3192,7 +3259,7 @@ async def _processar_publico(
     # Encerramento
     # S37C-03: pos_candidatura é tolerante — "obrigado", "valeu" não encerram o fluxo
     if _quer_encerrar(texto) and etapa not in (
-        "coletando_nome_candidato", "confirmando_terceiro", "pos_candidatura",
+        "coletando_nome_candidato", "pos_candidatura",
         "coletando_nome_curriculo_publico",
     ):
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
@@ -3230,47 +3297,13 @@ async def _processar_publico(
                 })
             else:
                 codigo = candidatura_codigo or candidatura_id.replace("-", "")[-6:].upper()
-                # S37C-02: Mensagem 1 — confirmação com o código de acompanhamento
-                await e(
-                    f"🎉 *Candidatura recebida com sucesso!*\n\n"
-                    f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
-                    "Guarde esse número! Com ele você pode verificar o status da sua candidatura a qualquer momento. ✅"
+                # S-EMP-FSL-03: mensagem de sucesso + fila chaining + landing pos_candidatura
+                # extraídos pra `_emitir_sucesso_candidatura_vaga`, reaproveitados pelo fluxo sem
+                # link (que já tem o código em mãos, sem esperar o metadata do formulário).
+                await _emitir_sucesso_candidatura_vaga(
+                    codigo=codigo, fluxo_atual=fluxo_atual, conversa_id=conversa_id,
+                    instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
                 )
-                # S37C-04/05: salva histórico de vagas e prefill do nome para o próximo ciclo
-                vaga_confirmada = fluxo_atual.get("vaga_id_selecionada")
-                historico = list(fluxo_atual.get("historico_vagas_aplicadas") or [])
-                if vaga_confirmada and vaga_confirmada not in historico:
-                    historico.append(vaga_confirmada)
-
-                # S-EMP-AUD-023 passo 3 (seção 5, regra 5): se ainda tem
-                # ocorrência(s) escolhidas pendentes na fila, encadeia a
-                # próxima rota automaticamente — sem reaproveitar nome/dados
-                # desta candidatura — em vez de oferecer "outra"/"encerrar".
-                fila = fluxo_atual.get("fila_candidaturas_pendentes") or []
-                if fila:
-                    await e("Show! Agora vamos para a próxima vaga que você escolheu. 👇")
-                    await _rotear_ocorrencia_escolhida(
-                        ocorrencia=fila[0],
-                        fila_restante=fila[1:],
-                        fluxo={**fluxo_atual, "historico_vagas_aplicadas": historico},
-                        conversa_id=conversa_id,
-                        instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
-                        usar_prefill=False,
-                    )
-                    return
-
-                # S37C-02: Mensagem 2 — oferta de nova candidatura (separada para melhor UX)
-                await e(
-                    "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
-                    "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
-                )
-                await _set_fluxo_async(conversa_id, {
-                    "etapa": "pos_candidatura",  # S37C-01
-                    "perfil": "publico",
-                    "ultima_candidatura_codigo": codigo,
-                    "historico_vagas_aplicadas": historico,
-                    "nome_candidato_prefill": fluxo_atual.get("nome_candidato", ""),
-                })
         else:
             tem_negacao = any(p in t_lower for p in ("não", "nao"))
             if not tem_negacao and any(
@@ -3417,36 +3450,16 @@ async def _processar_publico(
         vaga_id_ref = fluxo.get("vaga_id_selecionada")
         eh_banco_talentos = fluxo.get("banco_talentos", False)
 
-        # Achado em produção 2026-08-18: mesma classe de bug já corrigida em
-        # coletando_nome_curriculo_publico (2026-08-13, ConnectTimeout esporádico
-        # pra Graph API) — aqui o envio da pergunta "eu ou outra pessoa?" não era
-        # checado, e a etapa avançava pra confirmando_terceiro mesmo se a
-        # mensagem nunca tivesse saído. O candidato ficava esperando uma
-        # pergunta que nunca chegou, sem qualquer sinal de erro (caso real:
-        # lead informou o nome e não recebeu mais nada).
-        # Retry agora é centralizado em `_meta_enviar` (mesmo dia) — cobre
-        # este e todos os outros handlers automaticamente. Aqui só resta
-        # checar o resultado final e logar se, mesmo com o retry interno,
-        # o envio não saiu.
-        enviado = await e(
-            f"Obrigado, *{nome_coletado}*!\n\n"
-            "Esse currículo é para *você mesmo(a)* ou para outra pessoa?\n\n"
-            "Responda *eu* ou *outra pessoa*."
+        # Decisão do Junior (2026-08-29): eliminada a opção de candidatura "pra outra
+        # pessoa" — o lead só pode se candidatar por si mesmo. A pergunta "é pra você ou
+        # pra outra pessoa?" (e as etapas confirmando_terceiro/coletando_nome_terceiro que
+        # ela levava) saiu; toda candidatura segue direto como self. Evita, de quebra, o
+        # bug de colisão de terceiros que a FSL-05 original ia corrigir — não existe mais
+        # candidatura de terceiro pra colidir.
+        await _finalizar_candidatura_self(
+            instance_name, token, phone, conversa_id, fluxo,
+            nome_coletado, phone, vaga_id_ref, eh_banco_talentos, lead_id=lead_id
         )
-        if not enviado:
-            logger.error(
-                "[coletando_nome_candidato] Falha ao enviar pergunta eu/outra pessoa (mesmo após retry) para %s — "
-                "avança etapa mesmo assim; qualquer mensagem seguinte do candidato em confirmando_terceiro "
-                "é interpretada como resposta (default 'é pra mim mesmo' se não disser 'outra pessoa').",
-                phone[:6] + "****",
-            )
-        await _set_fluxo_async(conversa_id, {
-            **fluxo,
-            "etapa": "confirmando_terceiro",
-            "nome_candidato": nome_coletado,
-            "vaga_id_selecionada": vaga_id_ref,
-            "banco_talentos": eh_banco_talentos,
-        })
         return
 
     # --- ETAPA: coletando_nome_curriculo_publico (SQS-58, opção 5) ---
@@ -3521,66 +3534,160 @@ async def _processar_publico(
         })
         return
 
-    # --- ETAPA: confirmando_terceiro ---
-    if etapa == "confirmando_terceiro":
-        nome_candidato = fluxo.get("nome_candidato", "")
-        vaga_id_ref = fluxo.get("vaga_id_selecionada")
-        eh_banco_talentos = fluxo.get("banco_talentos", False)
-
-        if any(p in t_lower for p in ("outra", "outro", "outra pessoa", "amigo", "familiar", "parente", "não")):
-            # Mesma mitigação de 2026-08-18 aplicada em coletando_nome_candidato —
-            # sem isso, se o envio falhasse o candidato ficava em
-            # coletando_nome_terceiro sem nunca ter visto o pedido do nome.
-            # Retry agora é centralizado em `_meta_enviar` — aqui só resta logar
-            # se, mesmo com o retry interno, o envio não saiu.
-            enviado = await e("Tudo certo! Informe o *nome completo* da pessoa para quem você está enviando o currículo:")
-            if not enviado:
-                logger.error(
-                    "[confirmando_terceiro] Falha ao enviar pedido de nome do terceiro (mesmo após retry) para %s.",
-                    phone[:6] + "****",
-                )
-            await _set_fluxo_async(conversa_id, {
-                **fluxo,
-                "etapa": "coletando_nome_terceiro",
-                "vaga_id_selecionada": vaga_id_ref,
-                "banco_talentos": eh_banco_talentos,
-            })
+    # --- ETAPA: coletando_data_nascimento (S-EMP-FSL-03 + S-EMP-FSL-04) ---
+    if etapa == "coletando_data_nascimento":
+        if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
             return
-
-        # S-WM-20 Task 5: diferente das etapas de coleta de nome (qualquer
-        # texto é um nome válido), aqui a resposta esperada é um binário
-        # eu/outra pessoa — se não bateu com o "outra pessoa" acima, o código
-        # assumia sempre "é para si mesmo" e disparava a candidatura em
-        # silêncio, mesmo numa mudança de assunto real. Checa o classificador
-        # completo (não só quer_sair) antes desse default silencioso.
-        if await _escape_semantico_ou_none(
-            texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
-        ):
-            return
-
-        # É para si mesmo — enviar link
-        await _enviar_link_candidatura(
-            instance_name, token, phone, conversa_id, fluxo,
-            nome_candidato, phone, vaga_id_ref, eh_banco_talentos, lead_id=lead_id
+        # Parser tolerante (S-EMP-FSL-04): data exata OU idade solta aproximada (1º de janeiro do
+        # ano correspondente, marcada como aproximada). Texto que não parseia nenhuma das duas
+        # formas guarda None — payload manda null, sem 500, sem corte fantasma.
+        data_iso, aproximada = _data_nascimento_tolerante(texto)
+        await _aplicar_data_nascimento_ou_ofertar_banco(
+            e=e, conversa_id=conversa_id, fluxo=fluxo, data_iso=data_iso, aproximada=aproximada,
         )
         return
 
-    # --- ETAPA: coletando_nome_terceiro ---
-    if etapa == "coletando_nome_terceiro":
-        # S-WM-20 Task 5, categoria (b): mesmo tratamento de coletando_nome_candidato.
-        if await _quer_sair_semantico(texto, "publico", etapa, conversa_id, phone, instance_name, token):
+    # --- ETAPA: confirmando_reaproveitamento_dados (S-EMP-FSL-06) ---
+    if etapa == "confirmando_reaproveitamento_dados":
+        t_low_local = texto.strip().lower()
+        # "quero atualizar" não é um "não" de PCD — checagem literal própria, mais o "não"
+        # semântico de _interpretar_sim_nao como sinônimo de recusa.
+        if "atualizar" in t_low_local or _interpretar_sim_nao(texto) is False:
+            await e("Sem problema! Vamos atualizar.\n\nQual a sua *data de nascimento*? (ex: 25/03/2005)")
+            await _set_fluxo_async(conversa_id, {
+                **fluxo, "etapa": "coletando_data_nascimento",
+                "_reaproveitamento_data_nascimento": "",
+            })
             return
-        # S-EMP-AUD-024: fast-path literal antes de tratar como nome.
-        if await _escape_literal_ou_none(texto, conversa_id, phone, instance_name, token, lead_id, unidade_cuca):
+        if _interpretar_sim_nao(texto) is not True:
+            await e(
+                "Posso seguir com a data que já tenho? Responda *sim* pra confirmar ou "
+                "*quero atualizar* pra informar de novo."
+            )
             return
-        nome_terceiro = texto.strip()
-        vaga_id_ref = fluxo.get("vaga_id_selecionada")
-        eh_banco_talentos = fluxo.get("banco_talentos", False)
-
-        await _enviar_link_candidatura(
-            instance_name, token, phone, conversa_id, fluxo,
-            nome_terceiro, phone, vaga_id_ref, eh_banco_talentos, lead_id=lead_id
+        # "sim" — usa a data reaproveitada, passando pela MESMA checagem de corte de idade que a
+        # coleta nova usa (uma vaga que exige 18+ não pode ser furada só porque o dado é antigo).
+        data_iso = fluxo.get("_reaproveitamento_data_nascimento") or ""
+        await _aplicar_data_nascimento_ou_ofertar_banco(
+            e=e, conversa_id=conversa_id,
+            fluxo={**fluxo, "_reaproveitamento_data_nascimento": ""},
+            data_iso=data_iso, aproximada=False,
         )
+        return
+
+    # --- ETAPA: oferta_banco_idade_fsl (S-EMP-FSL-04 + S-EMP-FSL-07) ---
+    if etapa == "oferta_banco_idade_fsl":
+        resp = _interpretar_sim_nao(texto)
+        if resp is None:
+            await e("Quer deixar seu currículo no *Banco de Talentos*? Responda *sim* ou *não*.")
+            return
+        if resp is True:
+            # S-EMP-FSL-07 (AC5): com o flag ligado, reaproveita nome/data já coletados aqui
+            # mesmo (não passou pelo formulário/link) — pula direto pra PCD, que ainda não tinha
+            # sido perguntado (o corte de idade acontece ANTES do PCD). Com o flag desligado,
+            # cai no fluxo de banco já existente (link, recoleta tudo) — comportamento de hoje.
+            if await _fluxo_sem_link_ativo():
+                await e(
+                    "Sem problema! Vamos continuar por aqui mesmo. 🙌\n\n"
+                    "Você é *PCD* (Pessoa com Deficiência)? Responda *sim* ou *não*."
+                )
+                await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "coletando_pcd", "banco_talentos": True})
+                return
+            await iniciar_banco_talentos()
+            return
+        await e(
+            "Sem problema! Quer ver outras vagas disponíveis?\n\n"
+            "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
+        )
+        await _set_fluxo_async(conversa_id, {
+            "perfil": "publico", "etapa": "pos_candidatura",
+            "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+            "nome_candidato_prefill": fluxo.get("nome_candidato") or fluxo.get("nome_candidato_prefill", ""),
+        })
+        return
+
+    # --- ETAPA: coletando_pcd (S-EMP-FSL-03 + S-EMP-FSL-07) ---
+    if etapa == "coletando_pcd":
+        resp = _interpretar_sim_nao(texto)
+        if resp is None:
+            await e("Só pra confirmar: você é *PCD* (Pessoa com Deficiência)? Responda *sim* ou *não*.")
+            return
+        fluxo_pcd = {**fluxo, "pcd_candidato": resp}
+        if fluxo_pcd.get("banco_talentos"):
+            # S-EMP-FSL-07: banco de talentos escolhe áreas de interesse antes do currículo
+            # (a candidatura de vaga vai direto pro currículo — não tem esse passo).
+            linhas_areas = ["Show! 🙌 Agora escolha até *3 áreas* de interesse (número separado por vírgula, ex: 1,2,5):\n"]
+            for idx_a, area in enumerate(_AREAS_INTERESSE_BANCO_TALENTOS, start=1):
+                linhas_areas.append(f"{idx_a}. {area}")
+            await e("\n".join(linhas_areas))
+            await _set_fluxo_async(conversa_id, {**fluxo_pcd, "etapa": "escolhendo_areas_interesse"})
+            return
+        arquivo_existente = fluxo.get("arquivo_pendente_url") or fluxo.get("curriculo_r2_url")
+        if arquivo_existente:
+            await e("Recebi seu currículo! ✅ Quer usar esse mesmo? Responda *sim* ou *quero enviar outro*.")
+        else:
+            await e("Agora me envie seu *currículo* (PDF, Word, JPG ou PNG) — é só anexar aqui na conversa. 📎")
+        await _set_fluxo_async(conversa_id, {**fluxo_pcd, "etapa": "coletando_ou_confirmando_curriculo"})
+        return
+
+    # --- ETAPA: escolhendo_areas_interesse (S-EMP-FSL-07) ---
+    if etapa == "escolhendo_areas_interesse":
+        escolhas_raw = re.findall(r"\d+", texto)
+        areas_escolhidas: list[str] = []
+        for n in escolhas_raw:
+            idx = int(n) - 1
+            if 0 <= idx < len(_AREAS_INTERESSE_BANCO_TALENTOS):
+                area = _AREAS_INTERESSE_BANCO_TALENTOS[idx]
+                if area not in areas_escolhidas:
+                    areas_escolhidas.append(area)
+            if len(areas_escolhidas) >= 3:
+                break
+        if not areas_escolhidas:
+            if await _escape_semantico_ou_none(
+                texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+            ):
+                return
+            linhas_re = ["Não entendi. Digite os números das áreas de interesse (até 3), separados por vírgula. Ex: *1,2,5*\n"]
+            for idx_a, area in enumerate(_AREAS_INTERESSE_BANCO_TALENTOS, start=1):
+                linhas_re.append(f"{idx_a}. {area}")
+            await e("\n".join(linhas_re))
+            return
+        arquivo_existente = fluxo.get("arquivo_pendente_url") or fluxo.get("curriculo_r2_url")
+        if arquivo_existente:
+            await e("Recebi seu currículo! ✅ Quer usar esse mesmo? Responda *sim* ou *quero enviar outro*.")
+        else:
+            await e("Agora me envie seu *currículo* (PDF, Word, JPG ou PNG) — é só anexar aqui na conversa. 📎")
+        await _set_fluxo_async(conversa_id, {
+            **fluxo, "etapa": "coletando_ou_confirmando_curriculo", "area_interesse": areas_escolhidas,
+        })
+        return
+
+    # --- ETAPA: coletando_ou_confirmando_curriculo (S-EMP-FSL-03 + S-EMP-FSL-07) ---
+    if etapa == "coletando_ou_confirmando_curriculo":
+        # Arquivo recém-anexado (a URL nova chega via FSL-02) — este é o currículo, finaliza.
+        if midia_url:
+            await _finalizar_coleta_curriculo_chat(
+                instance_name, token, phone, conversa_id,
+                {**fluxo, "arquivo_pendente_url": midia_url, "curriculo_r2_url": ""},
+                lead_id=lead_id,
+            )
+            return
+        arquivo_existente = fluxo.get("arquivo_pendente_url") or fluxo.get("curriculo_r2_url")
+        resp = _interpretar_sim_nao(texto)
+        if arquivo_existente and resp is True:
+            await _finalizar_coleta_curriculo_chat(instance_name, token, phone, conversa_id, fluxo, lead_id=lead_id)
+            return
+        if arquivo_existente and resp is None:
+            # Resposta ambígua ("pode ser", "esse aí") — NÃO descartar o currículo já recebido:
+            # repergunta preservando o estado. Só um "não/quero enviar outro" explícito limpa.
+            await e("Só confirmando: quer usar o currículo que já recebi? Responda *sim* ou *quero enviar outro*.")
+            return
+        # "quero enviar outro" / não explícito, ou nenhum arquivo ainda → pede o arquivo.
+        await e("Sem problema! Me envie o currículo que você quer usar (PDF, Word, JPG ou PNG). 📎")
+        await _set_fluxo_async(conversa_id, {
+            **fluxo, "etapa": "coletando_ou_confirmando_curriculo",
+            "arquivo_pendente_url": "", "curriculo_r2_url": "",
+        })
         return
 
     # --- ETAPA: listando_cargos_selecao (SQS-49) ---
@@ -3633,9 +3740,8 @@ async def _processar_publico(
     # --- ETAPA: confirmando_presenca_nome (SQS-56) ---
     if etapa == "confirmando_presenca_nome":
         # Campo de DADO livre (nome) — mesma variante de alta precisão usada
-        # em coletando_nome_candidato/coletando_nome_terceiro: só honra
-        # quer_sair, nunca mudou_de_assunto (nome incomum teria falso-positivo
-        # alto nesse sinal).
+        # em coletando_nome_candidato: só honra quer_sair, nunca
+        # mudou_de_assunto (nome incomum teria falso-positivo alto nesse sinal).
         # S-EMP-AUD-029: mensagem específica de desistência de convocação —
         # a genérica ("Boa sorte! 🎉") logo depois de "Você está
         # convocado(a)!" lê como se a recusa não tivesse sido ouvida.
@@ -3859,7 +3965,7 @@ async def _processar_publico(
                     "unidade_id_escolhida": unidade_id_escolhida,
                 }
                 if nome_prefill:
-                    await _enviar_link_candidatura(
+                    await _finalizar_candidatura_self(
                         instance_name, token, phone, conversa_id, novo_fluxo,
                         nome_prefill, phone, vaga_id_global, False, lead_id=lead_id
                     )
@@ -4219,7 +4325,7 @@ async def _processar_publico(
         # S37C-05: vaga com unidade definida — fluxo normal
         nome_prefill = fluxo.get("nome_candidato_prefill", "")
         if nome_prefill:
-            await _enviar_link_candidatura(
+            await _finalizar_candidatura_self(
                 instance_name, token, phone, conversa_id, fluxo,
                 nome_prefill, phone, vaga_id_ref, False, lead_id=lead_id
             )
@@ -4295,6 +4401,669 @@ async def _processar_publico(
         "historico_vagas_aplicadas": historico_aplicadas,
         "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
     })
+
+
+# ---------------------------------------------------------------------------
+# S-EMP-FSL-03 — Fluxo do candidato 100% no WhatsApp (sem link): coleta no chat
+# ---------------------------------------------------------------------------
+
+_PALAVRAS_SIM_PCD = ("sim", "isso", "sou", "tenho", "positivo", "claro", "afirmativo", "pcd", "yes", "uhum", "aham")
+_PALAVRAS_NAO_PCD = ("não", "nao", "negativo", "nunca", "jamais", "no")
+
+# S-EMP-FSL-07: as 10 áreas do Banco de Talentos — CÓPIA EXATA de `AREAS_INTERESSE`
+# (candidatura/page.tsx:15), idêntica também ao classificador `talent_bank_matcher.py:22` e ao
+# que já está gravado no banco (114 pessoas em "Serviços Gerais"). Não funde nem inventa rótulo —
+# o filtro por área do Portal (`banco-talentos/page.tsx`) busca pela STRING COMPLETA; qualquer
+# divergência quebraria o filtro em silêncio (mesmo bug que a S-EMP-AUD já flagrou uma vez com o
+# cast de `area_interesse`).
+_AREAS_INTERESSE_BANCO_TALENTOS = (
+    "Serviços Gerais (limpeza, portaria, zeladoria)",
+    "Construção Civil (pedreiro, ajudante, eletricista, encanador)",
+    "Logística e Entregas (estoque, separação, entregador, motorista)",
+    "Comércio e Vendas (vendedor, caixa, atendimento)",
+    "Alimentação (cozinha, garçom, lanchonete)",
+    "Tecnologia (suporte técnico, programação, dados)",
+    "Criativo / Digital (design, vídeo, redes sociais)",
+    "Beleza e Estética (barbeiro, manicure, cabeleireiro)",
+    "Cuidados Pessoais (babá, cuidador de idosos)",
+    "Administrativo / Escritório (recepção, auxiliar administrativo)",
+)
+
+
+_RE_DATA_BR = re.compile(r"\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})\b")
+
+
+def _data_br_para_iso(texto: str) -> str | None:
+    """S-EMP-FSL-03: converte `DD/MM/AAAA` (e variações com `-`/`.`) → `YYYY-MM-DD`, o formato que
+    a coluna `candidaturas.data_nascimento` (tipo `date`) espera — o mesmo que o `<input
+    type="date">` do formulário manda. Mandar `DD/MM/AAAA` cru quebraria de duas formas: o portal
+    faz `new Date(...)` (que lê MM/DD e vira Invalid Date, **desligando o corte de idade** — vira
+    NaN < 18 = false) e o INSERT no Postgres daria erro de data. Retorna None se não parsear uma
+    data válida (o parsing tolerante de "tenho 17"/idade aproximada é a FSL-04)."""
+    m = _RE_DATA_BR.search(texto or "")
+    if not m:
+        return None
+    dia, mes, ano = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        from datetime import date  # noqa: PLC0415
+        return date(ano, mes, dia).isoformat()
+    except ValueError:
+        return None
+
+
+_RE_PUNCTUACAO_DATA = re.compile(r"[/\-.]")
+_RE_IDADE_SOLTA = re.compile(r"\b(\d{1,2})\b")
+
+
+def _data_nascimento_tolerante(texto: str) -> tuple[str | None, bool]:
+    """S-EMP-FSL-04: parser tolerante de data de nascimento. `DD/MM/AAAA` exato (via
+    `_data_br_para_iso`) tem prioridade. Se não parsear e o texto tiver claramente uma tentativa
+    de data (contém `/`, `-` ou `.` — ex.: "32/13/2020") NÃO cai pra idade solta: é melhor seguir
+    sem data (None) do que adivinhar errado a partir de fragmentos de uma data mal digitada. Só
+    interpreta como idade aproximada quando o texto não tem essa pontuação e traz um número
+    plausível de idade (5-99) — ex.: "tenho 19", "19 anos", "19". A data aproximada usa 1º de
+    janeiro do ano correspondente (mesma convenção do plano) e é marcada como tal, pra o
+    complemento não-bloqueante (AC3) ser oferecido depois. Retorna (data_iso_ou_None, aproximada)."""
+    exata = _data_br_para_iso(texto)
+    if exata:
+        return exata, False
+    if _RE_PUNCTUACAO_DATA.search(texto or ""):
+        return None, False
+    m = _RE_IDADE_SOLTA.search(texto or "")
+    if not m:
+        return None, False
+    idade = int(m.group(1))
+    if not (5 <= idade <= 99):
+        return None, False
+    from datetime import date  # noqa: PLC0415
+    ano_nascimento = date.today().year - idade
+    return date(ano_nascimento, 1, 1).isoformat(), True
+
+
+def _idade_a_partir_de_iso(data_iso: str | None) -> int | None:
+    """Calcula a idade a partir de uma data ISO (`YYYY-MM-DD`) — mesma lógica do corte de idade
+    do portal (`candidaturas/route.ts`: diferença de ano, ajustada se o aniversário deste ano
+    ainda não chegou). Retorna None se `data_iso` for vazia/inválida (o chamador trata como "sem
+    info suficiente pra decidir", não bloqueia)."""
+    if not data_iso:
+        return None
+    try:
+        from datetime import date  # noqa: PLC0415
+        ano, mes, dia = (int(p) for p in data_iso.split("-"))
+        nasc = date(ano, mes, dia)
+    except (ValueError, TypeError):
+        return None
+    hoje = date.today()
+    idade = hoje.year - nasc.year
+    if (hoje.month, hoje.day) < (nasc.month, nasc.day):
+        idade -= 1
+    return idade
+
+
+async def _vaga_exige_maioridade(vaga_id: str | None) -> bool:
+    """S-EMP-FSL-04: replica a MESMA regra que o portal já aplica em `candidaturas/route.ts`
+    (`faixa_etaria === "Maior de 18 anos"` — a única faixa com corte ativo hoje; "A partir de 14
+    anos" não é reforçada no servidor). Fail-open (não bloquear) em erro de consulta: o portal
+    continua sendo o gate real e aplicado no INSERT — esta checagem no chat é só antecipação de
+    UX pra oferecer o banco de talentos com jeito, em vez de deixar o portal rejeitar seco."""
+    if not vaga_id:
+        return False
+    try:
+        def _query():
+            return supabase.table("vagas").select("faixa_etaria").eq("id", vaga_id).maybe_single().execute()
+        res = await _supabase_to_thread(_query)
+        dado = getattr(res, "data", None) or {}
+        return dado.get("faixa_etaria") == "Maior de 18 anos"
+    except Exception:
+        logger.warning("[fluxo-sem-link] Falha ao checar faixa etária da vaga %s", vaga_id, exc_info=True)
+        return False
+
+
+async def _aplicar_data_nascimento_ou_ofertar_banco(
+    *, e, conversa_id: str, fluxo: dict, data_iso: str | None, aproximada: bool,
+) -> None:
+    """S-EMP-FSL-04/06: dado um `data_nascimento` já resolvido — coletado agora (FSL-04) OU
+    reaproveitado de uma candidatura anterior (FSL-06) —, decide entre seguir pra PCD ou desviar
+    pra oferta de Banco de Talentos por corte de idade. MESMA regra nos dois casos: uma vaga que
+    exige 18+ não pode ser furada só porque o dado veio reaproveitado em vez de digitado agora.
+    Extraído pra evitar duplicar a lógica de corte de idade entre `coletando_data_nascimento` e
+    `confirmando_reaproveitamento_dados`."""
+    vaga_id_atual = fluxo.get("vaga_id_selecionada")
+    if data_iso and await _vaga_exige_maioridade(vaga_id_atual):
+        idade = _idade_a_partir_de_iso(data_iso)
+        if idade is not None and idade < 18:
+            # S-EMP-AUD-026 resolvido na conversa: em vez do bloqueio seco que o formulário faz
+            # hoje, oferece o Banco de Talentos com jeito. O "sim" em `oferta_banco_idade_fsl`
+            # reaproveita nome/data já coletados aqui (S-EMP-FSL-07) em vez de recomeçar do zero.
+            # S-EMP-FSL-08: observabilidade — quantas vezes o corte de idade desvia pro banco.
+            logger.info(
+                "[fluxo-sem-link][corte-idade] corte de idade acionado, desviando pro banco de "
+                "talentos — conversa=%s vaga=%s idade=%s", conversa_id, vaga_id_atual, idade,
+            )
+            await e(
+                "Entendo! 💙 Essa vaga específica pede idade mínima de 18 anos, então não "
+                "consigo prosseguir com a candidatura pra ela agora.\n\n"
+                "Mas você pode deixar seu currículo no nosso *Banco de Talentos* — quando "
+                "surgir uma vaga compatível com seu perfil, a equipe entra em contato. Quer "
+                "fazer isso? Responda *sim* ou *não*."
+            )
+            await _set_fluxo_async(conversa_id, {
+                **fluxo, "etapa": "oferta_banco_idade_fsl",
+                "data_nascimento": data_iso, "data_nascimento_aproximada": aproximada,
+            })
+            return
+    await e("Entendido! Você é *PCD* (Pessoa com Deficiência)? Responda *sim* ou *não*.")
+    await _set_fluxo_async(conversa_id, {
+        **fluxo, "etapa": "coletando_pcd",
+        "data_nascimento": data_iso, "data_nascimento_aproximada": aproximada,
+    })
+
+
+def _interpretar_sim_nao(texto: str) -> bool | None:
+    """Interpreta uma resposta binária (sim/não) de forma tolerante a negação — mesmo idioma do
+    resto do motor (ver `oferta_banco_talentos`): a negação tem prioridade (evita que "não sou"
+    caia como "sou" por causa da palavra "sou"). Retorna True (sim), False (não) ou None (ambíguo,
+    o chamador repergunta) — não é um `if texto == "sim"` ingênuo."""
+    t = texto.strip().lower()
+    if not t:
+        return None
+    if any(re.search(rf"(?:^|\s){re.escape(p)}(?:\s|$|,|\.)", t) for p in _PALAVRAS_NAO_PCD):
+        return False
+    if any(re.search(rf"(?:^|\s){re.escape(p)}(?:\s|$|,|\.)", t) for p in _PALAVRAS_SIM_PCD):
+        return True
+    return None
+
+
+async def _baixar_anexo_bucket(caminho: str) -> bytes | None:
+    """S-EMP-FSL-03: baixa o anexo do WhatsApp do bucket privado `anexos-conversas`. A S-WM-68
+    guarda só o CAMINHO (não signed URL com TTL — ver `_subir_anexo_supabase`), então isso funciona
+    a qualquer momento durante os 15 dias, mesmo que o lead demore vários turnos pra concluir.
+    Retorna os bytes ou None (nunca levanta)."""
+    if not caminho:
+        return None
+    try:
+        def _download():
+            return supabase.storage.from_("anexos-conversas").download(caminho)
+        return await _supabase_to_thread(_download)
+    except Exception:
+        logger.warning("[fluxo-sem-link] Falha ao baixar anexo do bucket: %s", caminho, exc_info=True)
+        return None
+
+
+async def _emitir_sucesso_candidatura_vaga(
+    *, codigo: str, fluxo_atual: dict, conversa_id: str,
+    instance_name: str, token: str, phone: str, lead_id: str = "",
+):
+    """Mensagem de sucesso (código de acompanhamento) + encadeamento da fila de candidaturas
+    (S-EMP-AUD-023) + landing em `pos_candidatura` (S37C). Extraído do handler
+    `aguardando_confirmacao_candidatura` pra ser reaproveitado pelo fluxo sem link, que já tem o
+    código em mãos (não espera o metadata do formulário). Comportamento idêntico ao do formulário."""
+    async def e(msg: str):
+        return await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
+
+    await e(
+        f"🎉 *Candidatura recebida com sucesso!*\n\n"
+        f"🔢 *Número de acompanhamento:* *{codigo}*\n\n"
+        "Guarde esse número! Com ele você pode verificar o status da sua candidatura a qualquer momento. ✅"
+    )
+    # S-EMP-FSL-04 (AC3): data aproximada (idade solta, sem dia/mês exatos) → pede o complemento
+    # como algo explicitamente NÃO obrigatório, sem travar nem recoletar nada. Escopo desta story é
+    # só pedir (não existe hoje uma rota de update pra persistir uma resposta posterior — inventar
+    # uma ficaria fora do que a story descreve; ver Dev Agent Record).
+    if fluxo_atual.get("data_nascimento_aproximada"):
+        await e(
+            "Só um detalhe (não é obrigatório 🙂): você me disse só a idade — se quiser, "
+            "me manda sua data de nascimento completa (ex: 25/03/2005) que eu deixo registrado. "
+            "Pode ignorar também, sua candidatura já está garantida."
+        )
+    vaga_confirmada = fluxo_atual.get("vaga_id_selecionada")
+    historico = list(fluxo_atual.get("historico_vagas_aplicadas") or [])
+    if vaga_confirmada and vaga_confirmada not in historico:
+        historico.append(vaga_confirmada)
+
+    fila = fluxo_atual.get("fila_candidaturas_pendentes") or []
+    if fila:
+        await e("Show! Agora vamos para a próxima vaga que você escolheu. 👇")
+        await _rotear_ocorrencia_escolhida(
+            ocorrencia=fila[0],
+            fila_restante=fila[1:],
+            fluxo={**fluxo_atual, "historico_vagas_aplicadas": historico},
+            conversa_id=conversa_id,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+            usar_prefill=False,
+        )
+        return
+
+    await e(
+        "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
+        "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
+    )
+    await _set_fluxo_async(conversa_id, {
+        "etapa": "pos_candidatura",
+        "perfil": "publico",
+        "ultima_candidatura_codigo": codigo,
+        "historico_vagas_aplicadas": historico,
+        "nome_candidato_prefill": fluxo_atual.get("nome_candidato", ""),
+    })
+
+
+async def _com_decisao8(fazer, *, e, holding_msg: str, contexto: dict):
+    """S-EMP-FSL-01 (decisão 8) + S-EMP-FSL-08 (observabilidade): 1ª tentativa curta; se
+    transiente, avisa uma vez (`holding_msg`) e re-tenta por trás (`PORTAL_MAX_RETRIES` vezes).
+    Compartilhado por `_finalizar_candidatura_chat` e `_finalizar_banco_talentos_chat` — extraído
+    daqui pra não duplicar a lógica de retry NEM a observabilidade dela em 2 lugares. Loga o
+    desfecho de qualquer retry que de fato aconteceu (recuperou ou esgotou) com `contexto`
+    técnico (conversa_id, vaga_id, fase) — NUNCA dado pessoal (nome, telefone, conteúdo de
+    arquivo), mesma cautela da S-EMP-AUD-034."""
+    from empregabilidade_portal_client import (  # noqa: PLC0415
+        PORTAL_TIMEOUT_PRIMEIRA_TENTATIVA_S, PORTAL_TIMEOUT_RETRY_S,
+        PORTAL_MAX_RETRIES, PORTAL_RETRY_INTERVALO_S,
+    )
+    holding = {"enviado": False}
+    res = await fazer(PORTAL_TIMEOUT_PRIMEIRA_TENTATIVA_S)
+    tentativas = 0
+    while res.deve_retentar and tentativas < PORTAL_MAX_RETRIES:
+        if not holding["enviado"]:
+            await e(holding_msg)
+            holding["enviado"] = True
+        await asyncio.sleep(PORTAL_RETRY_INTERVALO_S)
+        res = await fazer(PORTAL_TIMEOUT_RETRY_S)
+        tentativas += 1
+    if tentativas > 0:
+        if res.deve_retentar:
+            logger.error(
+                "[fluxo-sem-link][decisao8] retry esgotado (%s tentativas) — contexto=%s",
+                tentativas, contexto,
+            )
+        else:
+            logger.info(
+                "[fluxo-sem-link][decisao8] recuperou após retry (%s tentativas) — contexto=%s",
+                tentativas, contexto,
+            )
+    return res
+
+
+async def _finalizar_candidatura_chat(
+    instance_name: str, token: str, phone: str, conversa_id: str, fluxo: dict, lead_id: str = "",
+):
+    """Fecha a candidatura do fluxo sem link: sobe o currículo pro R2 permanente (baixando o anexo
+    do bucket, se veio do WhatsApp) e cria a candidatura chamando a MESMA rota do formulário, com o
+    payload idêntico. Orquestra a decisão 8 (mensagem de espera + re-tentar) em cima da
+    classificação transiente que a FSL-01 entrega. Não levanta — sempre resolve a conversa."""
+    from empregabilidade_portal_client import criar_candidatura, enviar_curriculo_para_r2  # noqa: PLC0415
+
+    async def e(msg: str):
+        return await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
+
+    vaga_id = fluxo.get("vaga_id_selecionada")
+    holding_msg = "Estou finalizando sua candidatura, já te confirmo o número de acompanhamento. Só um instante… ⏳"
+    # 1) Currículo → R2 permanente (só se veio do WhatsApp e ainda não está no R2)
+    arquivo_cv_url = fluxo.get("curriculo_r2_url") or ""
+    if not arquivo_cv_url:
+        caminho = fluxo.get("arquivo_pendente_url") or ""
+        if caminho:
+            conteudo = await _baixar_anexo_bucket(caminho)
+            if not conteudo:
+                # Havia um currículo (o lead mandou), mas o download falhou — NÃO finalizar sem
+                # ele (senão o lead ganharia código com CV perdido em silêncio). Pede pra reenviar.
+                await e("Não consegui recuperar seu currículo agora. Pode reenviar aqui na conversa? 📎")
+                await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "coletando_ou_confirmando_curriculo", "arquivo_pendente_url": "", "curriculo_r2_url": ""})
+                return
+            # folder com o vaga_id — mesma forma do formulário (preserva o contexto Sentry da AUD-034)
+            folder = f"candidaturas/{vaga_id}" if vaga_id else "candidaturas"
+            up = await _com_decisao8(
+                lambda t: enviar_curriculo_para_r2(conteudo, "curriculo", "", folder=folder, timeout_s=t),
+                e=e, holding_msg=holding_msg,
+                contexto={"conversa_id": conversa_id, "vaga_id": vaga_id, "fase": "upload_curriculo_vaga"},
+            )
+            if up.ok:
+                arquivo_cv_url = (up.dado or {}).get("url", "")
+            elif up.status == "rejeitado":
+                # S-EMP-FSL-08: sem dado pessoal cru (sem nome de arquivo/nome do lead) — só
+                # contexto técnico, mesma cautela da S-EMP-AUD-034.
+                logger.warning(
+                    "[fluxo-sem-link] Upload de currículo rejeitado (formato inválido) — "
+                    "conversa=%s vaga=%s", conversa_id, vaga_id,
+                )
+                await e("Não consegui ler seu currículo (o formato pode estar inválido). Pode reenviar em *PDF, Word, JPG ou PNG*? 📎")
+                await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "coletando_ou_confirmando_curriculo", "arquivo_pendente_url": "", "curriculo_r2_url": ""})
+                return
+            else:
+                # Retry já esgotado e logado dentro de `_com_decisao8` — aqui só a UX de saída.
+                await e("Tive uma instabilidade técnica pra registrar seu currículo agora. Pode me mandar de novo em alguns minutos? 🙏")
+                await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+                return
+
+    # 2) Candidatura via portal — payload IDÊNTICO ao do formulário (herda as mesmas regras)
+    # S-EMP-FSL-06 (achado @qa): `candidaturas.telefone` é gravado SEM o "55" em todo o resto do
+    # sistema (formulário: candidatura/page.tsx `formatPhoneInit`; SQS-56: `phone_local_grav`
+    # aqui mesmo, linha ~3793; checagem de "vagas já candidatadas":
+    # `_buscar_vagas_abertas_e_candidaturas`). Sem esse strip, o telefone gravado aqui (chat)
+    # nunca batia com o formato que as buscas por telefone (incluindo a de reaproveitamento da
+    # FSL-06) esperam — same padrão de normalização usado em `:3793`.
+    telefone_bruto = re.sub(r"\D", "", fluxo.get("telefone_candidato") or phone)
+    telefone = telefone_bruto[2:] if telefone_bruto.startswith("55") and len(telefone_bruto) > 11 else telefone_bruto
+    payload = {
+        "vaga_id": fluxo.get("vaga_id_selecionada"),
+        "nome": fluxo.get("nome_candidato"),
+        "data_nascimento": fluxo.get("data_nascimento") or None,
+        "telefone": telefone,
+        "arquivo_cv_url": arquivo_cv_url or None,
+        "conversa_id": conversa_id,
+        # PCD: o formulário só grava pcd_tipo_candidato quando pcd_candidato=True; a coleta no chat
+        # pergunta só o sim/não (não o tipo) — divergência documentada, tipo fica null (FSL-03).
+        "pcd_candidato": bool(fluxo.get("pcd_candidato", False)),
+        "observacoes": fluxo.get("observacoes") or None,
+    }
+    # cargos_escolhidos é load-bearing na dedup (vaga_id, telefone, cargo_escolhido) — sem ele,
+    # seleção multi-cargo colapsaria numa linha só. Preserva a mesma forma que o link já mandava.
+    cargos = fluxo.get("cargos_escolhidos") or []
+    if cargos:
+        payload["cargos_escolhidos"] = cargos
+    elif fluxo.get("cargo_escolhido"):
+        payload["cargo_escolhido"] = fluxo.get("cargo_escolhido")
+
+    res = await _com_decisao8(
+        lambda t: criar_candidatura(payload, timeout_s=t),
+        e=e, holding_msg=holding_msg,
+        contexto={"conversa_id": conversa_id, "vaga_id": vaga_id, "fase": "criar_candidatura_vaga"},
+    )
+
+    if res.ok:
+        dado = res.dado or {}
+        codigo = dado.get("codigo") or (dado.get("id") or "").replace("-", "")[-6:].upper()
+        await _emitir_sucesso_candidatura_vaga(
+            codigo=codigo,
+            fluxo_atual={**fluxo, "candidatura_criada_id": dado.get("id")},
+            conversa_id=conversa_id, instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+        )
+        return
+    if res.status == "ja_inscrito":
+        await e(
+            "Você já está inscrito nesta vaga com esse número. 😉\n\n"
+            "Quer ver outras vagas? Responda *outra* ou *encerrar*."
+        )
+        await _set_fluxo_async(conversa_id, {
+            "perfil": "publico", "etapa": "pos_candidatura",
+            "nome_candidato_prefill": fluxo.get("nome_candidato", ""),
+        })
+        return
+    if res.status == "rejeitado":
+        # FSL-04 vai ramificar aqui pro corte de idade (400 "idade mínima"). Por ora, gentil.
+        motivo = (res.dado or {}).get("error") or "não consegui concluir sua candidatura agora"
+        # S-EMP-FSL-08: contexto técnico + motivo (mensagem de erro do portal, não dado pessoal).
+        logger.warning(
+            "[fluxo-sem-link] Candidatura rejeitada pelo portal — conversa=%s vaga=%s motivo=%s",
+            conversa_id, vaga_id, motivo,
+        )
+        await e(f"{motivo}. Se achar que foi engano, me chame de novo por aqui. 🙏")
+        await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+        return
+    # retry esgotado (transiente persistente) — já logado dentro de `_com_decisao8`.
+    await e("Estou com uma instabilidade técnica agora e não consegui finalizar. Pode tentar de novo em alguns minutos? 🙏")
+    await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+
+
+async def _finalizar_banco_talentos_chat(
+    instance_name: str, token: str, phone: str, conversa_id: str, fluxo: dict, lead_id: str = "",
+):
+    """S-EMP-FSL-07: fecha o cadastro no Banco de Talentos pelo chat — MESMA orquestração de
+    upload/decisão-8 de `_finalizar_candidatura_chat` (FSL-03), mas grava via a MESMA rota
+    `candidaturas` que o formulário já usa pro banco: `vaga_id=None` + `observacoes` contendo
+    "banco_talentos" (ver `candidaturas/route.ts:178` — dispara o upsert em `talent_bank`
+    automaticamente lá, sem o worker precisar chamar outra rota). `area_interesse` grava a
+    string completa de cada área (`_AREAS_INTERESSE_BANCO_TALENTOS`, idêntica ao formulário) —
+    é isso que faz o filtro por área do Portal encontrar quem respondeu pelo WhatsApp. Não
+    levanta; sempre resolve a conversa."""
+    from empregabilidade_portal_client import criar_candidatura, enviar_curriculo_para_r2  # noqa: PLC0415
+
+    async def e(msg: str):
+        return await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
+
+    holding_msg = "Estou finalizando seu cadastro no banco de talentos, já te confirmo. Só um instante… ⏳"
+
+    # 1) Currículo → R2 permanente (mesmo mecanismo da FSL-03; folder "banco_talentos" quando não
+    # há vaga_id, igual ao formulário: `fd.append("folder", \`candidaturas/${vagaId ||
+    # "banco_talentos"}\`)`, candidatura/page.tsx:221)
+    arquivo_cv_url = fluxo.get("curriculo_r2_url") or ""
+    if not arquivo_cv_url:
+        caminho = fluxo.get("arquivo_pendente_url") or ""
+        if caminho:
+            conteudo = await _baixar_anexo_bucket(caminho)
+            if not conteudo:
+                await e("Não consegui recuperar seu currículo agora. Pode reenviar aqui na conversa? 📎")
+                await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "coletando_ou_confirmando_curriculo", "arquivo_pendente_url": "", "curriculo_r2_url": ""})
+                return
+            up = await _com_decisao8(
+                lambda t: enviar_curriculo_para_r2(conteudo, "curriculo", "", folder="candidaturas/banco_talentos", timeout_s=t),
+                e=e, holding_msg=holding_msg,
+                contexto={"conversa_id": conversa_id, "vaga_id": None, "fase": "upload_curriculo_banco"},
+            )
+            if up.ok:
+                arquivo_cv_url = (up.dado or {}).get("url", "")
+            elif up.status == "rejeitado":
+                logger.warning(
+                    "[fluxo-sem-link] Upload de currículo (banco de talentos) rejeitado — conversa=%s",
+                    conversa_id,
+                )
+                await e("Não consegui ler seu currículo (o formato pode estar inválido). Pode reenviar em *PDF, Word, JPG ou PNG*? 📎")
+                await _set_fluxo_async(conversa_id, {**fluxo, "etapa": "coletando_ou_confirmando_curriculo", "arquivo_pendente_url": "", "curriculo_r2_url": ""})
+                return
+            else:
+                # Retry já esgotado e logado dentro de `_com_decisao8` — aqui só a UX de saída.
+                await e("Tive uma instabilidade técnica pra registrar seu currículo agora. Pode me mandar de novo em alguns minutos? 🙏")
+                await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+                return
+
+    # 2) Cadastro via portal — mesma rota `candidaturas`, vaga_id=None + observacoes com
+    # "banco_talentos" (é isso que o route.ts usa pra decidir upsertar em talent_bank)
+    telefone_bruto = re.sub(r"\D", "", fluxo.get("telefone_candidato") or phone)
+    telefone = telefone_bruto[2:] if telefone_bruto.startswith("55") and len(telefone_bruto) > 11 else telefone_bruto
+    payload = {
+        "vaga_id": None,
+        "nome": fluxo.get("nome_candidato"),
+        "data_nascimento": fluxo.get("data_nascimento") or None,
+        "telefone": telefone,
+        "arquivo_cv_url": arquivo_cv_url or None,
+        "conversa_id": conversa_id,
+        "pcd_candidato": bool(fluxo.get("pcd_candidato", False)),
+        "observacoes": "banco_talentos: cadastro via WhatsApp",
+        "area_interesse": fluxo.get("area_interesse") or [],
+    }
+
+    res = await _com_decisao8(
+        lambda t: criar_candidatura(payload, timeout_s=t),
+        e=e, holding_msg=holding_msg,
+        contexto={"conversa_id": conversa_id, "vaga_id": None, "fase": "criar_candidatura_banco"},
+    )
+
+    if res.ok:
+        # Mesma mensagem de sucesso que o formulário já usa pro banco de talentos (ver etapa
+        # `aguardando_confirmacao_candidatura`, ramo `eh_banco_talentos`) — comportamento
+        # idêntico, só que o worker já tem a confirmação em mãos, sem esperar o metadata.
+        await e(
+            "✅ *Currículo salvo com sucesso!*\n\n"
+            "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
+            "Assim que surgir uma oportunidade compatível com seu perfil e área de interesse, "
+            "nossa equipe entrará em contato diretamente por aqui. 🎯\n\n"
+            "Obrigado por confiar na CUCA!\n\n"
+            "Deseja ver as *vagas abertas* ou encerrar por aqui?\n"
+            "Responda *vagas* para ver oportunidades ou *encerrar*."
+        )
+        await _set_fluxo_async(conversa_id, {"etapa": "candidatura_confirmada", "perfil": "publico"})
+        return
+    if res.status == "ja_inscrito":
+        # Ramo defensivo: sem `vaga_id`, a trava anti-duplicação de `candidaturas/route.ts`
+        # (que exige `vaga_id && telefone`) não se aplica — o insert de banco de talentos não
+        # deveria retornar 409 na prática. Mantido por simetria/robustez com o outro caminho.
+        await e("Já temos seu currículo no banco de talentos. 😉")
+        await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "pos_candidatura"})
+        return
+    if res.status == "rejeitado":
+        motivo = (res.dado or {}).get("error") or "não consegui concluir seu cadastro agora"
+        logger.warning(
+            "[fluxo-sem-link] Cadastro no banco de talentos rejeitado pelo portal — conversa=%s motivo=%s",
+            conversa_id, motivo,
+        )
+        await e(f"{motivo}. Se achar que foi engano, me chame de novo por aqui. 🙏")
+        await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+        return
+    # retry esgotado (transiente persistente) — já logado dentro de `_com_decisao8`.
+    await e("Estou com uma instabilidade técnica agora e não consegui finalizar. Pode tentar de novo em alguns minutos? 🙏")
+    await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
+
+
+async def _finalizar_coleta_curriculo_chat(
+    instance_name: str, token: str, phone: str, conversa_id: str, fluxo: dict, lead_id: str = "",
+):
+    """S-EMP-FSL-07: ponto de decisão entre finalizar candidatura de vaga (FSL-03) ou cadastro no
+    banco de talentos (FSL-07) — o dado que diferencia é `banco_talentos`, já presente no fluxo
+    desde a abertura da coleta (`_iniciar_coleta_chat`). Chamado pelos 2 pontos de
+    `coletando_ou_confirmando_curriculo` que hoje finalizam a coleta, em vez de decidir o destino
+    duas vezes."""
+    if fluxo.get("banco_talentos"):
+        await _finalizar_banco_talentos_chat(instance_name, token, phone, conversa_id, fluxo, lead_id=lead_id)
+        return
+    await _finalizar_candidatura_chat(instance_name, token, phone, conversa_id, fluxo, lead_id=lead_id)
+
+
+def _data_iso_para_br(data_iso: str | None) -> str:
+    """Formata `YYYY-MM-DD` pra `DD/MM/AAAA` (exibição na mensagem de reaproveitamento). Retorna
+    a string original se não bater o formato esperado — nunca levanta."""
+    if not data_iso:
+        return ""
+    partes = data_iso.split("-")
+    if len(partes) != 3:
+        return data_iso
+    ano, mes, dia = partes
+    return f"{dia}/{mes}/{ano}"
+
+
+async def _buscar_dados_anteriores_self(telefone: str, nome: str) -> dict | None:
+    """S-EMP-FSL-06: busca uma candidatura/registro de banco de talentos anterior pela chave da
+    verdade (telefone + nome) — usada só no caminho self, pra oferecer reaproveitar em vez de
+    recoletar do zero. Não tenta desambiguar homônimos que compartilham o mesmo número (buraco
+    conhecido, aceito no plano): só considera um "match" quando o nome do registro bate
+    (case-insensitive) com o nome que acabou de ser digitado agora — se não bater, trata como
+    pessoa nova, sem oferecer nada (evita reaproveitar dado da pessoa errada). Olha primeiro
+    `candidaturas` (mais completo — tem data + currículo), depois `talent_bank` como fallback.
+    Nunca levanta; retorna None se não achar ou se a consulta falhar."""
+    telefone_limpo = re.sub(r"\D", "", telefone or "")
+    if telefone_limpo.startswith("55") and len(telefone_limpo) > 11:
+        telefone_limpo = telefone_limpo[2:]
+    nome_norm = (nome or "").strip().lower()
+    if not telefone_limpo or not nome_norm:
+        return None
+    try:
+        def _buscar():
+            cand_res = supabase.table("candidaturas").select(
+                "nome, data_nascimento, arquivo_cv_url"
+            ).eq("telefone", telefone_limpo).order("created_at", desc=True).limit(5).execute()
+            for linha in (cand_res.data or []):
+                if (linha.get("nome") or "").strip().lower() == nome_norm:
+                    return linha
+            talent_res = supabase.table("talent_bank").select(
+                "nome, data_nascimento, arquivo_cv_url"
+            ).eq("telefone", telefone_limpo).order("created_at", desc=True).limit(5).execute()
+            for linha in (talent_res.data or []):
+                if (linha.get("nome") or "").strip().lower() == nome_norm:
+                    return linha
+            return None
+        return await _supabase_to_thread(_buscar)
+    except Exception:
+        logger.warning("[fluxo-sem-link] Falha ao buscar dados anteriores pra reaproveitamento", exc_info=True)
+        return None
+
+
+async def _iniciar_coleta_chat(
+    instance_name: str, token: str, phone: str, conversa_id: str, fluxo: dict,
+    nome_candidato: str, telefone_origem: str, vaga_id: str | None, lead_id: str = "",
+    banco_talentos: bool = False,
+):
+    """Abre a sequência de coleta no chat — self+vaga específica (FSL-03) OU banco de talentos
+    (S-EMP-FSL-07, quando `banco_talentos=True` e `vaga_id=None`; as duas etapas seguintes,
+    `coletando_data_nascimento`/`coletando_pcd`, são as MESMAS para os dois casos — só depois do
+    PCD é que `banco_talentos` desvia pra `escolhendo_areas_interesse` em vez de ir direto pro
+    currículo). Preserva o fluxo (spread) pra NÃO perder `fila_candidaturas_pendentes`,
+    `cargos_escolhidos`, `arquivo_pendente_url`, `historico_vagas_aplicadas` etc. — o
+    encadeamento de fila e a fidelidade do payload dependem disso."""
+    async def e(msg: str):
+        return await _enviar(instance_name, token, phone, msg, conversa_id=conversa_id, lead_id=lead_id)
+
+    # S-EMP-FSL-06: currículo é sempre pré-carregado quietamente quando há um anterior — a etapa
+    # de currículo da FSL-03 (coletando_ou_confirmando_curriculo) já sabe confirmar/substituir
+    # sozinha, sem lógica nova. A DATA só é OFERECIDA explicitamente (com uma pergunta própria)
+    # quando existe uma data anterior — é aí que a fricção de recoletar é real; PCD nunca é
+    # reaproveitado (sempre repergunta, decisão do plano).
+    dados_anteriores = await _buscar_dados_anteriores_self(telefone_origem or phone, nome_candidato)
+    curriculo_previo = (dados_anteriores or {}).get("arquivo_cv_url") or ""
+    data_previa = (dados_anteriores or {}).get("data_nascimento") or ""
+
+    # S-EMP-FSL-06 (achado @qa): normaliza o "55" aqui, na origem — mesmo padrão de todo o resto
+    # do sistema (formulário, SQS-56, checagem de "vagas já candidatadas"). `phone`/`telefone_origem`
+    # sempre chegam com "55" (formato canônico da Meta, `_normalizar_telefone_br`); sem stripar,
+    # `telefone_candidato` propagava o "55" pra `candidaturas.telefone` (via
+    # `_finalizar_candidatura_chat`), quebrando qualquer busca posterior por telefone.
+    _tel_candidato_bruto = re.sub(r"\D", "", telefone_origem or phone)
+    telefone_candidato = (
+        _tel_candidato_bruto[2:]
+        if _tel_candidato_bruto.startswith("55") and len(_tel_candidato_bruto) > 11
+        else _tel_candidato_bruto
+    )
+
+    fluxo_base = {
+        **fluxo,
+        "perfil": "publico",
+        "nome_candidato": nome_candidato,
+        "telefone_candidato": telefone_candidato,
+        "vaga_id_selecionada": vaga_id,
+        "banco_talentos": banco_talentos,
+        **({"curriculo_r2_url": curriculo_previo} if curriculo_previo else {}),
+    }
+
+    if data_previa:
+        await e(
+            f"Perfeito, {nome_candidato}! 🙌 Já tenho sua data de nascimento de uma candidatura "
+            f"anterior ({_data_iso_para_br(data_previa)}). Posso seguir com ela ou prefere "
+            "atualizar?\n\nResponda *sim* pra confirmar ou *quero atualizar* pra informar de novo."
+        )
+        await _set_fluxo_async(conversa_id, {
+            **fluxo_base,
+            "etapa": "confirmando_reaproveitamento_dados",
+            "_reaproveitamento_data_nascimento": data_previa,
+        })
+        return
+
+    await e(
+        f"Perfeito, {nome_candidato}! 🙌 Vou te fazer algumas perguntas rápidas aqui mesmo pra "
+        "concluir sua candidatura — sem precisar de link.\n\n"
+        "Primeiro: qual a sua *data de nascimento*? (ex: 25/03/2005)"
+    )
+    await _set_fluxo_async(conversa_id, {**fluxo_base, "etapa": "coletando_data_nascimento"})
+
+
+async def _finalizar_candidatura_self(
+    instance_name: str, token: str, phone: str, conversa_id: str, fluxo: dict,
+    nome_candidato: str, telefone_origem: str, vaga_id: str | None, banco_talentos: bool,
+    lead_id: str = "",
+):
+    """Ponto de decisão ÚNICO do caminho self: com o flag do fluxo sem link ligado E (vaga
+    específica OU banco de talentos — S-EMP-FSL-07), coleta no chat; senão, envia o link
+    exatamente como hoje. Centraliza o gate (em vez de espalhar o `if` pelos call sites) —
+    quando desligado, encaminha pro `_enviar_link_candidatura` com os MESMOS args, então o
+    caminho do link é provado idêntico. `vaga_id` e `banco_talentos` são mutualmente exclusivos
+    na prática (`iniciar_banco_talentos()` sempre zera `vaga_id_selecionada`)."""
+    if (vaga_id or banco_talentos) and await _fluxo_sem_link_ativo():
+        await _iniciar_coleta_chat(
+            instance_name, token, phone, conversa_id, fluxo,
+            nome_candidato, telefone_origem, vaga_id, lead_id=lead_id,
+            banco_talentos=banco_talentos,
+        )
+        return
+    await _enviar_link_candidatura(
+        instance_name, token, phone, conversa_id, fluxo,
+        nome_candidato, telefone_origem, vaga_id, banco_talentos, lead_id=lead_id,
+    )
 
 
 async def _enviar_link_candidatura(
@@ -4380,7 +5149,9 @@ _ETAPAS_CANDIDATO = {
 }
 _ETAPAS_PUBLICO = {
     "inicio", "listou_vagas", "candidatura_enviada",
-    "coletando_nome_candidato", "confirmando_terceiro", "coletando_nome_terceiro",
+    # Decisão do Junior (2026-08-29): "confirmando_terceiro"/"coletando_nome_terceiro" foram
+    # removidas — candidatura de terceiro deixou de existir, o lead só se candidata por si.
+    "coletando_nome_candidato",
     "aguardando_confirmacao_candidatura", "candidatura_confirmada",
     "pos_candidatura",            # S37C-01: novo estado para fluxo cíclico
     "oferta_banco_talentos",
@@ -4392,7 +5163,30 @@ _ETAPAS_PUBLICO = {
     "coletando_nome_curriculo_publico", # SQS-58: opção 5, montar currículo pelo celular
     "listou_cargos_consolidados", # S-EMP-AUD-023 passo 2: Nível 1, cargo consolidado
     "listou_ocorrencias_cargo",   # S-EMP-AUD-023 passo 2: Nível 2, ocorrências do(s) cargo(s) escolhido(s)
+    # S-EMP-FSL-03: coleta no chat (fluxo sem link) — self + vaga específica
+    "coletando_data_nascimento",
+    "coletando_pcd",
+    "coletando_ou_confirmando_curriculo",
+    # S-EMP-FSL-04: oferta de banco de talentos por corte de idade, na conversa
+    "oferta_banco_idade_fsl",
+    # S-EMP-FSL-06: confirmação de reaproveitamento de dados de candidatura anterior
+    "confirmando_reaproveitamento_dados",
+    # S-EMP-FSL-07: escolha de áreas de interesse (Banco de Talentos)
+    "escolhendo_areas_interesse",
 }
+
+# S-EMP-FSL-03 (AC6): as etapas de coleta no chat expiram por inatividade como as demais
+# (S-EMP-AUD-033) — uma conversa parada no meio da coleta não pode ficar presa nem contar falha
+# velha na volta. Sem tratamento especial: entram no mesmo raciocínio de reset.
+# S-EMP-FSL-04: `oferta_banco_idade_fsl` entra no mesmo conjunto — mesmo reset, sem tratamento
+# especial (o dado coletado até ali, se descartado, não perde nada que já esteja gravado no banco).
+# S-EMP-FSL-06: `confirmando_reaproveitamento_dados` idem — se expirar, a próxima tentativa self
+# refaz a busca de reaproveitamento do zero (nada se perde, o dado antigo continua no banco).
+# S-EMP-FSL-07: `escolhendo_areas_interesse` idem.
+_ETAPAS_COLETA_CHAT_FSL = frozenset({
+    "coletando_data_nascimento", "coletando_pcd", "coletando_ou_confirmando_curriculo",
+    "oferta_banco_idade_fsl", "confirmando_reaproveitamento_dados", "escolhendo_areas_interesse",
+})
 
 
 async def processar_mensagem_empregabilidade(
@@ -4405,6 +5199,7 @@ async def processar_mensagem_empregabilidade(
     unidade_cuca: str,
     push_name: str = "Cidadão",
     midia_tipo: str = "",
+    midia_url: str = "",
 ):
     async with _fluxo_lock_context(conversa_id):
         return await _processar_mensagem_empregabilidade_locked(
@@ -4417,6 +5212,7 @@ async def processar_mensagem_empregabilidade(
             unidade_cuca,
             push_name,
             midia_tipo,
+            midia_url,
         )
 
 
@@ -4430,6 +5226,7 @@ async def _processar_mensagem_empregabilidade_locked(
     unidade_cuca: str,
     push_name: str = "Cidadão",
     midia_tipo: str = "",
+    midia_url: str = "",
 ):
     """
     Entry point chamado pelo main.py quando agente_tipo = 'Empregabilidade'.
@@ -4452,6 +5249,25 @@ async def _processar_mensagem_empregabilidade_locked(
             if (agora - ultima_interacao) > timedelta(hours=_LIMIAR_INATIVIDADE_HORAS):
                 fluxo = _resetar_fluxo_por_inatividade(fluxo, etapa_salva)
                 await _set_fluxo_async(conversa_id, fluxo)
+
+    # S-EMP-FSL-08: rede de segurança do rollback — as etapas de coleta no chat (FSL-03/04/06/07)
+    # não re-checam o flag sozinhas, só o ponto de entrada (`_finalizar_candidatura_self`) checa.
+    # Sem isso, desligar o botão no meio de uma coleta não teria efeito nenhum até a conversa
+    # terminar ou expirar por inatividade (até 24h depois) — o "plano B" do rollout precisa ser
+    # imediato, não só eventual. Reinicia no fluxo do link (mesmo formato de reset da
+    # inatividade); a mensagem atual segue processada normalmente contra o novo estado — sem
+    # round-trip perdido. Lê `fluxo` (não a `etapa_salva` capturada antes) porque o bloco de
+    # inatividade acima já pode ter alterado — evita checar duas vezes/redundância.
+    # `fail_default=True` (achado do @qa): aqui o erro tem que assumir "ainda ligado", não
+    # "desligado" — diferente do ponto de entrada, aqui um erro transiente reiniciando a conversa
+    # descartaria nome/data/PCD já coletados sem o admin ter desligado nada de verdade.
+    if fluxo.get("etapa", "") in _ETAPAS_COLETA_CHAT_FSL and not await _fluxo_sem_link_ativo(fail_default=True):
+        logger.info(
+            "[fluxo-sem-link][rollback] flag desligado com conversa em etapa nova (%s) — "
+            "reiniciando no fluxo do link. conversa=%s", fluxo.get("etapa", ""), conversa_id,
+        )
+        fluxo = {"perfil": fluxo.get("perfil"), "etapa": "inicio"}
+        await _set_fluxo_async(conversa_id, fluxo)
 
     perfil_atual = fluxo.get("perfil")
     etapa_atual = fluxo.get("etapa", "")
@@ -4591,7 +5407,7 @@ async def _processar_mensagem_empregabilidade_locked(
             from intencao_detector import extrair_setor_da_mensagem  # noqa: PLC0415
             await _rotear_por_intencao(
                 sem_pendente, texto, phone, instance_name, token, lead_id, conversa_id,
-                unidade_pendente, extrair_setor_da_mensagem,
+                unidade_pendente, extrair_setor_da_mensagem, midia_url=midia_url,
             )
             return
         # Não confirmou (ou resposta que não seja um "sim" claro) — não travar
@@ -4618,7 +5434,7 @@ async def _processar_mensagem_empregabilidade_locked(
         await _processar_candidato(texto, phone, instance_name, token, lead_id, conversa_id)
         return
     if perfil_atual == "publico" or etapa_atual in _ETAPAS_PUBLICO:
-        await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+        await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca, midia_url=midia_url)
         return
 
     # Retomada de empresa sem etapa ativa mas com empresa_id salvo
@@ -4629,7 +5445,7 @@ async def _processar_mensagem_empregabilidade_locked(
 
     # Usuário respondeu ao menu inicial com número ou palavra-chave
     if etapa_atual == "menu_inicial":
-        await _processar_menu_inicial(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+        await _processar_menu_inicial(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca, midia_url=midia_url)
         return
 
     # SQS-49: detectar resposta de confirmação de presença (SIM/NÃO) para selecao_evento
@@ -4691,7 +5507,7 @@ async def _processar_mensagem_empregabilidade_locked(
     await _log_intencao_async(conversa_id, intencao_res["intencao"])
     await _rotear_por_intencao(
         intencao_res, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
-        extrair_setor_da_mensagem,
+        extrair_setor_da_mensagem, midia_url=midia_url,
     )
 
 
@@ -4707,6 +5523,7 @@ async def _processar_menu_inicial(
     lead_id: str,
     conversa_id: str,
     unidade_cuca: str,
+    midia_url: str = "",
 ) -> None:
     """Dispatch da etapa `menu_inicial` (extraído de
     `processar_mensagem_empregabilidade` para ser testável isoladamente,
@@ -4730,7 +5547,7 @@ async def _processar_menu_inicial(
         return
     if t in ("3", "vagas", "vaga", "ver vagas", "vagas abertas", "quero trabalhar", "emprego"):
         await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio"})
-        await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+        await _processar_publico(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca, midia_url=midia_url)
         return
     if t in ("4", "enviar curriculo", "enviar currículo", "deixar curriculo", "deixar currículo",
              "sem vaga", "curriculo sem vaga", "currículo sem vaga", "banco", "cadastrar curriculo",
@@ -4784,7 +5601,7 @@ async def _processar_menu_inicial(
         return
     await _rotear_por_intencao(
         sem_menu, texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca,
-        extrair_setor_da_mensagem,
+        extrair_setor_da_mensagem, midia_url=midia_url,
     )
 
 
@@ -4812,6 +5629,7 @@ async def _rotear_por_intencao(
     conversa_id: str,
     unidade_cuca: str,
     extrair_setor_fn=None,
+    midia_url: str = "",
 ) -> None:
     """Roteia a primeira mensagem com base na intenção detectada (S-EMP-01-01)."""
     intencao = intencao_res.get("intencao", "ambiguo")
@@ -4960,7 +5778,17 @@ async def _rotear_por_intencao(
             "*vaga específica* ou deixar no *Banco de Talentos*?\n\n"
             "Responda *vaga* ou *banco de talentos*."
         )
-        await _set_fluxo_async(conversa_id, {"perfil": "publico", "etapa": "inicio", "arquivo_pendente": True})
+        # S-EMP-FSL-02: guarda a URL real do anexo (capturada pela S-WM-68 e agora trafegada até
+        # aqui) em vez do booleano morto `arquivo_pendente`, que era escrito e nunca lido. Fica
+        # INERTE até a FSL-03 consumi-la sob o flag do fluxo sem link — com o botão desligado,
+        # ninguém lê `arquivo_pendente_url`, então o comportamento é idêntico ao de hoje. Se o lead
+        # reenviar um arquivo antes da hora, a URL mais recente sobrescreve a anterior (pode ter
+        # corrigido o arquivo). `midia_url` vazio (ex.: chegou só o tipo, sem URL) também é guardado
+        # como "" — inofensivo.
+        novo_fluxo = {"perfil": "publico", "etapa": "inicio"}
+        if midia_url:
+            novo_fluxo["arquivo_pendente_url"] = midia_url
+        await _set_fluxo_async(conversa_id, novo_fluxo)
 
     else:
         # AC#4 / bug 1 (S-WM-20 Task 3): ambíguo — menu determinístico em vez
