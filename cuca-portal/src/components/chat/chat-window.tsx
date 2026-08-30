@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-import { User, Bot, Send, ShieldCheck, Zap, PauseCircle, HandshakeIcon } from "lucide-react";
+import { User, Bot, Send, ShieldCheck, Zap, PauseCircle, HandshakeIcon, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,9 @@ import AnexoMensagem from "./anexo-mensagem";
 interface ChatWindowProps {
     conversationId: string | null;
     moduloAtendimento?: string;
+    /** Mobile: volta pra lista de conversas (esconde o chat, mostra a sidebar). Sem isso, o
+     * botão de voltar não aparece — desktop não precisa, as 2 colunas já ficam lado a lado. */
+    onBack?: () => void;
 }
 
 type ChatLead = {
@@ -45,7 +48,7 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-export default function ChatWindow({ conversationId, moduloAtendimento = 'atendimentos_institucional' }: ChatWindowProps) {
+export default function ChatWindow({ conversationId, moduloAtendimento = 'atendimentos_institucional', onBack }: ChatWindowProps) {
     const { hasPermission } = useUser();
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [conversation, setConversation] = useState<ChatConversation | null>(null);
@@ -264,6 +267,17 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
         <div className="flex-1 flex flex-col h-full bg-card/20 backdrop-blur-md relative overflow-hidden">
             {/* Header */}
             <div className="p-4 border-b bg-card/60 backdrop-blur-xl flex items-center gap-3 shadow-sm relative z-20">
+                {onBack && (
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 -ml-1 shrink-0 md:hidden"
+                        onClick={onBack}
+                        aria-label="Voltar pra lista de conversas"
+                    >
+                        <ArrowLeft className="h-4 w-4" />
+                    </Button>
+                )}
                 <Avatar className="h-9 w-9 border border-muted">
                     <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
                         {conversation?.leads?.nome?.substring(0, 2).toUpperCase() || "CN"}

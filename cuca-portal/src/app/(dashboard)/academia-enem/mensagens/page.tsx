@@ -3,6 +3,7 @@
 import { useState } from "react";
 import ChatSidebar from "@/components/chat/chat-sidebar";
 import ChatWindow from "@/components/chat/chat-window";
+import { ChatMasterDetail } from "@/components/chat/chat-master-detail";
 import { Badge } from "@/components/ui/badge";
 
 // Constante estável fora do componente — evita recriar canal Realtime a cada render.
@@ -14,8 +15,8 @@ export default function AcademiaEnemMensagensPage() {
 
     return (
         <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-background">
-            <div className="px-6 py-4 border-b bg-card">
-                <h1 className="text-2xl font-bold tracking-tight flex items-center gap-3">
+            <div className="px-4 sm:px-6 py-4 border-b bg-card">
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex flex-wrap items-center gap-2 sm:gap-3">
                     Atendimento — Academia Enem
                     <Badge variant="secondary">WhatsApp oficial</Badge>
                 </h1>
@@ -23,19 +24,24 @@ export default function AcademiaEnemMensagensPage() {
                     Conversas e transbordos do canal Meta oficial da Academia Enem.
                 </p>
             </div>
-            <div className="flex flex-1 overflow-hidden">
-                <div className="w-80 lg:w-96 h-full flex-shrink-0 border-r border-[#E5E7EB]">
+            <ChatMasterDetail
+                activeConversationId={activeConversationId}
+                sidebar={
                     <ChatSidebar
                         title="Academia Enem"
                         activeConversationId={activeConversationId}
                         onSelectConversation={setActiveConversationId}
                         filterCanalTipo={CANAL_ACADEMIA_ENEM}
                     />
-                </div>
-                <div className="flex-1 h-full relative">
-                    <ChatWindow conversationId={activeConversationId} moduloAtendimento="atendimentos_academia_enem" />
-                </div>
-            </div>
+                }
+                chat={
+                    <ChatWindow
+                        conversationId={activeConversationId}
+                        moduloAtendimento="atendimentos_academia_enem"
+                        onBack={() => setActiveConversationId(null)}
+                    />
+                }
+            />
         </div>
     );
 }
