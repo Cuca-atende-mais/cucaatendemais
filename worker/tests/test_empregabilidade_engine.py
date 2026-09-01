@@ -2907,10 +2907,10 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         assert estado["ocorrencias_auto_pendentes"] == []
 
     @pytest.mark.asyncio
-    async def test_escolha_nivel1_multiplos_cargos_unicos_enfileira_sem_nivel2(self, monkeypatch, _isola_enviar):
-        """2 cargos escolhidos juntos, cada um com 1 ocorrência só: nenhum
-        Nível 2 aparece — a 1ª ocorrência é roteada, a 2ª entra na fila
-        automática (mesmo mecanismo já usado pra múltipla escolha no Nível 2)."""
+    async def test_escolha_nivel1_multiplos_cargos_unicos_limita_a_1(self, monkeypatch, _isola_enviar):
+        """S-EMP-CARD-01: vaga-a-vaga. 2 cargos escolhidos juntos, cada um com 1
+        ocorrência: nenhum Nível 2 aparece — só a 1ª ocorrência é roteada e a 2ª
+        é IGNORADA (fila fica vazia; o fim pergunta se quer outra vaga)."""
         estado, fake_get, fake_set = _fluxo_mock("listou_cargos_consolidados", {
             "perfil": "publico",
             "mapa_cargos_consolidados": {
@@ -2934,11 +2934,11 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
 
         await emp._processar_publico("1,2", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
 
-        # Nunca passa por listou_ocorrencias_cargo — roteia a 1ª (Porteiro) e
-        # guarda a 2ª (Consultora) na fila automática.
+        # Nunca passa por listou_ocorrencias_cargo — roteia a 1ª (Porteiro,
+        # seleção_evento → coleta nome) e IGNORA a 2ª (Consultora): fila vazia.
         assert estado["etapa"] == "coletando_nome_candidato"
         assert estado["cargos_escolhidos"] == ["Porteiro"]
-        assert estado["fila_candidaturas_pendentes"][0]["vaga_id"] == "v3"
+        assert estado.get("fila_candidaturas_pendentes") == []
 
     @pytest.mark.asyncio
     async def test_escolha_nivel1_mistura_unico_e_multiplo_mostra_nivel2_so_pro_que_precisa(self, monkeypatch, _isola_enviar):
@@ -2981,10 +2981,11 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         # na fila assim que o lead responder o Nível 2.
         assert estado["ocorrencias_auto_pendentes"][0]["vaga_id"] == "v3"
 
-        # Lead escolhe "1" no Nível 2 → Porteiro/Empresa A roteado, e a
-        # Consultora (auto) entra na fila automática, sem exigir escolha nova.
+        # S-EMP-CARD-01: Lead escolhe "1" no Nível 2 → Porteiro/Empresa A roteado
+        # (seleção → coleta nome). A Consultora (auto-pendente) é IGNORADA (vaga-
+        # a-vaga): fila vazia, o fim é que pergunta se quer outra vaga.
         await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
-        assert estado["fila_candidaturas_pendentes"][-1]["vaga_id"] == "v3"
+        assert estado.get("fila_candidaturas_pendentes") == []
 
     @pytest.mark.asyncio
     async def test_escolha_nivel1_multipla_numera_ocorrencias_de_forma_continua(self, monkeypatch, _isola_enviar):
@@ -3075,7 +3076,8 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         assert estado["cargos_escolhidos"] == ["Porteiro"]
 
     @pytest.mark.asyncio
-    async def test_nivel2_vaga_normal_global_pergunta_unidade(self, monkeypatch, _isola_enviar):
+    async def test_nivel2_vaga_normal_global_card_e_sim_pergunta_unidade(self, monkeypatch, _isola_enviar):
+        # S-EMP-CARD-01: vaga_normal mostra o card + sim/não ANTES de coletar.
         estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
             "perfil": "publico",
             "mapa_ocorrencias": {
@@ -3087,18 +3089,25 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
         fake = _SupabaseFakeBloco6()
-        fake.vagas_publicas = [{"id": "v3", "unidade_destino": "global"}]
+        fake.vagas_publicas = [{"id": "v3", "unidade_destino": "global",
+                                 "titulo": "Consultora de Vendas", "descricao": "Venda no varejo"}]
         fake.unidades = [{"id": "u1", "nome": "Barra"}, {"id": "u2", "nome": "Mondubim"}]
         monkeypatch.setattr(emp, "supabase", fake)
 
+        # 1) escolhe a vaga → card + pergunta sim/não
         await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+        assert estado["etapa"] == "confirmando_interesse_vaga"
+        assert estado["vaga_id_selecionada"] == "v3"
 
+        # 2) responde SIM → segue o fluxo: vaga global pergunta a unidade
+        await emp._processar_publico("sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
         assert estado["etapa"] == "aguardando_escolha_unidade"
         texto_enviado = _isola_enviar.call_args.args[3]
         assert "toda a rede" in texto_enviado.lower()
 
     @pytest.mark.asyncio
-    async def test_nivel2_vaga_normal_unidade_especifica_pede_nome(self, monkeypatch, _isola_enviar):
+    async def test_nivel2_vaga_normal_unidade_especifica_card_e_sim_pede_nome(self, monkeypatch, _isola_enviar):
+        # S-EMP-CARD-01: card + sim/não; no SIM, unidade específica → pede nome.
         estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
             "perfil": "publico",
             "mapa_ocorrencias": {
@@ -3110,11 +3119,14 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
         fake = _SupabaseFakeBloco6()
-        fake.vagas_publicas = [{"id": "v3", "unidade_destino": "unidade-pici"}]
+        fake.vagas_publicas = [{"id": "v3", "unidade_destino": "unidade-pici",
+                                 "titulo": "Consultora de Vendas", "descricao": "Venda no varejo"}]
         monkeypatch.setattr(emp, "supabase", fake)
 
         await emp._processar_publico("1", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+        assert estado["etapa"] == "confirmando_interesse_vaga"
 
+        await emp._processar_publico("sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
         assert estado["etapa"] == "coletando_nome_candidato"
         assert estado["vaga_id_selecionada"] == "v3"
 
@@ -3274,7 +3286,8 @@ class TestS_EMP_AUD_023Passo2FluxoReal:
 class TestS_EMP_AUD_023Passo3FilaCandidaturas:
 
     @pytest.mark.asyncio
-    async def test_escolha_multipla_no_nivel2_popula_a_fila_com_o_restante(self, monkeypatch, _isola_enviar):
+    async def test_escolha_multipla_no_nivel2_limita_a_1_ignora_extras(self, monkeypatch, _isola_enviar):
+        # S-EMP-CARD-01: vaga-a-vaga — escolha múltipla no Nível 2 só honra a 1ª.
         estado, fake_get, fake_set = _fluxo_mock("listou_ocorrencias_cargo", {
             "perfil": "publico",
             "mapa_ocorrencias": {
@@ -3293,19 +3306,17 @@ class TestS_EMP_AUD_023Passo3FilaCandidaturas:
 
         await emp._processar_publico("1,2", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
 
-        # 1ª ocorrência roteada de imediato (seleção → coletando nome).
+        # 1ª ocorrência roteada de imediato (seleção → coletando nome); a 2ª
+        # (v3) é IGNORADA (vaga-a-vaga) — fila vazia.
         assert estado["etapa"] == "coletando_nome_candidato"
         assert estado["cargos_escolhidos"] == ["Porteiro"]
-        # 2ª ocorrência guardada na fila, pronta pra ser consumida ao final.
-        fila = estado["fila_candidaturas_pendentes"]
-        assert len(fila) == 1
-        assert fila[0]["vaga_id"] == "v3"
+        assert estado.get("fila_candidaturas_pendentes") == []
 
     @pytest.mark.asyncio
-    async def test_conclusao_de_candidatura_por_link_encadeia_proxima_da_fila_automaticamente(self, monkeypatch, _isola_enviar):
-        """Ponto de conclusão: aguardando_confirmacao_candidatura (vaga_normal
-        / link). Com fila pendente, não oferece 'outra/encerrar' — já roteia
-        a próxima ocorrência sozinho."""
+    async def test_conclusao_de_candidatura_nao_encadeia_vai_para_pos_candidatura(self, monkeypatch, _isola_enviar):
+        """S-EMP-CARD-01: auto-encadeamento APOSENTADO (vaga-a-vaga). Mesmo com
+        uma fila injetada, concluir a candidatura NÃO roteia a próxima — sempre
+        oferece outra/encerrar (pos_candidatura)."""
         proxima = {
             "vaga_id": "v9", "tipo": "vaga_normal", "cargo_titulo_original": "Auxiliar",
             "quantidade": 2, "empresa_nome": "Empresa X", "rotulo_tipo": "Vaga individual",
@@ -3329,97 +3340,22 @@ class TestS_EMP_AUD_023Passo3FilaCandidaturas:
 
         await emp._processar_publico("oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
 
-        # Não caiu em pos_candidatura (que ofereceria "outra/encerrar") — foi
-        # direto pra rota da próxima ocorrência (vaga_normal específica → pede nome).
-        assert estado["etapa"] == "coletando_nome_candidato"
-        assert estado["vaga_id_selecionada"] == "v9"
-        # Fila consumida — item processado sai da lista.
-        assert estado["fila_candidaturas_pendentes"] == []
-        # Histórico da candidatura concluída foi salvo antes de seguir.
+        # Vaga-a-vaga: NÃO roteou a próxima (v9); ofereceu outra/encerrar.
+        assert estado["etapa"] == "pos_candidatura"
         assert "v1" in estado["historico_vagas_aplicadas"]
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "outra" in texto_enviado.lower() or "encerrar" in texto_enviado.lower()
+
+    # S-EMP-CARD-01: removidos `test_fila_nunca_reaproveita_nome_entre_candidaturas_diferentes`
+    # e `test_fila_com_vaga_global_tambem_nao_reaproveita_nome` — testavam a
+    # NÃO-reutilização de nome/prefill DURANTE o auto-encadeamento da fila, que
+    # foi aposentado (vaga-a-vaga). Sem encadeamento, não há próxima candidatura
+    # na mesma sessão pra herdar prefill; o cenário deixou de existir.
 
     @pytest.mark.asyncio
-    async def test_fila_nunca_reaproveita_nome_entre_candidaturas_diferentes(self, monkeypatch, _isola_enviar):
-        """Seção 5, regra 5, literal: 'nunca reaproveitando nome/dados entre
-        elas'. Mesmo com nome_candidato_prefill de uma candidatura anterior
-        disponível no fluxo, o item dequeueado da fila pede nome de novo."""
-        proxima = {
-            "vaga_id": "v9", "tipo": "vaga_normal", "cargo_titulo_original": "Auxiliar",
-            "quantidade": 2, "empresa_nome": "Empresa X", "rotulo_tipo": "Vaga individual",
-            "cargo_exibicao": "Auxiliar",
-        }
-        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
-            "perfil": "publico",
-            "banco_talentos": False,
-            "candidatura_criada_id": "cand-1",
-            "candidatura_codigo": "ABC123",
-            "vaga_id_selecionada": "v1",
-            "nome_candidato": "Maria Silva",
-            "nome_candidato_prefill": "Maria Silva",  # já existia de antes
-            "historico_vagas_aplicadas": [],
-            "fila_candidaturas_pendentes": [proxima],
-        })
-        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
-        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
-        fake = _SupabaseFakeBloco6()
-        fake.vagas_publicas = [{"id": "v9", "unidade_destino": "unidade-x"}]
-        monkeypatch.setattr(emp, "supabase", fake)
-
-        await emp._processar_publico("oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
-
-        # Se tivesse reaproveitado o prefill, teria ido direto pro link
-        # (_enviar_link_candidatura → aguardando_confirmacao_candidatura),
-        # pulando a coleta de nome. Confirma que pediu nome de novo.
-        assert estado["etapa"] == "coletando_nome_candidato"
-
-    @pytest.mark.asyncio
-    async def test_fila_com_vaga_global_tambem_nao_reaproveita_nome(self, monkeypatch, _isola_enviar):
-        """Achado do @qa (revisão do passo 3): o caso acima só cobria vaga
-        individual de unidade ESPECÍFICA. O branch de vaga GLOBAL (pergunta
-        unidade antes de pedir nome) tem seu próprio ponto de limpeza do
-        prefill — sem este teste, remover essa limpeza não quebrava nenhum
-        teste (confirmado pelo @qa desligando o código na mão). Aqui a
-        próxima ocorrência da fila é uma vaga_normal global; com
-        nome_candidato_prefill de uma candidatura anterior no fluxo, confirma
-        que a etapa seguinte (aguardando_escolha_unidade) NÃO carrega esse
-        prefill — só assim, quando a unidade for escolhida, o handler
-        genérico de aguardando_escolha_unidade vai pedir o nome de novo em
-        vez de pular direto pro link com o nome antigo."""
-        proxima_global = {
-            "vaga_id": "v9", "tipo": "vaga_normal", "cargo_titulo_original": "Auxiliar",
-            "quantidade": 2, "empresa_nome": "Empresa X", "rotulo_tipo": "Vaga individual",
-            "cargo_exibicao": "Auxiliar",
-        }
-        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
-            "perfil": "publico",
-            "banco_talentos": False,
-            "candidatura_criada_id": "cand-1",
-            "candidatura_codigo": "ABC123",
-            "vaga_id_selecionada": "v1",
-            "nome_candidato": "Maria Silva",
-            "nome_candidato_prefill": "Maria Silva",  # já existia de antes
-            "historico_vagas_aplicadas": [],
-            "fila_candidaturas_pendentes": [proxima_global],
-        })
-        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
-        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
-        fake = _SupabaseFakeBloco6()
-        fake.vagas_publicas = [{"id": "v9", "unidade_destino": "global"}]
-        fake.unidades = [{"id": "u1", "nome": "Barra"}, {"id": "u2", "nome": "Mondubim"}]
-        monkeypatch.setattr(emp, "supabase", fake)
-
-        await emp._processar_publico("oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
-
-        assert estado["etapa"] == "aguardando_escolha_unidade"
-        # A prova real do achado: se o prefill não fosse limpo aqui, ficaria
-        # "Maria Silva" (herdado da candidatura anterior) — pediria unidade
-        # e, ao escolher, iria direto pro link sem pedir nome de novo.
-        assert estado["nome_candidato_prefill"] == ""
-
-    @pytest.mark.asyncio
-    async def test_conclusao_de_selecao_encadeia_proxima_da_fila_automaticamente(self, monkeypatch, _isola_enviar):
-        """Ponto de conclusão: confirmando_presenca_telefone (SQS-56, seleção
-        sem coleta de currículo). Com fila pendente, encadeia a próxima."""
+    async def test_conclusao_de_selecao_nao_encadeia_vai_para_pos_candidatura(self, monkeypatch, _isola_enviar):
+        """S-EMP-CARD-01: auto-encadeamento APOSENTADO. Mesmo com fila injetada,
+        concluir a presença (seleção) NÃO encadeia — oferece outra/encerrar."""
         proxima = {
             "vaga_id": "v9", "tipo": "selecao_evento", "cargo_titulo_original": "Jardineiro",
             "quantidade": 10, "empresa_nome": "Empresa Y", "rotulo_tipo": "Processo seletivo Cuca: Toda a Rede",
@@ -3444,11 +3380,9 @@ class TestS_EMP_AUD_023Passo3FilaCandidaturas:
             "85999998888", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
         )
 
-        # Não caiu em pos_candidatura — encadeou a próxima ocorrência da fila
-        # (seleção, coleta_curriculo=True → coletando_nome_candidato).
-        assert estado["etapa"] == "coletando_nome_candidato"
-        assert estado["cargos_escolhidos"] == ["Jardineiro"]
-        assert estado["fila_candidaturas_pendentes"] == []
+        # S-EMP-CARD-01: vaga-a-vaga — NÃO encadeou (Jardineiro/v9 ignorado);
+        # ofereceu outra/encerrar.
+        assert estado["etapa"] == "pos_candidatura"
 
     @pytest.mark.asyncio
     async def test_sem_fila_mantem_comportamento_antigo_de_outra_ou_encerrar(self, monkeypatch, _isola_enviar):
@@ -5333,7 +5267,9 @@ class TestFinalizarCandidaturaChat:
         assert "ABC123" in enviado
 
     @pytest.mark.asyncio
-    async def test_fila_encadeia_proxima(self, monkeypatch, _isola_enviar):
+    async def test_fila_nao_encadeia_vai_para_pos_candidatura(self, monkeypatch, _isola_enviar):
+        # S-EMP-CARD-01: auto-encadeamento APOSENTADO (vaga-a-vaga). Mesmo com
+        # fila pendente, o chat conclui a candidatura e oferece outra/encerrar.
         estado, fake_get, fake_set = _fluxo_mock("coletando_ou_confirmando_curriculo", {})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
@@ -5344,7 +5280,8 @@ class TestFinalizarCandidaturaChat:
         fluxo = {"vaga_id_selecionada": "v1", "nome_candidato": "Maria",
                  "fila_candidaturas_pendentes": [{"vaga_id": "v2"}], "arquivo_pendente_url": "document/x.pdf"}
         await emp._finalizar_candidatura_chat("PID", "tok", "5585999", "conv-1", fluxo, lead_id="l1")
-        rotear.assert_awaited_once()
+        rotear.assert_not_awaited()
+        assert estado["etapa"] == "pos_candidatura"
 
     @pytest.mark.asyncio
     async def test_retry_manda_espera_e_retenta(self, monkeypatch, _isola_enviar):
@@ -6455,3 +6392,79 @@ def _mock_sb_multi_com_system_config_falho(mock_system_config: MagicMock) -> Mag
     mock_candidaturas = MagicMock()
     mock_candidaturas.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
     return _mock_multi_tabela({"system_config": mock_system_config, "candidaturas": mock_candidaturas})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-CARD-01 — Card da vaga + confirmação (sim/não) antes de pedir currículo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestS_EMP_CARD_01CardVagaConfirmacao:
+
+    def test_montar_card_vaga_completo_inclui_todos_os_campos(self):
+        card = emp._montar_card_vaga({
+            "titulo": "Vendedor", "descricao": "Vender no varejo",
+            "salario": "R$ 1.500", "carga_horaria": "44h semanais", "tipo_contrato": "CLT",
+            "requisitos": "Ensino médio completo", "beneficios": "VT + VR",
+        })
+        assert "Vendedor" in card
+        assert "Vender no varejo" in card
+        assert "R$ 1.500" in card and "44h semanais" in card and "CLT" in card
+        assert "Ensino médio completo" in card and "VT + VR" in card
+
+    def test_montar_card_vaga_omite_campos_vazios(self):
+        # Metade das vagas não tem benefícios/salário/carga — não pode virar rótulo vazio.
+        card = emp._montar_card_vaga({
+            "titulo": "Auxiliar", "descricao": "Ajudar na loja",
+            "salario": "", "carga_horaria": None, "tipo_contrato": "CLT",
+            "requisitos": "  ", "beneficios": None,
+        })
+        assert "Auxiliar" in card and "Ajudar na loja" in card and "CLT" in card
+        assert "💰" not in card            # salário vazio → sem linha de salário
+        assert "🕐" not in card            # carga vazia → sem linha de carga
+        assert "Requisitos" not in card    # requisitos em branco → sem seção
+        assert "Benefícios" not in card    # benefícios None → sem seção
+
+    def test_montar_card_vaga_vazio_usa_fallback(self):
+        # L1 (QA): vaga sem título nem descrição → nunca mensagem em branco.
+        card = emp._montar_card_vaga({"titulo": "", "descricao": None,
+                                      "salario": "", "beneficios": None})
+        assert card.strip() != ""
+        assert "Vaga disponível" in card
+
+    @pytest.mark.asyncio
+    async def test_nao_desistencia_vai_para_pos_candidatura_com_3_opcoes(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_interesse_vaga", {
+            "perfil": "publico",
+            "vaga_id_selecionada": "v3",
+            "cargo_selecionado": "Consultora de Vendas",
+            "historico_vagas_aplicadas": [],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+
+        await emp._processar_publico("não quero essa", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "pos_candidatura"
+        low = _isola_enviar.call_args.args[3].lower()
+        assert "outras vagas" in low and "banco de talentos" in low and "encerrar" in low
+
+    @pytest.mark.asyncio
+    async def test_ambiguo_reprompt_nao_trava(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_interesse_vaga", {
+            "perfil": "publico",
+            "vaga_id_selecionada": "v3",
+            "cargo_selecionado": "X",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+        # escape semântico não trata (não é mudança de assunto) → deve repetir a pergunta
+        monkeypatch.setattr(emp, "_escape_semantico_ou_none", AsyncMock(return_value=False))
+
+        await emp._processar_publico("hmm sei lá", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        # continua na mesma etapa (não avança, não trava) e repergunta sim/não
+        assert estado.get("etapa", "confirmando_interesse_vaga") == "confirmando_interesse_vaga"
+        low = _isola_enviar.call_args.args[3].lower()
+        assert "sim" in low and "não" in low

@@ -1389,6 +1389,94 @@ async def _confirmar_cargos_selecao_evento(
     })
 
 
+def _montar_card_vaga(vaga: dict) -> str:
+    """S-EMP-CARD-01: monta a mensagem-card da vaga com copy atraente, incluindo
+    APENAS os campos preenchidos (benefícios/salário/carga/requisitos faltam em
+    ~40-54% das vagas — nunca renderizar rótulo vazio)."""
+    linhas: list[str] = []
+    titulo = (vaga.get("titulo") or "").strip()
+    if titulo:
+        linhas.append(f"🌟 *{titulo}*")
+    descricao = (vaga.get("descricao") or "").strip()
+    if descricao:
+        linhas.append(f"\n📝 {descricao}")
+    resumo: list[str] = []
+    salario = (vaga.get("salario") or "").strip()
+    if salario:
+        resumo.append(f"💰 {salario}")
+    carga = (vaga.get("carga_horaria") or "").strip()
+    if carga:
+        resumo.append(f"🕐 {carga}")
+    contrato = (vaga.get("tipo_contrato") or "").strip()
+    if contrato:
+        resumo.append(f"📋 {contrato}")
+    if resumo:
+        linhas.append("\n" + " · ".join(resumo))
+    requisitos = (vaga.get("requisitos") or "").strip()
+    if requisitos:
+        linhas.append(f"\n✅ *Requisitos:*\n{requisitos}")
+    beneficios = (vaga.get("beneficios") or "").strip()
+    if beneficios:
+        linhas.append(f"\n🎁 *Benefícios:*\n{beneficios}")
+    if not linhas:
+        # L1 (QA): vaga sem nenhum campo preenchido — nunca enviar mensagem em
+        # branco. Em produção não ocorre (descrição é sempre preenchida), mas o
+        # fallback deixa o fluxo robusto.
+        return "📋 *Vaga disponível*\n\nConfira os detalhes com a equipe e responda se deseja se candidatar."
+    return "\n".join(linhas)
+
+
+async def _apresentar_card_e_confirmar_interesse(
+    *,
+    vaga_id: str,
+    cargo_escolhido: str,
+    fluxo: dict,
+    fila_restante: list[dict],
+    usar_prefill: bool,
+    conversa_id: str,
+    instance_name: str,
+    token: str,
+    phone: str,
+    lead_id: str,
+) -> None:
+    """S-EMP-CARD-01: antes de coletar qualquer dado (só vaga_normal), mostra o
+    card da vaga (msg 1) + a pergunta sim/não (msg 2) e para em
+    `confirmando_interesse_vaga`. O SIM re-entra em `_rotear_ocorrencia_escolhida`
+    com `interesse_confirmado=True` (pula este portão)."""
+    def _buscar_vaga():
+        res = supabase.table("vagas").select(
+            "titulo, descricao, beneficios, requisitos, salario, carga_horaria, tipo_contrato"
+        ).eq("id", vaga_id).maybe_single().execute()
+        data = res.data
+        if isinstance(data, list):  # defensivo: maybe_single deve dar dict, mas mocks devolvem lista
+            data = data[0] if data else {}
+        return data or {}
+
+    vaga = await _supabase_to_thread(_buscar_vaga)
+    await _enviar(
+        instance_name, token, phone, _montar_card_vaga(vaga),
+        conversa_id=conversa_id, lead_id=lead_id,
+    )
+    await _enviar(
+        instance_name, token, phone,
+        "Curtiu a vaga? 💜 Para enviar seu currículo e concorrer, responda *SIM*.\n"
+        "Se não for esta, responda *NÃO* que eu te mostro outras. 👀",
+        conversa_id=conversa_id, lead_id=lead_id,
+    )
+    await _set_fluxo_async(conversa_id, {
+        **_fluxo_sem_falhas_atendente(fluxo),
+        "perfil": "publico",
+        "etapa": "confirmando_interesse_vaga",
+        "vaga_id_selecionada": vaga_id,
+        "cargo_selecionado": cargo_escolhido,
+        "banco_talentos": False,
+        "fila_candidaturas_pendentes": fila_restante,
+        "usar_prefill_interesse": usar_prefill,
+        "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", "") if usar_prefill else "",
+        "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+    })
+
+
 async def _rotear_ocorrencia_escolhida(
     *,
     ocorrencia: dict,
@@ -1432,6 +1520,18 @@ async def _rotear_ocorrencia_escolhida(
             conversa_id=conversa_id,
             instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
             fila_candidaturas_pendentes=fila_restante,
+        )
+        return
+
+    # S-EMP-CARD-01: portão do card + confirmação de interesse (só vaga_normal).
+    # Na 1ª passada mostra o card e para em `confirmando_interesse_vaga`; o SIM
+    # re-entra aqui com `interesse_confirmado=True` e segue a rota normal abaixo.
+    if not fluxo.get("interesse_confirmado"):
+        await _apresentar_card_e_confirmar_interesse(
+            vaga_id=vaga_id_escolhida, cargo_escolhido=cargo_escolhido,
+            fluxo=fluxo, fila_restante=fila_restante, usar_prefill=usar_prefill,
+            conversa_id=conversa_id, instance_name=instance_name, token=token,
+            phone=phone, lead_id=lead_id,
         )
         return
 
@@ -3280,6 +3380,53 @@ async def _processar_publico(
         await iniciar_banco_talentos()
         return
 
+    # --- ETAPA: confirmando_interesse_vaga (S-EMP-CARD-01) ---
+    # Depois do card da vaga: SIM segue o fluxo (re-entra na rota da vaga com
+    # interesse_confirmado=True); NÃO desiste e cai em pos_candidatura (Concern 1).
+    if etapa == "confirmando_interesse_vaga":
+        tem_negacao = any(p in t_lower for p in ("não", "nao"))
+        quer_sim = not tem_negacao and any(
+            p in t_lower for p in ("sim", "quero", "bora", "aceito", "candidatar", "claro", "pode", "ok", "isso")
+        )
+        if quer_sim:
+            ocorrencia = {
+                "vaga_id": fluxo.get("vaga_id_selecionada"),
+                "cargo_titulo_original": fluxo.get("cargo_selecionado", ""),
+                "tipo": "vaga_normal",
+            }
+            await _rotear_ocorrencia_escolhida(
+                ocorrencia=ocorrencia,
+                fila_restante=fluxo.get("fila_candidaturas_pendentes") or [],
+                fluxo={**fluxo, "interesse_confirmado": True},
+                conversa_id=conversa_id,
+                instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
+                usar_prefill=bool(fluxo.get("usar_prefill_interesse")),
+            )
+            return
+        if tem_negacao:
+            await e(
+                "Sem problema! 😊 O que você prefere agora?\n"
+                "👀 Ver *outras vagas* · 💼 Entrar no *banco de talentos* · ✖️ *Encerrar*"
+            )
+            await _set_fluxo_async(conversa_id, {
+                "perfil": "publico",
+                "etapa": "pos_candidatura",
+                "historico_vagas_aplicadas": fluxo.get("historico_vagas_aplicadas") or [],
+                "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
+            })
+            return
+        # Ambíguo: tenta o classificador semântico (anti-loop S-EMP-AUD-020);
+        # se não for mudança de assunto, repete a pergunta sim/não.
+        if await _escape_semantico_ou_none(
+            texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+        ):
+            return
+        await e(
+            "Só pra confirmar: você quer se candidatar a esta vaga? 💜\n"
+            "Responda *SIM* para enviar seu currículo, ou *NÃO* para ver outras vagas. 👀"
+        )
+        return
+
     # --- ETAPA: aguardando_confirmacao_candidatura ---
     # Verifica se o portal já registrou a candidatura e envia o número
     if etapa == "aguardando_confirmacao_candidatura":
@@ -3901,22 +4048,8 @@ async def _processar_publico(
         if empresa_nome_final:
             linhas_final.append(f"Você está registrado(a) no processo seletivo *{empresa_nome_final}*.")
 
-        # S-EMP-AUD-023 passo 3 (seção 5, regra 5): fila pendente encadeia a
-        # próxima rota automaticamente, sem reaproveitar nome/dados desta.
-        fila = fluxo.get("fila_candidaturas_pendentes") or []
-        if fila:
-            linhas_final.append("\nAgora vamos para a próxima vaga que você escolheu. 👇")
-            await e("\n".join(linhas_final))
-            await _rotear_ocorrencia_escolhida(
-                ocorrencia=fila[0],
-                fila_restante=fila[1:],
-                fluxo=fluxo,
-                conversa_id=conversa_id,
-                instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
-                usar_prefill=False,
-            )
-            return
-
+        # S-EMP-CARD-01: auto-encadeamento aposentado (vaga-a-vaga). Concluir a
+        # presença sempre oferece outra/encerrar — nunca encadeia sozinho.
         linhas_final.append(
             "\nQuer continuar procurando outras vagas ou prefere encerrar por aqui?\n"
             "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
@@ -4040,13 +4173,8 @@ async def _processar_publico(
                 # roteia direto (caso confirmado como o mais comum, 60%).
                 if ocorrencias_auto:
                     ocorrencia_escolhida = ocorrencias_auto[0]
-                    fila_restante = ocorrencias_auto[1:]
-                    if fila_restante:
-                        await e(
-                            f"Vou te ajudar com uma vaga de cada vez, começando por "
-                            f"*{ocorrencia_escolhida['cargo_exibicao']}* ({ocorrencia_escolhida['empresa_nome']}). "
-                            "Assim que essa candidatura terminar, sigo automaticamente para a próxima."
-                        )
+                    # S-EMP-CARD-01: vaga-a-vaga — não enfileira as demais (limitar a 1).
+                    fila_restante = []
                     await _rotear_ocorrencia_escolhida(
                         ocorrencia=ocorrencia_escolhida,
                         fila_restante=fila_restante,
@@ -4111,19 +4239,10 @@ async def _processar_publico(
         # as demais escolhas ao final de cada rota — não precisa mais o lead
         # escolher manualmente a próxima.
         ocorrencia_escolhida = mapa_ocorrencias_fluxo[numeros_validos[0]]
-        # Achado do Junior (2026-08-28): quando a escolha do Nível 1 misturava
-        # cargos de 1 ocorrência (auto-resolvidos, sem precisar de Nível 2) com
-        # cargos de 2+ ocorrências (que mostraram Nível 2 aqui), os primeiros
-        # ficaram guardados em `ocorrencias_auto_pendentes` — entram no fim da
-        # fila agora, sem exigir escolha nova do lead pra eles.
-        fila_restante = [mapa_ocorrencias_fluxo[n] for n in numeros_validos[1:]] + \
-            list(fluxo.get("ocorrencias_auto_pendentes") or [])
-        if fila_restante:
-            await e(
-                f"Vou te ajudar com uma vaga de cada vez, começando por "
-                f"*{ocorrencia_escolhida['cargo_exibicao']}* ({ocorrencia_escolhida['empresa_nome']}). "
-                "Assim que essa candidatura terminar, sigo automaticamente para a próxima."
-            )
+        # S-EMP-CARD-01: vaga-a-vaga — só a 1ª escolha vale; não enfileira as
+        # demais nem os auto-pendentes (limitar a 1). O fim (pos_candidatura)
+        # pergunta se quer outra vaga.
+        fila_restante = []
 
         await _rotear_ocorrencia_escolhida(
             ocorrencia=ocorrencia_escolhida,
@@ -4630,19 +4749,10 @@ async def _emitir_sucesso_candidatura_vaga(
     if vaga_confirmada and vaga_confirmada not in historico:
         historico.append(vaga_confirmada)
 
-    fila = fluxo_atual.get("fila_candidaturas_pendentes") or []
-    if fila:
-        await e("Show! Agora vamos para a próxima vaga que você escolheu. 👇")
-        await _rotear_ocorrencia_escolhida(
-            ocorrencia=fila[0],
-            fila_restante=fila[1:],
-            fluxo={**fluxo_atual, "historico_vagas_aplicadas": historico},
-            conversa_id=conversa_id,
-            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
-            usar_prefill=False,
-        )
-        return
-
+    # S-EMP-CARD-01: auto-encadeamento de fila APOSENTADO (vaga-a-vaga, decisão
+    # do Junior). A fila já nasce vazia na seleção (limitar a 1); aqui é
+    # explícito: concluir 1 candidatura sempre oferece outra/encerrar, nunca
+    # encadeia sozinho para uma próxima vaga.
     await e(
         "Deseja se candidatar a outra vaga da CUCA? 👀\n\n"
         "Responda *outra* para ver mais vagas ou *encerrar* para finalizar."
