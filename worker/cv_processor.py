@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import json
 import logging
 import base64
@@ -8,6 +9,35 @@ from openai import AsyncOpenAI
 from supabase import create_client, Client
 
 logger = logging.getLogger("cv_processor")
+
+
+def _parse_model_json(raw: str | None, ctx: str) -> dict:
+    """Extrai JSON da resposta do modelo de forma robusta.
+
+    Trata os casos que produziam o erro silencioso 'Expecting value: line 1
+    column 1 (char 0)': resposta vazia, cercas de markdown (```json ... ```), e
+    texto antes/depois do objeto. Em último caso, tenta o primeiro bloco {...}
+    balanceado. Se ainda assim falhar, loga o conteúdo cru (truncado) para
+    diagnóstico e propaga a exceção.
+    """
+    texto = (raw or "").strip()
+    if not texto:
+        raise ValueError("resposta do modelo vazia")
+    # Remove cercas de markdown, se presentes (```json\n...\n``` ou ```\n...\n```)
+    if texto.startswith("```"):
+        texto = re.sub(r"^```[a-zA-Z0-9]*\s*", "", texto)
+        texto = re.sub(r"\s*```$", "", texto).strip()
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError:
+        bloco = re.search(r"\{.*\}", texto, re.DOTALL)
+        if bloco:
+            try:
+                return json.loads(bloco.group(0))
+            except json.JSONDecodeError:
+                pass
+        logger.error(f"[{ctx}] Resposta do modelo não é JSON válido. Raw(300)={texto[:300]!r}")
+        raise
 
 # S37B-02: Lista canônica de 11 níveis de escolaridade
 NIVEIS_ESCOLARIDADE = [
@@ -119,16 +149,11 @@ async def process_cv_from_text(candidatura_id: str, cv_text: str, vaga_id: str, 
             model="gpt-4o",
             messages=messages,
             max_tokens=1000,
-            temperature=0.0
+            temperature=0.0,
+            response_format={"type": "json_object"},
         )
 
-        raw_output = response.choices[0].message.content.strip()
-        if raw_output.startswith("```json"):
-            raw_output = raw_output[7:-3]
-        elif raw_output.startswith("```"):
-            raw_output = raw_output[3:-3]
-
-        json_data = json.loads(raw_output)
+        json_data = _parse_model_json(response.choices[0].message.content, "process_cv_from_text")
 
         analise = json_data.get("analise_aderencia", {})
         veredito = analise.get("veredito", "⚠️")
@@ -259,19 +284,12 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str, cargo_e
             model="gpt-4o",
             messages=messages,
             max_tokens=1000,
-            temperature=0.0
+            temperature=0.0,
+            response_format={"type": "json_object"},
         )
-        
-        raw_output = response.choices[0].message.content.strip()
-        
-        # Limpar crases de markdown se o GPT retornar
-        if raw_output.startswith("```json"):
-            raw_output = raw_output[7:-3]
-        elif raw_output.startswith("```"):
-            raw_output = raw_output[3:-3]
-            
-        json_data = json.loads(raw_output)
-        
+
+        json_data = _parse_model_json(response.choices[0].message.content, "process_cv_ocr")
+
         # Extraindo dados da nova estrutura
         analise = json_data.get("analise_aderencia", {})
         veredito = analise.get("veredito", "⚠️")
@@ -357,16 +375,11 @@ async def process_cv_espontaneo(nome: str, telefone: str, cv_url: str):
             model="gpt-4o",
             messages=messages,
             max_tokens=800,
-            temperature=0.0
+            temperature=0.0,
+            response_format={"type": "json_object"},
         )
 
-        raw_output = response.choices[0].message.content.strip()
-        if raw_output.startswith("```json"):
-            raw_output = raw_output[7:-3]
-        elif raw_output.startswith("```"):
-            raw_output = raw_output[3:-3]
-
-        json_data = json.loads(raw_output)
+        json_data = _parse_model_json(response.choices[0].message.content, "process_cv_espontaneo")
 
         # Atualizar talent_bank pelo telefone
         supabase.table("talent_bank").update({
@@ -441,15 +454,10 @@ IMPORTANTE: as três últimas chaves (habilidades_identificadas, experiencias_an
             ],
             max_tokens=800,
             temperature=0.0,
+            response_format={"type": "json_object"},
         )
 
-        raw = response.choices[0].message.content.strip()
-        if raw.startswith("```json"):
-            raw = raw[7:-3]
-        elif raw.startswith("```"):
-            raw = raw[3:-3]
-
-        json_data = json.loads(raw)
+        json_data = _parse_model_json(response.choices[0].message.content, "process_cv_talent_bank_id")
         skills = {**json_data, "origem": "talent_bank_ocr_demanda", "ocr_processado": True}
 
         supabase.table("talent_bank").update({

@@ -137,22 +137,38 @@ async def security_middleware(request: Request, call_next):
     return response
 
 
+OCR_MAX_TENTATIVAS = 3
+
 async def ocr_pending_loop():
-    """Loop que verifica candidaturas com CV mas sem análise e dispara OCR automaticamente."""
+    """Loop que verifica candidaturas com CV mas sem análise e dispara OCR automaticamente.
+
+    Anti-starvation: candidaturas que erram/travam no OCR mantêm matching_score e
+    dados_ocr_json nulos, então continuariam batendo no filtro para sempre e
+    ocupariam a janela do LIMIT — starvando os currículos novos. Por isso o loop
+    filtra por `ocr_tentativas < OCR_MAX_TENTATIVAS`, ordena por created_at (FIFO) e
+    incrementa a tentativa ANTES de processar: um CV que falha N vezes (ou trava o
+    worker e volta no restart) sai da fila em vez de bloquear os demais.
+    """
     from cv_processor import process_cv_ocr
     logger.info("[ocr-loop] Loop de OCR pendente iniciado.")
     while True:
         try:
             res = supabase.table("candidaturas").select(
-                "id, vaga_id, arquivo_cv_url, matching_justificativa, cargo_escolhido"
-            ).not_.is_("arquivo_cv_url", "null").is_("matching_score", "null").is_("dados_ocr_json", "null").not_.is_("vaga_id", "null").limit(5).execute()
+                "id, vaga_id, arquivo_cv_url, cargo_escolhido, ocr_tentativas"
+            ).not_.is_("arquivo_cv_url", "null").is_("matching_score", "null").is_(
+                "dados_ocr_json", "null"
+            ).not_.is_("vaga_id", "null").lt(
+                "ocr_tentativas", OCR_MAX_TENTATIVAS
+            ).order("created_at").limit(5).execute()
             pendentes = res.data or []
             for p in pendentes:
-                # Pular candidaturas que já tiveram erro de OCR (evitar loop infinito)
-                just = p.get("matching_justificativa") or ""
-                if just.startswith("Erro OCR:"):
-                    continue
                 if p.get("arquivo_cv_url") and p.get("vaga_id"):
+                    # Marca a tentativa antes de processar — assim um CV que erra ou
+                    # trava o worker esgota o contador e libera a fila, em vez de
+                    # reentrar para sempre.
+                    supabase.table("candidaturas").update(
+                        {"ocr_tentativas": (p.get("ocr_tentativas") or 0) + 1}
+                    ).eq("id", p["id"]).execute()
                     logger.info(f"[ocr-loop] Disparando OCR para candidatura {p['id']}")
                     # SQS-49: passa cargo_escolhido para análise contextualizada em selecao_evento
                     await process_cv_ocr(p["id"], p["arquivo_cv_url"], p["vaga_id"],
