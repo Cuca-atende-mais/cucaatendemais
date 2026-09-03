@@ -3085,6 +3085,21 @@ async def _processar_candidato(
         candidaturas_encontradas = []
 
         def _buscar_candidaturas_e_vagas():
+            # Busca por nome (texto com espaço, 5+ chars) — SEC-02: nome sozinho não
+            # basta, tem que bater também com o telefone de quem está perguntando
+            # (mesma normalização dos 2 lados usada na busca por telefone abaixo).
+            # Extraída para função porque também é usada como fallback do ramo de
+            # código de referência abaixo (2026-09).
+            def _buscar_por_nome():
+                cand_res = supabase.table("candidaturas").select(
+                    "id, status, vaga_id, created_at, observacoes, nome, telefone, email_enviado_em"
+                ).ilike("nome", f"%{texto_limpo}%").order("created_at", desc=True).limit(5).execute()
+                telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
+                return [
+                    c for c in (cand_res.data or [])
+                    if _telefone_normalizado_para_comparacao(c.get("telefone") or "") == telefone_quem_pergunta
+                ]
+
             candidaturas = []
 
             # Busca por CPF (histórico)
@@ -3097,9 +3112,15 @@ async def _processar_candidato(
                     ).in_("candidato_id", ids_candidatos).order("created_at", desc=True).limit(5).execute()
                     candidaturas = cand_res.data or []
 
-            # Busca por número de candidatura (6+ chars alfanuméricos)
-            elif re.match(r"^[A-Za-z0-9]{6}$", texto_limpo):
-                ref = texto_limpo.upper()
+            # Busca por número de candidatura (6 chars alfanuméricos) — aceita tanto a
+            # mensagem inteira quanto o código embutido junto de outro texto (ex.: código
+            # + nome na mesma mensagem, padrão comum de escrita real). 2026-09 (achado de
+            # auditoria de conversas reais, 01/09): antes exigia match exato da string
+            # inteira, o que falhava sempre que o usuário mandava código e nome juntos —
+            # caía no ramo de busca por nome usando a string toda (código incluso) como
+            # termo de ILIKE, que nunca batia.
+            elif (match_ref := re.search(r"\b([A-Za-z0-9]{6})\b", texto_limpo)):
+                ref = match_ref.group(1).upper()
                 todas = supabase.table("candidaturas").select(
                     "id, status, vaga_id, created_at, observacoes, email_enviado_em"
                 ).order("created_at", desc=True).limit(500).execute()
@@ -3107,6 +3128,14 @@ async def _processar_candidato(
                     c for c in (todas.data or [])
                     if c["id"].replace("-", "")[-6:].upper() == ref
                 ]
+                # Fallback pro ramo de nome: o token de 6 chars não bateu com nenhuma
+                # candidatura real — pode ser um sobrenome comum de 6 letras (ex.:
+                # "Santos"), não um código, então tenta buscar por nome antes de
+                # desistir. Risco de falso-positivo já previsto no plano original
+                # (STOP condition) — sem este fallback, "Maria da Silva Santos"
+                # cairia no ramo de código por engano e nunca tentaria o nome.
+                if not candidaturas and len(texto_limpo) >= 5 and " " in texto_limpo:
+                    candidaturas = _buscar_por_nome()
 
             # Busca por telefone (10-11 dígitos) — SEC-02: só aceita se bater com quem
             # está perguntando. Normaliza os 2 lados (candidaturas.telefone tem
@@ -3127,18 +3156,8 @@ async def _processar_candidato(
                     if _telefone_normalizado_para_comparacao(c.get("telefone") or "") == telefone_quem_pergunta
                 ]
 
-            # Busca por nome (texto com espaço, 5+ chars) — SEC-02: nome sozinho não
-            # basta, tem que bater também com o telefone de quem está perguntando
-            # (mesma normalização dos 2 lados usada na busca por telefone acima).
             elif len(texto_limpo) >= 5 and " " in texto_limpo:
-                cand_res = supabase.table("candidaturas").select(
-                    "id, status, vaga_id, created_at, observacoes, nome, telefone, email_enviado_em"
-                ).ilike("nome", f"%{texto_limpo}%").order("created_at", desc=True).limit(5).execute()
-                telefone_quem_pergunta = _telefone_normalizado_para_comparacao(phone)
-                candidaturas = [
-                    c for c in (cand_res.data or [])
-                    if _telefone_normalizado_para_comparacao(c.get("telefone") or "") == telefone_quem_pergunta
-                ]
+                candidaturas = _buscar_por_nome()
 
             vaga_ids = list({
                 c["vaga_id"]
@@ -3438,11 +3457,18 @@ async def _processar_publico(
         if candidatura_id or curriculo_publico_salvo:
             eh_banco_talentos = fluxo_atual.get("banco_talentos", False)
             if eh_banco_talentos:
+                # 2026-09 (achado de auditoria de conversas reais, 01/09): a confirmação de
+                # banco de talentos nunca mostrava o código de acompanhamento, ao contrário
+                # da candidatura a vaga específica — usuário não sabia que podia consultar
+                # depois. `candidatura_id` pode ser None quando só `curriculo_publico_salvo`
+                # está presente (condição acima), por isso a linha só aparece com código.
+                codigo_bt = (candidatura_id or "").replace("-", "")[-6:].upper()
+                linha_codigo = f"\n\n🔢 *Número de acompanhamento:* *{codigo_bt}*" if codigo_bt else ""
                 await e(
                     "✅ *Currículo salvo com sucesso!*\n\n"
                     "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
                     "Assim que surgir uma oportunidade compatível com seu perfil e área de interesse, "
-                    "nossa equipe entrará em contato diretamente por aqui. 🎯\n\n"
+                    f"nossa equipe entrará em contato diretamente por aqui. 🎯{linha_codigo}\n\n"
                     "Obrigado por confiar na CUCA!\n\n"
                     "Deseja ver as *vagas abertas* ou encerrar por aqui?\n"
                     "Responda *vagas* para ver oportunidades ou *encerrar*."
@@ -5000,11 +5026,16 @@ async def _finalizar_banco_talentos_chat(
         # Mesma mensagem de sucesso que o formulário já usa pro banco de talentos (ver etapa
         # `aguardando_confirmacao_candidatura`, ramo `eh_banco_talentos`) — comportamento
         # idêntico, só que o worker já tem a confirmação em mãos, sem esperar o metadata.
+        # 2026-09 (achado de auditoria de conversas reais, 01/09): agora inclui o código de
+        # acompanhamento, mesmo padrão de extração do fluxo de vaga específica (`:4905-4906`).
+        dado = res.dado or {}
+        codigo_bt = dado.get("codigo") or (dado.get("id") or "").replace("-", "")[-6:].upper()
+        linha_codigo = f"\n\n🔢 *Número de acompanhamento:* *{codigo_bt}*" if codigo_bt else ""
         await e(
             "✅ *Currículo salvo com sucesso!*\n\n"
             "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
             "Assim que surgir uma oportunidade compatível com seu perfil e área de interesse, "
-            "nossa equipe entrará em contato diretamente por aqui. 🎯\n\n"
+            f"nossa equipe entrará em contato diretamente por aqui. 🎯{linha_codigo}\n\n"
             "Obrigado por confiar na CUCA!\n\n"
             "Deseja ver as *vagas abertas* ou encerrar por aqui?\n"
             "Responda *vagas* para ver oportunidades ou *encerrar*."
@@ -5761,6 +5792,18 @@ async def _rotear_por_intencao(
     logger.info("[intencao] %s → %s", phone[:6] + "****", intencao)
 
     if intencao == "empresa":
+        # 2026-09 (achado de auditoria de conversas reais, 01/09): antes sempre pedia
+        # CNPJ do zero, mesmo quando a empresa já tinha sido confirmada minutos antes na
+        # mesma conversa (caminho: usuário diz "não" a um menu, depois reafirma intenção
+        # por texto livre — reentra aqui via `confirmando_troca_rota`, sem passar pelo
+        # check de `empresa_id_salvo` que já existe no despacho normal, `:5560-5561`).
+        # Reaproveita a branch de retomada que `_processar_empresa` já tem (`:1953`) em
+        # vez de duplicar a lógica aqui.
+        fluxo_atual = await _get_fluxo_async(conversa_id)
+        if fluxo_atual.get("empresa_id"):
+            await _set_fluxo_async(conversa_id, {**fluxo_atual, "perfil": "empresa", "etapa": ""})
+            await _processar_empresa(texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca)
+            return
         # AC#5 — pede CNPJ diretamente, humanizado
         await e(f"Olá{saudacao_nome} Me passa o CNPJ da empresa (somente números) para verificar seu cadastro:")
         await _set_fluxo_async(conversa_id, {"perfil": "empresa", "etapa": "aguardando_cnpj"})
@@ -6119,12 +6162,19 @@ async def _empregabilidade_notify_tick():
                 continue
             eh_banco_talentos = fluxo.get("banco_talentos", False)
             if eh_banco_talentos:
+                # 2026-09 (achado de auditoria de conversas reais, 01/09): inclui o código
+                # de acompanhamento, mesmo cálculo já usado no `else` (vaga específica)
+                # logo abaixo. `candidatura_id` pode ser None quando só
+                # `curriculo_publico_salvo` está presente (guard na linha 6148).
+                candidatura_codigo = fluxo.get("candidatura_codigo")
+                codigo_bt = candidatura_codigo or (candidatura_id or "").replace("-", "")[-6:].upper()
+                linha_codigo = f"\n\n🔢 *Número de acompanhamento:* *{codigo_bt}*" if codigo_bt else ""
                 _ok = await _enviar(
                     instance_name, token, phone,
                     "✅ *Currículo salvo com sucesso!*\n\n"
                     "Seu currículo foi cadastrado no banco de talentos da rede CUCA. "
                     "Assim que surgir uma oportunidade compatível com seu perfil e área de interesse, "
-                    "nossa equipe entrará em contato diretamente por aqui. 🎯\n\n"
+                    f"nossa equipe entrará em contato diretamente por aqui. 🎯{linha_codigo}\n\n"
                     "Obrigado por confiar na CUCA!\n\n"
                     "Deseja ver as *vagas abertas* ou encerrar por aqui?\n"
                     "Responda *vagas* para ver oportunidades ou *encerrar*.",

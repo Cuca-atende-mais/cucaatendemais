@@ -6064,6 +6064,33 @@ class TestFinalizarBancoTalentosChat:
         assert "banco de talentos" in texto_enviado.lower()
 
     @pytest.mark.asyncio
+    async def test_confirmacao_inclui_codigo_de_acompanhamento(self, monkeypatch, _isola_enviar):
+        """Ponto 2 do achado 033 (S-EMP-AUD-039, auditoria de conversas reais
+        01/09/2026): a confirmação de banco de talentos criada direto pelo
+        WhatsApp (sem passar pelo portal) também precisa mostrar o código de
+        acompanhamento — antes desta cobertura, esse ponto específico não tinha
+        teste dedicado (achado do @qa na revisão do commit `ae5f8c3`)."""
+        _, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+
+        import empregabilidade_portal_client as pc
+        # Sem "codigo" no retorno — força o fallback pelos últimos 6 chars do
+        # `id` (mesmo padrão já coberto pelo fluxo de vaga específica).
+        cand = AsyncMock(return_value=ResultadoPortal(
+            "ok", 200, {"id": "11111111-2222-3333-4444-555555dc8168"},
+        ))
+        monkeypatch.setattr(pc, "criar_candidatura", cand)
+
+        fluxo = {"nome_candidato": "Ana", "telefone_candidato": "85999998888"}
+        await emp._finalizar_banco_talentos_chat("PID", "tok", "5585999998888", "conv-1", fluxo, lead_id="l1")
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "Número de acompanhamento" in texto_enviado
+        assert "DC8168" in texto_enviado.upper()
+
+    @pytest.mark.asyncio
     async def test_reusa_curriculo_r2_sem_novo_upload(self, monkeypatch, _isola_enviar):
         _, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura")
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
@@ -6468,3 +6495,243 @@ class TestS_EMP_CARD_01CardVagaConfirmacao:
         assert estado.get("etapa", "confirmando_interesse_vaga") == "confirmando_interesse_vaga"
         low = _isola_enviar.call_args.args[3].lower()
         assert "sim" in low and "não" in low
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auditoria de conversas reais 01/09/2026 — Plano 032: fluxo de empresa não repete
+# verificação de CNPJ já confirmada na mesma conversa
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestEmpresaNaoRepeteCnpjJaConfirmado:
+
+    @pytest.mark.asyncio
+    async def test_empresa_ja_confirmada_pula_pedido_de_cnpj(self, monkeypatch, _isola_enviar):
+        """Regressão do caso real (conversa 78354ccc, Renata/Ancora Distribuidora,
+        01/09): empresa já confirmada na mesma conversa não deve ser pedida de novo
+        ao reentrar via confirmação de troca de rota (`_rotear_por_intencao`) —
+        antes sempre resetava pra `aguardando_cnpj`, mesmo com `empresa_id` salvo."""
+        estado, fake_get, fake_set = _fluxo_mock("", {
+            "empresa_id": "emp-1",
+            "empresa_nome": "Empresa Teste",
+            "empresa_nome_exibicao": "Empresa Teste",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "empresa"}, "sim", "558599990000", "PHONE_ID", "token",
+            "lead-1", "conv-1", "Barra",
+        )
+
+        # não deve ter mandado a mensagem de "me passa o CNPJ" de novo
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "CNPJ" not in texto_enviado
+        # cai na branch de retomada de `_processar_empresa`: reconhece a empresa e
+        # mostra o menu de ações, sem pedir CNPJ
+        assert "que bom ter você de volta" in texto_enviado.lower()
+        assert "Empresa Teste" in texto_enviado
+        assert estado["etapa"] == "menu_empresa_acoes"
+
+    @pytest.mark.asyncio
+    async def test_empresa_nova_ainda_pede_cnpj(self, monkeypatch, _isola_enviar):
+        """Regressão do comportamento original: empresa sem `empresa_id` salvo
+        continua sendo perguntada normalmente (caminho feliz, sem duplicidade)."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "empresa", "nome": "Ana"}, "sou empresa", "558599990000",
+            "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado == {"perfil": "empresa", "etapa": "aguardando_cnpj"}
+        assert "CNPJ" in _isola_enviar.call_args.args[3]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auditoria de conversas reais 01/09/2026 — Plano 031: consulta de candidatura
+# aceita código + nome na mesma mensagem
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestConsultaCandidaturaCodigoEmbutidoNaMensagem:
+
+    @pytest.mark.asyncio
+    async def test_codigo_mais_nome_na_mesma_mensagem_encontra_candidatura(self, monkeypatch):
+        """Regressão do caso real (conversa f2b206d1, Thiago Mariano da Silva,
+        01/09 — reproduziu de novo em 02/09): código válido + nome na mesma
+        mensagem falhava antes (caía no ramo de busca por nome usando a string
+        inteira, prefixo do código incluso, que nunca batia)."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.order.return_value.limit.return_value \
+            .execute.return_value.data = [
+                {"id": "11111111-2222-3333-4444-555555dc8168", "status": "pendente", "vaga_id": "v1",
+                 "created_at": "2026-01-01", "observacoes": "", "telefone": "8511112222"},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Ajudante de Rota"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "DC8168\nThiago Mariano da Silva", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto_enviado = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "não encontrei candidatura" not in todo_texto_enviado
+        assert "encontrada" in todo_texto_enviado
+        assert "dc8168" in todo_texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_codigo_sozinho_continua_funcionando(self, monkeypatch):
+        """Regressão: mensagem só com o código (comportamento anterior) continua
+        funcionando exatamente como antes."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.order.return_value.limit.return_value \
+            .execute.return_value.data = [
+                {"id": "11111111-2222-3333-4444-555555dc8168", "status": "pendente", "vaga_id": "v1",
+                 "created_at": "2026-01-01", "observacoes": "", "telefone": "8511112222"},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Ajudante de Rota"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "DC8168", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto_enviado = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "não encontrei candidatura" not in todo_texto_enviado
+        assert "encontrada" in todo_texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_nome_sem_token_de_6_chars_nao_aciona_ramo_de_codigo_por_engano(self, monkeypatch):
+        """Nome comum sem nenhuma palavra de exatamente 6 caracteres alfanuméricos
+        continua caindo no ramo de busca por nome, sem regressão — mesmo cenário já
+        coberto por TestConsultaCandidaturaExigeTelefoneDeQuemPergunta, reforçado
+        aqui no contexto específico deste plano."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_id_candidato", {"perfil": "candidato"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", _mock_gpt_ambiguo_sem_escape)
+
+        mock_sb = MagicMock()
+        mock_sb.table.return_value.select.return_value.ilike.return_value.order.return_value \
+            .limit.return_value.execute.return_value.data = [
+                {"id": "c1", "status": "pendente", "vaga_id": "v1", "created_at": "2026-01-01",
+                 "observacoes": "", "nome": "Maria da Silva Santos", "telefone": "8599990000"},
+            ]
+        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value \
+            .execute.return_value.data = {"titulo": "Vaga Teste"}
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        await emp._processar_candidato(
+            "Maria da Silva Santos", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1",
+        )
+
+        todo_texto_enviado = "\n".join(c.args[3] for c in mock_enviar.call_args_list).lower()
+        assert "não encontrei candidatura" not in todo_texto_enviado
+        assert "encontrada" in todo_texto_enviado
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auditoria de conversas reais 01/09/2026 — Plano 033: confirmação de currículo
+# no banco de talentos passa a mostrar o número de acompanhamento
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestBancoTalentosMostraCodigoDeAcompanhamento:
+
+    @pytest.mark.asyncio
+    async def test_confirmacao_via_metadata_inclui_codigo(self, monkeypatch, _isola_enviar):
+        """Ponto 1 (etapa aguardando_confirmacao_candidatura): confirmação de banco
+        de talentos deve incluir o código de acompanhamento, igual à candidatura de
+        vaga específica — antes nunca mostrava nenhum código."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
+            "candidatura_criada_id": "11111111-2222-3333-4444-555555dc8168",
+            "banco_talentos": True,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico(
+            "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "Número de acompanhamento" in texto_enviado
+        assert "DC8168" in texto_enviado.upper()
+
+    @pytest.mark.asyncio
+    async def test_confirmacao_sem_candidatura_id_nao_quebra_mensagem(self, monkeypatch, _isola_enviar):
+        """Guard: quando só `curriculo_publico_salvo` está presente (sem
+        `candidatura_criada_id` ainda), a mensagem sai sem a linha de código — não
+        com 'None' ou string vazia entre asteriscos."""
+        estado, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura", {
+            "curriculo_publico_salvo": True,
+            "banco_talentos": True,
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+
+        await emp._processar_publico(
+            "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "None" not in texto_enviado
+        assert "Número de acompanhamento: **" not in texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_notificacao_proativa_banco_talentos_inclui_codigo(self, monkeypatch):
+        """Ponto 3 (loop de notificação proativa, `_empregabilidade_notify_tick`):
+        mesmo comportamento do ponto 1 — candidato que volta ao WhatsApp depois do
+        processamento assíncrono recebe o código de acompanhamento na confirmação
+        de banco de talentos, reaproveitando o mesmo cálculo já usado no ramo
+        `else` (vaga específica) logo abaixo no código."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        fake.conversas = [{
+            "id": "conv-6",
+            "origem_id": "PHONE_ID",
+            "lead_id": "lead-6",
+            "metadata": {"empreg_fluxo": {
+                "etapa": "aguardando_confirmacao_candidatura",
+                "banco_talentos": True,
+                "candidatura_criada_id": "11111111-2222-3333-4444-555555dc8168",
+            }},
+        }]
+        fake.leads = [{"id": "lead-6", "telefone": "558577770000"}]
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "Número de acompanhamento" in texto_enviado
+        assert "DC8168" in texto_enviado.upper()
