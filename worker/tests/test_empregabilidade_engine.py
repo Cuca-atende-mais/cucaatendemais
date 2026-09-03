@@ -6064,6 +6064,33 @@ class TestFinalizarBancoTalentosChat:
         assert "banco de talentos" in texto_enviado.lower()
 
     @pytest.mark.asyncio
+    async def test_confirmacao_inclui_codigo_de_acompanhamento(self, monkeypatch, _isola_enviar):
+        """Ponto 2 do achado 033 (S-EMP-AUD-039, auditoria de conversas reais
+        01/09/2026): a confirmação de banco de talentos criada direto pelo
+        WhatsApp (sem passar pelo portal) também precisa mostrar o código de
+        acompanhamento — antes desta cobertura, esse ponto específico não tinha
+        teste dedicado (achado do @qa na revisão do commit `ae5f8c3`)."""
+        _, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_baixar_anexo_bucket", AsyncMock(return_value=None))
+
+        import empregabilidade_portal_client as pc
+        # Sem "codigo" no retorno — força o fallback pelos últimos 6 chars do
+        # `id` (mesmo padrão já coberto pelo fluxo de vaga específica).
+        cand = AsyncMock(return_value=ResultadoPortal(
+            "ok", 200, {"id": "11111111-2222-3333-4444-555555dc8168"},
+        ))
+        monkeypatch.setattr(pc, "criar_candidatura", cand)
+
+        fluxo = {"nome_candidato": "Ana", "telefone_candidato": "85999998888"}
+        await emp._finalizar_banco_talentos_chat("PID", "tok", "5585999998888", "conv-1", fluxo, lead_id="l1")
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "Número de acompanhamento" in texto_enviado
+        assert "DC8168" in texto_enviado.upper()
+
+    @pytest.mark.asyncio
     async def test_reusa_curriculo_r2_sem_novo_upload(self, monkeypatch, _isola_enviar):
         _, fake_get, fake_set = _fluxo_mock("aguardando_confirmacao_candidatura")
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
