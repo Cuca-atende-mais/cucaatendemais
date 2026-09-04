@@ -101,12 +101,14 @@ _AFIRMATIVO_CONFIRMACAO_DETALHADA = (
 _AFIRMATIVO_CANCELAMENTO = (*_AFIRMATIVO_CONFIRMACAO, "yes")
 _AFIRMATIVO_CRIAR_VAGA = ("sim", "s", "quero", "vou", "yes", "ok", "1")
 _AFIRMATIVO_ROTA = (*_AFIRMATIVO_CONFIRMACAO_DETALHADA, "exato")
-# "voltar"/"volta" entram aqui de propósito: na etapa oferecendo_atendente_humano
-# o lead que digita "voltar" quer exatamente o mesmo efeito de um "não" (recusar
+# "voltar"/"volta"/"menu" entram aqui de propósito: na etapa oferecendo_atendente_humano
+# o lead que digita o comando de voltar quer exatamente o mesmo efeito de um "não" (recusar
 # o transbordo e retomar a etapa anterior) — antes disso a mensagem "voltar"
 # caía no fallback genérico e repetia a pergunta pra sempre (loop reportado
-# pelo Junior em 2026-08-27).
-_NEGATIVO_ATENDENTE_HUMANO = ("não", "nao", "n", "negativo", "voltar", "volta")
+# pelo Junior em 2026-08-27). "menu" incluído junto quando o comando exibido ao
+# lead passou de "voltar" para "menu" (pedido do Junior 2026-09-04) — sem isso o
+# lead que digita "menu" aqui reabriria exatamente o loop de 27/08.
+_NEGATIVO_ATENDENTE_HUMANO = ("não", "nao", "n", "negativo", "voltar", "volta", "menu")
 # S-EMP-AUD-032: subido de 2 pra 3 como paliativo — o BUG-04 da auditoria de 27/08 mostrou uma
 # conversa dormente há 9 dias sendo escalada na 1ª mensagem de retorno, porque o contador de
 # falha não expira com o tempo (só a S-EMP-AUD-033 resolve a causa raiz). 1 tentativa a mais dá
@@ -1237,8 +1239,8 @@ async def _mostrar_cargos_consolidados(
             linha += f" — {unica['empresa_nome']} — {unica['rotulo_tipo']}"
         linhas.append(linha)
     linhas.append(
-        "\nDigite o *número* do cargo para ver as vagas. Para mais de um, separe por vírgula (ex: *1,3*).\n"
-        "Digite *voltar* para ver outras opções.\n"
+        "\nDigite o *número* do cargo para ver as vagas.\n"
+        "Digite *menu* para ver outras opções.\n"
         "Ou diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
     )
     await _enviar(instance_name, token, phone, "\n".join(linhas), conversa_id=conversa_id, lead_id=lead_id)
@@ -1267,7 +1269,7 @@ def _construir_mapa_ocorrencias(mapa_cargos: dict, chaves_escolhidas: list[str])
             )
             contador += 1
         linhas_bloco.append(
-            "\nEscolha uma ou mais vagas, caso queira mais de uma separe com vírgula (ex: *1,3*)."
+            "\nDigite o *número* da vaga desejada."
         )
         blocos_txt.append("\n".join(linhas_bloco))
     return mapa_ocorrencias, blocos_txt
@@ -1283,7 +1285,7 @@ async def _mostrar_ocorrencias_cargo(
     chaves_escolhidas: list[str],
 ) -> dict:
     mapa_ocorrencias, blocos_txt = _construir_mapa_ocorrencias(mapa_cargos, chaves_escolhidas)
-    corpo = "\n\n".join(blocos_txt) + "\n\nDigite *voltar* para ver outras opções."
+    corpo = "\n\n".join(blocos_txt) + "\n\nDigite *menu* para ver outras opções."
     await _enviar(instance_name, token, phone, corpo, conversa_id=conversa_id, lead_id=lead_id)
     return {"mapa_ocorrencias": mapa_ocorrencias}
 
@@ -1561,7 +1563,7 @@ async def _rotear_ocorrencia_escolhida(
         ]
         for idx_u, u in enumerate(unidades_disponiveis, start=1):
             linhas_unid.append(f"*{idx_u}.* {u['nome']}")
-        linhas_unid.append("\nDigite *voltar* para ver outras opções.")
+        linhas_unid.append("\nDigite *menu* para ver outras opções.")
         if await _enviar(
             instance_name, token, phone, "\n".join(linhas_unid),
             conversa_id=conversa_id, lead_id=lead_id,
@@ -1623,7 +1625,7 @@ async def _mostrar_categorias(
         )
     linhas.append(
         "\nDigite o *número* da categoria para ver as vagas disponíveis.\n"
-        "Digite *voltar* para ver outras opções.\n"
+        "Digite *menu* para ver outras opções.\n"
         "Ou diga *banco de talentos* para deixar seu currículo para futuras oportunidades."
     )
     await _enviar(instance_name, token, phone, "\n".join(linhas), conversa_id=conversa_id, lead_id=lead_id)
@@ -1647,7 +1649,7 @@ async def _mostrar_vagas_da_categoria(
         ultima_vaga_id_cat = vc["id"]
     linhas_cat.append(
         "\nDigite o *número* da vaga para se candidatar.\n"
-        "Digite *voltar* para ver outras opções."
+        "Digite *menu* para ver outras opções."
     )
     await _enviar(instance_name, token, phone, "\n".join(linhas_cat), conversa_id=conversa_id, lead_id=lead_id)
     return {
@@ -3354,7 +3356,7 @@ async def _processar_publico(
             "nome_candidato_prefill": fluxo.get("nome_candidato_prefill", ""),
         })
 
-    if t_lower in ("voltar", "volta") and etapa in _ETAPA_ANTERIOR:
+    if t_lower in ("voltar", "volta", "menu") and etapa in _ETAPA_ANTERIOR:
         if await _voltar_etapa_publico(
             fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
             instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
@@ -3896,10 +3898,10 @@ async def _processar_publico(
                 instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
             ):
                 return
-            linhas_re = ["Não entendi. Digite o número do cargo de interesse. Ex: *1* ou *1,3*\n"]
+            linhas_re = ["Não entendi. Digite o número do cargo de interesse. Ex: *1*\n"]
             for idx_c, c in enumerate(cargos_disponiveis, start=1):
                 linhas_re.append(f"{idx_c}️⃣ {c.get('titulo', '')}")
-            linhas_re.append("\nDigite *voltar* para ver outras opções.")
+            linhas_re.append("\nDigite *menu* para ver outras opções.")
             await e("\n".join(linhas_re))
             return
         # SQS-56: `coleta_curriculo is False` desvia para confirmação de
@@ -4160,7 +4162,7 @@ async def _processar_publico(
         ]
         for idx_ru, u in enumerate(unidades_opcoes, start=1):
             linhas_re_unid.append(f"*{idx_ru}.* {u['nome']}")
-        linhas_re_unid.append("\nDigite *voltar* para ver outras opções.")
+        linhas_re_unid.append("\nDigite *menu* para ver outras opções.")
         await e("\n".join(linhas_re_unid))
         return
 
@@ -4255,8 +4257,8 @@ async def _processar_publico(
             ):
                 return
             await e(
-                "Não entendi. Digite o *número* da vaga de interesse. Ex: *1* ou *1,3*\n\n"
-                "Digite *voltar* para ver outras opções."
+                "Não entendi. Digite o *número* da vaga de interesse. Ex: *1*\n\n"
+                "Digite *menu* para ver outras opções."
             )
             return
 
@@ -4432,8 +4434,8 @@ async def _processar_publico(
                     faixa_txt = f" · {faixa}" if faixa else ""
                     linhas_cargos.append(f"*{idx_c}.* {cargo.get('titulo', '')}{qtd_txt}{faixa_txt}")
                 linhas_cargos.append(
-                    "\nDigite o *número* do cargo. Para mais de um, separe por vírgula (ex: *1,3*).\n"
-                    "Digite *voltar* para ver outras opções."
+                    "\nDigite o *número* do cargo.\n"
+                    "Digite *menu* para ver outras opções."
                 )
                 await _set_fluxo_async(conversa_id, {
                     **fluxo,
@@ -4464,7 +4466,7 @@ async def _processar_publico(
             ]
             for idx_u, u in enumerate(unidades_disponiveis, start=1):
                 linhas_unid.append(f"*{idx_u}.* {u['nome']}")
-            linhas_unid.append("\nDigite *voltar* para ver outras opções.")
+            linhas_unid.append("\nDigite *menu* para ver outras opções.")
             if await e("\n".join(linhas_unid)):
                 await _set_fluxo_async(conversa_id, {
                     **fluxo,
