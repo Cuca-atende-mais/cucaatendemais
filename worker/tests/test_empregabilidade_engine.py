@@ -4713,7 +4713,7 @@ class TestVoltarNavegacaoAud021:
         assert estado["etapa"] == "listou_vagas"
         assert "Não entendi" not in _isola_enviar.call_args.args[3]
         assert "Auxiliar Administrativo" in _isola_enviar.call_args.args[3]
-        assert "voltar" in _isola_enviar.call_args.args[3].lower()
+        assert "menu" in _isola_enviar.call_args.args[3].lower()
 
     @pytest.mark.asyncio
     async def test_aguardando_escolha_unidade_agora_aceita_voltar_semantico(self, monkeypatch, _isola_enviar):
