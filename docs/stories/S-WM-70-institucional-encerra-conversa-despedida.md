@@ -1,6 +1,6 @@
 # S-WM-70 — Institucional encerra a conversa quando o lead se despede
 
-**Status:** InReview
+**Status:** Ready for Review
 **Epic:** WhatsApp Meta / Institucional
 **Origem:** Investigação @dev 2026-09-05 a pedido do Junior (conversa do lead Nívea,
 `5585989757671`) — `docs/2026-09-05/PLANO-3-melhorias-empregabilidade-2026-09-05.md`, item 3-BIS.
@@ -223,8 +223,79 @@ ao ponto do handler que consome a decisão (linha ~1454).
   `status='encerrada'` + `encerrado` no JSON) estão no código deployado — sem drift de
   transcrição.
 
+## QA Results
+
+### Review em 2026-09-05 — @qa Quinn
+
+**Gate: PASS**
+
+**7 checks:**
+
+1. **Code review** — PASS. O branch novo em `decidirConversaEngajada` espelha exatamente a
+   estrutura de `decidirAguardandoUnidade:713` (mesma posição relativa: depois de
+   `pedido_depende_unidade`, antes do catch-all), e a marcação de encerramento no early-return do
+   handler é **byte-a-byte a mesma expressão** já usada no caminho da tag `[[ENCERRAR]]`
+   (`:1866`: `status: "encerrada", updated_at: new Date().toISOString()`) — reuso de padrão
+   comprovado, não invenção de um novo. Campo `encerrar?: boolean` opcional, coerente com o
+   padrão já estabelecido por `pedidoEspecifico?` no mesmo tipo.
+2. **Testes** — PASS. Rodei a suíte de forma independente nesta branch:
+   `deno test --no-check --allow-env --allow-net` → **208 passed, 0 failed, 2 ignored**
+   (os 2 ignorados são pré-existentes, sem relação). Os 6 testes novos cobrem exatamente os
+   ACs 1, 2, 3, 4, 5 e a ordem dos branches. Confirmei por rastreamento lógico que o teste do AC2
+   (wiring do handler) teria **falhado** no código anterior — a versão antiga do early-return não
+   incluía `encerrado` no JSON nem tocava `conversas.status`, então `body.encerrado === true`
+   falharia. É um teste de regressão genuíno, não tautológico.
+3. **Acceptance Criteria** — PASS, 7/7 verificados diretamente:
+   - AC1 ✅ branch novo + teste com as 6 frases reais.
+   - AC2 ✅ verificado nos dois efeitos — `status='encerrada'` (paridade confirmada linha a linha
+     com o caminho da tag) e `encerrado:true` no JSON (consumido de fato por
+     `meta_adapter_inbound.py:666`, li o trecho e confirmo o `elif data.get("encerrado")`).
+   - AC3 ✅ as 6 frases reais da conversa da Nívea testadas individualmente.
+   - AC4 ✅ teste de não-regressão com agradecimento que continua ("obrigada, e qual o horário?").
+   - AC5 ✅ os outros 4 branches testados explicitamente, todos com `encerrar: undefined`.
+   - AC6 ✅ confirmado pelo diff: `decidirAguardandoUnidade` e `decidirPrimeiraMensagem` não
+     aparecem em nenhuma linha alterada.
+   - AC7 ✅ verificado por leitura: `deveReconhecerDisparoRecente(ultimoDisparo, ehOptOut)` retorna
+     `false` quando `ehOptOut=true` (`:676`), e o handler já passa
+     `avaliacaoSemanticaEngajada.quer_sair === true` nesse parâmetro — uma despedida nunca aciona
+     o desvio de disparo recente, cai direto no early-return novo. Os testes "Achado 2026-07-24"
+     (pré-existentes) continuam verdes, confirmando que este caminho não foi tocado.
+4. **Sem regressões** — PASS. `deno lint`: 6 problemas, **mesma contagem** de antes desta
+   mudança (conferi de forma independente, não só aceitei o número do @dev). `deno check`: débito
+   pré-existente da S-WM-28, não afetado por esta story (nenhum dos erros reportados está nas
+   linhas tocadas). Consultei o banco de produção: `conversas.status` não tem CHECK constraint e
+   `'encerrada'` já é valor usado (15 conversas Institucional hoje) — nenhum risco de schema.
+   Reabertura de conversa `encerrada` já é caminho testado e suportado (VAL-07,
+   pré-existente) — este story só alcança esse estado por mais um caminho, não cria
+   comportamento novo de reabertura.
+5. **Performance** — PASS. Função pura, um `if` a mais; o `UPDATE` extra só roda quando a
+   conversa de fato encerra, mesmo custo que o caminho da tag já paga hoje.
+6. **Segurança** — PASS. Nenhum dado de entrada do lead é refletido sem sanitização;
+   `conversa.id` já é valor de confiança (linha do próprio banco, não vem do body da requisição).
+   `verify_jwt` da function não mudou (segue `true`). Nenhum segredo tocado.
+7. **Documentação** — PASS. File List e Dev Agent Record batem com o diff real, conferido linha a
+   linha. Nenhuma discrepância entre o que a story descreve e o que o commit contém.
+
+**Deploy (verificado de forma independente, não só aceito do relato do @dev):**
+`list_edge_functions` confirma `motor-agente` ainda em **v50** (sem redeploy desde o @dev), demais
+9 functions do projeto com versão e `updated_at` inalterados — nenhuma tocada. Não houve drift
+desde a verificação do @dev.
+
+**Achado não-bloqueante (observação, não item a corrigir):** o `UPDATE` de encerramento no
+early-return novo não verifica o retorno de erro (mesmo padrão do caminho `[[ENCERRAR]]` na linha
+`:1866`, que também não verifica) — é uma inconsistência **pré-existente** no arquivo, não
+introduzida por esta story, e tratá-la aqui sozinha deixaria os dois caminhos divergentes de novo.
+Sinalizo para uma story de observabilidade futura (ex. próxima da série S-WM-69), não para esta.
+
+**Nenhum item bloqueia o avanço.** Recomendo seguir para @devops.
+
 ## Change Log
 
+- v0.3 (2026-09-05): @qa revisa — **PASS**, 7/7 checks, 7/7 ACs confirmados por leitura e teste
+  independentes (suíte rodada de novo pelo @qa: 208/208, lint: mesma contagem pré-existente,
+  deploy conferido sem drift). 1 achado não-bloqueante registrado (ausência de checagem de erro no
+  `UPDATE` de encerramento — padrão já pré-existente no caminho `[[ENCERRAR]]`, não desta story).
+  Status: InReview → **Ready for Review** (aguardando @devops).
 - v0.2 (2026-09-05): @po valida — **GO** (9/10). Uma correção aplicada antes do GO: o AC2 dizia
   "efetivamente encerrada" sem definir o que isso é em código, o que deixaria o @dev descobrir
   sozinho. Rastreado na leitura: `encerrado` produz `conversas.status='encerrada'` (`:1866`) **e**
