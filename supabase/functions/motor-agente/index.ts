@@ -748,6 +748,10 @@ export type DecisaoConversaEngajada = {
   resposta: string | null;
   /** S-WM-34 (VAL-23): ver DecisaoAguardandoUnidade.pedidoEspecifico — mesmo contrato. */
   pedidoEspecifico?: boolean;
+  /** S-WM-70: true quando `resposta` é uma despedida e a conversa deve ser marcada como
+   * encerrada (mesmo efeito que a tag `[[ENCERRAR]]` já produz no fluxo com GPT — ver handler).
+   * Opcional pra não quebrar nenhum literal de teste existente que constrói este tipo sem ele. */
+  encerrar?: boolean;
 };
 
 /**
@@ -780,6 +784,20 @@ export function decidirConversaEngajada(
       aguardandoUnidade: true,
       perguntaGeralAtiva: false,
       resposta: "Pra te ajudar certinho com isso, me diz qual unidade CUCA:\n\n" + MENU_UNIDADES,
+    };
+  }
+  if (avaliacaoSemantica.quer_sair) {
+    // S-WM-70: antes deste branch, `quer_sair` nunca era lido aqui — uma despedida numa conversa
+    // já engajada caía direto no catch-all "Em que mais posso te ajudar? 😊" (achado real: lead
+    // Nívea pediu pra encerrar 3x e recebeu o mesmo canned nas 3). Precisa vir DEPOIS de
+    // `pedido_depende_unidade` (um pedido que dependa de unidade ganha de uma despedida na mesma
+    // frase) e ANTES de `!pergunta_geral` (que é o catch-all que hoje engolia a despedida).
+    return {
+      unidadeSelecionada: null,
+      aguardandoUnidade: false,
+      perguntaGeralAtiva: false,
+      resposta: "Que bom poder ajudar! 😊 Se precisar de mais alguma coisa, é só chamar por aqui. Até logo! 👋",
+      encerrar: true,
     };
   }
   if (!avaliacaoSemantica.pergunta_geral) {
@@ -1476,7 +1494,19 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoEngajada.aguardandoUnidade };
           await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
-          return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
+          // S-WM-70: este early-return não passava pelo trecho que processa a tag [[ENCERRAR]]
+          // (linha ~1810 em diante) — então uma despedida decidida aqui (decisaoEngajada.encerrar)
+          // nunca marcava conversas.status nem devolvia `encerrado` no JSON, mesmo com o texto de
+          // despedida certo. Reproduz os DOIS efeitos que a tag já produz noutro caminho: status
+          // 'encerrada' no banco e o campo `encerrado` na resposta (consumido pelo worker em
+          // meta_adapter_inbound.py:666).
+          if (decisaoEngajada.encerrar) {
+            await supabase.from("conversas").update({ status: "encerrada", updated_at: new Date().toISOString() }).eq("id", conversa.id);
+          }
+          return new Response(
+            JSON.stringify({ success: true, resposta: respostaFinal, handover: false, encerrado: decisaoEngajada.encerrar === true }),
+            { headers: { "Content-Type": "application/json" } },
+          );
         } else {
           perguntaGeralAtiva = true;
           console.log("[motor-agente v18] Pergunta geral identificada (conversa engajada): segue pro RAG geral (FAQ isolado)");

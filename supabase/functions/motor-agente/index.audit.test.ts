@@ -372,6 +372,76 @@ Deno.test("VAL-19 (S-WM-50): decidirConversaEngajada — pergunta_geral=true rea
   assertEquals(decisao.resposta, null);
 });
 
+// ── S-WM-70: decidirConversaEngajada não lia quer_sair — lead Nívea pediu pra encerrar 3x e
+// recebeu "Em que mais posso te ajudar? 😊" nas 3 (achado real, 2026-09-05, conversa
+// e09247c6-18ad-4a0e-bcdc-9a9ef3cfd26b) ──────────────────────────────────────────────────────
+Deno.test("S-WM-70 (AC1/AC3): decidirConversaEngajada — quer_sair=true devolve despedida, não o canned de continuação", () => {
+  // As 6 frases reais coletadas em produção que geraram o canned indevidamente.
+  const frasesReaisDeSpedida = [
+    "Obrigada!",
+    "Nada, era só isso.",
+    "Nada. Já podemos encerrar. Obrigada!",
+    "Muitoooo obrigada por informar",
+    "Obrigado",
+    "Ok obrigado",
+  ];
+  for (const frase of frasesReaisDeSpedida) {
+    const decisao = decidirConversaEngajada(undefined, {
+      unidade: null, quer_sair: true, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false,
+    }, frase);
+    assertEquals(decisao.unidadeSelecionada, null);
+    assertEquals(decisao.aguardandoUnidade, false);
+    assertEquals(decisao.perguntaGeralAtiva, false);
+    assertEquals(decisao.encerrar, true, `frase "${frase}" deveria sinalizar encerrar=true`);
+    assertEquals(
+      decisao.resposta !== "Em que mais posso te ajudar? 😊",
+      true,
+      `frase "${frase}" não deveria mais cair no canned de continuação`,
+    );
+  }
+});
+
+Deno.test("S-WM-70 (AC4, não-regressão): decidirConversaEngajada — agradecimento que CONTINUA a conversa não encerra", () => {
+  // "obrigada, e qual o horário?" — pergunta_geral=true é o sinal real que o classificador
+  // devolveria aqui (a frase tem conteúdo institucional concreto); quer_sair=false porque não é
+  // despedida. Cobre o caso em que agradecer não significa sair.
+  const decisao = decidirConversaEngajada(undefined, {
+    unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: true, pedido_depende_unidade: false,
+  }, "obrigada, e qual o horário?");
+  assertEquals(decisao.encerrar, undefined, "sem quer_sair, o branch novo não deveria disparar");
+  assertEquals(decisao.perguntaGeralAtiva, true, "segue pro RAG geral normalmente");
+});
+
+Deno.test("S-WM-70 (ordem dos branches): pedido_depende_unidade=true E quer_sair=true na mesma mensagem — o pedido de unidade ganha, não encerra", () => {
+  // A story exige essa ordem explicitamente: um lead pode agradecer e, na mesma frase, perguntar
+  // algo que dependa de unidade — o pedido tem que vencer a despedida.
+  const decisao = decidirConversaEngajada(undefined, {
+    unidade: null, quer_sair: true, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: true,
+  }, "obrigada! e tem judô na Barra?");
+  assertEquals(decisao.encerrar, undefined, "pedido_depende_unidade precisa vencer quer_sair — não pode encerrar aqui");
+  assertEquals(decisao.aguardandoUnidade, true);
+  assertStringIncludes(decisao.resposta ?? "", MENU_UNIDADES);
+});
+
+Deno.test("S-WM-70 (AC5, não-regressão): os outros 4 branches de decidirConversaEngajada continuam com quer_sair=false, comportamento intacto", () => {
+  // unidade detectada
+  const comUnidade = decidirConversaEngajada("Cuca Mondubim", { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
+  assertEquals(comUnidade.unidadeSelecionada, "Cuca Mondubim");
+  assertEquals(comUnidade.encerrar, undefined);
+  // pedido_depende_unidade sozinho
+  const pedidoUnidade = decidirConversaEngajada(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false, pedido_depende_unidade: true });
+  assertEquals(pedidoUnidade.aguardandoUnidade, true);
+  assertEquals(pedidoUnidade.encerrar, undefined);
+  // cortesia pura (catch-all !pergunta_geral)
+  const cortesia = decidirConversaEngajada(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false });
+  assertEquals(cortesia.resposta, "Em que mais posso te ajudar? 😊");
+  assertEquals(cortesia.encerrar, undefined);
+  // pergunta_geral=true real
+  const perguntaGeral = decidirConversaEngajada(undefined, { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true, pedido_depende_unidade: false });
+  assertEquals(perguntaGeral.perguntaGeralAtiva, true);
+  assertEquals(perguntaGeral.encerrar, undefined);
+});
+
 // Testes de wiring no HANDLER — provam que o 3º branch (conversa_engajada) e a marcação da flag
 // nos outros 2 branches (decidirPrimeiraMensagem, decidirAguardandoUnidade) estão conectados.
 Deno.test("VAL-19 (S-WM-50): conversa_engajada=true + cortesia pura → early-return canned, NÃO chega no RAG geral (resumo_rede/FAQ)", async () => {
@@ -2554,4 +2624,36 @@ Deno.test("Achado 2026-07-24: conversa_engajada + disparo antigo (>24h) → comp
   assertEquals(chegouNoRag, false, "disparo fora da janela de 24h não deveria mudar o comportamento original (VAL-19)");
   const body = await resp.json();
   assertEquals(body.resposta, "Em que mais posso te ajudar? 😊");
+});
+
+Deno.test("S-WM-70 (AC2, achado @po): conversa_engajada + quer_sair=true — marca status='encerrada' E devolve encerrado:true, não só o texto de despedida", async () => {
+  // Reproduz o caso real da Nívea: conversa já engajada (passou pelo encaminhamento), lead se
+  // despede. O classificador (mock via comFetchMockado) devolve quer_sair=true.
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ conversa_engajada: true });
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const resp = await comFetchMockado(
+    () => handler(requestFake("Nada. Já podemos encerrar. Obrigada!"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: true, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }),
+  );
+  assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
+
+  const body = await resp.json();
+  assertEquals(body.encerrado, true, "AC2: a armadilha que o @po encontrou era exatamente este campo faltando no early-return");
+  assertEquals(
+    body.resposta !== "Em que mais posso te ajudar? 😊",
+    true,
+    "AC1: não pode mais ser o canned de continuação",
+  );
+
+  const marcouEncerrada = chamadas.some((c) =>
+    c.tabela === "conversas" && c.metodo === "update" &&
+    (c.payload as { status?: string } | undefined)?.status === "encerrada"
+  );
+  assertEquals(
+    marcouEncerrada,
+    true,
+    "AC2: precisa marcar conversas.status='encerrada' de verdade, mesmo efeito que a tag [[ENCERRAR]] produz noutro caminho — reproduz a armadilha registrada pelo @po (o early-return antigo não tocava o status)",
+  );
 });
