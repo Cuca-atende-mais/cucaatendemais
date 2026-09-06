@@ -979,6 +979,9 @@ class TestS_EMP_AUD_024EscapeLiteralTrocaRota:
         estado, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato", {"perfil": "publico"})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        # S-EMP-AUD-040: força "dentro do horário" — este teste não é sobre a janela de
+        # atendimento, e sem isso ele fica dependente da hora real em que roda.
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: True)
 
         mock_conversas = MagicMock()
         mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
@@ -2021,6 +2024,9 @@ class TestSelecaoSemColetaCurriculo:
         })
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        # S-EMP-AUD-040: força "dentro do horário" — este teste não é sobre a janela de
+        # atendimento, e sem isso ele fica dependente da hora real em que roda.
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: True)
 
         mock_conversas = MagicMock()
         mock_sb = _mock_multi_tabela({"conversas": mock_conversas})
@@ -2290,6 +2296,9 @@ class TestAutorizacaoEmpresaPorNumeroWhatsapp:
         estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        # S-EMP-AUD-040: força "dentro do horário" — este teste não é sobre a janela de
+        # atendimento, e sem isso ele fica dependente da hora real em que roda.
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: True)
         mock_enviar = AsyncMock(return_value=True)
         monkeypatch.setattr(emp, "_enviar", mock_enviar)
 
@@ -2331,6 +2340,9 @@ class TestAutorizacaoEmpresaPorNumeroWhatsapp:
         estado, fake_get, fake_set = _fluxo_mock("aguardando_cnpj", {"perfil": "empresa"})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        # S-EMP-AUD-040: força "dentro do horário" — este teste não é sobre a janela de
+        # atendimento, e sem isso ele fica dependente da hora real em que roda.
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: True)
         mock_enviar = AsyncMock(return_value=True)
         monkeypatch.setattr(emp, "_enviar", mock_enviar)
         caplog.set_level(logging.ERROR, logger="empregabilidade_engine")
@@ -2374,6 +2386,9 @@ class TestHandoverEmpregabilidadeEndurecido:
         estado, fake_get, fake_set = _fluxo_mock("", {})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        # S-EMP-AUD-040: força "dentro do horário" — este teste não é sobre a janela de
+        # atendimento, e sem isso ele fica dependente da hora real em que roda.
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: True)
         caplog.set_level(logging.ERROR, logger="empregabilidade_engine")
 
         mock_conversas = MagicMock()
@@ -2402,6 +2417,9 @@ class TestHandoverEmpregabilidadeEndurecido:
         estado, fake_get, fake_set = _fluxo_mock("", {})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        # S-EMP-AUD-040: força "dentro do horário" — este teste não é sobre a janela de
+        # atendimento, e sem isso ele fica dependente da hora real em que roda.
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: True)
         caplog.set_level(logging.ERROR, logger="empregabilidade_engine")
 
         mock_conversas = MagicMock()
@@ -6735,3 +6753,358 @@ class TestBancoTalentosMostraCodigoDeAcompanhamento:
         texto_enviado = mock_enviar.call_args.args[3]
         assert "Número de acompanhamento" in texto_enviado
         assert "DC8168" in texto_enviado.upper()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-040 — Horário de atendimento no transbordo do Emprega+
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDentroHorarioAtendimento:
+    """AC6/AC7 — limites da janela (Seg-Sex 08:00-16:59, -03:00) e conversão de fuso."""
+
+    def _dt(self, ano, mes, dia, hora, minuto, tz=None):
+        from datetime import datetime, timezone
+        return datetime(ano, mes, dia, hora, minuto, tzinfo=tz or timezone.utc)
+
+    def test_sexta_16_59_dentro(self):
+        from datetime import timezone, timedelta
+        tz = timezone(timedelta(hours=-3))
+        # 2026-09-04 é sexta-feira.
+        agora = self._dt(2026, 9, 4, 16, 59, tz=tz)
+        assert emp._dentro_horario_atendimento(agora) is True
+
+    def test_sexta_17_00_fora(self):
+        from datetime import timezone, timedelta
+        tz = timezone(timedelta(hours=-3))
+        agora = self._dt(2026, 9, 4, 17, 0, tz=tz)
+        assert emp._dentro_horario_atendimento(agora) is False
+
+    def test_sabado_10h_fora(self):
+        from datetime import timezone, timedelta
+        tz = timezone(timedelta(hours=-3))
+        # 2026-09-05 é sábado.
+        agora = self._dt(2026, 9, 5, 10, 0, tz=tz)
+        assert emp._dentro_horario_atendimento(agora) is False
+
+    def test_domingo_10h_fora(self):
+        from datetime import timezone, timedelta
+        tz = timezone(timedelta(hours=-3))
+        # 2026-09-06 é domingo.
+        agora = self._dt(2026, 9, 6, 10, 0, tz=tz)
+        assert emp._dentro_horario_atendimento(agora) is False
+
+    def test_segunda_08_00_dentro(self):
+        from datetime import timezone, timedelta
+        tz = timezone(timedelta(hours=-3))
+        # 2026-09-07 é segunda-feira.
+        agora = self._dt(2026, 9, 7, 8, 0, tz=tz)
+        assert emp._dentro_horario_atendimento(agora) is True
+
+    def test_segunda_07_59_fora(self):
+        from datetime import timezone, timedelta
+        tz = timezone(timedelta(hours=-3))
+        agora = self._dt(2026, 9, 7, 7, 59, tz=tz)
+        assert emp._dentro_horario_atendimento(agora) is False
+
+    def test_ac7_datetime_utc_converte_antes_de_comparar(self):
+        """AC7 — um datetime recebido em UTC produz o mesmo veredito que o horário local
+        equivalente. Segunda 08:00 -03:00 == segunda 11:00 UTC (dentro)."""
+        from datetime import timezone
+        agora_utc = self._dt(2026, 9, 7, 11, 0, tz=timezone.utc)
+        assert emp._dentro_horario_atendimento(agora_utc) is True
+        # Segunda 10:59 UTC == segunda 07:59 -03:00 (fora, 1 minuto antes de abrir).
+        agora_utc_fora = self._dt(2026, 9, 7, 10, 59, tz=timezone.utc)
+        assert emp._dentro_horario_atendimento(agora_utc_fora) is False
+
+    def test_datetime_naive_tratado_como_utc(self):
+        """Mesmo padrão já usado em `_obter_ultima_interacao_anterior`/inatividade
+        (S-EMP-AUD-033): datetime sem tzinfo é tratado como UTC, não como hora local do
+        container."""
+        from datetime import datetime
+        agora_naive = datetime(2026, 9, 7, 11, 0)  # == segunda 08:00 -03:00 se tratado como UTC
+        assert emp._dentro_horario_atendimento(agora_naive) is True
+
+    def test_sem_argumento_usa_relogio_real(self, monkeypatch):
+        """Sem `agora`, usa o instante real — não trava em nenhum valor fixo."""
+        from datetime import datetime, timezone
+        fixo = datetime(2026, 9, 7, 11, 0, tzinfo=timezone.utc)  # segunda 08:00 -03:00
+
+        class _DatetimeFixo(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixo if tz is None else fixo.astimezone(tz)
+
+        import datetime as _dt_module
+        monkeypatch.setattr(_dt_module, "datetime", _DatetimeFixo)
+        assert emp._dentro_horario_atendimento() is True
+
+
+class TestAcionarTransbordoForaHorario:
+    """AC1 (regressão via suíte existente), AC2, AC3, AC8, AC9 — os dois caminhos de
+    `_acionar_transbordo_empregabilidade`."""
+
+    @pytest.mark.asyncio
+    async def test_fora_horario_nao_marca_awaiting_human_nem_notifica(self, monkeypatch, _isola_enviar):
+        """AC2: fora da janela, a conversa não vira awaiting_human e o transbordo não é
+        notificado — a IA segue ativa."""
+        estado, fake_get, fake_set = _fluxo_mock("listando_cargos_selecao", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: False)
+
+        mock_conversas = MagicMock()
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"conversas": mock_conversas}))
+
+        import meta_adapter_inbound
+        mock_notificar = AsyncMock(return_value=True)
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", mock_notificar)
+
+        resultado = await emp._acionar_transbordo_empregabilidade(
+            conversa_id="conv-1", unidade_cuca="Barra",
+            instance_name="PHONE_ID", token="token", phone="558599990000", lead_id="lead-1",
+            motivo="pedido_atendente_humano",
+            mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+        )
+
+        assert resultado is True
+        mock_notificar.assert_not_awaited()
+        updates_status = [
+            chamada.args[0] for chamada in mock_conversas.update.call_args_list
+            if "status" in chamada.args[0]
+        ]
+        assert updates_status == [], "AC2: nenhum update de status — nem awaiting_human, nem qualquer outro"
+
+    @pytest.mark.asyncio
+    async def test_fora_horario_envia_texto_aprovado_e_grava_etapa(self, monkeypatch, _isola_enviar):
+        """AC3: mensagem exatamente igual ao texto aprovado pelo Junior (implementação
+        literal). Também prova o contexto salvo pra retomar a conversa depois (Item C)."""
+        estado, fake_get, fake_set = _fluxo_mock("listou_categorias", {"perfil": "publico", "algo_em_andamento": "x"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: False)
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"conversas": MagicMock()}))
+
+        import meta_adapter_inbound
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", AsyncMock(return_value=True))
+
+        await emp._acionar_transbordo_empregabilidade(
+            conversa_id="conv-1", unidade_cuca="Barra",
+            instance_name="PHONE_ID", token="token", phone="558599990000", lead_id="lead-1",
+            motivo="oferta_proativa_falhas",
+            mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert texto_enviado == emp._MSG_FORA_HORARIO_ATENDIMENTO
+
+        assert estado["etapa"] == "fora_horario_aguardando_assunto"
+        contexto = estado["_fora_horario_contexto"]
+        assert contexto["etapa_anterior"] == "listou_categorias"
+        assert contexto["fluxo_anterior"]["algo_em_andamento"] == "x"
+
+    @pytest.mark.asyncio
+    async def test_fora_horario_persiste_metadata_update_mesmo_sem_marcar_status(self, monkeypatch, _isola_enviar):
+        """Achado @dev durante a implementação: `metadata_update` (ex.: limpar
+        `ultima_intencao` do SQS-40) precisa ser persistido mesmo fora do horário — sem
+        isso, a PRÓXIMA mensagem do lead re-entraria no mesmo caminho de dúvida
+        indefinidamente, nunca alcançando a etapa nova."""
+        estado, fake_get, fake_set = _fluxo_mock("", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: False)
+
+        mock_conversas = MagicMock()
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"conversas": mock_conversas}))
+
+        import meta_adapter_inbound
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", AsyncMock(return_value=True))
+
+        await emp._acionar_transbordo_empregabilidade(
+            conversa_id="conv-1", unidade_cuca="Barra",
+            instance_name="PHONE_ID", token="token", phone="558599990000", lead_id="lead-1",
+            motivo="duvida",
+            mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+            metadata_update={"ultima_intencao": None},
+        )
+
+        payloads = [chamada.args[0] for chamada in mock_conversas.update.call_args_list]
+        assert {"metadata": {"ultima_intencao": None}} in payloads
+
+    @pytest.mark.asyncio
+    async def test_ac9_nenhuma_chave_de_configuracoes_e_consultada(self, monkeypatch, _isola_enviar):
+        """AC9: a janela está no código, não em `configuracoes` — o caminho fora do
+        horário não consulta a tabela `configuracoes`."""
+        estado, fake_get, fake_set = _fluxo_mock("listando_cargos_selecao", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: False)
+
+        mock_conversas = MagicMock()
+        mock_configuracoes = MagicMock()
+        monkeypatch.setattr(
+            emp, "supabase",
+            _mock_multi_tabela({"conversas": mock_conversas, "configuracoes": mock_configuracoes}),
+        )
+        import meta_adapter_inbound
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", AsyncMock(return_value=True))
+
+        await emp._acionar_transbordo_empregabilidade(
+            conversa_id="conv-1", unidade_cuca="Barra",
+            instance_name="PHONE_ID", token="token", phone="558599990000", lead_id="lead-1",
+            motivo="pedido_atendente_humano",
+            mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+        )
+        mock_configuracoes.select.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dentro_do_horario_comportamento_intacto_awaiting_human_e_notifica(self, monkeypatch, _isola_enviar):
+        """AC1: dentro da janela, nada muda — marca awaiting_human e notifica (regressão
+        explícita, além das 287 pré-existentes que agora travam o relógio pra manter
+        exatamente este comportamento)."""
+        estado, fake_get, fake_set = _fluxo_mock("listando_cargos_selecao", {"perfil": "publico"})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_dentro_horario_atendimento", lambda agora=None: True)
+
+        mock_conversas = MagicMock()
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({"conversas": mock_conversas}))
+        import meta_adapter_inbound
+        mock_notificar = AsyncMock(return_value=True)
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", mock_notificar)
+
+        await emp._acionar_transbordo_empregabilidade(
+            conversa_id="conv-1", unidade_cuca="Barra",
+            instance_name="PHONE_ID", token="token", phone="558599990000", lead_id="lead-1",
+            motivo="pedido_atendente_humano",
+            mensagem_sucesso="Sua solicitação foi registrada. Em breve você será atendido por nossa equipe.",
+        )
+
+        mock_notificar.assert_awaited_once()
+        payloads = [chamada.args[0] for chamada in mock_conversas.update.call_args_list]
+        assert {"status": "awaiting_human", "updated_at": "now()"} in payloads
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert texto_enviado == "Sua solicitação foi registrada. Em breve você será atendido por nossa equipe."
+
+
+class TestQuerEncerrarForaHorario:
+    """AC4 — cobertura do gap real encontrado em `_quer_encerrar` pra respostas curtas."""
+
+    @pytest.mark.parametrize("texto", [
+        "não", "nao", "obrigado", "obrigada", "era só isso", "nada",
+        "pode encerrar", "Não, obrigado!", "nao precisa.",
+    ])
+    def test_frases_de_negacao_encerram(self, texto):
+        assert emp._quer_encerrar_fora_horario(texto) is True
+
+    def test_gap_documentado_em_quer_encerrar_puro(self):
+        """Prova o motivo de existir `_quer_encerrar_fora_horario`: `_quer_encerrar`
+        sozinha falha nestes 3 exemplos que a própria story cita como negação esperada."""
+        assert emp._quer_encerrar("não") is False
+        assert emp._quer_encerrar("nada") is False
+        assert emp._quer_encerrar("pode encerrar") is False
+
+    @pytest.mark.parametrize("texto", [
+        "sim", "quero saber de outra vaga", "tenho uma dúvida sobre o processo",
+        "boxe", "quero falar sobre outra coisa",
+    ])
+    def test_outro_assunto_nao_encerra(self, texto):
+        assert emp._quer_encerrar_fora_horario(texto) is False
+
+
+class TestEtapaForaHorarioAguardandoAssunto:
+    """AC4/AC5 — o diálogo na etapa nova, via roteador completo."""
+
+    def _mock_router_basico(self, monkeypatch, metadata_extra=None):
+        mock_conversas = MagicMock()
+        mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "metadata": metadata_extra or {}
+        }
+        mock_candidaturas = MagicMock()
+        mock_candidaturas.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+        mock_mensagens = MagicMock()
+        mock_mensagens.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = []
+        monkeypatch.setattr(emp, "supabase", _mock_multi_tabela({
+            "conversas": mock_conversas, "candidaturas": mock_candidaturas, "mensagens": mock_mensagens,
+        }))
+
+    @pytest.mark.asyncio
+    async def test_negacao_encerra_com_cordialidade(self, monkeypatch, _isola_enviar):
+        """AC4: negação na etapa fora_horario_aguardando_assunto encerra a conversa com o
+        texto aprovado, não seco."""
+        estado, fake_get, fake_set = _fluxo_mock("fora_horario_aguardando_assunto", {
+            "perfil": "publico",
+            "_fora_horario_contexto": {
+                "etapa_anterior": "oferta_banco_talentos",
+                "fluxo_anterior": {"perfil": "publico", "etapa": "oferta_banco_talentos"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        self._mock_router_basico(monkeypatch)
+
+        await emp.processar_mensagem_empregabilidade(
+            "não, obrigado", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado == {}, "_encerrar_fluxo limpa o fluxo"
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert texto_enviado == emp._MSG_FORA_HORARIO_ENCERRAMENTO
+
+    @pytest.mark.asyncio
+    async def test_outro_assunto_restaura_fluxo_anterior_e_reprocessa_sem_perder_a_mensagem(self, monkeypatch, _isola_enviar):
+        """AC5: lead traz outro assunto — a MESMA mensagem é reprocessada contra o estado
+        anterior à mensagem de horário, sem se perder. Usa `oferta_banco_talentos` +
+        "sim" como fluxo determinístico e sem chamada de LLM (fast-path `quer_banco`)."""
+        estado, fake_get, fake_set = _fluxo_mock("fora_horario_aguardando_assunto", {
+            "perfil": "publico",
+            "_fora_horario_contexto": {
+                "etapa_anterior": "oferta_banco_talentos",
+                "fluxo_anterior": {"perfil": "publico", "etapa": "oferta_banco_talentos"},
+            },
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        self._mock_router_basico(monkeypatch)
+
+        await emp.processar_mensagem_empregabilidade(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert texto_enviado != emp._MSG_FORA_HORARIO_ATENDIMENTO
+        assert texto_enviado != emp._MSG_FORA_HORARIO_ENCERRAMENTO
+        assert "nome completo" in texto_enviado.lower(), (
+            "a resposta esperada de oferta_banco_talentos+'sim' é pedir o nome completo — "
+            "prova que a mensagem 'sim' chegou de fato no fluxo restaurado, não foi perdida"
+        )
+        assert estado["etapa"] == "coletando_nome_candidato", "avançou pro próximo passo do fluxo restaurado"
+
+
+class TestExpiracaoAlcancaEtapaForaHorario:
+    """Item C do impact analysis — lead que recebe o aviso e nunca responde não fica
+    preso: a etapa nova entra na expiração por inatividade da S-EMP-AUD-033."""
+
+    def test_etapa_esta_na_lista_de_expiracao(self):
+        assert "fora_horario_aguardando_assunto" in emp._ETAPAS_EXPIRAM_POR_INATIVIDADE
+
+    def test_reset_por_inatividade_volta_pro_inicio(self):
+        fluxo = {
+            "perfil": "publico",
+            "etapa": "fora_horario_aguardando_assunto",
+            "_fora_horario_contexto": {"etapa_anterior": "listou_categorias", "fluxo_anterior": {}},
+        }
+        resultado = emp._resetar_fluxo_por_inatividade(fluxo, "fora_horario_aguardando_assunto")
+        assert resultado == {"perfil": "publico", "etapa": "inicio"}
+
+
+class TestVagaCriadaNotificaForaDoHorario:
+    """AC8 — o aviso interno de vaga/seleção criada (S-EMP-AUD-027) continua 24/7, mesmo
+    fora do horário de atendimento humano. Prova estrutural: o loop proativo chama
+    `_notificar_transbordo` diretamente, nunca `_acionar_transbordo_empregabilidade` —
+    não existe caminho pelo qual o gate desta story possa alcançá-lo."""
+
+    def test_notify_tick_nunca_chama_acionar_transbordo(self):
+        import inspect
+        codigo_fonte = inspect.getsource(emp._empregabilidade_notify_tick)
+        assert "_acionar_transbordo_empregabilidade" not in codigo_fonte
+        assert "_notificar_transbordo" in codigo_fonte
