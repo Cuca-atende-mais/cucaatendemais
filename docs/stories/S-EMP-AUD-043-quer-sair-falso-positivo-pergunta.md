@@ -1,6 +1,6 @@
 # S-EMP-AUD-043 — `quer_sair` falso-positivo encerra a conversa numa pergunta
 
-**Status:** InReview
+**Status:** Ready for Review
 **Epic:** Auditoria Empregabilidade
 **Origem:** Achado adjacente da investigação @dev 2026-09-05 (mesma conversa que originou a
 S-EMP-AUD-041) — `docs/2026-09-05/PLANO-3-melhorias-empregabilidade-2026-09-05.md`, §0 item 2.
@@ -283,8 +283,76 @@ palavras) continua valendo e **não** é alvo desta story — quem erra é o cam
   consulta read-only em produção (Step 1) e testes automatizados (Step 2), conforme o test plan
   da própria story já previa.
 
+## QA Results
+
+### Review em 2026-09-06 — @qa Quinn
+
+**Gate: PASS**
+
+**7 checks:**
+
+1. **Code review** — PASS. Li o diff completo. A guarda entra em exatamente 4 pontos —
+   `_escape_semantico_ou_none`, `_quer_sair_semantico`, o fallback de `menu_inicial` e o segundo
+   gate de `oferta_banco_talentos` — sempre como `and not _pergunta_generica_nao_e_saida(texto)`
+   ou um `if` isolado antes do encerramento existente, nunca reescrevendo lógica ao redor.
+   Confirmei que `_quer_encerrar` (determinístico) não é tocado em nenhuma linha do diff — grep
+   próprio, zero ocorrências.
+2. **Testes** — PASS. Rodei a suíte de forma independente: **391/391**. Contei via
+   `pytest --collect-only`: 35 testes nas 5 classes tocadas, 4 já existiam antes — bate exato com
+   os "31 novos" declarados.
+3. **Acceptance Criteria** — PASS, 9/9 verificados por mim (AC9 corretamente marcado N/A, já que
+   o prompt do classificador não foi tocado — confirmei isso também, zero menção a
+   `intencao_detector.py` no diff):
+   - AC1 ✅ reproduzi "Tem previsão pra abrir?" na etapa `oferta_banco_talentos` — não encerra.
+   - AC2 ✅ a lead não fica presa: testei eu mesma que um "sim" na mensagem seguinte à guarda
+     continua funcionando pelo fast-path normal da etapa, sem precisar de nenhum destino novo.
+   - AC3 ✅ despedidas diretas sem formato de pergunta ("tchau", "obrigado, era só isso") não
+     batem no padrão da guarda — confirmado com script próprio, não só nos testes do @dev.
+   - AC4 ✅ "posso encerrar?" e "dá pra parar por aqui?" continuam encerrando — reproduzido
+     também num script independente, nas 3 camadas afetadas (`_escape_semantico_ou_none`,
+     `_quer_sair_semantico`, `oferta_banco_talentos`).
+   - AC5 ✅ Step 1 registrado na story **antes** do Step 2 — reexecutei a consulta read-only do
+     Step 1 eu mesma, de forma independente: mesmos 2 falsos positivos confirmados, mesmo caso
+     descartado (mensagem do agente rotulada como lead). O total de encerramentos subiu de 130
+     para 142 entre a consulta do @dev e a minha — natural, é produção viva, não um dataset
+     congelado; os casos específicos batidos são idênticos.
+   - AC6 ✅ `_quer_encerrar` não aparece em nenhuma linha do diff.
+   - AC7 ✅ as linhas de `quer_atendente_humano`, `quer_voltar` e `mudou_de_assunto` em
+     `_escape_semantico_ou_none` não foram tocadas — só a linha de `quer_sair` mudou. Testei
+     `quer_atendente_humano` eu mesma com um texto em formato de pergunta, pra confirmar que a
+     guarda não vaza pra esse branch.
+   - AC8 ✅ os 3 pontos reais de leitura de `quer_sair` (não 5 — achado do @dev, que confirmei)
+     estão todos cobertos.
+   - AC9 ✅ N/A, confirmado — prompt não tocado.
+4. **Sem regressões** — PASS. 391/391, nenhum teste pré-existente precisou de ajuste.
+5. **Performance** — PASS. Regex compilada uma vez, sem I/O adicional.
+6. **Segurança** — PASS. Nenhum dado sensível envolvido; guarda opera só sobre o texto já
+   recebido do lead.
+7. **Documentação** — PASS. File List e Dev Agent Record batem com o diff real; os dois achados
+   (segundo gate em `oferta_banco_talentos`, 3º ponto de consumo) são precisos e foram o que
+   guiou minha verificação do AC2/AC8.
+
+**Achado próprio, não bloqueante:** testei um caso de fronteira que a suíte do @dev não cobria —
+frases que **começam** com uma palavra interrogativa ("tem", "quando", "como") mas são
+**afirmações**, não perguntas, e **sem** `?` no fim (ex.: `"tem que ser hoje mesmo"`,
+`"como assim, não quero mais nada disso"`). A guarda as classifica como "pergunta protegida"
+mesmo sem interrogação — teoricamente isso poderia impedir um encerramento legítimo se o
+classificador disparasse `quer_sair=true` para uma frase assim. **Busquei essa exata forma nos
+142 encerramentos de produção** (frase sem `?` começando com uma das palavras do padrão) — **zero
+ocorrências históricas**. É um risco de desenho real, mas sem evidência de que já aconteceu ou
+vá acontecer com frequência relevante — registro para consciência futura (poderia exigir "OU
+termina em `?` OU tem outro sinal de interrogação" mais estrito), não como bloqueio agora.
+
+**Nenhum item bloqueia o avanço.** Recomendo seguir para @devops.
+
 ## Change Log
 
+- v0.4 (2026-09-06): @qa revisa — **PASS**, 7/7 checks, 9/9 ACs (AC9 corretamente N/A) confirmados
+  por verificação independente (suíte rodada de novo: 391/391; Step 1 reexecutado
+  independentemente, mesmos casos batidos; AC4 reproduzido nas 3 camadas afetadas). 1 achado
+  próprio, não bloqueante: a guarda protege frases que começam com palavra interrogativa mesmo
+  sem `?` — risco de desenho real, mas zero ocorrência nos 142 encerramentos históricos
+  verificados. Status: InReview → **Ready for Review** (aguardando @devops).
 - v0.3 (2026-09-06): @dev executa o Step 1 (bloqueante) e registra o resultado ANTES de
   implementar o Step 2, conforme a story exige. Volume medido (~1,5%, 2 casos confirmados)
   justificou a abordagem (a) sozinha — guarda determinística de pergunta — descartando (b) e (c)
