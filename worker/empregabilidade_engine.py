@@ -5911,6 +5911,97 @@ def _log_intencao(conversa_id: str, intencao: str) -> None:
 _LOG_INTENCAO_SYNC = _log_intencao
 
 
+# ---------------------------------------------------------------------------
+# S-EMP-AUD-041 — Redirecionamento Emprega+ → Institucional (Cuca Atende+)
+# ---------------------------------------------------------------------------
+
+# Lista FECHADA e estreita — só nomes de atividade que nunca nomeiam um cargo real no CUCA
+# (decisão consciente, Item B da story: termos ambíguos como "curso"/"turma"/"academia" ficam
+# DE FORA de propósito, porque também aparecem em pedidos legítimos de emprego — uma lista
+# larga misdirecionaria candidato a emprego, o que é pior que o bug original). Sem marcadores
+# de ocupação (professor/instrutor/oficineiro): confirmado com o Junior em 05/09/2026 que a
+# Rede CUCA não divulga vaga dessas modalidades neste canal — se isso mudar, esta lista precisa
+# ser revista (ver Change Log da story).
+_MODALIDADES_INSTITUCIONAL = (
+    "boxe", "judô", "judo", "capoeira", "natação", "natacao", "muay thai",
+    "jiu-jitsu", "ballet", "vôlei", "volei", "futsal", "skate", "grafite", "zumba",
+)
+_MODALIDADES_INSTITUCIONAL_REGEX = re.compile(
+    r"(?<!\w)(?:" + "|".join(re.escape(t) for t in _MODALIDADES_INSTITUCIONAL) + r")(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def _assunto_institucional(texto: str) -> bool:
+    """Pré-filtro determinístico (NÃO é keyword de intenção — roda depois do LLM já ter
+    classificado `candidato_vaga`) pra pegar o caso em que o lead pergunta de turma/atividade
+    do Institucional (ex.: "quando abre a vaga de boxe?") e seria misdirecionado pra oferta de
+    Banco de Talentos pelo branch `cargo_mencionado` (S-EMP-AUD-030). Match por palavra
+    inteira — mesmo princípio do `contemPalavra` do motor-agente — pra não casar substring
+    dentro de outra palavra."""
+    return bool(_MODALIDADES_INSTITUCIONAL_REGEX.search(texto))
+
+
+_TTL_CACHE_NUMERO_INSTITUCIONAL_SEGUNDOS = 300
+_CACHE_NUMERO_INSTITUCIONAL: dict[str, tuple[float, str | None]] = {}
+
+
+async def _buscar_numero_institucional() -> str | None:
+    """Lê o número do Cuca Atende+ (canal `institucional`) em
+    `configuracoes.numeros_canais_cuca`, com cache em processo de TTL curto (evita 1 SELECT
+    por mensagem redirecionada — custo em escala citado na story). Nunca propaga exceção:
+    linha ausente, JSON malformado ou erro de rede caem em `None`, que
+    `_montar_mensagem_institucional` já trata sem número — mesmo contrato defensivo de
+    `buscarNumeroCanal` no motor-agente (Deno)."""
+    cache_hit = _CACHE_NUMERO_INSTITUCIONAL.get("numero")
+    if cache_hit and (time.time() - cache_hit[0]) < _TTL_CACHE_NUMERO_INSTITUCIONAL_SEGUNDOS:
+        return cache_hit[1]
+
+    def _consultar():
+        return (
+            supabase.table("configuracoes").select("valor")
+            .eq("chave", "numeros_canais_cuca").maybe_single().execute()
+        )
+
+    numero: str | None = None
+    try:
+        res = await _supabase_to_thread(_consultar)
+        numeros = (res.data or {}).get("valor") or {}
+        candidato = numeros.get("institucional")
+        numero = candidato if isinstance(candidato, str) and candidato.strip() else None
+    except Exception as exc:
+        logger.warning("[S-EMP-AUD-041] falha ao buscar número institucional, fallback sem número: %s", exc)
+        numero = None
+
+    _CACHE_NUMERO_INSTITUCIONAL["numero"] = (time.time(), numero)
+    return numero
+
+
+_MSG_INSTITUCIONAL_COM_NUMERO = (
+    "Essa turma/atividade é da Rede CUCA, não uma vaga de emprego — quem cuida disso é o time "
+    "do *Cuca Atende+*! 😊 Chama eles direto no wa.me/{numero} que te passam os detalhes "
+    "certinho.\n\n"
+    "Se quiser, posso te ajudar a ver as vagas de emprego disponíveis por aqui. É só me chamar!"
+)
+_MSG_INSTITUCIONAL_SEM_NUMERO = (
+    "Essa turma/atividade é da Rede CUCA, não uma vaga de emprego — quem cuida disso é o time "
+    "do *Cuca Atende+*! 😊 Em breve te passo o contato certinho aqui.\n\n"
+    "Se quiser, posso te ajudar a ver as vagas de emprego disponíveis por aqui. É só me chamar!"
+)
+
+
+def _montar_mensagem_institucional(numero: str | None) -> str:
+    """Monta a mensagem de redirecionamento só a partir de código + config — NUNCA do texto do
+    LLM (mesma garantia de `montarMensagemEncaminhamento`, motor-agente). Sanitiza `numero` pra
+    só dígitos antes de montar o link wa.me; se sobrar vazio depois de sanitizar (config
+    ausente, malformada ou só máscara sem dígito), cai no texto sem link — nunca gera
+    "wa.me/None" nem link quebrado (AC5)."""
+    numero_limpo = re.sub(r"\D", "", numero) if numero else ""
+    if not numero_limpo:
+        return _MSG_INSTITUCIONAL_SEM_NUMERO
+    return _MSG_INSTITUCIONAL_COM_NUMERO.format(numero=numero_limpo)
+
+
 async def _rotear_por_intencao(
     intencao_res: dict,
     texto: str,
@@ -5958,6 +6049,18 @@ async def _rotear_por_intencao(
         # (categoria fechada, ~15 opções do portal) — checado antes do setor,
         # já que é mais específico quando presente.
         cargo_mencionado = (intencao_res.get("cargo_mencionado") or "").strip()
+
+        # S-EMP-AUD-041: antes de tratar `cargo_mencionado` (S-EMP-AUD-030), filtra pedidos que
+        # na verdade são sobre turma/atividade do Institucional (ex.: "quando abre a vaga de
+        # boxe?") — o LLM classifica como candidato_vaga e sem este filtro o branch abaixo
+        # emitiria a oferta de Banco de Talentos, misdirecionando quem só queria se matricular
+        # numa turma. Lista fechada e estreita (ver `_assunto_institucional`) — roda só aqui,
+        # na mensagem livre de intenção (`_rotear_por_intencao`), nunca dentro de etapa de
+        # coleta de dado (AC7), já que essas etapas têm dispatch próprio e não passam por aqui.
+        if _assunto_institucional(texto):
+            numero_institucional = await _buscar_numero_institucional()
+            await e(_montar_mensagem_institucional(numero_institucional))
+            return
 
         if cargo_mencionado:
             # busca todas as vagas abertas e filtra em Python por titulo OU

@@ -7108,3 +7108,276 @@ class TestVagaCriadaNotificaForaDoHorario:
         codigo_fonte = inspect.getsource(emp._empregabilidade_notify_tick)
         assert "_acionar_transbordo_empregabilidade" not in codigo_fonte
         assert "_notificar_transbordo" in codigo_fonte
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-AUD-041 — Redirecionamento Emprega+ → Institucional (Cuca Atende+)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestAssuntoInstitucional:
+    """AC1, AC2, AC3 — pré-filtro determinístico `_assunto_institucional`."""
+
+    @pytest.mark.parametrize("texto", [
+        "Bom dia, quando abre a vaga de boxe?",
+        "tem vaga de judô?",
+        "tem vaga de judo?",
+        "quero fazer capoeira",
+        "quando abre natação",
+        "tem natacao pra criança",
+        "vai ter muay thai esse mês?",
+        "quero jiu-jitsu",
+        "meu filho quer ballet",
+        "tem vôlei aqui?",
+        "quero jogar volei",
+        "abre futsal quando",
+        "quero aprender skate",
+        "tem aula de grafite",
+        "quero fazer zumba",
+    ])
+    def test_positivos_lista_fechada(self, texto):
+        """AC1/AC2 — as frases reais da auditoria e as demais modalidades da lista
+        fechada disparam o pré-filtro."""
+        assert emp._assunto_institucional(texto) is True
+
+    @pytest.mark.parametrize("texto", [
+        "vaga de auxiliar de academia",
+        "curso técnico exigido na vaga",
+        "atestado pra admissão",
+        "tem vaga de enfermeira?",
+        "quero deixar meu currículo",
+    ])
+    def test_negativos_obrigatorios(self, texto):
+        """AC3 — os três casos negativos obrigatórios da story (mais dois de sanidade)
+        NÃO disparam o pré-filtro; seguem o fluxo de emprego normal."""
+        assert emp._assunto_institucional(texto) is False
+
+    def test_match_e_por_palavra_inteira_nao_substring(self):
+        """Mesmo princípio do `contemPalavra` do motor-agente — não pode casar 'boxe'
+        dentro de outra palavra maior."""
+        assert emp._assunto_institucional("desemboxelamento") is False
+        assert emp._assunto_institucional("skatista profissional") is False
+
+    def test_case_insensitive(self):
+        assert emp._assunto_institucional("VAGA DE BOXE") is True
+
+
+class TestMontarMensagemInstitucional:
+    """AC4, AC5, AC6 — montagem da mensagem só a partir de código + config."""
+
+    def test_com_numero_gera_link_wa_me_sanitizado(self):
+        texto = emp._montar_mensagem_institucional("5585999401027")
+        assert "wa.me/5585999401027" in texto
+
+    def test_numero_com_mascara_e_sanitizado(self):
+        texto = emp._montar_mensagem_institucional("(85) 99940-1027")
+        assert "wa.me/85999401027" in texto
+        assert "(" not in texto.split("wa.me/")[1].split()[0]
+
+    def test_sem_numero_nao_gera_link_quebrado(self):
+        texto = emp._montar_mensagem_institucional(None)
+        assert "wa.me" not in texto
+        assert "None" not in texto
+
+    def test_numero_vazio_nao_gera_link_quebrado(self):
+        texto = emp._montar_mensagem_institucional("")
+        assert "wa.me" not in texto
+        assert "None" not in texto
+
+    def test_com_numero_oferece_voltar_ao_menu(self):
+        """AC6 — depois de redirecionar, o lead recebe a opção de voltar ao menu do
+        Emprega+, não é encerrado seco."""
+        texto = emp._montar_mensagem_institucional("5585999401027")
+        assert "vagas de emprego" in texto.lower()
+
+    def test_sem_numero_tambem_oferece_voltar_ao_menu(self):
+        texto = emp._montar_mensagem_institucional(None)
+        assert "vagas de emprego" in texto.lower()
+
+
+class _SupabaseFakeConfiguracoes:
+    """Fake mínimo só pra `configuracoes.numeros_canais_cuca` — não reaproveita
+    `_SupabaseFakeBloco6` porque essa tabela é específica desta story."""
+
+    def __init__(self, valor):
+        self._valor = valor
+
+    def table(self, nome):
+        assert nome == "configuracoes"
+        return self
+
+    def select(self, *_args, **_kwargs):
+        return self
+
+    def eq(self, *_args, **_kwargs):
+        return self
+
+    def maybe_single(self):
+        return self
+
+    def execute(self):
+        if self._valor is None:
+            return _ResultadoFake(None)
+        return _ResultadoFake({"valor": self._valor})
+
+
+_SupabaseFakeConfiguracoes.__module__ = "unittest.mock"
+
+
+class TestBuscarNumeroInstitucional:
+    """Item A/C — leitura com cache em processo e fallback seguro (nunca propaga exceção)."""
+
+    def setup_method(self):
+        emp._CACHE_NUMERO_INSTITUCIONAL.clear()
+
+    @pytest.mark.asyncio
+    async def test_le_numero_da_config(self, monkeypatch):
+        monkeypatch.setattr(
+            emp, "supabase",
+            _SupabaseFakeConfiguracoes({"institucional": "5585999401027", "empregabilidade": "5585999401057"}),
+        )
+        numero = await emp._buscar_numero_institucional()
+        assert numero == "5585999401027"
+
+    @pytest.mark.asyncio
+    async def test_config_ausente_retorna_none(self, monkeypatch):
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeConfiguracoes(None))
+        assert await emp._buscar_numero_institucional() is None
+
+    @pytest.mark.asyncio
+    async def test_chave_institucional_ausente_retorna_none(self, monkeypatch):
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeConfiguracoes({"empregabilidade": "5585999401057"}))
+        assert await emp._buscar_numero_institucional() is None
+
+    @pytest.mark.asyncio
+    async def test_erro_de_rede_cai_em_none_sem_propagar(self, monkeypatch):
+        class _Explode:
+            def table(self, *_a, **_k):
+                raise RuntimeError("timeout simulado")
+
+        _Explode.__module__ = "unittest.mock"
+        monkeypatch.setattr(emp, "supabase", _Explode())
+        assert await emp._buscar_numero_institucional() is None
+
+    @pytest.mark.asyncio
+    async def test_usa_cache_dentro_do_ttl(self, monkeypatch):
+        fake = _SupabaseFakeConfiguracoes({"institucional": "5585999401027"})
+        chamadas = {"n": 0}
+        original_table = fake.table
+
+        def _table_contando(nome):
+            chamadas["n"] += 1
+            return original_table(nome)
+
+        fake.table = _table_contando
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        primeiro = await emp._buscar_numero_institucional()
+        segundo = await emp._buscar_numero_institucional()
+
+        assert primeiro == segundo == "5585999401027"
+        assert chamadas["n"] == 1, "segunda chamada dentro do TTL não deve consultar o banco de novo"
+
+    @pytest.mark.asyncio
+    async def test_expira_apos_ttl(self, monkeypatch):
+        fake = _SupabaseFakeConfiguracoes({"institucional": "5585999401027"})
+        monkeypatch.setattr(emp, "supabase", fake)
+        await emp._buscar_numero_institucional()
+
+        momento_futuro = time.time() + emp._TTL_CACHE_NUMERO_INSTITUCIONAL_SEGUNDOS + 1
+        monkeypatch.setattr(emp.time, "time", lambda: momento_futuro)
+        fake._valor = {"institucional": "5585999401099"}
+        numero = await emp._buscar_numero_institucional()
+        assert numero == "5585999401099"
+
+
+class TestRotaCandidatoVagaAssuntoInstitucional:
+    """AC1, AC2, AC6, AC7, AC8 — fiação completa via `_rotear_por_intencao`."""
+
+    @pytest.mark.asyncio
+    async def test_boxe_redireciona_em_vez_de_banco_talentos(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_buscar_numero_institucional", AsyncMock(return_value="5585999401027"))
+
+        await emp._rotear_por_intencao(
+            {"intencao": "candidato_vaga", "nome": "Ana", "cargo_mencionado": "boxe"},
+            "Bom dia, quando abre a vaga de boxe?", "558599990000", "PHONE_ID", "token",
+            "lead-1", "conv-1", "Barra", lambda _texto: (None, None),
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "wa.me/5585999401027" in texto_enviado
+        assert "banco de talentos" not in texto_enviado.lower()
+        assert "boxe" not in texto_enviado.lower(), "resposta não deve repetir o termo como se fosse cargo"
+
+    @pytest.mark.asyncio
+    async def test_capoeira_redireciona_mesmo_sem_cargo_mencionado(self, monkeypatch, _isola_enviar):
+        """AC2 — dispara mesmo quando o classificador não preencheu `cargo_mencionado`
+        (a pré-checagem olha o texto bruto, não depende desse campo)."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_buscar_numero_institucional", AsyncMock(return_value="5585999401027"))
+
+        await emp._rotear_por_intencao(
+            {"intencao": "candidato_vaga", "nome": "Ana", "cargo_mencionado": None},
+            "quero fazer capoeira", "558599990000", "PHONE_ID", "token",
+            "lead-1", "conv-1", "Barra", lambda _texto: (None, None),
+        )
+
+        assert "wa.me/5585999401027" in _isola_enviar.call_args.args[3]
+
+    @pytest.mark.asyncio
+    async def test_sem_numero_configurado_nao_gera_link_quebrado(self, monkeypatch, _isola_enviar):
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_buscar_numero_institucional", AsyncMock(return_value=None))
+
+        await emp._rotear_por_intencao(
+            {"intencao": "candidato_vaga", "nome": "Ana", "cargo_mencionado": "boxe"},
+            "tem vaga de boxe?", "558599990000", "PHONE_ID", "token",
+            "lead-1", "conv-1", "Barra", lambda _texto: (None, None),
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "wa.me" not in texto_enviado
+        assert "None" not in texto_enviado
+
+    @pytest.mark.asyncio
+    async def test_cargo_real_nao_regride_por_estar_perto_de_modalidade(self, monkeypatch, _isola_enviar):
+        """AC8 — regressão: 'tem vaga de enfermeira?' (sem nenhum termo da lista fechada)
+        continua caindo no branch `cargo_mencionado` (S-EMP-AUD-030), não no redirecionamento."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_publicas = [
+            {"id": "vaga-enf", "titulo": "Enfermeira Plantonista", "descricao": "", "cargos_lista": []},
+        ]
+        monkeypatch.setattr(emp, "supabase", fake)
+        buscar_numero_spy = AsyncMock(return_value="5585999401027")
+        monkeypatch.setattr(emp, "_buscar_numero_institucional", buscar_numero_spy)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "candidato_vaga", "nome": "Ana", "cargo_mencionado": "enfermeira"},
+            "tem vaga de enfermeira?", "558599990000", "PHONE_ID", "token",
+            "lead-1", "conv-1", "Barra", lambda _texto: (None, None),
+        )
+
+        assert estado["etapa"] == "listou_vagas"
+        buscar_numero_spy.assert_not_awaited()
+
+    def test_prefiltro_nao_roda_em_etapa_de_coleta_de_dado(self):
+        """AC7 — prova estrutural: `_assunto_institucional` só é referenciado dentro de
+        `_rotear_por_intencao` (mensagem livre), nunca nos dispatchers de etapa de coleta
+        (nome, e-mail, CNPJ, telefone) — mesmo princípio de prova estrutural já usado pra
+        AC8 da S-EMP-AUD-040."""
+        import inspect
+        assert "_assunto_institucional(" in inspect.getsource(emp._rotear_por_intencao)
+        for func in (emp._processar_empresa, emp._processar_candidato, emp._processar_publico):
+            assert "_assunto_institucional(" not in inspect.getsource(func), (
+                f"{func.__name__} não deve chamar o pré-filtro — ele roda só na mensagem "
+                "livre do branch candidato_vaga, nunca dentro de etapa de coleta de dado"
+            )
