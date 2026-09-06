@@ -839,6 +839,40 @@ def _tem_palavra_encerramento(texto: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# S-EMP-AUD-043 — Guarda: pergunta sobre o assunto não é `quer_sair`
+# ---------------------------------------------------------------------------
+
+# Caso real de produção (05/09/2026): "Tem previsão pra abrir?", depois de uma oferta de
+# sim/não ("Você se interessa em deixar seu currículo no Banco de Talentos?"), foi classificado
+# como quer_sair=true pelo classificador semântico (`avaliar_mensagem_contextual`) — o prompt lê
+# "negativa de continuar" contra uma pergunta de sim/não como sinal de saída, mas a lead só
+# queria saber mais sobre o assunto. Guarda determinística e barata (Step 2, abordagem (a) da
+# story): formato de pergunta sobre o assunto não deve encerrar. Não filtra despedida direta sem
+# formato de pergunta ("tchau", "não quero mais") — essas nunca batem no padrão abaixo e seguem
+# encerrando como hoje (AC3).
+_PADRAO_PERGUNTA_ASSUNTO = re.compile(
+    r"\?\s*$"
+    r"|^(tem|quando|qual|quais|quanto|quantos|quantas|quem|onde|como|"
+    r"por que|porque|pra que|posso|dá pra|da pra|tem como|é possível|e possivel)\b",
+    re.IGNORECASE,
+)
+# Mas uma pergunta que já é sobre ENCERRAR/PARAR/SAIR/CANCELAR continua válida como saída —
+# "posso encerrar?" e "dá pra parar por aqui?" não podem ficar presos por causa desta guarda
+# (AC4). `\bencerr` sem `\b` final de propósito: cobre "encerrar"/"encerro"/"encerra" etc.
+_PADRAO_PERGUNTA_DE_SAIDA = re.compile(r"\bencerr|\bparar\b|\bsair\b|\bcancelar\b", re.IGNORECASE)
+
+
+def _pergunta_generica_nao_e_saida(texto: str) -> bool:
+    """True quando o texto tem formato de pergunta sobre o assunto original (não deve ser lido
+    como `quer_sair`), False quando não parece pergunta, texto vazio, ou quando a própria
+    pergunta já é sobre sair/encerrar (aí `quer_sair` continua valendo — AC4)."""
+    t = texto.strip().lower()
+    if not t or not _PADRAO_PERGUNTA_ASSUNTO.search(t):
+        return False
+    return not _PADRAO_PERGUNTA_DE_SAIDA.search(t)
+
+
+# ---------------------------------------------------------------------------
 # Encerramento padronizado
 # ---------------------------------------------------------------------------
 
@@ -948,7 +982,10 @@ async def _escape_semantico_ou_none(
             instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
         ):
             return True
-    if sem["quer_sair"]:
+    # S-EMP-AUD-043: pergunta sobre o assunto original ("tem previsão pra abrir?") não é lida
+    # como despedida — cai pro comportamento de "sem sinal claro" abaixo, que cada chamador já
+    # trata (a maioria pede de novo; `oferta_banco_talentos` tem tratamento próprio, ver ali).
+    if sem["quer_sair"] and not _pergunta_generica_nao_e_saida(texto):
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil)
         return True
     if sem["mudou_de_assunto"] and sem["intencao"] != "ambiguo":
@@ -1918,7 +1955,10 @@ async def _quer_sair_semantico(
     sem = await avaliar_mensagem_contextual(
         texto, perfil=perfil, etapa=etapa, ultima_msg_bot=await _ultima_mensagem_bot_async(conversa_id),
     )
-    if sem["quer_sair"]:
+    # S-EMP-AUD-043: mesma guarda de `_escape_semantico_ou_none` — pergunta sobre o assunto não
+    # é despedida. Aqui a etapa chamadora trata o texto como dado livre quando retorna False
+    # (ex.: nome de candidato); uma pergunta rara nessa etapa vira dado igual a hoje, sem piorar.
+    if sem["quer_sair"] and not _pergunta_generica_nao_e_saida(texto):
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, perfil, mensagem_customizada)
         return True
     return False
@@ -3729,6 +3769,22 @@ async def _processar_publico(
         if await _escape_semantico_ou_none(
             texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
         ):
+            return
+
+        # S-EMP-AUD-043 (AC1/AC2): esta etapa tinha o comportamento mais agressivo do canal —
+        # QUALQUER mensagem não reconhecida encerrava, mesmo já passando ilesa pela guarda de
+        # `_escape_semantico_ou_none` acima (que só intercepta quando o classificador aciona
+        # quer_sair). Caso real: se o classificador não acionasse quer_sair pra essa frase,
+        # "tem previsão pra abrir?" cairia direto aqui e seria encerrada do mesmo jeito.
+        # Pergunta sobre o assunto reapresenta a oferta com texto variado, não encerra — a lead
+        # não fica presa porque o fast-path `quer_banco` no topo desta mesma etapa já trata um
+        # "sim" na próxima mensagem normalmente.
+        if _pergunta_generica_nao_e_saida(texto):
+            await e(
+                "Ainda não tenho mais detalhes sobre isso por aqui, mas te aviso assim que "
+                "surgir novidade! 😊\n\nEnquanto isso, quer deixar seu currículo no nosso "
+                "Banco de Talentos, pra eu te chamar quando aparecer uma vaga?"
+            )
             return
 
         # Recusa ou mensagem ambígua → única despedida e encerramento
@@ -5888,7 +5944,9 @@ async def _processar_menu_inicial(
     sem_menu = await avaliar_mensagem_contextual(
         texto, perfil=None, etapa="menu_inicial", ultima_msg_bot=await _ultima_mensagem_bot_async(conversa_id),
     )
-    if sem_menu["quer_sair"]:
+    # S-EMP-AUD-043: mesma guarda — pergunta sobre o assunto na primeira mensagem não é
+    # despedida (3º dos pontos de consumo de `quer_sair` mapeados pela story).
+    if sem_menu["quer_sair"] and not _pergunta_generica_nao_e_saida(texto):
         await _encerrar_fluxo(conversa_id, instance_name, token, phone, "publico")
         return
     await _rotear_por_intencao(
