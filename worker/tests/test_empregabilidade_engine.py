@@ -345,6 +345,366 @@ class TestOfertaBancoTalentos:
         assert estado.get("etapa") == "coletando_nome_candidato"
         assert estado.get("banco_talentos") is True
 
+    @pytest.mark.asyncio
+    async def test_pergunta_sobre_assunto_nao_encerra_e_reoferece_banco_talentos(self, monkeypatch):
+        """S-EMP-AUD-043 AC1/AC2 — caso real de produção (05/09/2026): 'Tem previsão pra
+        abrir?' foi classificado como quer_sair=true pelo semântico (oferta de sim/não
+        confunde o prompt) e encerrava a conversa. Agora reoferece o banco de talentos com
+        texto variado (não repete a oferta original) em vez de encerrar — a lead não fica
+        presa porque o fast-path 'sim' no topo da etapa já trata a próxima resposta."""
+        estado, fake_get, fake_set = _fluxo_mock("oferta_banco_talentos")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        await emp._processar_publico(
+            "Tem previsão pra abrir?", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "banco de talentos" in texto_enviado.lower()
+        assert "boa sorte" not in texto_enviado.lower(), "não pode ser a despedida de _encerrar_fluxo"
+        assert estado.get("etapa") == "oferta_banco_talentos", "conversa continua na mesma etapa, não fica presa nem encerra"
+
+    @pytest.mark.asyncio
+    async def test_segunda_pergunta_de_cargo_tambem_nao_encerra(self, monkeypatch):
+        """AC2 — outra pergunta real da auditoria ('E para operador de farmácia?'), pra
+        confirmar que a guarda não é hardcoded pra uma frase só."""
+        estado, fake_get, fake_set = _fluxo_mock("oferta_banco_talentos")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        await emp._processar_publico(
+            "E para operador de farmácia?", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("etapa") == "oferta_banco_talentos"
+
+    @pytest.mark.asyncio
+    async def test_sim_apos_pergunta_nao_atendida_ainda_funciona(self, monkeypatch):
+        """AC2 — prova de que a lead não fica presa: depois da guarda reoferecer o banco
+        de talentos, um 'sim' na mensagem seguinte segue funcionando pelo fast-path
+        normal desta mesma etapa (sem precisar de nenhum caminho novo)."""
+        estado, fake_get, fake_set = _fluxo_mock("oferta_banco_talentos")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+        await emp._processar_publico(
+            "Tem previsão pra abrir?", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+        assert estado.get("etapa") == "oferta_banco_talentos"
+
+        await emp._processar_publico(
+            "sim, quero", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+        assert estado.get("etapa") == "coletando_nome_candidato"
+        assert estado.get("banco_talentos") is True
+
+    @pytest.mark.asyncio
+    async def test_despedida_genuina_continua_encerrando_ac3(self, monkeypatch):
+        """AC3 — não regride: despedida sem formato de pergunta segue encerrando (a
+        guarda só intercepta texto com formato de pergunta, nunca despedida direta)."""
+        estado, fake_get, fake_set = _fluxo_mock("oferta_banco_talentos")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        await emp._processar_publico(
+            "não, obrigado, era só isso mesmo", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "boa sorte" in texto_enviado.lower()
+        assert estado == {}
+
+    @pytest.mark.asyncio
+    async def test_pergunta_sobre_encerrar_continua_encerrando_ac4(self, monkeypatch):
+        """AC4 — o guarda não pode ser cego ao sentido: 'posso encerrar?' é uma pergunta
+        (termina em '?'), mas é sobre SAIR — continua encerrando normalmente."""
+        estado, fake_get, fake_set = _fluxo_mock("oferta_banco_talentos")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        await emp._processar_publico(
+            "posso encerrar?", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "boa sorte" in texto_enviado.lower()
+        assert estado == {}
+
+
+class TestPerguntaGenericaNaoESaida:
+    """AC1/AC3/AC4 — testes unitários diretos da guarda determinística."""
+
+    @pytest.mark.parametrize("texto", [
+        "Tem previsão pra abrir?",
+        "E para operador de farmácia?",
+        "Quando abre a próxima seleção?",
+        "Qual o salário?",
+        "Como funciona o processo seletivo?",
+        "Tem como saber mais detalhes?",
+        "É possível trabalhar meio período?",
+    ])
+    def test_perguntas_sobre_assunto_sao_protegidas(self, texto):
+        assert emp._pergunta_generica_nao_e_saida(texto) is True
+
+    @pytest.mark.parametrize("texto", [
+        "posso encerrar?",
+        "dá pra parar por aqui?",
+        "dá pra cancelar minha candidatura?",
+        "quero sair, tem como?",
+    ])
+    def test_perguntas_sobre_sair_nao_sao_protegidas(self, texto):
+        assert emp._pergunta_generica_nao_e_saida(texto) is False
+
+    @pytest.mark.parametrize("texto", [
+        "tchau",
+        "não quero mais",
+        "obrigado, era só isso",
+        "deixa pra lá",
+        "",
+        "   ",
+    ])
+    def test_despedida_direta_sem_formato_de_pergunta_nao_e_protegida(self, texto):
+        """Não é o alvo da guarda (nunca tem formato de pergunta) — segue valendo como
+        quer_sair normalmente, comportamento não muda (AC3)."""
+        assert emp._pergunta_generica_nao_e_saida(texto) is False
+
+    def test_case_insensitive(self):
+        assert emp._pergunta_generica_nao_e_saida("TEM PREVISÃO PRA ABRIR?") is True
+        assert emp._pergunta_generica_nao_e_saida("POSSO ENCERRAR?") is False
+
+
+class TestEscapeSemanticoOuNoneGuardaPergunta:
+    """AC7/AC8 — a guarda entra só no branch quer_sair; os outros 4 pontos de consumo
+    (quer_atendente_humano, quer_voltar, mudou_de_assunto, cargo_mencionado via
+    intencao) e os outros sinais do classificador não mudam de comportamento."""
+
+    @pytest.mark.asyncio
+    async def test_pergunta_sobre_assunto_retorna_false_sem_encerrar(self, monkeypatch):
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        resultado = await emp._escape_semantico_ou_none(
+            "tem vaga de motorista?", "publico", "alguma_etapa", "conv-1",
+            "558599990000", "PHONE_ID", "token", "lead-1",
+        )
+        assert resultado is False
+        mock_enviar.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_despedida_real_ainda_encerra_via_escape_semantico(self, monkeypatch):
+        _, fake_get, fake_set = _fluxo_mock("alguma_etapa")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        resultado = await emp._escape_semantico_ou_none(
+            "não quero mais, obrigado", "publico", "alguma_etapa", "conv-1",
+            "558599990000", "PHONE_ID", "token", "lead-1",
+        )
+        assert resultado is True
+        mock_enviar.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_quer_atendente_humano_nao_afetado_pela_guarda(self, monkeypatch):
+        """AC7 — quer_atendente_humano continua funcionando normalmente mesmo quando o
+        texto tem formato de pergunta (a guarda só existe dentro do branch quer_sair)."""
+        mock_acionar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_acionar_transbordo_empregabilidade", mock_acionar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {
+                "intencao": "ambiguo", "quer_sair": False, "mudou_de_assunto": False,
+                "quer_atendente_humano": True,
+            }
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        resultado = await emp._escape_semantico_ou_none(
+            "posso falar com um atendente?", "publico", "alguma_etapa", "conv-1",
+            "558599990000", "PHONE_ID", "token", "lead-1",
+        )
+        assert resultado is True
+        mock_acionar.assert_awaited_once()
+
+
+class TestQuerSairSemanticoGuardaPergunta:
+    """AC1/AC3/AC4/AC8 — mesma guarda aplicada em `_quer_sair_semantico` (etapas de
+    coleta de dado livre, ex.: nome de candidato)."""
+
+    @pytest.mark.asyncio
+    async def test_pergunta_sobre_assunto_nao_encerra(self, monkeypatch):
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        resultado = await emp._quer_sair_semantico(
+            "isso demora quanto tempo?", "publico", "coletando_nome_candidato", "conv-1",
+            "558599990000", "PHONE_ID", "token",
+        )
+        assert resultado is False
+        mock_enviar.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_despedida_real_ainda_encerra(self, monkeypatch):
+        _, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        resultado = await emp._quer_sair_semantico(
+            "deixa pra lá, obrigado", "publico", "coletando_nome_candidato", "conv-1",
+            "558599990000", "PHONE_ID", "token",
+        )
+        assert resultado is True
+        mock_enviar.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_pergunta_sobre_encerrar_ainda_encerra_ac4(self, monkeypatch):
+        _, fake_get, fake_set = _fluxo_mock("coletando_nome_candidato")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        resultado = await emp._quer_sair_semantico(
+            "dá pra parar por aqui?", "publico", "coletando_nome_candidato", "conv-1",
+            "558599990000", "PHONE_ID", "token",
+        )
+        assert resultado is True
+        mock_enviar.assert_called_once()
+
+
+class TestMenuInicialGuardaPergunta:
+    """AC1/AC8 — 3º ponto de consumo de `quer_sair` mapeado pela story: o fallback
+    semântico de `menu_inicial` (primeira mensagem não reconhecida por dígito/keyword)."""
+
+    @pytest.mark.asyncio
+    async def test_pergunta_na_primeira_mensagem_nao_encerra(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("menu_inicial")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        await emp._processar_menu_inicial(
+            "vocês têm vaga de motorista?", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "boa sorte" not in texto_enviado.lower()
+
+    @pytest.mark.asyncio
+    async def test_despedida_na_primeira_mensagem_ainda_encerra(self, monkeypatch):
+        estado, fake_get, fake_set = _fluxo_mock("menu_inicial")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": True, "mudou_de_assunto": False}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        await emp._processar_menu_inicial(
+            "não, deixa pra lá", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "boa sorte" in texto_enviado.lower()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Bug 1 do relatório — fallback ambíguo no primeiro contato
