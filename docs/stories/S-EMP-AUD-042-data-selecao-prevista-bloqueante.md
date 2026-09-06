@@ -1,6 +1,6 @@
 # S-EMP-AUD-042 — Data prevista da seleção como campo bloqueante na criação de vaga
 
-**Status:** Ready for Review
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** Demanda direta do Junior 2026-09-05 —
 `docs/2026-09-05/PLANO-3-melhorias-empregabilidade-2026-09-05.md`, item 3.
@@ -316,6 +316,9 @@ consciência, não para correção.
 
 ## Change Log
 
+- v0.5 (2026-09-06): @devops confirma — PR #155 **mergeado** e `portal` **redeployado** no
+  EasyPanel (confirmado pelo Junior). Nenhuma pendência restante — última story da leva de 4.
+  Status: Ready for Review → **Done**.
 - v0.4 (2026-09-06): @qa revisa — **PASS**, 7/7 checks, 10/10 ACs confirmados por verificação
   independente (suíte rodada de novo pelo @qa: 48/48; AC6 verificado lendo o código-fonte de
   `handleSaveStatus` linha a linha, não aceito da alegação do Dev Agent Record; AC7/AC8
