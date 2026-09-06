@@ -135,6 +135,8 @@ export type Vaga = {
     // SQS-56: seleção sem coleta prévia de currículo
     coleta_curriculo: boolean
     observacoes_selecao: string | null
+    // S-EMP-AUD-042: data prevista da seleção (bloqueante na criação; NULL em vagas antigas)
+    data_selecao_prevista: string | null
 }
 
 export type EmpregabilidadeFollowup = {

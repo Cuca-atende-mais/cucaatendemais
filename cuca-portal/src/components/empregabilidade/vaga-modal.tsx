@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Loader2, Save, AlertCircle, Trash2 } from "lucide-react"
 import { useUser } from "@/lib/auth/user-provider"
+import { validarDataSelecaoPrevista, hojeBrasilISO } from "@/lib/empregabilidade/data-selecao-prevista"
 
 interface VagaModalProps {
     open: boolean
@@ -85,6 +86,11 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [emailContatoEmpresa, setEmailContatoEmpresa] = useState("")
     const [telefoneResponsavel, setTelefoneResponsavel] = useState("")
     const [escolaridadeMinima, setEscolaridadeMinima] = useState("")
+    // S-EMP-AUD-042: data prevista da seleção — bloqueante só na CRIAÇÃO (ver `handleSave`);
+    // a edição de vaga já existente (`handleSaveStatus`) nunca lê nem exige este campo, de
+    // propósito — vagas antigas nasceram com `data_selecao_prevista = NULL` e não podem travar
+    // a equipe numa correção não relacionada (AC6).
+    const [dataSelecaoPrevista, setDataSelecaoPrevista] = useState("")
 
     // Carga horária estruturada
     const [cargaTipo, setCargaTipo] = useState("horario_comercial")
@@ -147,6 +153,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setEmailContatoEmpresa(vaga.email_contato_empresa || "")
                 setTelefoneResponsavel(vaga.telefone_responsavel || "")
                 setEscolaridadeMinima(vaga.escolaridade_minima || "")
+                setDataSelecaoPrevista(vaga.data_selecao_prevista || "")
                 setUnidadeDestino((vaga as any).unidade_destino || "")
                 setSetoresMarcados((vaga as any).setor || [])
                 setPcdVaga(vaga.pcd_vaga || false)
@@ -177,6 +184,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setFaixaEtaria(""); setLocalEntrevista("na_empresa"); setEnderecoEntrevista("")
         setTipoSelecao("presencial"); setExpansiva(false); setEmailContatoEmpresa("")
         setTelefoneResponsavel(""); setEscolaridadeMinima(""); setUnidadeDestino(""); setSetoresMarcados([])
+        setDataSelecaoPrevista("")
         setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false)
         setCargaTipo("horario_comercial"); setCargaHoras(""); setCargaEscalaT("")
         setCargaEscalaF(""); setCargaDias("Seg à Sex"); setCargaTrabSabado(false); setCargaSabadoAte("12:00")
@@ -191,6 +199,14 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         }
         if (setoresMarcados.length === 0) {
             setErro("Selecione pelo menos uma área da vaga. Este campo é obrigatório.")
+            return
+        }
+        // S-EMP-AUD-042: bloqueante só na criação — este é o caminho de `!vaga` (o botão só
+        // chama `handleSave` quando não há `vaga`; edição de vaga existente vai por
+        // `handleSaveStatus`, que não toca este campo — ver AC6).
+        const dataSelecaoValidada = validarDataSelecaoPrevista(dataSelecaoPrevista)
+        if (!dataSelecaoValidada.ok) {
+            setErro(dataSelecaoValidada.erro)
             return
         }
         setErro("")
@@ -216,6 +232,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 tipo_contrato: tipoContrato,
                 carga_horaria: cargaHoraria || null,
                 local: local || null,
+                data_selecao_prevista: dataSelecaoValidada.valor,
                 unidade_cuca: unidadesMap[unidadeCucaId] || unidadeCucaId,
                 unidade_destino: unidadeDestino,
                 setor: setoresMarcados,
@@ -438,6 +455,20 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                     <Input value={local} readOnly={camposEmpresaReadOnly} onChange={e => setLocal(e.target.value)} className={camposEmpresaReadOnly ? "bg-muted" : ""} />
                                 </div>
                             </div>
+                            {/* Data prevista da seleção — S-EMP-AUD-042: bloqueante só na
+                                criação (`!vaga`); vaga já existente é só leitura aqui, igual aos
+                                demais campos preenchidos pela empresa. */}
+                            <div className="space-y-2">
+                                <Label>Data prevista da seleção {!camposEmpresaReadOnly && "*"}</Label>
+                                <Input
+                                    type="date"
+                                    min={!camposEmpresaReadOnly ? hojeBrasilISO() : undefined}
+                                    value={dataSelecaoPrevista}
+                                    readOnly={camposEmpresaReadOnly}
+                                    onChange={e => setDataSelecaoPrevista(e.target.value)}
+                                    className={camposEmpresaReadOnly ? "bg-muted" : ""}
+                                />
+                            </div>
                         </div>
 
                         {/* Status + Unidade Destino + Expansiva — editável pela CUCA */}
@@ -584,7 +615,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                 <Button
                                     className="bg-cuca-blue hover:bg-sky-800 text-white"
                                     onClick={camposEmpresaReadOnly ? handleSaveStatus : handleSave}
-                                    disabled={loading || (!camposEmpresaReadOnly && (!empresaId || !titulo || !descricao || !unidadeCucaId)) || !unidadeDestino || setoresMarcados.length === 0}
+                                    disabled={loading || (!camposEmpresaReadOnly && (!empresaId || !titulo || !descricao || !unidadeCucaId || !dataSelecaoPrevista)) || !unidadeDestino || setoresMarcados.length === 0}
                                 >
                                     {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
                                     {camposEmpresaReadOnly ? "Salvar Alterações" : "Salvar Vaga"}
