@@ -1,6 +1,6 @@
 # S-EMP-AUD-041 — Redirecionamento Emprega+ → Institucional (Cuca Atende+)
 
-**Status:** InReview
+**Status:** Ready for Review
 **Epic:** Auditoria Empregabilidade
 **Origem:** Demanda direta do Junior 2026-09-05 —
 `docs/2026-09-05/PLANO-3-melhorias-empregabilidade-2026-09-05.md`, item 1.
@@ -279,8 +279,87 @@ ao menu, em `worker/empregabilidade_engine.py` + testes.
   de `origin/main` já com a S-EMP-AUD-040 mergeada (Item D do impact analysis — ordem respeitada,
   sem conflito de merge).
 
+## QA Results
+
+### Review em 2026-09-06 — @qa Quinn
+
+**Gate: PASS**
+
+**7 checks:**
+
+1. **Code review** — PASS. Conferi o diff completo, não só a descrição: a inserção do pré-filtro
+   fica inteiramente antes de `if cargo_mencionado:`, e nenhuma linha do branch `candidato_vaga`
+   pré-existente foi tocada — o `git diff` mostra só adição, zero remoção fora do ponto de
+   inserção. `_buscar_numero_institucional` segue exatamente o mesmo padrão de cache TTL já usado
+   em `_normalizar_cargos_via_ia`/`_CACHE_NORMALIZACAO_CARGOS` (reuso de padrão do arquivo, não
+   mecanismo novo inventado) — verifiquei eu mesma lendo os dois lado a lado.
+2. **Testes** — PASS. Rodei a suíte de forma independente: **360 passed, 0 failed**. Contei via
+   `pytest --collect-only -k "..."` (não grep, que errou por causa dos parametrize) — bate exato
+   com os 39 novos declarados. Rodei também isoladamente os 5 testes pré-existentes de
+   `cargo_mencionado` (S-EMP-AUD-030) — os 5 passam sem qualquer ajuste, confirmando a
+   não-regressão do AC8 na prática, não só por leitura de diff.
+3. **Acceptance Criteria** — PASS, 10/10 verificados por mim:
+   - AC1/AC2 ✅ reproduzi eu mesma, fora do arquivo de teste, a frase real da auditoria ("Bom dia,
+     quando abre a vaga de boxe?") e as demais 14 variantes da lista fechada contra
+     `_assunto_institucional` — todas `True`.
+   - AC3 ✅ reproduzi os 3 casos negativos obrigatórios da story ("vaga de auxiliar de academia",
+     "curso técnico exigido na vaga", "atestado pra admissão") — todos `False`, confirmado em
+     script próprio, não só no teste do @dev.
+   - AC4 ✅ `_montar_mensagem_institucional("5585999401027")` gera `wa.me/5585999401027` — número
+     exato, sanitizado.
+   - AC5 ✅ testei `None`, string vazia e número mascarado (`(85) 99940-1027`) — nenhum gera
+     `wa.me` quebrado nem a string `"None"`.
+   - AC6 ✅ as duas variantes de mensagem (com e sem número) terminam oferecendo ajuda com vagas de
+     emprego — não encerram seco.
+   - AC7 ✅ confirmei estruturalmente, eu mesma, com `inspect.getsource`: `_assunto_institucional`
+     só aparece dentro de `_rotear_por_intencao`; os três dispatchers de etapa de coleta
+     (`_processar_empresa`, `_processar_candidato`, `_processar_publico`) não o referenciam.
+   - AC8 ✅ os 5 testes pré-existentes de `cargo_mencionado` continuam verdes sem ajuste; "tem vaga
+     de enfermeira?" não contém nenhum termo da lista fechada, então nunca entra no branch novo —
+     confirmei isso rodando a frase direto contra `_assunto_institucional` (`False`).
+   - AC9 ✅ `execute_sql` (read-only) antes e depois: `empregabilidade` permanece
+     `5585999401057`, `institucional` gravou `5585999401027` — os dois, dígito a dígito, e as
+     chaves `acesso_cuca`/`ouvidoria`/`academia_enem` seguem `null` como esperado. A migration em
+     si (`INSERT ... ON CONFLICT DO UPDATE` com merge via `||`) é idempotente por construção —
+     reexecutá-la converge sempre pro mesmo estado, nunca duplica nem apaga outras chaves.
+   - AC10 ✅ o código que lê a chave `institucional` só existe a partir deste PR — antes do
+     redeploy do `cuca-worker`, gravar a chave é inerte por definição (nenhum consumidor existente
+     lê essa chave hoje).
+4. **Sem regressões** — PASS. Além dos 5 testes de `cargo_mencionado`, rodei a suíte completa
+   (360/360) — nenhum teste pré-existente precisou de ajuste (diferente da S-EMP-AUD-040, que
+   exigiu 6 ajustes de relógio; aqui a mudança é puramente aditiva, sem gate de tempo).
+5. **Performance** — PASS. Regex compilada uma vez no import do módulo, sem I/O; o SELECT em
+   `configuracoes` só acontece quando o pré-filtro bate — confirmei isso no próprio teste do @dev
+   (`buscar_numero_spy.assert_not_awaited()` no caso "enfermeira") e também por leitura do código:
+   a chamada a `_buscar_numero_institucional` está dentro do `if`, não antes dele. Cache de 300s
+   evita repetição de SELECT em picos de mensagens.
+6. **Segurança** — PASS. Nenhuma interpolação de string em SQL (client Supabase parametrizado);
+   `numero` só vem de config confiável, nunca do texto do lead; a sanitização (`re.sub(r"\D", "",
+   numero)`) impede qualquer valor malformado de virar link quebrado ou injetar conteúdo na
+   mensagem.
+7. **Documentação** — PASS. File List e Dev Agent Record batem com o diff real, item por item; a
+   aprovação da copy (só variante com número) está registrada com data e justificativa.
+
+**Achado próprio, não bloqueante:** testei alguns casos de fronteira que a suíte do @dev não
+cobria explicitamente — palavras que **começam** com um termo da lista mas são cargos/palavras
+diferentes: `"voleibol é uma boa opção de carreira"`, `"trabalho com skatelandia"` e
+**principalmente `"grafiteiro profissional contratado"`** (grafiteiro é uma ocupação real). Os
+três retornam `False` — o boundary `(?!\w)` já protege contra isso corretamente, sem precisar de
+nenhuma mudança. Registro como confirmação adicional, não como código pendente; sugiro considerar
+adicionar "grafiteiro" ao menos como caso de teste explícito num incremento futuro, já que é o
+caso mais realista de colisão (job title real vs. termo da lista).
+
+**Nenhum item bloqueia o avanço.** Recomendo seguir para @devops.
+
 ## Change Log
 
+- v0.5 (2026-09-06): @qa revisa — **PASS**, 7/7 checks, 10/10 ACs confirmados por verificação
+  independente (suíte rodada de novo pelo @qa: 360/360; AC1/AC2/AC3 reproduzidos em script
+  próprio; AC7 confirmado via `inspect.getsource` rodado pelo próprio @qa; AC9 conferido com
+  `execute_sql` read-only antes e depois, dígito a dígito). 1 achado próprio, não bloqueante:
+  boundary de palavra inteira protege corretamente contra colisão com "grafiteiro" (ocupação
+  real) e outras palavras que começam com termo da lista — confirmado, sem necessidade de ajuste.
+  Status: InReview → **Ready for Review** (aguardando @devops).
 - v0.4 (2026-09-06): @dev implementa. Os 3 itens (A: chave `institucional` na config via
   migration idempotente aplicada e conferida em produção; B: pré-filtro `_assunto_institucional`;
   C: montagem de mensagem só por código+config, com cache de número em processo) seguidos
