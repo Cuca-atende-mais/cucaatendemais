@@ -384,8 +384,43 @@ falhas.
 
 **Branch:** `fix/s-emp-aud-041-redirecionamento-sem-classificacao-candidato_vaga`.
 
+### QA Results do hotfix — 2026-09-06 — @qa Quinn
+
+**Gate: PASS**
+
+1. **Code review** — PASS. Diff mínimo e correto: o filtro sobe pro topo de
+   `_rotear_por_intencao`, a checagem duplicada dentro de `candidato_vaga` é removida (não
+   sobrou lógica morta), e a restrição `intencao in ("candidato_vaga", "ambiguo")` é exatamente
+   o que impede a regressão de segurança (empresa/banco_talentos desviados por engano).
+2. **Testes** — PASS. Rodei a suíte de forma independente: **396/396**. Rodei também isoladas as
+   10 (5 pré-existentes + 5 novas) das duas classes de teste do redirecionamento.
+3. **Acceptance Criteria (do hotfix)** — PASS:
+   - Reproduzi eu mesma o achado real, **fora do arquivo de teste**, chamando
+     `_rotear_por_intencao` diretamente com `intencao="ambiguo"` + "Quero saber sobre futsal" —
+     redireciona corretamente.
+   - Reproduzi a guarda de segurança da mesma forma: `intencao="empresa"` + "quero divulgar vaga
+     de instrutor de zumba" — **não** redireciona, segue fluxo normal de empresa (confirmei que
+     `_assunto_institucional("...zumba")` sozinho retornaria `True` — é a checagem de `intencao`
+     que impede o desvio, não o regex; importante confirmar isso porque é o ponto onde um fix
+     apressado poderia reintroduzir o mesmo tipo de bug de outro jeito).
+   - Reconferi a causa raiz direto no banco: `intencao_detectada='ambiguo'` na conversa real —
+     confere com o que o @dev registrou.
+4. **Sem regressões** — PASS. 396/396, nenhum teste pré-existente exigiu ajuste.
+5. **Performance** — PASS. Mesma regex, mesmo custo; só mudou a ordem da checagem.
+6. **Segurança** — PASS. A restrição de intenção é a proteção correta contra o cenário que eu
+   mesma verifiquei ser possível (empresa postando vaga de instrutor de modalidade).
+7. **Documentação** — PASS. Seção "Hotfix pós-Done" registra causa raiz, correção e verificação
+   de forma completa e rastreável à conversa real.
+
+**Nenhum achado bloqueante.** Recomendo seguir para @devops.
+
 ## Change Log
 
+- v0.8 (2026-09-06): @qa revisa o hotfix — **PASS**. Reproduzi de forma independente, fora dos
+  testes automatizados, tanto o caso real (ambiguo+futsal redireciona) quanto a guarda de
+  segurança (empresa+zumba não redireciona) — confirmando que é a checagem de `intencao`, não o
+  regex sozinho, que impede a regressão de segurança. 396/396, 0 falhas. Status: InReview →
+  **Ready for Review** (aguardando @devops).
 - v0.7 (2026-09-06): Hotfix pós-Done — pré-filtro do redirecionamento não disparava quando o
   classificador rotulava a mensagem como `ambiguo` (caso real: "Quero saber sobre futsal", sem
   menção a "vaga"). Movido pra rodar antes do dispatch por intenção, restrito a
