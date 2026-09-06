@@ -1,6 +1,6 @@
 # S-WM-70 — Institucional encerra a conversa quando o lead se despede
 
-**Status:** Ready for Review
+**Status:** Done
 **Epic:** WhatsApp Meta / Institucional
 **Origem:** Investigação @dev 2026-09-05 a pedido do Junior (conversa do lead Nívea,
 `5585989757671`) — `docs/2026-09-05/PLANO-3-melhorias-empregabilidade-2026-09-05.md`, item 3-BIS.
@@ -291,6 +291,11 @@ Sinalizo para uma story de observabilidade futura (ex. próxima da série S-WM-6
 
 ## Change Log
 
+- v0.4 (2026-09-05): @devops mergeia PR [#150](https://github.com/Cuca-atende-mais/cucaatendemais/pull/150)
+  em `main` (`9ea2812`), com aprovação explícita do Junior. Edge Function `motor-agente` já estava
+  deployada e verificada (v49→v50) desde a implementação do @dev — o merge só formaliza no git o
+  que já está ativo em produção; nenhum redeploy adicional necessário (não há mudança em
+  `worker/` nem `cuca-portal/` nesta story). Status: Ready for Review → **Done**.
 - v0.3 (2026-09-05): @qa revisa — **PASS**, 7/7 checks, 7/7 ACs confirmados por leitura e teste
   independentes (suíte rodada de novo pelo @qa: 208/208, lint: mesma contagem pré-existente,
   deploy conferido sem drift). 1 achado não-bloqueante registrado (ausência de checagem de erro no
