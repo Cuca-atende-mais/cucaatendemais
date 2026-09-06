@@ -81,6 +81,18 @@ _PALAVRAS_ENCERRAR = {
     "obrigada", "valeu", "pronto", "pode fechar", "ok pode fechar",
     "nada mais", "só isso", "era isso",
 }
+# S-EMP-AUD-040: complemento a `_PALAVRAS_ENCERRAR`/`_quer_encerrar` (abaixo) só para a etapa
+# `fora_horario_aguardando_assunto` — um yes/no fechado ("posso te ajudar com mais alguma
+# coisa?"). Verificado durante a implementação que `_quer_encerrar` (desenhada pra texto livre
+# em qualquer etapa) NÃO cobre respostas curtas isoladas: `_quer_encerrar("não")`,
+# `_quer_encerrar("nada")` e `_quer_encerrar("pode encerrar")` retornam `False`, embora a story
+# cite as três como negação esperada (AC4). Ver `_quer_encerrar_fora_horario`.
+_NEGATIVO_FORA_HORARIO_CURTO = (
+    "não", "nao", "n", "nada", "negativo",
+    "não precisa", "nao precisa", "pode encerrar",
+    "não, obrigado", "nao, obrigado", "não obrigado", "nao obrigado",
+    "nada, obrigado", "nada obrigado",
+)
 _REGEX_NUMERO_VAGA_ISOLADO = re.compile(r"(?:^|\s)(\d{1,4})(?:\s|$)")
 
 _MENU_ACOES_EMPRESA = (
@@ -136,10 +148,14 @@ _LIMIAR_INATIVIDADE_HORAS = 24
 # mesmo raciocínio — sem tratamento especial.
 # S-EMP-FSL-06: `confirmando_reaproveitamento_dados` idem.
 # S-EMP-FSL-07: `escolhendo_areas_interesse` idem.
+# S-EMP-AUD-040: `fora_horario_aguardando_assunto` idem — sem isso, um lead que recebe o aviso
+# de horário e nunca responde ficaria preso nessa etapa indefinidamente (achado do impact
+# analysis da story, Item C).
 _ETAPAS_EXPIRAM_POR_INATIVIDADE = _ETAPAS_OFERTA_ATENDENTE | {
     "aguardando_confirmacao_candidatura",
     "coletando_data_nascimento", "coletando_pcd", "coletando_ou_confirmando_curriculo",
     "oferta_banco_idade_fsl", "confirmando_reaproveitamento_dados", "escolhendo_areas_interesse",
+    "fora_horario_aguardando_assunto",
 }
 _ETAPA_ANTERIOR = {
     "listou_categorias": "inicio",
@@ -567,8 +583,10 @@ async def _obter_ultima_interacao_anterior(conversa_id: str):
 def _resetar_fluxo_por_inatividade(fluxo: dict, etapa_atual: str) -> dict:
     """S-EMP-AUD-033: decisão do Junior (2026-08-28) — reset total pro início nas 5 etapas de
     `_ETAPAS_OFERTA_ATENDENTE`; em `aguardando_confirmacao_candidatura`, só reseta se o link já
-    tiver vencido (progresso recuperável enquanto ele funciona, não faz sentido descartar). Fora
-    dessas 6 etapas, não faz nada (fora do escopo desta story)."""
+    tiver vencido (progresso recuperável enquanto ele funciona, não faz sentido descartar).
+    S-EMP-AUD-040 acrescenta `fora_horario_aguardando_assunto` com o mesmo reset total das
+    etapas de coleta no chat, abaixo — sem link ou dado a preservar. Fora dessas etapas, não faz
+    nada (fora do escopo desta story)."""
     if etapa_atual == "aguardando_confirmacao_candidatura":
         if _link_candidatura_ainda_valido(fluxo.get("link_candidatura", "")):
             return fluxo
@@ -578,6 +596,10 @@ def _resetar_fluxo_por_inatividade(fluxo: dict, etapa_atual: str) -> dict:
     # S-EMP-FSL-03 (AC6): coleta no chat parada há 24h → reset total pro início (não há link a
     # preservar como no caso acima; o anexo pendente, se houver, expira sozinho no bucket).
     if etapa_atual in _ETAPAS_COLETA_CHAT_FSL:
+        return {"perfil": fluxo.get("perfil"), "etapa": "inicio"}
+    # S-EMP-AUD-040: lead avisado do horário e nunca respondeu → reset total, mesmo padrão dos
+    # dois casos acima (não há progresso a preservar aqui, diferente do link de candidatura).
+    if etapa_atual == "fora_horario_aguardando_assunto":
         return {"perfil": fluxo.get("perfil"), "etapa": "inicio"}
     return fluxo
 
@@ -593,6 +615,47 @@ _MSG_TRANSBORDO_FALHOU = (
     "Por favor, tente novamente em alguns minutos ou procure a equipe do CUCA pelo canal oficial."
 )
 
+# S-EMP-AUD-040: mensagens aprovadas pelo Junior (2026-09-05) — implementação literal, ver
+# Change Log da story. Não reescrever sem nova decisão dele.
+_MSG_FORA_HORARIO_ATENDIMENTO = (
+    "No momento nossa equipe não está disponível. 🕐\n"
+    "O atendimento humano funciona de *segunda a sexta, das 08:00 às 17:00*.\n\n"
+    "Assim que abrirmos, é só chamar aqui que a gente te atende!\n"
+    "Enquanto isso, posso te ajudar com mais alguma coisa por aqui? 😊"
+)
+_MSG_FORA_HORARIO_ENCERRAMENTO = (
+    "Combinado! Qualquer coisa é só me chamar — vou estar por aqui. 🤝\n"
+    "Tenha um ótimo dia!"
+)
+
+
+def _dentro_horario_atendimento(agora=None) -> bool:
+    """S-EMP-AUD-040: janela de atendimento humano do Emprega+ — Segunda a sexta, 08:00 às
+    16:59 (`-03:00`, São Paulo/Fortaleza; às 17:00 em ponto já é fora — registrado de propósito
+    pra não virar achado de @qa). Sábado e domingo sempre fora. Feriado em dia útil NÃO é
+    tratado — decisão explícita do Junior (05/09): cai normalmente no transbordo, dentro do
+    horário.
+
+    Janela FIXA no código, não em `configuracoes` — decisão do Junior: nenhuma mudança de
+    comportamento pode valer em tempo real, só com redeploy do worker.
+
+    `agora` injetável só para teste (relógio congelado); em produção sempre `None`, usa o
+    instante real. O container roda em UTC (migration
+    `20260827161500_s_wm_68_cron_expirar_anexos.sql` já documenta "04:00 UTC = 01:00 BRT") —
+    sem o fuso explícito abaixo, o gate ficaria 3h deslocado. Um `agora` sem tzinfo é tratado
+    como UTC, mesmo padrão já usado em `_obter_ultima_interacao_anterior`/inatividade
+    (S-EMP-AUD-033)."""
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+    tz_atendimento = timezone(timedelta(hours=-3))  # -03:00 (São Paulo/Fortaleza, sem DST desde 2019)
+    momento = agora if agora is not None else datetime.now(timezone.utc)
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=timezone.utc)
+    momento_local = momento.astimezone(tz_atendimento)
+    if momento_local.weekday() >= 5:  # 5=sábado, 6=domingo
+        return False
+    minutos_do_dia = momento_local.hour * 60 + momento_local.minute
+    return 8 * 60 <= minutos_do_dia < 17 * 60
+
 
 async def _acionar_transbordo_empregabilidade(
     *,
@@ -607,7 +670,44 @@ async def _acionar_transbordo_empregabilidade(
     metadata_update: dict | None = None,
     reset_fluxo: bool = False,
 ) -> bool:
-    """Aciona handover real antes de prometer atendimento humano ao lead."""
+    """Aciona handover real antes de prometer atendimento humano ao lead.
+
+    S-EMP-AUD-040: fora do horário de atendimento, NÃO marca `awaiting_human` nem notifica o
+    transbordo — a IA segue ativa, a conversa não é parqueada. Avisa o horário, oferece ajudar
+    em outro assunto e grava a etapa `fora_horario_aguardando_assunto` pra continuar o diálogo
+    na próxima mensagem (ver `_processar_mensagem_empregabilidade_locked`). Nenhum dos 7 call
+    sites precisa mudar — o gate entra aqui, no único funil voltado ao lead."""
+    if not _dentro_horario_atendimento():
+        fluxo_atual = await _get_fluxo_async(conversa_id)
+
+        def _persistir_metadata_fora_horario():
+            # `metadata_update` (ex.: limpar `ultima_intencao` do SQS-40) precisa ser persistido
+            # mesmo fora do horário — sem isso, o campo lido no início do roteador continuaria
+            # "duvida" e a PRÓXIMA mensagem do lead re-entraria neste mesmo caminho de novo,
+            # nunca alcançando a etapa nova (achado @dev durante a implementação).
+            if metadata_update is not None:
+                supabase.table("conversas").update({"metadata": metadata_update}).eq("id", conversa_id).execute()
+
+        await _supabase_to_thread(_persistir_metadata_fora_horario)
+        await _set_fluxo_async(conversa_id, {
+            "_fora_horario_contexto": {
+                "etapa_anterior": fluxo_atual.get("etapa", ""),
+                "fluxo_anterior": fluxo_atual,
+            },
+            "perfil": fluxo_atual.get("perfil"),
+            "etapa": "fora_horario_aguardando_assunto",
+        })
+        await _enviar(
+            instance_name, token, phone, _MSG_FORA_HORARIO_ATENDIMENTO,
+            conversa_id=conversa_id, lead_id=lead_id,
+        )
+        logger.info(
+            "[handover] %s",
+            {"event": "handover_fora_horario", "telefone": phone[:6] + "****",
+             "conversa_id": conversa_id, "unidade_cuca": unidade_cuca, "motivo": motivo},
+        )
+        return True
+
     status_humano_marcado = False
     try:
         def _marcar_conversa_humana():
@@ -712,6 +812,22 @@ def _quer_encerrar(texto: str) -> bool:
         "queria", "gostaria", "de",
     }
     return all(p in palavras_apoio for p in resto.split())
+
+
+def _quer_encerrar_fora_horario(texto: str) -> bool:
+    """S-EMP-AUD-040: a etapa `fora_horario_aguardando_assunto` pergunta um yes/no fechado
+    ("posso te ajudar com mais alguma coisa?"). `_quer_encerrar` (acima) foi desenhada pra
+    despedida em texto livre em qualquer etapa e comprovadamente NÃO cobre respostas curtas
+    isoladas comuns numa pergunta fechada — verificado durante a implementação:
+    `_quer_encerrar("não")`, `_quer_encerrar("nada")` e `_quer_encerrar("pode encerrar")`
+    retornam `False`, embora a story cite as três como negação esperada (AC4).
+    `_NEGATIVO_FORA_HORARIO_CURTO` cobre esse caso curto (normalizando pontuação final);
+    `_quer_encerrar` como fallback continua cobrindo despedidas mais elaboradas ("era só isso",
+    "obrigado")."""
+    t_norm = re.sub(r"[!.]+$", "", texto.strip().lower()).strip()
+    if t_norm in _NEGATIVO_FORA_HORARIO_CURTO:
+        return True
+    return _quer_encerrar(texto)
 
 
 def _tem_palavra_encerramento(texto: str) -> bool:
@@ -5546,6 +5662,30 @@ async def _processar_mensagem_empregabilidade_locked(
                 conversa_id=conversa_id, lead_id=lead_id
             )
             return
+
+    # S-EMP-AUD-040: aviso de fora-do-horário pendente (ver `_acionar_transbordo_empregabilidade`).
+    # Checado antes do roteamento por perfil/etapa pelo mesmo motivo de `confirmando_troca_rota`
+    # logo abaixo — essa etapa não pertence a nenhum perfil, é um estado transitório que pode ter
+    # sido alcançado a partir de empresa, candidato ou público.
+    if etapa_atual == "fora_horario_aguardando_assunto":
+        contexto_fora_horario = fluxo.get("_fora_horario_contexto") or {}
+        fluxo_anterior_fora_horario = contexto_fora_horario.get("fluxo_anterior") or {}
+        if _quer_encerrar_fora_horario(texto):
+            await _encerrar_fluxo(
+                conversa_id, instance_name, token, phone, fluxo.get("perfil") or "publico",
+                mensagem_customizada=_MSG_FORA_HORARIO_ENCERRAMENTO,
+            )
+            return
+        # Outro assunto — restaura o estado anterior à mensagem de horário e reprocessa a MESMA
+        # mensagem contra ele, sem perdê-la (AC5). `processar_mensagem_empregabilidade` (não a
+        # variante `_locked`) porque o lock é reentrante por conversa_id (_fluxo_lock_context),
+        # mesmo padrão já usado no reprocesso de dúvida do convite de entrevista, acima.
+        await _set_fluxo_async(conversa_id, fluxo_anterior_fora_horario)
+        await processar_mensagem_empregabilidade(
+            texto, phone, instance_name, token, lead_id, conversa_id, unidade_cuca, push_name,
+            midia_tipo, midia_url,
+        )
+        return
 
     # S-WM-20 Task 5 (ajuste 3): resposta de confirmação de troca de rota
     # pendente (ver _perguntar_confirmacao_troca_rota). Checado antes do
