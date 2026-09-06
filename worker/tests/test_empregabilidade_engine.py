@@ -7741,3 +7741,120 @@ class TestRotaCandidatoVagaAssuntoInstitucional:
                 f"{func.__name__} não deve chamar o pré-filtro — ele roda só na mensagem "
                 "livre do branch candidato_vaga, nunca dentro de etapa de coleta de dado"
             )
+
+
+class TestRotaAssuntoInstitucionalHotfixIntencaoAmbigua:
+    """Hotfix 2026-09-06 — achado de produção: "Quero saber sobre futsal" (sem menção a
+    "vaga"/emprego) foi classificado pelo LLM como intencao="ambiguo", não "candidato_vaga" —
+    o filtro original só rodava dentro do branch candidato_vaga e nunca era alcançado. Movido
+    pra rodar antes do dispatch por intenção, cobrindo candidato_vaga E ambiguo."""
+
+    @pytest.mark.asyncio
+    async def test_futsal_com_intencao_ambigua_redireciona_em_vez_do_menu_generico(
+        self, monkeypatch, _isola_enviar,
+    ):
+        """Reprodução exata do caso real de produção (06/09/2026, conversa
+        108da528-9372-4cbb-84a5-f94a26fbbbe3): 'Quero saber sobre futsal' → intencao='ambiguo'
+        no banco — antes desta correção, caía no menu genérico de 'não entendi'."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "_buscar_numero_institucional", AsyncMock(return_value="5585999401027"))
+
+        await emp._rotear_por_intencao(
+            {"intencao": "ambiguo", "nome": None},
+            "Quero saber sobre futsal", "558599990000", "PHONE_ID", "token",
+            "lead-1", "conv-1", "Barra", lambda _texto: (None, None),
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "wa.me/5585999401027" in texto_enviado
+        assert "não entendi" not in texto_enviado.lower()
+        assert "1️⃣" not in texto_enviado, "não pode cair no menu genérico de opções"
+
+    @pytest.mark.asyncio
+    async def test_ambiguo_sem_termo_da_lista_continua_no_menu_generico(self, monkeypatch, _isola_enviar):
+        """Não regride: uma mensagem ambígua que NÃO menciona nenhuma modalidade da lista
+        fechada continua caindo no menu genérico de sempre."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        buscar_numero_spy = AsyncMock(return_value="5585999401027")
+        monkeypatch.setattr(emp, "_buscar_numero_institucional", buscar_numero_spy)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "ambiguo", "nome": None},
+            "bom dia", "558599990000", "PHONE_ID", "token",
+            "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = _isola_enviar.call_args.args[3]
+        assert "1️⃣" in texto_enviado
+        buscar_numero_spy.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empresa_mencionando_modalidade_nao_e_desviada(self, monkeypatch, _isola_enviar):
+        """Guarda de segurança: uma EMPRESA dizendo que quer divulgar vaga de instrutor de uma
+        modalidade da lista fechada (ex.: zumba) não pode ser desviada pro Institucional só
+        porque a intenção é restrita a candidato_vaga/ambiguo, não a TODAS as intenções —
+        intencao='empresa' segue seu fluxo normal, mesmo com o termo na frase."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        buscar_numero_spy = AsyncMock(return_value="5585999401027")
+        monkeypatch.setattr(emp, "_buscar_numero_institucional", buscar_numero_spy)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "empresa", "nome": None},
+            "quero divulgar vaga de instrutor de zumba", "558599990000", "PHONE_ID", "token",
+            "lead-1", "conv-1", "Barra",
+        )
+
+        assert estado.get("perfil") == "empresa"
+        assert estado.get("etapa") == "aguardando_cnpj"
+        buscar_numero_spy.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_banco_talentos_mencionando_modalidade_nao_e_desviado(self, monkeypatch, _isola_enviar):
+        """Mesma guarda pro lado de banco_talentos — não está na lista restrita
+        (candidato_vaga/ambiguo), então segue o fluxo normal."""
+        estado, fake_get, fake_set = _fluxo_mock("", {})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        buscar_numero_spy = AsyncMock(return_value="5585999401027")
+        monkeypatch.setattr(emp, "_buscar_numero_institucional", buscar_numero_spy)
+
+        await emp._rotear_por_intencao(
+            {"intencao": "banco_talentos", "nome": None},
+            "quero deixar meu currículo, já dei aula de zumba antes", "558599990000", "PHONE_ID", "token",
+            "lead-1", "conv-1", "Barra",
+        )
+
+        buscar_numero_spy.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reproducao_fim_a_fim_via_menu_inicial(self, monkeypatch):
+        """Reprodução fim a fim do caso real, entrando pelo mesmo ponto que o lead real usou
+        (`_processar_menu_inicial`, primeira mensagem da conversa) — mocka só o classificador
+        semântico (`_chamar_gpt_contextual`), não `_rotear_por_intencao` diretamente."""
+        estado, fake_get, fake_set = _fluxo_mock("menu_inicial")
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        monkeypatch.setattr(emp, "_buscar_numero_institucional", AsyncMock(return_value="5585999401027"))
+
+        import intencao_detector
+
+        async def mock_gpt(texto, perfil, etapa, ultima_msg_bot):
+            return {"intencao": "ambiguo", "quer_sair": False, "mudou_de_assunto": False, "nome": None}
+
+        monkeypatch.setattr(intencao_detector, "_chamar_gpt_contextual", mock_gpt)
+
+        await emp._processar_menu_inicial(
+            "Quero saber sobre futsal", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        texto_enviado = mock_enviar.call_args.args[3]
+        assert "wa.me/5585999401027" in texto_enviado
+        assert "não entendi" not in texto_enviado.lower()
