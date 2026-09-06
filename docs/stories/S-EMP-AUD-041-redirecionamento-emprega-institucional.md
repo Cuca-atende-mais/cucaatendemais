@@ -262,8 +262,13 @@ ao menu, em `worker/empregabilidade_engine.py` + testes.
   aprovou copy explícita) — a story só descrevia a estrutura ("com número → texto + wa.me; sem
   número → texto sem link; oferecer voltar ao menu"). Escrevi o texto seguindo o tom das 4
   mensagens já em produção no motor-agente (`MENSAGENS_CANAL`, Deno) — desculpa/contexto curto,
-  emoji único, sem jargão. **Não é copy aprovada pelo Junior ainda** — sinalizando aqui pra não
-  passar despercebido, mesmo a story não tendo marcado isso como pendência bloqueante.
+  emoji único, sem jargão.
+- **Copy aprovada pelo Junior em 06/09/2026 — só a variante COM NÚMERO** (`_MSG_INSTITUCIONAL_COM_NUMERO`):
+  como o número já está configurado em produção (Item A), é essa a que roda de fato; o lead
+  precisa do direcionamento (link), não de um "aguarde". A variante SEM NÚMERO
+  (`_MSG_INSTITUCIONAL_SEM_NUMERO`) segue como fallback defensivo — só dispararia se a config
+  ficasse ausente/malformada — e **não foi objeto de aprovação**, por não ser o caminho esperado
+  em uso normal.
 - **Ruff não disponível neste ambiente** (mesma limitação já registrada na S-EMP-AUD-040) —
   sintaxe validada via `python3 -c "import ast; ast.parse(...)"`; estilo manual seguindo o padrão
   já estabelecido no arquivo.
