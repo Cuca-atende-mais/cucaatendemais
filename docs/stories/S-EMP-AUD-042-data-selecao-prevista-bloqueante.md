@@ -1,6 +1,6 @@
 # S-EMP-AUD-042 — Data prevista da seleção como campo bloqueante na criação de vaga
 
-**Status:** InReview
+**Status:** Ready for Review
 **Epic:** Auditoria Empregabilidade
 **Origem:** Demanda direta do Junior 2026-09-05 —
 `docs/2026-09-05/PLANO-3-melhorias-empregabilidade-2026-09-05.md`, item 3.
@@ -247,8 +247,83 @@ relacionada (ex.: corrigir um título) por causa de um campo que não existia qu
 - **Sem navegador/localhost usado** (`qa-testes-sem-navegador-ao-vivo.md`) — validação só por
   testes, build e typecheck, conforme o test plan da própria story já previa.
 
+## QA Results
+
+### Review em 2026-09-06 — @qa Quinn
+
+**Gate: PASS**
+
+**7 checks:**
+
+1. **Code review** — PASS. Li o diff completo, não só a descrição do @dev. Confirmei
+   pessoalmente, lendo `handleSaveStatus` linha a linha, que ele **não referencia**
+   `data_selecao_prevista` em nenhum ponto — nem no payload do `update`, nem em nenhuma
+   validação. A afirmação do @dev de que a edição de vaga existente é estruturalmente imune à
+   nova exigência (não é uma checagem condicional que poderia ser esquecida) é fato confirmado,
+   não aceito de bandeja. `route.ts` e `page.tsx` seguem o mesmo padrão defensivo do
+   `montarMensagemEncaminhamento`/`buscarNumeroCanal` já visto na S-EMP-AUD-041 (validação
+   sempre no servidor, nunca só no cliente, para rota pública).
+2. **Testes** — PASS. Rodei a suíte de forma independente: **48/48**. Escrevi 4 casos próprios
+   (não reaproveitando os do @dev) num arquivo temporário, incluindo um teste específico pra
+   provar que a comparação de data é lexicográfica (string `YYYY-MM-DD`) e não por instante —
+   removi o arquivo depois, não fica na story.
+3. **Acceptance Criteria** — PASS, 10/10 verificados por mim:
+   - AC1/AC2 ✅ `validarDataSelecaoPrevista("")` → rejeitado, mesma mensagem no cliente
+     (`page.tsx`) e no servidor (`route.ts`) — módulo compartilhado, não duas implementações que
+     poderiam divergir.
+   - AC3 ✅ reproduzi com data de ontem (calculada dinamicamente, não hardcoded) → rejeitada; data
+     de amanhã → aceita; data de hoje (limite exato) → aceita, não é "passado". Mensagem distinta
+     da de campo vazio, confirmado nas constantes exportadas.
+   - AC4 ✅ conferido no diff de `route.ts`: `numero_vaga`, `status: "pre_cadastro"` e o bloco de
+     notificação do worker (linhas seguintes ao insert) **não foram tocados** — só a validação e
+     o campo novo no payload foram adicionados.
+   - AC5 ✅ `handleSave` (criação) valida e persiste; botão "Salvar Vaga" fica desabilitado sem a
+     data (`disabled` atualizado corretamente, só no branch de criação).
+   - AC6 ✅ **o achado mais importante desta revisão**, verificado por mim de forma independente:
+     `camposEmpresaReadOnly = !!vaga` e o botão chama `handleSaveStatus` quando `vaga` existe —
+     confirmei isso lendo o JSX do botão, não só a alegação do Dev Agent Record. Uma vaga antiga
+     com `data_selecao_prevista = NULL` carrega `""` no state (sem crash) e o caminho de salvar
+     dela nunca valida nem grava o campo.
+   - AC7 ✅ `git show HEAD --name-only` não lista nenhum arquivo de `/empregabilidade/selecao/*`
+     nem `/api/empregabilidade/selecao/*` — zero mudança, confirmado pela ausência total, não por
+     leitura de um diff vazio de um arquivo específico.
+   - AC8 ✅ `datas_selecao` (jsonb) não aparece em nenhum código do diff — só na mensagem do
+     commit, explicando a decisão de não reutilizá-la.
+   - AC9 ✅ `execute_sql` (read-only) independente: `data_selecao_prevista`, tipo `date`,
+     `is_nullable = YES`, `column_default = null`.
+   - AC10 ✅ a coluna só passa a ser exigida pelo código que só existe a partir deste PR — inerte
+     até o redeploy do `portal`.
+4. **Sem regressões** — PASS. `npx tsc --noEmit` rodado por mim de forma independente: os mesmos
+   4 erros pré-existentes (`TS5097`, arquivos de teste com import `.ts`) — confirmei que já
+   existem idênticos no `main` sem a mudança desta story.
+5. **Performance** — PASS. Validação é regex + comparação de string, sem I/O extra; `Intl.
+   DateTimeFormat` é nativo, sem overhead relevante.
+6. **Segurança** — PASS. A rota pública (`route.ts`) valida no servidor, não confia no `required`
+   do HTML — é o ponto certo, já que o link assinado só protege `empresa_id`, não o corpo do POST.
+7. **Documentação** — PASS. File List e Dev Agent Record batem com o diff real, item por item; a
+   observação sobre `handleSave` vs. `handleSaveStatus` é precisa e foi o que guiou minha
+   verificação do AC6.
+
+**Achado próprio, não bloqueante:** o campo "Data prevista da seleção" aparece também na visão
+somente-leitura de edição de uma vaga (dentro do bloco `opacity-70 pointer-events-none`), por
+consistência com os demais campos preenchidos pela empresa já tratados assim no arquivo. Isso é
+só exibição — `handleSaveStatus` nunca lê esse state — mas registro que não estava
+explicitamente pedido pela story (que fala só em migration + formulário público + criação no
+modal). Não é um problema, é uma escolha de consistência de UI razoável; sinalizo para
+consciência, não para correção.
+
+**Nenhum item bloqueia o avanço.** Recomendo seguir para @devops.
+
 ## Change Log
 
+- v0.4 (2026-09-06): @qa revisa — **PASS**, 7/7 checks, 10/10 ACs confirmados por verificação
+  independente (suíte rodada de novo pelo @qa: 48/48; AC6 verificado lendo o código-fonte de
+  `handleSaveStatus` linha a linha, não aceito da alegação do Dev Agent Record; AC7/AC8
+  confirmados pela ausência total de arquivos/referências no diff, não por leitura pontual; AC9
+  conferido com `execute_sql` read-only independente). 1 achado próprio, não bloqueante: campo
+  também exibido (somente leitura) na visão de edição, por consistência de UI — não pedido
+  explicitamente pela story, mas inofensivo. Status: InReview → **Ready for Review** (aguardando
+  @devops).
 - v0.3 (2026-09-06): @dev implementa. Migration aplicada e conferida em produção (AC9); campo
   bloqueante adicionado no formulário público (Item B) e no modal interno — só na criação, não
   na edição (Item C/AC6), com rastreamento explícito de qual função (`handleSave` vs.
