@@ -6082,6 +6082,21 @@ async def _rotear_por_intencao(
 
     logger.info("[intencao] %s → %s", phone[:6] + "****", intencao)
 
+    # S-EMP-AUD-041 (hotfix 2026-09-06): achado de produção — "Quero saber sobre futsal" (sem
+    # menção a "vaga"/emprego) foi classificado pelo LLM como intencao="ambiguo", não
+    # "candidato_vaga", e caía direto no menu genérico de "não entendi" — o filtro original só
+    # rodava dentro do branch `candidato_vaga` (funcionava pra "quando abre a VAGA de boxe?",
+    # que tem a palavra "vaga" e empurra o classificador nessa direção, mas não pra uma pergunta
+    # pura sobre a modalidade, sem framing de emprego, que é o caso mais comum na prática).
+    # Movido pra rodar ANTES do dispatch por intenção, cobrindo `ambiguo` também — mas restrito a
+    # `candidato_vaga`/`ambiguo`, não a TODAS as intenções: uma empresa dizendo "quero divulgar
+    # vaga de instrutor de zumba" tem intencao="empresa" e não pode ser desviada pro
+    # Institucional só porque a frase contém um termo da lista fechada.
+    if intencao in ("candidato_vaga", "ambiguo") and _assunto_institucional(texto):
+        numero_institucional = await _buscar_numero_institucional()
+        await e(_montar_mensagem_institucional(numero_institucional))
+        return
+
     if intencao == "empresa":
         # 2026-09 (achado de auditoria de conversas reais, 01/09): antes sempre pedia
         # CNPJ do zero, mesmo quando a empresa já tinha sido confirmada minutos antes na
@@ -6107,18 +6122,9 @@ async def _rotear_por_intencao(
         # (categoria fechada, ~15 opções do portal) — checado antes do setor,
         # já que é mais específico quando presente.
         cargo_mencionado = (intencao_res.get("cargo_mencionado") or "").strip()
-
-        # S-EMP-AUD-041: antes de tratar `cargo_mencionado` (S-EMP-AUD-030), filtra pedidos que
-        # na verdade são sobre turma/atividade do Institucional (ex.: "quando abre a vaga de
-        # boxe?") — o LLM classifica como candidato_vaga e sem este filtro o branch abaixo
-        # emitiria a oferta de Banco de Talentos, misdirecionando quem só queria se matricular
-        # numa turma. Lista fechada e estreita (ver `_assunto_institucional`) — roda só aqui,
-        # na mensagem livre de intenção (`_rotear_por_intencao`), nunca dentro de etapa de
-        # coleta de dado (AC7), já que essas etapas têm dispatch próprio e não passam por aqui.
-        if _assunto_institucional(texto):
-            numero_institucional = await _buscar_numero_institucional()
-            await e(_montar_mensagem_institucional(numero_institucional))
-            return
+        # S-EMP-AUD-041: o filtro de `_assunto_institucional` já rodou no topo desta função,
+        # antes do dispatch por intenção (cobre `candidato_vaga` e `ambiguo`) — não duplicado
+        # aqui.
 
         if cargo_mencionado:
             # busca todas as vagas abertas e filtra em Python por titulo OU

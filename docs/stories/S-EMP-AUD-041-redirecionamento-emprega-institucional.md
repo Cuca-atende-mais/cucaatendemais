@@ -351,8 +351,46 @@ caso mais realista de colisão (job title real vs. termo da lista).
 
 **Nenhum item bloqueia o avanço.** Recomendo seguir para @devops.
 
+## Hotfix pós-Done (2026-09-06) — achado de produção pelo Junior
+
+**Sintoma reportado (com print da conversa real):** lead mandou "Quero saber sobre futsal" e
+recebeu o menu genérico de "Não entendi bem o que você precisa" — o redirecionamento pro
+Institucional (implementado nesta story) não disparou.
+
+**Causa raiz confirmada no banco** (`intencao_detectada` da conversa
+`108da528-9372-4cbb-84a5-f94a26fbbbe3`): o LLM classificou a mensagem como `intencao="ambiguo"`,
+não `"candidato_vaga"`. O pré-filtro `_assunto_institucional` só rodava **dentro** do branch
+`elif intencao == "candidato_vaga":` — funcionava para a frase da auditoria original ("quando
+abre a **vaga** de boxe?", que menciona "vaga" e empurra o classificador nessa direção), mas uma
+pergunta pura sobre a modalidade, sem framing de emprego ("quero saber sobre futsal" — o caso
+mais comum na prática), é lida como `ambiguo` e nunca alcançava o filtro.
+
+**Lacuna da story original:** os ACs testaram só variações que mencionavam "vaga" — nenhum caso
+de teste cobria uma pergunta sobre a modalidade sem esse framing. Passou despercebido na review
+porque o cenário mais comum na prática não era o cenário coberto pelos testes.
+
+**Correção:** `_assunto_institucional` movido pra rodar **antes** do dispatch por intenção em
+`_rotear_por_intencao`, restrito a `intencao in ("candidato_vaga", "ambiguo")` — não a TODAS as
+intenções, de propósito: uma empresa dizendo "quero divulgar vaga de instrutor de zumba" tem
+`intencao="empresa"` e não pode ser desviada pro Institucional só por conter um termo da lista
+fechada (guarda de segurança nova, coberta por teste). Checagem duplicada dentro do branch
+`candidato_vaga` removida (redundante).
+
+**Verificação:** 5 testes novos — reprodução exata do caso real (`intencao="ambiguo"` +
+"Quero saber sobre futsal"), não-regressão do menu genérico pra ambíguo sem termo da lista,
+guarda de segurança pra `empresa` e `banco_talentos` mencionando modalidade, e reprodução fim a
+fim via `_processar_menu_inicial` (mesmo ponto de entrada do lead real). Suíte: 391 → 396, 0
+falhas.
+
+**Branch:** `fix/s-emp-aud-041-redirecionamento-sem-classificacao-candidato_vaga`.
+
 ## Change Log
 
+- v0.7 (2026-09-06): Hotfix pós-Done — pré-filtro do redirecionamento não disparava quando o
+  classificador rotulava a mensagem como `ambiguo` (caso real: "Quero saber sobre futsal", sem
+  menção a "vaga"). Movido pra rodar antes do dispatch por intenção, restrito a
+  `candidato_vaga`/`ambiguo` (guarda de segurança pra não desviar `empresa`/`banco_talentos`).
+  5 testes novos, suíte 391→396, 0 falhas. Ver seção "Hotfix pós-Done" acima.
 - v0.6 (2026-09-06): @devops confirma — PR #153 **mergeado** e `cuca-worker` **redeployado** no
   EasyPanel (confirmado pelo Junior). Nenhuma pendência restante. Status: Ready for Review →
   **Done**.
