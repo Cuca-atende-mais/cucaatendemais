@@ -1,6 +1,6 @@
 # S-EMP-AUD-040 — Horário de atendimento no transbordo do Emprega+
 
-**Status:** InReview
+**Status:** Ready for Review
 **Epic:** Auditoria Empregabilidade
 **Origem:** Demanda direta do Junior 2026-09-05 —
 `docs/2026-09-05/PLANO-3-melhorias-empregabilidade-2026-09-05.md`, item 2.
@@ -278,8 +278,85 @@ caminhos de `_acionar_transbordo_empregabilidade`, a etapa nova e seu tratamento
   (`git worktree`), branch `fix/s-emp-aud-040-horario-atendimento-transbordo`, isolado de
   propósito da branch `fix/ocr-curriculo-starvation-parsing` (WIP alheio no mesmo arquivo).
 
+## QA Results
+
+### Review em 2026-09-05 — @qa Quinn
+
+**Gate: PASS**
+
+**7 checks:**
+
+1. **Code review** — PASS. O gate novo entra no topo de `_acionar_transbordo_empregabilidade`
+   como early-return, sem tocar uma linha do caminho "dentro do horário" existente — confirmei
+   isso no diff, não só na descrição. A etapa cross-cutting reusa exatamente o padrão já
+   estabelecido por `confirmando_troca_rota` (mesmo ponto do roteador, mesmo raciocínio de "não
+   pertence a nenhum perfil"), e o reprocesso "outro assunto" reusa literalmente o mesmo padrão
+   de recursão (`processar_mensagem_empregabilidade`, não a variante `_locked`) que o reprocesso
+   de dúvida do convite de entrevista já usa — **verifiquei a reentrância do lock eu mesma**
+   (`_fluxo_lock_context:437-454`, contextvar `_FLUXO_LOCKS_HELD` pula a re-aquisição quando o
+   `conversa_id` já está held pela mesma task) — não é suposição, é o mecanismo real.
+2. **Testes** — PASS. Rodei a suíte de forma independente, num horário diferente do @dev
+   (sábado 21:46, mesma janela "fora do horário" real) — **321 passed, 0 failed**. Contei os
+   `def test_` novos no diff (22) e confirmei que bate com "34 novos" depois de expandir os 2
+   parametrizados (9 + 5 casos) — a conta do @dev é exata, não arredondada.
+3. **Acceptance Criteria** — PASS, 10/10 verificados por mim, não só lidos no Dev Agent Record:
+   - AC1/AC2 ✅ confirmei nos 8 call sites reais (a story citava 7; o @dev achou 1 a mais) que
+     nenhum consome o retorno booleano de `_acionar_transbordo_empregabilidade` — o gate não
+     quebra nenhum deles.
+   - AC3 ✅ comparei caractere a caractere a copy da story vs. as constantes no código — idênticas
+     (a única diferença é `**negrito**` markdown virando `*negrito*` WhatsApp, adaptação correta,
+     não desvio).
+   - AC4 ✅ **reproduzi eu mesma** o gap alegado: `_quer_encerrar("não")`, `_quer_encerrar("nada")`
+     e `_quer_encerrar("pode encerrar")` retornam `False` — a alegação do @dev de que a story
+     pedia reuso de uma função que não cobria seus próprios exemplos é **fato confirmado**, não
+     afirmação aceita de bandeja. `_quer_encerrar_fora_horario` cobre os 3 corretamente.
+   - AC5 ✅ confirmado via leitura + teste próprio do @dev que reproduz cenário determinístico
+     (`oferta_banco_talentos` + "sim" → pede nome completo) sem depender do classificador LLM.
+   - AC6/AC7 ✅ **rodei os 8 casos de limite eu mesma**, fora do arquivo de teste (script Python
+     direto contra `_dentro_horario_atendimento`) — todos batem, incluindo a conversão UTC.
+   - AC8 ✅ confirmei que `_empregabilidade_notify_tick` nunca chama
+     `_acionar_transbordo_empregabilidade` (grep próprio) e que os testes pré-existentes desse
+     loop (linhas ~4013-4352, ~6750) continuam verdes sem qualquer ajuste de relógio — prova de
+     que estruturalmente não há como o gate alcançá-los.
+   - AC9 ✅ `git diff | grep -i configuracoes` só encontra a menção no docstring, nenhuma leitura
+     de tabela.
+   - AC10 ✅ confirmado pelo diff: o bloco de reversão em caso de falha dentro do horário não foi
+     tocado.
+4. **Sem regressões** — PASS. Os 6 testes ajustados (relógio travado) são consequência esperada
+   de introduzir um gate de tempo, não bugs de lógica — confirmei lendo os 6 antes/depois: cada
+   um continua testando exatamente o que testava, só deixou de depender da hora real.
+5. **Performance** — PASS. Early-return simples; o `UPDATE` extra de metadata só roda quando
+   `metadata_update` não é `None`, mesmo custo que o caminho existente já pagava.
+6. **Segurança** — PASS. Nenhum dado do lead entra sem sanitização; `conversa_id`/`phone` já são
+   valores de confiança vindos do banco/webhook, não do texto livre do usuário.
+7. **Documentação** — PASS. File List e Dev Agent Record batem com o diff real, item por item.
+
+**Achado próprio, não bloqueante:** ao entrar na etapa fora-do-horário, o `perfil` gravado é
+`fluxo_atual.get("perfil")` sem fallback (pode gravar `None`, diferente do branch de encerramento
+que usa `fluxo.get("perfil") or "publico"`). Na prática é inofensivo — essa etapa é interceptada
+pelo próprio nome no roteador antes de qualquer checagem por `perfil`, e o `None` nunca sobrevive
+além dessa janela transitória (a restauração de "outro assunto" recupera o `perfil` real; o
+encerramento usa o fallback seguro). Registro para consciência, não para correção.
+
+**Achado próprio, não bloqueante:** se o lead, já na etapa `fora_horario_aguardando_assunto`,
+digitar uma frase que contenha uma palavra-chave de handover (ex.: "quero falar com atendente"),
+o check global de palavra-chave (linha ~5581, que roda ANTES do check da etapa nova, ~5670)
+aciona `_acionar_transbordo_empregabilidade` de novo, que (ainda fora do horário) reenvia a mesma
+mensagem de aviso e sobrescreve `_fora_horario_contexto` com a própria etapa como "anterior". Não
+quebra nem perde dado — na pior hipótese o lead vê a mensagem de horário repetida uma vez. Cenário
+raro (pedir atendente humano logo depois de ser avisado que não há atendente), não bloqueia.
+
+**Nenhum item bloqueia o avanço.** Recomendo seguir para @devops.
+
 ## Change Log
 
+- v0.5 (2026-09-05): @qa revisa — **PASS**, 7/7 checks, 10/10 ACs confirmados por verificação
+  independente (suíte rodada de novo pelo @qa em horário diferente do @dev, mesmo assim fora da
+  janela: 321/321; os 8 limites de horário reproduzidos em script Python direto; o gap alegado em
+  `_quer_encerrar` reproduzido pessoalmente, não aceito de bandeja; reentrância do lock lida e
+  confirmada no código, não suposta). 2 achados próprios, não bloqueantes, registrados (perfil
+  `None` transitório; possível repetição da mensagem de horário num cenário raro). Status:
+  InReview → **Ready for Review** (aguardando @devops).
 - v0.4 (2026-09-05): @dev implementa. Os 2 itens (A: helper de horário; B: dois caminhos no
   transbordo; C: etapa nova cross-cutting) seguidos conforme desenhado, com 2 achados registrados
   no Dev Agent Record que a story não previa (gap real em `_quer_encerrar`, e `metadata_update`
