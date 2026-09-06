@@ -12,6 +12,7 @@ import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift, Copy,
 import toast from "react-hot-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
+import { validarDataSelecaoPrevista, hojeBrasilISO } from "@/lib/empregabilidade/data-selecao-prevista"
 
 const TIPOS_CONTRATO = ["CLT", "PJ", "Estágio", "Temporário", "Aprendiz", "Freelancer"]
 const ESCOLARIDADES = ["Fundamental Incompleto", "Fundamental Completo", "Médio Incompleto", "Médio Completo", "Superior Incompleto", "Superior Completo"]
@@ -97,6 +98,8 @@ function NovaVagaEmpresaContent() {
     const [faixaEtaria, setFaixaEtaria] = useState("")
     const [local, setLocal] = useState("")
     const [localEntrevista, setLocalEntrevista] = useState("na_empresa")
+    // S-EMP-AUD-042: data prevista da seleção — bloqueante
+    const [dataSelecaoPrevista, setDataSelecaoPrevista] = useState("")
 
     // Carga horária estruturada
     const [cargaTipo, setCargaTipo] = useState("horario_comercial")
@@ -207,6 +210,13 @@ function NovaVagaEmpresaContent() {
             toast.error("Informe o e-mail e o telefone do responsável pela seleção.")
             return
         }
+        // S-EMP-AUD-042: bloqueante — a validação real (que protege de fato, já que esta rota é
+        // pública) roda também no servidor logo abaixo; esta aqui é só a resposta rápida no cliente.
+        const dataSelecaoValidada = validarDataSelecaoPrevista(dataSelecaoPrevista)
+        if (!dataSelecaoValidada.ok) {
+            toast.error(dataSelecaoValidada.erro)
+            return
+        }
         setLoadingSubmit(true)
         try {
             const cargaHoraria = buildCargaHoraria(cargaTipo, cargaHoras, cargaEscalaT, cargaEscalaF, cargaDias, cargaTrabSabado, cargaSabadoAte)
@@ -226,6 +236,7 @@ function NovaVagaEmpresaContent() {
                     carga_horaria: cargaHoraria || null,
                     local: local || null,
                     local_entrevista: localEntrevista,
+                    data_selecao_prevista: dataSelecaoValidada.valor,
                     beneficios: buildBeneficios(),
                     limite_curriculos: limiteCurriculos ? parseInt(limiteCurriculos) : null,
                     tipo_selecao: tipoSelecao || null,
@@ -445,6 +456,20 @@ function NovaVagaEmpresaContent() {
                                         </label>
                                     ))}
                                 </div>
+                            </div>
+
+                            {/* Data prevista da seleção — S-EMP-AUD-042 */}
+                            <div className="space-y-2">
+                                <Label htmlFor="dataSelecaoPrevista">Data prevista da seleção *</Label>
+                                <Input
+                                    id="dataSelecaoPrevista"
+                                    type="date"
+                                    min={hojeBrasilISO()}
+                                    value={dataSelecaoPrevista}
+                                    onChange={e => setDataSelecaoPrevista(e.target.value)}
+                                    required
+                                />
+                                <p className="text-xs text-muted-foreground">Quando a equipe deve prever a seleção/entrevista dos candidatos.</p>
                             </div>
 
                             {/* Carga horária estruturada */}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
+import { validarDataSelecaoPrevista } from "@/lib/empregabilidade/data-selecao-prevista"
 
 export async function POST(request: NextRequest) {
     // Rota pública: acesso via link gerado pelo worker (empresa_id validado abaixo)
@@ -18,6 +19,7 @@ export async function POST(request: NextRequest) {
             unidade_destino,
             setor, email_responsavel, telefone_responsavel,
             pcd_vaga, pcd_tipo, pcd_homologado,
+            data_selecao_prevista,
             link_params,
         } = body
 
@@ -33,6 +35,12 @@ export async function POST(request: NextRequest) {
         }
         if (!Array.isArray(setor) || setor.length === 0) {
             return NextResponse.json({ error: "Campo obrigatório ausente: setor deve ser um array com pelo menos uma categoria." }, { status: 400 })
+        }
+        // S-EMP-AUD-042: validação SEMPRE no servidor também — rota pública, protegida só pelo
+        // link assinado; o `required` do formulário é contornável enviando o POST direto.
+        const dataSelecaoValidada = validarDataSelecaoPrevista(data_selecao_prevista)
+        if (!dataSelecaoValidada.ok) {
+            return NextResponse.json({ error: dataSelecaoValidada.erro }, { status: 400 })
         }
 
         // Verificar se empresa existe e está ativa
@@ -74,6 +82,7 @@ export async function POST(request: NextRequest) {
                 unidade_destino: unidade_destino,
                 numero_vaga,
                 status: "pre_cadastro",
+                data_selecao_prevista: dataSelecaoValidada.valor,
                 setor: setor,
                 email_responsavel: email_responsavel || null,
                 email_contato_empresa: email_responsavel || null,
