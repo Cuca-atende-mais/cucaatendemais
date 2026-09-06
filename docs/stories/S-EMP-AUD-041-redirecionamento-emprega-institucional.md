@@ -1,6 +1,6 @@
 # S-EMP-AUD-041 — Redirecionamento Emprega+ → Institucional (Cuca Atende+)
 
-**Status:** Ready for Review
+**Status:** Done
 **Epic:** Auditoria Empregabilidade
 **Origem:** Demanda direta do Junior 2026-09-05 —
 `docs/2026-09-05/PLANO-3-melhorias-empregabilidade-2026-09-05.md`, item 1.
@@ -353,6 +353,9 @@ caso mais realista de colisão (job title real vs. termo da lista).
 
 ## Change Log
 
+- v0.6 (2026-09-06): @devops confirma — PR #153 **mergeado** e `cuca-worker` **redeployado** no
+  EasyPanel (confirmado pelo Junior). Nenhuma pendência restante. Status: Ready for Review →
+  **Done**.
 - v0.5 (2026-09-06): @qa revisa — **PASS**, 7/7 checks, 10/10 ACs confirmados por verificação
   independente (suíte rodada de novo pelo @qa: 360/360; AC1/AC2/AC3 reproduzidos em script
   próprio; AC7 confirmado via `inspect.getsource` rodado pelo próprio @qa; AC9 conferido com
