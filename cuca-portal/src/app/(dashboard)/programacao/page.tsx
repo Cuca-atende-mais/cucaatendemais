@@ -35,7 +35,6 @@ import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 import { UnifiedProgramModal } from "@/components/programacao/unified-program-modal"
 import { ImportPlanilhaModal } from "@/components/programacao/import-planilha-modal"
-import { CriarProgramacaoModal } from "@/components/programacao/criar-programacao-modal"
 import * as XLSX from 'xlsx'
 import { useRouter } from "next/navigation"
 import { useUser } from "@/lib/auth/user-provider"
@@ -47,7 +46,6 @@ export default function ProgramacaoPage() {
     const [unidadeFilter, setUnidadeFilter] = useState<string>("all")
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [isImportModalOpen, setIsImportModalOpen] = useState(false)
-    const [isCriarModalOpen, setIsCriarModalOpen] = useState(false)
 
     // S17-01: Prévia de disparo pontual
     const [previewEvento, setPreviewEvento] = useState<EventoPontual | null>(null)
@@ -330,7 +328,7 @@ export default function ProgramacaoPage() {
                                                 toast.error("Selecione uma unidade específica antes de criar a programação.")
                                                 return
                                             }
-                                            setIsCriarModalOpen(true)
+                                            router.push(`/programacao/criar?unidade=${encodeURIComponent(unidadeFilter)}`)
                                         }}
                                     >
                                         <Plus className="h-4 w-4" />
@@ -515,13 +513,6 @@ export default function ProgramacaoPage() {
                     onSuccess={invalidateProg}
                 />
             )}
-
-            <CriarProgramacaoModal
-                open={isCriarModalOpen}
-                onOpenChange={setIsCriarModalOpen}
-                unidadeInicial={unidadeFilter !== "all" ? unidadeFilter : ""}
-                onSuccess={invalidateProg}
-            />
 
             {/* S25-02: Sheet Visualizar Evento Pontual */}
             <Sheet open={!!visualizarEvento} onOpenChange={open => !open && setVisualizarEvento(null)}>
