@@ -4,6 +4,7 @@
 // Coexiste com o upload de planilha — não substitui nem altera o fluxo existente.
 
 import { useState } from "react"
+import { AVISO_VAGAS } from "@/lib/programacao/rag"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -341,7 +342,7 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
         const periodoStr = `${fmtDate(meta.data_inicio_raw)} ${fmtDate(meta.data_fim_raw)} ${diasStr}`
         const horarioStr = `${hi} às ${hf}`
         // Descricao no mesmo formato que o trigger trigger_indexar_campanha_mensal usa para montar o RAG
-        const descricao = `Curso: ${a.titulo}. Educador: ${meta.educador}. Vagas: ${meta.vagas}. Carga Horária: ${meta.carga_horaria}h. Período: ${periodoStr}. Horário: ${horarioStr}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}`
+        const descricao = `Curso: ${a.titulo}. Educador: ${meta.educador}. Carga Horária: ${meta.carga_horaria}h. Período: ${periodoStr}. Horário: ${horarioStr}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}. ${AVISO_VAGAS}`
         return {
             titulo: a.titulo,
             categoria: "CURSOS",
@@ -370,7 +371,7 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
         const faixaStr = `${meta.faixa_de} a ${meta.faixa_ate} anos`
         const horarioStr = `${hi} às ${hf}`
         // Descricao no mesmo formato que o trigger usa para montar o RAG
-        const descricao = `Esporte Modalidade: ${a.titulo} - ${turmaStr}. Professor: ${meta.professor}. Vagas: ${meta.vagas}. Público: ${meta.sexo} (Idade: ${faixaStr}). Dias: ${diasStr}. Horário: ${horarioStr}.`
+        const descricao = `Esporte Modalidade: ${a.titulo} - ${turmaStr}. Professor: ${meta.professor}. Público: ${meta.sexo} (Idade: ${faixaStr}). Dias: ${diasStr}. Horário: ${horarioStr}. ${AVISO_VAGAS}`
         return {
             titulo: a.titulo,
             categoria: "ESPORTES",
