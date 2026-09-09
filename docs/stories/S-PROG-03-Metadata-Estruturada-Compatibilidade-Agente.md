@@ -1,6 +1,6 @@
 # S-PROG-03 — Metadata estruturada, compatibilidade do agente e vagas fora do RAG
 
-**Status:** InProgress — **item 2 concluído (Ready for Review)**, item 1 não iniciado
+**Status:** InProgress — **item 2: Done** (PR #159 mergeado, deployado e testado em produção), item 1 não iniciado (aguarda S-PROG-01)
 **Epic:** Reestruturação da criação de programação
 **Origem:** Campos estruturados da S-PROG-01 + decisão do Junior sobre vagas no RAG (2026-09-07).
 **Prioridade:** **P0** — a parte de vagas (item 2) deve ir a produção **antes** do disparo público de
@@ -176,11 +176,25 @@ função agora reusa integralmente.
 Reconfirmado após a correção: `deno test index.test.ts` — 71 passed, 0 failed. `deno test
 index.audit.test.ts` — 138 passed, 0 failed.
 
-### Pendências para @devops (não executar sem autorização)
+### Fechamento @devops (2026-09-09) — item 2 em Done
 
-A Edge Function `motor-agente` **precisa ser deployada no Supabase antes do push/PR**
-(`devops-deploy-antes-de-push-edge-function.md`). Merge no GitHub não coloca a function no ar.
-O portal precisa de redeploy do serviço `portal` no EasyPanel após o merge.
+- **Deploy da Edge Function:** feito **antes** da abertura do PR, via CLI (`supabase functions
+  deploy motor-agente`), conforme `devops-deploy-antes-de-push-edge-function.md`. `motor-agente`
+  v50 → v51; conteúdo deployado conferido por diff byte a byte contra o arquivo local (idêntico);
+  as outras 9 Edge Functions do projeto mantiveram o mesmo `ezbr_sha256` — nenhuma tocada por engano.
+- **PR:** [#159](https://github.com/Cuca-atende-mais/cucaatendemais/pull/159), aprovado pelo Junior
+  e mergeado em `main` (commit `bd1b429`).
+- **Redeploy EasyPanel (portal):** feito pelo Junior e confirmado por ele — registrado aqui como
+  reportado; este agente não tem ferramenta própria de EasyPanel nesta sessão para verificar de
+  forma independente.
+- **Teste em produção:** confirmado pelo Junior em tempo real — resposta do assistente do WhatsApp
+  não informa mais quantidade de vagas.
+- **Nota de processo:** o deploy da Edge Function nesta story exigiu autenticar o CLI do Supabase
+  manualmente (MCP `deploy_edge_function` foi descartado por risco de retranscrição de ~5.700
+  linhas; `supabase login` via OAuth não persiste sessão neste ambiente headless — funcionou só
+  com `SUPABASE_ACCESS_TOKEN` passado inline pelo Junior, no terminal dele, nunca neste chat).
+  Para o próximo deploy de Edge Function nesta sessão, um `export SUPABASE_ACCESS_TOKEN=...`
+  permanente no `.bashrc` do Junior evita repetir esse processo.
 
 ## File List
 
@@ -201,3 +215,5 @@ O portal precisa de redeploy do serviço `portal` no EasyPanel após o merge.
 | 2026-09-08 | @dev (Dex) | Item 2 implementado e testado; item 1 aguarda S-PROG-01 |
 | 2026-09-08 | @qa (Quinn) | CONCERNS — buscarAtividadeEspecifica (S-WM-34) não sanitizado, vazava vagas no fallback |
 | 2026-09-08 | @dev (Dex) | Corrigido; testes reconfirmados verdes |
+| 2026-09-09 | @devops (Gage) | Edge Function deployada (v51), PR #159 aberto |
+| 2026-09-09 | @devops (Gage) | PR #159 aprovado e mergeado em `main`; portal redeployado no EasyPanel e testado em produção pelo Junior — item 2 marcado **Done** |
