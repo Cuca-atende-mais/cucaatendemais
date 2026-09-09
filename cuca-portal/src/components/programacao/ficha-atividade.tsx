@@ -65,7 +65,7 @@ export function FichaAtividade({ aberta, atividade, indice, total, focoCampo, on
 
     return (
         <Sheet open={aberta} onOpenChange={v => !v && onFechar()}>
-            <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+            <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
                 <SheetHeader>
                     <SheetTitle>{atividade.titulo?.trim() || "Nova atividade"}</SheetTitle>
                     <SheetDescription>

@@ -16,7 +16,7 @@ import {
     Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Plus } from "lucide-react"
+import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Plus, X } from "lucide-react"
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
 import { unidadesCuca } from "@/lib/constants"
@@ -314,48 +314,86 @@ export function CriarProgramacaoModal({
 
     return (
         <Dialog open={open} onOpenChange={handleClose}>
-            <DialogContent className={cn("max-h-[90vh] flex flex-col overflow-hidden", step === 2 ? "sm:max-w-[1080px]" : "max-w-2xl")}>
-                <DialogHeader className="shrink-0">
-                    <DialogTitle className="flex items-center gap-2">
-                        <Plus className="h-5 w-5 text-primary" />
-                        Criar Programação Mensal
-                        {step >= 2 && nomeMes && (
-                            <Badge variant="outline" className="ml-2 font-semibold text-primary border-primary/40">
-                                {nomeMes} {anoSel} · {unidadeSel.replace("Cuca ", "")}
-                            </Badge>
-                        )}
-                    </DialogTitle>
-                    <DialogDescription className="flex items-center gap-4">
+            <DialogContent
+                showCloseButton={false}
+                className="p-0 gap-0 flex flex-col overflow-hidden rounded-2xl border-border/60
+                    top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
+                    w-[calc(100vw-1.5rem)] h-[calc(100vh-1.5rem)]
+                    sm:w-[calc(100vw-3rem)] sm:h-[calc(100vh-3rem)]
+                    max-w-[1600px] max-h-[980px]"
+            >
+                {/* ── Header: identidade + stepper ── */}
+                <DialogHeader className="shrink-0 gap-0 space-y-0 border-b border-border bg-gradient-to-b from-card to-card/60 px-6 py-5 sm:px-8">
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-center gap-3.5">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15 ring-1 ring-primary/30 shadow-[0_0_24px_-6px_var(--primary)]">
+                                <Plus className="h-6 w-6 text-primary" />
+                            </div>
+                            <div>
+                                <DialogTitle className="text-xl font-bold tracking-tight">
+                                    Criar Programação Mensal
+                                </DialogTitle>
+                                <DialogDescription className="text-sm mt-0.5">
+                                    {step >= 2 && nomeMes ? (
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <Badge variant="outline" className="font-semibold text-primary border-primary/40 bg-primary/5">
+                                                {nomeMes} {anoSel} · {unidadeSel.replace("Cuca ", "")}
+                                            </Badge>
+                                        </span>
+                                    ) : "Grade editável por categoria — sem formulário por atividade."}
+                                </DialogDescription>
+                            </div>
+                        </div>
+                        <Button variant="ghost" size="icon" onClick={handleClose} className="shrink-0 rounded-full">
+                            <X className="h-4 w-4" />
+                        </Button>
+                    </div>
+
+                    {/* Stepper com linha de progresso conectando as etapas */}
+                    <div className="flex items-center mt-5 max-w-md">
                         {[
                             { n: 1, label: "Cabeçalho" },
                             { n: 2, label: "Atividades" },
                             { n: 3, label: "Revisão" },
-                        ].map(({ n, label }) => (
-                            <span key={n} className={`flex items-center gap-1.5 text-xs font-medium ${step === n ? "text-primary" : step > n ? "text-green-500" : "text-muted-foreground"}`}>
-                                <span className={`h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold border ${step === n ? "border-primary bg-primary/10 text-primary" : step > n ? "border-green-500 bg-green-500/10 text-green-500" : "border-border"}`}>
-                                    {step > n ? "✓" : n}
-                                </span>
-                                {label}
-                            </span>
+                        ].map(({ n, label }, i, arr) => (
+                            <div key={n} className="flex items-center flex-1 last:flex-none">
+                                <div className="flex items-center gap-2">
+                                    <span className={cn(
+                                        "h-7 w-7 shrink-0 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors",
+                                        step === n ? "border-primary bg-primary text-primary-foreground" :
+                                        step > n ? "border-emerald-500 bg-emerald-500 text-white" :
+                                        "border-border text-muted-foreground"
+                                    )}>
+                                        {step > n ? "✓" : n}
+                                    </span>
+                                    <span className={cn(
+                                        "text-sm font-semibold whitespace-nowrap",
+                                        step === n ? "text-foreground" : step > n ? "text-emerald-500" : "text-muted-foreground"
+                                    )}>{label}</span>
+                                </div>
+                                {i < arr.length - 1 && (
+                                    <div className={cn("h-0.5 flex-1 mx-3 rounded-full transition-colors", step > n ? "bg-emerald-500" : "bg-border")} />
+                                )}
+                            </div>
                         ))}
-                    </DialogDescription>
+                    </div>
                 </DialogHeader>
 
-                <div className="flex-1 overflow-y-auto px-0.5 py-2">
+                <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8">
 
                     {/* ── STEP 1: Cabeçalho ── */}
                     {step === 1 && (
-                        <div className="space-y-6">
+                        <div className="space-y-6 max-w-xl mx-auto py-2">
                             {/* Destaque visual: Mês e Ano são a identidade */}
-                            <div className="p-4 rounded-xl border-2 border-primary/40 bg-primary/5">
-                                <p className="text-xs font-semibold text-primary mb-3 uppercase tracking-wide">
+                            <div className="p-5 rounded-2xl border-2 border-primary/40 bg-primary/5">
+                                <p className="text-xs font-bold text-primary mb-4 uppercase tracking-wide">
                                     Identidade da Programação — Mês de Referência
                                 </p>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="space-y-1.5">
                                         <Label className="font-semibold">Mês *</Label>
                                         <Select value={String(mesSel)} onValueChange={v => setMesSel(Number(v))}>
-                                            <SelectTrigger className="border-primary/40 focus:ring-primary">
+                                            <SelectTrigger className="border-primary/40 focus:ring-primary h-11 text-sm w-full">
                                                 <SelectValue />
                                             </SelectTrigger>
                                             <SelectContent>
@@ -373,16 +411,16 @@ export function CriarProgramacaoModal({
                                             max={2030}
                                             value={anoSel}
                                             onChange={e => setAnoSel(Number(e.target.value))}
-                                            className="border-primary/40 focus-visible:ring-primary"
+                                            className="border-primary/40 focus-visible:ring-primary h-11 text-sm"
                                         />
                                     </div>
                                 </div>
                             </div>
 
                             <div className="space-y-1.5">
-                                <Label>Unidade CUCA *</Label>
+                                <Label className="font-semibold">Unidade CUCA *</Label>
                                 <Select value={unidadeSel} onValueChange={setUnidadeSel}>
-                                    <SelectTrigger>
+                                    <SelectTrigger className="h-11 text-sm w-full">
                                         <SelectValue placeholder="Selecione a unidade" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -394,8 +432,8 @@ export function CriarProgramacaoModal({
                             </div>
 
                             {unidadeSel && mesSel && anoSel && (
-                                <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 border">
-                                    Título gerado automaticamente: <strong>"Programação {unidadeSel} — {nomeMes} {anoSel}"</strong>
+                                <p className="text-sm text-muted-foreground bg-muted/50 rounded-xl p-4 border">
+                                    Título gerado automaticamente: <strong className="text-foreground">&quot;Programação {unidadeSel} — {nomeMes} {anoSel}&quot;</strong>
                                 </p>
                             )}
                         </div>
@@ -403,10 +441,10 @@ export function CriarProgramacaoModal({
 
                     {/* ── STEP 2: Atividades (S-PROG-01: grade editável + ficha) ── */}
                     {step === 2 && (
-                        <div className="space-y-3">
+                        <div className="space-y-4">
                             {/* Alerta de campanha existente (AC-8) */}
                             {campanhaExistente && (
-                                <div className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-600 text-sm">
+                                <div className="flex items-start gap-2.5 p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-500 text-sm">
                                     <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                                     <span>
                                         Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (status: <em>{campanhaExistente.status}</em>).
@@ -421,20 +459,23 @@ export function CriarProgramacaoModal({
                                     type="button"
                                     onClick={() => setPainelRevisaoAberto(v => !v)}
                                     className={cn(
-                                        "w-full text-left text-xs font-semibold px-3 py-2 rounded-lg border flex items-center justify-between",
+                                        "w-full text-left text-sm font-semibold px-4 py-3 rounded-xl border flex items-center justify-between transition-colors",
                                         problemas.length > 0
-                                            ? "bg-amber-500/10 border-amber-500/40 text-amber-700"
-                                            : "bg-green-500/10 border-green-500/40 text-green-700"
+                                            ? "bg-amber-500/10 border-amber-500/40 text-amber-500 hover:bg-amber-500/15"
+                                            : "bg-emerald-500/10 border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/15"
                                     )}
                                 >
-                                    <span>{problemas.length > 0 ? `${problemas.length} ponto(s) a revisar` : "Tudo certo para revisar"}</span>
-                                    <span className="opacity-70">{painelRevisaoAberto ? "ocultar" : "ver"}</span>
+                                    <span className="flex items-center gap-2">
+                                        <AlertCircle className="h-4 w-4" />
+                                        {problemas.length > 0 ? `${problemas.length} ponto(s) a revisar` : "Tudo certo para revisar"}
+                                    </span>
+                                    <span className="text-xs opacity-70 font-medium">{painelRevisaoAberto ? "ocultar ▲" : "ver ▼"}</span>
                                 </button>
                             )}
                             {painelRevisaoAberto && problemas.length > 0 && (
-                                <div className="space-y-1 max-h-40 overflow-y-auto border border-amber-500/30 rounded-lg p-2 bg-amber-500/5">
+                                <div className="space-y-1 max-h-40 overflow-y-auto border border-amber-500/30 rounded-xl p-3 bg-amber-500/5">
                                     {problemas.map((p, i) => (
-                                        <p key={i} className="text-xs text-amber-700 flex items-start gap-1.5">
+                                        <p key={i} className="text-xs text-amber-500 flex items-start gap-1.5">
                                             <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" /> {p.mensagem}
                                         </p>
                                     ))}
@@ -447,20 +488,20 @@ export function CriarProgramacaoModal({
 
                     {/* ── STEP 3: Revisão ── */}
                     {step === 3 && (
-                        <div className="space-y-4">
-                            <div className="p-4 rounded-xl border border-border bg-muted/20">
-                                <p className="text-sm font-semibold mb-1">Resumo da Programação</p>
-                                <p className="text-xs text-muted-foreground">
-                                    <strong>{unidadeSel}</strong> · {nomeMes} {anoSel} · {atividades.length} atividades
+                        <div className="space-y-5 max-w-2xl">
+                            <div className="p-5 rounded-xl border border-border bg-card/60">
+                                <p className="text-base font-bold mb-1">Resumo da Programação</p>
+                                <p className="text-sm text-muted-foreground">
+                                    <strong className="text-foreground">{unidadeSel}</strong> · {nomeMes} {anoSel} · {atividades.length} atividades
                                 </p>
                             </div>
 
                             <div className="space-y-2">
                                 {Object.entries(contagem).map(([cat, qtd]) => (
-                                    <div key={cat} className="flex items-center justify-between p-3 rounded-lg border border-border bg-background">
-                                        <div className="flex items-center gap-2">
-                                            <CheckCircle2 className="h-4 w-4 text-green-500" />
-                                            <span className="text-sm font-medium">{cat}</span>
+                                    <div key={cat} className="flex items-center justify-between p-3.5 rounded-xl border border-border bg-background">
+                                        <div className="flex items-center gap-2.5">
+                                            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                            <span className="text-sm font-semibold">{cat}</span>
                                         </div>
                                         <Badge variant="secondary">{qtd} {qtd === 1 ? "atividade" : "atividades"}</Badge>
                                     </div>
@@ -469,12 +510,12 @@ export function CriarProgramacaoModal({
 
                             {problemas.length > 0 && (
                                 <div className="space-y-1.5">
-                                    <p className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
-                                        <AlertCircle className="h-3.5 w-3.5" /> {problemas.length} ponto(s) a revisar — pode salvar como rascunho e corrigir depois
+                                    <p className="text-sm font-semibold text-amber-500 flex items-center gap-1.5">
+                                        <AlertCircle className="h-4 w-4" /> {problemas.length} ponto(s) a revisar — pode salvar como rascunho e corrigir depois
                                     </p>
-                                    <div className="space-y-1 max-h-40 overflow-y-auto border border-amber-500/30 rounded-lg p-2 bg-amber-500/5">
+                                    <div className="space-y-1 max-h-40 overflow-y-auto border border-amber-500/30 rounded-xl p-3 bg-amber-500/5">
                                         {problemas.map((p, i) => (
-                                            <p key={i} className="text-xs text-amber-700">{p.mensagem}</p>
+                                            <p key={i} className="text-xs text-amber-500">{p.mensagem}</p>
                                         ))}
                                     </div>
                                 </div>
@@ -501,17 +542,18 @@ export function CriarProgramacaoModal({
                 />
 
                 {/* ── Footer de navegação ── */}
-                <div className="shrink-0 border-t border-border pt-4 flex justify-between gap-2">
-                    <Button variant="ghost" onClick={step === 1 ? handleClose : () => setStep(s => s - 1)} className="gap-1">
+                <div className="shrink-0 border-t border-border bg-card/40 px-6 py-4 sm:px-8 flex justify-between gap-2">
+                    <Button variant="ghost" size="lg" onClick={step === 1 ? handleClose : () => setStep(s => s - 1)} className="gap-1.5">
                         {step === 1 ? "Cancelar" : <><ChevronLeft className="h-4 w-4" /> Voltar</>}
                     </Button>
 
                     <div className="flex gap-2">
                         {step < 3 && (
                             <Button
+                                size="lg"
                                 onClick={step === 1 ? handleAvancarStep1 : () => setStep(3)}
                                 disabled={verificandoDup}
-                                className="gap-1"
+                                className="gap-1.5"
                             >
                                 {verificandoDup ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                                 {step === 2 && atividades.length === 0 ? "Revisar" : "Próximo"}
@@ -520,9 +562,10 @@ export function CriarProgramacaoModal({
                         )}
                         {step === 3 && (
                             <Button
+                                size="lg"
                                 onClick={handleSalvarRascunho}
                                 disabled={salvando || atividades.length === 0}
-                                className="bg-primary text-primary-foreground gap-1"
+                                className="bg-primary text-primary-foreground gap-1.5"
                             >
                                 {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                                 Salvar como Rascunho
