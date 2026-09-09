@@ -9,7 +9,6 @@ import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -17,9 +16,14 @@ import {
     Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Plus, Trash2, Pencil } from "lucide-react"
+import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Plus } from "lucide-react"
 import toast from "react-hot-toast"
+import { cn } from "@/lib/utils"
 import { unidadesCuca } from "@/lib/constants"
+import { AtividadeForm, DIAS_SEMANA_ABREV } from "@/lib/programacao/tipos"
+import { calcularProblemas, Problema } from "@/lib/programacao/revisao"
+import { GradeAtividades } from "@/components/programacao/grade-atividades"
+import { FichaAtividade } from "@/components/programacao/ficha-atividade"
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -32,30 +36,10 @@ const MESES_LISTA = [
     { value: 11, label: "Novembro" }, { value: 12, label: "Dezembro" },
 ]
 
-const DIAS_SEMANA = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
-
-const DIAS_SEMANA_ABREV: Record<string, string> = {
-    "Segunda": "Seg", "Terça": "Ter", "Quarta": "Qua",
-    "Quinta": "Qui", "Sexta": "Sex", "Sábado": "Sáb", "Domingo": "Dom",
-}
-
-const NOMES_DIA_SEMANA = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"]
-
-// ─── Tipos internos ────────────────────────────────────────────────────────────
-
-type Categoria = "CURSOS" | "ESPORTES" | "DIA A DIA" | "ESPECIAIS"
-
-interface AtividadeInterna {
-    _tempId: string
-    categoria: Categoria
-    titulo: string
-    descricao: string | null
-    local: string | null
-    data_atividade: string | null
-    hora_inicio: string | null
-    hora_fim: string | null
-    metadata: Record<string, any>
-}
+// AtividadeInterna, Categoria, DIAS_SEMANA_ABREV: S-PROG-01 moveu para
+// lib/programacao/tipos.ts — compartilhado com a grade, a ficha e o painel de revisão, em vez
+// de redeclarado aqui como antes.
+type AtividadeInterna = AtividadeForm
 
 interface CriarProgramacaoModalProps {
     open: boolean
@@ -64,267 +48,15 @@ interface CriarProgramacaoModalProps {
     onSuccess: () => void
 }
 
-// ─── Formulários por categoria (sub-componentes inline) ───────────────────────
-
-interface FormCursosProps {
-    value: Partial<AtividadeInterna>
-    onChange: (v: Partial<AtividadeInterna>) => void
-}
-
-function FormCursos({ value, onChange }: FormCursosProps) {
-    const meta = value.metadata || {}
-    const set = (key: string, val: any) => onChange({ ...value, metadata: { ...meta, [key]: val } })
-    const setRoot = (key: keyof AtividadeInterna, val: any) => onChange({ ...value, [key]: val })
-    const diasSel: string[] = meta.dias_raw || []
-    const toggleDia = (d: string) => {
-        const next = diasSel.includes(d) ? diasSel.filter(x => x !== d) : [...diasSel, d]
-        onChange({ ...value, metadata: { ...meta, dias_raw: next, dias_semana: next.map(x => DIAS_SEMANA_ABREV[x]).join(" e ") } })
-    }
-
-    return (
-        <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2 space-y-1.5">
-                    <Label>Título do Curso *</Label>
-                    <Input maxLength={100} value={value.titulo || ""} onChange={e => setRoot("titulo", e.target.value)} placeholder="Ex: Fotografia Digital" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Educador *</Label>
-                    <Input value={meta.educador || ""} onChange={e => set("educador", e.target.value)} placeholder="Nome do educador" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Vagas *</Label>
-                    <Input type="number" min={1} value={meta.vagas || ""} onChange={e => set("vagas", e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Carga Horária (horas) *</Label>
-                    <Input type="number" min={1} value={meta.carga_horaria || ""} onChange={e => set("carga_horaria", e.target.value)} placeholder="Ex: 40" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Requisitos *</Label>
-                    <Input value={meta.requisitos || ""} onChange={e => set("requisitos", e.target.value)} placeholder="Ex: 15 a 29 anos" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Data de Início *</Label>
-                    <Input type="date" value={meta.data_inicio_raw || ""} onChange={e => set("data_inicio_raw", e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Data de Fim *</Label>
-                    <Input type="date" min={meta.data_inicio_raw || ""} value={meta.data_fim_raw || ""} onChange={e => set("data_fim_raw", e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Horário Início *</Label>
-                    <Input type="time" value={value.hora_inicio || ""} onChange={e => setRoot("hora_inicio", e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Horário Fim *</Label>
-                    <Input type="time" value={value.hora_fim || ""} onChange={e => setRoot("hora_fim", e.target.value)} />
-                </div>
-                <div className="sm:col-span-2 space-y-1.5">
-                    <Label>Dias da Semana *</Label>
-                    <div className="flex gap-1.5 flex-wrap">
-                        {DIAS_SEMANA.map(d => (
-                            <button key={d} type="button"
-                                onClick={() => toggleDia(d)}
-                                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${diasSel.includes(d) ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border hover:bg-muted/70"}`}>
-                                {DIAS_SEMANA_ABREV[d]}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-                <div className="sm:col-span-2 space-y-1.5">
-                    <Label>Ementa *</Label>
-                    <Textarea rows={3} value={meta.ementa || ""} onChange={e => set("ementa", e.target.value)} placeholder="Descrição do conteúdo do curso" />
-                </div>
-            </div>
-        </div>
-    )
-}
-
-interface FormEsportesProps {
-    value: Partial<AtividadeInterna>
-    onChange: (v: Partial<AtividadeInterna>) => void
-}
-
-function FormEsportes({ value, onChange }: FormEsportesProps) {
-    const meta = value.metadata || {}
-    const set = (key: string, val: any) => onChange({ ...value, metadata: { ...meta, [key]: val } })
-    const setRoot = (key: keyof AtividadeInterna, val: any) => onChange({ ...value, [key]: val })
-    const diasSel: string[] = meta.dias_raw || []
-    const toggleDia = (d: string) => {
-        const next = diasSel.includes(d) ? diasSel.filter(x => x !== d) : [...diasSel, d]
-        onChange({ ...value, metadata: { ...meta, dias_raw: next, dias_semana: next.map(x => DIAS_SEMANA_ABREV[x]).join(" e ") } })
-    }
-
-    return (
-        <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2 space-y-1.5">
-                    <Label>Modalidade *</Label>
-                    <Input maxLength={100} value={value.titulo || ""} onChange={e => setRoot("titulo", e.target.value)} placeholder="Ex: Natação, Futsal" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Professor *</Label>
-                    <Input value={meta.professor || ""} onChange={e => set("professor", e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Turma *</Label>
-                    <Input value={meta.turma || ""} onChange={e => set("turma", e.target.value)} placeholder="Ex: Turma 01" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Vagas *</Label>
-                    <Input type="number" min={1} value={meta.vagas || ""} onChange={e => set("vagas", e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Sexo *</Label>
-                    <Select value={meta.sexo || ""} onValueChange={v => set("sexo", v)}>
-                        <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="Misto">Misto</SelectItem>
-                            <SelectItem value="Masculino">Masculino</SelectItem>
-                            <SelectItem value="Feminino">Feminino</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Faixa Etária De *</Label>
-                    <Input type="number" min={0} max={100} value={meta.faixa_de || ""} onChange={e => set("faixa_de", e.target.value)} placeholder="Ex: 15" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Faixa Etária Até *</Label>
-                    <Input type="number" min={meta.faixa_de || 0} max={100} value={meta.faixa_ate || ""} onChange={e => set("faixa_ate", e.target.value)} placeholder="Ex: 29" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Horário Início *</Label>
-                    <Input type="time" value={value.hora_inicio || ""} onChange={e => setRoot("hora_inicio", e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Horário Fim *</Label>
-                    <Input type="time" value={value.hora_fim || ""} onChange={e => setRoot("hora_fim", e.target.value)} />
-                </div>
-                <div className="sm:col-span-2 space-y-1.5">
-                    <Label>Dias da Semana *</Label>
-                    <div className="flex gap-1.5 flex-wrap">
-                        {DIAS_SEMANA.map(d => (
-                            <button key={d} type="button"
-                                onClick={() => toggleDia(d)}
-                                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${diasSel.includes(d) ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border hover:bg-muted/70"}`}>
-                                {DIAS_SEMANA_ABREV[d]}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        </div>
-    )
-}
-
-interface FormDiaDiaProps {
-    value: Partial<AtividadeInterna>
-    onChange: (v: Partial<AtividadeInterna>) => void
-    categoria: "DIA A DIA" | "ESPECIAIS"
-}
-
-function FormDiaDia({ value, onChange, categoria }: FormDiaDiaProps) {
-    const meta = value.metadata || {}
-    const set = (key: string, val: any) => onChange({ ...value, metadata: { ...meta, [key]: val } })
-    const setRoot = (key: keyof AtividadeInterna, val: any) => onChange({ ...value, [key]: val })
-
-    const handleDataChange = (dataISO: string) => {
-        setRoot("data_atividade", dataISO)
-        if (dataISO) {
-            // Dia da semana calculado a partir da data — sem timezone issues
-            const [y, m, d] = dataISO.split("-").map(Number)
-            const dt = new Date(y, m - 1, d)
-            const diaNome = NOMES_DIA_SEMANA[dt.getDay()]
-            const [, md] = dataISO.split("-")
-            const dataFormatada = `${d.toString().padStart(2, "0")}/${md}`
-            set("dia_semana", diaNome)
-            set("data_real", dataFormatada)
-        }
-    }
-
-    return (
-        <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2 space-y-1.5">
-                    <Label>Título da Atividade *</Label>
-                    <Input maxLength={100} value={value.titulo || ""} onChange={e => setRoot("titulo", e.target.value)} placeholder="Nome da atividade" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Sessão / Eixo *</Label>
-                    <Input value={meta.sessao || ""} onChange={e => set("sessao", e.target.value)} placeholder="Ex: DPDH, Empregabilidade" />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Data do Evento *</Label>
-                    <Input type="date" value={value.data_atividade || ""} onChange={e => handleDataChange(e.target.value)} />
-                </div>
-                {meta.dia_semana && (
-                    <div className="space-y-1.5">
-                        <Label>Dia da Semana</Label>
-                        <p className="text-sm font-medium h-10 flex items-center px-3 bg-muted/40 rounded-md border border-border text-muted-foreground">{meta.dia_semana}</p>
-                    </div>
-                )}
-                <div className="space-y-1.5">
-                    <Label>Horário Início *</Label>
-                    <Input type="time" value={value.hora_inicio || ""} onChange={e => setRoot("hora_inicio", e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <Label>Horário Fim *</Label>
-                    <Input type="time" value={value.hora_fim || ""} onChange={e => setRoot("hora_fim", e.target.value)} />
-                </div>
-                <div className="sm:col-span-2 space-y-1.5">
-                    <Label>Local *</Label>
-                    <Input value={value.local || ""} onChange={e => setRoot("local", e.target.value)} placeholder="Local do evento (nunca use este campo para horário)" />
-                </div>
-                <div className="sm:col-span-2 space-y-1.5">
-                    <Label>Descrição da Atividade *</Label>
-                    <Input value={meta.atividade || ""} onChange={e => set("atividade", e.target.value)} placeholder="Breve descrição" />
-                </div>
-                <div className="sm:col-span-2 space-y-1.5">
-                    <Label>Informações / Objetivo</Label>
-                    <Textarea rows={2} value={meta.informacoes || ""} onChange={e => set("informacoes", e.target.value)} placeholder="Opcional" />
-                </div>
-            </div>
-        </div>
-    )
-}
+// Os antigos FormCursos/FormEsportes/FormDiaDia (1 formulário por atividade) e validarAtividade
+// (bloqueava "Adicionar" na primeira falha) saíram na S-PROG-01, substituídos pela grade editável
+// (`GradeAtividades`) + ficha lateral (`FichaAtividade`) + painel de revisão
+// (`calcularProblemas`, lib/programacao/revisao) — o gargalo era a cardinalidade (Mondubim teve
+// 126 atividades de ESPORTES num único mês), não o formulário em si. A grade permite editar
+// várias linhas incompletas ao mesmo tempo; bloquear o envio é escopo da S-PROG-04 (fluxo de
+// aprovação), fora desta story.
 
 // ─── Helpers de validação e montagem do payload ────────────────────────────────
-
-function validarAtividade(a: Partial<AtividadeInterna>): string | null {
-    const meta = a.metadata || {}
-    if (!a.titulo?.trim()) return "Título é obrigatório"
-    if (!a.hora_inicio || !a.hora_fim) return "Horário de início e fim são obrigatórios"
-
-    if (a.categoria === "CURSOS") {
-        if (!meta.educador?.trim()) return "Educador é obrigatório"
-        if (!meta.vagas) return "Vagas são obrigatórias"
-        if (!meta.carga_horaria) return "Carga horária é obrigatória"
-        if (!meta.requisitos?.trim()) return "Requisitos são obrigatórios"
-        if (!meta.data_inicio_raw || !meta.data_fim_raw) return "Período (início e fim) é obrigatório"
-        if (!meta.ementa?.trim()) return "Ementa é obrigatória"
-        if (!meta.dias_raw?.length) return "Selecione pelo menos um dia da semana"
-    }
-
-    if (a.categoria === "ESPORTES") {
-        if (!meta.professor?.trim()) return "Professor é obrigatório"
-        if (!meta.turma?.trim()) return "Turma é obrigatória"
-        if (!meta.vagas) return "Vagas são obrigatórias"
-        if (!meta.sexo) return "Sexo é obrigatório"
-        if (!meta.faixa_de || !meta.faixa_ate) return "Faixa etária é obrigatória"
-        if (!meta.dias_raw?.length) return "Selecione pelo menos um dia da semana"
-    }
-
-    if (a.categoria === "DIA A DIA" || a.categoria === "ESPECIAIS") {
-        if (!a.data_atividade) return "Data do evento é obrigatória"
-        if (!a.local?.trim()) return "Local é obrigatório"
-        if (!meta.sessao?.trim()) return "Sessão / Eixo é obrigatório"
-        if (!meta.atividade?.trim()) return "Descrição da atividade é obrigatória"
-    }
-
-    return null
-}
 
 function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): any {
     const meta = { ...a.metadata }
@@ -361,6 +93,10 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
                 periodo: periodoStr,
                 horario: horarioStr,
                 dias_semana: diasStr,
+                // S-PROG-01 (item 4): Meta e Diretoria — chaves aditivas, não vão ao RAG nem à
+                // exportação nesta story (contrato de gravação não muda, isso é S-PROG-03/05).
+                meta: meta.meta || null,
+                diretoria: meta.diretoria || null,
             },
         }
     }
@@ -368,7 +104,8 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
     if (a.categoria === "ESPORTES") {
         const diasStr = (meta.dias_raw || []).map((d: string) => DIAS_SEMANA_ABREV[d]).join(" e ")
         const turmaStr = meta.turma?.startsWith("Turma") ? meta.turma : `Turma ${meta.turma}`
-        const faixaStr = `${meta.faixa_de} a ${meta.faixa_ate} anos`
+        // S-PROG-01 (item 2): idade máxima é opcional — sem ela, "a partir de X anos".
+        const faixaStr = meta.faixa_ate ? `${meta.faixa_de} a ${meta.faixa_ate} anos` : `a partir de ${meta.faixa_de} anos`
         const horarioStr = `${hi} às ${hf}`
         // Descricao no mesmo formato que o trigger usa para montar o RAG
         const descricao = `Esporte Modalidade: ${a.titulo} - ${turmaStr}. Professor: ${meta.professor}. Público: ${meta.sexo} (Idade: ${faixaStr}). Dias: ${diasStr}. Horário: ${horarioStr}. ${AVISO_VAGAS}`
@@ -389,6 +126,8 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
                 vagas: String(meta.vagas),
                 dias_semana: diasStr,
                 horario: horarioStr,
+                meta: meta.meta || null,
+                diretoria: meta.diretoria || null,
             },
         }
     }
@@ -415,17 +154,10 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
             hora_fim: hf,
             local: a.local,
             informacoes: meta.informacoes || null,
+            meta: meta.meta || null,
+            diretoria: meta.diretoria || null,
         },
     }
-}
-
-function resumoAtividade(a: Partial<AtividadeInterna>): string {
-    const meta = a.metadata || {}
-    const hi = a.hora_inicio?.substring(0, 5) || "?"
-    const hf = a.hora_fim?.substring(0, 5) || "?"
-    if (a.categoria === "CURSOS") return `${hi}–${hf} · ${meta.educador || "—"}`
-    if (a.categoria === "ESPORTES") return `${hi}–${hf} · ${meta.turma || "—"} · ${meta.sexo || "—"}`
-    return `${meta.data_real || "—"} · ${hi}–${hf}`
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -450,23 +182,17 @@ export function CriarProgramacaoModal({
     const [verificandoDup, setVerificandoDup] = useState(false)
     const [campanhaExistente, setCampanhaExistente] = useState<any>(null)
 
-    // Atividades (Step 2)
-    const [atividades, setAtividades] = useState<Partial<AtividadeInterna>[]>([])
-    const [categoriaSel, setCategoriaSel] = useState<Categoria>("CURSOS")
-    const [formAtual, setFormAtual] = useState<Partial<AtividadeInterna>>({ categoria: "CURSOS", metadata: {} })
-    const [editandoIdx, setEditandoIdx] = useState<number | null>(null)
-    const [erroForm, setErroForm] = useState<string | null>(null)
+    // Atividades (Step 2) — S-PROG-01: grade editável, sem formulário-por-atividade
+    const [atividades, setAtividades] = useState<AtividadeInterna[]>([])
+
+    // Ficha da atividade (item 3) — painel lateral, aberto a partir da grade
+    const [fichaTempId, setFichaTempId] = useState<string | null>(null)
+    const [fichaFocoCampo, setFichaFocoCampo] = useState<string | undefined>(undefined)
 
     // Submit
     const [salvando, setSalvando] = useState(false)
 
     const nomeMes = MESES_LISTA.find(m => m.value === mesSel)?.label || ""
-
-    const resetForm = () => {
-        setFormAtual({ categoria: categoriaSel, metadata: {} })
-        setEditandoIdx(null)
-        setErroForm(null)
-    }
 
     const handleClose = () => {
         setStep(1)
@@ -475,8 +201,35 @@ export function CriarProgramacaoModal({
         setUnidadeSel(unidadeInicial)
         setCampanhaExistente(null)
         setAtividades([])
-        resetForm()
+        setFichaTempId(null)
+        setFichaFocoCampo(undefined)
         onOpenChange(false)
+    }
+
+    // ── Ficha da atividade: abrir/fechar/navegar entre linhas da MESMA categoria ──────────────
+    const atividadeDaFicha = atividades.find(a => a._tempId === fichaTempId) || null
+    const irmasDaFicha = atividadeDaFicha ? atividades.filter(a => a.categoria === atividadeDaFicha.categoria) : []
+    const indiceNaFicha = atividadeDaFicha ? irmasDaFicha.findIndex(a => a._tempId === atividadeDaFicha._tempId) : -1
+
+    const handleAbrirFicha = (tempId: string, focoCampo?: string) => {
+        setFichaTempId(tempId)
+        setFichaFocoCampo(focoCampo)
+    }
+
+    const handleFecharFicha = () => {
+        setFichaTempId(null)
+        setFichaFocoCampo(undefined)
+    }
+
+    const handleNavegarFicha = (delta: 1 | -1) => {
+        if (indiceNaFicha < 0 || irmasDaFicha.length === 0) return
+        const proximoIndice = (indiceNaFicha + delta + irmasDaFicha.length) % irmasDaFicha.length
+        setFichaTempId(irmasDaFicha[proximoIndice]._tempId)
+        setFichaFocoCampo(undefined)
+    }
+
+    const handleMudarAtividadeDaFicha = (nova: AtividadeInterna) => {
+        setAtividades(prev => prev.map(a => a._tempId === nova._tempId ? nova : a))
     }
 
     // ── Step 1: verificar duplicata e avançar ──────────────────────────────────
@@ -502,47 +255,6 @@ export function CriarProgramacaoModal({
         }
 
         setStep(2)
-    }
-
-    // ── Step 2: gerenciar atividades ───────────────────────────────────────────
-    const handleMudarCategoria = (cat: Categoria) => {
-        setCategoriaSel(cat)
-        setFormAtual({ categoria: cat, metadata: {} })
-        setEditandoIdx(null)
-        setErroForm(null)
-    }
-
-    const handleAdicionarAtividade = () => {
-        const erro = validarAtividade({ ...formAtual, categoria: categoriaSel })
-        if (erro) { setErroForm(erro); return }
-
-        const nova: Partial<AtividadeInterna> = {
-            ...formAtual,
-            categoria: categoriaSel,
-            _tempId: Math.random().toString(36).slice(2),
-        }
-
-        if (editandoIdx !== null) {
-            const updated = [...atividades]
-            updated[editandoIdx] = nova
-            setAtividades(updated)
-        } else {
-            setAtividades(prev => [...prev, nova])
-        }
-        resetForm()
-    }
-
-    const handleEditarAtividade = (idx: number) => {
-        const a = atividades[idx]
-        setCategoriaSel(a.categoria as Categoria)
-        setFormAtual({ ...a })
-        setEditandoIdx(idx)
-        setErroForm(null)
-    }
-
-    const handleRemoverAtividade = (idx: number) => {
-        if (!confirm("Remover esta atividade?")) return
-        setAtividades(prev => prev.filter((_, i) => i !== idx))
     }
 
     // ── Submit: salvar como rascunho ───────────────────────────────────────────
@@ -591,16 +303,18 @@ export function CriarProgramacaoModal({
         }
     }
 
-    // ── Contagem por categoria ──────────────────────────────────────────────────
+    // ── Contagem por categoria + painel de revisão (item 5) ────────────────────
     const contagem = atividades.reduce<Record<string, number>>((acc, a) => {
         const cat = a.categoria || "Outros"
         acc[cat] = (acc[cat] || 0) + 1
         return acc
     }, {})
+    const problemas: Problema[] = calcularProblemas(atividades)
+    const [painelRevisaoAberto, setPainelRevisaoAberto] = useState(false)
 
     return (
         <Dialog open={open} onOpenChange={handleClose}>
-            <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <DialogContent className={cn("max-h-[90vh] flex flex-col overflow-hidden", step === 2 ? "sm:max-w-[1080px]" : "max-w-2xl")}>
                 <DialogHeader className="shrink-0">
                     <DialogTitle className="flex items-center gap-2">
                         <Plus className="h-5 w-5 text-primary" />
@@ -687,9 +401,9 @@ export function CriarProgramacaoModal({
                         </div>
                     )}
 
-                    {/* ── STEP 2: Atividades ── */}
+                    {/* ── STEP 2: Atividades (S-PROG-01: grade editável + ficha) ── */}
                     {step === 2 && (
-                        <div className="space-y-4">
+                        <div className="space-y-3">
                             {/* Alerta de campanha existente (AC-8) */}
                             {campanhaExistente && (
                                 <div className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-600 text-sm">
@@ -701,77 +415,33 @@ export function CriarProgramacaoModal({
                                 </div>
                             )}
 
-                            {/* Seletor de categoria */}
-                            <div className="flex gap-1.5 flex-wrap">
-                                {(["CURSOS", "ESPORTES", "DIA A DIA", "ESPECIAIS"] as Categoria[]).map(cat => (
-                                    <button key={cat} type="button"
-                                        onClick={() => handleMudarCategoria(cat)}
-                                        className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors border ${categoriaSel === cat ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border hover:bg-muted/70"}`}>
-                                        {cat}
-                                        {contagem[cat] ? <span className="ml-1.5 opacity-70">({contagem[cat]})</span> : null}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {/* Formulário da categoria */}
-                            <div className="border border-border rounded-xl p-4 bg-muted/20">
-                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                                    {editandoIdx !== null ? "Editando atividade" : "Nova atividade"} — {categoriaSel}
-                                </p>
-
-                                {categoriaSel === "CURSOS" && (
-                                    <FormCursos value={formAtual} onChange={setFormAtual} />
-                                )}
-                                {categoriaSel === "ESPORTES" && (
-                                    <FormEsportes value={formAtual} onChange={setFormAtual} />
-                                )}
-                                {(categoriaSel === "DIA A DIA" || categoriaSel === "ESPECIAIS") && (
-                                    <FormDiaDia value={formAtual} onChange={setFormAtual} categoria={categoriaSel} />
-                                )}
-
-                                {erroForm && (
-                                    <p className="mt-2 text-xs text-red-500 flex items-center gap-1">
-                                        <AlertCircle className="h-3.5 w-3.5" /> {erroForm}
-                                    </p>
-                                )}
-
-                                <div className="flex gap-2 mt-4">
-                                    <Button size="sm" onClick={handleAdicionarAtividade} className="gap-1.5">
-                                        {editandoIdx !== null ? <><Pencil className="h-3.5 w-3.5" /> Salvar edição</> : <><Plus className="h-3.5 w-3.5" /> Adicionar</>}
-                                    </Button>
-                                    {editandoIdx !== null && (
-                                        <Button size="sm" variant="ghost" onClick={resetForm}>Cancelar</Button>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Lista de atividades adicionadas */}
+                            {/* Item 5: painel de revisão — contador no topo, lista em linguagem comum */}
                             {atividades.length > 0 && (
-                                <div className="space-y-2">
-                                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                                        {atividades.length} {atividades.length === 1 ? "atividade" : "atividades"} adicionadas
-                                    </p>
-                                    {atividades.map((a, idx) => (
-                                        <div key={a._tempId || idx} className="flex items-center justify-between gap-2 p-3 rounded-lg border border-border bg-background hover:bg-muted/30 transition-colors">
-                                            <div className="flex items-center gap-2.5 min-w-0">
-                                                <Badge variant="outline" className="text-[10px] shrink-0">{a.categoria}</Badge>
-                                                <div className="min-w-0">
-                                                    <p className="text-sm font-medium truncate">{a.titulo}</p>
-                                                    <p className="text-xs text-muted-foreground">{resumoAtividade(a)}</p>
-                                                </div>
-                                            </div>
-                                            <div className="flex gap-1 shrink-0">
-                                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-blue-500 hover:bg-blue-500/10" onClick={() => handleEditarAtividade(idx)}>
-                                                    <Pencil className="h-3.5 w-3.5" />
-                                                </Button>
-                                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:bg-red-500/10" onClick={() => handleRemoverAtividade(idx)}>
-                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                </Button>
-                                            </div>
-                                        </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setPainelRevisaoAberto(v => !v)}
+                                    className={cn(
+                                        "w-full text-left text-xs font-semibold px-3 py-2 rounded-lg border flex items-center justify-between",
+                                        problemas.length > 0
+                                            ? "bg-amber-500/10 border-amber-500/40 text-amber-700"
+                                            : "bg-green-500/10 border-green-500/40 text-green-700"
+                                    )}
+                                >
+                                    <span>{problemas.length > 0 ? `${problemas.length} ponto(s) a revisar` : "Tudo certo para revisar"}</span>
+                                    <span className="opacity-70">{painelRevisaoAberto ? "ocultar" : "ver"}</span>
+                                </button>
+                            )}
+                            {painelRevisaoAberto && problemas.length > 0 && (
+                                <div className="space-y-1 max-h-40 overflow-y-auto border border-amber-500/30 rounded-lg p-2 bg-amber-500/5">
+                                    {problemas.map((p, i) => (
+                                        <p key={i} className="text-xs text-amber-700 flex items-start gap-1.5">
+                                            <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" /> {p.mensagem}
+                                        </p>
                                     ))}
                                 </div>
                             )}
+
+                            <GradeAtividades atividades={atividades} onChange={setAtividades} onAbrirFicha={handleAbrirFicha} />
                         </div>
                     )}
 
@@ -797,6 +467,19 @@ export function CriarProgramacaoModal({
                                 ))}
                             </div>
 
+                            {problemas.length > 0 && (
+                                <div className="space-y-1.5">
+                                    <p className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
+                                        <AlertCircle className="h-3.5 w-3.5" /> {problemas.length} ponto(s) a revisar — pode salvar como rascunho e corrigir depois
+                                    </p>
+                                    <div className="space-y-1 max-h-40 overflow-y-auto border border-amber-500/30 rounded-lg p-2 bg-amber-500/5">
+                                        {problemas.map((p, i) => (
+                                            <p key={i} className="text-xs text-amber-700">{p.mensagem}</p>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             {atividades.length === 0 && (
                                 <p className="text-sm text-center text-muted-foreground py-4">
                                     Nenhuma atividade adicionada. Volte ao passo anterior.
@@ -805,6 +488,17 @@ export function CriarProgramacaoModal({
                         </div>
                     )}
                 </div>
+
+                <FichaAtividade
+                    aberta={!!fichaTempId}
+                    atividade={atividadeDaFicha}
+                    indice={Math.max(indiceNaFicha, 0)}
+                    total={irmasDaFicha.length}
+                    focoCampo={fichaFocoCampo}
+                    onChange={handleMudarAtividadeDaFicha}
+                    onFechar={handleFecharFicha}
+                    onNavegar={handleNavegarFicha}
+                />
 
                 {/* ── Footer de navegação ── */}
                 <div className="shrink-0 border-t border-border pt-4 flex justify-between gap-2">
