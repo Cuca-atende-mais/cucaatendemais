@@ -11,13 +11,25 @@ import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Plus, Copy, Trash2, FileText } from "lucide-react"
+import { Plus, Copy, Trash2, FileText, Dumbbell, GraduationCap, CalendarDays, Sparkles, LayoutGrid } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useMediaQuery } from "@/hooks/use-media-query"
 import { AtividadeForm, Categoria, DIAS_SEMANA, DIAS_SEMANA_ABREV, SESSOES_DIA_A_DIA, SEXOS } from "@/lib/programacao/tipos"
 import { aplicarMascaraDataDigitando, aplicarMascaraHoraDigitando, dataBrParaISO, exibirData, normalizarData, normalizarHora } from "@/lib/programacao/mascaras"
 import { RotuloComAjuda } from "@/components/programacao/ajuda-campo"
 import { CampoComAjuda } from "@/lib/programacao/ajuda"
+
+// ─── Identidade visual por categoria ────────────────────────────────────────────
+// Cada categoria tem cor e ícone fixos — repete em toda a grade (aba, barra lateral da
+// linha, cartão mobile) pra a junta técnica identificar a categoria sem ler o rótulo.
+// Classes sempre por extenso (nunca `text-${cor}-500`) porque o Tailwind não compila
+// nome de classe montado em runtime.
+const CATEGORIA_INFO: Record<Categoria, { icone: typeof Dumbbell; abaAtiva: string; barra: string; ponto: string; texto: string }> = {
+    ESPORTES: { icone: Dumbbell, abaAtiva: "bg-emerald-500 text-white border-emerald-500", barra: "bg-emerald-500", ponto: "bg-emerald-400", texto: "text-emerald-500" },
+    CURSOS: { icone: GraduationCap, abaAtiva: "bg-amber-500 text-white border-amber-500", barra: "bg-amber-500", ponto: "bg-amber-400", texto: "text-amber-500" },
+    "DIA A DIA": { icone: CalendarDays, abaAtiva: "bg-cyan-500 text-white border-cyan-500", barra: "bg-cyan-500", ponto: "bg-cyan-400", texto: "text-cyan-500" },
+    ESPECIAIS: { icone: Sparkles, abaAtiva: "bg-rose-500 text-white border-rose-500", barra: "bg-rose-500", ponto: "bg-rose-400", texto: "text-rose-500" },
+}
 
 // ─── Especificação de colunas por categoria ────────────────────────────────────
 // `root: true` lê/grava direto em AtividadeForm; senão lê/grava em AtividadeForm.metadata.
@@ -188,42 +200,65 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAti
     }
 
     return (
-        <div className="space-y-3">
-            <div className="flex gap-1.5 flex-wrap">
+        <div className="space-y-4">
+            <div className="flex gap-2 flex-wrap">
                 {(Object.keys(COLUNAS) as Categoria[]).map(cat => {
                     const qtd = atividades.filter(a => a.categoria === cat).length
+                    const info = CATEGORIA_INFO[cat]
+                    const Icone = info.icone
+                    const ativa = categoria === cat
                     return (
                         <button key={cat} type="button" onClick={() => setCategoria(cat)}
                             className={cn(
-                                "px-3 py-1.5 rounded-md text-xs font-semibold transition-colors border",
-                                categoria === cat ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border hover:bg-muted/70"
+                                "px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border flex items-center gap-2",
+                                ativa
+                                    ? cn(info.abaAtiva, "shadow-lg shadow-black/20 scale-[1.02]")
+                                    : "bg-card text-muted-foreground border-border hover:border-foreground/20 hover:text-foreground"
                             )}>
-                            {cat}{qtd ? <span className="ml-1.5 opacity-70">({qtd})</span> : null}
+                            <Icone className={cn("h-4 w-4", !ativa && info.texto)} />
+                            {cat}
+                            {qtd > 0 && (
+                                <span className={cn(
+                                    "min-w-5 h-5 px-1 rounded-full text-[11px] font-bold flex items-center justify-center",
+                                    ativa ? "bg-white/25" : "bg-muted"
+                                )}>{qtd}</span>
+                            )}
                         </button>
                     )
                 })}
             </div>
 
-            <div className="flex gap-2 flex-wrap items-center">
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={adicionarLinha}>
-                    <Plus className="h-3.5 w-3.5" /> Nova linha
-                </Button>
-                {linhaAtiva && daCategoria.some(a => a._tempId === linhaAtiva) && (
-                    <>
-                        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => duplicarLinha(linhaAtiva)}>
-                            <Copy className="h-3.5 w-3.5" /> Duplicar linha
-                        </Button>
-                        <Button size="sm" variant="outline" className="gap-1.5 text-red-500 hover:text-red-600" onClick={() => excluirLinha(linhaAtiva)}>
-                            <Trash2 className="h-3.5 w-3.5" /> Excluir linha
-                        </Button>
-                    </>
-                )}
+            <div className="flex gap-2 flex-wrap items-center justify-between rounded-xl bg-muted/40 border border-border p-2.5">
+                <div className="flex gap-2 flex-wrap items-center">
+                    <Button size="default" className="gap-1.5" onClick={adicionarLinha}>
+                        <Plus className="h-4 w-4" /> Nova linha
+                    </Button>
+                    {linhaAtiva && daCategoria.some(a => a._tempId === linhaAtiva) && (
+                        <>
+                            <Button size="default" variant="outline" className="gap-1.5" onClick={() => duplicarLinha(linhaAtiva)}>
+                                <Copy className="h-4 w-4" /> Duplicar linha
+                            </Button>
+                            <Button size="default" variant="outline" className="gap-1.5 text-red-400 hover:text-red-400 hover:bg-red-500/10 border-red-500/30" onClick={() => excluirLinha(linhaAtiva)}>
+                                <Trash2 className="h-4 w-4" /> Excluir linha
+                            </Button>
+                        </>
+                    )}
+                </div>
+                <span className="text-xs text-muted-foreground pr-1 hidden sm:inline">
+                    {daCategoria.length} {daCategoria.length === 1 ? "linha" : "linhas"} em {categoria}
+                </span>
             </div>
 
             {daCategoria.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-8 border border-dashed border-border rounded-lg">
-                    Nenhuma linha em {categoria}. Use &quot;Nova linha&quot; para começar.
-                </p>
+                <div className="flex flex-col items-center gap-3 text-center py-16 border-2 border-dashed border-border rounded-2xl bg-muted/10">
+                    <LayoutGrid className="h-8 w-8 text-muted-foreground/50" />
+                    <p className="text-sm text-muted-foreground">
+                        Nenhuma linha em <strong className="text-foreground">{categoria}</strong> ainda.
+                    </p>
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={adicionarLinha}>
+                        <Plus className="h-3.5 w-3.5" /> Adicionar a primeira linha
+                    </Button>
+                </div>
             )}
 
             {daCategoria.length > 0 && isCompacto && (
@@ -245,17 +280,17 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAti
             )}
 
             {daCategoria.length > 0 && !isCompacto && (
-                <div className="overflow-x-auto border border-border rounded-lg">
+                <div className="overflow-x-auto border border-border rounded-xl bg-card/40">
                     <table className="w-full text-sm border-collapse">
                         <thead>
-                            <tr className="bg-muted/50">
-                                <th className="w-8 px-2 py-2 text-left text-[10px] font-semibold text-muted-foreground uppercase">#</th>
+                            <tr className="bg-muted/60 sticky top-0 z-10">
+                                <th className="w-9 px-2 py-3 text-left text-[11px] font-bold text-muted-foreground uppercase tracking-wide">#</th>
                                 {colunas.map(col => (
-                                    <th key={col.key} className={cn("px-2 py-2 text-left text-[10px] font-semibold text-muted-foreground uppercase whitespace-nowrap", col.largura)}>
+                                    <th key={col.key} className={cn("px-2.5 py-3 text-left text-[11px] font-bold text-muted-foreground uppercase tracking-wide whitespace-nowrap", col.largura)}>
                                         <RotuloComAjuda texto={col.label} campo={col.ajuda} />
                                     </th>
                                 ))}
-                                <th className="w-10 px-2 py-2" />
+                                <th className="w-12 px-2 py-3" />
                             </tr>
                         </thead>
                         <tbody>
@@ -264,13 +299,19 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAti
                                     key={a._tempId}
                                     onClick={() => setLinhaAtiva(a._tempId)}
                                     className={cn(
-                                        "border-t border-border cursor-default",
-                                        linhaAtiva === a._tempId ? "bg-primary/5" : "hover:bg-muted/30"
+                                        "relative border-t border-border cursor-default transition-colors",
+                                        linhaAtiva === a._tempId ? "bg-primary/10" : "hover:bg-muted/30"
                                     )}
                                 >
-                                    <td className="px-2 py-1 text-center text-xs text-muted-foreground bg-muted/30">{idx + 1}</td>
+                                    <td className="relative px-2 py-2 text-center text-xs font-semibold text-muted-foreground">
+                                        <span className={cn(
+                                            "absolute left-0 top-0 bottom-0 w-1 rounded-r",
+                                            linhaAtiva === a._tempId ? CATEGORIA_INFO[categoria].barra : "bg-transparent"
+                                        )} />
+                                        {idx + 1}
+                                    </td>
                                     {colunas.map(col => (
-                                        <td key={col.key} className="px-1 py-1">
+                                        <td key={col.key} className="px-1.5 py-2">
                                             <CelulaCampo
                                                 atividade={a}
                                                 coluna={col}
@@ -280,9 +321,9 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAti
                                             />
                                         </td>
                                     ))}
-                                    <td className="px-1 py-1">
-                                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Abrir ficha" onClick={() => onAbrirFicha(a._tempId)}>
-                                            <FileText className="h-3.5 w-3.5" />
+                                    <td className="px-1.5 py-2">
+                                        <Button variant="ghost" size="icon-sm" title="Abrir ficha" onClick={() => onAbrirFicha(a._tempId)}>
+                                            <FileText className="h-4 w-4" />
                                         </Button>
                                     </td>
                                 </tr>
@@ -307,14 +348,14 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
                 type="button"
                 onClick={() => onAbrirFicha?.(coluna.key)}
                 className={cn(
-                    "h-8 w-full px-2 text-xs text-left border rounded-md flex items-center gap-2",
-                    preenchido ? "border-border hover:border-primary/50" : "border-amber-500/40 bg-amber-500/10"
+                    "h-10 w-full px-3 text-sm text-left border rounded-lg flex items-center gap-2 transition-colors",
+                    preenchido ? "border-border hover:border-primary/50 bg-background/60" : "border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/15"
                 )}
             >
                 <span className={cn("flex-1 truncate", preenchido ? "text-foreground" : "text-muted-foreground")}>
                     {preenchido ? valor : "clique para escrever"}
                 </span>
-                <span className="text-[10px] text-muted-foreground shrink-0">
+                <span className="text-[11px] text-muted-foreground shrink-0 font-medium">
                     {preenchido ? valor.length : "＋"}
                 </span>
             </button>
@@ -324,7 +365,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
     if (coluna.tipo === "sexo") {
         return (
             <Select value={valor} onValueChange={onChange}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                <SelectTrigger className="h-10 text-sm w-full"><SelectValue placeholder="Selecionar" /></SelectTrigger>
                 <SelectContent>{SEXOS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
             </Select>
         )
@@ -333,7 +374,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
     if (coluna.tipo === "sessao") {
         return (
             <Select value={valor} onValueChange={onChange}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                <SelectTrigger className="h-10 text-sm w-full"><SelectValue placeholder="Selecionar" /></SelectTrigger>
                 <SelectContent>{SESSOES_DIA_A_DIA.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
             </Select>
         )
@@ -344,16 +385,16 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
         return (
             <Popover>
                 <PopoverTrigger asChild>
-                    <button type="button" className="h-8 w-full px-2 text-xs text-left border border-transparent hover:border-border rounded-md truncate">
+                    <button type="button" className="h-10 w-full px-3 text-sm text-left border border-border hover:border-primary/50 rounded-lg truncate bg-background/60 transition-colors">
                         {selecionados.length ? selecionados.map(d => DIAS_SEMANA_ABREV[d]).join(", ") : <span className="text-muted-foreground">Selecionar</span>}
                     </button>
                 </PopoverTrigger>
-                <PopoverContent className="w-56">
+                <PopoverContent className="w-60">
                     <div className="flex gap-1.5 flex-wrap">
                         {DIAS_SEMANA.map(d => (
                             <button key={d} type="button" onClick={() => onToggleDia(d)}
                                 className={cn(
-                                    "px-2.5 py-1 rounded-md text-xs font-medium border transition-colors",
+                                    "px-2.5 py-1.5 rounded-md text-xs font-medium border transition-colors",
                                     selecionados.includes(d) ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground border-border hover:bg-muted/70"
                                 )}>
                                 {DIAS_SEMANA_ABREV[d]}
@@ -368,7 +409,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
     if (coluna.tipo === "hora") {
         return (
             <Input
-                className="h-8 text-xs text-center tabular-nums"
+                className="h-10 text-sm text-center tabular-nums font-medium"
                 inputMode="numeric"
                 maxLength={5}
                 placeholder="--:--"
@@ -385,7 +426,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
     if (coluna.tipo === "data" || coluna.tipo === "data_dia_a_dia") {
         return (
             <Input
-                className="h-8 text-xs text-center tabular-nums"
+                className="h-10 text-sm text-center tabular-nums font-medium"
                 inputMode="numeric"
                 maxLength={10}
                 placeholder="--/--/----"
@@ -402,7 +443,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
     if (coluna.tipo === "numero") {
         return (
             <Input
-                className="h-8 text-xs text-center"
+                className="h-10 text-sm text-center font-medium"
                 inputMode="numeric"
                 value={valor}
                 onChange={e => onChange(e.target.value.replace(/\D/g, ""))}
@@ -410,7 +451,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
         )
     }
 
-    return <Input className="h-8 text-xs" value={valor} onChange={e => onChange(e.target.value)} />
+    return <Input className="h-10 text-sm" value={valor} onChange={e => onChange(e.target.value)} />
 }
 
 // ─── Cartão de linha (mobile, abaixo de 820px — AC8) ──────────────────────────
@@ -427,25 +468,28 @@ function CartaoLinha({
     onToggleDia: (d: string) => void
     onAbrirFicha: (focoCampo?: string) => void
 }) {
+    const info = CATEGORIA_INFO[atividade.categoria]
     return (
         <div
             onClick={onSelecionar}
-            className={cn("rounded-lg border p-3 space-y-2.5", ativa ? "border-primary bg-primary/5" : "border-border bg-background")}
+            className={cn(
+                "relative rounded-xl border p-4 space-y-3 overflow-hidden transition-colors",
+                ativa ? "border-primary bg-primary/5" : "border-border bg-card/60"
+            )}
         >
-            <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground">Linha {indice + 1}</span>
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={e => { e.stopPropagation(); onAbrirFicha() }}>
+            <span className={cn("absolute left-0 top-0 bottom-0 w-1", info.barra)} />
+            <div className="flex items-center justify-between pl-2">
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Linha {indice + 1}</span>
+                <Button variant="outline" size="sm" className="h-8 px-2.5 text-xs gap-1.5" onClick={e => { e.stopPropagation(); onAbrirFicha() }}>
                     <FileText className="h-3.5 w-3.5" /> Abrir ficha
                 </Button>
             </div>
             {colunas.map(col => (
-                <div key={col.key} className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase w-24 shrink-0">
+                <div key={col.key} className="space-y-1 pl-2">
+                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                         <RotuloComAjuda texto={col.label} campo={col.ajuda} />
                     </span>
-                    <div className="flex-1 min-w-0">
-                        <CelulaCampo atividade={atividade} coluna={col} onChange={v => onSetCampo(col, v)} onToggleDia={onToggleDia} onAbrirFicha={onAbrirFicha} />
-                    </div>
+                    <CelulaCampo atividade={atividade} coluna={col} onChange={v => onSetCampo(col, v)} onToggleDia={onToggleDia} onAbrirFicha={onAbrirFicha} />
                 </div>
             ))}
         </div>
