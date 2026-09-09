@@ -1,6 +1,6 @@
 /**
  * S-PROG-01: tipos compartilhados entre a grade, a ficha da atividade e o painel de revisão.
- * Espelha exatamente o contrato de `metadata` que `criar-programacao-modal.tsx` já grava hoje —
+ * Espelha exatamente o contrato de `metadata` que `criar-programacao-view.tsx` já grava hoje —
  * esta story muda a superfície de edição, não o formato gravado (isso é escopo da S-PROG-03).
  */
 
