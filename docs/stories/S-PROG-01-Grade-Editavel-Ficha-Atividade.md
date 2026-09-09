@@ -1,6 +1,6 @@
 # S-PROG-01 — Grade editável + ficha da atividade
 
-**Status:** InReview
+**Status:** Done (implementação + QA PASS + push/PR concluídos; PR #161 aguardando aprovação do Junior para merge — deploy do portal no EasyPanel acontece depois do merge, não é uma etapa pendente separada)
 **Epic:** Reestruturação da criação de programação
 **Origem:** Protótipo aprovado pelo sócio (`docs/programacao-manual/prototipo-programacao.html`),
 levantamento `LEVANTAMENTO-programacao-manual-2026-09-07.md` e planejamento
@@ -271,4 +271,5 @@ por não ter ferramenta própria de navegador autorizada nesta sessão para medi
 | 2026-09-09 | @qa (Quinn) | Revisão 2: CONCERNS — painel de revisão não detectava data incompleta salva como texto bruto |
 | 2026-09-09 | @dev (Dex) | Correção 2: `ehDataIncompleta()` em `revisao.ts` + 5 testes novos |
 | 2026-09-09 | @qa (Quinn) | Revisão 3: **PASS** |
-| 2026-09-09 | @devops (Gage) | Push da branch `feat/s-prog-01-grade-editavel-ficha-atividade`, PR aberto contra `main` — aguardando aprovação do Junior para merge |
+| 2026-09-09 | @devops (Gage) | Push da branch `feat/s-prog-01-grade-editavel-ficha-atividade`, PR #161 aberto contra `main` — aguardando aprovação do Junior para merge |
+| 2026-09-09 | @devops (Gage) | Status InReview → Done (implementação + QA PASS + push/PR concluídos, conforme tabela de transição de `story-lifecycle.md`) |
