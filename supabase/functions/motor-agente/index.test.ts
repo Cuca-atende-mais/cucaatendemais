@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead, removerVagasDoTexto, AVISO_VAGAS, INSTRUCAO_SEGURANCA } from "./index.ts";
 
 // ── S-WM-34 (VAL-09) — normalizarTexto ──────────────────────────────────────
 Deno.test("normalizarTexto: remove acento e lowercase", () => {
@@ -409,7 +409,7 @@ Deno.test("formatarLinhaAtividadeDeterministica: campos completos (dado correto 
   });
   assertEquals(
     linha,
-    "Esporte Modalidade: NATAÇÃO - Turma Turma 09. Professor: CIRILLO. Vagas: 25. Publico: MISTO (Idade: 15 á 29+ anos). Dias: TER/QUI. Horario: 18h ás 19h.",
+    "Esporte Modalidade: NATAÇÃO - Turma Turma 09. Professor: CIRILLO. Publico: MISTO (Idade: 15 á 29+ anos). Dias: TER/QUI. Horario: 18h ás 19h. A quantidade de vagas muda com frequencia; oriente a pessoa a procurar a unidade CUCA para verificar a disponibilidade.",
   );
 });
 
@@ -426,7 +426,7 @@ Deno.test("formatarLinhaAtividadeDeterministica: campos ausentes/vazios viram 'n
   const linha = formatarLinhaAtividadeDeterministica("Judô", { turma: "B", professor: undefined, vagas: null, sexo: "", dias_semana: "Ter e Qui" });
   assertEquals(
     linha,
-    "Esporte Modalidade: Judô - Turma B. Professor: nao informado. Vagas: nao informado. Publico: nao informado (Idade: nao informado). Dias: Ter e Qui. Horario: nao informado.",
+    "Esporte Modalidade: Judô - Turma B. Professor: nao informado. Publico: nao informado (Idade: nao informado). Dias: Ter e Qui. Horario: nao informado. A quantidade de vagas muda com frequencia; oriente a pessoa a procurar a unidade CUCA para verificar a disponibilidade.",
   );
 });
 
@@ -434,6 +434,50 @@ Deno.test("formatarLinhaAtividadeDeterministica: metadata null (linha sem nenhum
   const linha = formatarLinhaAtividadeDeterministica("Futsal", null);
   assertEquals(
     linha,
-    "Esporte Modalidade: Futsal - Turma nao informado. Professor: nao informado. Vagas: nao informado. Publico: nao informado (Idade: nao informado). Dias: nao informado. Horario: nao informado.",
+    "Esporte Modalidade: Futsal - Turma nao informado. Professor: nao informado. Publico: nao informado (Idade: nao informado). Dias: nao informado. Horario: nao informado. A quantidade de vagas muda com frequencia; oriente a pessoa a procurar a unidade CUCA para verificar a disponibilidade.",
   );
+});
+
+// ─── S-PROG-03 (item 2): quantidade de vagas nunca vai ao cidadao ─────────────
+
+Deno.test("formatarLinhaAtividadeDeterministica: nao informa quantidade de vagas e traz o aviso padrao", () => {
+  const linha = formatarLinhaAtividadeDeterministica("NATAÇÃO", {
+    turma: "Turma 09", professor: "CIRILLO", vagas: "25", sexo: "MISTO",
+    dias_semana: "TER/QUI", horario: "18h ás 19h", faixa_etaria: "15 á 29+ anos",
+  });
+  assertEquals(linha.includes("Vagas:"), false, "o numero de vagas nunca pode aparecer no texto que vai ao cidadao");
+  assertEquals(linha.includes("25"), false, "nem o valor solto, sem o rotulo");
+  assertEquals(linha.includes(AVISO_VAGAS), true, "precisa orientar a procurar a unidade no lugar do numero");
+});
+
+Deno.test("removerVagasDoTexto: remove o trecho de vagas de chunk ja embeddado (setembro/2026 em producao)", () => {
+  const chunk = "Esporte Modalidade: Natação - Turma Turma 09. Professor: CIRILLO. Vagas: 25. Publico: MISTO (Idade: 15 a 29 anos). Dias: TER/QUI. Horario: 18h ás 19h.";
+  const limpo = removerVagasDoTexto(chunk);
+  assertEquals(limpo.includes("Vagas"), false);
+  assertEquals(limpo.includes("25"), false);
+  assertEquals(limpo.includes("Professor: CIRILLO."), true, "nao pode comer o campo anterior");
+  assertEquals(limpo.includes("Publico: MISTO"), true, "nao pode comer o campo seguinte");
+});
+
+Deno.test("removerVagasDoTexto: variantes reais de valor (texto livre, 'nao informado', sem ponto final)", () => {
+  assertEquals(removerVagasDoTexto("Curso: Violão. Vagas: 20 por turma. Educador: Edmundo.").includes("Vagas"), false);
+  assertEquals(removerVagasDoTexto("Curso: Violão. Vagas: nao informado. Educador: Edmundo.").includes("Vagas"), false);
+  assertEquals(removerVagasDoTexto("Curso: Violão. Vagas: 20").includes("Vagas"), false);
+  assertEquals(removerVagasDoTexto("Curso: Violão. VAGAS: 20. Educador: Edmundo.").includes("VAGAS"), false, "case-insensitive");
+});
+
+Deno.test("removerVagasDoTexto: no-op em texto que ja nasce sem vagas (chunks futuros, S-PROG-01/02)", () => {
+  const limpo = "Esporte Modalidade: Natação - Turma 09. Professor: CIRILLO. Publico: MISTO.";
+  assertEquals(removerVagasDoTexto(limpo), limpo, "quando nao ha o que remover a funcao nao pode alterar o texto");
+  assertEquals(removerVagasDoTexto(""), "");
+});
+
+Deno.test("removerVagasDoTexto: nao remove mencao a vaga que nao seja quantidade", () => {
+  const t = "As vagas sao preenchidas por ordem de chegada.";
+  assertEquals(removerVagasDoTexto(t), t, "so o padrao 'Vagas: <valor>' sai — texto corrido sobre vagas permanece");
+});
+
+Deno.test("INSTRUCAO_SEGURANCA: regra 8 proibe informar quantidade de vagas tambem na pergunta especifica", () => {
+  assertEquals(INSTRUCAO_SEGURANCA.includes("8. NUNCA informe a QUANTIDADE de vagas"), true);
+  assertEquals(INSTRUCAO_SEGURANCA.includes("atividade especifica"), true, "a regra 6 ja cobria a listagem geral; a 8 precisa cobrir a pergunta direta");
 });

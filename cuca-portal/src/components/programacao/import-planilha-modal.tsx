@@ -12,6 +12,7 @@ import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Upload, AlertTrian
 import { useRouter } from "next/navigation"
 import toast from "react-hot-toast"
 import * as XLSX from "xlsx"
+import { AVISO_VAGAS } from "@/lib/programacao/rag"
 import {
     CATEGORIAS_VALIDAS,
     COLUNAS_CURSOS,
@@ -305,7 +306,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                                 educador: lerColuna(row, idx, "educador"),
                             }
 
-                            descricao = `Curso: ${titulo}. Educador: ${meta.educador}. Vagas: ${meta.vagas}. Carga Horária: ${meta.carga_horaria}h. Período: ${meta.periodo}. Horário: ${meta.horario}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}`
+                            descricao = `Curso: ${titulo}. Educador: ${meta.educador}. Carga Horária: ${meta.carga_horaria}h. Período: ${meta.periodo}. Horário: ${meta.horario}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}. ${AVISO_VAGAS}`
                             local = "Não informado"
 
                             if (meta.horario) {
@@ -330,7 +331,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                                 horario: horarioRaw
                             }
 
-                            descricao = `Esporte Modalidade: ${titulo} - Turma ${meta.turma}. Professor: ${meta.professor}. Vagas: ${meta.vagas}. Público: ${meta.sexo} (Idade: ${meta.faixa_etaria}). Dias: ${meta.dias_semana}. Horário: ${meta.horario}.`
+                            descricao = `Esporte Modalidade: ${titulo} - Turma ${meta.turma}. Professor: ${meta.professor}. Público: ${meta.sexo} (Idade: ${meta.faixa_etaria}). Dias: ${meta.dias_semana}. Horário: ${meta.horario}. ${AVISO_VAGAS}`
                             local = "Não informado"
 
                             if (horarioRaw) {

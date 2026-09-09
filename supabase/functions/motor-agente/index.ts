@@ -445,7 +445,6 @@ export function formatarLinhaAtividadeDeterministica(titulo: string, metadata: R
   const meta = metadata ?? {};
   const turma = campo(meta.turma);
   const professor = campo(meta.professor);
-  const vagas = campo(meta.vagas);
   const sexo = campo(meta.sexo);
   const diasSemana = campo(meta.dias_semana);
   const horario = campo(meta.horario);
@@ -454,7 +453,8 @@ export function formatarLinhaAtividadeDeterministica(titulo: string, metadata: R
     ? faixaEtariaBruta
     : "nao informado";
   const prefixo = normalizarTexto(categoria) === "esportes" ? "Esporte Modalidade" : "Categoria " + categoria + " - Atividade";
-  return prefixo + ": " + titulo + " - Turma " + turma + ". Professor: " + professor + ". Vagas: " + vagas + ". Publico: " + sexo + " (Idade: " + faixaEtaria + "). Dias: " + diasSemana + ". Horario: " + horario + ".";
+  // S-PROG-03 (item 2.1): "Vagas: N" saiu daqui de proposito — ver AVISO_VAGAS.
+  return prefixo + ": " + titulo + " - Turma " + turma + ". Professor: " + professor + ". Publico: " + sexo + " (Idade: " + faixaEtaria + "). Dias: " + diasSemana + ". Horario: " + horario + ". " + AVISO_VAGAS;
 }
 
 /**
@@ -505,6 +505,14 @@ export const INSTRUCAO_SEGURANCA = [
   "   explicita, dado real de bairro/endereco/distancia das unidades. Sem esse dado no contexto,",
   "   diga com suas proprias palavras que nao tem essa informacao pra comparar e sugira que a",
   "   pessoa informe qual unidade prefere, ou confirme a distancia direto com a unidade.",
+  "",
+  "8. NUNCA informe a QUANTIDADE de vagas de um curso, modalidade ou atividade — nem numa",
+  "   listagem, nem quando perguntarem de uma atividade especifica (ex.: 'tem vaga para",
+  "   natacao?'). Mesmo que apareca um numero no contexto, NAO repita esse numero. Responda",
+  "   que a atividade existe, de os detalhes dela (dias, horario, publico) e diga que a",
+  "   quantidade de vagas muda com frequencia, orientando a pessoa a procurar a unidade CUCA",
+  "   para verificar a disponibilidade. A regra 6 ja proibia vagas na listagem geral; esta",
+  "   regra fecha tambem o caso da pergunta sobre uma atividade especifica.",
 ].join("\n");
 
 const UNIDADES_VALIDAS = ['Cuca Barra', 'Cuca Jangurussu', 'Cuca Mondubim', 'Cuca Pici', 'Cuca José Walter'];
@@ -1046,8 +1054,42 @@ const CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA = 100;
  * mesma expressão aparecia verbatim em 4 pontos do Passo 6 (visão geral, acompanhamento,
  * pergunta geral, genérico), com drift já observável entre eles (só 1 dos 4 logava contagem).
  */
+/**
+ * S-PROG-03 (item 2): a quantidade de vagas NUNCA e informada ao cidadao. O numero continua
+ * gravado em `atividades_mensais.metadata.vagas` e continua saindo na exportacao para a grafica
+ * (contrato externo, `handleExportarXLSX`) — sai apenas do que o agente conta pra pessoa, porque
+ * o valor muda com frequencia e informar um numero desatualizado gera deslocamento perdido.
+ */
+export const AVISO_VAGAS = "A quantidade de vagas muda com frequencia; oriente a pessoa a procurar a unidade CUCA para verificar a disponibilidade.";
+
+/**
+ * S-PROG-03 (item 2.2): remove o trecho "Vagas: <valor>." do texto JA EMBEDDADO dos chunks.
+ *
+ * Por que existe: mudar so as funcoes que montam a descricao (item 2.1) corrige o caminho
+ * deterministico — que le `atividades_mensais` ao vivo — mas NAO corrige a busca vetorial, cujo
+ * texto foi congelado no momento do embedding. Medicao em producao (2026-09-08): 168 dos 222
+ * chunks ativos de `monthly_program` contem "Vagas:" (Pici 41/41). Sem esta sanitizacao, a regra
+ * so valeria pra programacao criada dali pra frente, e setembro/2026 — ativo nas 5 unidades e
+ * ainda sem disparo publico — continuaria informando o numero.
+ *
+ * Nao gera divida tecnica: quando os chunks novos nascerem sem "Vagas:" (S-PROG-01/02), o regex
+ * deixa de encontrar qualquer coisa e a funcao vira um no-op. Nao precisa ser removida depois.
+ *
+ * O aviso NAO e concatenado aqui — seria repetido dezenas de vezes num bloco de ~40 chunks.
+ * Ele entra uma vez por bloco, em quem monta o contexto.
+ */
+export function removerVagasDoTexto(texto: string): string {
+  if (!texto) return texto;
+  // "Vagas: 25." / "Vagas: 20 por turma." / "Vagas: nao informado." — para no primeiro ponto ou
+  // fim de linha. Nao usa \s* no fim pra nao colar a frase seguinte na anterior.
+  return texto.replace(/\s*Vagas:[^.\n]*\.?/gi, "");
+}
+
 function formatarChunks(chunks: { conteudo: string; fonte_tipo?: string }[]): string {
-  return chunks.map((c) => c.fonte_tipo ? "[" + c.fonte_tipo + "] " + c.conteudo : c.conteudo).join("\n");
+  return chunks.map((c) => {
+    const conteudo = removerVagasDoTexto(c.conteudo);
+    return c.fonte_tipo ? "[" + c.fonte_tipo + "] " + conteudo : conteudo;
+  }).join("\n");
 }
 
 /**
@@ -1074,7 +1116,10 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
   if (chunks.length > CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA) {
     console.warn("[motor-agente v18] ALERTA: monthly_program de " + unidade + " tem " + chunks.length + " chunks (> " + CHUNKS_MONTHLY_PROGRAM_LIMITE_ALERTA + ") — checar se não é import duplicado/corrompido antes de assumir que é só crescimento normal.");
   }
-  return chunks.map((c: { conteudo: string }) => c.conteudo).join("\n");
+  // S-PROG-03 (item 2.2): este caminho NAO passa por formatarChunks — sanitiza aqui tambem,
+  // senao a visao geral da programacao (o maior bloco de contexto que vai ao GPT) continuaria
+  // trazendo "Vagas: N" de todos os ~40 chunks.
+  return chunks.map((c: { conteudo: string }) => removerVagasDoTexto(c.conteudo)).join("\n");
 }
 
 /**
@@ -1110,7 +1155,13 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
   if (relevantes.length === 0) return null;
 
   console.log("[motor-agente v18] Busca deterministica de atividade: \"" + atividade + "\" (" + relevantes.length + " chunks, unidade=" + unidade + ", origem=" + resolucao.origem + ")");
-  return relevantes.join("\n");
+  // S-PROG-03 (item 2.2, achado do @qa): esta e a 2a camada de fallback (S-WM-34) — entra
+  // exatamente quando buscarAtividadeDeterministica (ja sanitizada) nao reconhece a modalidade
+  // contra os titulos de atividades_mensais. Sem sanitizar aqui tambem, "tem vaga pra natacao?"
+  // vazava o numero de volta pelo texto cru do chunk. Filtra por atividadeNorm ANTES de
+  // sanitizar (linha acima) — remover "Vagas: N" não deveria nunca afetar o match do nome da
+  // modalidade, mas por segurança o filtro roda sobre o texto original, não o sanitizado.
+  return relevantes.map(removerVagasDoTexto).join("\n");
 }
 
 /**
