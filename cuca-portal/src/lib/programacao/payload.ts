@@ -48,8 +48,13 @@ export function montarAtividadePayload(a: Partial<AtividadeForm>, unidade: strin
             ? `${fmtDate(meta.data_inicio_raw)} a ${fmtDate(meta.data_fim_raw)}`
             : ""
         const horarioStr = `${hiTxt} às ${hfTxt}`
+        // Achado do @qa: juntar `periodoStr`/`diasStr` sempre com "(...)" gravava "Período:  ()."
+        // quando os dois vinham vazios (ex.: curso recém-duplicado, datas zeradas por política —
+        // S-PROG-02). Só entra parêntese quando há dias pra mostrar, e cai pra "nao informado"
+        // quando os dois estão vazios, mesmo padrão de fallback do resto do texto.
+        const periodoTexto = [periodoStr, diasStr ? `(${diasStr})` : ""].filter(Boolean).join(" ") || "nao informado"
         // Descricao no mesmo formato que o trigger trigger_indexar_campanha_mensal usa para montar o RAG
-        const descricao = `Curso: ${a.titulo}. Educador: ${meta.educador}. Carga Horária: ${meta.carga_horaria}h. Período: ${periodoStr} (${diasStr}). Horário: ${horarioStr}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}. ${AVISO_VAGAS}`
+        const descricao = `Curso: ${a.titulo}. Educador: ${meta.educador}. Carga Horária: ${meta.carga_horaria}h. Período: ${periodoTexto}. Horário: ${horarioStr}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}. ${AVISO_VAGAS}`
         return {
             titulo: a.titulo,
             categoria: "CURSOS",
