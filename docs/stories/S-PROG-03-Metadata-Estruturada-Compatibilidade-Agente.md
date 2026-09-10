@@ -262,6 +262,29 @@ como suficiente dado que a lógica não mudou desde a S-PROG-01 (só ganhou prot
 | 4. `metadata.vagas` continua gravado e na exportação | ✅ testado (`payload.test.ts`) |
 | 5. Teste de paridade grade vs. modal | ✅ adaptado — modal antigo não existe mais (S-PROG-01 substituiu); teste fixa o contrato por comportamento, não por comparação lado a lado |
 
+## QA Results (item 1)
+
+### Revisão 1 (2026-09-09, @qa/Quinn) — FAIL (achado abaixo)
+
+Revisão adicional pedida pelo Junior depois de notar que o @dev tinha commitado/dado push/aberto
+PR sem passar por @qa nem @devops. Achado:
+
+**CONFIRMED, cosmético:** ao corrigir o formato de `periodo` (remover os dias do campo, deixando
+só `"dd/mm/aaaa a dd/mm/aaaa"`), a `descricao` de CURSOS passou a juntar `periodo`+`dias` sempre
+com parênteses — quando os dois vinham vazios (curso recém-duplicado pela S-PROG-02, que sempre
+zera datas), o texto gravado ficava `"Período:  ()."`, com parênteses vazios, visivelmente
+malformado no texto que alimenta o RAG.
+
+### Correção (2026-09-09, @dev/Dex)
+
+Parêntese só entra quando há dias pra mostrar; cai pra `"nao informado"` quando período e dias
+estão os dois vazios. 2 testes novos travando os dois casos (vazio total, e período preenchido
+sem dias).
+
+### Revisão 2 (2026-09-09, @qa/Quinn) — PASS
+
+Reprodução independente do achado confirma corrigido. **Veredito final: PASS.**
+
 ## File List
 
 | Arquivo | Mudança |
@@ -271,8 +294,8 @@ como suficiente dado que a lógica não mudou desde a S-PROG-01 (só ganhou prot
 | `cuca-portal/src/lib/programacao/rag.ts` | **novo** — `AVISO_VAGAS` do lado do portal (item 2) |
 | `cuca-portal/src/components/programacao/import-planilha-modal.tsx` | `descricao` de Cursos e Esportes sem vagas (item 2) |
 | `cuca-portal/src/components/programacao/criar-programacao-modal.tsx` | `descricao` de Cursos e Esportes sem vagas (item 2 — arquivo depois substituído pela S-PROG-01) |
-| `cuca-portal/src/lib/programacao/payload.ts` | **novo** (item 1) — `montarAtividadePayload` extraído, com fix no formato de `periodo` |
-| `cuca-portal/src/lib/programacao/payload.test.ts` | **novo** (item 1) — 13 testes de recomposição de chaves antigas |
+| `cuca-portal/src/lib/programacao/payload.ts` | **novo** (item 1) — `montarAtividadePayload` extraído, com fix no formato de `periodo` (e correção do QA Results: parêntese vazio) |
+| `cuca-portal/src/lib/programacao/payload.test.ts` | **novo** (item 1) — 13 + 2 testes de recomposição de chaves antigas |
 | `cuca-portal/src/components/programacao/criar-programacao-view.tsx` | (item 1) importa `montarAtividadePayload` de `lib/programacao/payload` em vez de declarar local |
 
 ## Change Log
@@ -287,3 +310,6 @@ como suficiente dado que a lógica não mudou desde a S-PROG-01 (só ganhou prot
 | 2026-09-09 | @devops (Gage) | Edge Function deployada (v51), PR #159 aberto |
 | 2026-09-09 | @devops (Gage) | PR #159 aprovado e mergeado em `main`; portal redeployado no EasyPanel e testado em produção pelo Junior — item 2 marcado **Done** |
 | 2026-09-09 | @dev (Dex) | Item 1 implementado — achado que a recomposição já existia desde a S-PROG-01; extraído pra módulo testável, 13 testes novos, fix no formato de `periodo`. Status Draft → InReview |
+| 2026-09-09 | @qa (Quinn) | Revisão 1: FAIL — "Período:  ()." vazio quando data/dias em branco |
+| 2026-09-09 | @dev (Dex) | Corrigido; 2 testes novos |
+| 2026-09-09 | @qa (Quinn) | Revisão 2: **PASS** |
