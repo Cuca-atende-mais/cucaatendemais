@@ -7,7 +7,6 @@
 // ArrowLeft, header de página, sem overlay). Coexiste com o upload de planilha — não substitui.
 
 import { useState } from "react"
-import { AVISO_VAGAS } from "@/lib/programacao/rag"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,8 +23,9 @@ import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Loader
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
 import { unidadesCuca } from "@/lib/constants"
-import { AtividadeForm, DIAS_SEMANA_ABREV } from "@/lib/programacao/tipos"
+import { AtividadeForm } from "@/lib/programacao/tipos"
 import { calcularProblemas, Problema } from "@/lib/programacao/revisao"
+import { montarAtividadePayload } from "@/lib/programacao/payload"
 import { GradeAtividades } from "@/components/programacao/grade-atividades"
 import { FichaAtividade } from "@/components/programacao/ficha-atividade"
 import { SelecionarOrigem } from "@/components/programacao/selecionar-origem"
@@ -59,121 +59,7 @@ interface CriarProgramacaoViewProps {
 // 126 atividades de ESPORTES num único mês), não o formulário em si. A grade permite editar
 // várias linhas incompletas ao mesmo tempo; bloquear o envio é escopo da S-PROG-04 (fluxo de
 // aprovação), fora desta story.
-
-// ─── Helpers de validação e montagem do payload ────────────────────────────────
-
-function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): any {
-    const meta = { ...a.metadata }
-    // `hora_inicio`/`hora_fim` são coluna `time` no Postgres — `""` não é um `time` válido
-    // (`invalid input syntax for type time: ""`, confirmado direto no banco). A grade permite
-    // deixar o horário em branco de propósito (S-PROG-01/02: zerado na duplicação), então isso
-    // quebrava o INSERT inteiro sempre que alguém salvava com horário vazio. `null` é o valor
-    // seguro — mesmo padrão já usado por `parseTimeString` no import de planilha.
-    const fmtTime = (t: string): string | null => {
-        const s = t?.substring(0, 5)
-        return s || null
-    }
-    const hi = fmtTime(a.hora_inicio || "")
-    const hf = fmtTime(a.hora_fim || "")
-    // Só para montar texto (descrição/RAG e metadata.horario) — nunca vai direto pra coluna `time`.
-    const hiTxt = hi || ""
-    const hfTxt = hf || ""
-
-    if (a.categoria === "CURSOS") {
-        const fmtDate = (iso: string) => {
-            if (!iso) return ""
-            const [y, m, d] = iso.split("-")
-            return `${d}/${m}/${y}`
-        }
-        const diasStr = (meta.dias_raw || []).map((d: string) => DIAS_SEMANA_ABREV[d]).join(" e ")
-        const periodoStr = `${fmtDate(meta.data_inicio_raw)} ${fmtDate(meta.data_fim_raw)} ${diasStr}`
-        const horarioStr = `${hiTxt} às ${hfTxt}`
-        // Descricao no mesmo formato que o trigger trigger_indexar_campanha_mensal usa para montar o RAG
-        const descricao = `Curso: ${a.titulo}. Educador: ${meta.educador}. Carga Horária: ${meta.carga_horaria}h. Período: ${periodoStr}. Horário: ${horarioStr}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}. ${AVISO_VAGAS}`
-        return {
-            titulo: a.titulo,
-            categoria: "CURSOS",
-            descricao: descricao.substring(0, 1500),
-            local: null,
-            data_atividade: meta.data_inicio_raw || null,
-            hora_inicio: hi,
-            hora_fim: hf,
-            unidade_cuca: unidade,
-            metadata: {
-                ementa: meta.ementa,
-                educador: meta.educador,
-                vagas: String(meta.vagas),
-                carga_horaria: String(meta.carga_horaria),
-                requisitos: meta.requisitos,
-                periodo: periodoStr,
-                horario: horarioStr,
-                dias_semana: diasStr,
-                // S-PROG-01 (item 4): Meta e Diretoria — chaves aditivas, não vão ao RAG nem à
-                // exportação nesta story (contrato de gravação não muda, isso é S-PROG-03/05).
-                meta: meta.meta || null,
-                diretoria: meta.diretoria || null,
-            },
-        }
-    }
-
-    if (a.categoria === "ESPORTES") {
-        const diasStr = (meta.dias_raw || []).map((d: string) => DIAS_SEMANA_ABREV[d]).join(" e ")
-        const turmaStr = meta.turma?.startsWith("Turma") ? meta.turma : `Turma ${meta.turma}`
-        // S-PROG-01 (item 2): idade máxima é opcional — sem ela, "a partir de X anos".
-        const faixaStr = meta.faixa_ate ? `${meta.faixa_de} a ${meta.faixa_ate} anos` : `a partir de ${meta.faixa_de} anos`
-        const horarioStr = `${hiTxt} às ${hfTxt}`
-        // Descricao no mesmo formato que o trigger usa para montar o RAG
-        const descricao = `Esporte Modalidade: ${a.titulo} - ${turmaStr}. Professor: ${meta.professor}. Público: ${meta.sexo} (Idade: ${faixaStr}). Dias: ${diasStr}. Horário: ${horarioStr}. ${AVISO_VAGAS}`
-        return {
-            titulo: a.titulo,
-            categoria: "ESPORTES",
-            descricao: descricao.substring(0, 1500),
-            local: null,
-            data_atividade: null,
-            hora_inicio: hi,
-            hora_fim: hf,
-            unidade_cuca: unidade,
-            metadata: {
-                professor: meta.professor,
-                turma: turmaStr,
-                faixa_etaria: faixaStr,
-                sexo: meta.sexo,
-                vagas: String(meta.vagas),
-                dias_semana: diasStr,
-                horario: horarioStr,
-                meta: meta.meta || null,
-                diretoria: meta.diretoria || null,
-            },
-        }
-    }
-
-    // DIA A DIA / ESPECIAIS
-    const categoriaLabel = a.categoria as string
-    // Descricao no mesmo formato que o trigger usa para montar o RAG
-    const descricaoDiaDia = `Programa (${categoriaLabel}): ${a.titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${hiTxt} às ${hfTxt}. Local: ${a.local}. Informações: ${meta.informacoes || ""}. Sessão: ${meta.sessao}.`
-    return {
-        titulo: a.titulo,
-        categoria: a.categoria,
-        descricao: descricaoDiaDia.substring(0, 1500),
-        local: a.local || null,
-        data_atividade: a.data_atividade || null,
-        hora_inicio: hi,
-        hora_fim: hf,
-        unidade_cuca: unidade,
-        metadata: {
-            sessao: meta.sessao,
-            data_real: meta.data_real,
-            dia_semana: meta.dia_semana,
-            atividade: meta.atividade,
-            hora_inicio: hi,
-            hora_fim: hf,
-            local: a.local,
-            informacoes: meta.informacoes || null,
-            meta: meta.meta || null,
-            diretoria: meta.diretoria || null,
-        },
-    }
-}
+// `montarAtividadePayload` — S-PROG-03 (item 1) extraiu para lib/programacao/payload.ts (testável).
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
