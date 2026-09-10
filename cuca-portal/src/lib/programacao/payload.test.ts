@@ -131,6 +131,21 @@ describe("montarAtividadePayload — CURSOS: chaves antigas recompostas", () => 
         expect(p.descricao).toContain("Qua e Sex")
     })
 
+    it("achado do @qa: curso sem data nem dias (recém-duplicado) não grava 'Período:  ().' vazio", () => {
+        const p = montarAtividadePayload(
+            cursoForm({ metadata: { ...cursoForm().metadata, data_inicio_raw: "", data_fim_raw: "", dias_raw: [] } }),
+            "Cuca Mondubim"
+        )
+        expect(p.descricao).not.toContain("()")
+        expect(p.descricao).toContain("Período: nao informado.")
+    })
+
+    it("período preenchido mas sem dias não deixa parêntese vazio", () => {
+        const p = montarAtividadePayload(cursoForm({ metadata: { ...cursoForm().metadata, dias_raw: [] } }), "Cuca Mondubim")
+        expect(p.descricao).toContain("Período: 08/08/2026 a 29/08/2026.")
+        expect(p.descricao).not.toContain("()")
+    })
+
     it("data_atividade (coluna raiz) usa data_inicio_raw — AC4 mantém a coluna usada pela busca por data", () => {
         const p = montarAtividadePayload(cursoForm(), "Cuca Mondubim")
         expect(p.data_atividade).toBe("2026-08-08")
