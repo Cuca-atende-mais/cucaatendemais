@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { linhaTemProblema, LinhaOrigemDuplicacao } from "@/lib/programacao/duplicar"
+import { linhaIncompleta, LinhaParaAprovacao } from "@/lib/programacao/aprovacao"
 
 // S-PROG-04: centraliza as 4 transições do ciclo de aprovação (item 2 da story) — antes
 // "aprovado" era gerenciado por um update direto no cliente (bypassando esta rota), e
@@ -59,18 +59,20 @@ export async function PATCH(req: NextRequest) {
         }
 
         // Item 2: "Enviar para aprovação" (rascunho → pendente) bloqueada se houver ponto a
-        // revisar. `linhaTemProblema` (S-PROG-02) opera direto na linha gravada no banco — é o
-        // equivalente possível aqui, porque o painel de revisão da S-PROG-01 (`calcularProblemas`)
-        // é construído sobre o formato de edição da grade (`AtividadeForm`), não sobre o que está
-        // gravado; campanhas antigas (import de planilha) têm outro formato de `metadata` (ver
-        // S-PROG-02, Dev Agent Record) e passariam pelo checador da S-PROG-01 sem nunca bater.
+        // revisar. `linhaIncompleta` opera direto na linha gravada no banco, checando os campos
+        // obrigatórios de cada categoria (não é o painel de revisão da S-PROG-01
+        // `calcularProblemas`, construído sobre o formato de edição da grade — campanhas de
+        // outra origem, como import de planilha, têm outro formato de metadata e passariam sem
+        // nunca bater). Achado do @qa: a versão anterior usava `linhaTemProblema` (S-PROG-02),
+        // que mede contaminação (texto de exemplo, faixa sem dígito) pro selo de qualidade da
+        // duplicação — não completude; uma linha só com título passava como "sem problema".
         if (statusAtual === "rascunho" && novoStatus === "pendente") {
             const { data: linhas } = await supabase
                 .from("atividades_mensais")
-                .select("categoria, titulo, descricao, local, metadata")
+                .select("categoria, titulo, descricao, local, hora_inicio, hora_fim, data_atividade, metadata")
                 .eq("campanha_id", campanha_id)
 
-            const problemas = (linhas as LinhaOrigemDuplicacao[] || []).filter(linhaTemProblema)
+            const problemas = (linhas as LinhaParaAprovacao[] || []).filter(linhaIncompleta)
             if (problemas.length > 0) {
                 return NextResponse.json({
                     error: `${problemas.length} ponto(s) a revisar antes de enviar para aprovação`,
@@ -95,13 +97,17 @@ export async function PATCH(req: NextRequest) {
             .eq("user_id", user.id)
             .maybeSingle()
 
-        await supabase.from("campanha_historico").insert({
+        const { error: histErr } = await supabase.from("campanha_historico").insert({
             campanha_id,
             de_status: statusAtual,
             para_status: novoStatus,
             motivo: motivo?.trim() || null,
             usuario_id: colaborador?.id || null,
         })
+        // Achado do @qa: não checar esse erro deixava a transição "bem-sucedida" pro usuário
+        // mesmo se o histórico não tivesse sido gravado, sem nenhum sinal pra depurar depois.
+        // Não falha a transição por isso (já efetivada acima) — só loga, pra não perder o rastro.
+        if (histErr) console.error("[programacao/status] falha ao gravar histórico:", histErr)
 
         return NextResponse.json({ ok: true })
 
