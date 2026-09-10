@@ -15,14 +15,20 @@ import {
     AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import {
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
     ArrowLeft, Calendar, CheckCircle2, Clock, MapPin, Search, FileText, Loader2, ThumbsUp,
-    Download, Pencil, Send, HelpCircle, Undo2, History,
+    Download, Pencil, Send, HelpCircle, Undo2, History, FileSpreadsheet, FileType,
 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
 import * as XLSX from "xlsx"
+import { pdf } from "@react-pdf/renderer"
+import { montarAbasExportacao, nomeArquivoExportacao } from "@/lib/programacao/exportacao"
+import { ProgramacaoPdfDocument } from "@/lib/programacao/programacao-pdf"
 
 // S-PROG-04 (item 3): uma linha do histórico de transições — join com `colaboradores` pra
 // mostrar o nome de quem fez a mudança (Supabase resolve FK many-to-one como objeto único).
@@ -187,70 +193,51 @@ export default function CampanhaMensalPage() {
     }
 
     // SQS-44: T3.3/T3.4 — Exportar para Gráfica (.xlsx)
+    // S-PROG-05 (item 2): montagem das abas extraída pra `lib/programacao/exportacao.ts`
+    // (testável, com teste de snapshot congelando o formato que a gráfica já aceita) — aqui só
+    // sobra a parte que só existe no navegador (montar o workbook e disparar o download).
     const handleExportarXLSX = () => {
         if (!campanha || atividades.length === 0) return
-        const MESES_NOME = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-        const nomeMes = MESES_NOME[campanha.mes] || String(campanha.mes)
-        const unidade = campanha.unidade_cuca || ""
+        const abas = montarAbasExportacao(campanha, atividades)
+        if (abas.length === 0) { toast.error("Nenhuma atividade para exportar."); return }
+
         const wb = XLSX.utils.book_new()
-
-        const categorias: { key: string; headers: string[]; extrator: (a: any) => any[] }[] = [
-            {
-                key: "CURSOS",
-                headers: ["#", "Curso", "Carga Horária", "Vagas", "Ementa", "Requisitos", "Período", "Horário", "Educador"],
-                extrator: (a) => {
-                    const m = a.metadata || {}
-                    return [a.titulo, m.carga_horaria ? `${m.carga_horaria}h` : "—", m.vagas || "—", m.ementa || "—", m.requisitos || "—", m.periodo || "—", m.horario || "—", m.educador || "—"]
-                },
-            },
-            {
-                key: "ESPORTES",
-                headers: ["#", "Modalidade", "Professor", "Turma", "Faixa Etária", "Sexo", "Vagas", "Dias", "Horário"],
-                extrator: (a) => {
-                    const m = a.metadata || {}
-                    return [a.titulo, m.professor || "—", m.turma || "—", m.faixa_etaria || "—", m.sexo || "—", m.vagas || "—", m.dias_semana || "—", m.horario || "—"]
-                },
-            },
-            {
-                key: "DIA A DIA",
-                headers: ["#", "Sessão", "Data", "Dia da Semana", "Atividade", "Horário Início", "Horário Fim", "Local", "Informações"],
-                extrator: (a) => {
-                    const m = a.metadata || {}
-                    return [m.sessao || "—", m.data_real || "—", m.dia_semana || "—", m.atividade || a.titulo, a.hora_inicio?.substring(0, 5) || "—", a.hora_fim?.substring(0, 5) || "—", a.local || m.local || "—", m.informacoes || "—"]
-                },
-            },
-            {
-                key: "ESPECIAIS",
-                headers: ["#", "Sessão", "Data", "Dia da Semana", "Atividade", "Horário Início", "Horário Fim", "Local", "Informações"],
-                extrator: (a) => {
-                    const m = a.metadata || {}
-                    return [m.sessao || "—", m.data_real || "—", m.dia_semana || "—", m.atividade || a.titulo, a.hora_inicio?.substring(0, 5) || "—", a.hora_fim?.substring(0, 5) || "—", a.local || m.local || "—", m.informacoes || "—"]
-                },
-            },
-        ]
-
-        let abas = 0
-        for (const cat of categorias) {
-            const itens = atividades.filter(a => a.categoria === cat.key)
-            if (itens.length === 0) continue
-            const tituloAba = `${cat.key} - ${nomeMes.toUpperCase()}`
-            const tituloVisual = `${cat.key} ${unidade.toUpperCase()} — ${nomeMes.toUpperCase()} ${campanha.ano}`
-            const rows: any[][] = [
-                [tituloVisual],
-                cat.headers,
-                ...itens.map((a, i) => [i + 1, ...cat.extrator(a)]),
-            ]
+        for (const aba of abas) {
+            const rows = [[aba.tituloVisual], aba.headers, ...aba.linhas]
             const ws = XLSX.utils.aoa_to_sheet(rows)
-            XLSX.utils.book_append_sheet(wb, ws, tituloAba)
-            abas++
+            XLSX.utils.book_append_sheet(wb, ws, aba.tituloAba)
         }
 
-        if (abas === 0) { toast.error("Nenhuma atividade para exportar."); return }
-
-        const nomeArq = `Programacao_${unidade.replace(/\s+/g, "_")}_${nomeMes}_${campanha.ano}.xlsx`
+        const nomeArq = nomeArquivoExportacao(campanha, "xlsx")
         XLSX.writeFile(wb, nomeArq)
         toast.success(`Arquivo ${nomeArq} gerado!`)
+    }
+
+    // S-PROG-05 (item 4): PDF de leitura — mesmas abas/linhas do XLSX (item 1: usuário escolhe o
+    // formato, nenhum é padrão implícito), textos longos (ementa/informações) com quebra de linha.
+    const [gerandoPdf, setGerandoPdf] = useState(false)
+    const handleExportarPDF = async () => {
+        if (!campanha || atividades.length === 0) return
+        const abas = montarAbasExportacao(campanha, atividades)
+        if (abas.length === 0) { toast.error("Nenhuma atividade para exportar."); return }
+
+        setGerandoPdf(true)
+        try {
+            const blob = await pdf(<ProgramacaoPdfDocument campanha={campanha} abas={abas} />).toBlob()
+            const nomeArq = nomeArquivoExportacao(campanha, "pdf")
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = url
+            a.download = nomeArq
+            a.click()
+            URL.revokeObjectURL(url)
+            toast.success(`Arquivo ${nomeArq} gerado!`)
+        } catch (e) {
+            console.error("[handleExportarPDF]", e)
+            toast.error("Erro ao gerar o PDF.")
+        } finally {
+            setGerandoPdf(false)
+        }
     }
 
     const filteredAtividades = atividades.filter(act => {
@@ -375,16 +362,24 @@ export default function CampanhaMensalPage() {
                             Aprovar Programação
                         </Button>
                     ) : null}
-                    {/* SQS-44: T3.3 — Exportar para Gráfica */}
+                    {/* S-PROG-05 (item 1): escolha do formato — nenhum é padrão implícito */}
                     {(campanha.status === "aprovado" || campanha.status === "pendente") && (
-                        <Button
-                            variant="outline"
-                            className="font-semibold gap-2"
-                            onClick={handleExportarXLSX}
-                        >
-                            <Download className="h-4 w-4" />
-                            <span className="hidden sm:inline">Exportar Gráfica</span>
-                        </Button>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" className="font-semibold gap-2" disabled={gerandoPdf}>
+                                    {gerandoPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                                    <span className="hidden sm:inline">Exportar</span>
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={handleExportarXLSX} className="gap-2">
+                                    <FileSpreadsheet className="h-4 w-4" /> Exportar .xlsx (gráfica)
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={handleExportarPDF} className="gap-2">
+                                    <FileType className="h-4 w-4" /> Exportar .pdf (leitura)
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     )}
                 </div>
             </div>
