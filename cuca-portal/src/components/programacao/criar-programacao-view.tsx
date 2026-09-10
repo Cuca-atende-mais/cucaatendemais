@@ -16,6 +16,10 @@ import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Plus } from "lucide-react"
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
@@ -24,6 +28,7 @@ import { AtividadeForm, DIAS_SEMANA_ABREV } from "@/lib/programacao/tipos"
 import { calcularProblemas, Problema } from "@/lib/programacao/revisao"
 import { GradeAtividades } from "@/components/programacao/grade-atividades"
 import { FichaAtividade } from "@/components/programacao/ficha-atividade"
+import { SelecionarOrigem } from "@/components/programacao/selecionar-origem"
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -175,7 +180,7 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
 export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess }: CriarProgramacaoViewProps) {
     const supabase = createClient()
 
-    // Step: 1 = Cabeçalho, 2 = Atividades, 3 = Revisão
+    // Step: 1 = Cabeçalho, 2 = Origem (S-PROG-02), 3 = Atividades, 4 = Revisão
     const [step, setStep] = useState(1)
 
     // Cabeçalho (Step 1)
@@ -194,8 +199,11 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
     const [fichaTempId, setFichaTempId] = useState<string | null>(null)
     const [fichaFocoCampo, setFichaFocoCampo] = useState<string | undefined>(undefined)
 
-    // Submit
+    // Submit — AC4 da S-PROG-02: nunca sobrescreve campanha existente sem confirmação explícita
+    // (antes disso, `/api/programacao/importar` apagava sem avisar; corrigido junto nesta story,
+    // ver também o próprio endpoint).
     const [salvando, setSalvando] = useState(false)
+    const [confirmarSubstituicaoAberto, setConfirmarSubstituicaoAberto] = useState(false)
 
     const nomeMes = MESES_LISTA.find(m => m.value === mesSel)?.label || ""
 
@@ -250,12 +258,22 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
         setStep(2)
     }
 
+    // ── Step 2: origem (S-PROG-02) — zero ou duplicar mês anterior ─────────────
+    const handleEscolherZero = () => {
+        setAtividades([])
+        setStep(3)
+    }
+
+    const handleEscolherDuplicar = (duplicadas: AtividadeInterna[]) => {
+        setAtividades(duplicadas)
+        toast.success(`${duplicadas.length} atividade(s) copiada(s) — revise data, horário e vagas antes de salvar.`)
+        setStep(3)
+    }
+
     // ── Submit: salvar como rascunho ───────────────────────────────────────────
-    const handleSalvarRascunho = async () => {
-        if (atividades.length === 0) {
-            toast.error("Adicione pelo menos uma atividade antes de salvar.")
-            return
-        }
+    // `confirmarSubstituicao` só é `true` depois que o usuário confirma explicitamente no
+    // AlertDialog (AC4 da S-PROG-02) — sem isso, o endpoint recusa apagar a campanha existente.
+    const executarSalvamento = async (confirmarSubstituicao: boolean) => {
         setSalvando(true)
         try {
             const titulo = `Programação ${unidadeSel} — ${nomeMes} ${anoSel}`
@@ -276,10 +294,17 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
             const res = await fetch("/api/programacao/importar", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanha: campanhaPayload, atividades: atividadesPayload }),
+                body: JSON.stringify({ campanha: campanhaPayload, atividades: atividadesPayload, confirmarSubstituicao }),
             })
 
             const data = await res.json()
+            if (res.status === 409 && data.conflito) {
+                // Servidor detectou campanha existente que o cliente não sabia (corrida entre
+                // duas pessoas editando ao mesmo tempo) — mesmo tratamento do AlertDialog local.
+                setCampanhaExistente(data.conflito)
+                setConfirmarSubstituicaoAberto(true)
+                return
+            }
             if (!res.ok) throw new Error(data.error || "Erro ao salvar")
 
             // Aguarda 1.5s para a replicação do Supabase antes de voltar e atualizar
@@ -293,6 +318,18 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
         } finally {
             setSalvando(false)
         }
+    }
+
+    const handleSalvarRascunhoClick = () => {
+        if (atividades.length === 0) {
+            toast.error("Adicione pelo menos uma atividade antes de salvar.")
+            return
+        }
+        if (campanhaExistente) {
+            setConfirmarSubstituicaoAberto(true)
+            return
+        }
+        executarSalvamento(false)
     }
 
     // ── Contagem por categoria + painel de revisão (item 5) ────────────────────
@@ -330,8 +367,9 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
             <div className="flex items-center py-5 max-w-md">
                 {[
                     { n: 1, label: "Cabeçalho" },
-                    { n: 2, label: "Atividades" },
-                    { n: 3, label: "Revisão" },
+                    { n: 2, label: "Origem" },
+                    { n: 3, label: "Atividades" },
+                    { n: 4, label: "Revisão" },
                 ].map(({ n, label }, i, arr) => (
                     <div key={n} className="flex items-center flex-1 last:flex-none">
                         <div className="flex items-center gap-2">
@@ -415,8 +453,17 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
                     </div>
                 )}
 
-                {/* ── STEP 2: Atividades (S-PROG-01: grade editável + ficha) ── */}
+                {/* ── STEP 2: Origem (S-PROG-02) — zero ou duplicar mês anterior ── */}
                 {step === 2 && (
+                    <SelecionarOrigem
+                        unidade={unidadeSel}
+                        onEscolherZero={handleEscolherZero}
+                        onEscolherDuplicar={handleEscolherDuplicar}
+                    />
+                )}
+
+                {/* ── STEP 3: Atividades (S-PROG-01: grade editável + ficha) ── */}
+                {step === 3 && (
                     <div className="space-y-4">
                         {/* Alerta de campanha existente (AC-8) */}
                         {campanhaExistente && (
@@ -462,8 +509,8 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
                     </div>
                 )}
 
-                {/* ── STEP 3: Revisão ── */}
-                {step === 3 && (
+                {/* ── STEP 4: Revisão ── */}
+                {step === 4 && (
                     <div className="space-y-5 max-w-2xl">
                         <div className="p-5 rounded-xl border border-border bg-card/60">
                             <p className="text-base font-bold mb-1">Resumo da Programação</p>
@@ -525,22 +572,25 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
                 </Button>
 
                 <div className="flex gap-2">
-                    {step < 3 && (
-                        <Button
-                            size="lg"
-                            onClick={step === 1 ? handleAvancarStep1 : () => setStep(3)}
-                            disabled={verificandoDup}
-                            className="gap-1.5"
-                        >
+                    {step === 1 && (
+                        <Button size="lg" onClick={handleAvancarStep1} disabled={verificandoDup} className="gap-1.5">
                             {verificandoDup ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            {step === 2 && atividades.length === 0 ? "Revisar" : "Próximo"}
+                            Próximo
                             {!verificandoDup && <ChevronRight className="h-4 w-4" />}
                         </Button>
                     )}
+                    {/* Step 2 (Origem) não tem botão "Próximo" aqui — escolher um card ou
+                        "Começar do zero" já avança sozinho (ver SelecionarOrigem). */}
                     {step === 3 && (
+                        <Button size="lg" onClick={() => setStep(4)} className="gap-1.5">
+                            {atividades.length === 0 ? "Revisar" : "Próximo"}
+                            <ChevronRight className="h-4 w-4" />
+                        </Button>
+                    )}
+                    {step === 4 && (
                         <Button
                             size="lg"
-                            onClick={handleSalvarRascunho}
+                            onClick={handleSalvarRascunhoClick}
                             disabled={salvando || atividades.length === 0}
                             className="bg-primary text-primary-foreground gap-1.5"
                         >
@@ -550,6 +600,27 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
                     )}
                 </div>
             </div>
+
+            {/* AC4 da S-PROG-02: confirmação explícita antes de substituir campanha existente —
+                nunca apaga sem esse passo (endpoint também recusa sem `confirmarSubstituicao`). */}
+            <AlertDialog open={confirmarSubstituicaoAberto} onOpenChange={setConfirmarSubstituicaoAberto}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Substituir programação existente?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Já existe uma programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (status:{" "}
+                            <em>{campanhaExistente?.status}</em>). Salvar agora vai <strong>apagar a existente</strong> e gravar esta como nova versão
+                            (rascunho). Essa ação não pode ser desfeita.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => { setConfirmarSubstituicaoAberto(false); executarSalvamento(true) }}>
+                            Sim, substituir
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }

@@ -6,9 +6,10 @@
  * mostra (decisão do Junior em 2026-09-08: não depende da junta técnica; se precisarem de
  * ajuste, eles elaboram e mandamos aqui).
  *
- * Camada 1 — só estes 11 campos têm tooltip/popover. Camada 2 (Modalidade, Curso, Professor,
- * Educador, Turma, Local, Programa, Atividade, Sessão) não tem ajuda — ícone em campo óbvio
- * treina a pessoa a ignorar todos.
+ * Camada 1 — só estes campos têm tooltip/popover (11 da S-PROG-01 + 2 da S-PROG-02, item 5:
+ * seletor de origem e selo de qualidade). Camada 2 (Modalidade, Curso, Professor, Educador,
+ * Turma, Local, Programa, Atividade, Sessão) não tem ajuda — ícone em campo óbvio treina a
+ * pessoa a ignorar todos.
  */
 export const AJUDA_CAMPOS = {
   ementa:
@@ -33,6 +34,10 @@ export const AJUDA_CAMPOS = {
     "Código da meta usado na prestação de contas. Mesmo valor da planilha.",
   diretoria:
     "Diretoria responsável pela atividade. Mesmo valor da planilha.",
+  duplicar_origem:
+    "Escolha o mês que serve de base. Vem copiado tudo que se repete; data, horário e vagas voltam em branco para você preencher.",
+  selo_qualidade:
+    "Percentual de atividades daquele mês com sinal de problema (texto de exemplo não apagado, faixa etária sem número, título vazio) — calculado agora, não é um valor fixo salvo antes.",
 } as const
 
 export type CampoComAjuda = keyof typeof AJUDA_CAMPOS
