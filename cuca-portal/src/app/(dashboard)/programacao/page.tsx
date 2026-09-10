@@ -542,9 +542,12 @@ export default function ProgramacaoPage() {
                                         </p>
 
                                         <div className="flex items-center gap-1.5 pt-2 border-t border-border/60 flex-wrap">
+                                            {/* Achado do @qa: "Continuar edição" prometia edição que a tela de
+                                                destino (/programacao/mensal/[id]) não tem — é só leitura/status,
+                                                sem grade nem ficha. "Abrir rascunho" não promete o que não existe. */}
                                             {m.status === "rascunho" && (
                                                 <Button size="sm" className="gap-1.5" onClick={() => openCampanhaDetails(m)}>
-                                                    <Pencil className="h-3.5 w-3.5" /> Continuar edição
+                                                    <FileText className="h-3.5 w-3.5" /> Abrir rascunho
                                                 </Button>
                                             )}
                                             {m.status === "pendente" && (
