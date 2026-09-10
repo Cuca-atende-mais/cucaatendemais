@@ -19,11 +19,15 @@ import {
     Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@/components/ui/tabs"
 import {
-    Search, Plus, Calendar, CheckCircle2, Clock, Upload, Trash2, Send, Users, Eye, Pencil, MapPin, X
+    Search, Plus, Calendar, CheckCircle2, Clock, Upload, Trash2, Send, Users, Eye, Pencil, MapPin, X, FileText
 } from "lucide-react"
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
+import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import {
     Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet"
@@ -85,6 +89,33 @@ export default function ProgramacaoPage() {
         }
     }
 
+    // S-PROG-04 (item 5): exclusão de programação MENSAL exige confirmação nominal (mês +
+    // unidade digitados, não só um confirm() genérico) — evento pontual segue com o confirm()
+    // acima, fora do escopo desta story.
+    const [campanhaParaExcluir, setCampanhaParaExcluir] = useState<CampanhaMensal | null>(null)
+    const [textoConfirmacaoExclusao, setTextoConfirmacaoExclusao] = useState("")
+    const MESES_NOME_EXCLUSAO = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+    const textoNominalEsperado = (c: CampanhaMensal) =>
+        `${MESES_NOME_EXCLUSAO[c.mes] || c.mes} ${c.ano} ${c.unidade_cuca}`
+
+    const handleConfirmarExclusaoMensal = async () => {
+        if (!campanhaParaExcluir) return
+        try {
+            const res = await fetch(`/api/programacao/excluir?id=${campanhaParaExcluir.id}&tipo=mensal`, { method: 'DELETE' })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro ao excluir")
+
+            toast.success(data.message)
+            invalidateProg()
+            setCampanhaParaExcluir(null)
+            setTextoConfirmacaoExclusao("")
+        } catch (error) {
+            console.error(error)
+            toast.error(error instanceof Error ? error.message : "Erro ao excluir programação")
+        }
+    }
+
     // Iniciar filtro com a unidade do perfil caso não seja super/master
     useEffect(() => {
         if (profile && !canSeeAllUnits) {
@@ -116,12 +147,32 @@ export default function ProgramacaoPage() {
             const [{ data: pData, error: pError }, { data: mData, error: mError }] = await Promise.all([pQuery, mQuery])
             if (pError) console.error("Erro eventos pontuais:", pError)
             if (mError) console.error("Erro campanhas mensais:", mError)
-            return { pontuais: pData ?? [], mensais: mData ?? [] }
+
+            // S-PROG-04 (item 1): contagem por categoria pro card — só `campanha_id`/`categoria`
+            // (sem metadata), leve mesmo com ~100-150 atividades por campanha.
+            const idsCampanhas = (mData ?? []).map(m => m.id)
+            let contagemPorCategoria: Record<string, Record<string, number>> = {}
+            if (idsCampanhas.length > 0) {
+                const { data: catData } = await supabase
+                    .from("atividades_mensais")
+                    .select("campanha_id, categoria")
+                    .in("campanha_id", idsCampanhas)
+                contagemPorCategoria = (catData ?? []).reduce((acc, a) => {
+                    const cid = a.campanha_id as string
+                    const cat = (a.categoria as string) || "Outros"
+                    acc[cid] = acc[cid] || {}
+                    acc[cid][cat] = (acc[cid][cat] || 0) + 1
+                    return acc
+                }, {} as Record<string, Record<string, number>>)
+            }
+
+            return { pontuais: pData ?? [], mensais: mData ?? [], contagemPorCategoria }
         },
     })
 
     const pontuais = progData?.pontuais ?? []
     const mensais = progData?.mensais ?? []
+    const contagemPorCategoria = progData?.contagemPorCategoria ?? {}
     const invalidateProg = () => qc.invalidateQueries({ queryKey: PROGRAMACAO_KEY })
 
     const openCampanhaDetails = (campanha: CampanhaMensal) => {
@@ -137,6 +188,7 @@ export default function ProgramacaoPage() {
             case 'autorizado':
                 return <Badge className="bg-blue-600 text-white gap-1"><CheckCircle2 className="h-3 w-3" /> Autorizado</Badge>
             case 'aguardando_aprovacao':
+            case 'pendente':
                 return <Badge variant="outline" className="text-amber-600 border-amber-600 bg-amber-50 gap-1"><Clock className="h-3 w-3" /> Pendente</Badge>
             case 'rascunho':
                 return <Badge variant="secondary" className="gap-1"><Plus className="h-3 w-3" /> Rascunho</Badge>
@@ -450,60 +502,110 @@ export default function ProgramacaoPage() {
                     </Card>
                 </TabsContent>
 
+                {/* S-PROG-04 (item 1): lista em cards — mês/unidade, status, contagem por
+                    categoria e só as ações válidas pro status atual (ver tabela da story). */}
                 <TabsContent value="mensal" className="mt-6">
-                    <Card className="border-none shadow-sm overflow-hidden">
-                        <CardContent className="p-0">
-                            <Table>
-                                <TableHeader className="bg-muted/30">
-                                    <TableRow>
-                                        <TableHead>Título / Mês Ref.</TableHead>
-                                        <TableHead>Total Atividades</TableHead>
-                                        <TableHead>Status</TableHead>
-                                        <TableHead>Importado em</TableHead>
-                                        <TableHead className="text-right">Ações</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {loading ? (
-                                        <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
-                                    ) : filteredMensais.length === 0 ? (
-                                        <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">Nenhuma programação mensal encontrada.</TableCell></TableRow>
-                                    ) : filteredMensais.map(m => (
-                                        <TableRow key={m.id}>
-                                            <TableCell className="font-semibold">
-                                                {m.titulo} ({m.mes}/{m.ano})
-                                            </TableCell>
-                                            <TableCell>{m.total_atividades} atividades</TableCell>
-                                            <TableCell>{getStatusBadge(m.status)}</TableCell>
-                                            <TableCell>{format(new Date(m.created_at), "dd/MM/yyyy", { locale: ptBR })}</TableCell>
-                                            <TableCell className="text-right flex items-center justify-end gap-2">
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => openCampanhaDetails(m)}
-                                                    className="text-primary hover:text-primary/80 hover:bg-primary/10"
-                                                >
-                                                    Ver Atividades
+                    {loading ? (
+                        <p className="text-center py-10 text-muted-foreground">Carregando...</p>
+                    ) : filteredMensais.length === 0 ? (
+                        <p className="text-center py-10 text-muted-foreground">Nenhuma programação mensal encontrada.</p>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {filteredMensais.map(m => {
+                                const contagem = contagemPorCategoria[m.id] || {}
+                                return (
+                                    <div key={m.id} className="bg-card rounded-2xl border border-border p-5 flex flex-col gap-3 hover:border-primary/40 transition-colors">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div>
+                                                <p className="font-bold text-sm">{MESES_NOME_EXCLUSAO[m.mes] || m.mes} {m.ano}</p>
+                                                <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                                                    <MapPin className="h-3 w-3" /> {m.unidade_cuca}
+                                                </p>
+                                            </div>
+                                            {getStatusBadge(m.status)}
+                                        </div>
+
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                            {Object.keys(contagem).length > 0 ? (
+                                                Object.entries(contagem).map(([cat, qtd]) => (
+                                                    <Badge key={cat} variant="outline" className="text-[10px] font-medium">
+                                                        {qtd} {cat.toLowerCase()}
+                                                    </Badge>
+                                                ))
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">{m.total_atividades} atividades</span>
+                                            )}
+                                        </div>
+
+                                        <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                                            <Calendar className="h-3 w-3" /> Importado em {format(new Date(m.created_at), "dd/MM/yyyy", { locale: ptBR })}
+                                        </p>
+
+                                        <div className="flex items-center gap-1.5 pt-2 border-t border-border/60 flex-wrap">
+                                            {m.status === "rascunho" && (
+                                                <Button size="sm" className="gap-1.5" onClick={() => openCampanhaDetails(m)}>
+                                                    <Pencil className="h-3.5 w-3.5" /> Continuar edição
                                                 </Button>
-                                                {canDelete && (
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        onClick={() => handleDelete(m.id, 'mensal')}
-                                                        className="text-red-500 hover:text-red-700 hover:bg-red-500/10 h-8 w-8 p-0"
-                                                    >
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
-                                                )}
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </CardContent>
-                    </Card>
+                                            )}
+                                            {m.status === "pendente" && (
+                                                <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => openCampanhaDetails(m)}>
+                                                    <CheckCircle2 className="h-3.5 w-3.5" /> Analisar
+                                                </Button>
+                                            )}
+                                            {m.status === "aprovado" && (
+                                                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => openCampanhaDetails(m)}>
+                                                    <Pencil className="h-3.5 w-3.5" /> Reabrir para editar
+                                                </Button>
+                                            )}
+                                            <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground" onClick={() => openCampanhaDetails(m)}>
+                                                <FileText className="h-3.5 w-3.5" /> Ver
+                                            </Button>
+                                            {canDelete && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="ml-auto text-red-500 hover:text-red-700 hover:bg-red-500/10 h-8 w-8 p-0"
+                                                    onClick={() => { setCampanhaParaExcluir(m); setTextoConfirmacaoExclusao("") }}
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    )}
                 </TabsContent>
             </Tabs>
+
+            {/* Item 5: exclusão nominal — exige digitar mês + unidade antes de habilitar */}
+            <AlertDialog open={!!campanhaParaExcluir} onOpenChange={open => !open && setCampanhaParaExcluir(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Excluir programação permanentemente?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Isso apaga <strong>{campanhaParaExcluir && textoNominalEsperado(campanhaParaExcluir)}</strong> e todas as atividades
+                            vinculadas. Não pode ser desfeito. Para confirmar, digite <strong>{campanhaParaExcluir && textoNominalEsperado(campanhaParaExcluir)}</strong> abaixo.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <Input
+                        value={textoConfirmacaoExclusao}
+                        onChange={e => setTextoConfirmacaoExclusao(e.target.value)}
+                        placeholder={campanhaParaExcluir ? textoNominalEsperado(campanhaParaExcluir) : ""}
+                    />
+                    <AlertDialogFooter>
+                        <AlertDialogCancel onClick={() => setTextoConfirmacaoExclusao("")}>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={handleConfirmarExclusaoMensal}
+                            disabled={!campanhaParaExcluir || textoConfirmacaoExclusao.trim().toLowerCase() !== textoNominalEsperado(campanhaParaExcluir).toLowerCase()}
+                            className="bg-red-600 hover:bg-red-700 text-white"
+                        >
+                            Excluir
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             {isImportModalOpen && (
                 <ImportPlanilhaModal
