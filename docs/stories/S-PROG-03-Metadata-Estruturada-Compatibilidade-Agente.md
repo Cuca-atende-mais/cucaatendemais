@@ -1,6 +1,6 @@
 # S-PROG-03 — Metadata estruturada, compatibilidade do agente e vagas fora do RAG
 
-**Status:** InProgress — **item 2: Done** (PR #159 mergeado, deployado e testado em produção), item 1 não iniciado (aguarda S-PROG-01)
+**Status:** InReview — **item 2: Done** (PR #159 mergeado, deployado e testado em produção), **item 1: implementado**, aguardando @qa
 **Epic:** Reestruturação da criação de programação
 **Origem:** Campos estruturados da S-PROG-01 + decisão do Junior sobre vagas no RAG (2026-09-07).
 **Prioridade:** **P0** — a parte de vagas (item 2) deve ir a produção **antes** do disparo público de
@@ -196,15 +196,84 @@ index.audit.test.ts` — 138 passed, 0 failed.
   Para o próximo deploy de Edge Function nesta sessão, um `export SUPABASE_ACCESS_TOKEN=...`
   permanente no `.bashrc` do Junior evita repetir esse processo.
 
+### Item 1 — chaves novas e antigas (2026-09-09, @dev/Dex)
+
+**Levantamento de impacto feito antes de codar** (não presumido): grepei `motor-agente/index.ts`
+inteiro por toda chave "antiga" citada na tabela do item 1 (`requisitos`, `periodo`,
+`carga_horaria`, `ementa`, `educador`) — **nenhuma delas é lida individualmente por nenhum
+caminho do RAG.** As únicas chaves antigas de fato lidas direto do jsonb são `turma`, `professor`,
+`sexo`, `dias_semana`, `horario` e `faixa_etaria`, todas dentro de
+`formatarLinhaAtividadeDeterministica` (linha 443) — usada pelo fallback de busca por nome de
+atividade (`buscarAtividadeEspecifica`/`buscarAtividadeDeterministica`, cenário "tem vaga pra
+natação?"). As demais chaves da tabela do item 1 só aparecem dentro do texto livre de `descricao`,
+que já é montado direto pelo payload builder, sem depender de recomposição de metadata.
+
+**Achado principal: o risco que esta story existe pra prevenir já estava coberto.**
+`montarAtividadePayload` (então função local em `criar-programacao-modal.tsx`, hoje
+`criar-programacao-view.tsx`) já recompunha `horario`, `faixa_etaria` e `dias_semana` a partir dos
+campos novos da grade (`hora_inicio`/`hora_fim`, `faixa_de`/`faixa_ate`, `dias_raw`) desde a
+implementação da S-PROG-01 — o dev daquela story já havia feito a recomposição corretamente ao
+construir o payload, sem que isso tivesse sido testado ou registrado como tal. Verificado por
+leitura de código, não assumido.
+
+**O que foi feito nesta story, então:**
+
+1. **Extraído `montarAtividadePayload`** de `criar-programacao-view.tsx` (função local, não
+   testável) para `lib/programacao/payload.ts` (módulo puro, testável) — mesmo comportamento, só
+   testabilidade. Zero mudança funcional nesta extração.
+2. **13 testes novos** (`payload.test.ts`) travando por contrato a recomposição das chaves
+   antigas por categoria — a proteção de regressão que faltava. Serve também como o "teste de
+   paridade" do AC5: como o wizard antigo não existe mais lado a lado pra comparar (foi
+   substituído pela grade na S-PROG-01), o teste fixa o formato que a função sempre produziu.
+3. **Corrigido um achado durante a extração:** `periodo` (CURSOS) estava sendo montado como
+   `"08/08/2026 29/08/2026 Qua e Sex"` (datas sem conector, dias grudados) — a story documenta o
+   formato como `"07/08/2026 a 28/08/2026"`. Corrigido pra bater com o documentado. Como `periodo`
+   não é lido pelo RAG (só pela exportação, S-PROG-05), isso não afeta o agente — mas ao remover
+   os dias do `periodo`, adicionei `(${diasStr})` na `descricao` de CURSOS pra não perder essa
+   informação do texto que alimenta o RAG (a `descricao` de CURSOS já citava os dias via
+   `periodo`; sem esse ajuste, teria sumido).
+
+**Não precisou de mudança em `motor-agente/index.ts`** — as chaves que o Edge Function lê já
+estavam corretas; item 1 era 100% do lado do portal (gravação). Sem deploy de Edge Function
+necessário nesta story.
+
+**Não verificado nesta rodada:** teste end-to-end real (criar atividade pela grade → perguntar ao
+assistente do WhatsApp) — sem autorização de navegador/WhatsApp real nesta sessão. Recomendo o
+@qa validar com uma pergunta real antes do PASS final, ou aceitar a cobertura de teste unitário
+como suficiente dado que a lógica não mudou desde a S-PROG-01 (só ganhou proteção de regressão).
+
+### Verificação executada (item 1)
+
+| Verificação | Resultado |
+|---|---|
+| `tsc --noEmit` (portal) | Limpo nos arquivos alterados |
+| `vitest run src/lib/programacao` | **121 passed, 0 failed** (13 novos em `payload.test.ts`) |
+| `eslint` em `payload.ts`/`payload.test.ts` | 0 problemas |
+| `eslint` em `criar-programacao-view.tsx` | 2 erros pré-existentes (`any`) — **caiu de 3 pra 2** com a extração (a função extraída tinha um `any` de retorno que saiu do arquivo) |
+| Grep completo de `motor-agente/index.ts` por cada chave antiga da tabela do item 1 | Confirma que só 6 chaves são lidas de fato (turma/professor/sexo/dias_semana/horario/faixa_etaria) — as demais só existem dentro de `descricao` |
+
+### Cobertura de Acceptance Criteria
+
+| AC | Status |
+|---|---|
+| 1. Metadata com chaves novas E antigas, recompostas | ✅ já implementado na S-PROG-01, agora testado |
+| 2. `formatarLinhaAtividadeDeterministica` sem "Vagas: N", com aviso | ✅ (item 2, já Done) |
+| 3. `deno test motor-agente` passa, 5 asserções atualizadas | ✅ (item 2, já Done — item 1 não tocou motor-agente) |
+| 4. `metadata.vagas` continua gravado e na exportação | ✅ testado (`payload.test.ts`) |
+| 5. Teste de paridade grade vs. modal | ✅ adaptado — modal antigo não existe mais (S-PROG-01 substituiu); teste fixa o contrato por comportamento, não por comparação lado a lado |
+
 ## File List
 
 | Arquivo | Mudança |
 |---|---|
-| `supabase/functions/motor-agente/index.ts` | `AVISO_VAGAS`, `removerVagasDoTexto()`, `formatarChunks`, `carregarProgramacaoMensal`, `formatarLinhaAtividadeDeterministica`, regra 8 |
-| `supabase/functions/motor-agente/index.test.ts` | 3 asserções atualizadas + 6 testes novos |
-| `cuca-portal/src/lib/programacao/rag.ts` | **novo** — `AVISO_VAGAS` do lado do portal |
-| `cuca-portal/src/components/programacao/import-planilha-modal.tsx` | `descricao` de Cursos e Esportes sem vagas |
-| `cuca-portal/src/components/programacao/criar-programacao-modal.tsx` | `descricao` de Cursos e Esportes sem vagas |
+| `supabase/functions/motor-agente/index.ts` | `AVISO_VAGAS`, `removerVagasDoTexto()`, `formatarChunks`, `carregarProgramacaoMensal`, `formatarLinhaAtividadeDeterministica`, regra 8 (item 2) |
+| `supabase/functions/motor-agente/index.test.ts` | 3 asserções atualizadas + 6 testes novos (item 2) |
+| `cuca-portal/src/lib/programacao/rag.ts` | **novo** — `AVISO_VAGAS` do lado do portal (item 2) |
+| `cuca-portal/src/components/programacao/import-planilha-modal.tsx` | `descricao` de Cursos e Esportes sem vagas (item 2) |
+| `cuca-portal/src/components/programacao/criar-programacao-modal.tsx` | `descricao` de Cursos e Esportes sem vagas (item 2 — arquivo depois substituído pela S-PROG-01) |
+| `cuca-portal/src/lib/programacao/payload.ts` | **novo** (item 1) — `montarAtividadePayload` extraído, com fix no formato de `periodo` |
+| `cuca-portal/src/lib/programacao/payload.test.ts` | **novo** (item 1) — 13 testes de recomposição de chaves antigas |
+| `cuca-portal/src/components/programacao/criar-programacao-view.tsx` | (item 1) importa `montarAtividadePayload` de `lib/programacao/payload` em vez de declarar local |
 
 ## Change Log
 
@@ -217,3 +286,4 @@ index.audit.test.ts` — 138 passed, 0 failed.
 | 2026-09-08 | @dev (Dex) | Corrigido; testes reconfirmados verdes |
 | 2026-09-09 | @devops (Gage) | Edge Function deployada (v51), PR #159 aberto |
 | 2026-09-09 | @devops (Gage) | PR #159 aprovado e mergeado em `main`; portal redeployado no EasyPanel e testado em produção pelo Junior — item 2 marcado **Done** |
+| 2026-09-09 | @dev (Dex) | Item 1 implementado — achado que a recomposição já existia desde a S-PROG-01; extraído pra módulo testável, 13 testes novos, fix no formato de `periodo`. Status Draft → InReview |
