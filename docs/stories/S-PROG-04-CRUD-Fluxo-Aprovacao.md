@@ -148,14 +148,50 @@ reabrir aprovada → excluir com nome) recomendado para o @qa testar visualmente
 | 5. Reabrir aprovada exige confirmação e retira do RAG | ✅ implementado (mesmo trigger cobre a retirada) |
 | 6. Permissões existentes continuam valendo | ✅ mesma checagem `has_permission('programacao','update')` em todas as 4 transições |
 
+## QA Results
+
+### Revisão 1 (2026-09-09, @qa/Quinn) — FAIL
+
+Revisão adicional pedida pelo Junior depois de notar que o @dev tinha commitado/dado push/aberto
+PR sem passar por @qa nem @devops (violação do checkpoint entre agentes). Achados, por ordem de
+severidade:
+
+1. **CONFIRMED, grave:** o bloqueio de "Enviar para aprovação" (AC2) reusava `linhaTemProblema`
+   (S-PROG-02, mede contaminação pro selo de qualidade da duplicação, não completude). Reproduzido:
+   uma linha de CURSOS só com título e nada mais (sem educador/vagas/carga_horária/ementa/horário)
+   passava como "sem problema" — dava pra mandar pra aprovação, e aprovar, uma programação
+   praticamente vazia.
+2. **CONFIRMED:** botão "Continuar edição" (card de rascunho) leva pra `/programacao/mensal/[id]`,
+   que é só leitura — sem grade nem ficha, nenhum campo editável. O rótulo promete o que a tela
+   não entrega.
+3. **CONFIRMED, menor:** insert em `campanha_historico` não checava erro — uma falha ali deixava a
+   transição "bem-sucedida" pro usuário sem o histórico ter sido gravado, sem log nenhum.
+
+(Um 4º achado, sobre `payload.ts`, foi registrado na S-PROG-03 — ver aquela story.)
+
+### Correção (2026-09-09, @dev/Dex)
+
+- Novo módulo `lib/programacao/aprovacao.ts` (`linhaIncompleta`/`motivosFaltantes`) substitui
+  `linhaTemProblema` no gate — checa os campos obrigatórios reais de cada categoria. 7 testes
+  novos, incluindo o cenário exato do achado (CURSOS só com título).
+- Botão renomeado para "Abrir rascunho" — não promete edição que a tela não tem.
+- Erro do insert de histórico agora é logado (`console.error`), sem falhar a transição por isso.
+
+### Revisão 2 (2026-09-09, @qa/Quinn) — PASS
+
+Reprodução independente dos 3 achados confirma corrigidos. `tsc`/`eslint` limpos (mesmo débito
+pré-existente), 138/138 testes na cadeia completa. **Veredito final: PASS.**
+
 ## File List
 
 | Arquivo | Mudança |
 |---|---|
 | `supabase/migrations/20260909230000_s_prog_04_campanha_historico.sql` | **novo** — tabela de histórico de transições, RLS |
-| `cuca-portal/src/app/api/programacao/status/route.ts` | Reescrito — centraliza as 4 transições, motivo obrigatório, bloqueio de revisão, grava histórico |
+| `cuca-portal/src/app/api/programacao/status/route.ts` | Reescrito — centraliza as 4 transições, motivo obrigatório, bloqueio de revisão (corrigido no QA Results), grava histórico (erro logado) |
 | `cuca-portal/src/app/(dashboard)/programacao/mensal/[id]/page.tsx` | Botões "Devolver para ajuste"/"Reabrir" com `AlertDialog`, linha do tempo de histórico, tooltips de ajuda (item 6), "Aprovar" migrado pra rota centralizada |
-| `cuca-portal/src/app/(dashboard)/programacao/page.tsx` | Tabela → cards na aba Mensal, contagem por categoria, exclusão nominal (item 5) |
+| `cuca-portal/src/app/(dashboard)/programacao/page.tsx` | Tabela → cards na aba Mensal, contagem por categoria, exclusão nominal (item 5), rótulo "Abrir rascunho" (corrigido no QA Results) |
+| `cuca-portal/src/lib/programacao/aprovacao.ts` | **novo** (correção QA) — checador de campos obrigatórios pro gate de aprovação |
+| `cuca-portal/src/lib/programacao/aprovacao.test.ts` | **novo** (correção QA) — 7 testes |
 
 ## Change Log
 
@@ -164,3 +200,6 @@ reabrir aprovada → excluir com nome) recomendado para o @qa testar visualmente
 | 2026-09-08 | @sm (River) | Story criada |
 | 2026-09-09 | @po (Pax) | Validado GO (documento `VALIDACAO-PO-stories-programacao-2026-09-08.md`) — status não havia sido atualizado no arquivo da story até agora |
 | 2026-09-09 | @dev (Dex) | Status Draft → Ready → InProgress → InReview; implementação completa; migration aplicada em produção; 0 lint/tsc novos |
+| 2026-09-09 | @qa (Quinn) | Revisão 1: FAIL — gate de aprovação fraco, rótulo enganoso, erro de histórico não checado |
+| 2026-09-09 | @dev (Dex) | Corrigido: novo checador de completude, rótulo ajustado, erro logado |
+| 2026-09-09 | @qa (Quinn) | Revisão 2: **PASS** |
