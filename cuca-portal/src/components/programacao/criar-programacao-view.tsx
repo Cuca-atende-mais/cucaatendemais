@@ -59,9 +59,20 @@ interface CriarProgramacaoViewProps {
 
 function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): any {
     const meta = { ...a.metadata }
-    const fmtTime = (t: string) => t?.substring(0, 5) || ""
+    // `hora_inicio`/`hora_fim` são coluna `time` no Postgres — `""` não é um `time` válido
+    // (`invalid input syntax for type time: ""`, confirmado direto no banco). A grade permite
+    // deixar o horário em branco de propósito (S-PROG-01/02: zerado na duplicação), então isso
+    // quebrava o INSERT inteiro sempre que alguém salvava com horário vazio. `null` é o valor
+    // seguro — mesmo padrão já usado por `parseTimeString` no import de planilha.
+    const fmtTime = (t: string): string | null => {
+        const s = t?.substring(0, 5)
+        return s || null
+    }
     const hi = fmtTime(a.hora_inicio || "")
     const hf = fmtTime(a.hora_fim || "")
+    // Só para montar texto (descrição/RAG e metadata.horario) — nunca vai direto pra coluna `time`.
+    const hiTxt = hi || ""
+    const hfTxt = hf || ""
 
     if (a.categoria === "CURSOS") {
         const fmtDate = (iso: string) => {
@@ -71,7 +82,7 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
         }
         const diasStr = (meta.dias_raw || []).map((d: string) => DIAS_SEMANA_ABREV[d]).join(" e ")
         const periodoStr = `${fmtDate(meta.data_inicio_raw)} ${fmtDate(meta.data_fim_raw)} ${diasStr}`
-        const horarioStr = `${hi} às ${hf}`
+        const horarioStr = `${hiTxt} às ${hfTxt}`
         // Descricao no mesmo formato que o trigger trigger_indexar_campanha_mensal usa para montar o RAG
         const descricao = `Curso: ${a.titulo}. Educador: ${meta.educador}. Carga Horária: ${meta.carga_horaria}h. Período: ${periodoStr}. Horário: ${horarioStr}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}. ${AVISO_VAGAS}`
         return {
@@ -105,7 +116,7 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
         const turmaStr = meta.turma?.startsWith("Turma") ? meta.turma : `Turma ${meta.turma}`
         // S-PROG-01 (item 2): idade máxima é opcional — sem ela, "a partir de X anos".
         const faixaStr = meta.faixa_ate ? `${meta.faixa_de} a ${meta.faixa_ate} anos` : `a partir de ${meta.faixa_de} anos`
-        const horarioStr = `${hi} às ${hf}`
+        const horarioStr = `${hiTxt} às ${hfTxt}`
         // Descricao no mesmo formato que o trigger usa para montar o RAG
         const descricao = `Esporte Modalidade: ${a.titulo} - ${turmaStr}. Professor: ${meta.professor}. Público: ${meta.sexo} (Idade: ${faixaStr}). Dias: ${diasStr}. Horário: ${horarioStr}. ${AVISO_VAGAS}`
         return {
@@ -134,7 +145,7 @@ function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): 
     // DIA A DIA / ESPECIAIS
     const categoriaLabel = a.categoria as string
     // Descricao no mesmo formato que o trigger usa para montar o RAG
-    const descricaoDiaDia = `Programa (${categoriaLabel}): ${a.titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${hi} às ${hf}. Local: ${a.local}. Informações: ${meta.informacoes || ""}. Sessão: ${meta.sessao}.`
+    const descricaoDiaDia = `Programa (${categoriaLabel}): ${a.titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${hiTxt} às ${hfTxt}. Local: ${a.local}. Informações: ${meta.informacoes || ""}. Sessão: ${meta.sessao}.`
     return {
         titulo: a.titulo,
         categoria: a.categoria,
