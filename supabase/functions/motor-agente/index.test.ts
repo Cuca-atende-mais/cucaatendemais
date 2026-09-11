@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead, removerVagasDoTexto, AVISO_VAGAS, INSTRUCAO_SEGURANCA } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead, removerVagasDoTexto, AVISO_VAGAS, INSTRUCAO_SEGURANCA, montarDiretivaVigenciaMes } from "./index.ts";
 
 // ── S-WM-34 (VAL-09) — normalizarTexto ──────────────────────────────────────
 Deno.test("normalizarTexto: remove acento e lowercase", () => {
@@ -480,4 +480,70 @@ Deno.test("removerVagasDoTexto: nao remove mencao a vaga que nao seja quantidade
 Deno.test("INSTRUCAO_SEGURANCA: regra 8 proibe informar quantidade de vagas tambem na pergunta especifica", () => {
   assertEquals(INSTRUCAO_SEGURANCA.includes("8. NUNCA informe a QUANTIDADE de vagas"), true);
   assertEquals(INSTRUCAO_SEGURANCA.includes("atividade especifica"), true, "a regra 6 ja cobria a listagem geral; a 8 precisa cobrir a pergunta direta");
+});
+
+// ── S-PROG-10 (item 3) — montarDiretivaVigenciaMes ──────────────────────────
+Deno.test("montarDiretivaVigenciaMes: mes/ano ausentes (documento anterior a esta story) devolve vazio — AC5", () => {
+  assertEquals(montarDiretivaVigenciaMes(null, null, 9, 2026), "");
+  assertEquals(montarDiretivaVigenciaMes(undefined, undefined, 9, 2026), "");
+});
+
+Deno.test("montarDiretivaVigenciaMes: mes/ano de tipo errado (string, vindo de jsonb mal formado) devolve vazio, nunca lanca", () => {
+  assertEquals(montarDiretivaVigenciaMes("8", "2026", 9, 2026), "");
+});
+
+Deno.test("montarDiretivaVigenciaMes: mes fora de 1-12 devolve vazio", () => {
+  assertEquals(montarDiretivaVigenciaMes(0, 2026, 9, 2026), "");
+  assertEquals(montarDiretivaVigenciaMes(13, 2026, 9, 2026), "");
+  assertEquals(montarDiretivaVigenciaMes(1.5, 2026, 9, 2026), "", "nao inteiro tambem cai fora");
+});
+
+Deno.test("montarDiretivaVigenciaMes: mes/ano igual ao atual devolve vazio — AC3 (prompt byte-a-byte igual)", () => {
+  assertEquals(montarDiretivaVigenciaMes(9, 2026, 9, 2026), "");
+});
+
+Deno.test("montarDiretivaVigenciaMes: mes anterior, mesmo ano, devolve diretiva com os nomes corretos — AC4", () => {
+  const d = montarDiretivaVigenciaMes(8, 2026, 9, 2026);
+  assertEquals(d.includes("agosto de 2026"), true, "mes carregado (8) tem que aparecer como 'agosto', nao 'julho' nem outro — mesmo bug que a migration SQL teve");
+  assertEquals(d.includes("setembro de 2026"), true, "mes atual (9) tem que aparecer como 'setembro'");
+  assertEquals(d.includes("ja passou"), true);
+  assertEquals(d.includes("NAO apresente estes horarios como vigentes"), true);
+});
+
+Deno.test("montarDiretivaVigenciaMes: mes 1 (janeiro) e mes 12 (dezembro) — os dois extremos do array, onde erro de indice mais aparece", () => {
+  const janeiro = montarDiretivaVigenciaMes(1, 2026, 2, 2026);
+  assertEquals(janeiro.includes("janeiro de 2026"), true);
+
+  const dezembro = montarDiretivaVigenciaMes(12, 2025, 1, 2026);
+  assertEquals(dezembro.includes("dezembro de 2025"), true);
+  assertEquals(dezembro.includes("janeiro de 2026"), true, "mes atual (janeiro/2026) tambem tem que sair certo quando o mes carregado e do ano anterior");
+});
+
+Deno.test("montarDiretivaVigenciaMes: virada de ano — dezembro do ano anterior e mes anterior ao atual", () => {
+  const d = montarDiretivaVigenciaMes(12, 2025, 2, 2026);
+  assertEquals(d.includes("dezembro de 2025"), true);
+  assertEquals(d.includes("fevereiro de 2026"), true);
+});
+
+Deno.test("montarDiretivaVigenciaMes: mes 'futuro' (ano atual, mes a frente do atual) devolve vazio — nao deveria acontecer no fluxo real, mas nao inventa diretiva", () => {
+  assertEquals(montarDiretivaVigenciaMes(10, 2026, 9, 2026), "");
+});
+
+Deno.test("montarDiretivaVigenciaMes: ano futuro tambem devolve vazio, mesma logica de seguranca", () => {
+  assertEquals(montarDiretivaVigenciaMes(1, 2027, 9, 2026), "");
+});
+
+Deno.test("montarDiretivaVigenciaMes: todos os 12 meses, um a um, nomeados corretamente (regressao direta do bug de indice da migration SQL)", () => {
+  const nomes = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+  for (let mes = 1; mes <= 12; mes++) {
+    // mesAtual fixo em 12 (dezembro) do MESMO ano — assim todo mes 1..11 conta como "anterior"
+    // dentro do mesmo ano, e so o mes 12 fica igual ao atual (esperado "").
+    const mesAtualTeste = 12;
+    const resultado = montarDiretivaVigenciaMes(mes, 2026, mesAtualTeste, 2026);
+    if (mes === mesAtualTeste) {
+      assertEquals(resultado, "", `mes ${mes} == mesAtual, esperado vazio`);
+    } else {
+      assertEquals(resultado.includes(nomes[mes - 1] + " de 2026"), true, `mes ${mes} deveria conter '${nomes[mes - 1]}', resultado: ${resultado}`);
+    }
+  }
 });
