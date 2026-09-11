@@ -127,7 +127,10 @@ export default function CampanhaMensalPage() {
             const data = await res.json()
             if (!res.ok) {
                 if (res.status === 409 && data.totalProblemas) {
-                    toast.error(`Não é possível enviar: ${data.totalProblemas} ponto(s) a revisar. Abra "Ver Atividades" e corrija antes.`)
+                    // S-PROG-11 (item 4, achado adicional): esta função só é chamada dentro desta
+                    // própria página, que já É a tela de atividades — não existe "abrir Ver
+                    // Atividades" pra fazer, o usuário já está vendo a grade abaixo.
+                    toast.error(`Não é possível enviar: ${data.totalProblemas} ponto(s) a revisar. Corrija nas atividades abaixo antes de tentar de novo.`)
                 } else {
                     toast.error(data.error || "Erro ao alterar status")
                 }

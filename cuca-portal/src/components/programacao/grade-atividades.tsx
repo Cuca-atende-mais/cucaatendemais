@@ -4,18 +4,20 @@
 // atividade. Edição direta na célula, ＋ nova linha, ⧉ duplicar linha, 🗑 excluir linha.
 // Abaixo de 820px (AC8) vira cartão por linha, com rótulo em cada campo.
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import toast from "react-hot-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Plus, Copy, Trash2, FileText, Dumbbell, GraduationCap, CalendarDays, Sparkles, LayoutGrid } from "lucide-react"
+import { Plus, Copy, Trash2, FileText, Dumbbell, GraduationCap, CalendarDays, Sparkles, LayoutGrid, ArrowDownToLine } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useMediaQuery } from "@/hooks/use-media-query"
 import { AtividadeForm, Categoria, DIAS_SEMANA, DIAS_SEMANA_ABREV, SESSOES_DIA_A_DIA, SEXOS } from "@/lib/programacao/tipos"
 import { aplicarMascaraDataDigitando, aplicarMascaraHoraDigitando, dataBrParaISO, exibirData, normalizarData, normalizarHora } from "@/lib/programacao/mascaras"
+import { campoBloqueadoParaPreencherAbaixo, preencherColunaAbaixo } from "@/lib/programacao/preencher-abaixo"
 import { RotuloComAjuda } from "@/components/programacao/ajuda-campo"
 import { CampoComAjuda } from "@/lib/programacao/ajuda"
 
@@ -128,15 +130,31 @@ interface GradeAtividadesProps {
     atividades: AtividadeForm[]
     onChange: (atividades: AtividadeForm[]) => void
     onAbrirFicha: (tempId: string, focoCampo?: string) => void
+    // S-PROG-11 (item 3): notifica o pai qual atividade está selecionada agora — o painel "Texto
+    // enviado ao RAG" (modo desenvolvedor) vive em `criar-programacao-view.tsx`, não aqui dentro,
+    // e precisa saber qual linha mostrar sem a grade virar controlada de fora (mais invasivo).
+    onLinhaAtivaChange?: (atividade: AtividadeForm | null) => void
 }
 
-export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAtividadesProps) {
+export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAtivaChange }: GradeAtividadesProps) {
     const [categoria, setCategoria] = useState<Categoria>("ESPORTES")
     const [linhaAtiva, setLinhaAtiva] = useState<string | null>(null)
+    // S-PROG-11 (item 1): coluna em foco — junto com `linhaAtiva`, é o que "Preencher abaixo"
+    // precisa saber (linha de origem + qual campo propagar). Setada via `onFoco` de cada célula.
+    const [colunaFoco, setColunaFoco] = useState<string | null>(null)
     const isCompacto = !useMediaQuery("(min-width: 820px)")
 
     const daCategoria = atividades.filter(a => a.categoria === categoria)
     const colunas = COLUNAS[categoria]
+
+    // S-PROG-11 (item 3): avisa o pai a cada mudança de seleção OU de conteúdo da linha
+    // selecionada — o painel de RAG precisa refletir a edição em tempo real, não só a troca de
+    // linha (o texto/metadata mudam a cada tecla enquanto a linha continua selecionada).
+    useEffect(() => {
+        const atividadeAtiva = atividades.find(a => a._tempId === linhaAtiva) || null
+        onLinhaAtivaChange?.(atividadeAtiva)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [linhaAtiva, atividades])
 
     const atualizarAtividade = (tempId: string, patch: Partial<AtividadeForm> | ((a: AtividadeForm) => AtividadeForm)) => {
         onChange(atividades.map(a => {
@@ -199,6 +217,22 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAti
         if (linhaAtiva === tempId) setLinhaAtiva(null)
     }
 
+    // S-PROG-11 (item 1): "↓ Preencher abaixo" — precisa saber se a coluna em foco é `root` (lê
+    // direto em AtividadeForm) pra montar a chamada da função pura; a própria especificação de
+    // colunas (`colunas`, calculada abaixo de `categoria`) já carrega essa informação por coluna.
+    const preencherAbaixo = () => {
+        if (!linhaAtiva || !colunaFoco) return
+        const coluna = colunas.find(c => c.key === colunaFoco)
+        if (!coluna) return
+        const { atividades: atualizadas, linhasPreenchidas } = preencherColunaAbaixo(atividades, linhaAtiva, coluna.key, !!coluna.root)
+        if (linhasPreenchidas > 0) onChange(atualizadas)
+        toast.success(
+            linhasPreenchidas > 0
+                ? `Preenchido em ${linhasPreenchidas} ${linhasPreenchidas === 1 ? "linha" : "linhas"}.`
+                : "Nenhuma célula vazia abaixo para preencher.",
+        )
+    }
+
     return (
         <div className="space-y-4">
             <div className="flex gap-2 flex-wrap">
@@ -241,6 +275,13 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAti
                             <Button size="default" variant="outline" className="gap-1.5 text-red-400 hover:text-red-400 hover:bg-red-500/10 border-red-500/30" onClick={() => excluirLinha(linhaAtiva)}>
                                 <Trash2 className="h-4 w-4" /> Excluir linha
                             </Button>
+                            {/* S-PROG-11 (item 1): só aparece com uma linha selecionada E um campo
+                                em foco — as duas condições que a story exige antes de agir. */}
+                            {colunaFoco && !campoBloqueadoParaPreencherAbaixo(colunaFoco) && colunas.some(c => c.key === colunaFoco) && (
+                                <Button size="default" variant="outline" className="gap-1.5" onClick={preencherAbaixo}>
+                                    <ArrowDownToLine className="h-4 w-4" /> Preencher abaixo
+                                </Button>
+                            )}
                         </>
                     )}
                 </div>
@@ -274,6 +315,7 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAti
                             onSetCampo={(col, v) => setCampo(a._tempId, col, v)}
                             onToggleDia={d => toggleDia(a._tempId, d)}
                             onAbrirFicha={focoCampo => onAbrirFicha(a._tempId, focoCampo)}
+                            onFoco={colKey => { setLinhaAtiva(a._tempId); setColunaFoco(colKey) }}
                         />
                     ))}
                 </div>
@@ -318,6 +360,7 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAti
                                                 onChange={v => setCampo(a._tempId, col, v)}
                                                 onToggleDia={d => toggleDia(a._tempId, d)}
                                                 onAbrirFicha={campo => onAbrirFicha(a._tempId, campo)}
+                                                onFoco={() => { setLinhaAtiva(a._tempId); setColunaFoco(col.key) }}
                                             />
                                         </td>
                                     ))}
@@ -332,21 +375,45 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha }: GradeAti
                     </table>
                 </div>
             )}
+
+            {/* S-PROG-11 (item 2): legenda das cores da grade — só a legenda nesta story (decisão
+                do Junior); amber-500 é a mesma cor que o botão de texto longo já usa quando vazio
+                (`border-amber-500/40 bg-amber-500/10`, acima); `destructive` é o token do design
+                system pra vermelho/inválido (mesmo valor OKLCH do `--danger` do protótipo) —
+                nenhuma cor literal, os dois tokens já existem em `globals.css` pros dois temas. */}
+            {daCategoria.length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground px-1">
+                    <span className="flex items-center gap-1.5">
+                        <span className="h-3 w-3 rounded-sm border border-amber-500/40 bg-amber-500/10" />
+                        Falta preencher
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                        <span className="h-3 w-3 rounded-sm border border-destructive/40 bg-destructive/22" />
+                        Inválido
+                    </span>
+                    <span className="italic">Textos longos abrem em painel próprio — clique no campo</span>
+                </div>
+            )}
         </div>
     )
 }
 
 // ─── Renderizador de célula (compartilhado entre tabela e cartão) ─────────────
 
-function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }: { atividade: AtividadeForm; coluna: Coluna; onChange: (v: string) => void; onToggleDia: (d: string) => void; onAbrirFicha?: (focoCampo: string) => void }) {
+function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha, onFoco }: { atividade: AtividadeForm; coluna: Coluna; onChange: (v: string) => void; onToggleDia: (d: string) => void; onAbrirFicha?: (focoCampo: string) => void; onFoco?: (colunaKey: string) => void }) {
     const valor = getValor(atividade, coluna)
+    // S-PROG-11 (item 1): toda célula reporta "estou em foco" — é o sinal que a toolbar usa pra
+    // saber qual coluna "Preencher abaixo" deve propagar. `onFocus` nos campos de digitação;
+    // `onClick`/`onPointerDown` nos que abrem Select/Popover/Ficha (não dependem de foco de
+    // teclado — o clique já é a intenção de interagir com aquela célula).
+    const foco = () => onFoco?.(coluna.key)
 
     if (coluna.tipo === "texto_longo") {
         const preenchido = valor.trim().length > 0
         return (
             <button
                 type="button"
-                onClick={() => onAbrirFicha?.(coluna.key)}
+                onClick={() => { foco(); onAbrirFicha?.(coluna.key) }}
                 className={cn(
                     "h-10 w-full px-3 text-sm text-left border rounded-lg flex items-center gap-2 transition-colors",
                     preenchido ? "border-border hover:border-primary/50 bg-background/60" : "border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/15"
@@ -365,7 +432,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
     if (coluna.tipo === "sexo") {
         return (
             <Select value={valor} onValueChange={onChange}>
-                <SelectTrigger className="h-10 text-sm w-full"><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                <SelectTrigger className="h-10 text-sm w-full" onFocus={foco}><SelectValue placeholder="Selecionar" /></SelectTrigger>
                 <SelectContent>{SEXOS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
             </Select>
         )
@@ -374,7 +441,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
     if (coluna.tipo === "sessao") {
         return (
             <Select value={valor} onValueChange={onChange}>
-                <SelectTrigger className="h-10 text-sm w-full"><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                <SelectTrigger className="h-10 text-sm w-full" onFocus={foco}><SelectValue placeholder="Selecionar" /></SelectTrigger>
                 <SelectContent>{SESSOES_DIA_A_DIA.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
             </Select>
         )
@@ -385,7 +452,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
         return (
             <Popover>
                 <PopoverTrigger asChild>
-                    <button type="button" className="h-10 w-full px-3 text-sm text-left border border-border hover:border-primary/50 rounded-lg truncate bg-background/60 transition-colors">
+                    <button type="button" onClick={foco} className="h-10 w-full px-3 text-sm text-left border border-border hover:border-primary/50 rounded-lg truncate bg-background/60 transition-colors">
                         {selecionados.length ? selecionados.map(d => DIAS_SEMANA_ABREV[d]).join(", ") : <span className="text-muted-foreground">Selecionar</span>}
                     </button>
                 </PopoverTrigger>
@@ -414,6 +481,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
                 maxLength={5}
                 placeholder="--:--"
                 value={valor}
+                onFocus={foco}
                 onChange={e => onChange(aplicarMascaraHoraDigitando(e.target.value))}
                 onBlur={e => {
                     const r = normalizarHora(e.target.value)
@@ -431,6 +499,7 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
                 maxLength={10}
                 placeholder="--/--/----"
                 value={valor}
+                onFocus={foco}
                 onChange={e => onChange(aplicarMascaraDataDigitando(e.target.value))}
                 onBlur={e => {
                     const r = normalizarData(e.target.value)
@@ -446,18 +515,19 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha }:
                 className="h-10 text-sm text-center font-medium"
                 inputMode="numeric"
                 value={valor}
+                onFocus={foco}
                 onChange={e => onChange(e.target.value.replace(/\D/g, ""))}
             />
         )
     }
 
-    return <Input className="h-10 text-sm" value={valor} onChange={e => onChange(e.target.value)} />
+    return <Input className="h-10 text-sm" value={valor} onFocus={foco} onChange={e => onChange(e.target.value)} />
 }
 
 // ─── Cartão de linha (mobile, abaixo de 820px — AC8) ──────────────────────────
 
 function CartaoLinha({
-    atividade, indice, colunas, ativa, onSelecionar, onSetCampo, onToggleDia, onAbrirFicha,
+    atividade, indice, colunas, ativa, onSelecionar, onSetCampo, onToggleDia, onAbrirFicha, onFoco,
 }: {
     atividade: AtividadeForm
     indice: number
@@ -467,6 +537,7 @@ function CartaoLinha({
     onSetCampo: (col: Coluna, v: string) => void
     onToggleDia: (d: string) => void
     onAbrirFicha: (focoCampo?: string) => void
+    onFoco: (colunaKey: string) => void
 }) {
     const info = CATEGORIA_INFO[atividade.categoria]
     return (
@@ -489,7 +560,7 @@ function CartaoLinha({
                     <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                         <RotuloComAjuda texto={col.label} campo={col.ajuda} />
                     </span>
-                    <CelulaCampo atividade={atividade} coluna={col} onChange={v => onSetCampo(col, v)} onToggleDia={onToggleDia} onAbrirFicha={onAbrirFicha} />
+                    <CelulaCampo atividade={atividade} coluna={col} onChange={v => onSetCampo(col, v)} onToggleDia={onToggleDia} onAbrirFicha={onAbrirFicha} onFoco={onFoco} />
                 </div>
             ))}
         </div>
