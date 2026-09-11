@@ -6,8 +6,7 @@
 // em vez de um Dialog, seguindo o mesmo padrão já usado por /programacao/mensal/[id] (voltar com
 // ArrowLeft, header de página, sem overlay). Coexiste com o upload de planilha — não substitui.
 
-import { useState } from "react"
-import { AVISO_VAGAS } from "@/lib/programacao/rag"
+import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -16,14 +15,21 @@ import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Plus } from "lucide-react"
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
 import { unidadesCuca } from "@/lib/constants"
-import { AtividadeForm, DIAS_SEMANA_ABREV } from "@/lib/programacao/tipos"
+import { AtividadeForm } from "@/lib/programacao/tipos"
 import { calcularProblemas, Problema } from "@/lib/programacao/revisao"
+import { montarAtividadePayload } from "@/lib/programacao/payload"
+import { atividadeFormDeLinhaExistente } from "@/lib/programacao/duplicar"
 import { GradeAtividades } from "@/components/programacao/grade-atividades"
 import { FichaAtividade } from "@/components/programacao/ficha-atividade"
+import { SelecionarOrigem } from "@/components/programacao/selecionar-origem"
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -43,6 +49,12 @@ type AtividadeInterna = AtividadeForm
 
 interface CriarProgramacaoViewProps {
     unidadeInicial?: string
+    // S-PROG-09 (item 2): com `campanhaId`, o componente deixa de ser "criar do zero" e passa a
+    // ser "abrir e continuar um rascunho já gravado" — carrega campanha + atividades do banco,
+    // pula Cabeçalho e Origem (já decididos quando o rascunho nasceu) e grava por
+    // `PATCH /api/programacao/rascunho` (preserva o id) em vez de `POST /api/programacao/importar`
+    // (que apaga e recria — ver Dev Agent Record da story pro motivo).
+    campanhaId?: string
     onCancel: () => void
     onSuccess: () => void
 }
@@ -54,129 +66,19 @@ interface CriarProgramacaoViewProps {
 // 126 atividades de ESPORTES num único mês), não o formulário em si. A grade permite editar
 // várias linhas incompletas ao mesmo tempo; bloquear o envio é escopo da S-PROG-04 (fluxo de
 // aprovação), fora desta story.
-
-// ─── Helpers de validação e montagem do payload ────────────────────────────────
-
-function montarAtividadePayload(a: Partial<AtividadeInterna>, unidade: string): any {
-    const meta = { ...a.metadata }
-    // `hora_inicio`/`hora_fim` são coluna `time` no Postgres — `""` não é um `time` válido
-    // (`invalid input syntax for type time: ""`, confirmado direto no banco). A grade permite
-    // deixar o horário em branco de propósito (S-PROG-01/02: zerado na duplicação), então isso
-    // quebrava o INSERT inteiro sempre que alguém salvava com horário vazio. `null` é o valor
-    // seguro — mesmo padrão já usado por `parseTimeString` no import de planilha.
-    const fmtTime = (t: string): string | null => {
-        const s = t?.substring(0, 5)
-        return s || null
-    }
-    const hi = fmtTime(a.hora_inicio || "")
-    const hf = fmtTime(a.hora_fim || "")
-    // Só para montar texto (descrição/RAG e metadata.horario) — nunca vai direto pra coluna `time`.
-    const hiTxt = hi || ""
-    const hfTxt = hf || ""
-
-    if (a.categoria === "CURSOS") {
-        const fmtDate = (iso: string) => {
-            if (!iso) return ""
-            const [y, m, d] = iso.split("-")
-            return `${d}/${m}/${y}`
-        }
-        const diasStr = (meta.dias_raw || []).map((d: string) => DIAS_SEMANA_ABREV[d]).join(" e ")
-        const periodoStr = `${fmtDate(meta.data_inicio_raw)} ${fmtDate(meta.data_fim_raw)} ${diasStr}`
-        const horarioStr = `${hiTxt} às ${hfTxt}`
-        // Descricao no mesmo formato que o trigger trigger_indexar_campanha_mensal usa para montar o RAG
-        const descricao = `Curso: ${a.titulo}. Educador: ${meta.educador}. Carga Horária: ${meta.carga_horaria}h. Período: ${periodoStr}. Horário: ${horarioStr}. Requisitos: ${meta.requisitos}. Ementa: ${meta.ementa}. ${AVISO_VAGAS}`
-        return {
-            titulo: a.titulo,
-            categoria: "CURSOS",
-            descricao: descricao.substring(0, 1500),
-            local: null,
-            data_atividade: meta.data_inicio_raw || null,
-            hora_inicio: hi,
-            hora_fim: hf,
-            unidade_cuca: unidade,
-            metadata: {
-                ementa: meta.ementa,
-                educador: meta.educador,
-                vagas: String(meta.vagas),
-                carga_horaria: String(meta.carga_horaria),
-                requisitos: meta.requisitos,
-                periodo: periodoStr,
-                horario: horarioStr,
-                dias_semana: diasStr,
-                // S-PROG-01 (item 4): Meta e Diretoria — chaves aditivas, não vão ao RAG nem à
-                // exportação nesta story (contrato de gravação não muda, isso é S-PROG-03/05).
-                meta: meta.meta || null,
-                diretoria: meta.diretoria || null,
-            },
-        }
-    }
-
-    if (a.categoria === "ESPORTES") {
-        const diasStr = (meta.dias_raw || []).map((d: string) => DIAS_SEMANA_ABREV[d]).join(" e ")
-        const turmaStr = meta.turma?.startsWith("Turma") ? meta.turma : `Turma ${meta.turma}`
-        // S-PROG-01 (item 2): idade máxima é opcional — sem ela, "a partir de X anos".
-        const faixaStr = meta.faixa_ate ? `${meta.faixa_de} a ${meta.faixa_ate} anos` : `a partir de ${meta.faixa_de} anos`
-        const horarioStr = `${hiTxt} às ${hfTxt}`
-        // Descricao no mesmo formato que o trigger usa para montar o RAG
-        const descricao = `Esporte Modalidade: ${a.titulo} - ${turmaStr}. Professor: ${meta.professor}. Público: ${meta.sexo} (Idade: ${faixaStr}). Dias: ${diasStr}. Horário: ${horarioStr}. ${AVISO_VAGAS}`
-        return {
-            titulo: a.titulo,
-            categoria: "ESPORTES",
-            descricao: descricao.substring(0, 1500),
-            local: null,
-            data_atividade: null,
-            hora_inicio: hi,
-            hora_fim: hf,
-            unidade_cuca: unidade,
-            metadata: {
-                professor: meta.professor,
-                turma: turmaStr,
-                faixa_etaria: faixaStr,
-                sexo: meta.sexo,
-                vagas: String(meta.vagas),
-                dias_semana: diasStr,
-                horario: horarioStr,
-                meta: meta.meta || null,
-                diretoria: meta.diretoria || null,
-            },
-        }
-    }
-
-    // DIA A DIA / ESPECIAIS
-    const categoriaLabel = a.categoria as string
-    // Descricao no mesmo formato que o trigger usa para montar o RAG
-    const descricaoDiaDia = `Programa (${categoriaLabel}): ${a.titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${hiTxt} às ${hfTxt}. Local: ${a.local}. Informações: ${meta.informacoes || ""}. Sessão: ${meta.sessao}.`
-    return {
-        titulo: a.titulo,
-        categoria: a.categoria,
-        descricao: descricaoDiaDia.substring(0, 1500),
-        local: a.local || null,
-        data_atividade: a.data_atividade || null,
-        hora_inicio: hi,
-        hora_fim: hf,
-        unidade_cuca: unidade,
-        metadata: {
-            sessao: meta.sessao,
-            data_real: meta.data_real,
-            dia_semana: meta.dia_semana,
-            atividade: meta.atividade,
-            hora_inicio: hi,
-            hora_fim: hf,
-            local: a.local,
-            informacoes: meta.informacoes || null,
-            meta: meta.meta || null,
-            diretoria: meta.diretoria || null,
-        },
-    }
-}
+// `montarAtividadePayload` — S-PROG-03 (item 1) extraiu para lib/programacao/payload.ts (testável).
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess }: CriarProgramacaoViewProps) {
+export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel, onSuccess }: CriarProgramacaoViewProps) {
     const supabase = createClient()
+    const modoEdicao = !!campanhaId
 
-    // Step: 1 = Cabeçalho, 2 = Atividades, 3 = Revisão
-    const [step, setStep] = useState(1)
+    // Step: 1 = Cabeçalho, 2 = Origem (S-PROG-02), 3 = Atividades, 4 = Revisão
+    // Em modo edição (campanhaId) começa direto em 3 — Cabeçalho e Origem já foram decididos
+    // quando o rascunho nasceu (S-PROG-09 item 2).
+    const [step, setStep] = useState(modoEdicao ? 3 : 1)
+    const [carregandoRascunho, setCarregandoRascunho] = useState(modoEdicao)
 
     // Cabeçalho (Step 1)
     const anoCorrente = new Date().getFullYear()
@@ -194,10 +96,116 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
     const [fichaTempId, setFichaTempId] = useState<string | null>(null)
     const [fichaFocoCampo, setFichaFocoCampo] = useState<string | undefined>(undefined)
 
-    // Submit
+    // Submit — AC4 da S-PROG-02: nunca sobrescreve campanha existente sem confirmação explícita
+    // (antes disso, `/api/programacao/importar` apagava sem avisar; corrigido junto nesta story,
+    // ver também o próprio endpoint).
     const [salvando, setSalvando] = useState(false)
+    const [confirmarSubstituicaoAberto, setConfirmarSubstituicaoAberto] = useState(false)
+
+    // S-PROG-09 (item 4): indicador de alterações não salvas — só faz sentido em modo edição,
+    // porque só ali o dado já está gravado no banco antes de abrir a tela ("Nada é gravado até
+    // salvar", a frase do protótipo pra criação do zero, deixa de ser verdade aqui). `snapshot`
+    // é o JSON das atividades no momento em que a tela abriu (ou da última gravação bem-sucedida)
+    // — comparar contra o estado atual é o jeito mais simples de detectar mudança sem replicar
+    // um diff campo a campo por atividade.
+    const [snapshotAtividades, setSnapshotAtividades] = useState<string>("[]")
+    const [confirmarSairAberto, setConfirmarSairAberto] = useState(false)
 
     const nomeMes = MESES_LISTA.find(m => m.value === mesSel)?.label || ""
+    // Em modo edição a tela nasce direto em 3 (Atividades) — "Voltar" a partir dali sai da
+    // página, não existe Cabeçalho/Origem pra revisitar (S-PROG-09 item 2).
+    const primeiroStep = modoEdicao ? 3 : 1
+
+    // ── Modo edição (S-PROG-09 item 2): carrega campanha + atividades já gravadas ─────────────
+    // Efeito roda uma vez (campanhaId não muda depois de montado — é sempre a mesma página).
+    // `supabase`/`onCancel` de propósito fora do array: `supabase` é estável (criado 1x por
+    // render, mesmo padrão de todo o resto do componente); incluir `onCancel` re-executaria o
+    // fetch a cada render do componente pai (a prop é recriada como closure nova ali).
+    useEffect(() => {
+        if (!campanhaId) return
+
+        let cancelado = false
+        ;(async () => {
+            const { data: camp, error: campErr } = await supabase
+                .from("campanhas_mensais")
+                .select("id, titulo, unidade_cuca, mes, ano, status")
+                .eq("id", campanhaId)
+                .single()
+
+            if (cancelado) return
+
+            if (campErr || !camp) {
+                toast.error("Não foi possível carregar esta programação.")
+                onCancel()
+                return
+            }
+            if (camp.status !== "rascunho") {
+                // AC5 da S-PROG-09: só rascunho é editável por esta rota — reforça no cliente o
+                // que a função `programacao_salvar_rascunho` já recusa no servidor.
+                toast.error(`Esta programação não está mais em rascunho (status: ${camp.status}) — não pode ser editada por aqui.`)
+                onCancel()
+                return
+            }
+
+            const { data: linhas, error: atvErr } = await supabase
+                .from("atividades_mensais")
+                .select("id, categoria, titulo, descricao, local, data_atividade, hora_inicio, hora_fim, metadata")
+                .eq("campanha_id", campanhaId)
+                .order("categoria", { ascending: true })
+
+            if (cancelado) return
+
+            if (atvErr) {
+                toast.error("Não foi possível carregar as atividades desta programação.")
+                onCancel()
+                return
+            }
+
+            setMesSel(camp.mes)
+            setAnoSel(camp.ano)
+            setUnidadeSel(camp.unidade_cuca)
+
+            const convertidas = (linhas || [])
+                .map(l => atividadeFormDeLinhaExistente(l, l.id, { zerar: false }))
+                .filter((a): a is AtividadeForm => a !== null)
+
+            if (convertidas.length < (linhas || []).length) {
+                toast.error(`${(linhas || []).length - convertidas.length} atividade(s) com categoria inválida não pôde(puderam) ser carregada(s).`)
+            }
+
+            setAtividades(convertidas)
+            setSnapshotAtividades(JSON.stringify(convertidas))
+            setCarregandoRascunho(false)
+        })()
+
+        return () => { cancelado = true }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [campanhaId])
+
+    // "Sujo" só é um conceito de modo edição — na criação do zero, nada gravado ainda existe pra
+    // comparar (é sempre a mesma situação que a mensagem "Nada é gravado até salvar" já cobre).
+    const alteracoesNaoSalvas = modoEdicao && JSON.stringify(atividades) !== snapshotAtividades
+
+    // Aviso do navegador ao fechar a aba/atualizar com alteração pendente (AC6).
+    useEffect(() => {
+        if (!alteracoesNaoSalvas) return
+        const avisar = (e: BeforeUnloadEvent) => {
+            e.preventDefault()
+            e.returnValue = ""
+        }
+        window.addEventListener("beforeunload", avisar)
+        return () => window.removeEventListener("beforeunload", avisar)
+    }, [alteracoesNaoSalvas])
+
+    // Navegação interna (ArrowLeft do header, "Cancelar"/"Voltar" do primeiro passo): pede
+    // confirmação em vez de sair direto quando há alteração pendente (AC6).
+    const handleTentarSair = () => {
+        if (alteracoesNaoSalvas) {
+            setConfirmarSairAberto(true)
+            return
+        }
+        onCancel()
+    }
 
     // ── Ficha da atividade: abrir/fechar/navegar entre linhas da MESMA categoria ──────────────
     const atividadeDaFicha = atividades.find(a => a._tempId === fichaTempId) || null
@@ -250,12 +258,50 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
         setStep(2)
     }
 
-    // ── Submit: salvar como rascunho ───────────────────────────────────────────
-    const handleSalvarRascunho = async () => {
-        if (atividades.length === 0) {
-            toast.error("Adicione pelo menos uma atividade antes de salvar.")
-            return
+    // ── Step 2: origem (S-PROG-02) — zero ou duplicar mês anterior ─────────────
+    const handleEscolherZero = () => {
+        setAtividades([])
+        setStep(3)
+    }
+
+    const handleEscolherDuplicar = (duplicadas: AtividadeInterna[]) => {
+        setAtividades(duplicadas)
+        toast.success(`${duplicadas.length} atividade(s) copiada(s) — revise data, horário e vagas antes de salvar.`)
+        setStep(3)
+    }
+
+    // ── Submit: grava rascunho já existente, sem apagar a campanha (S-PROG-09 item 2) ──────────
+    // Único caminho quando `campanhaId` está presente. Nunca passa por `/api/programacao/importar`
+    // (que apaga e recria) — sempre `PATCH /api/programacao/rascunho`, que preserva o id.
+    const executarSalvamentoEdicao = async () => {
+        setSalvando(true)
+        try {
+            const titulo = `Programação ${unidadeSel} — ${nomeMes} ${anoSel}`
+            const atividadesPayload = atividades.map(a => montarAtividadePayload(a, unidadeSel))
+
+            const res = await fetch("/api/programacao/rascunho", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ campanha_id: campanhaId, titulo, atividades: atividadesPayload }),
+            })
+
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Erro ao salvar")
+
+            setSnapshotAtividades(JSON.stringify(atividades))
+            toast.success("Alterações salvas.")
+            onSuccess()
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Erro ao salvar")
+        } finally {
+            setSalvando(false)
         }
+    }
+
+    // ── Submit: salvar como rascunho (criação nova) ────────────────────────────
+    // `confirmarSubstituicao` só é `true` depois que o usuário confirma explicitamente no
+    // AlertDialog (AC4 da S-PROG-02) — sem isso, o endpoint recusa apagar a campanha existente.
+    const executarSalvamento = async (confirmarSubstituicao: boolean) => {
         setSalvando(true)
         try {
             const titulo = `Programação ${unidadeSel} — ${nomeMes} ${anoSel}`
@@ -276,10 +322,17 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
             const res = await fetch("/api/programacao/importar", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanha: campanhaPayload, atividades: atividadesPayload }),
+                body: JSON.stringify({ campanha: campanhaPayload, atividades: atividadesPayload, confirmarSubstituicao }),
             })
 
             const data = await res.json()
+            if (res.status === 409 && data.conflito) {
+                // Servidor detectou campanha existente que o cliente não sabia (corrida entre
+                // duas pessoas editando ao mesmo tempo) — mesmo tratamento do AlertDialog local.
+                setCampanhaExistente(data.conflito)
+                setConfirmarSubstituicaoAberto(true)
+                return
+            }
             if (!res.ok) throw new Error(data.error || "Erro ao salvar")
 
             // Aguarda 1.5s para a replicação do Supabase antes de voltar e atualizar
@@ -288,11 +341,27 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
                 toast.success("Programação salva como rascunho! Clique em 'Ver Atividades' para abrir.")
                 onSuccess()
             }, 1500)
-        } catch (e: any) {
-            toast.error(e.message || "Erro ao salvar")
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Erro ao salvar")
         } finally {
             setSalvando(false)
         }
+    }
+
+    const handleSalvarRascunhoClick = () => {
+        if (atividades.length === 0) {
+            toast.error("Adicione pelo menos uma atividade antes de salvar.")
+            return
+        }
+        if (modoEdicao) {
+            executarSalvamentoEdicao()
+            return
+        }
+        if (campanhaExistente) {
+            setConfirmarSubstituicaoAberto(true)
+            return
+        }
+        executarSalvamento(false)
     }
 
     // ── Contagem por categoria + painel de revisão (item 5) ────────────────────
@@ -304,11 +373,21 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
     const problemas: Problema[] = calcularProblemas(atividades)
     const [painelRevisaoAberto, setPainelRevisaoAberto] = useState(false)
 
+    // S-PROG-09 (item 2): enquanto carrega campanha + atividades do rascunho, não renderiza a
+    // tela — evita mostrar o stepper/grade vazios por um instante antes do fetch terminar.
+    if (carregandoRascunho) {
+        return (
+            <div className="flex items-center justify-center py-24">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+        )
+    }
+
     return (
         <div className="flex flex-col">
             {/* ── Header de página: mesmo padrão de /programacao/mensal/[id] (voltar com ArrowLeft) ── */}
             <div className="flex items-start gap-3.5 pb-5 border-b border-border">
-                <Button variant="ghost" size="icon" onClick={onCancel} className="mt-0.5 shrink-0">
+                <Button variant="ghost" size="icon" onClick={handleTentarSair} className="mt-0.5 shrink-0">
                     <ArrowLeft className="h-5 w-5" />
                 </Button>
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15 ring-1 ring-primary/30 shadow-[0_0_24px_-6px_var(--primary)]">
@@ -316,12 +395,25 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
                 </div>
                 <div className="flex-1 min-w-0">
                     <h1 className="text-xl font-bold tracking-tight">Criar Programação Mensal</h1>
-                    <p className="text-sm text-muted-foreground mt-0.5">
+                    <p className="text-sm text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
                         {step >= 2 && nomeMes ? (
                             <Badge variant="outline" className="font-semibold text-primary border-primary/40 bg-primary/5">
                                 {nomeMes} {anoSel} · {unidadeSel.replace("Cuca ", "")}
                             </Badge>
                         ) : "Grade editável por categoria — sem formulário por atividade."}
+                        {/* S-PROG-09 (item 4): só em modo edição — na criação do zero nada está
+                            gravado ainda, "Nada é gravado até salvar" já cobre o caso. */}
+                        {modoEdicao && (
+                            alteracoesNaoSalvas ? (
+                                <Badge className="bg-amber-500/10 text-amber-500 border-amber-500/40 font-semibold">
+                                    Alterações não salvas
+                                </Badge>
+                            ) : (
+                                <Badge className="bg-emerald-500/10 text-emerald-500 border-emerald-500/40 font-semibold">
+                                    Tudo salvo
+                                </Badge>
+                            )
+                        )}
                     </p>
                 </div>
             </div>
@@ -330,8 +422,9 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
             <div className="flex items-center py-5 max-w-md">
                 {[
                     { n: 1, label: "Cabeçalho" },
-                    { n: 2, label: "Atividades" },
-                    { n: 3, label: "Revisão" },
+                    { n: 2, label: "Origem" },
+                    { n: 3, label: "Atividades" },
+                    { n: 4, label: "Revisão" },
                 ].map(({ n, label }, i, arr) => (
                     <div key={n} className="flex items-center flex-1 last:flex-none">
                         <div className="flex items-center gap-2">
@@ -415,8 +508,17 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
                     </div>
                 )}
 
-                {/* ── STEP 2: Atividades (S-PROG-01: grade editável + ficha) ── */}
+                {/* ── STEP 2: Origem (S-PROG-02) — zero ou duplicar mês anterior ── */}
                 {step === 2 && (
+                    <SelecionarOrigem
+                        unidade={unidadeSel}
+                        onEscolherZero={handleEscolherZero}
+                        onEscolherDuplicar={handleEscolherDuplicar}
+                    />
+                )}
+
+                {/* ── STEP 3: Atividades (S-PROG-01: grade editável + ficha) ── */}
+                {step === 3 && (
                     <div className="space-y-4">
                         {/* Alerta de campanha existente (AC-8) */}
                         {campanhaExistente && (
@@ -462,8 +564,8 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
                     </div>
                 )}
 
-                {/* ── STEP 3: Revisão ── */}
-                {step === 3 && (
+                {/* ── STEP 4: Revisão ── */}
+                {step === 4 && (
                     <div className="space-y-5 max-w-2xl">
                         <div className="p-5 rounded-xl border border-border bg-card/60">
                             <p className="text-base font-bold mb-1">Resumo da Programação</p>
@@ -520,27 +622,30 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
             {/* ── Footer de navegação: fixo no rodapé da tela — não exige rolar a página inteira
                 pra achar o botão, mesmo com 126 linhas na grade ── */}
             <div className="sticky bottom-0 -mx-6 px-6 py-4 border-t border-border bg-background/95 backdrop-blur-sm flex justify-between gap-2">
-                <Button variant="ghost" size="lg" onClick={step === 1 ? onCancel : () => setStep(s => s - 1)} className="gap-1.5">
-                    {step === 1 ? "Cancelar" : <><ChevronLeft className="h-4 w-4" /> Voltar</>}
+                <Button variant="ghost" size="lg" onClick={step === primeiroStep ? handleTentarSair : () => setStep(s => s - 1)} className="gap-1.5">
+                    {step === primeiroStep ? "Cancelar" : <><ChevronLeft className="h-4 w-4" /> Voltar</>}
                 </Button>
 
                 <div className="flex gap-2">
-                    {step < 3 && (
-                        <Button
-                            size="lg"
-                            onClick={step === 1 ? handleAvancarStep1 : () => setStep(3)}
-                            disabled={verificandoDup}
-                            className="gap-1.5"
-                        >
+                    {step === 1 && (
+                        <Button size="lg" onClick={handleAvancarStep1} disabled={verificandoDup} className="gap-1.5">
                             {verificandoDup ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            {step === 2 && atividades.length === 0 ? "Revisar" : "Próximo"}
+                            Próximo
                             {!verificandoDup && <ChevronRight className="h-4 w-4" />}
                         </Button>
                     )}
+                    {/* Step 2 (Origem) não tem botão "Próximo" aqui — escolher um card ou
+                        "Começar do zero" já avança sozinho (ver SelecionarOrigem). */}
                     {step === 3 && (
+                        <Button size="lg" onClick={() => setStep(4)} className="gap-1.5">
+                            {atividades.length === 0 ? "Revisar" : "Próximo"}
+                            <ChevronRight className="h-4 w-4" />
+                        </Button>
+                    )}
+                    {step === 4 && (
                         <Button
                             size="lg"
-                            onClick={handleSalvarRascunho}
+                            onClick={handleSalvarRascunhoClick}
                             disabled={salvando || atividades.length === 0}
                             className="bg-primary text-primary-foreground gap-1.5"
                         >
@@ -550,6 +655,47 @@ export function CriarProgramacaoView({ unidadeInicial = "", onCancel, onSuccess 
                     )}
                 </div>
             </div>
+
+            {/* AC4 da S-PROG-02: confirmação explícita antes de substituir campanha existente —
+                nunca apaga sem esse passo (endpoint também recusa sem `confirmarSubstituicao`). */}
+            <AlertDialog open={confirmarSubstituicaoAberto} onOpenChange={setConfirmarSubstituicaoAberto}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Substituir programação existente?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Já existe uma programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (status:{" "}
+                            <em>{campanhaExistente?.status}</em>). Salvar agora vai <strong>apagar a existente</strong> e gravar esta como nova versão
+                            (rascunho). Essa ação não pode ser desfeita.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => { setConfirmarSubstituicaoAberto(false); executarSalvamento(true) }}>
+                            Sim, substituir
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* S-PROG-09 (item 4, AC6): sair com alteração pendente pede confirmação — o dado já
+                está gravado no banco (é um rascunho reaberto), diferente da criação do zero. */}
+            <AlertDialog open={confirmarSairAberto} onOpenChange={setConfirmarSairAberto}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Sair sem salvar as alterações?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Você fez alterações nesta programação que ainda não foram salvas. Saindo agora, elas se perdem —
+                            o que está gravado no banco continua como estava antes de abrir esta tela.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Continuar editando</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => { setConfirmarSairAberto(false); onCancel() }}>
+                            Sair sem salvar
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }

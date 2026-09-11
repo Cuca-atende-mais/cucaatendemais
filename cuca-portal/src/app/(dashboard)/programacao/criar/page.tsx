@@ -19,10 +19,14 @@ function CriarProgramacaoPageInterna() {
     const qc = useQueryClient()
 
     const unidadeInicial = searchParams.get("unidade") || ""
+    // S-PROG-09 (item 2/3): `?campanhaId=` é o destino de "Continuar edição" — carrega o
+    // rascunho gravado em vez de começar do zero. Ausente = fluxo de criação normal, inalterado.
+    const campanhaId = searchParams.get("campanhaId") || undefined
 
     return (
         <CriarProgramacaoView
             unidadeInicial={unidadeInicial}
+            campanhaId={campanhaId}
             onCancel={() => router.push("/programacao")}
             onSuccess={() => {
                 qc.invalidateQueries({ queryKey: PROGRAMACAO_KEY })

@@ -1,6 +1,6 @@
 # S-PROG-01 — Grade editável + ficha da atividade
 
-**Status:** InReview
+**Status:** InProgress (revertido de Done — ver Change Log 2026-09-10: item 1 incompleto, retomado pela S-PROG-11)
 **Epic:** Reestruturação da criação de programação
 **Origem:** Protótipo aprovado pelo sócio (`docs/programacao-manual/prototipo-programacao.html`),
 levantamento `LEVANTAMENTO-programacao-manual-2026-09-07.md` e planejamento
@@ -271,4 +271,6 @@ por não ter ferramenta própria de navegador autorizada nesta sessão para medi
 | 2026-09-09 | @qa (Quinn) | Revisão 2: CONCERNS — painel de revisão não detectava data incompleta salva como texto bruto |
 | 2026-09-09 | @dev (Dex) | Correção 2: `ehDataIncompleta()` em `revisao.ts` + 5 testes novos |
 | 2026-09-09 | @qa (Quinn) | Revisão 3: **PASS** |
-| 2026-09-09 | @devops (Gage) | Push da branch `feat/s-prog-01-grade-editavel-ficha-atividade`, PR aberto contra `main` — aguardando aprovação do Junior para merge |
+| 2026-09-09 | @devops (Gage) | Push da branch `feat/s-prog-01-grade-editavel-ficha-atividade`, PR #161 aberto contra `main` — aguardando aprovação do Junior para merge |
+| 2026-09-09 | @devops (Gage) | Status InReview → Done (implementação + QA PASS + push/PR concluídos, conforme tabela de transição de `story-lifecycle.md`) |
+| 2026-09-10 | @po (Pax) | **Status Done → InProgress.** A Revisão 3 (@qa) aprovou sem verificar o item 1 ("↓ preencher abaixo") contra o texto da story — a ferramenta nunca foi implementada e a story foi pra produção sem ela. Achado no levantamento de 2026-09-10. Retomado pela S-PROG-11, que fecha o item 1 e mais 3 pendências do protótipo. |
