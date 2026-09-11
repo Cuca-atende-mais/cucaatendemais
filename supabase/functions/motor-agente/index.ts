@@ -1122,6 +1122,74 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
   return chunks.map((c: { conteudo: string }) => removerVagasDoTexto(c.conteudo)).join("\n");
 }
 
+// S-PROG-10 (item 3): nomes de mês por extenso, em português. Array JS/TS é indexado a partir de
+// 0 — diferente do array PL/pgSQL da migration desta mesma story (item 2), onde o índice-base-1
+// causou um bug real (mês 8 virando "julho"). Aqui o acesso é sempre `NOMES_MES_EXTENSO[mes - 1]`
+// com `mes` 1-12 — testado nos dois extremos (1 e 12) pra não repetir o mesmo tipo de erro.
+const NOMES_MES_EXTENSO = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+
+/**
+ * S-PROG-10 (item 3): pura, sem I/O — decide a diretiva de vigência do mês a partir do
+ * `mes`/`ano` gravados em `documentos_rag.metadados` (S-PROG-10 item 1) comparados com o
+ * `mes`/`ano` de hoje (America/Fortaleza, calculado pelo caller). Calculada em código, nunca
+ * deduzida pelo modelo (exigência explícita da story).
+ *
+ * Devolve "" (nada é acrescentado ao prompt) em três casos:
+ *  - `mes`/`ano` ausentes ou de tipo errado — documento gravado antes desta story (AC5): cai no
+ *    comportamento atual, nunca quebra;
+ *  - `mes` fora de 1-12 — dado corrompido, mesma postura de nunca inventar;
+ *  - `mes`/`ano` batem com o mês corrente (AC3: o prompt final fica byte-a-byte igual ao de
+ *    antes desta story — @po reescreveu o AC assim porque "a resposta não muda" não é
+ *    verificável sem rodar o LLM, e o prompt montado é, determinístico).
+ *
+ * Só devolve a diretiva de alerta quando a programação carregada é de um mês estritamente
+ * ANTERIOR ao atual (AC4). Mês "futuro" (metadados à frente do calendário real, não deveria
+ * acontecer no fluxo normal) também devolve "" — por segurança, nunca inventa uma diretiva pra
+ * uma situação que não foi especificada.
+ */
+export function montarDiretivaVigenciaMes(
+  mes: unknown,
+  ano: unknown,
+  mesAtual: number,
+  anoAtual: number,
+): string {
+  if (typeof mes !== "number" || typeof ano !== "number") return "";
+  if (!Number.isInteger(mes) || mes < 1 || mes > 12) return "";
+  if (mes === mesAtual && ano === anoAtual) return "";
+
+  const ehMesPassado = ano < anoAtual || (ano === anoAtual && mes < mesAtual);
+  if (!ehMesPassado) return "";
+
+  const nomeMes = NOMES_MES_EXTENSO[mes - 1];
+  const nomeMesAtual = NOMES_MES_EXTENSO[mesAtual - 1];
+  return "\n\nATENCAO: a programacao carregada e de " + nomeMes + " de " + ano + ", que ja passou. " +
+    "A programacao de " + nomeMesAtual + " de " + anoAtual + " ainda nao foi publicada. " +
+    "NAO apresente estes horarios como vigentes, oriente a pessoa a confirmar na unidade.";
+}
+
+/**
+ * S-PROG-10 (item 3): busca o `metadados` do `monthly_program` ativo da unidade (mesma consulta
+ * base de `carregarProgramacaoMensal`/`buscarAtividadeDeterministica`, só que pedindo
+ * `metadados` em vez de `id`) e delega a decisão pra `montarDiretivaVigenciaMes` (pura, testada
+ * isoladamente). "Hoje" calculado via `Intl.DateTimeFormat` em vez de parsing de string — mesmo
+ * fuso (`America/Fortaleza`) que `DATA_ATUAL`, já usado no resto do prompt.
+ */
+async function calcularDiretivaVigenciaMes(supabase: ReturnType<typeof createClient<Database>>, unidade: string): Promise<string> {
+  const { data: doc } = await supabase.from("documentos_rag").select("metadados").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
+  const metadados = doc?.metadados as Record<string, unknown> | null;
+  const mes = metadados && typeof metadados === "object" ? metadados["mes"] : null;
+  const ano = metadados && typeof metadados === "object" ? metadados["ano"] : null;
+
+  const partes = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Fortaleza", year: "numeric", month: "numeric" }).formatToParts(new Date());
+  const anoAtual = Number(partes.find((p) => p.type === "year")?.value);
+  const mesAtual = Number(partes.find((p) => p.type === "month")?.value);
+
+  return montarDiretivaVigenciaMes(mes, ano, mesAtual, anoAtual);
+}
+
 /**
  * S-WM-34 (VAL-09): busca determinística por nome de atividade no `monthly_program` ativo da
  * unidade — evita o limite de `p_limite: 5` chunks da busca vetorial (`buscar_chunks_similares`)
@@ -1806,6 +1874,16 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       if (chunks && chunks.length > 0) {
         contextRAG = "\n\n--- CONTEXTO ---\n" + formatarChunks(chunks);
       }
+    }
+
+    // 6.5 Diretiva de vigência do mês (S-PROG-10, item 3) — computada UMA vez, fora da cadeia de
+    // branches acima, porque se aplica independente de qual delas carregou o monthly_program (a
+    // pergunta pode vir tanto na visão geral quanto no acompanhamento). "" (nenhuma mudança no
+    // prompt) na grande maioria dos casos hoje: documento sem mes/ano (dado anterior a esta
+    // story, AC5) ou mês corrente (AC3) — só os dois `if`s abaixo tocam `contextRAG`.
+    if (temUnidadeDefinida && isAgenteProgramacao) {
+      const diretivaVigenciaMes = await calcularDiretivaVigenciaMes(supabase, unidadeEfetiva as string);
+      if (diretivaVigenciaMes) contextRAG += diretivaVigenciaMes;
     }
 
     // 7. Data/hora
