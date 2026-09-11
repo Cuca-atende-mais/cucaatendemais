@@ -74,10 +74,11 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     const supabase = createClient()
     const modoEdicao = !!campanhaId
 
-    // Step: 1 = Cabeçalho, 2 = Origem (S-PROG-02), 3 = Atividades, 4 = Revisão
-    // Em modo edição (campanhaId) começa direto em 3 — Cabeçalho e Origem já foram decididos
-    // quando o rascunho nasceu (S-PROG-09 item 2).
-    const [step, setStep] = useState(modoEdicao ? 3 : 1)
+    // Step: 1 = Origem (S-PROG-08: Cabeçalho fundido em Origem — unidade/mês de destino vivem
+    // aqui, junto da grade de meses anteriores), 2 = Atividades, 3 = Enviar p/ aprovação (Revisão).
+    // Em modo edição (campanhaId) começa direto em 2 — Origem já foi decidida quando o rascunho
+    // nasceu (S-PROG-09 item 2).
+    const [step, setStep] = useState(modoEdicao ? 2 : 1)
     const [carregandoRascunho, setCarregandoRascunho] = useState(modoEdicao)
 
     // Cabeçalho (Step 1)
@@ -112,9 +113,9 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     const [confirmarSairAberto, setConfirmarSairAberto] = useState(false)
 
     const nomeMes = MESES_LISTA.find(m => m.value === mesSel)?.label || ""
-    // Em modo edição a tela nasce direto em 3 (Atividades) — "Voltar" a partir dali sai da
-    // página, não existe Cabeçalho/Origem pra revisitar (S-PROG-09 item 2).
-    const primeiroStep = modoEdicao ? 3 : 1
+    // Em modo edição a tela nasce direto em 2 (Atividades) — "Voltar" a partir dali sai da
+    // página, não existe Origem pra revisitar (S-PROG-09 item 2).
+    const primeiroStep = modoEdicao ? 2 : 1
 
     // ── Modo edição (S-PROG-09 item 2): carrega campanha + atividades já gravadas ─────────────
     // Efeito roda uma vez (campanhaId não muda depois de montado — é sempre a mesma página).
@@ -233,41 +234,42 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
         setAtividades(prev => prev.map(a => a._tempId === nova._tempId ? nova : a))
     }
 
-    // ── Step 1: verificar duplicata e avançar ──────────────────────────────────
-    const handleAvancarStep1 = async () => {
-        if (!unidadeSel || !mesSel || !anoSel) {
-            toast.error("Selecione unidade, mês e ano.")
-            return
-        }
+    // ── Step 1 (Origem): checa campanha já existente pro par unidade+mês+ano ──────────────────
+    // S-PROG-08 (AC3, achado @po): refaz a checagem a cada mudança de unidade OU mês/ano de
+    // destino, não só ao avançar de etapa — Origem deixou de ser uma etapa própria (Cabeçalho),
+    // então não existe mais um botão "Próximo" pra disparar isso manualmente.
+    useEffect(() => {
+        if (modoEdicao || step !== 1 || !unidadeSel || !mesSel || !anoSel) return
 
+        let cancelado = false
         setVerificandoDup(true)
-        try {
-            const { data: existente } = await supabase
-                .from("campanhas_mensais")
-                .select("id, status, titulo")
-                .eq("unidade_cuca", unidadeSel)
-                .eq("mes", mesSel)
-                .eq("ano", anoSel)
-                .maybeSingle()
+        supabase
+            .from("campanhas_mensais")
+            .select("id, status, titulo")
+            .eq("unidade_cuca", unidadeSel)
+            .eq("mes", mesSel)
+            .eq("ano", anoSel)
+            .maybeSingle()
+            .then(({ data: existente }) => {
+                if (cancelado) return
+                setCampanhaExistente(existente || null)
+                setVerificandoDup(false)
+            })
 
-            setCampanhaExistente(existente || null)
-        } finally {
-            setVerificandoDup(false)
-        }
+        return () => { cancelado = true }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [unidadeSel, mesSel, anoSel, step, modoEdicao])
 
-        setStep(2)
-    }
-
-    // ── Step 2: origem (S-PROG-02) — zero ou duplicar mês anterior ─────────────
+    // ── Step 1 (Origem, S-PROG-02/08) — zero ou duplicar mês anterior ──────────────────────────
     const handleEscolherZero = () => {
         setAtividades([])
-        setStep(3)
+        setStep(2)
     }
 
     const handleEscolherDuplicar = (duplicadas: AtividadeInterna[]) => {
         setAtividades(duplicadas)
         toast.success(`${duplicadas.length} atividade(s) copiada(s) — revise data, horário e vagas antes de salvar.`)
-        setStep(3)
+        setStep(2)
     }
 
     // ── Submit: grava rascunho já existente, sem apagar a campanha (S-PROG-09 item 2) ──────────
@@ -418,13 +420,13 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                 </div>
             </div>
 
-            {/* Stepper com linha de progresso conectando as etapas */}
+            {/* Stepper com linha de progresso conectando as etapas — S-PROG-08 (item 3): 3 passos
+                do protótipo, Cabeçalho deixou de existir como etapa própria (fundido em Origem). */}
             <div className="flex items-center py-5 max-w-md">
                 {[
-                    { n: 1, label: "Cabeçalho" },
-                    { n: 2, label: "Origem" },
-                    { n: 3, label: "Atividades" },
-                    { n: 4, label: "Revisão" },
+                    { n: 1, label: "Origem" },
+                    { n: 2, label: "Editar" },
+                    { n: 3, label: "Enviar p/ aprovação" },
                 ].map(({ n, label }, i, arr) => (
                     <div key={n} className="flex items-center flex-1 last:flex-none">
                         <div className="flex items-center gap-2">
@@ -450,75 +452,83 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
 
             <div className="pb-8">
 
-                {/* ── STEP 1: Cabeçalho ── */}
+                {/* ── STEP 1: Origem — Cabeçalho (unidade/mês de destino) fundido com a grade de
+                    meses anteriores (S-PROG-08, item 2), num único passo, como no protótipo. ── */}
                 {step === 1 && (
-                    <div className="space-y-6 max-w-xl">
-                        {/* Destaque visual: Mês e Ano são a identidade */}
-                        <div className="p-5 rounded-2xl border-2 border-primary/40 bg-primary/5">
-                            <p className="text-xs font-bold text-primary mb-4 uppercase tracking-wide">
-                                Identidade da Programação — Mês de Referência
-                            </p>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1.5">
-                                    <Label className="font-semibold">Mês *</Label>
-                                    <Select value={String(mesSel)} onValueChange={v => setMesSel(Number(v))}>
-                                        <SelectTrigger className="border-primary/40 focus:ring-primary h-11 text-sm w-full">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {MESES_LISTA.map(m => (
-                                                <SelectItem key={m.value} value={String(m.value)}>{m.label}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label className="font-semibold">Ano *</Label>
-                                    <Input
-                                        type="number"
-                                        min={2024}
-                                        max={2030}
-                                        value={anoSel}
-                                        onChange={e => setAnoSel(Number(e.target.value))}
-                                        className="border-primary/40 focus-visible:ring-primary h-11 text-sm"
-                                    />
-                                </div>
+                    <div className="space-y-6 max-w-3xl">
+                        <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_2fr] gap-4 p-4 rounded-xl border border-border bg-muted/20">
+                            <div className="space-y-1.5">
+                                <Label className="font-semibold">Unidade CUCA *</Label>
+                                <Select value={unidadeSel} onValueChange={setUnidadeSel}>
+                                    <SelectTrigger className="h-11 text-sm w-full">
+                                        <SelectValue placeholder="Selecione a unidade" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {unidadesCuca.map(u => (
+                                            <SelectItem key={u} value={u}>{u}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="font-semibold">Mês *</Label>
+                                <Select value={String(mesSel)} onValueChange={v => setMesSel(Number(v))}>
+                                    <SelectTrigger className="h-11 text-sm w-full">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {MESES_LISTA.map(m => (
+                                            <SelectItem key={m.value} value={String(m.value)}>{m.label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="font-semibold">Ano *</Label>
+                                <Input
+                                    type="number"
+                                    min={2024}
+                                    max={2030}
+                                    value={anoSel}
+                                    onChange={e => setAnoSel(Number(e.target.value))}
+                                    className="h-11 text-sm"
+                                />
                             </div>
                         </div>
 
-                        <div className="space-y-1.5">
-                            <Label className="font-semibold">Unidade CUCA *</Label>
-                            <Select value={unidadeSel} onValueChange={setUnidadeSel}>
-                                <SelectTrigger className="h-11 text-sm w-full">
-                                    <SelectValue placeholder="Selecione a unidade" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {unidadesCuca.map(u => (
-                                        <SelectItem key={u} value={u}>{u}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        {/* Mudar unidade ou mês/ano de destino refaz a checagem de duplicata em
+                            tempo real (AC3, achado @po) — não é preciso avançar de etapa pra ver. */}
+                        {verificandoDup && (
+                            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                                <Loader2 className="h-3 w-3 animate-spin" /> Checando se já existe programação para este mês…
+                            </p>
+                        )}
+                        {!verificandoDup && campanhaExistente && (
+                            <div className="flex items-start gap-2.5 p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-500 text-sm">
+                                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                                <span>
+                                    Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (status: <em>{campanhaExistente.status}</em>).
+                                    Salvar mais adiante criará uma nova versão — a existente será substituída ao confirmar.
+                                </span>
+                            </div>
+                        )}
 
-                        {unidadeSel && mesSel && anoSel && (
-                            <p className="text-sm text-muted-foreground bg-muted/50 rounded-xl p-4 border">
-                                Título gerado automaticamente: <strong className="text-foreground">&quot;Programação {unidadeSel} — {nomeMes} {anoSel}&quot;</strong>
+                        {unidadeSel ? (
+                            <SelecionarOrigem
+                                unidade={unidadeSel}
+                                onEscolherZero={handleEscolherZero}
+                                onEscolherDuplicar={handleEscolherDuplicar}
+                            />
+                        ) : (
+                            <p className="text-sm text-muted-foreground text-center py-6 border border-dashed border-border rounded-xl">
+                                Selecione a unidade para ver os meses aprovados disponíveis para duplicar.
                             </p>
                         )}
                     </div>
                 )}
 
-                {/* ── STEP 2: Origem (S-PROG-02) — zero ou duplicar mês anterior ── */}
+                {/* ── STEP 2: Atividades (S-PROG-01: grade editável + ficha) ── */}
                 {step === 2 && (
-                    <SelecionarOrigem
-                        unidade={unidadeSel}
-                        onEscolherZero={handleEscolherZero}
-                        onEscolherDuplicar={handleEscolherDuplicar}
-                    />
-                )}
-
-                {/* ── STEP 3: Atividades (S-PROG-01: grade editável + ficha) ── */}
-                {step === 3 && (
                     <div className="space-y-4">
                         {/* Alerta de campanha existente (AC-8) */}
                         {campanhaExistente && (
@@ -564,8 +574,8 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                     </div>
                 )}
 
-                {/* ── STEP 4: Revisão ── */}
-                {step === 4 && (
+                {/* ── STEP 3: Enviar p/ aprovação (Revisão) ── */}
+                {step === 3 && (
                     <div className="space-y-5 max-w-2xl">
                         <div className="p-5 rounded-xl border border-border bg-card/60">
                             <p className="text-base font-bold mb-1">Resumo da Programação</p>
@@ -627,22 +637,15 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                 </Button>
 
                 <div className="flex gap-2">
-                    {step === 1 && (
-                        <Button size="lg" onClick={handleAvancarStep1} disabled={verificandoDup} className="gap-1.5">
-                            {verificandoDup ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            Próximo
-                            {!verificandoDup && <ChevronRight className="h-4 w-4" />}
-                        </Button>
-                    )}
-                    {/* Step 2 (Origem) não tem botão "Próximo" aqui — escolher um card ou
+                    {/* Step 1 (Origem) não tem botão "Próximo" aqui — escolher um card ou
                         "Começar do zero" já avança sozinho (ver SelecionarOrigem). */}
-                    {step === 3 && (
-                        <Button size="lg" onClick={() => setStep(4)} className="gap-1.5">
+                    {step === 2 && (
+                        <Button size="lg" onClick={() => setStep(3)} className="gap-1.5">
                             {atividades.length === 0 ? "Revisar" : "Próximo"}
                             <ChevronRight className="h-4 w-4" />
                         </Button>
                     )}
-                    {step === 4 && (
+                    {step === 3 && (
                         <Button
                             size="lg"
                             onClick={handleSalvarRascunhoClick}

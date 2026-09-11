@@ -34,8 +34,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { unidadesCuca } from "@/lib/constants"
-import { format } from "date-fns"
-import { ptBR } from "date-fns/locale"
+import { cn } from "@/lib/utils"
 import toast from "react-hot-toast"
 import { UnifiedProgramModal } from "@/components/programacao/unified-program-modal"
 import { ImportPlanilhaModal } from "@/components/programacao/import-planilha-modal"
@@ -195,6 +194,29 @@ export default function ProgramacaoPage() {
             default:
                 return <Badge variant="outline">{status}</Badge>
         }
+    }
+
+    // S-PROG-08 (item 1): pílula de status do card de programação mensal — espelha
+    // `docs/programacao-manual/prototipo-programacao.html` (`.bdg`), literalmente, e não o
+    // `getStatusBadge` acima (compartilhado com evento pontual, que tem outros estados e usa
+    // `bg-amber-50` fixo — quebra no tema escuro). Só as 3 cores do design system, nunca literal.
+    const STATUS_MENSAL_LABEL: Record<string, string> = {
+        rascunho: "Rascunho", pendente: "Pendente de aprovação", aprovado: "Aprovada",
+    }
+    const getStatusPillMensal = (status: string) => {
+        const classes: Record<string, string> = {
+            rascunho: "bg-muted text-muted-foreground border-border",
+            pendente: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40",
+            aprovado: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/35",
+        }
+        return (
+            <span className={cn(
+                "inline-flex items-center text-[11px] font-bold px-2.5 py-1 rounded-full border shrink-0",
+                classes[status] || "bg-muted text-muted-foreground border-border",
+            )}>
+                {STATUS_MENSAL_LABEL[status] || status}
+            </span>
+        )
     }
 
     const handleAutorizar = async (id: string) => {
@@ -510,44 +532,51 @@ export default function ProgramacaoPage() {
                     ) : filteredMensais.length === 0 ? (
                         <p className="text-center py-10 text-muted-foreground">Nenhuma programação mensal encontrada.</p>
                     ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        // S-PROG-08 (item 1): grid e card fiéis ao protótipo
+                        // (`docs/programacao-manual/prototipo-programacao.html`, `.cards`/`.pc`) — mesmos
+                        // valores, convertidos pra utilitário Tailwind (arbitrary value) em vez de CSS solto,
+                        // seguindo o padrão do resto do portal.
+                        <div className="grid grid-cols-[repeat(auto-fill,minmax(268px,1fr))] gap-3.5">
                             {filteredMensais.map(m => {
                                 const contagem = contagemPorCategoria[m.id] || {}
                                 return (
-                                    <div key={m.id} className="bg-card rounded-2xl border border-border p-5 flex flex-col gap-3 hover:border-primary/40 transition-colors">
+                                    <div
+                                        key={m.id}
+                                        className="rounded-2xl border border-border bg-card p-4 flex flex-col gap-2.5 transition-colors hover:border-[color-mix(in_oklch,var(--primary)_45%,var(--border))]"
+                                    >
                                         <div className="flex items-start justify-between gap-2">
                                             <div>
-                                                <p className="font-bold text-sm">{MESES_NOME_EXCLUSAO[m.mes] || m.mes} {m.ano}</p>
+                                                <p className="text-[15.5px] font-bold tracking-[-0.01em]">{MESES_NOME_EXCLUSAO[m.mes] || m.mes} {m.ano}</p>
                                                 <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                                                     <MapPin className="h-3 w-3" /> {m.unidade_cuca}
                                                 </p>
                                             </div>
-                                            {getStatusBadge(m.status)}
+                                            {getStatusPillMensal(m.status)}
+                                        </div>
+
+                                        {/* Faixa de números — só as 3 categorias do protótipo; ESPECIAIS não
+                                            entra aqui (não está no recorte visual da story, evita inventar um
+                                            4º bloco que o protótipo não previu). */}
+                                        <div className="flex gap-3.5 py-2.5 border-t border-b border-border">
+                                            {[
+                                                ["ESPORTES", "Esportes"],
+                                                ["CURSOS", "Cursos"],
+                                                ["DIA A DIA", "Dia a dia"],
+                                            ].map(([chave, rotulo]) => (
+                                                <div key={chave} className="flex flex-col gap-0.5">
+                                                    <b className="text-[17px] font-bold leading-tight">{contagem[chave] || 0}</b>
+                                                    <span className="text-[10.5px] text-muted-foreground uppercase tracking-[0.04em]">{rotulo}</span>
+                                                </div>
+                                            ))}
                                         </div>
 
                                         <div className="flex items-center gap-1.5 flex-wrap">
-                                            {Object.keys(contagem).length > 0 ? (
-                                                Object.entries(contagem).map(([cat, qtd]) => (
-                                                    <Badge key={cat} variant="outline" className="text-[10px] font-medium">
-                                                        {qtd} {cat.toLowerCase()}
-                                                    </Badge>
-                                                ))
-                                            ) : (
-                                                <span className="text-xs text-muted-foreground">{m.total_atividades} atividades</span>
-                                            )}
-                                        </div>
-
-                                        <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-                                            <Calendar className="h-3 w-3" /> Importado em {format(new Date(m.created_at), "dd/MM/yyyy", { locale: ptBR })}
-                                        </p>
-
-                                        <div className="flex items-center gap-1.5 pt-2 border-t border-border/60 flex-wrap">
-                                            {/* Achado do @qa: "Continuar edição" prometia edição que a tela de
-                                                destino (/programacao/mensal/[id]) não tem — é só leitura/status,
-                                                sem grade nem ficha. "Abrir rascunho" não promete o que não existe. */}
+                                            {/* S-PROG-09 já entrega o destino real de "Continuar edição" —
+                                                antes disso o botão prometia edição que não existia (achado do
+                                                @qa na S-PROG-04), por isso ficou como "Abrir rascunho" até aqui. */}
                                             {m.status === "rascunho" && (
-                                                <Button size="sm" className="gap-1.5" onClick={() => openCampanhaDetails(m)}>
-                                                    <FileText className="h-3.5 w-3.5" /> Abrir rascunho
+                                                <Button size="sm" className="gap-1.5" onClick={() => router.push(`/programacao/criar?campanhaId=${m.id}`)}>
+                                                    <FileText className="h-3.5 w-3.5" /> Continuar edição
                                                 </Button>
                                             )}
                                             {m.status === "pendente" && (

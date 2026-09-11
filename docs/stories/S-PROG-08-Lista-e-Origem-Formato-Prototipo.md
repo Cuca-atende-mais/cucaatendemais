@@ -1,6 +1,6 @@
 # S-PROG-08 — Lista de programações e etapa Origem no formato do protótipo
 
-**Status:** Ready
+**Status:** InReview
 **Epic:** Reestruturação da criação de programação
 **Origem:** Instrução do Junior (2026-09-10): *"a parte interna do protótipo onde se edita ou cria a
 programação já está pronta; o que precisa ser feito e ajustado é a parte anterior a isso, onde se
@@ -117,9 +117,95 @@ vazios**, mesmo quando o dado de origem é válido. Já implementado e testado e
 | Consulta dos meses candidatos | `atividades_mensais` (leitura) | — | Consulta nova; volume ~150 linhas × 4 meses | Selecionar só as colunas necessárias para o selo, sem `descricao` |
 | Contagem por categoria na lista | `atividades_mensais` (leitura) | — | Uma consulta a mais ao abrir a aba | Já implementado no recorte anterior sem RPC; manter |
 
+## Dev Agent Record
+
+### Itens 1, 2 e 3 — Lista em cards, etapa Origem e stepper de 3 (2026-09-11, @dev/Dex) — **concluídos**
+
+Autorizado pelo Junior item a item ("Segue com a S-PROG-08" → "segue com o item 2" → "continua
+com o item 3"). Implementados os 3 juntos porque item 3 (stepper) é consequência direta e
+inseparável do item 2 (fundir Cabeçalho em Origem elimina uma etapa, o stepper reflete isso —
+não há como fazer um sem o outro). Item 4 (contrato de duplicação) já estava pronto desde a
+S-PROG-02, reaproveitado sem alteração, como a story já previa.
+
+**Item 1 — Lista em cards (`programacao/page.tsx`):**
+- Grid `repeat(auto-fill, minmax(268px, 1fr))` gap 14px, card com hover
+  `color-mix(in oklch, var(--primary) 45%, var(--border))`, título 15.5px/700, faixa de números
+  (3 blocos: Esportes · Cursos · Dia a dia, com borda superior/inferior) e pílula de status
+  (rascunho/pendente/aprovado) — tudo fiel ao protótipo (`.cards`/`.pc`/`.stats`/`.bdg`).
+  **Decisão de escopo:** só as 3 categorias citadas literalmente na story aparecem na faixa de
+  números — ESPECIAIS não vira um 4º bloco (o protótipo não previu isso; evita inventar).
+- "Continuar edição" (rascunho) agora tem destino real: `/programacao/criar?campanhaId=${id}`
+  — antes dizia "Abrir rascunho" e ia pra tela só-leitura, porque a S-PROG-09 (que dá esse
+  destino) ainda não existia; ela foi mergeada antes desta story, então o rótulo e a rota podem
+  virar os definitivos do protótipo.
+- Pílula de status é uma função nova (`getStatusPillMensal`), separada do `getStatusBadge`
+  genérico (compartilhado com evento pontual, que usa `bg-amber-50` fixo — quebraria no tema
+  escuro); a nova usa só tokens do design system.
+
+**Item 2 — Etapa Origem (`criar-programacao-view.tsx` + `selecionar-origem.tsx`):**
+- Cabeçalho (unidade/mês/ano) fundido na tela de Origem, num único passo — não é mais uma etapa
+  própria. A checagem de campanha já existente (AC3) passou de "só ao clicar Próximo" pra um
+  `useEffect` que refaz a cada mudança de unidade **ou** mês/ano, em tempo real.
+- `selecionar-origem.tsx`: grid `repeat(auto-fit, minmax(210px, 1fr))` gap 12px; card com estado
+  selecionado (`box-shadow color-mix(...) 18%`), hover, e um 3º estado **novo**: `indisponivel`
+  (AC5) — antes, campanha sem atividade utilizável era simplesmente omitida da grade (o mês
+  "sumia" sem explicação); agora aparece desabilitada (`opacity-50 pointer-events-none`), com o
+  selo "Importação com falha — indisponível", sem `role`/`tabIndex`/`onClick` (não é alvo de
+  clique nem de navegação por teclado).
+- Legenda fixa abaixo da grade com o texto literal da story: "Vem copiado: modalidade, professor,
+  turma, faixa etária, pré-requisitos, dias, local e ementa. Vem em branco: data, horário e
+  vagas." — mantive também a frase sobre texto de exemplo não copiado (não estava no texto
+  literal exigido, mas é informação real e útil; não contradiz o AC, só complementa).
+- Rodapé reestruturado: "Começar do zero" virou botão secundário ao lado de "Duplicar e
+  continuar" (antes era uma caixa tracejada grande acima da grade, fora do padrão do protótipo).
+
+**Item 3 — Stepper de 3 etapas:** rótulos trocados para "Origem · Editar · Enviar p/ aprovação",
+contagem de 4 pra 3 (Cabeçalho deixou de existir como passo). Mesmo componente de stepper
+reaproveitado, só o array de labels mudou — exatamente como a story previa.
+
+### Correção do achado do @qa — seleção de origem sobrevivia à troca de unidade (2026-09-11, @dev/Dex)
+
+`selecionar-origem.tsx`: `setSelecionada(null)` adicionado no início de `carregar()` (mesmo
+`useEffect` que já depende de `[unidade]`) — a cada troca de unidade, a seleção anterior é
+descartada junto com a lista antiga de campanhas candidatas. Fecha o cenário em que "Duplicar e
+continuar" ficava habilitado apontando pra um id de outra unidade, sem efeito nenhum ao clicar.
+
+**Verificação:** `tsc --noEmit` limpo, `eslint` sem erro novo, `vitest run src/lib/programacao`
+151/151 (reconfirmado), `npm run build` verde.
+
+**Achado de ambiente, não de código:** `npm run build` falhou duas vezes por motivos alheios ao
+código — um `node_modules/lucide-react` corrompido (fora sanado com reinstalação limpa via
+`npm ci`, resolveu esse E outros pacotes truncados) e uma falha transitória de rede ao buscar
+a fonte do Google Fonts (`next/font/google`) durante o build — resolvida numa nova tentativa.
+Nenhum dos dois tinha relação com as mudanças desta story; documentado aqui porque consumiu
+tempo real de verificação.
+
+**Verificação executada:**
+- `vitest run src/lib/programacao`: 151/151 (sem teste novo — mudança é de apresentação/UI,
+  sem lógica pura nova extraível pra `lib/`; a lógica de duplicação/selo já testada em
+  `duplicar.test.ts` não mudou).
+- `tsc --noEmit`: limpo nos arquivos tocados.
+- `eslint`: sem erro novo (mesmo único erro pré-existente, `criar-programacao-view.tsx` linha 91,
+  `campanhaExistente: any`, não tocado).
+- `npm run build`: verde, 129 rotas geradas, depois do `npm ci` (reinstalação limpa).
+
+**Não verificado:** navegador — regra do projeto (`qa-testes-sem-navegador-ao-vivo.md`) proíbe
+sem autorização explícita. Fidelidade visual ao protótipo foi conferida por leitura direta do
+CSS do protótipo (`docs/programacao-manual/prototipo-programacao.html`) linha a linha, convertido
+pra utilitário Tailwind — não por captura de tela comparada lado a lado.
+
 ## Fora de escopo
 
-Reabrir rascunho para edição (S-PROG-09). Conversão para RAG (S-PROG-10). Exportação (S-PROG-05).
+Reabrir rascunho para edição (S-PROG-09, já pronta e integrada aqui via "Continuar edição").
+Conversão para RAG (S-PROG-10). Exportação (S-PROG-05).
+
+## File List
+
+| Arquivo | Mudança |
+|---|---|
+| `cuca-portal/src/app/(dashboard)/programacao/page.tsx` | item 1 — cards da aba Mensal, pílula de status nova, "Continuar edição" com destino real |
+| `cuca-portal/src/components/programacao/criar-programacao-view.tsx` | itens 2/3 — Cabeçalho fundido em Origem, checagem de duplicata em tempo real, stepper de 3 etapas |
+| `cuca-portal/src/components/programacao/selecionar-origem.tsx` | item 2 — grid/card fiéis ao protótipo, estado indisponível, legenda, rodapé reestruturado; correção do achado @qa (reset de `selecionada` ao trocar unidade) |
 
 ## Change Log
 
@@ -127,3 +213,79 @@ Reabrir rascunho para edição (S-PROG-09). Conversão para RAG (S-PROG-10). Exp
 |---|---|---|
 | 2026-09-10 | @dev (Dex) | Story rascunhada a pedido do Junior, recortando S-PROG-02 + item 1 da S-PROG-04 contra o protótipo aprovado |
 | 2026-09-10 | @po (Pax) | Validado GO (9/10). AC3 adicionado (checagem de duplicata dentro de Origem, achado na análise de impacto mas ausente do AC). Status Draft → Ready |
+| 2026-09-11 | @dev (Dex) | Itens 1, 2 e 3 implementados (item 4 já pronto desde a S-PROG-02, reaproveitado). `vitest` 151/151, `tsc`/`eslint` limpos, `npm run build` verde. Status Ready → InProgress |
+| 2026-09-11 | @qa (Quinn) | Revisão completa (`*review`). Veredito **CONCERNS** — achado de UI em `selecionar-origem.tsx` (seleção de origem não reseta ao trocar unidade, ver QA Results). Status permanece InProgress |
+| 2026-09-11 | @dev (Dex) | Achado do @qa corrigido: `selecionada` resetada ao trocar unidade em `selecionar-origem.tsx`. `vitest` 151/151, `tsc`/`eslint` limpos, `npm run build` verde. Pronto para nova revisão do @qa |
+| 2026-09-11 | @qa (Quinn) | Nova revisão (`*review`). Achado **CONFIRMADO CORRIGIDO** — `setSelecionada(null)` roda antes de qualquer `await`, elimina a janela de estado inconsistente. Reproduzi 151/151 testes, `tsc`/`eslint` de forma independente. Veredito **PASS**. Status InProgress → InReview |
+
+## QA Results
+
+### Rodada 2 — @qa (Quinn) · 2026-09-11 · Veredito: **PASS**
+
+Achado da Rodada 1 **confirmado corrigido**: `setSelecionada(null)` roda como primeira instrução
+de `carregar()`, antes de qualquer `await` — a seleção antiga é descartada no mesmo instante em
+que `unidade` muda, sem janela de estado inconsistente entre o reset e a chegada da lista nova.
+
+Reproduzi de forma independente: `tsc --noEmit` limpo, `eslint` sem erro novo (os 4 erros restantes
+são os mesmos pré-existentes de sempre, em linhas não tocadas), `vitest run src/lib/programacao`
+151/151.
+
+**Decisão:** story pronta para seguir ao @devops quando o Junior autorizar. Status InProgress →
+InReview.
+
+---
+
+### Rodada 1 — @qa (Quinn) · 2026-09-11 · Veredito: CONCERNS (aprovável, com correção recomendada antes do push)
+
+### Achado — seleção de origem sobrevive à troca de unidade (`selecionar-origem.tsx`)
+
+**O quê:** `selecionada` (id da campanha de origem escolhida) nunca é resetada quando a prop
+`unidade` muda. O `useEffect` que recarrega `campanhas` depende só de `[unidade]` e nunca chama
+`setSelecionada(null)`.
+
+**Cenário concreto:** usuário está em Origem, escolhe Cuca Mondubim, seleciona o card "Agosto
+2026" (`selecionada = id-de-agosto-mondubim`). Sem sair da tela, troca a Unidade pra Cuca Barra.
+A grade recarrega com os meses de Barra — mas `selecionada` continua apontando pro id de
+Mondubim, que não existe mais na lista atual. O botão "Duplicar e continuar" (linha 214,
+`disabled={!selecionada}`) **continua habilitado**, porque só checa se `selecionada` é truthy, não
+se ainda existe na lista corrente. Ao clicar, `handleDuplicar` (linha 115) faz
+`campanhas.find(c => c.id === selecionada)`, não encontra nada, e retorna sem fazer nada — clique
+silenciosamente sem efeito, sem nenhum feedback pro usuário.
+
+**Por que não é FAIL:** não duplica dado da unidade errada (o `find` falha e para — comportamento
+seguro por acidente, não por design) nem corrompe nada gravado. É um bug de interação: o botão
+mente sobre estar pronto pra agir. Toca o espírito do AC6 ("'Duplicar e continuar' só habilita com
+um mês escolhido") — tecnicamente um mês FOI escolhido, só que não é mais válido pro contexto
+atual.
+
+**Correção recomendada (1 linha):** resetar `selecionada` pra `null` junto com `setCampanhas` toda
+vez que `unidade` mudar, dentro do mesmo `useEffect` (`carregar()`, início ou fim da função).
+
+### Demais checks
+
+1. **Code review** — código limpo, fiel ao protótipo linha a linha (conferi o CSS de
+   `docs/programacao-manual/prototipo-programacao.html` contra as classes Tailwind arbitrárias
+   usadas — `color-mix`, `grid-template-columns`, `border-radius: var(--radius)` — e testei a
+   compilação real com `@tailwindcss/cli` pra confirmar que nenhuma delas é descartada
+   silenciosamente pelo parser de arbitrary value; todas geram o CSS esperado).
+2. **Testes** — `vitest run src/lib/programacao`: 151/151, reproduzido de forma independente.
+   Sem teste novo pro achado acima nem pro resto da mudança (é UI de componente, sem suíte de
+   componente no projeto — mesmo padrão aceito na S-PROG-09).
+3. **Acceptance Criteria** — AC1, AC2, AC4, AC5, AC7, AC8 verificados por leitura de código.
+   **AC3** verificado: `useEffect` novo em `criar-programacao-view.tsx` refaz a checagem a cada
+   mudança de unidade/mês/ano, não só ao avançar — correto. **AC6** parcialmente comprometido pelo
+   achado acima (habilita com mês escolhido, mas não invalida a escolha ao trocar de unidade).
+   AC9 (tema/mobile) verificado por leitura — grids `auto-fill`/`auto-fit` colapsam pra 1 coluna
+   sem precisar de breakpoint manual; sem cor literal em nenhum componente novo.
+4. **Regressão** — `/api/programacao/importar`, `/api/programacao/status` não tocados;
+   `duplicar.ts`/`duplicar.test.ts` inalterados (32 testes originais continuam intocados).
+5. **Performance** — sem mudança de padrão de consulta (mesmas queries de antes, só apresentação).
+6. **Segurança** — sem superfície nova (camada de apresentação, nenhuma rota/função nova).
+7. **Documentação** — Dev Agent Record, File List e Change Log completos e precisos.
+
+### Concerns não-bloqueantes
+
+- "Excluir" só aparece pra `DEVELOPER_EMAILS` (pré-existente, não desta story) — a tabela de
+  ações da story lista Excluir como ação padrão pra todo status; usuário comum nunca vê essa
+  opção. Não é regressão, só uma divergência entre o texto da story e o comportamento real de
+  permissão, que já existia antes.
