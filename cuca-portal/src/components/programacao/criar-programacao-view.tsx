@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -340,7 +341,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
             // Aguarda 1.5s para a replicação do Supabase antes de voltar e atualizar
             // (mesmo padrão do import-planilha-modal que usa 3s de delay pelo mesmo motivo)
             setTimeout(() => {
-                toast.success("Programação salva como rascunho! Clique em 'Ver Atividades' para abrir.")
+                toast.success("Programação salva como rascunho! Clique em 'Continuar edição' na lista para abrir.")
                 onSuccess()
             }, 1500)
         } catch (e) {
@@ -374,6 +375,15 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     }, {})
     const problemas: Problema[] = calcularProblemas(atividades)
     const [painelRevisaoAberto, setPainelRevisaoAberto] = useState(false)
+
+    // S-PROG-11 (item 3): painel "Texto enviado ao RAG" (modo desenvolvedor) — desligado por
+    // padrão (AC7). `atividadeSelecionadaGrade` vem do callback novo de `GradeAtividades`; não
+    // existe estado próprio de seleção aqui, a grade continua dona disso.
+    const [modoDesenvolvedor, setModoDesenvolvedor] = useState(false)
+    const [atividadeSelecionadaGrade, setAtividadeSelecionadaGrade] = useState<AtividadeInterna | null>(null)
+    const payloadRagSelecionado = atividadeSelecionadaGrade
+        ? montarAtividadePayload(atividadeSelecionadaGrade, unidadeSel)
+        : null
 
     // S-PROG-09 (item 2): enquanto carrega campanha + atividades do rascunho, não renderiza a
     // tela — evita mostrar o stepper/grade vazios por um instante antes do fetch terminar.
@@ -570,7 +580,48 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                             </div>
                         )}
 
-                        <GradeAtividades atividades={atividades} onChange={setAtividades} onAbrirFicha={handleAbrirFicha} />
+                        <GradeAtividades
+                            atividades={atividades}
+                            onChange={setAtividades}
+                            onAbrirFicha={handleAbrirFicha}
+                            onLinhaAtivaChange={setAtividadeSelecionadaGrade}
+                        />
+
+                        {/* S-PROG-11 (item 3): modo desenvolvedor — desligado por padrão (AC7).
+                            Não é enfeite: única forma de conferir, sem abrir o banco, se a grade
+                            produz o mesmo texto que a planilha produzia (é o que a S-PROG-10
+                            depende). Alimentado por `montarAtividadePayload`, já pronto. */}
+                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/60">
+                            <label htmlFor="modo-dev-rag" className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                                <Switch id="modo-dev-rag" checked={modoDesenvolvedor} onCheckedChange={setModoDesenvolvedor} />
+                                Modo desenvolvedor — texto enviado ao RAG
+                            </label>
+                        </div>
+
+                        {modoDesenvolvedor && (
+                            <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
+                                {!payloadRagSelecionado ? (
+                                    <p className="text-xs text-muted-foreground">
+                                        Selecione uma linha na grade pra ver o texto que ela envia ao RAG.
+                                    </p>
+                                ) : (
+                                    <>
+                                        <div className="space-y-1.5">
+                                            <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Texto enviado ao RAG (descrição)</p>
+                                            <pre className="text-[11px] font-mono whitespace-pre-wrap break-words bg-background border border-border rounded-lg p-3 max-h-48 overflow-y-auto">
+                                                {payloadRagSelecionado.descricao}
+                                            </pre>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Registro gravado (metadata)</p>
+                                            <pre className="text-[11px] font-mono whitespace-pre-wrap break-words bg-background border border-border rounded-lg p-3 max-h-48 overflow-y-auto">
+                                                {JSON.stringify(payloadRagSelecionado.metadata, null, 2)}
+                                            </pre>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
 
