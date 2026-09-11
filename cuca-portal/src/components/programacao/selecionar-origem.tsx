@@ -28,6 +28,11 @@ interface CampanhaOrigem {
     contagem: Record<string, number>
     selo: SeloQualidade
     linhas: LinhaOrigemDuplicacao[]
+    // S-PROG-08 (item 2): antes, campanha com categoria fora da lista fechada (AC2) era
+    // simplesmente omitida da grade — o mês desaparecia sem explicação. O protótipo prevê um
+    // 3º estado do card (`.mo.off`, desabilitado, com selo "Importação com falha —
+    // indisponível") em vez de sumir; mais claro pra quem está escolhendo a origem.
+    indisponivel: boolean
 }
 
 function novoTempId(): string {
@@ -57,6 +62,11 @@ export function SelecionarOrigem({ unidade, onEscolherZero, onEscolherDuplicar }
 
         async function carregar() {
             setCarregando(true)
+            // Achado do @qa (S-PROG-08, 2026-09-11): trocar de unidade sem resetar `selecionada`
+            // deixava "Duplicar e continuar" habilitado apontando pra um id de outra unidade, que
+            // não existe na lista recarregada — clique virava no-op silencioso. A seleção só faz
+            // sentido dentro da mesma unidade que a gerou.
+            setSelecionada(null)
             // Só campanhas aprovadas fazem sentido como origem — rascunho é trabalho em
             // andamento, não uma referência "que já funcionou" pra copiar.
             const { data: base } = await supabase
@@ -73,27 +83,32 @@ export function SelecionarOrigem({ unidade, onEscolherZero, onEscolherDuplicar }
                 return
             }
 
-            const resultados = await Promise.all(base.map(async (c): Promise<CampanhaOrigem | null> => {
+            const resultados = await Promise.all(base.map(async (c): Promise<CampanhaOrigem> => {
                 const { data: linhas } = await supabase
                     .from("atividades_mensais")
                     .select("categoria, titulo, descricao, local, metadata")
                     .eq("campanha_id", c.id)
 
                 const todasLinhas = (linhas || []) as LinhaOrigemDuplicacao[]
-                // AC2: campanha com QUALQUER categoria fora da lista (ex.: "ESPORTE", singular —
-                // achado real do Jangurussu/jun-2026) não pode aparecer como origem.
-                if (todasLinhas.some(l => !categoriaValida(l.categoria))) return null
+                // AC2/AC5: campanha com QUALQUER categoria fora da lista fechada (ex.: "ESPORTE",
+                // singular — achado real do Jangurussu/jun-2026) ou sem nenhuma atividade não pode
+                // ser escolhida como origem — mas aparece desabilitada, não some da grade
+                // (S-PROG-08 item 2, ver comentário de `indisponivel` acima).
+                const indisponivel = todasLinhas.length === 0 || todasLinhas.some(l => !categoriaValida(l.categoria))
 
                 const contagem = todasLinhas.reduce<Record<string, number>>((acc, l) => {
                     acc[l.categoria] = (acc[l.categoria] || 0) + 1
                     return acc
                 }, {})
 
-                return { id: c.id, mes: c.mes, ano: c.ano, contagem, selo: calcularSeloQualidade(todasLinhas), linhas: todasLinhas }
+                return {
+                    id: c.id, mes: c.mes, ano: c.ano, contagem, indisponivel,
+                    selo: calcularSeloQualidade(todasLinhas), linhas: todasLinhas,
+                }
             }))
 
             if (!cancelado) {
-                setCampanhas(resultados.filter((c): c is CampanhaOrigem => c !== null))
+                setCampanhas(resultados)
                 setCarregando(false)
             }
         }
@@ -104,7 +119,7 @@ export function SelecionarOrigem({ unidade, onEscolherZero, onEscolherDuplicar }
 
     const handleDuplicar = () => {
         const origem = campanhas.find(c => c.id === selecionada)
-        if (!origem) return
+        if (!origem || origem.indisponivel) return
         const formularios = origem.linhas
             .map(l => atividadeFormDeLinhaExistente(l, novoTempId()))
             .filter((a): a is AtividadeForm => a !== null)
@@ -112,29 +127,7 @@ export function SelecionarOrigem({ unidade, onEscolherZero, onEscolherDuplicar }
     }
 
     return (
-        <div className="space-y-5 max-w-3xl">
-            <div className="flex items-start gap-2.5 p-4 rounded-xl border border-border bg-muted/30 text-sm text-muted-foreground">
-                <AjudaCampo campo="duplicar_origem" />
-                <span>
-                    Escolha o mês que serve de base. Vem copiado tudo que se repete (modalidade, professor, turma,
-                    faixa etária, pré-requisitos, ementa, local); <strong className="text-foreground">data, horário e vagas voltam em branco</strong> para
-                    você preencher. Textos de exemplo detectados na origem (ex.: &quot;Nome Sobrenome&quot;) também
-                    não são copiados.
-                </span>
-            </div>
-
-            <button
-                type="button"
-                onClick={onEscolherZero}
-                className="w-full flex items-center gap-3 p-4 rounded-xl border-2 border-dashed border-border hover:border-primary/50 hover:bg-primary/5 transition-colors text-left"
-            >
-                <Sparkles className="h-5 w-5 text-primary shrink-0" />
-                <div>
-                    <p className="font-semibold text-sm">Começar do zero</p>
-                    <p className="text-xs text-muted-foreground">Sem nenhuma atividade pré-preenchida.</p>
-                </div>
-            </button>
-
+        <div className="space-y-4 max-w-3xl">
             {carregando && (
                 <div className="flex items-center gap-2 justify-center py-10 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" /> Carregando meses anteriores…
@@ -147,49 +140,82 @@ export function SelecionarOrigem({ unidade, onEscolherZero, onEscolherDuplicar }
                 </p>
             )}
 
+            {/* Grade de meses anteriores (S-PROG-08 item 2) — fiel ao protótipo
+                (`.grid3`/`.mo`): `repeat(auto-fit, minmax(210px, 1fr))`. */}
             {!carregando && campanhas.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-3">
                     {campanhas.map(c => {
                         const ativa = selecionada === c.id
                         return (
                             // `role="button"` em vez de `<button>` real — o card contém o ícone de
                             // ajuda do selo (também interativo), e `<button>` dentro de `<button>`
                             // é HTML inválido (achado de acessibilidade, corrigido antes do PASS).
+                            // Card indisponível (AC5): sem role/tabIndex/onClick — não é alvo de
+                            // navegação por teclado nem de clique, mesmo estilo `.mo.off` do protótipo.
                             <div
                                 key={c.id}
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => setSelecionada(c.id)}
-                                onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelecionada(c.id) } }}
+                                role={c.indisponivel ? undefined : "button"}
+                                tabIndex={c.indisponivel ? undefined : 0}
+                                onClick={c.indisponivel ? undefined : () => setSelecionada(c.id)}
+                                onKeyDown={c.indisponivel ? undefined : (e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelecionada(c.id) } })}
                                 className={cn(
-                                    "text-left p-4 rounded-xl border-2 transition-colors space-y-2.5 cursor-pointer",
-                                    ativa ? "border-primary bg-primary/5 shadow-[0_0_0_3px_var(--primary)]/10" : "border-border hover:border-primary/40"
+                                    "text-left p-3.5 rounded-[var(--radius)] border-2 transition-colors space-y-2",
+                                    c.indisponivel
+                                        ? "opacity-50 pointer-events-none bg-muted border-border"
+                                        : cn(
+                                            "cursor-pointer",
+                                            ativa
+                                                ? "border-primary shadow-[0_0_0_3px_color-mix(in_oklch,var(--primary)_18%,transparent)]"
+                                                : "border-border hover:border-primary/60",
+                                        ),
                                 )}
                             >
                                 <div className="flex items-center justify-between gap-2">
-                                    <p className="font-bold text-sm">{NOMES_MES[c.mes - 1]} {c.ano}</p>
-                                    <span className="flex items-center gap-1 shrink-0">
-                                        <Badge variant="outline" className={cn("text-[11px] font-bold gap-1", corSelo(c.selo.percentualProblemas))}>
-                                            {c.selo.percentualProblemas === 0
-                                                ? <CheckCircle2 className="h-3 w-3" />
-                                                : <AlertCircle className="h-3 w-3" />}
-                                            {c.selo.percentualProblemas === 0 ? "Dados conferidos" : `${c.selo.percentualProblemas}% precisam revisão`}
-                                        </Badge>
+                                    <p className="font-bold text-[15px]">{NOMES_MES[c.mes - 1]} {c.ano}</p>
+                                    {!c.indisponivel && (
                                         <span onClick={e => e.stopPropagation()}>
                                             <AjudaCampo campo="selo_qualidade" />
                                         </span>
-                                    </span>
+                                    )}
                                 </div>
-                                <p className="text-xs text-muted-foreground">
-                                    {Object.entries(c.contagem).map(([cat, qtd]) => `${qtd} ${cat.toLowerCase()}`).join(" · ")}
+                                <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                                    {c.indisponivel
+                                        ? "Importação com dado fora do padrão — não pode ser usado como origem."
+                                        : Object.entries(c.contagem).map(([cat, qtd]) => `${qtd} ${cat.toLowerCase()}`).join(" · ")}
                                 </p>
+                                <Badge variant="outline" className={cn(
+                                    "text-[11px] font-bold gap-1",
+                                    c.indisponivel ? "border-border bg-muted text-muted-foreground" : corSelo(c.selo.percentualProblemas),
+                                )}>
+                                    {c.indisponivel ? null : c.selo.percentualProblemas === 0
+                                        ? <CheckCircle2 className="h-3 w-3" />
+                                        : <AlertCircle className="h-3 w-3" />}
+                                    {c.indisponivel
+                                        ? "Importação com falha — indisponível"
+                                        : c.selo.percentualProblemas === 0 ? "Dados conferidos" : `${c.selo.percentualProblemas}% precisam revisão`}
+                                </Badge>
                             </div>
                         )
                     })}
                 </div>
             )}
 
-            <div className="flex justify-end">
+            {/* Legenda fixa abaixo da grade — texto literal do protótipo (S-PROG-08 item 2). */}
+            <div className="flex items-start gap-2.5 p-3.5 rounded-xl border border-border bg-muted/30 text-xs text-muted-foreground">
+                <AjudaCampo campo="duplicar_origem" />
+                <span>
+                    Vem copiado: modalidade, professor, turma, faixa etária, pré-requisitos, dias, local e ementa.{" "}
+                    <strong className="text-foreground">Vem em branco: data, horário e vagas.</strong>{" "}
+                    Textos de exemplo detectados na origem (ex.: &quot;Nome Sobrenome&quot;) também não são copiados.
+                </span>
+            </div>
+
+            {/* Rodapé — "Começar do zero" (secundária, à esquerda) · "Duplicar e continuar"
+                (primária, à direita, desabilitada até escolher um mês), como no protótipo. */}
+            <div className="flex items-center justify-between gap-2 pt-1">
+                <Button type="button" variant="outline" size="lg" className="gap-1.5" onClick={onEscolherZero}>
+                    <Sparkles className="h-4 w-4" /> Começar do zero
+                </Button>
                 <Button size="lg" className="gap-1.5" disabled={!selecionada} onClick={handleDuplicar}>
                     <Copy className="h-4 w-4" /> Duplicar e continuar
                 </Button>
