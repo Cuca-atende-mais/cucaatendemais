@@ -345,19 +345,152 @@ export function extrairModalidades(chunks: string[]): string[] {
  * nomes mais espec\u00edficos ("Futsal Sesc") n\u00e3o perderem pra um prefixo mais gen\u00e9rico que tamb\u00e9m
  * seja um nome v\u00e1lido ("Futsal") quando ambos aparecem na lista de modalidades.
  */
-export function detectarAtividadeMencionada(mensagem: string, modalidades: string[]): string | null {
-  const msgNorm = normalizarTexto(mensagem);
-  const ordenadas = [...modalidades].sort((a, b) => b.length - a.length);
-  for (const modalidade of ordenadas) {
-    const modalidadeNorm = normalizarTexto(modalidade);
-    if (msgNorm.includes(modalidadeNorm)) return modalidade;
-    // Achado 2026-08-09 (fecha o débito do Plano 011): cursos têm título longo e o lead
-    // costuma citar só uma palavra/trecho dele (ex.: "Fotografia" pra "FUNDAMENTOS DA
-    // FOTOGRAFIA: ILUMINAÇÃO..."). Guarda de tamanho mínimo (4) evita casar palavra
-    // trivial ("de", "a", "no") contra qualquer título longo.
-    if (msgNorm.length >= 4 && modalidadeNorm.includes(msgNorm)) return modalidade;
+/**
+ * Plano 001 (auditoria de conversas 09-10/09/2026): `normalizarTexto` remove acento mas PRESERVA
+ * pontuação — "hidro-ginastica" (hífen digitado pelo lead) não batia contra "HIDROGINÁSTICA"
+ * (título cadastrado, sem hífen), e o bot negou em produção que o Pici tem hidroginástica (tem,
+ * 11 turmas cadastradas). Mesmo bug confirmado numa 2ª conversa real com "Muay -Thai" (hífen
+ * sujo vindo da planilha de origem).
+ * Normalizador SEPARADO de `normalizarTexto` de propósito: aquele é usado em ~15 outros pontos
+ * do arquivo pra fins diferentes (nome de unidade, faixa etária) que não foram avaliados aqui.
+ * O colapso de espaço NÃO estava no plano e foi acrescentado por necessidade: ao trocar "/" por
+ * espaço, um título real como "HIDROGINÁSTICA/ ESCOLA DE SAÚDE" viraria "hidroginastica  escola
+ * de saude" (espaço duplo) e deixaria de casar com a mesma frase digitada sem a barra.
+ */
+export function normalizarParaMatchDeAtividade(texto: string): string {
+  return normalizarTexto(texto).replace(/[-_/]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Plano 001, forma COMPACTA — usada só nas comparações de substring (Fases 1 e 2 de
+ * `detectarAtividadeMencionada`). Remove tudo que não é letra/dígito, inclusive espaço.
+ * Duas formas são necessárias porque os dois sentidos do erro existem no dado real e se
+ * contradizem se houver só uma:
+ *   - lead digita hífen onde o título não tem: "hidro-ginastica" x "HIDROGINÁSTICA";
+ *   - título tem hífen onde o lead digita espaço: "Muay -Thai" x "muay thai".
+ * Trocar pontuação por espaço resolve só o 2º caso; remover pontuação resolve só o 1º. Comparar
+ * sem espaço nenhum resolve os dois ("hidroginastica", "muaythai" dos dois lados).
+ * A forma COM espaço continua sendo a usada pelo guard base/variante (que precisa enxergar o
+ * separador de palavra) e pelo match por palavra inteira da Fase 3.
+ */
+function compactarParaMatchDeAtividade(texto: string): string {
+  return normalizarParaMatchDeAtividade(texto).replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Plano 009 (varredura sistêmica do catálogo real — 15 pares base/variante confirmados nas 3
+ * unidades ativas em 2026-09-11): quando a unidade tem uma atividade "base" ("NATAÇÃO") E uma
+ * variante mais específica ("NATAÇÃO INFANTIL"), uma pergunta que cita só a palavra base
+ * resolvia SILENCIOSAMENTE pra base — devolvendo turma/professor/faixa etária de uma atividade
+ * possivelmente diferente da perguntada, com confiança total. Preferir `null` (o fallback seguro
+ * que qualquer título desconhecido já tem hoje) a arriscar a atividade errada.
+ * O separador de palavra logo após o prefixo comum evita falso positivo do tipo "judo" ser
+ * prefixo de "judoca" — palavra diferente colada, não uma variante qualificada.
+ */
+function ehBaseDeVarianteMaisEspecifica(modalidadeNorm: string, todasNormalizadas: string[]): boolean {
+  if (!modalidadeNorm) return false;
+  return todasNormalizadas.some((outraNorm) => {
+    if (outraNorm === modalidadeNorm) return false;
+    if (outraNorm.length <= modalidadeNorm.length) return false;
+    if (!outraNorm.startsWith(modalidadeNorm)) return false;
+    return !/[a-z0-9]/.test(outraNorm[modalidadeNorm.length]);
+  });
+}
+
+/**
+ * Plano 005: mensagem que cita só a 1ª palavra de um título composto ("violão" pra "Violão para
+ * Iniciantes") não batia em nenhuma das condições de substring — nem a mensagem contém o título
+ * inteiro, nem o título contém a mensagem inteira. Último recurso, e conservador: só resolve
+ * quando EXATAMENTE 1 modalidade bate pela palavra significativa; 0 ou 2+ devolvem `null`
+ * (ex.: "Violão para Iniciantes" e "Violão Fácil" na mesma unidade — nunca adivinha).
+ * Compara por palavra inteira (`\b`), não substring solta — "vela" não pode casar "novela".
+ */
+/**
+ * @qa FAIL-2 (gate S-WM-AUD-002): `normalizarParaMatchDeAtividade` remove só `-_/`, então o resto
+ * da pontuação sobrevivia grudado na palavra — `"Dança: Integração"` virava `"danca:"` e
+ * `"(Oficina) Canva..."` virava `"(oficina)"`, palavras que NUNCA casam `\bdanca\b`/`\boficina\b`.
+ * Efeito duplo: o guard de ambiguidade enxergava 1 candidato onde havia 2+ (falsa unicidade), E o
+ * próprio caso principal do Plano 005 falhava nesses títulos. Limpar aqui conserta os dois.
+ */
+function primeiraPalavraSignificativa(modalidadeNorm: string): string | null {
+  return modalidadeNorm
+    .split(" ")
+    .map((palavra) => palavra.replace(/[^a-z0-9]/g, ""))
+    .find((palavra) => palavra.length >= 4 && !PALAVRAS_NAO_DISCRIMINANTES.has(palavra)) ?? null;
+}
+
+/**
+ * @qa FAIL-1 (gate S-WM-AUD-002): a Fase 3 casa a 1ª palavra do título contra a mensagem — e
+ * títulos reais começam com palavras comuns do português. Medido contra o catálogo real das 5
+ * unidades: 28 de 85 frases genéricas resolviam pra uma atividade. O caso mais grave era
+ * `"Hora Pintada"` (existe em 4 das 5 unidades): `"qual a hora?"` resolvia pra ela com
+ * `origem=mensagem_atual`, **sequestrando a mensagem antes de a continuação do Plano 003 rodar** —
+ * o bot respondia sobre a oficina "Hora Pintada" a quem perguntou o horário da natação. Mesmo
+ * padrão do achado 009, reintroduzido por outra porta.
+ *
+ * Esta lista NÃO é um dicionário de stopwords do português: é o conjunto fechado de palavras que
+ * (a) são vocabulário de ATRIBUTO do Plano 003 — o conflito direto — ou (b) são verbo/saudação de
+ * conversa comum. Uma palavra aqui só deixa de servir como GATILHO da Fase 3; o título que começa
+ * com ela continua sendo encontrado normalmente pelas Fases 1 e 2 quando citado de verdade
+ * (ex.: "Venha Jogar" citado por inteiro resolve na Fase 1).
+ * Não é exaustiva por construção — a bateria de frases genéricas em `index.test.ts` é o que
+ * protege contra a próxima palavra problemática aparecer num título novo.
+ */
+const PALAVRAS_NAO_DISCRIMINANTES = new Set([
+  // (a) vocabulário de atributo — colide de frente com o Plano 003
+  "hora", "horas", "horario", "horarios", "dia", "dias", "professor", "professora",
+  "educador", "educadora", "idade", "publico", "turma", "turmas", "vaga", "vagas",
+  "aula", "aulas", "horarios",
+  // (b) verbo/saudação de conversa comum
+  "venha", "vamos", "quero", "queria", "gostaria", "preciso", "tudo", "bom", "boa",
+  "onde", "quando", "como", "qual", "quais", "para", "pela", "pelo", "sobre", "tem",
+]);
+
+function detectarPorPalavraUnicaSemAmbiguidade(msgNorm: string, modalidades: string[], normalizadas: string[]): string | null {
+  const candidatos = new Set<string>();
+  for (let i = 0; i < modalidades.length; i++) {
+    const palavra = primeiraPalavraSignificativa(normalizadas[i]);
+    if (!palavra) continue;
+    if (new RegExp("\\b" + escaparRegex(palavra) + "\\b").test(msgNorm)) candidatos.add(modalidades[i]);
   }
-  return null;
+  return candidatos.size === 1 ? [...candidatos][0] : null;
+}
+
+export function detectarAtividadeMencionada(mensagem: string, modalidades: string[]): string | null {
+  const msgNorm = normalizarParaMatchDeAtividade(mensagem);
+  if (!msgNorm) return null;
+  const msgCompacta = compactarParaMatchDeAtividade(mensagem);
+  const normalizadas = modalidades.map((m) => normalizarParaMatchDeAtividade(m));
+  const compactas = modalidades.map((m) => compactarParaMatchDeAtividade(m));
+
+  // Fase 1 — o título aparece por inteiro dentro da mensagem. Do mais específico pro mais
+  // genérico, pra "Futsal Sesc" não perder pro prefixo "Futsal" quando os dois existem.
+  const porTamanho = modalidades.map((_, i) => i).sort((a, b) => compactas[b].length - compactas[a].length);
+  for (const i of porTamanho) {
+    if (!compactas[i]) continue;
+    if (!msgCompacta.includes(compactas[i])) continue;
+    if (ehBaseDeVarianteMaisEspecifica(normalizadas[i], normalizadas)) continue; // Plano 009
+    return modalidades[i];
+  }
+
+  // Fase 2 — a mensagem inteira é um TRECHO de um título (achado 2026-08-09: curso tem nome
+  // longo e o lead cita um pedaço, ex.: "Fotografia" pra "FUNDAMENTOS DA FOTOGRAFIA: ...").
+  // Guarda de tamanho mínimo (4) evita casar palavra trivial ("de", "a", "no").
+  //
+  // AMPLIAÇÃO DO PLANO 009 — furo encontrado na implementação, NÃO previsto no plano: o plano
+  // só protegia a Fase 1. Uma mensagem que é exatamente a palavra base (o lead digitando só
+  // "natação") entrava por aqui e resolvia pra "NATAÇÃO INFANTIL" — o título mais longo é
+  // tentado primeiro e contém a base — que é exatamente o bug que o plano quer impedir. O teste
+  // proposto no plano usa frase longa e por isso não pegava esse caminho.
+  // Correção: só resolve quando UM ÚNICO título contém o trecho; 2+ é ambiguidade real → null.
+  if (msgCompacta.length >= 4) {
+    const contendoOTrecho = [...new Set(modalidades.filter((_, i) => compactas[i].includes(msgCompacta)))];
+    if (contendoOTrecho.length === 1) return contendoOTrecho[0];
+    if (contendoOTrecho.length > 1) return null;
+  }
+
+  // Fase 3 — Plano 005, último recurso por palavra significativa única.
+  return detectarPorPalavraUnicaSemAmbiguidade(msgNorm, modalidades, normalizadas);
 }
 
 /**
@@ -374,6 +507,19 @@ export function mensagemPareceContinuacaoDeAtividade(texto: string): boolean {
   if (/\b(longe|perto|proxim[ao]s?|distancia|distante|bairro|endereco|localizacao|chegar|fica)\b/.test(norm)) return false;
   if (/^(e\s+)?(la|ai|nessa unidade|nessa cuca|nesse cuca)\??$/.test(norm)) return true;
   if (/^(e\s+)?(no|na|em|do|da|o|a)\s+[\p{L}\s0-9]+[?!.\s]*$/u.test(norm) && norm.split(/\s+/).length <= 6) return true;
+  // Plano 003 (auditoria + confirmação de campo, caso Claudiana/48bbf2f2, 10/09): pergunta curta
+  // sobre um ATRIBUTO da atividade recém-discutida ("qual horário", "que horas", "quais os
+  // dias", "quem é o professor") não cita o nome da modalidade e não batia em nenhum padrão
+  // acima — resolverAtividadeMencionadaComHistorico nunca olhava o histórico e o bot dizia "não
+  // encontrei" com o dado disponível (Voleibol na Barra tinha horário cadastrado).
+  // Os dois guards de cima continuam tendo precedência: "quais atividades tem no Jangurussu?"
+  // (pedido amplo) e "o Pici fica longe?" (localização) já retornaram false antes de chegar aqui.
+  if (/^(qual|quais|que)\s+(e\s+)?(o\s+|a\s+|os\s+|as\s+)?(horario|horarios|hora|horas|dia|dias|professor|professora|educador|educadora|idade|faixa etaria|publico)\b/.test(norm)) return true;
+  // "quem e o professor?" / "quem da a aula?" — variante com pronome interrogativo diferente,
+  // não coberta pela regex acima (que exige qual/quais/que no início).
+  if (/^quem\s+(e\s+)?(o\s+|a\s+)?(professor|professora|educador|educadora|da a aula|ministra|ensina)\b/.test(norm)) return true;
+  // Mensagem de uma palavra só ("horario?", "dias?") — o lead responde telegraficamente.
+  if (/^(horario|horarios|hora|horas|dias?|professor|professora)[?!.\s]*$/.test(norm)) return true;
   return false;
 }
 

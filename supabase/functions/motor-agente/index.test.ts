@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, extrairModalidades, detectarAtividadeMencionada, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead, removerVagasDoTexto, AVISO_VAGAS, INSTRUCAO_SEGURANCA, montarDiretivaVigenciaMes } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, normalizarParaMatchDeAtividade, extrairModalidades, detectarAtividadeMencionada, mensagemPareceContinuacaoDeAtividade, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead, removerVagasDoTexto, AVISO_VAGAS, INSTRUCAO_SEGURANCA, montarDiretivaVigenciaMes } from "./index.ts";
 
 // ── S-WM-34 (VAL-09) — normalizarTexto ──────────────────────────────────────
 Deno.test("normalizarTexto: remove acento e lowercase", () => {
@@ -546,4 +546,247 @@ Deno.test("montarDiretivaVigenciaMes: todos os 12 meses, um a um, nomeados corre
       assertEquals(resultado.includes(nomes[mes - 1] + " de 2026"), true, `mes ${mes} deveria conter '${nomes[mes - 1]}', resultado: ${resultado}`);
     }
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Fase 2 / Bloco A — auditoria de conversas reais 09-10/09/2026 (Planos 001/003/005/009)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Plano 001 — pontuação no meio da palavra não pode quebrar o match ──────────
+Deno.test("Plano 001: normalizarParaMatchDeAtividade troca pontuacao por espaco e colapsa", () => {
+  assertEquals(normalizarParaMatchDeAtividade("hidro-ginastica"), "hidro ginastica");
+  assertEquals(normalizarParaMatchDeAtividade("HIDROGINÁSTICA"), "hidroginastica");
+  assertEquals(normalizarParaMatchDeAtividade("Muay -Thai"), "muay thai");
+  // barra vira espaco e o espaco duplo resultante e colapsado (nao estava no plano)
+  assertEquals(normalizarParaMatchDeAtividade("HIDROGINÁSTICA/ ESCOLA DE SAÚDE"), "hidroginastica escola de saude");
+});
+
+Deno.test("Plano 001: caso real reproduzido (Rafael/Pici) — hifen digitado pelo lead ainda acha a modalidade", () => {
+  assertEquals(
+    detectarAtividadeMencionada("olá, tem hidro-ginastica no cuca?", ["HIDROGINÁSTICA", "Natação"]),
+    "HIDROGINÁSTICA",
+  );
+  // sem hifen continua funcionando (nao-regressao)
+  assertEquals(
+    detectarAtividadeMencionada("olá, tem hidroginastica no cuca?", ["HIDROGINÁSTICA", "Natação"]),
+    "HIDROGINÁSTICA",
+  );
+});
+
+Deno.test("Plano 001: caso real (bsimports/Muay Thai) — hifen sujo no TÍTULO cadastrado", () => {
+  // o titulo em producao e literalmente "Muay -Thai"; o lead escreve sem hifen
+  assertEquals(detectarAtividadeMencionada("tem muay thai?", ["Muay -Thai"]), "Muay -Thai");
+});
+
+// ── Plano 009 — base x variante, contra o catálogo REAL de produção ────────────
+Deno.test("Plano 009: nao resolve pra atividade base quando existe variante mais especifica (pares reais, 2026-09-11)", async (t) => {
+  const casos: { unidade: string; base: string; variantes: string[] }[] = [
+    { unidade: "Cuca Barra", base: "NATAÇÃO", variantes: ["NATAÇÃO INFANTIL"] },
+    { unidade: "Cuca José Walter", base: "NATAÇÃO", variantes: ["NATAÇÃO SELEÇÃO", "NATAÇÃO INFANTIL"] },
+    { unidade: "Cuca José Walter", base: "JUDÔ", variantes: ["JUDÔ SELEÇÃO", "JUDÔ INFANTIL"] },
+    { unidade: "Cuca José Walter", base: "KARATÊ ", variantes: ["KARATÊ INFANTIL"] },
+    { unidade: "Cuca José Walter", base: "JIU JITSU ", variantes: ["JIU JITSU INFANTIL"] },
+    { unidade: "Cuca José Walter", base: "HIDROGINÁSTICA", variantes: ["HIDROGINÁSTICA VIVER +", "HIDROGINÁSTICA/ ESCOLA DE SAÚDE"] },
+    { unidade: "Cuca Pici", base: "CAPOEIRA", variantes: ["CAPOEIRA INICIANTE"] },
+    { unidade: "Cuca Pici", base: "JUDO", variantes: ["JUDO SELEÇÃO"] },
+    { unidade: "Cuca Pici", base: "NATAÇÃO", variantes: ["NATAÇÃO INFANTIL", "NATAÇÃO PARALIMPICA"] },
+  ];
+  for (const caso of casos) {
+    await t.step(`${caso.unidade}: "${caso.base.trim()}" com variante(s) ${caso.variantes.join(", ")}`, () => {
+      const catalogo = [caso.base, ...caso.variantes];
+      assertEquals(
+        detectarAtividadeMencionada(`oi, poderia me informar o horario de ${caso.base.trim().toLowerCase()} por favor`, catalogo),
+        null,
+        `frase generica sobre "${caso.base.trim()}" nao pode resolver pra base tendo "${caso.variantes[0]}" no catalogo`,
+      );
+    });
+  }
+});
+
+Deno.test("Plano 009 (furo encontrado na implementacao, fora do plano): mensagem que E so a palavra base tambem nao pode resolver", () => {
+  // o plano so protegia a 1a condicao de match. O lead digitando so "natação" entrava pela
+  // 2a condicao ("NATAÇÃO INFANTIL".includes("natacao")) e resolvia pra variante errada.
+  assertEquals(detectarAtividadeMencionada("natação", ["NATAÇÃO", "NATAÇÃO INFANTIL"]), null);
+  assertEquals(detectarAtividadeMencionada("judo", ["JUDO", "JUDO SELEÇÃO"]), null);
+  assertEquals(detectarAtividadeMencionada("futsal", ["Futsal ", "Futsal Sesc"]), null);
+});
+
+Deno.test("Plano 009: AINDA resolve pra variante quando o lead cita o qualificador", () => {
+  assertEquals(detectarAtividadeMencionada("tem natação infantil?", ["NATAÇÃO", "NATAÇÃO INFANTIL"]), "NATAÇÃO INFANTIL");
+  assertEquals(detectarAtividadeMencionada("quero saber de hidroginástica viver +", ["HIDROGINÁSTICA", "HIDROGINÁSTICA VIVER +"]), "HIDROGINÁSTICA VIVER +");
+  assertEquals(detectarAtividadeMencionada("judo seleção tem hoje?", ["JUDO", "JUDO SELEÇÃO"]), "JUDO SELEÇÃO");
+});
+
+Deno.test("Plano 009: sem familia base/variante, resolve normalmente (nao-regressao)", () => {
+  assertEquals(detectarAtividadeMencionada("tem capoeira?", ["Capoeira", "Judô"]), "Capoeira");
+  assertEquals(detectarAtividadeMencionada("tem natação de noite?", ["Natação", "Judô"]), "Natação");
+});
+
+Deno.test("Plano 009: prefixo colado nao conta como variante (judo x judoca)", () => {
+  // "judoca" nao e variante qualificada de "judo" — e outra palavra; o guard nao pode disparar
+  assertEquals(detectarAtividadeMencionada("tem judo?", ["Judo", "Judoca"]), "Judo");
+});
+
+// ── Plano 005 — nome parcial de título composto ────────────────────────────────
+Deno.test("Plano 005: caso real (bsimports/violao) — 1a palavra do titulo composto resolve quando NAO ha ambiguidade", () => {
+  assertEquals(
+    detectarAtividadeMencionada("Múay Thai e violão quais os horários", ["Violão para Iniciantes"]),
+    "Violão para Iniciantes",
+  );
+});
+
+Deno.test("Plano 005: duas atividades com a mesma 1a palavra sao ambiguas — nunca adivinha", () => {
+  assertEquals(
+    detectarAtividadeMencionada("queria saber de violão", ["Violão para Iniciantes", "Violão Fácil"]),
+    null,
+  );
+});
+
+Deno.test("Plano 005: match por palavra INTEIRA — 'vela' nao pode casar dentro de 'novela'", () => {
+  assertEquals(detectarAtividadeMencionada("gosto de novela", ["Vela Oceanica"]), null);
+});
+
+Deno.test("Plano 005 (DIVERGE do plano, melhor que o previsto): 2 atividades na mesma mensagem resolve a citada por inteiro", () => {
+  // O Plano 005 previa `null` aqui (2 candidatos pela estrategia de palavra -> ambiguo). Com a
+  // normalizacao do Plano 001 aplicada, "muay thai" passa a casar o titulo INTEIRO ("Muay -Thai")
+  // ja na Fase 1, antes de qualquer estrategia de palavra — entao a funcao devolve uma atividade
+  // REALMENTE citada pelo lead, em vez de nada. Nao e o bug do Plano 009 (nao e outra atividade;
+  // e uma das duas perguntadas), e responder sobre 1 das 2 e melhor que responder sobre nenhuma.
+  // A limitacao de fundo continua valendo e registrada: a assinatura devolve 1 atividade so, e o
+  // Violao dessa mesma mensagem segue sem ser respondido pela camada deterministica.
+  assertEquals(
+    detectarAtividadeMencionada("Múay Thai e violão quais os horários", ["Muay -Thai", "Violão para Iniciantes"]),
+    "Muay -Thai",
+  );
+});
+
+// ── Plano 003 — pergunta curta de atributo mantém a atividade do turno anterior ─
+Deno.test("Plano 003: pergunta curta de atributo e reconhecida como continuacao", () => {
+  for (const texto of [
+    "qual horário", "qual horário?", "qual o horário?", "que horas?", "quais os dias?",
+    "qual o professor?", "quem é o professor?", "quem dá a aula?", "qual a faixa etária?",
+    "horário?", "dias?",
+  ]) {
+    assertEquals(mensagemPareceContinuacaoDeAtividade(texto), true, `"${texto}" deveria ser continuacao`);
+  }
+});
+
+Deno.test("Plano 003: 'qual horário' herda a atividade do historico quando o lead escreveu o nome", () => {
+  const resolucao = resolverAtividadeMencionadaComHistorico("qual horário", ["Voleibol", "Natação"], [
+    { role: "user", content: "tem voleibol no cuca da barra?" },
+    { role: "assistant", content: "Temos Voleibol sim!" },
+  ]);
+  assertEquals(resolucao.atividade, "Voleibol");
+  assertEquals(resolucao.origem, "historico");
+});
+
+Deno.test("Plano 003 — GAP CONHECIDO: a conversa real (Claudiana/48bbf2f2) NAO e fechada por este plano", () => {
+  // A mensagem real da lead foi "voleiboy" (typo), nao "voleibol". O Plano 003 conserta a
+  // deteccao de continuacao ("qual horário" agora e reconhecida), mas a busca no historico
+  // continua devolvendo null porque detectarAtividadeMencionada nao tolera erro de digitacao em
+  // nome de ATIVIDADE (so existe tolerancia para nome de UNIDADE, via distanciaLevenshtein).
+  // O plano validou so o lado da continuacao e nao seguiu ate o historico.
+  // Este teste TRAVA o comportamento atual de proposito: se alguem adicionar fuzzy matching de
+  // atividade no futuro, este teste quebra e obriga a decisao a ser consciente (fuzzy em nome de
+  // atividade tem exatamente o risco de falso positivo que o Plano 009 combate).
+  assertEquals(mensagemPareceContinuacaoDeAtividade("qual horário"), true);
+  const resolucao = resolverAtividadeMencionadaComHistorico("qual horário", ["Voleibol", "Natação"], [
+    { role: "user", content: "voleiboy" },
+  ]);
+  assertEquals(resolucao.atividade, null, "gap conhecido: typo em nome de atividade nao resolve");
+});
+
+Deno.test("Plano 003: guards existentes continuam tendo precedencia (nao-regressao)", () => {
+  // pedido amplo de listagem nao pode virar continuacao
+  assertEquals(mensagemPareceContinuacaoDeAtividade("quais atividades tem no Jangurussu?"), false);
+  // pergunta de localizacao tambem nao
+  assertEquals(mensagemPareceContinuacaoDeAtividade("o Pici fica longe daqui?"), false);
+  assertEquals(mensagemPareceContinuacaoDeAtividade(""), false);
+});
+
+Deno.test("Plano 003: atributo sem atividade no historico nao inventa", () => {
+  const resolucao = resolverAtividadeMencionadaComHistorico("qual horário", ["Voleibol", "Natação"], [
+    { role: "user", content: "bom dia" },
+  ]);
+  assertEquals(resolucao.atividade, null);
+});
+
+Deno.test("Plano 003: duas atividades distintas no historico nao chutam", () => {
+  const resolucao = resolverAtividadeMencionadaComHistorico("que horas?", ["Voleibol", "Natação"], [
+    { role: "user", content: "tem voleibol?" },
+    { role: "user", content: "e natação?" },
+  ]);
+  assertEquals(resolucao.atividade, null);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @qa FAIL-1/FAIL-2 (gate S-WM-AUD-002) — 2º EIXO DE VERIFICAÇÃO
+// A varredura original perguntava SOBRE cada título e conferia se resolvia pra ele mesmo. Isso
+// prova "perguntar por X não devolve Y", mas NÃO prova "perguntar por nada não devolve algo" —
+// e era exatamente aí que estava a regressão (28 frases genéricas resolvendo pra uma atividade).
+// Esta bateria é o eixo que faltava, agora permanente.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+Deno.test("2º eixo: frase generica de conversa nao pode resolver pra atividade nenhuma", async (t) => {
+  // Catalogo reduzido mas com os titulos REAIS que causaram os falsos positivos.
+  const catalogo = [
+    "Hora Pintada", "Venha Jogar", "Natação", "NATAÇÃO INFANTIL", "Judô",
+    "Oficina criativa", "Quiz", "Treinamento Funcional", "Carimba",
+  ];
+  const genericas = [
+    "qual a hora?", "que hora?", "a que hora abre?", "qual hora comeca?",
+    "venha me ajudar", "pode vir aqui?", "bom dia", "obrigado",
+    "qual o horário?", "quais os dias?", "quem é o professor?", "qual a turma?",
+    "tem vaga?", "que idade precisa ter?", "qual o público?",
+  ];
+  for (const frase of genericas) {
+    await t.step(`"${frase}"`, () => {
+      assertEquals(
+        detectarAtividadeMencionada(frase, catalogo),
+        null,
+        `"${frase}" nao cita atividade nenhuma e nao pode resolver pra uma`,
+      );
+    });
+  }
+});
+
+Deno.test("@qa FAIL-1: 'qual a hora?' NAO pode sequestrar a mensagem antes da continuacao do Plano 003", () => {
+  // Regressao real medida no gate: "Hora Pintada" existe em 4 das 5 unidades e resolvia com
+  // origem=mensagem_atual, impedindo o Plano 003 de rodar — o bot respondia sobre a oficina
+  // "Hora Pintada" a quem perguntou o horario da natacao.
+  const catalogo = ["Hora Pintada", "Natação", "Judô"];
+  const historico = [{ role: "user", content: "tem natação?" }];
+  for (const frase of ["qual a hora?", "que hora?", "a que hora abre?", "qual o horário?"]) {
+    const r = resolverAtividadeMencionadaComHistorico(frase, catalogo, historico);
+    assertEquals(r.atividade, "Natação", `"${frase}" deveria herdar Natação do historico`);
+    assertEquals(r.origem, "historico");
+  }
+});
+
+Deno.test("@qa FAIL-2: pontuacao grudada no titulo nao pode criar falsa unicidade no guard", () => {
+  // "Dança: Integração" virava a palavra "danca:" (nunca casa \bdanca\b), fazendo o guard enxergar
+  // 1 candidato onde havia 2 — e resolvia o que deveria ser ambiguo.
+  assertEquals(
+    detectarAtividadeMencionada(
+      "oi queria saber sobre danca e os horarios",
+      ["Dança Contemporânea - Corpo Poético", "Dança: Integração"],
+    ),
+    null,
+    "2 titulos de danca -> ambiguo -> null",
+  );
+  // Mesmo caso com parenteses (Mondubim tem 3 titulos comecando com Oficina)
+  assertEquals(
+    detectarAtividadeMencionada(
+      "queria saber sobre oficina e os horarios",
+      ["(Oficina) Canva para Apresentações", "(Oficina) Protótipo de Jogo Analógico", "Oficina criativa"],
+    ),
+    null,
+  );
+});
+
+Deno.test("Fase 3 endurecida: titulo que COMECA com palavra nao-discriminante ainda resolve quando citado por inteiro", () => {
+  // A palavra so deixa de servir como GATILHO da Fase 3 — o titulo continua encontravel.
+  const catalogo = ["Hora Pintada", "Venha Jogar", "Natação"];
+  assertEquals(detectarAtividadeMencionada("quero saber da hora pintada", catalogo), "Hora Pintada");
+  assertEquals(detectarAtividadeMencionada("tem venha jogar hoje?", catalogo), "Venha Jogar");
 });
