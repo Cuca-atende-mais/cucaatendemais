@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
 
         // 3. Lê o payload
         const body = await req.json()
-        const { campanha, atividades } = body as {
+        const { campanha, atividades, confirmarSubstituicao } = body as {
             campanha: {
                 titulo: string
                 unidade_cuca: string
@@ -32,6 +32,11 @@ export async function POST(req: NextRequest) {
                 status: string
             }
             atividades: any[]
+            // S-PROG-02 (AC4): só apaga campanha existente com essa confirmação explícita —
+            // antes este endpoint apagava sem avisar (`campanhas_mensais_mes_ano_unidade_key` é
+            // UNIQUE, então inserir sem apagar primeiro sempre falhava; a correção não é pular o
+            // delete, é só fazê-lo sob confirmação, não incondicionalmente).
+            confirmarSubstituicao?: boolean
         }
 
         if (!campanha || !atividades || atividades.length === 0) {
@@ -41,13 +46,22 @@ export async function POST(req: NextRequest) {
         // 4. Usa admin client (service role) para bypassar o RLS no insert
         const admin = createAdminClient()
 
-        // Remove campanha existente para o mesmo mês/ano/unidade (pode ser órfã de import com falha)
-        await admin
+        // Verifica campanha existente para o mesmo mês/ano/unidade ANTES de decidir apagar.
+        const { data: conflito } = await admin
             .from("campanhas_mensais")
-            .delete()
+            .select("id, status, titulo")
             .eq("mes", campanha.mes)
             .eq("ano", campanha.ano)
             .eq("unidade_cuca", campanha.unidade_cuca)
+            .maybeSingle()
+
+        if (conflito && !confirmarSubstituicao) {
+            return NextResponse.json({ error: "Já existe programação para este mês/unidade", conflito }, { status: 409 })
+        }
+
+        if (conflito) {
+            await admin.from("campanhas_mensais").delete().eq("id", conflito.id)
+        }
 
         const { data: newCamp, error: campErr } = await admin
             .from("campanhas_mensais")

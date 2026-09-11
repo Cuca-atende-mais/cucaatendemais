@@ -7,13 +7,44 @@ import { CampanhaMensal } from "@/lib/types/database"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeft, Calendar, CheckCircle2, Clock, MapPin, Search, FileText, Loader2, ThumbsUp, Download, Pencil, Send } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+    ArrowLeft, Calendar, CheckCircle2, Clock, MapPin, Search, FileText, Loader2, ThumbsUp,
+    Download, Pencil, Send, HelpCircle, Undo2, History, FileSpreadsheet, FileType,
+} from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
 import * as XLSX from "xlsx"
+import { pdf } from "@react-pdf/renderer"
+import { montarAbasExportacao, nomeArquivoExportacao } from "@/lib/programacao/exportacao"
+import { ProgramacaoPdfDocument } from "@/lib/programacao/programacao-pdf"
+
+// S-PROG-04 (item 3): uma linha do histórico de transições — join com `colaboradores` pra
+// mostrar o nome de quem fez a mudança (Supabase resolve FK many-to-one como objeto único).
+interface HistoricoItem {
+    id: string
+    de_status: string | null
+    para_status: string
+    motivo: string | null
+    criado_em: string
+    colaboradores: { nome_completo: string | null }[] | null
+}
+
+// S-PROG-04 (item 2): as 4 transições do ciclo passam a ser centralizadas em
+// /api/programacao/status — antes "aprovado" fazia update direto no cliente, bypassando
+// qualquer checagem de motivo/histórico. Rota valida a transição, bloqueia sem revisão (item 2)
+// e grava o histórico (item 3).
 
 export default function CampanhaMensalPage() {
     const params = useParams()
@@ -29,11 +60,28 @@ export default function CampanhaMensalPage() {
     const [categoriaFilter, setCategoriaFilter] = useState("all")
     const [categoriasUnicas, setCategoriasUnicas] = useState<string[]>([])
 
+    // S-PROG-04 (item 3): histórico de transições — linha do tempo na tela de aprovação.
+    const [historico, setHistorico] = useState<HistoricoItem[]>([])
+    // S-PROG-04 (item 2): "Devolver para ajuste" exige motivo obrigatório.
+    const [dialogDevolverAberto, setDialogDevolverAberto] = useState(false)
+    const [motivoDevolucao, setMotivoDevolucao] = useState("")
+    // S-PROG-04 (item 2): "Reabrir" uma aprovada exige confirmação (sai do ar).
+    const [dialogReabrirAberto, setDialogReabrirAberto] = useState(false)
+
     const supabase = createClient()
 
     useEffect(() => {
         if (campanhaId) fetchData()
     }, [campanhaId])
+
+    const fetchHistorico = async () => {
+        const { data } = await supabase
+            .from("campanha_historico")
+            .select("id, de_status, para_status, motivo, criado_em, colaboradores(nome_completo)")
+            .eq("campanha_id", campanhaId)
+            .order("criado_em", { ascending: false })
+        setHistorico(data || [])
+    }
 
     const fetchData = async () => {
         setLoading(true)
@@ -55,6 +103,8 @@ export default function CampanhaMensalPage() {
                 const distinctTags = Array.from(new Set(actData.map(a => a.categoria || "Diversos")))
                 setCategoriasUnicas(distinctTags as string[])
             }
+
+            await fetchHistorico()
         } catch (error: any) {
             console.error(error)
             toast.error("Erro ao carregar os dados desta planilha.")
@@ -63,142 +113,131 @@ export default function CampanhaMensalPage() {
         }
     }
 
-    // S9-00: Aprovação sem disparo automático
-    const handleAprovarProgramacao = async () => {
-        if (!campanha || campanha.status === "aprovado") return
-        setIsAprovando(true)
+    // S-PROG-04 (item 2/4): ponto único de transição — valida, bloqueia sem revisão, grava
+    // histórico (tudo do lado do servidor, ver /api/programacao/status). Devolve `true` em
+    // sucesso pra cada chamador decidir sua própria mensagem/estado local.
+    const executarTransicao = async (novoStatus: string, motivo?: string): Promise<boolean> => {
+        if (!campanha) return false
         try {
-            const { data: sessionData } = await supabase.auth.getSession()
-            if (!sessionData.session) {
-                toast.error("Sessão expirada. Faça login novamente.")
-                setIsAprovando(false)
-                return
+            const res = await fetch("/api/programacao/status", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ campanha_id: campanha.id, novoStatus, motivo }),
+            })
+            const data = await res.json()
+            if (!res.ok) {
+                if (res.status === 409 && data.totalProblemas) {
+                    toast.error(`Não é possível enviar: ${data.totalProblemas} ponto(s) a revisar. Abra "Ver Atividades" e corrija antes.`)
+                } else {
+                    toast.error(data.error || "Erro ao alterar status")
+                }
+                return false
             }
-            const { error } = await supabase
-                .from("campanhas_mensais").update({ status: "aprovado" }).eq("id", campanha.id)
-            if (error) throw error
-            setCampanha({ ...campanha, status: "aprovado" })
-            toast.success("Programação aprovada! O Gestor Geral poderá disparar o aviso para toda a Rede.")
-        } catch (error: any) {
-            toast.error("Erro ao aprovar: " + error.message)
-        } finally {
-            setIsAprovando(false)
+            setCampanha({ ...campanha, status: novoStatus })
+            await fetchHistorico()
+            return true
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Erro ao alterar status")
+            return false
         }
     }
 
-    // SQS-44: T3.1 — Finalizar Programação (rascunho → pendente)
+    // Item 2: Aprovar (pendente → aprovado) — vai ao ar e dispara os embeddings do RAG (já
+    // condicional a `status = 'aprovado'` no trigger `trigger_indexar_campanha_mensal`).
+    const handleAprovarProgramacao = async () => {
+        if (!campanha || campanha.status !== "pendente") return
+        setIsAprovando(true)
+        const ok = await executarTransicao("aprovado")
+        setIsAprovando(false)
+        if (ok) toast.success("Programação aprovada! Foi ao ar e os embeddings do RAG foram gerados.")
+    }
+
+    // Item 2: Finalizar/"Enviar para aprovação" (rascunho → pendente) — bloqueada no servidor se
+    // houver ponto a revisar.
     const handleFinalizarProgramacao = async () => {
         if (!campanha || campanha.status !== "rascunho") return
         if (!confirm("Finalizar a programação e enviá-la para aprovação?")) return
         setIsAlterandoStatus(true)
-        try {
-            const res = await fetch("/api/programacao/status", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanha_id: campanha.id, status: "pendente" }),
-            })
-            if (!res.ok) {
-                const err = await res.json()
-                throw new Error(err.error || "Erro ao finalizar")
-            }
-            setCampanha({ ...campanha, status: "pendente" })
-            toast.success("Programação enviada para aprovação!")
-        } catch (e: any) {
-            toast.error(e.message || "Erro ao finalizar programação")
-        } finally {
-            setIsAlterandoStatus(false)
+        const ok = await executarTransicao("pendente")
+        setIsAlterandoStatus(false)
+        if (ok) toast.success("Programação enviada para aprovação!")
+    }
+
+    // Item 2: "Devolver para ajuste" (pendente → rascunho) — motivo obrigatório, registrado no
+    // histórico. Substitui o antigo "Reabrir para Edição" que não pedia motivo nenhum.
+    const handleConfirmarDevolucao = async () => {
+        if (!motivoDevolucao.trim()) {
+            toast.error("Informe o motivo da devolução.")
+            return
+        }
+        setIsAlterandoStatus(true)
+        const ok = await executarTransicao("rascunho", motivoDevolucao.trim())
+        setIsAlterandoStatus(false)
+        if (ok) {
+            toast.success("Programação devolvida para ajuste.")
+            setDialogDevolverAberto(false)
+            setMotivoDevolucao("")
         }
     }
 
-    // SQS-44: T3.2 — Reabrir para Edição (pendente → rascunho)
-    const handleReabrirEdicao = async () => {
-        if (!campanha || campanha.status !== "pendente") return
-        if (!confirm("Reabrir esta programação para edição? O status voltará para rascunho.")) return
+    // Item 2: "Reabrir" uma aprovada (aprovado → rascunho) — sai do ar até nova aprovação (o
+    // mesmo trigger que gera o embedding na aprovação já desativa quando status != 'aprovado').
+    const handleConfirmarReabrir = async () => {
         setIsAlterandoStatus(true)
-        try {
-            const res = await fetch("/api/programacao/status", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanha_id: campanha.id, status: "rascunho" }),
-            })
-            if (!res.ok) {
-                const err = await res.json()
-                throw new Error(err.error || "Erro ao reabrir")
-            }
-            setCampanha({ ...campanha, status: "rascunho" })
-            toast.success("Programação reaberta para edição.")
-        } catch (e: any) {
-            toast.error(e.message || "Erro ao reabrir programação")
-        } finally {
-            setIsAlterandoStatus(false)
+        const ok = await executarTransicao("rascunho")
+        setIsAlterandoStatus(false)
+        if (ok) {
+            toast.success("Programação reaberta — saiu do ar até ser aprovada de novo.")
+            setDialogReabrirAberto(false)
         }
     }
 
     // SQS-44: T3.3/T3.4 — Exportar para Gráfica (.xlsx)
+    // S-PROG-05 (item 2): montagem das abas extraída pra `lib/programacao/exportacao.ts`
+    // (testável, com teste de snapshot congelando o formato que a gráfica já aceita) — aqui só
+    // sobra a parte que só existe no navegador (montar o workbook e disparar o download).
     const handleExportarXLSX = () => {
         if (!campanha || atividades.length === 0) return
-        const MESES_NOME = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-        const nomeMes = MESES_NOME[campanha.mes] || String(campanha.mes)
-        const unidade = campanha.unidade_cuca || ""
+        const abas = montarAbasExportacao(campanha, atividades)
+        if (abas.length === 0) { toast.error("Nenhuma atividade para exportar."); return }
+
         const wb = XLSX.utils.book_new()
-
-        const categorias: { key: string; headers: string[]; extrator: (a: any) => any[] }[] = [
-            {
-                key: "CURSOS",
-                headers: ["#", "Curso", "Carga Horária", "Vagas", "Ementa", "Requisitos", "Período", "Horário", "Educador"],
-                extrator: (a) => {
-                    const m = a.metadata || {}
-                    return [a.titulo, m.carga_horaria ? `${m.carga_horaria}h` : "—", m.vagas || "—", m.ementa || "—", m.requisitos || "—", m.periodo || "—", m.horario || "—", m.educador || "—"]
-                },
-            },
-            {
-                key: "ESPORTES",
-                headers: ["#", "Modalidade", "Professor", "Turma", "Faixa Etária", "Sexo", "Vagas", "Dias", "Horário"],
-                extrator: (a) => {
-                    const m = a.metadata || {}
-                    return [a.titulo, m.professor || "—", m.turma || "—", m.faixa_etaria || "—", m.sexo || "—", m.vagas || "—", m.dias_semana || "—", m.horario || "—"]
-                },
-            },
-            {
-                key: "DIA A DIA",
-                headers: ["#", "Sessão", "Data", "Dia da Semana", "Atividade", "Horário Início", "Horário Fim", "Local", "Informações"],
-                extrator: (a) => {
-                    const m = a.metadata || {}
-                    return [m.sessao || "—", m.data_real || "—", m.dia_semana || "—", m.atividade || a.titulo, a.hora_inicio?.substring(0, 5) || "—", a.hora_fim?.substring(0, 5) || "—", a.local || m.local || "—", m.informacoes || "—"]
-                },
-            },
-            {
-                key: "ESPECIAIS",
-                headers: ["#", "Sessão", "Data", "Dia da Semana", "Atividade", "Horário Início", "Horário Fim", "Local", "Informações"],
-                extrator: (a) => {
-                    const m = a.metadata || {}
-                    return [m.sessao || "—", m.data_real || "—", m.dia_semana || "—", m.atividade || a.titulo, a.hora_inicio?.substring(0, 5) || "—", a.hora_fim?.substring(0, 5) || "—", a.local || m.local || "—", m.informacoes || "—"]
-                },
-            },
-        ]
-
-        let abas = 0
-        for (const cat of categorias) {
-            const itens = atividades.filter(a => a.categoria === cat.key)
-            if (itens.length === 0) continue
-            const tituloAba = `${cat.key} - ${nomeMes.toUpperCase()}`
-            const tituloVisual = `${cat.key} ${unidade.toUpperCase()} — ${nomeMes.toUpperCase()} ${campanha.ano}`
-            const rows: any[][] = [
-                [tituloVisual],
-                cat.headers,
-                ...itens.map((a, i) => [i + 1, ...cat.extrator(a)]),
-            ]
+        for (const aba of abas) {
+            const rows = [[aba.tituloVisual], aba.headers, ...aba.linhas]
             const ws = XLSX.utils.aoa_to_sheet(rows)
-            XLSX.utils.book_append_sheet(wb, ws, tituloAba)
-            abas++
+            XLSX.utils.book_append_sheet(wb, ws, aba.tituloAba)
         }
 
-        if (abas === 0) { toast.error("Nenhuma atividade para exportar."); return }
-
-        const nomeArq = `Programacao_${unidade.replace(/\s+/g, "_")}_${nomeMes}_${campanha.ano}.xlsx`
+        const nomeArq = nomeArquivoExportacao(campanha, "xlsx")
         XLSX.writeFile(wb, nomeArq)
         toast.success(`Arquivo ${nomeArq} gerado!`)
+    }
+
+    // S-PROG-05 (item 4): PDF de leitura — mesmas abas/linhas do XLSX (item 1: usuário escolhe o
+    // formato, nenhum é padrão implícito), textos longos (ementa/informações) com quebra de linha.
+    const [gerandoPdf, setGerandoPdf] = useState(false)
+    const handleExportarPDF = async () => {
+        if (!campanha || atividades.length === 0) return
+        const abas = montarAbasExportacao(campanha, atividades)
+        if (abas.length === 0) { toast.error("Nenhuma atividade para exportar."); return }
+
+        setGerandoPdf(true)
+        try {
+            const blob = await pdf(<ProgramacaoPdfDocument campanha={campanha} abas={abas} />).toBlob()
+            const nomeArq = nomeArquivoExportacao(campanha, "pdf")
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = url
+            a.download = nomeArq
+            a.click()
+            URL.revokeObjectURL(url)
+            toast.success(`Arquivo ${nomeArq} gerado!`)
+        } catch (e) {
+            console.error("[handleExportarPDF]", e)
+            toast.error("Erro ao gerar o PDF.")
+        } finally {
+            setGerandoPdf(false)
+        }
     }
 
     const filteredAtividades = atividades.filter(act => {
@@ -241,6 +280,19 @@ export default function CampanhaMensalPage() {
                                     <CheckCircle2 className="h-3 w-3 mr-1" /> Em Vigência
                                 </Badge>
                             )}
+                            {/* Item 6: ajuda no badge de status — o que cada um significa e quem muda */}
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <button type="button" tabIndex={-1} className="text-muted-foreground hover:text-foreground" aria-label="O que os status significam">
+                                        <HelpCircle className="h-3.5 w-3.5" />
+                                    </button>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-72 text-xs space-y-1">
+                                    <p><strong>Rascunho:</strong> em edição, fora do ar. Junta técnica envia para aprovação.</p>
+                                    <p><strong>Pendente:</strong> aguardando a coordenação aprovar ou devolver.</p>
+                                    <p><strong>Aprovado:</strong> no ar — o assistente do WhatsApp já responde com este conteúdo.</p>
+                                </TooltipContent>
+                            </Tooltip>
                         </div>
                         <p className="text-muted-foreground text-sm flex items-center gap-2 mt-1">
                             <MapPin className="h-3.5 w-3.5" />
@@ -252,7 +304,7 @@ export default function CampanhaMensalPage() {
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap shrink-0">
-                    {/* SQS-44: T3.1 — Finalizar (rascunho → pendente) */}
+                    {/* Item 2: Finalizar/"Enviar para aprovação" (rascunho → pendente) */}
                     {campanha.status === "rascunho" && (
                         <Button
                             variant="outline"
@@ -264,19 +316,38 @@ export default function CampanhaMensalPage() {
                             Finalizar Programação
                         </Button>
                     )}
-                    {/* SQS-44: T3.2 — Reabrir para Edição (pendente → rascunho) */}
+                    {/* Item 2: "Devolver para ajuste" (pendente → rascunho) — motivo obrigatório */}
                     {campanha.status === "pendente" && (
                         <Button
                             variant="outline"
                             className="font-semibold"
-                            onClick={handleReabrirEdicao}
+                            onClick={() => setDialogDevolverAberto(true)}
                             disabled={isAlterandoStatus}
                         >
-                            {isAlterandoStatus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Pencil className="mr-2 h-4 w-4" />}
-                            Reabrir para Edição
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Devolver para ajuste
                         </Button>
                     )}
-                    {/* Aprovação existente — mantida intacta */}
+                    {/* Item 2: "Reabrir" uma aprovada (aprovado → rascunho) — sai do ar */}
+                    {campanha.status === "aprovado" && (
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="outline"
+                                    className="font-semibold gap-2"
+                                    onClick={() => setDialogReabrirAberto(true)}
+                                    disabled={isAlterandoStatus}
+                                >
+                                    <Undo2 className="h-4 w-4" />
+                                    Reabrir para editar
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-64 text-xs">
+                                A programação sai do ar enquanto estiver sendo editada e volta quando for aprovada de novo.
+                            </TooltipContent>
+                        </Tooltip>
+                    )}
+                    {/* Item 2: Aprovar (pendente → aprovado) */}
                     {campanha.status === "aprovado" ? (
                         <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 px-4 py-2 text-sm font-semibold">
                             <CheckCircle2 className="h-4 w-4 mr-2" /> Programação Aprovada
@@ -291,19 +362,99 @@ export default function CampanhaMensalPage() {
                             Aprovar Programação
                         </Button>
                     ) : null}
-                    {/* SQS-44: T3.3 — Exportar para Gráfica */}
+                    {/* S-PROG-05 (item 1): escolha do formato — nenhum é padrão implícito */}
                     {(campanha.status === "aprovado" || campanha.status === "pendente") && (
-                        <Button
-                            variant="outline"
-                            className="font-semibold gap-2"
-                            onClick={handleExportarXLSX}
-                        >
-                            <Download className="h-4 w-4" />
-                            <span className="hidden sm:inline">Exportar Gráfica</span>
-                        </Button>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" className="font-semibold gap-2" disabled={gerandoPdf}>
+                                    {gerandoPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                                    <span className="hidden sm:inline">Exportar</span>
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={handleExportarXLSX} className="gap-2">
+                                    <FileSpreadsheet className="h-4 w-4" /> Exportar .xlsx (gráfica)
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={handleExportarPDF} className="gap-2">
+                                    <FileType className="h-4 w-4" /> Exportar .pdf (leitura)
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     )}
                 </div>
             </div>
+
+            {/* Item 3: histórico visível — linha do tempo de transições, com motivo quando houver */}
+            {historico.length > 0 && (
+                <div className="bg-card p-5 rounded-2xl border border-border">
+                    <p className="text-sm font-bold flex items-center gap-2 mb-3">
+                        <History className="h-4 w-4 text-muted-foreground" /> Histórico
+                    </p>
+                    <div className="space-y-3">
+                        {historico.map(h => (
+                            <div key={h.id} className="flex items-start gap-3 text-sm">
+                                <span className="h-2 w-2 rounded-full bg-primary mt-1.5 shrink-0" />
+                                <div>
+                                    <p className="font-medium">
+                                        {h.de_status ? `${h.de_status} → ${h.para_status}` : `Criada como ${h.para_status}`}
+                                        <span className="text-muted-foreground font-normal ml-2">
+                                            {format(new Date(h.criado_em), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                                            {h.colaboradores?.[0]?.nome_completo ? ` · ${h.colaboradores[0].nome_completo}` : ""}
+                                        </span>
+                                    </p>
+                                    {h.motivo && (
+                                        <p className="text-xs text-amber-500 mt-0.5">Motivo: {h.motivo}</p>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Item 2: dialog "Devolver para ajuste" — motivo obrigatório */}
+            <AlertDialog open={dialogDevolverAberto} onOpenChange={setDialogDevolverAberto}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Devolver para ajuste</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            A programação volta para rascunho e sai da fila de aprovação. Explique o que precisa ser corrigido —
+                            o motivo fica registrado no histórico e a junta técnica vê ao reabrir.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <Textarea
+                        placeholder="Ex.: revisar horários de Esportes"
+                        value={motivoDevolucao}
+                        onChange={e => setMotivoDevolucao(e.target.value)}
+                        rows={3}
+                    />
+                    <AlertDialogFooter>
+                        <AlertDialogCancel onClick={() => setMotivoDevolucao("")}>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleConfirmarDevolucao} disabled={isAlterandoStatus || !motivoDevolucao.trim()}>
+                            Devolver
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Item 2: dialog "Reabrir" uma aprovada — sai do ar até nova aprovação */}
+            <AlertDialog open={dialogReabrirAberto} onOpenChange={setDialogReabrirAberto}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Reabrir para editar?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            A programação sai do ar imediatamente (o assistente do WhatsApp deixa de usar este conteúdo) e volta
+                            para rascunho. Só volta a valer depois de ser aprovada de novo.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleConfirmarReabrir} disabled={isAlterandoStatus}>
+                            Sim, reabrir
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             {/* ── Filtros + Grid ── */}
             <div className="bg-card rounded-2xl border border-border flex-1 flex flex-col overflow-hidden">
