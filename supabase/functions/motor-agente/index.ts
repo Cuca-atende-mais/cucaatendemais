@@ -435,6 +435,11 @@ function primeiraPalavraSignificativa(modalidadeNorm: string): string | null {
  * (ex.: "Venha Jogar" citado por inteiro resolve na Fase 1).
  * Não é exaustiva por construção — a bateria de frases genéricas em `index.test.ts` é o que
  * protege contra a próxima palavra problemática aparecer num título novo.
+ *
+ * ATENÇÃO (@qa Revisão 2) — comportamento não óbvio: quando a 1ª palavra é descartada,
+ * `primeiraPalavraSignificativa` NÃO descarta o título — ela avança para a PRÓXIMA palavra, que
+ * pode ser igualmente comum. Foi assim que "Venha Jogar" (com "venha" na lista) passou a ser
+ * disparada por "jogar". Ao acrescentar palavra aqui, confira qual vira o novo gatilho do título.
  */
 const PALAVRAS_NAO_DISCRIMINANTES = new Set([
   // (a) vocabulário de atributo — colide de frente com o Plano 003
@@ -443,6 +448,9 @@ const PALAVRAS_NAO_DISCRIMINANTES = new Set([
   "aula", "aulas", "horarios",
   // (b) verbo/saudação de conversa comum
   "venha", "vamos", "quero", "queria", "gostaria", "preciso", "tudo", "bom", "boa",
+  // @qa Revisao 2: "Venha Jogar" tem "venha" descartada, entao o gatilho migrou pra "jogar" —
+  // "quero jogar bola" resolvia pra ela em 4 unidades. Verbo comum, mesmo caso de "venha".
+  "jogar",
   "onde", "quando", "como", "qual", "quais", "para", "pela", "pelo", "sobre", "tem",
 ]);
 
@@ -520,7 +528,176 @@ export function mensagemPareceContinuacaoDeAtividade(texto: string): boolean {
   if (/^quem\s+(e\s+)?(o\s+|a\s+)?(professor|professora|educador|educadora|da a aula|ministra|ensina)\b/.test(norm)) return true;
   // Mensagem de uma palavra só ("horario?", "dias?") — o lead responde telegraficamente.
   if (/^(horario|horarios|hora|horas|dias?|professor|professora)[?!.\s]*$/.test(norm)) return true;
+  // S-WM-AUD-010 (CONCERN-5): mensagem de elegibilidade ("meu filho tem 15 anos", "tenho 12")
+  // qualifica a atividade do turno anterior sem nomeá-la. Sem isso, o histórico nunca era
+  // consultado e o turno caía na busca vetorial com um embedding que não tem relação semântica
+  // nenhuma com a modalidade — condição que produziu o Plano 010.
+  if (extrairIdadeDaMensagem(texto) !== null) return true;
+  // "para criança", "é para adulto?" — elegibilidade sem número
+  if (/\b(para|pra|e para|e pra)\s+(crianca|criancas|adolescente|adolescentes|adulto|adultos|idoso|idosos)\b/.test(norm)) return true;
   return false;
+}
+
+/**
+ * S-WM-AUD-010 (CONCERN-4): mensagem composta SÓ de um qualificador. Cenário real levantado pelo
+ * Junior: lead digita "natação" e, no turno seguinte, só "infantil".
+ *
+ * Hoje isso é um bug grave, da mesma família do achado 009. A janela de debounce do worker NÃO
+ * concatena — ela descarta: cada mensagem cancela o dispatch anterior e só a última vira
+ * `textoFinal`. Então o motor-agente recebe "infantil" sozinho, tenta casar contra o catálogo, e
+ * em Jangurussu resolvia pra "Ballet Infantil" — o lead pergunta de natação e recebe ballet.
+ *
+ * O qualificador NUNCA pode ser casado sozinho contra o catálogo. Ele só faz sentido colado à
+ * atividade do turno anterior: "natação" + "infantil" → "NATAÇÃO INFANTIL" (caminho que já
+ * funciona quando o lead escreve tudo junto).
+ *
+ * Lista fechada de propósito: são os qualificadores que aparecem nos títulos reais das 5 unidades
+ * (INFANTIL, SELEÇÃO, INICIANTE, PARALIMPICA, VIVER +, FEMININO, INFANTO JUVENIL, BABY CLASS).
+ * Acrescentar aqui exige acrescentar caso na bateria de testes — o mesmo contrato de
+ * PALAVRAS_NAO_DISCRIMINANTES.
+ */
+const QUALIFICADORES_DE_ATIVIDADE = [
+  "infantil", "infantis", "infanto juvenil", "infanto-juvenil", "baby", "baby class",
+  "adulto", "adultos", "iniciante", "iniciantes", "avancado", "avancada",
+  "selecao", "paralimpica", "paralimpico", "feminino", "feminina", "masculino", "masculina",
+  "viver +", "viver mais", "intermediario", "intermediaria", "sesc", "integracao",
+];
+
+/** `true` só quando a mensagem INTEIRA é o qualificador (com pontuação/artigo trivial em volta) —
+ * nunca quando ele aparece no meio de uma frase maior, que já é caso das Fases 1/2. */
+export function ehQualificadorSozinho(texto: string): string | null {
+  const norm = normalizarParaMatchDeAtividade(texto)
+    .replace(/[?!.,;]/g, " ")
+    .replace(/^(e|o|a|os|as|de|do|da|pra|para|tem|quero|queria)\s+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!norm) return null;
+  return QUALIFICADORES_DE_ATIVIDADE.includes(norm) ? norm : null;
+}
+
+/**
+ * S-WM-AUD-010: procura, no histórico recente do lead, a atividade que o qualificador está
+ * qualificando, e resolve a CONCATENAÇÃO contra o catálogo. Devolve `null` — nunca a atividade
+ * base nem o qualificador solto — quando a concatenação não existe no catálogo daquela unidade.
+ * Ex.: lead falou de natação e diz "infantil" numa unidade sem natação infantil → `null` e o
+ * fallback seguro, em vez de oferecer outra coisa com "infantil" no nome.
+ */
+function resolverQualificadorContraHistorico(
+  qualificador: string,
+  atividadesConhecidas: string[],
+  historico: { role: string; content: string }[],
+  mensagemAtual: string,
+): string | null {
+  const mensagensLead = [...historico]
+    .reverse()
+    .filter((m) => m.role === "user" && m.content.trim() !== "" && m.content.trim() !== mensagemAtual.trim())
+    .slice(0, 5);
+
+  for (const msg of mensagensLead) {
+    // Base mencionada no turno anterior. Aqui interessa a BASE, mesmo que ela tenha variantes —
+    // o guard do Plano 009 devolveria null justamente porque existe variante, e é exatamente a
+    // variante que o lead está pedindo agora. Por isso a busca é direta, contra o texto.
+    for (const base of [...atividadesConhecidas].sort((a, b) => b.length - a.length)) {
+      const baseNorm = normalizarParaMatchDeAtividade(base);
+      if (!baseNorm) continue;
+      if (!normalizarParaMatchDeAtividade(msg.content).includes(baseNorm)) continue;
+      const combinada = detectarAtividadeMencionada(base + " " + qualificador, atividadesConhecidas);
+      if (combinada && normalizarParaMatchDeAtividade(combinada) !== baseNorm) return combinada;
+      // Achou a base no histórico mas a variante não existe no catálogo: não tenta outra base,
+      // e não devolve a base — o lead pediu a variante, não a geral.
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * S-WM-AUD-010 (CONCERN-5): extrai a idade de uma mensagem de elegibilidade — "meu filho tem 15
+ * anos", "tenho 12", "ela tem 9 aninhos". Devolve `null` quando não há idade clara: o chamador
+ * trata isso como "não filtrar", nunca como "filtrar por zero".
+ * Guarda de faixa plausível (1-120) porque "tem 2026" (ano) e "turma 15" não são idade.
+ */
+export function extrairIdadeDaMensagem(texto: string): number | null {
+  const norm = normalizarTexto(texto);
+  const plausivel = (n: number): number | null => (n >= 1 && n <= 120 ? n : null);
+
+  // Caminho 1 — a palavra "anos" é o sinal forte. O lookbehind descarta expressão de TEMPO
+  // DECORRIDO ("faço natação há 2 anos", "faz 3 anos que treino"), que tem "anos" mas não é
+  // idade — achado meu ao revisar, não estava na bateria do @qa.
+  const comAnos = norm.match(/(?<!\b(?:ha|faz|desde|por|durante)\s{1,3})\b(\d{1,3})\s*(?:anos?|aninhos?)\b/);
+  if (comAnos) return plausivel(Number(comAnos[1]));
+
+  // Caminho 2 — sem a palavra "anos", exige o VERBO adjacente ao número.
+  // @qa FAIL (gate S-WM-AUD-010): a versão anterior aceitava o pronome solto com até 20
+  // caracteres até o número, e 8 de 10 frases comuns viravam idade — "eu quero 2 vagas" -> 2,
+  // "eu quero a turma 3" -> 3, "ela custa 50 reais" -> 50. Pior: a idade falsa CASAVA com uma
+  // turma real (Ballet Baby Class, "2 á 4 anos") e as turmas infantil e adulta sumiam da
+  // resposta. Nenhuma das duas redes de segurança pega esse caso, porque uma turma aceita.
+  // Esconder turma do cidadão é o pior erro possível aqui — e a versão anterior fazia
+  // exatamente isso, contrariando o que este próprio comentário promete.
+  const comVerbo = norm.match(
+    /\b(?:filho|filha|neto|neta|sobrinho|sobrinha|crianca|menino|menina|ele|ela)\s+(?:tem|faz|vai fazer|completou|fez)\s+(\d{1,3})\b(?!\s*(?:filhos?|filhas?|vagas?|turmas?|pessoas?|reais|irmaos?|meses|quadras?|minutos?|horas?))/,
+  );
+  if (comVerbo) return plausivel(Number(comVerbo[1]));
+
+  // "tenho 12" — 1ª pessoa, mesmo rigor.
+  const primeiraPessoa = norm.match(
+    /\btenho\s+(\d{1,3})\b(?!\s*(?:filhos?|filhas?|vagas?|turmas?|pessoas?|reais|irmaos?|meses|quadras?|minutos?|horas?))/,
+  );
+  if (primeiraPessoa) return plausivel(Number(primeiraPessoa[1]));
+
+  return null;
+}
+
+/**
+ * S-WM-AUD-010 (CONCERN-5): a idade cabe na faixa etária cadastrada?
+ *
+ * Devolve `null` — "não sei dizer" — sempre que não consegue interpretar com segurança, e o
+ * chamador traduz isso como NÃO FILTRAR. A assimetria é deliberada: `faixa_etaria` é texto livre
+ * digitado por pessoas ("15 a 29 e 29+", "8 a 14", "a partir de 15 anos"), e o pior resultado
+ * possível seria esconder do cidadão uma turma que ele poderia fazer. Errar para "mostro demais"
+ * é recuperável; errar para "escondi" não é.
+ */
+export function faixaAceitaIdade(faixa: unknown, idade: number): boolean | null {
+  if (typeof faixa !== "string") return null;
+  const norm = normalizarTexto(faixa).trim();
+  if (!norm || norm === "nao informado") return null;
+
+  // O "+" de teto aberto aparece em 4 grafias no dado real: "29+", "29+ anos", "29 anos +" e
+  // "15 a 29 e 29+". O `(?:anos?)?` no meio cobre as duas últimas — sem ele, "15 a 29 anos +"
+  // perdia o teto aberto e um adulto de 35 seria filtrado PRA FORA da turma dele.
+  const aPartirDe = norm.match(/(?:a partir de|acima de|maiores de)\s*(\d{1,3})/) ?? norm.match(/\b(\d{1,3})\s*(?:anos?)?\s*\+/);
+  const intervalo = norm.match(/\b(\d{1,3})\s*(?:a|ate|-)\s*(\d{1,3})\b/);
+
+  if (intervalo) {
+    const de = Number(intervalo[1]);
+    const ate = Number(intervalo[2]);
+    if (de > ate) return null;
+    if (idade >= de && idade <= ate) return true;
+    // "15 a 29 e 29+" — intervalo E teto aberto; o aberto pode salvar quem passou do topo
+    if (aPartirDe && idade >= Number(aPartirDe[1])) return true;
+    return false;
+  }
+
+  if (aPartirDe) return idade >= Number(aPartirDe[1]);
+
+  return null;
+}
+
+/**
+ * S-WM-AUD-010 (CONCERN-5): filtra turmas por idade, com duas saídas de segurança.
+ *  - nenhuma linha com faixa interpretável → devolve tudo;
+ *  - dá pra interpretar mas nenhuma turma aceita → devolve tudo, pro agente ter o dado real e
+ *    poder dizer quais faixas existem, em vez de receber vazio e cair na busca vetorial, que é
+ *    onde nasce a resposta inventada (Plano 010).
+ */
+export function filtrarLinhasPorIdade<T extends { metadata: Record<string, unknown> | null }>(
+  linhas: T[],
+  idade: number | null,
+): T[] {
+  if (idade === null || linhas.length === 0) return linhas;
+  const compativeis = linhas.filter((l) => faixaAceitaIdade((l.metadata ?? {}).faixa_etaria, idade) === true);
+  return compativeis.length > 0 ? compativeis : linhas;
 }
 
 export function resolverAtividadeMencionadaComHistorico(
@@ -528,6 +705,15 @@ export function resolverAtividadeMencionadaComHistorico(
   atividadesConhecidas: string[],
   historico: { role: string; content: string }[] = [],
 ): { atividade: string | null; origem: "mensagem_atual" | "historico" | null } {
+  // S-WM-AUD-010 (CONCERN-4): ANTES de tentar casar a mensagem atual contra o catálogo. Um
+  // qualificador sozinho ("infantil") casaria com qualquer título que o contenha — foi assim que
+  // "natação" seguido de "infantil" devolvia "Ballet Infantil" em Jangurussu.
+  const qualificador = ehQualificadorSozinho(mensagemAtual);
+  if (qualificador) {
+    const combinada = resolverQualificadorContraHistorico(qualificador, atividadesConhecidas, historico, mensagemAtual);
+    return combinada ? { atividade: combinada, origem: "historico" } : { atividade: null, origem: null };
+  }
+
   const atividadeAtual = detectarAtividadeMencionada(mensagemAtual, atividadesConhecidas);
   if (atividadeAtual) return { atividade: atividadeAtual, origem: "mensagem_atual" };
   if (!mensagemPareceContinuacaoDeAtividade(mensagemAtual)) return { atividade: null, origem: null };
@@ -1422,8 +1608,15 @@ async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createC
   const linhasRelevantes = linhas.filter((l) => typeof l.titulo === "string" && normalizarTexto(l.titulo) === atividadeNorm);
   if (linhasRelevantes.length === 0) return null;
 
-  console.log("[motor-agente v18] Busca deterministica (metadata) de atividade: \"" + atividade + "\" (" + linhasRelevantes.length + " turmas, unidade=" + unidade + ", origem=" + resolucao.origem + ")");
-  return linhasRelevantes.map((l) => formatarLinhaAtividadeDeterministica(l.titulo, l.metadata, l.categoria || "nao informado")).join("\n");
+  // S-WM-AUD-010 (CONCERN-5): "meu filho tem 15 anos" depois de perguntar de futsal deve devolver
+  // só as turmas compatíveis, em vez de despejar todas. O dado existe em metadata.faixa_etaria e
+  // nada o usava pra filtrar. `filtrarLinhasPorIdade` devolve TUDO quando não consegue
+  // interpretar com segurança — esconder turma do cidadão é o pior erro possível aqui.
+  const idade = extrairIdadeDaMensagem(mensagem);
+  const linhasFiltradas = filtrarLinhasPorIdade(linhasRelevantes, idade);
+
+  console.log("[motor-agente v18] Busca deterministica (metadata) de atividade: \"" + atividade + "\" (" + linhasFiltradas.length + "/" + linhasRelevantes.length + " turmas, unidade=" + unidade + ", origem=" + resolucao.origem + (idade !== null ? ", idade=" + idade : "") + ")");
+  return linhasFiltradas.map((l) => formatarLinhaAtividadeDeterministica(l.titulo, l.metadata, l.categoria || "nao informado")).join("\n");
 }
 
 /**
