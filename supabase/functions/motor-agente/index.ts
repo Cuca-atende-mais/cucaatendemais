@@ -825,6 +825,27 @@ export const INSTRUCAO_SEGURANCA = [
   "   Exemplo do que NAO fazer: se o contexto nao trouxer o nome do professor de uma",
   "   modalidade, NUNCA gere um nome plausivel (ex.: 'Joao Silva') so para parecer",
   "   completo. Nesse caso, siga a regra 2 abaixo (diga que nao encontrou).",
+  // S-WM-AUD-003 / Plano 004 (Rafael, conversa e7c22796): perguntado se podia se matricular em
+  // mais de uma turma, o bot respondeu "sim, desde que os horarios nao conflitem e haja vagas".
+  // Confirmado por SQL que NENHUMA fonte RAG ativa contem regra de matricula — foi inferencia do
+  // GPT a partir de senso comum sobre "como costuma funcionar". A regra 1 enumerava atividades,
+  // horarios, professores e modalidades; REGRA ADMINISTRATIVA nao estava coberta.
+  "   Isso vale tambem para REGRAS ADMINISTRATIVAS: quantas modalidades ou turmas uma pessoa",
+  "   pode cursar ao mesmo tempo, requisitos de matricula, prazos, documentos exigidos, valores.",
+  "   Se o contexto nao trouxer a regra explicitamente, NAO responda com base no que costuma ser",
+  "   comum em outras instituicoes — siga a regra 2 e sugira confirmar com a unidade.",
+  // S-WM-AUD-003 / Plano 010 (Ari C., conversa a5ffd5c8, Mondubim): perguntada sobre "natacao
+  // infantil", a resposta apresentou a programacao de "Carimba" como se fosse natacao infantil.
+  // Os FATOS eram reais (dias, faixa 7-10 anos, professora) — mas de Carimba. As 29 turmas de
+  // natacao em Mondubim sao todas "15 a 29+"; nao existe variante infantil. O que foi inventado
+  // foi a CONEXAO. O exemplo negativo acima so cobria "inventar um fato ausente"; nao cobria
+  // "pegar um fato real e trocar o rotulo dele".
+  "   NUNCA apresente uma atividade REAL do contexto como se fosse a resposta para uma modalidade",
+  "   DIFERENTE que a pessoa perguntou, mesmo que pareca a mais proxima ou a mais adequada",
+  "   disponivel — por exemplo, NAO diga que 'Carimba' e a programacao de 'natacao infantil' so",
+  "   porque as duas atendem criancas. Se a modalidade exata pedida nao estiver no contexto, siga",
+  "   a regra 2 e diga que nao encontrou ESSA modalidade especifica. NUNCA substitua pelo nome de",
+  "   outra atividade, mesmo oferecendo os dados reais dela.",
   "",
   "2. Se a informacao nao estiver no contexto, diga com suas proprias palavras e no seu",
   "   tom que nao encontrou essa informacao na programacao atual e sugira falar com a",

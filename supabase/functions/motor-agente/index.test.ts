@@ -1106,3 +1106,68 @@ Deno.test("Plano 008 (nao-regressao): negacoes e outros agentes intactos", () =>
   assertEquals(deveAcionarHandoverInstitucional("Não consigo acessar minha conta", "Empregabilidade"), false);
   assertEquals(deveAcionarHandoverInstitucional("quero falar com atendente", "Institucional"), true);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// S-WM-AUD-003 / Planos 004 e 010 — guardrails contra invencao
+// Os dois unicos casos de INVENCAO confirmados na auditoria (os outros 10 achados sao dado real
+// mas errado). Ambos vivem na regra 1, por isso um diff so.
+//
+// LIMITACAO INERENTE, declarada: isto e reforco de PROMPT. Estes testes travam o TEXTO enviado ao
+// modelo, nao o comportamento dele — nao existe teste automatizado que prove que o GPT vai
+// obedecer. A validacao real e observar conversas depois. Confianca MEDIUM nos dois planos.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+Deno.test("Plano 004: regra 1 cobre REGRA ADMINISTRATIVA (caso Rafael/e7c22796)", () => {
+  // O bot afirmou "pode se matricular em mais de uma turma, desde que os horarios nao conflitem"
+  // — nenhuma fonte RAG ativa tem essa regra. A regra 1 enumerava atividades/horarios/professores/
+  // modalidades; regra administrativa nao estava na lista.
+  assertEquals(INSTRUCAO_SEGURANCA.includes("REGRAS ADMINISTRATIVAS"), true);
+  assertEquals(INSTRUCAO_SEGURANCA.includes("quantas modalidades ou turmas"), true);
+  assertEquals(INSTRUCAO_SEGURANCA.includes("requisitos de matricula"), true);
+  assertEquals(
+    INSTRUCAO_SEGURANCA.includes("comum em outras instituicoes"),
+    true,
+    "precisa nomear a fonte do erro: inferencia por senso comum, nao invencao aleatoria",
+  );
+});
+
+Deno.test("Plano 010: regra 1 proibe TROCA DE ROTULO de atividade real (caso Ari C./a5ffd5c8)", () => {
+  // Os fatos eram reais (Carimba: Qua/Sex, 7-10 anos, professora Geysilane) — mas de Carimba.
+  // O inventado foi a CONEXAO "isso e a programacao da natacao infantil".
+  assertEquals(INSTRUCAO_SEGURANCA.includes("atividade REAL do contexto"), true);
+  assertEquals(INSTRUCAO_SEGURANCA.includes("modalidade"), true);
+  assertEquals(
+    INSTRUCAO_SEGURANCA.includes("Carimba"),
+    true,
+    "o exemplo concreto e o que diferencia esta regra da regra generica de nao inventar",
+  );
+  assertEquals(INSTRUCAO_SEGURANCA.includes("NUNCA substitua pelo nome de"), true);
+});
+
+Deno.test("Plano 004/010: regras anteriores da INSTRUCAO_SEGURANCA intactas (nao-regressao)", () => {
+  // A regra 1 cresceu; as outras 7 nao podem ter sido afetadas.
+  for (const marcador of [
+    "REGRAS OBRIGATORIAS",
+    "'Joao Silva'",                       // exemplo negativo original da regra 1
+    "2. Se a informacao nao estiver no contexto",
+    "3. NUNCA peca desculpas por informacoes corretas",
+    "4. Use a DATA ATUAL",
+    "5. NUNCA use [[HANDOVER]]",
+    "6. FORMATO DE LISTAGEM",
+    "7. NUNCA invente proximidade geografica",
+    "8. NUNCA informe a QUANTIDADE de vagas",
+  ]) {
+    assertEquals(INSTRUCAO_SEGURANCA.includes(marcador), true, `marcador perdido: "${marcador}"`);
+  }
+});
+
+Deno.test("Plano 004/010: o guardrail continua cabendo com folga no prompt", () => {
+  // carregarProgramacaoMensal manda ~40-140 chunks; o guardrail nao pode virar o que estoura.
+  // Teto generoso de proposito — o teste existe pra pegar crescimento descontrolado, nao pra
+  // brigar por algumas centenas de caracteres.
+  assertEquals(
+    INSTRUCAO_SEGURANCA.length < 6000,
+    true,
+    `INSTRUCAO_SEGURANCA com ${INSTRUCAO_SEGURANCA.length} chars — crescimento a revisar`,
+  );
+});
