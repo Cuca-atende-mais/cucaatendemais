@@ -1360,6 +1360,54 @@ async function salvarMensagemAgente(supabase: ReturnType<typeof createClient<Dat
  * "Natacao - Ter/Qui/Sex"). Não é um formato novo inventado por esta story, é o formato que o
  * guardrail já pede; esta função só detecta se o GPT seguiu a regra.
  */
+/**
+ * S-WM-AUD-007 / Plano 012: registra QUAL camada de RAG respondeu o turno, e com que similaridade
+ * quando foi vetorial. Hoje isso so existe em console.log — nao consultavel por SQL, sem retencao,
+ * e a `similaridade` que `buscar_chunks_similares` ja devolve era simplesmente descartada.
+ *
+ * NUNCA propaga excecao e NUNCA e aguardada — mesmo padrao defensivo de `buscarNumeroCanal`. Um
+ * log que falha nao pode derrubar nem atrasar a resposta ao cidadao. Se o insert quebrar, o turno
+ * segue exatamente como seguiria sem esta funcao existir.
+ */
+/**
+ * @qa (LOW, gate S-WM-AUD-007): o insert do log e fire-and-forget de proposito — a latencia dele
+ * nao pode entrar no tempo de resposta ao cidadao. Hoje ele completa porque sobram ~150 linhas de
+ * trabalho assincrono depois (chamada ao GPT, gravacao das mensagens) mantendo o isolate vivo.
+ * Isso e garantia por ACIDENTE: se um refactor aproximar o `return`, os logs somem em silencio.
+ * `EdgeRuntime.waitUntil` e a garantia por desenho. Acessado via `globalThis` porque o global so
+ * existe no runtime do Supabase — em teste local vira no-op, sem `ts-ignore`.
+ */
+function manterVivoAposResposta(promessa: Promise<unknown>): void {
+  // deno-lint-ignore no-explicit-any
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt && typeof rt.waitUntil === "function") rt.waitUntil(promessa);
+}
+
+async function registrarBuscaRAG(
+  supabase: ReturnType<typeof createClient<Database>>,
+  params: {
+    conversa_id: string | null;
+    agente_tipo: string;
+    unidade_cuca: string | null;
+    camada: string;
+    atividade_resolvida?: string | null;
+    chunks_retornados?: unknown;
+    mensagem_lead: string;
+  },
+): Promise<void> {
+  try {
+    // `rag_retrieval_logs` e nova e ainda nao esta em `database.types.ts` (arquivo gerado,
+    // commitado). O cast fica no CLIENT, nao no resultado — `.from()` valida o nome da tabela
+    // contra o tipo gerado, entao castar depois nao resolve. Regenerar os types e o caminho
+    // limpo e esta registrado como pendencia; nao foi feito aqui pra nao misturar um diff de
+    // 3700 linhas geradas com a mudanca desta story.
+    // deno-lint-ignore no-explicit-any
+    await (supabase as any).from("rag_retrieval_logs").insert(params);
+  } catch (exc) {
+    console.error("[motor-agente v18] registrarBuscaRAG erro (nao afeta a resposta):", exc);
+  }
+}
+
 function ehLinhaDeItemLista(linha: string): boolean {
   const l = linha.trim();
   if (!l || l.endsWith('?') || l.length > 80) return false;
@@ -1805,6 +1853,29 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     const historico = (hist || []).reverse().map((m: { conteudo: string; remetente: string }) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
     if (!prompt) throw new Error("Prompt nao encontrado para: " + agente_tipo);
 
+    // S-WM-AUD-007 (@qa FAIL-1 + LOW da Revisao 2): os turnos que retornam ANTES do Passo 6 nao
+    // chegavam ao insert, e o comentario do Passo 6 afirmava o contrario. Cada saida registra a
+    // sua PROPRIA camada — dado melhor que um `nao_aplicavel` generico: permite separar "nao
+    // buscou porque era handover" de "buscou e nao achou".
+    //
+    // `unidadeEfetiva` foi PROMOVIDA pra ca (antes do handover) por dois motivos: o handover
+    // retorna antes do ponto onde ela era declarada, e o helper precisa ler o valor CORRENTE —
+    // nas saidas posteriores a unidade pode ter sido trocada no mesmo turno, e gravar o parametro
+    // cru registraria a unidade ANTERIOR (@qa Revisao 2, LOW). Sendo closure sobre a variavel, le
+    // o valor no momento da chamada, nao no da definicao.
+    let unidadeEfetiva = unidade_cuca;
+
+    const logarTurnoSemBusca = (camada: string) =>
+      manterVivoAposResposta(registrarBuscaRAG(supabase, {
+        conversa_id: conversa?.id ?? null,
+        agente_tipo,
+        unidade_cuca: (unidadeEfetiva as string | null) ?? null,
+        camada,
+        atividade_resolvida: null,
+        chunks_retornados: null,
+        mensagem_lead: textoFinal,
+      }));
+
     if (deveAcionarHandoverInstitucional(textoFinal, agente_tipo)) {
       const resposta = "Vou te encaminhar para um atendente humano, só um momento!";
       await salvarMensagemAgente(supabase, conversa.id, lead.id, resposta);
@@ -1812,17 +1883,20 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       if (handoverError) {
         console.error("[motor-agente v18] Falha ao marcar conversa como awaiting_human conversa_id=" + conversa.id + " agente_tipo=" + agente_tipo + " erro=" + handoverError.message);
       }
+      logarTurnoSemBusca("handover");
       return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover: true, encerrado: false, resposta, mensagens: [resposta] }), { headers: { "Content-Type": "application/json" } });
     }
+
 
     const isSofia = agente_tipo === "sofia" || agente_tipo === "sofia_global" || agente_tipo === "sofia_unidade";
     if (conversaJustCreated && isSofia && prompt.menu_boas_vindas) {
       await salvarMensagemAgente(supabase, conversa.id, lead.id, prompt.menu_boas_vindas);
+      logarTurnoSemBusca("menu_abertura");
       return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover: false, resposta: prompt.menu_boas_vindas, menu_boas_vindas: true }), { headers: { "Content-Type": "application/json" } });
     }
 
     // 5b. Seleção / troca de unidade (instância Geral)
-    let unidadeEfetiva = unidade_cuca;
+    // `unidadeEfetiva` foi declarada mais acima (antes do handover) — ver S-WM-AUD-007.
     let trocouUnidade = false;
     // S-WM-34 (VAL-23): true quando a mensagem que causou trocouUnidade=true JÁ trazia um pedido
     // específico junto (ex.: "e no Mondubim, tem natação de noite?") — usado no Passo 6 pra NÃO
@@ -1889,6 +1963,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
             // mantém a unidade atual, mesmo comportamento de hoje pra erros transitórios.
             const respostaAmbiguidade = evitarRepeticaoLiteral("Só pra confirmar: você quer saber sobre outra unidade CUCA? Me diz qual! 😊\n\n" + MENU_UNIDADES, historico);
             await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaAmbiguidade);
+            logarTurnoSemBusca("ambiguidade_unidade");
             return new Response(JSON.stringify({ success: true, resposta: respostaAmbiguidade, handover: false }), { headers: { "Content-Type": "application/json" } });
           } else {
             unidadeEfetiva = unidadeSalva;
@@ -1945,6 +2020,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           };
           await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
+          logarTurnoSemBusca("resposta_canned");
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           // VAL-12: pergunta_geral=true — nem unidade escolhida, nem resposta canned. Grava
@@ -2000,6 +2076,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           if (decisaoEngajada.encerrar) {
             await supabase.from("conversas").update({ status: "encerrada", updated_at: new Date().toISOString() }).eq("id", conversa.id);
           }
+          logarTurnoSemBusca(decisaoEngajada.encerrar ? "encerramento" : "resposta_canned");
           return new Response(
             JSON.stringify({ success: true, resposta: respostaFinal, handover: false, encerrado: decisaoEngajada.encerrar === true }),
             { headers: { "Content-Type": "application/json" } },
@@ -2056,6 +2133,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           };
           await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
+          logarTurnoSemBusca("resposta_canned");
           return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
         } else {
           // VAL-12: pergunta_geral=true já na 1ª mensagem — segue pro fluxo normal (Passo 6).
@@ -2070,6 +2148,19 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
     // 6. Contexto RAG
     let contextRAG = "";
+    // S-WM-AUD-007 / Plano 012: os pontos abaixo SO escrevem nesta variavel — nenhum deles muda
+    // `contextRAG`, condicao ou fluxo. O insert acontece uma unica vez, no fim do Passo 6.5.
+    // Default `nao_aplicavel`: turno que nao chega a fazer busca de atividade (handover,
+    // encerramento, saudacao de abertura) tambem vira linha, senao o denominador fica errado.
+    let logRAG: {
+      camada: string;
+      atividadeResolvida?: string | null;
+      chunksRetornados?: { documento_id: string; fonte_tipo: string; similaridade: number | null }[];
+    } = { camada: "nao_aplicavel" };
+    // @qa (LOW): `similaridade` ausente vira `null`, nao `-1`. Sentinela numerica entra em media
+    // sem ninguem perceber; `null` e o valor honesto pra "nao veio" e a coluna e jsonb.
+    const mapearChunks = (cs: { documento_id: string; fonte_tipo?: string; similaridade?: number }[]) =>
+      cs.map((c) => ({ documento_id: c.documento_id, fonte_tipo: c.fonte_tipo ?? "desconhecido", similaridade: c.similaridade ?? null }));
     const temUnidadeDefinida = unidadeEfetiva && unidadeEfetiva !== 'Geral';
     const isAgenteProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
     // S-WM-51: gateado em isAgenteProgramacao (não literal 'Institucional') por consistência com
@@ -2151,6 +2242,10 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       contextRAG = contextServicos;
       if (conteudoPrograma) {
         contextRAG += "\n\n--- PROGRAMACAO MENSAL ATUAL (" + unidadeEfetiva + ") ---" + instrucaoArea + "\n" + conteudoPrograma;
+        // @qa FAIL-2: este e o caminho MAIS COMUM do Institucional (carrega os 85-137 chunks da
+        // unidade direto, sem embedding) e nao era contado como camada nenhuma — o turno virava
+        // `nao_aplicavel`, e a metrica diria que quase nao ha RAG acontecendo.
+        logRAG = { camada: "programacao_completa" };
       }
 
       // S-WM-35 (Frente C): quando a mensagem que causou a troca de unidade ja trazia um pedido
@@ -2164,6 +2259,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         const conteudoAtividadeEspecifica = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
         if (conteudoAtividadeEspecifica) {
           contextRAG += "\n\n--- ATIVIDADE ESPECIFICA (dado exato) ---\n" + conteudoAtividadeEspecifica;
+          // Sobrescreve `programacao_completa` de proposito: quando a camada deterministica
+          // respondeu, e ELA a fonte do dado exato — o resumo geral e so pano de fundo.
+          logRAG = { camada: "deterministica_metadata" };
         }
       }
 
@@ -2176,6 +2274,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       });
       if (chunksEventos && chunksEventos.length > 0) {
         contextRAG += "\n\n--- EVENTOS E FAQ ---\n" + formatarChunks(chunksEventos);
+        // So marca vetorial se a camada deterministica nao tiver respondido antes — o que manda
+        // e a fonte da ATIVIDADE, nao o complemento de eventos.
+        if (logRAG.camada === "nao_aplicavel") logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksEventos) };
       }
     } else if (temUnidadeDefinida && isAgenteProgramacao) {
       // Pergunta de acompanhamento (conversa em andamento, mesma unidade, sem selecao de menu):
@@ -2189,8 +2290,14 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       //    muitos chunks nao-contiguos).
       // 3) Busca vetorial (comportamento original, rede de seguranca) - so quando a mensagem
       //    nao cita nenhuma modalidade conhecida em nenhuma das duas camadas deterministicas.
-      const conteudoAtividade = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico)
+      // S-WM-AUD-007: o `??` foi aberto em duas linhas SO pra saber qual camada respondeu.
+      // Semantica identica — `buscarAtividadeEspecifica` continua so sendo chamada quando a
+      // primeira devolve null (short-circuit do `??` preservado pelo `?? await`).
+      const conteudoAtividadeMetadata = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
+      const conteudoAtividade = conteudoAtividadeMetadata
         ?? await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal, historico);
+      if (conteudoAtividadeMetadata) logRAG = { camada: "deterministica_metadata" };
+      else if (conteudoAtividade) logRAG = { camada: "deterministica_texto" };
       // S-WM-51: mesma inicialização com contextServicos que o branch anterior — ver comentário
       // na declaração de contextServicos.
       contextRAG = contextServicos;
@@ -2209,6 +2316,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
         if (chunksPrograma && chunksPrograma.length > 0) {
           contextRAG += "\n\n--- CONTEXTO ---\n" + formatarChunks(chunksPrograma);
+          logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksPrograma) };
+        } else {
+          logRAG = { camada: "sem_match_rag" };
         }
       }
     } else if (isAgenteProgramacao && perguntaGeralAtiva) {
@@ -2236,6 +2346,14 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       if (resumoRede) blocosRede.push("--- RESUMO DA REDE (atividades por unidade) ---\n" + resumoRede);
       if (chunksFaq && chunksFaq.length > 0) {
         blocosRede.push("--- CONTEXTO (FAQ) ---\n" + formatarChunks(chunksFaq));
+        logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksFaq) };
+      } else if (resumoRede) {
+        // @qa FAIL-3: resumo_rede presente e nenhum chunk de FAQ — o turno USOU o resumo como
+        // contexto (e o caminho das perguntas sobre a rede inteira, "quais unidades tem natacao")
+        // e virava `nao_aplicavel`, sumindo da medicao.
+        logRAG = { camada: "resumo_rede" };
+      } else {
+        logRAG = { camada: "sem_match_rag" };
       }
       // S-WM-51: mesma inicialização com contextServicos dos outros 2 branches.
       contextRAG = contextServicos;
@@ -2251,6 +2369,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       });
       if (chunks && chunks.length > 0) {
         contextRAG = "\n\n--- CONTEXTO ---\n" + formatarChunks(chunks);
+        logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunks) };
       }
     }
 
@@ -2263,6 +2382,23 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       const diretivaVigenciaMes = await calcularDiretivaVigenciaMes(supabase, unidadeEfetiva as string);
       if (diretivaVigenciaMes) contextRAG += diretivaVigenciaMes;
     }
+
+    // S-WM-AUD-007 / Plano 012: UM insert por turno, aqui — nao um por ponto de busca (seriam 6).
+    // Sem `await` de proposito: a latencia do insert nao pode entrar no tempo de resposta ao
+    // cidadao, e `registrarBuscaRAG` ja engole qualquer excecao internamente.
+    manterVivoAposResposta(registrarBuscaRAG(supabase, {
+      // `conversa?.id` em vez de `conversa.id`: a coluna e nullable (FK com on delete set null)
+      // e este e o unico lugar novo que tocaria `conversa` — nao aumento o baseline de 29 erros
+      // de "conversa possibly null" por causa de um log. Se `conversa` fosse null aqui, a linha
+      // e gravada sem vinculo em vez de estourar.
+      conversa_id: conversa?.id ?? null,
+      agente_tipo,
+      unidade_cuca: (unidadeEfetiva as string | null) ?? null,
+      camada: logRAG.camada,
+      atividade_resolvida: logRAG.atividadeResolvida ?? null,
+      chunks_retornados: logRAG.chunksRetornados ?? null,
+      mensagem_lead: textoFinal,
+    }));
 
     // 7. Data/hora
     const agora = new Date();
