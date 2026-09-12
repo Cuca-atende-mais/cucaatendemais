@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, normalizarParaMatchDeAtividade, extrairModalidades, detectarAtividadeMencionada, mensagemPareceContinuacaoDeAtividade, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead, removerVagasDoTexto, AVISO_VAGAS, INSTRUCAO_SEGURANCA, montarDiretivaVigenciaMes } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, normalizarParaMatchDeAtividade, extrairModalidades, detectarAtividadeMencionada, mensagemPareceContinuacaoDeAtividade, ehQualificadorSozinho, extrairIdadeDaMensagem, faixaAceitaIdade, filtrarLinhasPorIdade, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead, removerVagasDoTexto, AVISO_VAGAS, INSTRUCAO_SEGURANCA, montarDiretivaVigenciaMes } from "./index.ts";
 
 // ── S-WM-34 (VAL-09) — normalizarTexto ──────────────────────────────────────
 Deno.test("normalizarTexto: remove acento e lowercase", () => {
@@ -789,4 +789,258 @@ Deno.test("Fase 3 endurecida: titulo que COMECA com palavra nao-discriminante ai
   const catalogo = ["Hora Pintada", "Venha Jogar", "Natação"];
   assertEquals(detectarAtividadeMencionada("quero saber da hora pintada", catalogo), "Hora Pintada");
   assertEquals(detectarAtividadeMencionada("tem venha jogar hoje?", catalogo), "Venha Jogar");
+});
+
+Deno.test("@qa Revisao 2: 'jogar' nao pode disparar 'Venha Jogar' (gatilho migrado da 1a palavra)", () => {
+  const catalogo = ["Venha Jogar", "Natação", "Futsal"];
+  for (const frase of ["quero jogar bola com meus amigos", "posso jogar hoje?", "gosto de jogar"]) {
+    assertEquals(detectarAtividadeMencionada(frase, catalogo), null, `"${frase}" nao pode resolver`);
+  }
+  // citado por inteiro continua resolvendo
+  assertEquals(detectarAtividadeMencionada("tem venha jogar hoje?", catalogo), "Venha Jogar");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// S-WM-AUD-010 / CONCERN-4 — qualificador sozinho no turno seguinte
+// Cenário levantado pelo Junior: lead digita "natação" e depois só "infantil".
+// ═══════════════════════════════════════════════════════════════════════════════
+
+Deno.test("CONCERN-4 (o bug): 'natação' + 'infantil' NAO pode devolver outra familia", () => {
+  // Catalogo real de Cuca Jangurussu: tem Ballet Infantil, NAO tem natacao infantil.
+  // Antes desta correcao devolvia "Ballet Infantil: ..." — lead pergunta natacao, recebe ballet.
+  const jangurussu = ["Natação", "Ballet Infantil: Consciência Técnica, Musicalidade e Domínio do Movimento", "Judô"];
+  const r = resolverAtividadeMencionadaComHistorico("infantil", jangurussu, [{ role: "user", content: "natação" }]);
+  assertEquals(r.atividade, null, "sem natacao infantil no catalogo, o certo e null — nunca outra atividade");
+});
+
+Deno.test("CONCERN-4: 'natação' + 'infantil' resolve a variante quando ela existe", () => {
+  const catalogo = ["NATAÇÃO", "NATAÇÃO INFANTIL", "Judô"];
+  const r = resolverAtividadeMencionadaComHistorico("infantil", catalogo, [{ role: "user", content: "natação" }]);
+  assertEquals(r.atividade, "NATAÇÃO INFANTIL");
+  assertEquals(r.origem, "historico");
+});
+
+Deno.test("CONCERN-4: demais qualificadores reais do catalogo", () => {
+  const casos: { catalogo: string[]; base: string; qualificador: string; esperado: string }[] = [
+    { catalogo: ["NATAÇÃO", "NATAÇÃO PARALIMPICA"], base: "natação", qualificador: "paralimpica", esperado: "NATAÇÃO PARALIMPICA" },
+    { catalogo: ["JUDÔ", "JUDÔ SELEÇÃO"], base: "judô", qualificador: "seleção", esperado: "JUDÔ SELEÇÃO" },
+    { catalogo: ["CAPOEIRA", "CAPOEIRA INICIANTE"], base: "capoeira", qualificador: "iniciante", esperado: "CAPOEIRA INICIANTE" },
+    { catalogo: ["Futsal ", "Futsal Sesc"], base: "futsal", qualificador: "sesc", esperado: "Futsal Sesc" },
+    { catalogo: ["HIDROGINÁSTICA", "HIDROGINÁSTICA VIVER +"], base: "hidroginástica", qualificador: "viver +", esperado: "HIDROGINÁSTICA VIVER +" },
+  ];
+  for (const c of casos) {
+    const r = resolverAtividadeMencionadaComHistorico(c.qualificador, c.catalogo, [{ role: "user", content: c.base }]);
+    assertEquals(r.atividade, c.esperado, `"${c.base}" + "${c.qualificador}"`);
+  }
+});
+
+Deno.test("CONCERN-4: qualificador sem atividade no historico nao inventa", () => {
+  const catalogo = ["NATAÇÃO", "NATAÇÃO INFANTIL", "Ballet Infantil"];
+  for (const h of ["bom dia", "quero informação", ""]) {
+    const r = resolverAtividadeMencionadaComHistorico("infantil", catalogo, [{ role: "user", content: h }]);
+    assertEquals(r.atividade, null, `historico "${h}"`);
+  }
+});
+
+Deno.test("CONCERN-4: qualificador NUNCA devolve a atividade base", () => {
+  // Lead pediu a variante. Se ela nao existe, devolver a base seria responder outra coisa.
+  const r = resolverAtividadeMencionadaComHistorico("infantil", ["NATAÇÃO"], [{ role: "user", content: "natação" }]);
+  assertEquals(r.atividade, null);
+});
+
+Deno.test("ehQualificadorSozinho: so quando a mensagem INTEIRA e o qualificador", () => {
+  assertEquals(ehQualificadorSozinho("infantil"), "infantil");
+  assertEquals(ehQualificadorSozinho("Infantil?"), "infantil");
+  assertEquals(ehQualificadorSozinho("e infantil"), "infantil");
+  assertEquals(ehQualificadorSozinho("seleção"), "selecao");
+  // frase maior NAO e qualificador sozinho — cai nas Fases 1/2 normalmente
+  assertEquals(ehQualificadorSozinho("tem natação infantil?"), null);
+  assertEquals(ehQualificadorSozinho("qual o horário?"), null);
+  assertEquals(ehQualificadorSozinho(""), null);
+});
+
+Deno.test("CONCERN-4 (nao-regressao): mensagem que cita a atividade inteira continua pela Fase 1", () => {
+  const catalogo = ["NATAÇÃO", "NATAÇÃO INFANTIL"];
+  const r = resolverAtividadeMencionadaComHistorico("tem natação infantil?", catalogo, []);
+  assertEquals(r.atividade, "NATAÇÃO INFANTIL");
+  assertEquals(r.origem, "mensagem_atual");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// S-WM-AUD-010 / CONCERN-5 — elegibilidade por idade
+// Cenário do Junior: "Tem futsal" seguido de "Meu filho tem 15 anos".
+// Valores de faixa_etaria abaixo sao os REAIS de producao (2026-09-11).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+Deno.test("CONCERN-5: extrai idade de mensagens reais de elegibilidade", () => {
+  assertEquals(extrairIdadeDaMensagem("Meu filho tem 15 anos"), 15);
+  assertEquals(extrairIdadeDaMensagem("tenho 12 anos"), 12);
+  assertEquals(extrairIdadeDaMensagem("minha filha tem 8"), 8);
+  assertEquals(extrairIdadeDaMensagem("ela tem 9 aninhos"), 9);
+  // nao e idade
+  assertEquals(extrairIdadeDaMensagem("quero saber da turma 15"), null);
+  assertEquals(extrairIdadeDaMensagem("bom dia"), null);
+  assertEquals(extrairIdadeDaMensagem("tem vaga em 2026?"), null);
+});
+
+Deno.test("CONCERN-5: faixaAceitaIdade contra os formatos REAIS do banco", () => {
+  // Cuca Barra, FUTSAL
+  assertEquals(faixaAceitaIdade("8 a 14", 15), false);
+  assertEquals(faixaAceitaIdade("8 a 14", 10), true);
+  assertEquals(faixaAceitaIdade("15 a 29 e 29+", 15), true);
+  assertEquals(faixaAceitaIdade("15 a 29 e 29+", 35), true, "o '29+' cobre quem passou do topo");
+  assertEquals(faixaAceitaIdade("15 a 29 e 29+", 10), false);
+  // Cuca Jangurussu
+  assertEquals(faixaAceitaIdade("15 a 18 anos", 15), true);
+  assertEquals(faixaAceitaIdade("14 a 15 anos", 15), true);
+  assertEquals(faixaAceitaIdade("9 a 10 anos", 15), false);
+  // formato do payload.ts quando nao ha idade maxima
+  assertEquals(faixaAceitaIdade("a partir de 15 anos", 20), true);
+  assertEquals(faixaAceitaIdade("a partir de 15 anos", 12), false);
+});
+
+Deno.test("CONCERN-5: o que NAO da pra interpretar devolve null — nunca filtra no escuro", () => {
+  assertEquals(faixaAceitaIdade("nao informado", 15), null);
+  assertEquals(faixaAceitaIdade("", 15), null);
+  assertEquals(faixaAceitaIdade(null, 15), null);
+  assertEquals(faixaAceitaIdade(undefined, 15), null);
+  assertEquals(faixaAceitaIdade("NATAÇÃO", 15), null, "gap S-WM-35: faixa gravada como o titulo");
+  assertEquals(faixaAceitaIdade("todas as idades", 15), null);
+  assertEquals(faixaAceitaIdade("29 a 15", 20), null, "intervalo invertido: dado incoerente, nao arrisca");
+});
+
+Deno.test("CONCERN-5: filtra as turmas de futsal da Barra para 15 anos (dado real)", () => {
+  const turmas = [
+    { metadata: { turma: "Turma 1 - INFANTIL", faixa_etaria: "8 a 14" } },
+    { metadata: { turma: "Turma 3", faixa_etaria: "15 a 29 e 29+" } },
+    { metadata: { turma: "Turma 4 - SELEÇÃO", faixa_etaria: "15 a 29 e 29+" } },
+  ];
+  const r = filtrarLinhasPorIdade(turmas, 15);
+  assertEquals(r.length, 2);
+  assertEquals(r.every((l) => l.metadata.faixa_etaria === "15 a 29 e 29+"), true);
+});
+
+Deno.test("CONCERN-5 (rede de seguranca 1): nenhuma faixa interpretavel -> devolve TUDO", () => {
+  const turmas = [
+    { metadata: { turma: "A", faixa_etaria: "NATAÇÃO" } },
+    { metadata: { turma: "B", faixa_etaria: "nao informado" } },
+  ];
+  assertEquals(filtrarLinhasPorIdade(turmas, 15).length, 2);
+});
+
+Deno.test("CONCERN-5 (rede de seguranca 2): nenhuma turma aceita a idade -> devolve TUDO", () => {
+  // Melhor o agente receber o dado real e dizer quais faixas existem do que receber vazio e
+  // cair na busca vetorial, que e onde nasce a resposta inventada (Plano 010).
+  const turmas = [
+    { metadata: { turma: "A", faixa_etaria: "8 a 14" } },
+    { metadata: { turma: "B", faixa_etaria: "9 a 10 anos" } },
+  ];
+  assertEquals(filtrarLinhasPorIdade(turmas, 25).length, 2);
+});
+
+Deno.test("CONCERN-5: sem idade na mensagem, nao filtra nada", () => {
+  const turmas = [{ metadata: { turma: "A", faixa_etaria: "8 a 14" } }, { metadata: { turma: "B", faixa_etaria: "15 a 29" } }];
+  assertEquals(filtrarLinhasPorIdade(turmas, null).length, 2);
+});
+
+Deno.test("CONCERN-5: 'meu filho tem 15 anos' e reconhecida como continuacao", () => {
+  assertEquals(mensagemPareceContinuacaoDeAtividade("Meu filho tem 15 anos"), true);
+  assertEquals(mensagemPareceContinuacaoDeAtividade("é para criança?"), true);
+  // nao-regressao dos guards existentes
+  assertEquals(mensagemPareceContinuacaoDeAtividade("quais atividades tem no Jangurussu?"), false);
+  assertEquals(mensagemPareceContinuacaoDeAtividade("o Pici fica longe daqui?"), false);
+});
+
+Deno.test("CONCERN-5: 'meu filho tem 15 anos' herda o futsal do historico", () => {
+  const r = resolverAtividadeMencionadaComHistorico("Meu filho tem 15 anos", ["FUTSAL", "NATAÇÃO"], [
+    { role: "user", content: "Tem futsal(futebol de salão)" },
+  ]);
+  assertEquals(r.atividade, "FUTSAL");
+  assertEquals(r.origem, "historico");
+});
+
+Deno.test("CONCERN-5: cobertura contra TODOS os formatos reais de faixa_etaria em producao", () => {
+  // Levantados em 2026-09-11 de atividades_mensais das 5 unidades ativas (ESPORTES).
+  // O separador real e majoritariamente "á"/"à", nao "a" — normalizarTexto resolve.
+  const reais = [
+    "15 á 29+ anos", "15 A 29  anos", "15 a 29+", "15 a 29 e 29+", "15 a 29 anos", "15 a 29+ anos",
+    "05 a 07 anos", "18 á 29+ anos", "7 á 10 anos", "11 á 14 anos", "29+", "5 á 6 anos",
+    "11 a 14 anos", "09 a 14 anos", "2 á 4 anos", "13 a 18 anos", "8 à 13 anos", "29+ anos",
+    "7 a 13 anos", "08 a 14 anos", "06 a 08 anos", "15 á 29 anos", "15 a 29+anos", "8 a 15 anos",
+    "10 a 29 anos", "8 a 14", "15 a 29", "12+ anos", "12 a 13 anos", "7 á 12 anos", "10 a 11 anos",
+    "15 a 29 anos +", "10 a 15 anos", "07 a 10 anos", "5 À 6 anos", "Acima de 15 anos",
+    "9 a 10 anos", "8 a 13", "16 a 29 anos",
+  ];
+  for (const f of reais) {
+    assertEquals(faixaAceitaIdade(f, 15) !== null, true, `formato real nao interpretado: "${f}"`);
+  }
+  // dado sujo (faixa_etaria guardando nome de turma) -> nao interpreta -> nao filtra
+  assertEquals(faixaAceitaIdade("SELEÇÃO", 15), null);
+});
+
+Deno.test("CONCERN-5: teto aberto '+' nas 4 grafias reais — adulto de 35 nao pode ser excluido", () => {
+  assertEquals(faixaAceitaIdade("15 á 29+ anos", 35), true);
+  assertEquals(faixaAceitaIdade("15 a 29 anos +", 35), true);
+  assertEquals(faixaAceitaIdade("15 a 29 e 29+", 35), true);
+  assertEquals(faixaAceitaIdade("29+", 35), true);
+  // faixa FECHADA continua fechada — nao inventa teto onde nao ha
+  assertEquals(faixaAceitaIdade("15 a 29 anos", 35), false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// @qa FAIL (gate S-WM-AUD-010) — bateria de frases SEM idade.
+// A versao anterior de extrairIdadeDaMensagem aceitava pronome solto com ate 20 caracteres ate o
+// numero: 8 destas 10 frases produziam uma idade, e a idade falsa CASAVA com uma turma real
+// (Ballet Baby Class, "2 á 4 anos"), fazendo as turmas infantil e adulta sumirem da resposta.
+// Esta bateria e o que impede a reincidencia — nao a correcao sozinha.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+Deno.test("@qa FAIL: frase comum SEM idade nao pode produzir idade", async (t) => {
+  const semIdade = [
+    "eu quero 2 vagas", "eu quero a turma 3", "eu preciso de 3 informacoes",
+    "ela custa 50 reais", "eu moro no bairro 5", "eu vi 4 turmas",
+    "ele tem 2 filhos", "ela fica a 2 quadras", "eu tenho 2 filhos",
+    "eu tenho interesse", "quantas vagas tem?", "quero saber dos horarios",
+    // achado adicional: tempo decorrido tem a palavra "anos" mas nao e idade
+    "faco natacao ha 2 anos", "faz 3 anos que treino", "estudo aqui ha 5 anos",
+  ];
+  for (const frase of semIdade) {
+    await t.step(`"${frase}"`, () => {
+      assertEquals(extrairIdadeDaMensagem(frase), null, `"${frase}" nao contem idade`);
+    });
+  }
+});
+
+Deno.test("@qa FAIL: frase COM idade continua sendo reconhecida (nao-regressao da correcao)", () => {
+  assertEquals(extrairIdadeDaMensagem("Meu filho tem 15 anos"), 15);
+  assertEquals(extrairIdadeDaMensagem("meu filho tem 15"), 15);
+  assertEquals(extrairIdadeDaMensagem("minha filha tem 8"), 8);
+  assertEquals(extrairIdadeDaMensagem("ela tem 9 aninhos"), 9);
+  assertEquals(extrairIdadeDaMensagem("tenho 12 anos"), 12);
+  assertEquals(extrairIdadeDaMensagem("tenho 12"), 12);
+  assertEquals(extrairIdadeDaMensagem("ele vai fazer 7 anos"), 7);
+  assertEquals(extrairIdadeDaMensagem("meu neto completou 10"), 10);
+});
+
+Deno.test("@qa FAIL (o dano medido): frase sem idade nao pode esconder turma", () => {
+  // Cenario reproduzido pelo @qa contra o catalogo real: Baby Class convive com turmas adultas.
+  const turmas = [
+    { metadata: { turma: "Baby Class", faixa_etaria: "2 á 4 anos" } },
+    { metadata: { turma: "Infantil", faixa_etaria: "7 á 10 anos" } },
+    { metadata: { turma: "Adulto", faixa_etaria: "15 á 29+ anos" } },
+  ];
+  for (const frase of ["eu quero 2 vagas", "eu quero a turma 3", "ele tem 2 filhos"]) {
+    const r = filtrarLinhasPorIdade(turmas, extrairIdadeDaMensagem(frase));
+    assertEquals(r.length, 3, `"${frase}" nao pode filtrar turma nenhuma`);
+  }
+  // com idade de verdade, filtra normalmente
+  assertEquals(filtrarLinhasPorIdade(turmas, extrairIdadeDaMensagem("meu filho tem 3 anos")).length, 1);
+});
+
+Deno.test("@qa FAIL: frase sem idade tambem nao vira continuacao por engano", () => {
+  for (const frase of ["eu quero 2 vagas", "eu vi 4 turmas", "ela custa 50 reais"]) {
+    assertEquals(mensagemPareceContinuacaoDeAtividade(frase), false, `"${frase}"`);
+  }
+  // a de verdade continua virando
+  assertEquals(mensagemPareceContinuacaoDeAtividade("meu filho tem 15 anos"), true);
 });
