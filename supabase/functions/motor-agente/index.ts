@@ -133,6 +133,24 @@ const PADROES_HANDOVER_INSTITUCIONAL = [
   /\bpessoa real\b/,
   /\bme passa(r)? (para|pra|pro) (um |uma |o |a )?(atendente|humano|pessoa)\b/,
   /\btransfer(ir|e)? (para|pra|pro) (um |uma |o |a )?(atendente|humano|pessoa)\b/,
+  // S-WM-AUD-006 (Plano 008) — recuperacao de acesso ao Portal da Juventude. A IA nao tem acesso
+  // ao sistema de contas: so um humano resolve, e a colaboradora do CUCA confirmou que resolve
+  // esses casos manualmente hoje. Sem isso o lead repetia o pedido varias vezes sem transbordo
+  // (Violeta/9456c260 e 🧿💞/ed18367a) e so era atendido quando alguem entrava por conta propria.
+  //
+  // Padroes escritos a partir do TEXTO REAL das 2 conversas, nao do que o plano propunha: as
+  // regexes do Plano 008 exigiam "nao consigo" colado a "acessar" e pegavam 3 das 6 falas reais.
+  // Ficavam de fora as duas mais claras — "Pelo portal eu nao consigo me inscrever" (o primeiro
+  // sinal da conversa) e "Gostaria de ajuda para acessar a minha conta no portal" (repetida 2x).
+  //
+  // Exigem SEMPRE um sinal de problema ("nao consigo", "perdi", "esqueci", "bloqueado") ou um
+  // pedido explicito de ajuda. "Quero acessar o portal pra ver os cursos" — intencao normal, sem
+  // problema — NAO dispara.
+  /\bnao (consigo|consegui|estou conseguindo)\b.{0,40}\b(acessar|entrar|logar|inscrever|matricular|cadastrar)\b/,
+  /\b(ajuda|ajudar|auxilio|me ajud\w+)\b.{0,40}\b(acessar|entrar|recuperar|resgatar)\b.{0,40}\b(conta|portal|juv|juventude|cadastro|senha|login)\b/,
+  /\b(perdi|esqueci)\b.{0,25}\b(acesso|senha|conta|login|usuario|e-?mail)\b/,
+  /\brecuperar\b.{0,25}\b(acesso|senha|conta|cadastro|login)\b/,
+  /\b(conta|acesso|cadastro|login)\b.{0,25}\b(bloquead[oa]|travad[oa]|suspens[oa]|nao funciona|nao esta funcionando)\b/,
 ];
 
 const PADROES_NEGACAO_HANDOVER_INSTITUCIONAL = [

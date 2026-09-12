@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, normalizarParaMatchDeAtividade, extrairModalidades, detectarAtividadeMencionada, mensagemPareceContinuacaoDeAtividade, ehQualificadorSozinho, extrairIdadeDaMensagem, faixaAceitaIdade, filtrarLinhasPorIdade, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead, removerVagasDoTexto, AVISO_VAGAS, INSTRUCAO_SEGURANCA, montarDiretivaVigenciaMes } from "./index.ts";
+import { ehSelecaoMenu, extrairTextoMenu, detectarTrocaUnidade, parseRetryAfterSegundos, validarAvaliacaoSelecaoUnidade, removerTag, pareceIntencaoTrocaUnidade, dividirRespostaEmPartes, normalizarTexto, normalizarParaMatchDeAtividade, extrairModalidades, detectarAtividadeMencionada, mensagemPareceContinuacaoDeAtividade, ehQualificadorSozinho, deveAcionarHandoverInstitucional, extrairIdadeDaMensagem, faixaAceitaIdade, filtrarLinhasPorIdade, mensagemTemPedidoEspecifico, formatarLinhaAtividadeDeterministica, resolverAtividadeMencionadaComHistorico, sanitizarNomeLead, removerVagasDoTexto, AVISO_VAGAS, INSTRUCAO_SEGURANCA, montarDiretivaVigenciaMes } from "./index.ts";
 
 // ── S-WM-34 (VAL-09) — normalizarTexto ──────────────────────────────────────
 Deno.test("normalizarTexto: remove acento e lowercase", () => {
@@ -1043,4 +1043,66 @@ Deno.test("@qa FAIL: frase sem idade tambem nao vira continuacao por engano", ()
   }
   // a de verdade continua virando
   assertEquals(mensagemPareceContinuacaoDeAtividade("meu filho tem 15 anos"), true);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// S-WM-AUD-006 / Plano 008 — handover para recuperacao de acesso ao Portal
+// Frases abaixo sao o TEXTO REAL das 2 conversas (Violeta/9456c260 e 🧿💞/ed18367a),
+// puxado do banco — nao o que o plano supunha que o lead teria escrito.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+Deno.test("Plano 008: falas REAIS de pedido de acesso acionam handover", async (t) => {
+  const reais = [
+    "Pelo portal eu não consigo me inscrever",
+    "Não consigo acessar minha conta pelo portal",
+    "Gostaria de ajuda para acessar a minha conta no portal",
+    "Eu não consigo acessar meu juv, poderia me ajudar?",
+    "É que eu troquei de número e email, não consigo acessar minha conta da juv e gostaria muito de fazer cursos no cuca só que eu não consigo me matricular",
+  ];
+  for (const frase of reais) {
+    await t.step(`"${frase.slice(0, 55)}"`, () => {
+      assertEquals(deveAcionarHandoverInstitucional(frase, "Institucional"), true);
+    });
+  }
+});
+
+Deno.test("Plano 008 (LIMITACAO CONHECIDA): fragmento sem sinal de problema NAO dispara", () => {
+  // "Que acessar o juventude fortaleza" (real, conversa ed18367a) — provavelmente "Quero
+  // acessar...". Cobri-la exigiria casar "acessar"+"juventude" puro, o que pegaria
+  // "quero acessar o portal pra ver os cursos" (intencao normal). Na conversa real a mensagem
+  // ANTERIOR ja dispara, entao a perda nao tem consequencia pratica. Travado de proposito:
+  // se alguem ampliar, este teste quebra e obriga a medir o falso positivo junto.
+  assertEquals(deveAcionarHandoverInstitucional("Que acessar o juventude fortaleza", "Institucional"), false);
+});
+
+Deno.test("Plano 008: intencao NORMAL de acesso nao pode virar handover", async (t) => {
+  const normais = [
+    "Quero acessar o portal pra ver os cursos", "Como faço pra me inscrever?",
+    "Onde acesso a programação?", "Quero me matricular em natação",
+    "tem curso de violão?", "Não consigo decidir qual curso fazer",
+    "Quero saber como faço o cadastro", "qual o horário?", "bom dia",
+  ];
+  for (const frase of normais) {
+    await t.step(`"${frase}"`, () => {
+      assertEquals(deveAcionarHandoverInstitucional(frase, "Institucional"), false);
+    });
+  }
+});
+
+Deno.test("Plano 008 (AC3): pedido de acesso CITANDO unidade continua disparando", () => {
+  // A regra 5 de INSTRUCAO_SEGURANCA proibe o GPT de emitir [[HANDOVER]] quando o lead cita uma
+  // unidade CUCA. Sao mecanismos INDEPENDENTES: este e deterministico (regex), aquele e
+  // instrucao ao modelo. O comportamento combinado esta verificado aqui — o pedido de acesso
+  // continua transbordando mesmo com o nome da unidade na frase.
+  assertEquals(deveAcionarHandoverInstitucional("não consigo acessar minha conta no Cuca Pici", "Institucional"), true);
+  assertEquals(deveAcionarHandoverInstitucional("perdi minha senha, sou do Cuca Barra", "Institucional"), true);
+  // consulta normal citando unidade continua sem handover
+  assertEquals(deveAcionarHandoverInstitucional("quero saber dos cursos do Cuca Pici", "Institucional"), false);
+});
+
+Deno.test("Plano 008 (nao-regressao): negacoes e outros agentes intactos", () => {
+  assertEquals(deveAcionarHandoverInstitucional("nao quero falar com atendente", "Institucional"), false);
+  assertEquals(deveAcionarHandoverInstitucional("sem atendente por favor", "Institucional"), false);
+  assertEquals(deveAcionarHandoverInstitucional("Não consigo acessar minha conta", "Empregabilidade"), false);
+  assertEquals(deveAcionarHandoverInstitucional("quero falar com atendente", "Institucional"), true);
 });
