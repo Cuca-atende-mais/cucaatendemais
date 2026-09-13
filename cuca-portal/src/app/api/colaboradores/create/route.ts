@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient } from '@/lib/supabase/server'
+import { autorizarOperacaoColaborador } from '@/lib/auth/colaboradores-acesso-server'
 import { Resend } from 'resend'
 import SetupPasswordEmail from '@/emails/SetupPasswordEmail'
 import crypto from 'crypto'
@@ -9,19 +9,15 @@ export async function POST(request: Request) {
     try {
         const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy')
 
-        // 1. Validação real no servidor — getUser() verifica o JWT com o Supabase Auth server-side
-        const supabase = await createClient()
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
-        if (authError || !user) {
-            return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-        }
-
         const body = await request.json()
         const { email, nome, unidadeCuca, roleId } = body
 
-        if (!email || !nome || !roleId) {
+        if (!email || !nome) {
             return NextResponse.json({ error: 'Dados incompletos' }, { status: 400 })
         }
+
+        const acesso = await autorizarOperacaoColaborador({ operacao: 'create', emailAlvo: email, roleIdNovo: roleId })
+        if (!acesso.ok) return acesso.resposta
 
         const adminAuth = createAdminClient().auth
         const adminDb = createAdminClient()
@@ -58,6 +54,10 @@ export async function POST(request: Request) {
                 console.error("Erro Auth Supabase:", createUserError)
                 return NextResponse.json({ error: createUserError.message }, { status: 400 })
             }
+            // Vincular uma conta de Auth já existente entrega o link de senha dela a quem cadastra.
+            if (!acesso.developer) {
+                return NextResponse.json({ error: 'Este e-mail já tem conta de acesso. Peça a um Developer para vincular.' }, { status: 409 })
+            }
             // Buscar usuário existente no Auth por e-mail (paginação com limite de 20 páginas = 1000 usuários)
             let found = false
             let page = 1
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
                 nome_completo: nome,
                 email,
                 unidade_cuca: unidadeCuca || null,
-                role_id: roleId,
+                role_id: roleId || null,
                 setup_token: setupToken,
                 setup_token_expires_at: expiresAt
             })

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
 
 export async function POST(req: Request) {
     try {
@@ -12,8 +13,7 @@ export async function POST(req: Request) {
         }
 
         // 2. Verificar permissão de Desenvolvedor Restrito
-        const allowedEmails = ["valmir@cucateste.com", "dev.cucaatendemais@gmail.com"]
-        if (!allowedEmails.includes(user.email)) {
+        if (!DEVELOPER_EMAILS.includes(user.email)) {
             return NextResponse.json({ error: "Permissão negada. Apenas desenvolvedores podem excluir instâncias permanentemente." }, { status: 403 })
         }
 

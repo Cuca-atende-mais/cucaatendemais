@@ -1,9 +1,9 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
 import { NextRequest, NextResponse } from "next/server"
+import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
 
 // Emails autorizados — deve espelhar user-provider.tsx
-const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
 
 export async function POST(req: NextRequest) {
     // SOL-02: autenticação real + lista de autorização de emails developer

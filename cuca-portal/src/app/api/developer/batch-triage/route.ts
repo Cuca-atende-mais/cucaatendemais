@@ -5,8 +5,8 @@ import pdf from "pdf-parse/lib/pdf-parse.js";
 import OpenAI from "openai";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { uploadToR2 } from "@/lib/r2";
+import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
 
-const DEVELOPER_EMAILS = ["valmir@cucateste.com", "dev.cucaatendemais@gmail.com"];
 
 const CATEGORIES = [
   "Serviços Gerais (limpeza, portaria, zeladoria)",

@@ -1,25 +1,41 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient } from '@/lib/supabase/server'
+import { autorizarOperacaoColaborador } from '@/lib/auth/colaboradores-acesso-server'
 
 export async function POST(request: Request) {
     try {
-        const supabase = await createClient()
-        const { data: { session } } = await supabase.auth.getSession()
-
-        if (!session) {
-            return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-        }
-
         const body = await request.json()
-        const { id, user_id, nome_completo, telefone, role_id, unidade_cuca, ativo } = body
+        const { id, nome_completo, telefone, role_id, unidade_cuca, ativo } = body
 
-        if (!id || !user_id) {
+        if (!id) {
             return NextResponse.json({ error: 'ID do colaborador ausente' }, { status: 400 })
+        }
+        if (typeof ativo !== 'boolean') {
+            return NextResponse.json({ error: 'Campo ativo inválido' }, { status: 400 })
         }
 
         const adminDb = createAdminClient()
         const adminAuth = adminDb.auth
+
+        // user_id e perfil atual vêm do banco, nunca do corpo da requisição.
+        const { data: alvo, error: alvoError } = await adminDb
+            .from('colaboradores')
+            .select('id, user_id, email, role_id')
+            .eq('id', id)
+            .single()
+
+        if (alvoError || !alvo) {
+            return NextResponse.json({ error: 'Colaborador não encontrado' }, { status: 404 })
+        }
+
+        const acesso = await autorizarOperacaoColaborador({
+            operacao: 'update',
+            emailAlvo: alvo.email,
+            roleIdNovo: role_id !== alvo.role_id ? role_id : undefined,
+        })
+        if (!acesso.ok) return acesso.resposta
+
+        const user_id = alvo.user_id
 
         // 1. Atualizar a tabela de colaboradores
         const { error: updateError } = await adminDb
@@ -27,7 +43,7 @@ export async function POST(request: Request) {
             .update({
                 nome_completo,
                 telefone,
-                role_id,
+                ...(role_id !== undefined ? { role_id: role_id || null } : {}),
                 unidade_cuca,
                 ativo
             })

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
 
 export async function DELETE(req: NextRequest) {
     try {
@@ -10,7 +11,6 @@ export async function DELETE(req: NextRequest) {
             return NextResponse.json({ error: "Não autenticado" }, { status: 401 })
         }
 
-        const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com']
 
         if (!user.email || !DEVELOPER_EMAILS.includes(user.email)) {
             return NextResponse.json({ error: "Apenas developers/owners podem realizar esta ação." }, { status: 403 })

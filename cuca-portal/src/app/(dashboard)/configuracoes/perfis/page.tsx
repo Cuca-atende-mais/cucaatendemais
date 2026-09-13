@@ -164,7 +164,12 @@ const getErrorMessage = (error: unknown) => {
 }
 
 export default function GestaoPerfisPage() {
-    const { isDeveloper, profile } = useUser()
+    const { isDeveloper, profile, hasPermission } = useUser()
+    const podeCriarPerfil = isDeveloper || hasPermission('config_perfis', 'create')
+    const podeEditarPerfil = isDeveloper || hasPermission('config_perfis', 'update')
+    const podeExcluirPerfil = isDeveloper || hasPermission('config_perfis', 'delete')
+    // A tela grava a matriz apagando e reinserindo as linhas do perfil
+    const podeGravarMatriz = isDeveloper || (hasPermission('config_perfis', 'create') && hasPermission('config_perfis', 'delete'))
     const groupsToRender = useMemo(
         () => isDeveloper ? MODULE_GROUPS : MODULE_GROUPS.filter(g => g.category !== 'Módulo Técnico'),
         [isDeveloper]
@@ -334,12 +339,12 @@ export default function GestaoPerfisPage() {
                         </p>
                     </div>
                 </div>
-                <Button
+                {podeCriarPerfil && <Button
                     onClick={() => { setIsCreating(true); setSelectedRole(null); setRoleForm({ name: "", description: "" }) }}
                     className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shrink-0"
                 >
                     <Plus className="h-4 w-4 mr-2" /> Novo Perfil
-                </Button>
+                </Button>}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
@@ -370,7 +375,7 @@ export default function GestaoPerfisPage() {
 
                 {/* Painel Direito */}
                 <div className="lg:col-span-3">
-                    {(isCreating || isEditingRoleInfo) ? (
+                    {((isCreating && podeCriarPerfil) || (isEditingRoleInfo && podeEditarPerfil)) ? (
                         <div className="bg-card rounded-2xl border border-border overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                             <div className="px-6 pt-6 pb-4 border-b border-border">
                                 <h2 className="font-bold text-base flex items-center gap-2">
@@ -432,12 +437,12 @@ export default function GestaoPerfisPage() {
                                         </div>
                                     </div>
                                     <div className="flex gap-2 shrink-0">
-                                        <Button variant="outline" size="sm" onClick={() => { setIsEditingRoleInfo(true); setRoleForm({ name: selectedRole.name, description: selectedRole.description || "" }) }}>
+                                        {podeEditarPerfil && <Button variant="outline" size="sm" onClick={() => { setIsEditingRoleInfo(true); setRoleForm({ name: selectedRole.name, description: selectedRole.description || "" }) }}>
                                             <Pencil className="h-3.5 w-3.5 mr-1.5" /> Editar
-                                        </Button>
-                                        <Button variant="outline" size="sm" className="text-red-400 border-red-500/30 hover:bg-red-500/10 hover:text-red-400" onClick={() => deleteRole(selectedRole.id, selectedRole.name)}>
+                                        </Button>}
+                                        {podeExcluirPerfil && <Button variant="outline" size="sm" className="text-red-400 border-red-500/30 hover:bg-red-500/10 hover:text-red-400" onClick={() => deleteRole(selectedRole.id, selectedRole.name)}>
                                             <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Destruir
-                                        </Button>
+                                        </Button>}
                                     </div>
                                 </div>
                                 <div className="bg-amber-500/10 border-t border-amber-500/20 px-5 py-3 flex items-start gap-2.5">
@@ -452,10 +457,14 @@ export default function GestaoPerfisPage() {
                             <div className="bg-card rounded-2xl border border-border overflow-hidden">
                                 <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
                                     <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Matriz de Controle (CRUD)</span>
-                                    <Button onClick={savePermissionsMatrix} disabled={saving} size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-full px-5">
-                                        <Save className="h-3.5 w-3.5 mr-2" />
-                                        {saving ? "Salvando..." : "Gravar Permissões"}
-                                    </Button>
+                                    {podeGravarMatriz ? (
+                                        <Button onClick={savePermissionsMatrix} disabled={saving} size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-full px-5">
+                                            <Save className="h-3.5 w-3.5 mr-2" />
+                                            {saving ? "Salvando..." : "Gravar Permissões"}
+                                        </Button>
+                                    ) : (
+                                        <Badge variant="outline" className="text-xs">Somente leitura — sem permissão para alterar perfis</Badge>
+                                    )}
                                 </div>
 
                                 <div className="overflow-x-auto">
@@ -476,6 +485,7 @@ export default function GestaoPerfisPage() {
                                                                     size="sm"
                                                                     className="h-5 text-[10px] px-2 rounded-full w-full max-w-[72px] border-border"
                                                                     onClick={() => handleColumnSelectAll(col.field, !allChecked)}
+                                                                    disabled={!podeGravarMatriz}
                                                                 >
                                                                     {allChecked ? 'Desfazer' : 'Todos'}
                                                                 </Button>
@@ -509,6 +519,7 @@ export default function GestaoPerfisPage() {
                                                                         <Checkbox
                                                                             checked={perm?.[col.field] ?? false}
                                                                             onCheckedChange={c => handleCheckboxChange(mod.id, col.field, !!c)}
+                                                                            disabled={!podeGravarMatriz}
                                                                             className={`w-5 h-5 rounded border-border ${col.checkClass}`}
                                                                         />
                                                                     </TableCell>
@@ -517,6 +528,7 @@ export default function GestaoPerfisPage() {
                                                                     <Button
                                                                         variant="ghost"
                                                                         onClick={() => handleRowSelectAll(mod.id, !isRowFull)}
+                                                                        disabled={!podeGravarMatriz}
                                                                         className={`h-7 w-7 p-0 rounded-md transition-all ${isRowFull ? 'text-primary bg-primary/10 border border-primary/30' : 'opacity-40 hover:opacity-100 hover:bg-primary/10 hover:text-primary'}`}
                                                                         title={isRowFull ? "Desmarcar linha" : "Marcar CRUD completo"}
                                                                     >
@@ -534,10 +546,12 @@ export default function GestaoPerfisPage() {
 
                                 <div className="px-5 py-4 border-t border-border flex flex-col md:flex-row justify-between items-center gap-3">
                                     <p className="text-xs text-muted-foreground">Modificações não salvas serão perdidas ao trocar de perfil.</p>
-                                    <Button onClick={savePermissionsMatrix} disabled={saving} className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-full px-8">
-                                        <Save className="h-4 w-4 mr-2" />
-                                        {saving ? "Salvando..." : "Salvar Matriz de Acesso"}
-                                    </Button>
+                                    {podeGravarMatriz && (
+                                        <Button onClick={savePermissionsMatrix} disabled={saving} className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-full px-8">
+                                            <Save className="h-4 w-4 mr-2" />
+                                            {saving ? "Salvando..." : "Salvar Matriz de Acesso"}
+                                        </Button>
+                                    )}
                                 </div>
                             </div>
                         </div>
