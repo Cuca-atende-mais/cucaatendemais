@@ -38,6 +38,9 @@ import { cn } from "@/lib/utils"
 import toast from "react-hot-toast"
 import { UnifiedProgramModal } from "@/components/programacao/unified-program-modal"
 import { ImportPlanilhaModal } from "@/components/programacao/import-planilha-modal"
+import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
+import { opcaoLiberada } from "@/lib/programacao/permissoes-categoria"
+import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
 import * as XLSX from 'xlsx'
 import { useRouter } from "next/navigation"
 import { useUser } from "@/lib/auth/user-provider"
@@ -70,6 +73,13 @@ export default function ProgramacaoPage() {
     const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral' || profile?.funcao?.nome === 'Super Admin Cuca'
 
     const canDelete = isDeveloper
+
+    // S-PROG-13: cada botão da mensal segue a opção própria do perfil.
+    const checarPgm = useChecarPgm()
+    const podeVerListaMensal = opcaoLiberada(checarPgm, PGM_GERAL.lista)
+    const podeCriarMensal = opcaoLiberada(checarPgm, PGM_GERAL.criarZero) || opcaoLiberada(checarPgm, PGM_GERAL.duplicar)
+    const podeImportarPlanilha = opcaoLiberada(checarPgm, PGM_GERAL.importarPlanilha)
+    const podeExcluirMensal = opcaoLiberada(checarPgm, PGM_GERAL.excluirProgramacao)
 
     const handleDelete = async (id: string, tipo: 'mensal' | 'pontual') => {
         if (!confirm("Tem certeza que deseja excluir esta programação permanentemente? Isso apagará todas as atividades vinculadas e NÃO PODE SER DESFEITO.")) return
@@ -123,7 +133,7 @@ export default function ProgramacaoPage() {
 
     // TanStack Query — substitui useEffect + fetchData manual
     const { data: progData, isLoading: loading } = useQuery({
-        queryKey: [...PROGRAMACAO_KEY, unidadeFilter, searchTerm, profile?.id],
+        queryKey: [...PROGRAMACAO_KEY, unidadeFilter, searchTerm, profile?.id, podeVerListaMensal],
         enabled: !!profile,
         staleTime: 20_000,
         queryFn: async () => {
@@ -142,7 +152,10 @@ export default function ProgramacaoPage() {
                 mQuery = mQuery.ilike("titulo", `%${searchTerm}%`)
             }
 
-            const [{ data: pData, error: pError }, { data: mData, error: mError }] = await Promise.all([pQuery, mQuery])
+            const [{ data: pData, error: pError }, { data: mData, error: mError }] = await Promise.all([
+                pQuery,
+                podeVerListaMensal ? mQuery : Promise.resolve({ data: [] as CampanhaMensal[], error: null }),
+            ])
             if (pError) console.error("Erro eventos pontuais:", pError)
             if (mError) console.error("Erro campanhas mensais:", mError)
 
@@ -377,8 +390,9 @@ export default function ProgramacaoPage() {
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                            {hasPermission("programacao_mensal", "create") && (
+                            {(podeImportarPlanilha || podeCriarMensal) && (
                                 <>
+                                    {podeImportarPlanilha && (
                                     <Button
                                         variant="outline"
                                         className="gap-2 text-xs"
@@ -393,6 +407,8 @@ export default function ProgramacaoPage() {
                                         <Upload className="h-4 w-4" />
                                         <span className="hidden sm:inline">Atualizar Programação</span>
                                     </Button>
+                                    )}
+                                    {podeCriarMensal && (
                                     <Button
                                         variant="outline"
                                         className="gap-2 text-xs border-primary/40 text-primary hover:bg-primary/5"
@@ -407,10 +423,11 @@ export default function ProgramacaoPage() {
                                         <Plus className="h-4 w-4" />
                                         <span className="hidden sm:inline">Criar Programação</span>
                                     </Button>
+                                    )}
                                 </>
                             )}
 
-                            {(hasPermission("programacao_mensal", "create") || hasPermission("programacao_pontual", "create")) && (
+                            {hasPermission("programacao_pontual", "create") && (
                                 <Button
                                     className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold"
                                     onClick={() => setIsModalOpen(true)}
@@ -526,7 +543,9 @@ export default function ProgramacaoPage() {
                 {/* S-PROG-04 (item 1): lista em cards — mês/unidade, status, contagem por
                     categoria e só as ações válidas pro status atual (ver tabela da story). */}
                 <TabsContent value="mensal" className="mt-6">
-                    {loading ? (
+                    {!podeVerListaMensal ? (
+                        <p className="text-center py-10 text-muted-foreground">Seu perfil não tem acesso à lista de programações mensais.</p>
+                    ) : loading ? (
                         <p className="text-center py-10 text-muted-foreground">Carregando...</p>
                     ) : filteredMensais.length === 0 ? (
                         <p className="text-center py-10 text-muted-foreground">Nenhuma programação mensal encontrada.</p>
@@ -591,7 +610,7 @@ export default function ProgramacaoPage() {
                                             <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground" onClick={() => openCampanhaDetails(m)}>
                                                 <FileText className="h-3.5 w-3.5" /> Ver
                                             </Button>
-                                            {canDelete && (
+                                            {podeExcluirMensal && (
                                                 <Button
                                                     size="sm"
                                                     variant="ghost"

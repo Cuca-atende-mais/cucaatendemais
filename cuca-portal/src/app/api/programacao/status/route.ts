@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { createAdminClient } from "@/lib/supabase/admin"
 import { linhaIncompleta, LinhaParaAprovacao } from "@/lib/programacao/aprovacao"
+import { podeTransicionar } from "@/lib/programacao/permissoes-categoria"
+import { carregarAcessoPgm } from "@/lib/programacao/permissoes-categoria-server"
 
 // S-PROG-04: centraliza as 4 transições do ciclo de aprovação (item 2 da story) — antes
 // "aprovado" era gerenciado por um update direto no cliente (bypassando esta rota), e
@@ -8,6 +11,11 @@ import { linhaIncompleta, LinhaParaAprovacao } from "@/lib/programacao/aprovacao
 // porque a story pede explicitamente controle explícito no código (item 4), e as 4 transições
 // compartilham a mesma checagem de permissão e o mesmo histórico — duplicar essa lógica em dois
 // lugares (rota + update direto) é como o motivo obrigatório teria sido esquecido de novo.
+// S-PROG-13: a permissão é a ação do fluxo (enviar/autorizar/devolver/reabrir) em todas as categorias
+// que a campanha tem, e a gravação usa a chave de serviço — a política de UPDATE de
+// `campanhas_mensais` fica só para as contas Developer, então ninguém muda status direto pela API.
+// Como a chave de serviço ignora a política de leitura por unidade, a unidade também é conferida
+// aqui: campanha de outra unidade responde 404, como antes (a leitura pela sessão não a achava).
 const TRANSICOES: Record<string, string[]> = {
     rascunho: ["pendente"],
     pendente: ["aprovado", "rascunho"],
@@ -23,13 +31,6 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "Não autenticado" }, { status: 401 })
         }
 
-        const { data: permOk } = await supabase
-            .rpc("has_permission", { p_recurso: "programacao", p_acao: "update" })
-
-        if (!permOk) {
-            return NextResponse.json({ error: "Sem permissão para alterar status da programação" }, { status: 403 })
-        }
-
         const body = await req.json()
         const { campanha_id, novoStatus, motivo } = body as { campanha_id: string; novoStatus: string; motivo?: string }
 
@@ -37,13 +38,15 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "campanha_id e novoStatus são obrigatórios" }, { status: 400 })
         }
 
-        const { data: campanha, error: campErr } = await supabase
+        const admin = createAdminClient()
+        const acesso = await carregarAcessoPgm(user)
+        const { data: campanha, error: campErr } = await admin
             .from("campanhas_mensais")
-            .select("id, status")
+            .select("id, status, unidade_cuca")
             .eq("id", campanha_id)
             .single()
 
-        if (campErr || !campanha) {
+        if (campErr || !campanha || !acesso.alcancaUnidade(campanha.unidade_cuca as string | null)) {
             return NextResponse.json({ error: "Programação não encontrada" }, { status: 404 })
         }
 
@@ -51,6 +54,17 @@ export async function PATCH(req: NextRequest) {
         const permitidas = TRANSICOES[statusAtual] || []
         if (!permitidas.includes(novoStatus)) {
             return NextResponse.json({ error: `Transição inválida: ${statusAtual} → ${novoStatus}` }, { status: 400 })
+        }
+
+        const { data: categoriasLinhas, error: catErr } = await admin
+            .from("atividades_mensais")
+            .select("categoria")
+            .eq("campanha_id", campanha_id)
+        if (catErr) throw new Error(catErr.message)
+
+        const categorias = (categoriasLinhas || []).map(l => l.categoria as string | null)
+        if (!podeTransicionar(acesso.checar, statusAtual, novoStatus, categorias)) {
+            return NextResponse.json({ error: "Sem permissão para alterar o status desta programação" }, { status: 403 })
         }
 
         // Item 2: "Devolver para ajuste" (pendente → rascunho) exige motivo obrigatório.
@@ -67,7 +81,7 @@ export async function PATCH(req: NextRequest) {
         // que mede contaminação (texto de exemplo, faixa sem dígito) pro selo de qualidade da
         // duplicação — não completude; uma linha só com título passava como "sem problema".
         if (statusAtual === "rascunho" && novoStatus === "pendente") {
-            const { data: linhas } = await supabase
+            const { data: linhas } = await admin
                 .from("atividades_mensais")
                 .select("categoria, titulo, descricao, local, hora_inicio, hora_fim, data_atividade, metadata")
                 .eq("campanha_id", campanha_id)
@@ -81,7 +95,7 @@ export async function PATCH(req: NextRequest) {
             }
         }
 
-        const { error: updateErr } = await supabase
+        const { error: updateErr } = await admin
             .from("campanhas_mensais")
             .update({ status: novoStatus })
             .eq("id", campanha_id)
@@ -97,7 +111,7 @@ export async function PATCH(req: NextRequest) {
             .eq("user_id", user.id)
             .maybeSingle()
 
-        const { error: histErr } = await supabase.from("campanha_historico").insert({
+        const { error: histErr } = await admin.from("campanha_historico").insert({
             campanha_id,
             de_status: statusAtual,
             para_status: novoStatus,

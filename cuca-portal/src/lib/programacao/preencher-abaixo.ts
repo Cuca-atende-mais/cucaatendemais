@@ -55,6 +55,8 @@ export function preencherColunaAbaixo(
   tempIdOrigem: string,
   colunaKey: string,
   colunaRoot: boolean,
+  // S-PROG-13: linhas que quem edita não pode alterar ficam como estão.
+  podeEditar: (a: AtividadeForm) => boolean = () => true,
 ): ResultadoPreencherAbaixo {
   if (CAMPOS_BLOQUEADOS.has(colunaKey)) {
     return { atividades, linhasPreenchidas: 0 }
@@ -86,6 +88,7 @@ export function preencherColunaAbaixo(
       return a
     }
     if (!alcancouOrigem) return a // mesma categoria, mas linha ACIMA da origem — não mexe
+    if (!podeEditar(a)) return a
 
     const valorAtual = lerCampo(a, colunaKey, colunaRoot)
     if (!ehVazio(valorAtual)) return a // já preenchida — nunca sobrescreve

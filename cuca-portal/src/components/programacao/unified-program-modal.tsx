@@ -19,8 +19,6 @@ import { cn } from "@/lib/utils"
 import { unidadesCuca } from "@/lib/constants"
 import toast from "react-hot-toast"
 import { Calendar, MapPin, Sparkles, Upload, X, Users } from "lucide-react"
-import { format } from "date-fns"
-import { ptBR } from "date-fns/locale"
 import { useUser } from "@/lib/auth/user-provider"
 import { EventoPontual } from "@/lib/types/database"
 
@@ -34,12 +32,10 @@ interface UnifiedProgramModalProps {
 export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento }: UnifiedProgramModalProps) {
     const { hasPermission, profile } = useUser()
     const [loading, setLoading] = useState(false)
-    const [isPontual, setIsPontual] = useState(true)
-
-    // Permissões calculadas em tempo real (hasPermission lê profile reativamente)
-    const canPontual = hasPermission("programacao_pontual", "create")
-    const canMensal = hasPermission("programacao_mensal", "create")
-    const canBoth = canPontual && canMensal
+    // S-PROG-13: o modal cria só evento pontual. A programação mensal é criada pela grade
+    // (/programacao/criar) ou pela importação de planilha, que passam pelas permissões por categoria;
+    // o antigo ramo "Mensal" gravava `campanhas_mensais` direto pelo navegador, sem categoria.
+    const isPontual = true
 
     // Form states
     const [titulo, setTitulo] = useState("")
@@ -55,10 +51,6 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
     const [flyerFile, setFlyerFile] = useState<File | null>(null)
     const [flyerPreview, setFlyerPreview] = useState<string | null>(null)
 
-    // Mensal specific
-    const [mes, setMes] = useState(1)
-    const [ano, setAno] = useState(2026)
-
     // Toda a Rede CUCA (sem filtro de unidade no disparo)
     const [todaRede, setTodaRede] = useState(false)
 
@@ -70,20 +62,6 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
     const supabase = createClient()
 
     useEffect(() => {
-        const now = new Date()
-        setMes(now.getMonth() + 1)
-        setAno(now.getFullYear())
-    }, [])
-
-    // Quando profile carrega, define o modo padrão baseado nas permissões reais
-    useEffect(() => {
-        if (!profile?.id) return
-        if (!editEvento) {
-            setIsPontual(canPontual)
-        }
-    }, [profile?.id])
-
-    useEffect(() => {
         if (open) {
             supabase.from("categorias_interesse").select("id, nome, pai_id").eq("ativo", true).order("ordem")
                 .then(({ data }) => setCategorias(data ?? []))
@@ -93,7 +71,6 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
     // S25-03: Preencher form quando abrir em modo de edição
     useEffect(() => {
         if (open && editEvento) {
-            setIsPontual(true)
             setTitulo(editEvento.titulo || "")
             setDescricao(editEvento.descricao || "")
             const temUnidade = !!editEvento.unidade_cuca
@@ -209,17 +186,6 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
                     if (error) throw error
                     toast.success("Evento enviado para aprovação!")
                 }
-            } else {
-                // Salvar em campanhas_mensais -> Status: aguardando_aprovacao
-                const { error } = await supabase.from("campanhas_mensais").insert({
-                    titulo,
-                    descricao,
-                    mes,
-                    ano,
-                    status: "aguardando_aprovacao"
-                })
-                if (error) throw error
-                toast.success("Programação mensal enviada para aprovação da comissão!")
             }
 
             onSuccess()
@@ -268,29 +234,12 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
                         <DialogTitle className="text-xl">{editEvento ? "Editar Evento Pontual" : "Nova Programação"}</DialogTitle>
                     </div>
                     <DialogDescription>
-                        Cadastre eventos pontuais (cursos, festivais) ou a grade mensal de atividades.
+                        Cadastre eventos pontuais (cursos, festivais).
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="flex-1 overflow-y-auto px-6 py-4">
                 <div className="grid gap-6">
-                    {/* Toggle Selector — visível apenas se tiver permissão para os dois tipos */}
-                    {canBoth && (
-                    <div className="flex items-center justify-between p-3 bg-muted/40 rounded-xl border border-muted-foreground/10">
-                        <div className="space-y-0.5">
-                            <Label className="text-sm font-bold">Categoria</Label>
-                            <p className="text-xs text-muted-foreground">
-                                {isPontual ? "Aprovação superior necessária" : "Ativação imediata no RAG"}
-                            </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <span className={!isPontual ? "text-xs font-bold text-cuca-blue" : "text-xs text-muted-foreground"}>Mensal</span>
-                            <Switch checked={isPontual} onCheckedChange={setIsPontual} />
-                            <span className={isPontual ? "text-xs font-bold text-cuca-yellow" : "text-xs text-muted-foreground"}>Pontual</span>
-                        </div>
-                    </div>
-                    )}
-
                     <div className="grid gap-2">
                         <Label htmlFor="titulo">Título do Evento / Campanha</Label>
                         <Input
@@ -354,29 +303,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
                                 )}
                             </div>
                         </div>
-                    ) : (
-                        <div className="grid grid-cols-2 gap-4 p-4 bg-cuca-blue/5 rounded-xl border border-cuca-blue/10">
-                            <div className="grid gap-2">
-                                <Label>Mês de Referência</Label>
-                                <Select value={mes.toString()} onValueChange={(v) => setMes(parseInt(v))}>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                                            <SelectItem key={m} value={m.toString()}>
-                                                {format(new Date(2024, m - 1, 1), "MMMM", { locale: ptBR })}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="grid gap-2">
-                                <Label>Ano</Label>
-                                <Input type="number" value={ano} onChange={(e) => setAno(parseInt(e.target.value))} />
-                            </div>
-                        </div>
-                    )}
+                    ) : null}
 
                     {/* Alcance do disparo: unidade específica ou toda a Rede CUCA */}
                     {isPontual && (
@@ -489,9 +416,9 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
                     <Button
                         className={isPontual ? "bg-cuca-yellow text-cuca-dark hover:bg-yellow-500" : "bg-cuca-blue hover:bg-sky-800 text-white"}
                         onClick={handleSave}
-                        disabled={loading || (isPontual ? !hasPermission("programacao_pontual", "create") : !hasPermission("programacao_mensal", "create"))}
+                        disabled={loading || !hasPermission("programacao_pontual", "create")}
                     >
-                        {loading ? "Salvando..." : isPontual ? "Enviar para Aprovação" : "Publicar Grade Mensal"}
+                        {loading ? "Salvando..." : "Enviar para Aprovação"}
                     </Button>
                 </DialogFooter>
             </DialogContent>

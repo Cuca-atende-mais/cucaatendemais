@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils"
 import { AtividadeForm } from "@/lib/programacao/tipos"
 import { atividadeFormDeLinhaExistente, calcularSeloQualidade, categoriaValida, LinhaOrigemDuplicacao, SeloQualidade } from "@/lib/programacao/duplicar"
 import { AjudaCampo } from "@/components/programacao/ajuda-campo"
+import { separarLinhasParaDuplicar, type ChecarPermissao } from "@/lib/programacao/permissoes-categoria"
 
 const NOMES_MES = [
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -48,10 +49,16 @@ function corSelo(pct: number): string {
 interface SelecionarOrigemProps {
     unidade: string
     onEscolherZero: () => void
-    onEscolherDuplicar: (atividades: AtividadeForm[]) => void
+    // S-PROG-13: `foraDoPerfil` = linhas da origem de categorias em que a pessoa não pode criar.
+    onEscolherDuplicar: (atividades: AtividadeForm[], foraDoPerfil: number) => void
+    podeComecarDoZero?: boolean
+    podeDuplicar?: boolean
+    checar?: ChecarPermissao
 }
 
-export function SelecionarOrigem({ unidade, onEscolherZero, onEscolherDuplicar }: SelecionarOrigemProps) {
+export function SelecionarOrigem({
+    unidade, onEscolherZero, onEscolherDuplicar, podeComecarDoZero = true, podeDuplicar = true, checar = () => true,
+}: SelecionarOrigemProps) {
     const [carregando, setCarregando] = useState(true)
     const [campanhas, setCampanhas] = useState<CampanhaOrigem[]>([])
     const [selecionada, setSelecionada] = useState<string | null>(null)
@@ -119,11 +126,12 @@ export function SelecionarOrigem({ unidade, onEscolherZero, onEscolherDuplicar }
 
     const handleDuplicar = () => {
         const origem = campanhas.find(c => c.id === selecionada)
-        if (!origem || origem.indisponivel) return
-        const formularios = origem.linhas
+        if (!origem || origem.indisponivel || !podeDuplicar) return
+        const { copiadas, foraDoPerfil } = separarLinhasParaDuplicar(origem.linhas, checar)
+        const formularios = copiadas
             .map(l => atividadeFormDeLinhaExistente(l, novoTempId()))
             .filter((a): a is AtividadeForm => a !== null)
-        onEscolherDuplicar(formularios)
+        onEscolherDuplicar(formularios, foraDoPerfil)
     }
 
     return (
@@ -213,12 +221,16 @@ export function SelecionarOrigem({ unidade, onEscolherZero, onEscolherDuplicar }
             {/* Rodapé — "Começar do zero" (secundária, à esquerda) · "Duplicar e continuar"
                 (primária, à direita, desabilitada até escolher um mês), como no protótipo. */}
             <div className="flex items-center justify-between gap-2 pt-1">
-                <Button type="button" variant="outline" size="lg" className="gap-1.5" onClick={onEscolherZero}>
-                    <Sparkles className="h-4 w-4" /> Começar do zero
-                </Button>
-                <Button size="lg" className="gap-1.5" disabled={!selecionada} onClick={handleDuplicar}>
-                    <Copy className="h-4 w-4" /> Duplicar e continuar
-                </Button>
+                {podeComecarDoZero ? (
+                    <Button type="button" variant="outline" size="lg" className="gap-1.5" onClick={onEscolherZero}>
+                        <Sparkles className="h-4 w-4" /> Começar do zero
+                    </Button>
+                ) : <span />}
+                {podeDuplicar && (
+                    <Button size="lg" className="gap-1.5" disabled={!selecionada} onClick={handleDuplicar}>
+                        <Copy className="h-4 w-4" /> Duplicar e continuar
+                    </Button>
+                )}
             </div>
         </div>
     )

@@ -6,7 +6,7 @@
 // em vez de um Dialog, seguindo o mesmo padrão já usado por /programacao/mensal/[id] (voltar com
 // ArrowLeft, header de página, sem overlay). Coexiste com o upload de planilha — não substitui.
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -31,6 +31,12 @@ import { atividadeFormDeLinhaExistente } from "@/lib/programacao/duplicar"
 import { GradeAtividades } from "@/components/programacao/grade-atividades"
 import { FichaAtividade } from "@/components/programacao/ficha-atividade"
 import { SelecionarOrigem } from "@/components/programacao/selecionar-origem"
+import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
+import {
+    categoriasEditaveis, mapaPermissoesCategorias, opcaoLiberada, permissoesDaCategoria, type OrigemCriacao,
+} from "@/lib/programacao/permissoes-categoria"
+import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
+import { useUser } from "@/lib/auth/user-provider"
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -74,6 +80,16 @@ interface CriarProgramacaoViewProps {
 export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel, onSuccess }: CriarProgramacaoViewProps) {
     const supabase = createClient()
     const modoEdicao = !!campanhaId
+
+    // S-PROG-13: permissões por categoria. Linhas criadas nesta sessão (nova, duplicada ou vinda da
+    // origem) são editáveis por quem pode criar; linhas já gravadas exigem "editar".
+    const { loading: carregandoUsuario } = useUser()
+    const checarPgm = useChecarPgm()
+    const permissoes = useMemo(() => mapaPermissoesCategorias(checarPgm), [checarPgm])
+    const [linhasNovas, setLinhasNovas] = useState<Set<string>>(() => new Set())
+    const marcarLinhaNova = (tempId: string) => setLinhasNovas(prev => new Set(prev).add(tempId))
+    const linhaEditavel = (a: AtividadeInterna) => linhasNovas.has(a._tempId)
+    const [origemCriacao, setOrigemCriacao] = useState<OrigemCriacao>("zero")
 
     // Step: 1 = Origem (S-PROG-08: Cabeçalho fundido em Origem — unidade/mês de destino vivem
     // aqui, junto da grade de meses anteriores), 2 = Atividades, 3 = Enviar p/ aprovação (Revisão).
@@ -124,7 +140,8 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     // render, mesmo padrão de todo o resto do componente); incluir `onCancel` re-executaria o
     // fetch a cada render do componente pai (a prop é recriada como closure nova ali).
     useEffect(() => {
-        if (!campanhaId) return
+        // S-PROG-13: espera o perfil carregar — sem ele, as permissões por categoria ainda estão vazias.
+        if (!campanhaId || carregandoUsuario) return
 
         let cancelado = false
         ;(async () => {
@@ -167,12 +184,15 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
             setAnoSel(camp.ano)
             setUnidadeSel(camp.unidade_cuca)
 
-            const convertidas = (linhas || [])
+            // S-PROG-13: só as categorias que o perfil pode ver entram na tela (e nunca são enviadas
+            // de volta as que não entraram).
+            const visiveis = (linhas || []).filter(l => permissoesDaCategoria(checarPgm, l.categoria).ver)
+            const convertidas = visiveis
                 .map(l => atividadeFormDeLinhaExistente(l, l.id, { zerar: false }))
                 .filter((a): a is AtividadeForm => a !== null)
 
-            if (convertidas.length < (linhas || []).length) {
-                toast.error(`${(linhas || []).length - convertidas.length} atividade(s) com categoria inválida não pôde(puderam) ser carregada(s).`)
+            if (convertidas.length < visiveis.length) {
+                toast.error(`${visiveis.length - convertidas.length} atividade(s) com categoria inválida não pôde(puderam) ser carregada(s).`)
             }
 
             setAtividades(convertidas)
@@ -182,7 +202,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
 
         return () => { cancelado = true }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [campanhaId])
+    }, [campanhaId, carregandoUsuario])
 
     // "Sujo" só é um conceito de modo edição — na criação do zero, nada gravado ainda existe pra
     // comparar (é sempre a mesma situação que a mensagem "Nada é gravado até salvar" já cobre).
@@ -263,13 +283,19 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
 
     // ── Step 1 (Origem, S-PROG-02/08) — zero ou duplicar mês anterior ──────────────────────────
     const handleEscolherZero = () => {
+        setOrigemCriacao("zero")
         setAtividades([])
         setStep(2)
     }
 
-    const handleEscolherDuplicar = (duplicadas: AtividadeInterna[]) => {
+    const handleEscolherDuplicar = (duplicadas: AtividadeInterna[], foraDoPerfil: number) => {
+        setOrigemCriacao("duplicar")
+        setLinhasNovas(new Set(duplicadas.map(a => a._tempId)))
         setAtividades(duplicadas)
         toast.success(`${duplicadas.length} atividade(s) copiada(s) — revise data, horário e vagas antes de salvar.`)
+        if (foraDoPerfil > 0) {
+            toast(`${foraDoPerfil} atividade(s) de categorias fora do seu perfil ficaram de fora da cópia.`, { icon: "ℹ️" })
+        }
         setStep(2)
     }
 
@@ -280,12 +306,17 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
         setSalvando(true)
         try {
             const titulo = `Programação ${unidadeSel} — ${nomeMes} ${anoSel}`
-            const atividadesPayload = atividades.map(a => montarAtividadePayload(a, unidadeSel))
+            // S-PROG-13: só as categorias que a pessoa pode alterar são enviadas (e substituídas);
+            // as demais continuam no banco como estão.
+            const categorias = categoriasEditaveis(permissoes)
+            const atividadesPayload = atividades
+                .filter(a => categorias.includes(a.categoria))
+                .map(a => montarAtividadePayload(a, unidadeSel))
 
             const res = await fetch("/api/programacao/rascunho", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanha_id: campanhaId, titulo, atividades: atividadesPayload }),
+                body: JSON.stringify({ campanha_id: campanhaId, titulo, atividades: atividadesPayload, categorias }),
             })
 
             const data = await res.json()
@@ -325,7 +356,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
             const res = await fetch("/api/programacao/importar", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanha: campanhaPayload, atividades: atividadesPayload, confirmarSubstituicao }),
+                body: JSON.stringify({ campanha: campanhaPayload, atividades: atividadesPayload, confirmarSubstituicao, origem: origemCriacao }),
             })
 
             const data = await res.json()
@@ -352,12 +383,12 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     }
 
     const handleSalvarRascunhoClick = () => {
-        if (atividades.length === 0) {
-            toast.error("Adicione pelo menos uma atividade antes de salvar.")
-            return
-        }
         if (modoEdicao) {
             executarSalvamentoEdicao()
+            return
+        }
+        if (atividades.length === 0) {
+            toast.error("Adicione pelo menos uma atividade antes de salvar.")
             return
         }
         if (campanhaExistente) {
@@ -528,6 +559,9 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                                 unidade={unidadeSel}
                                 onEscolherZero={handleEscolherZero}
                                 onEscolherDuplicar={handleEscolherDuplicar}
+                                podeComecarDoZero={opcaoLiberada(checarPgm, PGM_GERAL.criarZero)}
+                                podeDuplicar={opcaoLiberada(checarPgm, PGM_GERAL.duplicar)}
+                                checar={checarPgm}
                             />
                         ) : (
                             <p className="text-sm text-muted-foreground text-center py-6 border border-dashed border-border rounded-xl">
@@ -585,6 +619,9 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                             onChange={setAtividades}
                             onAbrirFicha={handleAbrirFicha}
                             onLinhaAtivaChange={setAtividadeSelecionadaGrade}
+                            permissoes={permissoes}
+                            linhaEditavel={linhaEditavel}
+                            onLinhaCriada={marcarLinhaNova}
                         />
 
                         {/* S-PROG-11 (item 3): modo desenvolvedor — desligado por padrão (AC7).
@@ -678,6 +715,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                 onChange={handleMudarAtividadeDaFicha}
                 onFechar={handleFecharFicha}
                 onNavegar={handleNavegarFicha}
+                somenteLeitura={!!atividadeDaFicha && !(permissoes[atividadeDaFicha.categoria].editar || linhaEditavel(atividadeDaFicha))}
             />
 
             {/* ── Footer de navegação: fixo no rodapé da tela — não exige rolar a página inteira
@@ -700,7 +738,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                         <Button
                             size="lg"
                             onClick={handleSalvarRascunhoClick}
-                            disabled={salvando || atividades.length === 0}
+                            disabled={salvando || (!modoEdicao && atividades.length === 0)}
                             className="bg-primary text-primary-foreground gap-1.5"
                         >
                             {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
