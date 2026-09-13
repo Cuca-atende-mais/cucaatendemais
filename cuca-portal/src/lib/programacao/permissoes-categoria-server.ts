@@ -11,7 +11,7 @@ export type AcessoPgm = {
     alcancaUnidade: (unidade: string | null | undefined) => boolean
 }
 
-// S-PROG-13: permissões da programação mensal e unidade de quem está logado, lidas uma vez por
+// S-PROG-13: permissões da programação mensal (e o módulo `divulgacao`, S-PROG-15) e unidade de quem está logado, lidas uma vez por
 // requisição. Mesma regra de `has_permission_exata` (colaborador ativo ou sem o campo, perfil do
 // colaborador, módulo exato) e de `get_my_unit()`. As rotas que gravam com a chave de serviço
 // precisam das duas checagens, porque as políticas do banco não se aplicam a elas.
@@ -38,7 +38,7 @@ export async function carregarAcessoPgm(user: User): Promise<AcessoPgm> {
         .from("sys_permissions")
         .select("module, can_read, can_create, can_update, can_delete")
         .eq("role_id", colaborador.role_id)
-        .like("module", "pgm_%")
+        .or("module.like.pgm_%,module.eq.divulgacao")
 
     return { checar: checadorDePermissoes(linhas as LinhaPermissaoPgm[] | null, false), alcancaUnidade }
 }

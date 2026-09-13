@@ -1,36 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/admin"
-import { createClient } from "@/lib/supabase/server"
 import {
-    AcaoDivulgacao,
-    avaliarAcesso,
     erroConfiguracao,
     mensagemDuplicata,
     montarRegistroDisparo,
     periodoValido,
-    PermissaoDivulgacao,
-    ResultadoAutorizacao,
 } from "@/app/api/divulgacao/disparar/logic"
-import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
+import { carregarAcessoDivulgacao } from "@/lib/divulgacao/acesso-server"
+import { carregarSituacaoDivulgacao } from "@/lib/divulgacao/situacao-server"
+import { motivoBloqueioDisparo } from "@/lib/divulgacao/niveis"
 
-
-async function autorizar(
-    supabase: Awaited<ReturnType<typeof createClient>>,
-    acao: AcaoDivulgacao,
-): Promise<ResultadoAutorizacao> {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return avaliarAcesso(null, [], acao, DEVELOPER_EMAILS)
-    if (DEVELOPER_EMAILS.includes(user.email ?? "")) return avaliarAcesso(user, [], acao, DEVELOPER_EMAILS)
-
-    const { data: colab } = await supabase
-        .from("colaboradores")
-        .select("sys_roles(sys_permissions(module, can_read, can_create))")
-        .eq("user_id", user.id)
-        .single()
-
-    const role = colab?.sys_roles as { sys_permissions?: PermissaoDivulgacao[] } | null
-    return avaliarAcesso(user, role?.sys_permissions ?? [], acao, DEVELOPER_EMAILS)
-}
+// S-PROG-15: ver = módulo `divulgacao` ou opções de aprovar RAG/disparar; disparar = opção "Disparar
+// Aviso Global". O servidor repete o bloqueio duplo da tela: mês vigente ou seguinte, nível 1
+// (programações autorizadas) e nível 2 (RAG do mês no ar), além de número e template Meta.
 
 async function buscarConfiguracaoMeta() {
     const admin = createAdminClient()
@@ -70,11 +52,9 @@ async function buscarConfiguracaoMeta() {
 
 export async function GET() {
     try {
-        const supabase = await createClient()
-        const acesso = await autorizar(supabase, "can_read")
-        if (!acesso.autorizado) {
-            return NextResponse.json({ error: acesso.error }, { status: acesso.status })
-        }
+        const acesso = await carregarAcessoDivulgacao()
+        if (!acesso) return NextResponse.json({ error: "Não autenticado" }, { status: 401 })
+        if (!acesso.podeVer) return NextResponse.json({ error: "Sem permissão para acessar a Divulgação." }, { status: 403 })
 
         return NextResponse.json(await buscarConfiguracaoMeta())
     } catch (error: unknown) {
@@ -86,16 +66,26 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
     try {
-        const supabase = await createClient()
-        const acesso = await autorizar(supabase, "can_create")
-        if (!acesso.autorizado) {
-            return NextResponse.json({ error: acesso.error }, { status: acesso.status })
-        }
+        const acesso = await carregarAcessoDivulgacao()
+        if (!acesso) return NextResponse.json({ error: "Não autenticado" }, { status: 401 })
+        if (!acesso.podeDisparar) return NextResponse.json({ error: "Sem permissão para disparar o aviso global." }, { status: 403 })
 
         const body = await req.json()
         const { mes, ano, titulo } = body
         if (!periodoValido(mes, ano)) {
             return NextResponse.json({ error: "Campos obrigatórios inválidos: mes e ano" }, { status: 400 })
+        }
+
+        const situacao = await carregarSituacaoDivulgacao({ mes, ano })
+        const bloqueioNiveis = motivoBloqueioDisparo({
+            temPermissao: true,
+            mesPermitido: situacao.mesPermitido,
+            unidades: situacao.unidades,
+            temNumero: true,
+            temTemplate: true,
+        })
+        if (bloqueioNiveis) {
+            return NextResponse.json({ error: bloqueioNiveis }, { status: 422 })
         }
 
         const admin = createAdminClient()
@@ -141,7 +131,7 @@ export async function POST(req: NextRequest) {
                 corpoTemplate: template.corpo_texto,
                 phoneNumberId: numero.phone_number_id,
                 totalLeads: totalLeads ?? 0,
-                userId: acesso.userId,
+                userId: acesso.user.id,
             }))
             .select("id")
             .single()

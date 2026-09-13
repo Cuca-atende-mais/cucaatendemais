@@ -57,31 +57,49 @@ export function separarLinhasParaDuplicar<T extends { categoria: string | null }
     return { copiadas, foraDoPerfil: linhas.length - copiadas.length }
 }
 
-/** Ação do fluxo de aprovação exigida por cada transição de status (até a S-PROG-14 separar por categoria). */
-export function moduloDaTransicao(de: string, para: string): "enviar" | "autorizar" | "devolver" | "reabrir" | null {
-    if (de === "rascunho" && para === "pendente") return "enviar"
-    if (de === "pendente" && para === "aprovado") return "autorizar"
-    if (de === "pendente" && para === "rascunho") return "devolver"
-    if (de === "aprovado" && para === "rascunho") return "reabrir"
+export type StatusCategoria = "rascunho" | "aguardando_autorizacao" | "autorizada"
+export type AcaoFluxo = "enviar" | "autorizar" | "devolver" | "reabrir"
+
+export const ROTULO_STATUS_CATEGORIA: Record<StatusCategoria, string> = {
+    rascunho: "Rascunho",
+    aguardando_autorizacao: "Aguardando autorização",
+    autorizada: "Autorizada",
+}
+
+/** S-PROG-14: transições de uma categoria e a ação do fluxo que cada uma exige. */
+export function acaoDaTransicaoCategoria(de: string, para: string): AcaoFluxo | null {
+    if (de === "rascunho" && para === "aguardando_autorizacao") return "enviar"
+    if (de === "aguardando_autorizacao" && para === "autorizada") return "autorizar"
+    if (de === "aguardando_autorizacao" && para === "rascunho") return "devolver"
+    if (de === "autorizada" && para === "rascunho") return "reabrir"
     return null
 }
 
-/**
- * Transição de status da campanha inteira: exige a ação em TODAS as categorias que têm linha na
- * campanha (um coordenador de ESPORTES não autoriza uma campanha que também tem CURSOS). Campanha
- * sem linhas exige a ação em pelo menos uma categoria. Categoria desconhecida só passa para Developer
- * (quem chama resolve o bypass antes).
- */
-export function podeTransicionar(
-    checar: ChecarPermissao, de: string, para: string, categoriasDaCampanha: (string | null)[],
-): boolean {
-    const acao = moduloDaTransicao(de, para)
-    if (!acao) return false
-    const liberado = (slug: SlugCategoria) => opcaoLiberada(checar, pgmCategoria(slug)[acao])
-    const slugs = [...new Set(categoriasDaCampanha.map(slugDaCategoria))]
-    if (slugs.length === 0) return CATEGORIAS_PROGRAMACAO.some(c => liberado(c.slug))
-    // Categoria desconhecida: módulo que não existe em perfil nenhum — só o checador de Developer libera.
-    return slugs.every(slug => slug !== null ? liberado(slug) : checar("pgm_categoria_desconhecida", "read"))
+export function transicaoExigeMotivo(de: string, para: string): boolean {
+    const acao = acaoDaTransicaoCategoria(de, para)
+    return acao === "devolver" || acao === "reabrir"
+}
+
+/** A pessoa pode fazer a transição nesta categoria? (opção de ação única da S-PROG-12) */
+export function podeTransicionarCategoria(checar: ChecarPermissao, categoria: string | null | undefined, de: string, para: string): boolean {
+    const acao = acaoDaTransicaoCategoria(de, para)
+    const slug = slugDaCategoria(categoria)
+    if (!acao || !slug) return false
+    return opcaoLiberada(checar, pgmCategoria(slug)[acao])
+}
+
+/** Transições oferecidas a partir do status atual. */
+export function transicoesPossiveis(de: string): { para: StatusCategoria; acao: AcaoFluxo }[] {
+    const destinos: StatusCategoria[] = ["rascunho", "aguardando_autorizacao", "autorizada"]
+    return destinos
+        .map(para => ({ para, acao: acaoDaTransicaoCategoria(de, para) }))
+        .filter((t): t is { para: StatusCategoria; acao: AcaoFluxo } => t.acao !== null)
+}
+
+/** Permissões da categoria considerando o status: fora de rascunho, só leitura. */
+export function permissoesComStatus(p: PermissoesCategoria, status: string | null | undefined): PermissoesCategoria {
+    if (!status || status === "rascunho") return p
+    return { ver: p.ver, criar: false, editar: false, excluir: false }
 }
 
 export type OrigemCriacao = "zero" | "duplicar" | "planilha"
