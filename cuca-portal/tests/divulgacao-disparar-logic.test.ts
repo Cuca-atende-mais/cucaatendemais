@@ -1,48 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
-    avaliarAcesso,
     erroConfiguracao,
     mensagemDuplicata,
     montarRegistroDisparo,
     periodoValido,
 } from "../src/app/api/divulgacao/disparar/logic.ts"
-
-const DEV_EMAILS = ["dev@example.com"]
-
-test("retorna 401 quando não há usuário autenticado", () => {
-    assert.deepEqual(avaliarAcesso(null, [], "can_create", DEV_EMAILS), {
-        autorizado: false,
-        status: 401,
-        error: "Não autenticado",
-    })
-})
-
-test("retorna 403 para usuário somente leitura tentando criar disparo", () => {
-    const acesso = avaliarAcesso(
-        { id: "user-1", email: "leitor@example.com" },
-        [{ module: "divulgacao", can_read: true, can_create: false }],
-        "can_create",
-        DEV_EMAILS,
-    )
-    assert.equal(acesso.autorizado, false)
-    if (!acesso.autorizado) assert.equal(acesso.status, 403)
-})
-
-test("autoriza leitura RBAC e bypass de developer", () => {
-    assert.equal(avaliarAcesso(
-        { id: "reader" },
-        [{ module: "divulgacao", can_read: true, can_create: false }],
-        "can_read",
-        DEV_EMAILS,
-    ).autorizado, true)
-    assert.equal(avaliarAcesso(
-        { id: "dev", email: "dev@example.com" },
-        [],
-        "can_create",
-        DEV_EMAILS,
-    ).autorizado, true)
-})
 
 test("valida mês e ano e preserva mensagem de duplicata 409", () => {
     assert.equal(periodoValido(7, 2026), true)

@@ -85,7 +85,7 @@ export const menuItems = [
         title: "Divulgação",
         url: "/divulgacao",
         icon: "Radio",
-        permission: { recurso: "divulgacao", acao: "read" },
+        permission: { recurso: "pgm_divulgacao_ver", acao: "read" },
     },
     {
         title: "Configurações",
@@ -99,7 +99,7 @@ export const menuItems = [
             { title: "Perfis (RBAC)", url: "/configuracoes/perfis", permission: { recurso: "config_perfis", acao: "read" } },
             { title: "Unidades", url: "/unidades", permission: { recurso: "config_unidades", acao: "read" } },
             { title: "Categorias", url: "/categorias", permission: { recurso: "config_categorias", acao: "read" } },
-            { title: "Base Conhecimento Global", url: "/configuracoes/rag-global", permission: { recurso: "programacao_rag_global", acao: "read" } },
+            { title: "Base Conhecimento Global", url: "/configuracoes/rag-global", permission: { recurso: "pgr_ver", acao: "read" } },
             { title: "Acompanhamento de Envios", url: "/configuracoes/acompanhamento-envios", permission: { recurso: "config_acompanhamento_envios", acao: "read" } },
         ],
     },

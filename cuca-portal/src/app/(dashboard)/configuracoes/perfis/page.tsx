@@ -30,6 +30,7 @@ import {
 import toast from "react-hot-toast"
 import { ACOES_CRUD, GRUPOS_PROGRAMACAO_MENSAL, type CampoPermissao, type GrupoPermissao } from "@/lib/rbac/catalogo-programacao-mensal"
 import { GRUPOS_PROGRAMACAO_PONTUAL } from "@/lib/rbac/catalogo-programacao-pontual"
+import { GRUPOS_DIVULGACAO_RAG_GLOBAL, completarVerDivulgacao } from "@/lib/rbac/catalogo-divulgacao-rag-global"
 import { limitarAcoes, linhaCompleta, marcarCampo, marcarLinha } from "@/lib/rbac/matriz-permissoes"
 import { Skeleton } from "@/components/ui/skeleton"
 
@@ -115,13 +116,8 @@ const MODULE_GROUPS: GrupoPermissao[] = [
             { id: 'config_acompanhamento_envios', label: 'Acompanhamento de Envios (Visão de Entrega)' },
         ]
     },
-    {
-        category: 'Divulgação & RAG Global',
-        modules: [
-            { id: 'divulgacao', label: 'Central de Divulgação (Painel Gestor Geral + Disparar Aviso Global)' },
-            { id: 'programacao_rag_global', label: 'Base de Conhecimento — Rede CUCA (RAG Global)' },
-        ]
-    },
+    // S-PROG-16: substitui "Divulgação & RAG Global" (módulos antigos `divulgacao` e `programacao_rag_global`).
+    ...GRUPOS_DIVULGACAO_RAG_GLOBAL,
     {
         category: 'Módulo Técnico',
         modules: [
@@ -293,7 +289,7 @@ export default function GestaoPerfisPage() {
             const { error: deleteError } = await supabase.from('sys_permissions').delete().eq('role_id', selectedRole.id)
             if (deleteError) throw deleteError
 
-            const uniquePermissions = Array.from(new Map(permissions.map(p => [p.module, p])).values())
+            const uniquePermissions = completarVerDivulgacao(Array.from(new Map(permissions.map(p => [p.module, p])).values()))
             const toInsert = uniquePermissions.map(p => limitarAcoes(p, p.acoes)).map(p => ({
                 role_id: selectedRole.id, module: p.module,
                 can_read: p.can_read, can_create: p.can_create, can_update: p.can_update, can_delete: p.can_delete
