@@ -17,6 +17,11 @@ describe("mapearErroSalvarRascunho", () => {
         expect(r).toEqual({ status: 403, error: "Sem permissão para editar programação" })
     })
 
+    it("S-PROG-13: recusa por categoria repassa a mensagem com o nome da categoria", () => {
+        const r = mapearErroSalvarRascunho({ code: "42501", message: "Sem permissão para alterar atividades da categoria CURSOS" })
+        expect(r).toEqual({ status: 403, error: "Sem permissão para alterar atividades da categoria CURSOS" })
+    })
+
     it("qualquer outro código vira 500", () => {
         const r = mapearErroSalvarRascunho({ code: "23505", message: "duplicate key" })
         expect(r).toEqual({ status: 500, error: "duplicate key" })

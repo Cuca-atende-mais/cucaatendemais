@@ -9,6 +9,8 @@ import { mapearErroSalvarRascunho } from "@/lib/programacao/rascunho"
 // motor-agente). Toda a lógica de substituição atômica está na função Postgres
 // `programacao_salvar_rascunho` (uma chamada de função = uma transação) — a rota só autentica,
 // checa permissão e traduz o erro.
+// S-PROG-13: chama `programacao_salvar_rascunho_categorias`, que só substitui as categorias enviadas
+// em `categorias` e confere, dentro do banco, a permissão de cada uma (ver/criar/editar/excluir).
 interface AtividadePayload {
     titulo: string
     categoria: string | null
@@ -31,31 +33,27 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "Não autenticado" }, { status: 401 })
         }
 
-        const { data: permOk } = await supabase
-            .rpc("has_permission", { p_recurso: "programacao", p_acao: "update" })
-
-        if (!permOk) {
-            return NextResponse.json({ error: "Sem permissão para editar programação" }, { status: 403 })
-        }
-
         const body = await req.json()
-        const { campanha_id, titulo, atividades } = body as {
+        const { campanha_id, titulo, atividades, categorias } = body as {
             campanha_id: string
             titulo: string
             atividades: AtividadePayload[]
+            categorias: string[]
         }
 
-        if (!campanha_id || !titulo || !Array.isArray(atividades) || atividades.length === 0) {
+        if (!campanha_id || !titulo || !Array.isArray(atividades) || !Array.isArray(categorias) || categorias.length === 0
+            || categorias.some(c => typeof c !== "string")) {
             return NextResponse.json(
-                { error: "campanha_id, titulo e ao menos uma atividade são obrigatórios" },
+                { error: "campanha_id, titulo, atividades e categorias são obrigatórios" },
                 { status: 400 },
             )
         }
 
-        const { data, error } = await supabase.rpc("programacao_salvar_rascunho", {
+        const { data, error } = await supabase.rpc("programacao_salvar_rascunho_categorias", {
             p_campanha_id: campanha_id,
             p_titulo: titulo,
             p_atividades: atividades,
+            p_categorias: categorias,
         })
 
         if (error) {

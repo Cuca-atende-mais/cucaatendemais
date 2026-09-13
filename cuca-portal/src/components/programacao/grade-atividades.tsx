@@ -18,6 +18,7 @@ import { useMediaQuery } from "@/hooks/use-media-query"
 import { AtividadeForm, Categoria, DIAS_SEMANA, DIAS_SEMANA_ABREV, SESSOES_DIA_A_DIA, SEXOS } from "@/lib/programacao/tipos"
 import { aplicarMascaraDataDigitando, aplicarMascaraHoraDigitando, dataBrParaISO, exibirData, normalizarData, normalizarHora } from "@/lib/programacao/mascaras"
 import { campoBloqueadoParaPreencherAbaixo, preencherColunaAbaixo } from "@/lib/programacao/preencher-abaixo"
+import { NOMES_CATEGORIAS, type PermissoesCategoria } from "@/lib/programacao/permissoes-categoria"
 import { RotuloComAjuda } from "@/components/programacao/ajuda-campo"
 import { CampoComAjuda } from "@/lib/programacao/ajuda"
 
@@ -134,10 +135,22 @@ interface GradeAtividadesProps {
     // enviado ao RAG" (modo desenvolvedor) vive em `criar-programacao-view.tsx`, não aqui dentro,
     // e precisa saber qual linha mostrar sem a grade virar controlada de fora (mais invasivo).
     onLinhaAtivaChange?: (atividade: AtividadeForm | null) => void
+    // S-PROG-13: permissões por categoria. Sem a prop, tudo liberado (comportamento anterior).
+    permissoes?: Record<Categoria, PermissoesCategoria>
+    // Linhas criadas nesta sessão: editáveis por quem pode criar, mesmo sem "editar".
+    linhaEditavel?: (atividade: AtividadeForm) => boolean
+    onLinhaCriada?: (tempId: string) => void
 }
 
-export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAtivaChange }: GradeAtividadesProps) {
-    const [categoria, setCategoria] = useState<Categoria>("ESPORTES")
+const TUDO_LIBERADO: PermissoesCategoria = { ver: true, criar: true, editar: true, excluir: true }
+
+export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAtivaChange, permissoes, linhaEditavel, onLinhaCriada }: GradeAtividadesProps) {
+    const permissaoDe = (cat: Categoria) => permissoes?.[cat] ?? TUDO_LIBERADO
+    const categoriasVisiveis = NOMES_CATEGORIAS.filter(cat => permissaoDe(cat).ver)
+    const [categoriaEscolhida, setCategoria] = useState<Categoria>("ESPORTES")
+    const categoria = categoriasVisiveis.includes(categoriaEscolhida) ? categoriaEscolhida : (categoriasVisiveis[0] ?? categoriaEscolhida)
+    const permissaoAtual = permissaoDe(categoria)
+    const podeEditarLinha = (a: AtividadeForm) => permissaoDe(a.categoria).editar || (linhaEditavel?.(a) ?? false)
     const [linhaAtiva, setLinhaAtiva] = useState<string | null>(null)
     // S-PROG-11 (item 1): coluna em foco — junto com `linhaAtiva`, é o que "Preencher abaixo"
     // precisa saber (linha de origem + qual campo propagar). Setada via `onFoco` de cada célula.
@@ -196,15 +209,18 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
     }
 
     const adicionarLinha = () => {
+        if (!permissaoAtual.criar) return
         const nova = novaAtividade(categoria)
+        onLinhaCriada?.(nova._tempId)
         onChange([...atividades, nova])
         setLinhaAtiva(nova._tempId)
     }
 
     const duplicarLinha = (tempId: string) => {
         const original = atividades.find(a => a._tempId === tempId)
-        if (!original) return
+        if (!original || !permissaoDe(original.categoria).criar) return
         const copia: AtividadeForm = { ...original, _tempId: novoTempId(), metadata: { ...original.metadata } }
+        onLinhaCriada?.(copia._tempId)
         const indiceOriginal = atividades.findIndex(a => a._tempId === tempId)
         const proximo = [...atividades]
         proximo.splice(indiceOriginal + 1, 0, copia)
@@ -213,6 +229,8 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
     }
 
     const excluirLinha = (tempId: string) => {
+        const alvo = atividades.find(a => a._tempId === tempId)
+        if (!alvo || !permissaoDe(alvo.categoria).excluir) return
         onChange(atividades.filter(a => a._tempId !== tempId))
         if (linhaAtiva === tempId) setLinhaAtiva(null)
     }
@@ -224,7 +242,7 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
         if (!linhaAtiva || !colunaFoco) return
         const coluna = colunas.find(c => c.key === colunaFoco)
         if (!coluna) return
-        const { atividades: atualizadas, linhasPreenchidas } = preencherColunaAbaixo(atividades, linhaAtiva, coluna.key, !!coluna.root)
+        const { atividades: atualizadas, linhasPreenchidas } = preencherColunaAbaixo(atividades, linhaAtiva, coluna.key, !!coluna.root, podeEditarLinha)
         if (linhasPreenchidas > 0) onChange(atualizadas)
         toast.success(
             linhasPreenchidas > 0
@@ -236,7 +254,7 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
     return (
         <div className="space-y-4">
             <div className="flex gap-2 flex-wrap">
-                {(Object.keys(COLUNAS) as Categoria[]).map(cat => {
+                {categoriasVisiveis.map(cat => {
                     const qtd = atividades.filter(a => a.categoria === cat).length
                     const info = CATEGORIA_INFO[cat]
                     const Icone = info.icone
@@ -264,20 +282,27 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
 
             <div className="flex gap-2 flex-wrap items-center justify-between rounded-xl bg-muted/40 border border-border p-2.5">
                 <div className="flex gap-2 flex-wrap items-center">
-                    <Button size="default" className="gap-1.5" onClick={adicionarLinha}>
-                        <Plus className="h-4 w-4" /> Nova linha
-                    </Button>
+                    {permissaoAtual.criar && (
+                        <Button size="default" className="gap-1.5" onClick={adicionarLinha}>
+                            <Plus className="h-4 w-4" /> Nova linha
+                        </Button>
+                    )}
                     {linhaAtiva && daCategoria.some(a => a._tempId === linhaAtiva) && (
                         <>
-                            <Button size="default" variant="outline" className="gap-1.5" onClick={() => duplicarLinha(linhaAtiva)}>
-                                <Copy className="h-4 w-4" /> Duplicar linha
-                            </Button>
-                            <Button size="default" variant="outline" className="gap-1.5 text-red-400 hover:text-red-400 hover:bg-red-500/10 border-red-500/30" onClick={() => excluirLinha(linhaAtiva)}>
-                                <Trash2 className="h-4 w-4" /> Excluir linha
-                            </Button>
+                            {permissaoAtual.criar && (
+                                <Button size="default" variant="outline" className="gap-1.5" onClick={() => duplicarLinha(linhaAtiva)}>
+                                    <Copy className="h-4 w-4" /> Duplicar linha
+                                </Button>
+                            )}
+                            {permissaoAtual.excluir && (
+                                <Button size="default" variant="outline" className="gap-1.5 text-red-400 hover:text-red-400 hover:bg-red-500/10 border-red-500/30" onClick={() => excluirLinha(linhaAtiva)}>
+                                    <Trash2 className="h-4 w-4" /> Excluir linha
+                                </Button>
+                            )}
                             {/* S-PROG-11 (item 1): só aparece com uma linha selecionada E um campo
                                 em foco — as duas condições que a story exige antes de agir. */}
-                            {colunaFoco && !campoBloqueadoParaPreencherAbaixo(colunaFoco) && colunas.some(c => c.key === colunaFoco) && (
+                            {colunaFoco && !campoBloqueadoParaPreencherAbaixo(colunaFoco) && colunas.some(c => c.key === colunaFoco)
+                                && atividades.some(a => a._tempId === linhaAtiva && podeEditarLinha(a)) && (
                                 <Button size="default" variant="outline" className="gap-1.5" onClick={preencherAbaixo}>
                                     <ArrowDownToLine className="h-4 w-4" /> Preencher abaixo
                                 </Button>
@@ -290,15 +315,23 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
                 </span>
             </div>
 
-            {daCategoria.length === 0 && (
+            {categoriasVisiveis.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-16 border-2 border-dashed border-border rounded-2xl">
+                    Seu perfil não tem acesso a nenhuma categoria da programação mensal.
+                </p>
+            )}
+
+            {categoriasVisiveis.length > 0 && daCategoria.length === 0 && (
                 <div className="flex flex-col items-center gap-3 text-center py-16 border-2 border-dashed border-border rounded-2xl bg-muted/10">
                     <LayoutGrid className="h-8 w-8 text-muted-foreground/50" />
                     <p className="text-sm text-muted-foreground">
                         Nenhuma linha em <strong className="text-foreground">{categoria}</strong> ainda.
                     </p>
-                    <Button size="sm" variant="outline" className="gap-1.5" onClick={adicionarLinha}>
-                        <Plus className="h-3.5 w-3.5" /> Adicionar a primeira linha
-                    </Button>
+                    {permissaoAtual.criar && (
+                        <Button size="sm" variant="outline" className="gap-1.5" onClick={adicionarLinha}>
+                            <Plus className="h-3.5 w-3.5" /> Adicionar a primeira linha
+                        </Button>
+                    )}
                 </div>
             )}
 
@@ -311,6 +344,7 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
                             indice={idx}
                             colunas={colunas}
                             ativa={linhaAtiva === a._tempId}
+                            somenteLeitura={!podeEditarLinha(a)}
                             onSelecionar={() => setLinhaAtiva(a._tempId)}
                             onSetCampo={(col, v) => setCampo(a._tempId, col, v)}
                             onToggleDia={d => toggleDia(a._tempId, d)}
@@ -354,6 +388,7 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
                                     </td>
                                     {colunas.map(col => (
                                         <td key={col.key} className="px-1.5 py-2">
+                                            <fieldset disabled={!podeEditarLinha(a)} className="min-w-0">
                                             <CelulaCampo
                                                 atividade={a}
                                                 coluna={col}
@@ -362,6 +397,7 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
                                                 onAbrirFicha={campo => onAbrirFicha(a._tempId, campo)}
                                                 onFoco={() => { setLinhaAtiva(a._tempId); setColunaFoco(col.key) }}
                                             />
+                                            </fieldset>
                                         </td>
                                     ))}
                                     <td className="px-1.5 py-2">
@@ -527,12 +563,13 @@ function CelulaCampo({ atividade, coluna, onChange, onToggleDia, onAbrirFicha, o
 // ─── Cartão de linha (mobile, abaixo de 820px — AC8) ──────────────────────────
 
 function CartaoLinha({
-    atividade, indice, colunas, ativa, onSelecionar, onSetCampo, onToggleDia, onAbrirFicha, onFoco,
+    atividade, indice, colunas, ativa, somenteLeitura, onSelecionar, onSetCampo, onToggleDia, onAbrirFicha, onFoco,
 }: {
     atividade: AtividadeForm
     indice: number
     colunas: Coluna[]
     ativa: boolean
+    somenteLeitura: boolean
     onSelecionar: () => void
     onSetCampo: (col: Coluna, v: string) => void
     onToggleDia: (d: string) => void
@@ -556,12 +593,12 @@ function CartaoLinha({
                 </Button>
             </div>
             {colunas.map(col => (
-                <div key={col.key} className="space-y-1 pl-2">
+                <fieldset key={col.key} disabled={somenteLeitura} className="space-y-1 pl-2 min-w-0">
                     <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                         <RotuloComAjuda texto={col.label} campo={col.ajuda} />
                     </span>
                     <CelulaCampo atividade={atividade} coluna={col} onChange={v => onSetCampo(col, v)} onToggleDia={onToggleDia} onAbrirFicha={onAbrirFicha} onFoco={onFoco} />
-                </div>
+                </fieldset>
             ))}
         </div>
     )

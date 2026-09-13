@@ -131,20 +131,13 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
     const handleConfirmOverwrite = async () => {
         setConfirmDeletePhase(false)
         setIsLoading(true)
-        appendLog("info", "Deleção em Cascata", "Apagando a programação anterior e limpando o RAG...")
+        appendLog("info", "Substituição", "A programação anterior será substituída ao gravar, se o seu perfil permitir.")
 
         try {
-            // O Banco vai dar CASCADE em atividades_mensais. O Supabase Vector trigger apaga os embeddings lincados.
-            const { error: delErr } = await supabase
-                .from("campanhas_mensais")
-                .delete()
-                .eq("id", existingCampanha.id)
-
-            if (delErr) throw new Error("Falha ao apagar campanha anterior: " + delErr.message)
-
-            appendLog("success", "Banco Atualizado", "Programação antiga removida com sucesso.")
-
-            await performExtractionAndInsert(null)
+            // S-PROG-13: a exclusão da anterior não é mais feita pelo navegador. A rota
+            // /api/programacao/importar confere "excluir programação inteira" e "excluir atividade"
+            // em todas as categorias dela antes de apagar; sem permissão, nada é apagado.
+            await performExtractionAndInsert(null, true)
 
         } catch (error: any) {
             appendLog("error", "Ops", error.message)
@@ -155,7 +148,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
 
 
     // Parte 3: Extração do Arquivo Fisico, match das abas e insert no Supabase
-    const performExtractionAndInsert = async (campanhaRecicladaId: string | null) => {
+    const performExtractionAndInsert = async (campanhaRecicladaId: string | null, confirmarSubstituicao = false) => {
         const mesInt = parseInt(mesSelecionado)
         const anoAtual = new Date().getFullYear()
         const mesObj = MESES.find(m => m.value === mesSelecionado)!
@@ -453,9 +446,12 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                             mes: mesInt,
                             ano: anoAtual,
                             total_atividades: atividadesToInsert.length,
-                            status: "pendente"
+                            // S-PROG-13: nasce como rascunho; o envio para autorização é outro passo.
+                            status: "rascunho"
                         },
-                        atividades: atividadesToInsert
+                        atividades: atividadesToInsert,
+                        confirmarSubstituicao,
+                        origem: "planilha",
                     }),
                     signal: AbortSignal.timeout(60000)
                 })

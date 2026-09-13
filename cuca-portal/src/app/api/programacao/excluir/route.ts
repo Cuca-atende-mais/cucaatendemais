@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
+import { createAdminClient } from "@/lib/supabase/admin"
+import { isDeveloperEmail } from "@/lib/auth/developers"
+import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
+import { opcaoLiberada } from "@/lib/programacao/permissoes-categoria"
+import { carregarAcessoPgm } from "@/lib/programacao/permissoes-categoria-server"
+
+// S-PROG-13: mensal exige a opção "Excluir programação inteira" (a confirmação nominal continua na
+// tela) e a campanha precisa ser de unidade ao alcance de quem pede. Pontual segue só para as contas
+// Developer, como antes.
 
 export async function DELETE(req: NextRequest) {
     try {
@@ -9,11 +17,6 @@ export async function DELETE(req: NextRequest) {
 
         if (!user) {
             return NextResponse.json({ error: "Não autenticado" }, { status: 401 })
-        }
-
-
-        if (!user.email || !DEVELOPER_EMAILS.includes(user.email)) {
-            return NextResponse.json({ error: "Apenas developers/owners podem realizar esta ação." }, { status: 403 })
         }
 
         const { searchParams } = new URL(req.url)
@@ -25,12 +28,32 @@ export async function DELETE(req: NextRequest) {
         }
 
         if (tipo === 'mensal') {
+            const acesso = await carregarAcessoPgm(user)
+            if (!opcaoLiberada(acesso.checar, PGM_GERAL.excluirProgramacao)) {
+                return NextResponse.json({ error: "Sem permissão para excluir a programação inteira." }, { status: 403 })
+            }
+
+            const admin = createAdminClient()
+            const { data: campanha } = await admin
+                .from("campanhas_mensais")
+                .select("id, unidade_cuca")
+                .eq("id", id)
+                .maybeSingle()
+            if (!campanha || !acesso.alcancaUnidade(campanha.unidade_cuca as string | null)) {
+                return NextResponse.json({ error: "Programação não encontrada" }, { status: 404 })
+            }
+
             // Primeiro deletar os eventos vinculados se não houver ON DELETE CASCADE
             await supabase.from("eventos_mensais").delete().eq("campanha_id", id)
 
-            const { error } = await supabase.from("campanhas_mensais").delete().eq("id", id)
+            // Chave de serviço: a permissão já foi conferida acima (atividades e histórico saem
+            // junto pelo ON DELETE CASCADE).
+            const { error } = await admin.from("campanhas_mensais").delete().eq("id", id)
             if (error) throw error
         } else if (tipo === 'pontual') {
+            if (!isDeveloperEmail(user.email)) {
+                return NextResponse.json({ error: "Apenas developers/owners podem realizar esta ação." }, { status: 403 })
+            }
             const { error } = await supabase.from("eventos_pontuais").delete().eq("id", id)
             if (error) throw error
         } else {

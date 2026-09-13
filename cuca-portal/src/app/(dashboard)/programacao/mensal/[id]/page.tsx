@@ -29,6 +29,10 @@ import * as XLSX from "xlsx"
 import { pdf } from "@react-pdf/renderer"
 import { montarAbasExportacao, nomeArquivoExportacao } from "@/lib/programacao/exportacao"
 import { ProgramacaoPdfDocument } from "@/lib/programacao/programacao-pdf"
+import { useUser } from "@/lib/auth/user-provider"
+import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
+import { opcaoLiberada, permissoesDaCategoria, podeTransicionar } from "@/lib/programacao/permissoes-categoria"
+import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
 
 // S-PROG-04 (item 3): uma linha do histórico de transições — join com `colaboradores` pra
 // mostrar o nome de quem fez a mudança (Supabase resolve FK many-to-one como objeto único).
@@ -59,6 +63,8 @@ export default function CampanhaMensalPage() {
     const [searchTerm, setSearchTerm] = useState("")
     const [categoriaFilter, setCategoriaFilter] = useState("all")
     const [categoriasUnicas, setCategoriasUnicas] = useState<string[]>([])
+    // S-PROG-13: linhas lidas do banco que ficaram fora da tela por categoria sem "ver".
+    const [linhasForaDoPerfil, setLinhasForaDoPerfil] = useState(0)
 
     // S-PROG-04 (item 3): histórico de transições — linha do tempo na tela de aprovação.
     const [historico, setHistorico] = useState<HistoricoItem[]>([])
@@ -70,11 +76,29 @@ export default function CampanhaMensalPage() {
 
     const supabase = createClient()
 
+    // S-PROG-13: só as categorias que o perfil pode ver; exportar, histórico e cada transição
+    // seguem a opção própria (o servidor confere de novo em /api/programacao/status).
+    const { loading: carregandoUsuario } = useUser()
+    const checarPgm = useChecarPgm()
+    const podeExportar = opcaoLiberada(checarPgm, PGM_GERAL.exportar)
+    const podeVerHistorico = opcaoLiberada(checarPgm, PGM_GERAL.historico)
+    const categoriasDaCampanha = atividades.map(a => a.categoria as string | null)
+    // `atividades` já vem só com as categorias visíveis. Se alguma linha ficou de fora, o servidor
+    // recusaria qualquer transição (ele confere todas as categorias) — os botões não aparecem.
+    // Não usar `total_atividades`: o número gravado nem sempre bate com as linhas (set/2026 Pici:
+    // 124 gravado, 100 linhas). Depois do contrato, as linhas fora do perfil nem chegam aqui, e a
+    // rota responde 403 com a mensagem.
+    const temCategoriaForaDoPerfil = linhasForaDoPerfil > 0
+    const pode = (de: string, para: string) =>
+        !temCategoriaForaDoPerfil && podeTransicionar(checarPgm, de, para, categoriasDaCampanha)
+
     useEffect(() => {
-        if (campanhaId) fetchData()
-    }, [campanhaId])
+        if (campanhaId && !carregandoUsuario) fetchData()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [campanhaId, carregandoUsuario])
 
     const fetchHistorico = async () => {
+        if (!podeVerHistorico) { setHistorico([]); return }
         const { data } = await supabase
             .from("campanha_historico")
             .select("id, de_status, para_status, motivo, criado_em, colaboradores(nome_completo)")
@@ -98,9 +122,11 @@ export default function CampanhaMensalPage() {
                 .order("titulo", { ascending: true })
             if (actErr) throw actErr
 
-            setAtividades(actData || [])
-            if (actData) {
-                const distinctTags = Array.from(new Set(actData.map(a => a.categoria || "Diversos")))
+            const visiveis = (actData || []).filter(a => permissoesDaCategoria(checarPgm, a.categoria).ver)
+            setAtividades(visiveis)
+            setLinhasForaDoPerfil((actData || []).length - visiveis.length)
+            if (visiveis) {
+                const distinctTags = Array.from(new Set(visiveis.map(a => a.categoria || "Diversos")))
                 setCategoriasUnicas(distinctTags as string[])
             }
 
@@ -307,8 +333,21 @@ export default function CampanhaMensalPage() {
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap shrink-0">
+                    {temCategoriaForaDoPerfil && campanha.status !== "aprovado" && (
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Badge variant="outline" className="text-xs text-muted-foreground gap-1">
+                                    <HelpCircle className="h-3 w-3" /> Envio e autorização indisponíveis
+                                </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-64 text-xs">
+                                Esta programação tem atividades de categorias fora do seu perfil. Enviar, autorizar,
+                                devolver ou reabrir exige permissão em todas as categorias dela.
+                            </TooltipContent>
+                        </Tooltip>
+                    )}
                     {/* Item 2: Finalizar/"Enviar para aprovação" (rascunho → pendente) */}
-                    {campanha.status === "rascunho" && (
+                    {campanha.status === "rascunho" && pode("rascunho", "pendente") && (
                         <Button
                             variant="outline"
                             className="border-amber-500/60 text-amber-600 hover:bg-amber-500/10 font-semibold"
@@ -320,7 +359,7 @@ export default function CampanhaMensalPage() {
                         </Button>
                     )}
                     {/* Item 2: "Devolver para ajuste" (pendente → rascunho) — motivo obrigatório */}
-                    {campanha.status === "pendente" && (
+                    {campanha.status === "pendente" && pode("pendente", "rascunho") && (
                         <Button
                             variant="outline"
                             className="font-semibold"
@@ -332,7 +371,7 @@ export default function CampanhaMensalPage() {
                         </Button>
                     )}
                     {/* Item 2: "Reabrir" uma aprovada (aprovado → rascunho) — sai do ar */}
-                    {campanha.status === "aprovado" && (
+                    {campanha.status === "aprovado" && pode("aprovado", "rascunho") && (
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <Button
@@ -355,7 +394,7 @@ export default function CampanhaMensalPage() {
                         <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 px-4 py-2 text-sm font-semibold">
                             <CheckCircle2 className="h-4 w-4 mr-2" /> Programação Aprovada
                         </Badge>
-                    ) : campanha.status === "pendente" ? (
+                    ) : campanha.status === "pendente" && pode("pendente", "aprovado") ? (
                         <Button
                             className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
                             onClick={handleAprovarProgramacao}
@@ -366,7 +405,7 @@ export default function CampanhaMensalPage() {
                         </Button>
                     ) : null}
                     {/* S-PROG-05 (item 1): escolha do formato — nenhum é padrão implícito */}
-                    {(campanha.status === "aprovado" || campanha.status === "pendente") && (
+                    {podeExportar && (campanha.status === "aprovado" || campanha.status === "pendente") && (
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button variant="outline" className="font-semibold gap-2" disabled={gerandoPdf}>

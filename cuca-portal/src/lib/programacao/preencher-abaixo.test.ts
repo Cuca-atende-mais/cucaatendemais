@@ -18,6 +18,18 @@ function linha(tempId: string, categoria: AtividadeForm["categoria"], overrides:
 }
 
 describe("preencherColunaAbaixo", () => {
+  it("S-PROG-13: linha que a pessoa não pode editar fica como está", () => {
+    const atividades = [
+      linha("a", "ESPORTES", { metadata: { professor: "Renato Severo" } }),
+      linha("b", "ESPORTES", {}),
+      linha("c", "ESPORTES", {}),
+    ]
+    const r = preencherColunaAbaixo(atividades, "a", "professor", false, a => a._tempId !== "b")
+    expect(r.linhasPreenchidas).toBe(1)
+    expect(r.atividades.find(a => a._tempId === "b")?.metadata.professor).toBeUndefined()
+    expect(r.atividades.find(a => a._tempId === "c")?.metadata.professor).toBe("Renato Severo")
+  })
+
   it("coluna vazia abaixo: preenche todas as linhas da mesma categoria abaixo da origem", () => {
     const atividades = [
       linha("a", "ESPORTES", { metadata: { professor: "Renato Severo" } }),

@@ -33,9 +33,11 @@ interface FichaAtividadeProps {
     onChange: (atividade: AtividadeForm) => void
     onFechar: () => void
     onNavegar: (delta: 1 | -1) => void
+    // S-PROG-13: sem "editar atividade" na categoria, a ficha só mostra os dados.
+    somenteLeitura?: boolean
 }
 
-export function FichaAtividade({ aberta, atividade, indice, total, focoCampo, onChange, onFechar, onNavegar }: FichaAtividadeProps) {
+export function FichaAtividade({ aberta, atividade, indice, total, focoCampo, onChange, onFechar, onNavegar, somenteLeitura = false }: FichaAtividadeProps) {
     if (!atividade) return null
 
     const meta = atividade.metadata || {}
@@ -73,7 +75,10 @@ export function FichaAtividade({ aberta, atividade, indice, total, focoCampo, on
                     </SheetDescription>
                 </SheetHeader>
 
-                <div className="px-4 space-y-4 pb-4">
+                <fieldset disabled={somenteLeitura} className="px-4 space-y-4 pb-4 min-w-0">
+                    {somenteLeitura && (
+                        <p className="text-xs text-muted-foreground">Seu perfil só pode ver as atividades desta categoria.</p>
+                    )}
                     <CamposComuns atividade={atividade} set={set} setRoot={setRoot} toggleDia={toggleDia} handleDataDiaADia={handleDataDiaADia} focoCampo={focoCampo} />
 
                     {/* Meta e Diretoria — item 4: entram como campos da ficha em todas as categorias */}
@@ -87,7 +92,7 @@ export function FichaAtividade({ aberta, atividade, indice, total, focoCampo, on
                             <Input value={meta.diretoria || ""} onChange={e => set("diretoria", e.target.value)} />
                         </div>
                     </div>
-                </div>
+                </fieldset>
 
                 <SheetFooter className="flex-row justify-between border-t border-border">
                     <Button variant="outline" size="sm" onClick={onFechar}>Fechar</Button>

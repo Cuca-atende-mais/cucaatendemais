@@ -36,6 +36,12 @@ export function mapearErroSalvarRascunho(erro: { code?: string; message?: string
         return { status: 409, error: mensagem }
     }
     if (code === SEM_PERMISSAO) {
+        // S-PROG-13: a recusa por categoria vem com o nome da categoria — repassar. Qualquer outra
+        // mensagem 42501 (ex.: "permission denied for function") vira o texto padrão.
+        if (mensagem.startsWith("Sem permissão para gravar atividades da categoria")
+            || mensagem.startsWith("Sem permissão para alterar atividades da categoria")) {
+            return { status: 403, error: mensagem }
+        }
         return { status: 403, error: "Sem permissão para editar programação" }
     }
     return { status: 500, error: mensagem }
