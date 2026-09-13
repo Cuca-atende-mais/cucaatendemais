@@ -62,9 +62,10 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: authHeader } } },
     );
-    const { data: permitido } = await supabaseUsuario.rpc("has_permission", {
-      p_recurso: "programacao_rag_global",
-      p_acao: "update",
+    // S-PROG-16: opção própria "Gerar resumo da rede" (checagem exata, sem passe livre do Super Admin).
+    const { data: permitido } = await supabaseUsuario.rpc("has_permission_exata", {
+      p_recurso: "pgr_gerar_resumo",
+      p_acao: "read",
     });
     if (!permitido) {
       return new Response(JSON.stringify({ error: "Sem permissão para atualizar o resumo de rede" }), { status: 403 });
@@ -72,7 +73,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
     // Service role pra ler monthly_program de todas as unidades e escrever o novo resumo_rede
     // — bypassa RLS de propósito (mesmo padrão de processar-documento/motor-agente), a
-    // autorização real já foi feita acima via has_permission.
+    // autorização real já foi feita acima via has_permission_exata.
     const supabase = supabaseOverride ?? createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,

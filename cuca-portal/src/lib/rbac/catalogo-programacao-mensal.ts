@@ -73,16 +73,16 @@ export const GRUPOS_PROGRAMACAO_MENSAL: GrupoPermissao[] = [
             ],
         }
     }),
-    {
-        category: "Divulgação — RAG e Disparo",
-        modules: [
-            { id: PGM_DIVULGACAO.aprovarRag, label: "Aprovar RAG do mês", acoes: ACAO_UNICA },
-            { id: PGM_DIVULGACAO.dispararGlobal, label: "Disparar Aviso Global", acoes: ACAO_UNICA },
-        ],
-    },
 ]
 
-export const MODULOS_PROGRAMACAO_MENSAL: ModuloPermissao[] = GRUPOS_PROGRAMACAO_MENSAL.flatMap(g => g.modules)
+// S-PROG-16: as duas opções da Divulgação passaram para o grupo "Divulgação" (catalogo-divulgacao-rag-global.ts).
+// Continuam em MODULOS_PROGRAMACAO_MENSAL porque o espelhamento da S-PROG-12 as criou.
+export const MODULOS_DIVULGACAO: ModuloPermissao[] = [
+    { id: PGM_DIVULGACAO.aprovarRag, label: "Aprovar RAG do mês", acoes: ACAO_UNICA },
+    { id: PGM_DIVULGACAO.dispararGlobal, label: "Disparar Aviso Global", acoes: ACAO_UNICA },
+]
+
+export const MODULOS_PROGRAMACAO_MENSAL: ModuloPermissao[] = [...GRUPOS_PROGRAMACAO_MENSAL.flatMap(g => g.modules), ...MODULOS_DIVULGACAO]
 
 type Flags = { can_read: boolean; can_create: boolean; can_update: boolean; can_delete: boolean }
 export type LinhaPermissao = Flags & { module: string }

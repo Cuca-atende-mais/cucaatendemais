@@ -11,8 +11,9 @@ export type AcessoPgm = {
     alcancaUnidade: (unidade: string | null | undefined) => boolean
 }
 
-// S-PROG-17: também carrega as opções `pgp_*` da programação pontual.
-const FILTRO_MODULOS = "module.like.pgm_%,module.like.pgp_%,module.eq.divulgacao"
+// S-PROG-17: também carrega as opções `pgp_*` da programação pontual. S-PROG-16: `pgr_*` da base global;
+// o módulo antigo `divulgacao` deixou de ser consultado.
+const FILTRO_MODULOS = "module.like.pgm_%,module.like.pgp_%,module.like.pgr_%"
 
 // S-PROG-13: permissões da programação mensal (e o módulo `divulgacao`, S-PROG-15) e unidade de quem está logado, lidas uma vez por
 // requisição. Mesma regra de `has_permission_exata` (colaborador ativo ou sem o campo, perfil do

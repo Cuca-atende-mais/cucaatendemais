@@ -20,7 +20,7 @@ const nada = { can_read: false, can_create: false, can_update: false, can_delete
 describe("catálogo de permissões da programação mensal", () => {
     it("tem 7 gerais, 5 por categoria nas 4 categorias e 2 da Divulgação", () => {
         expect(MODULOS_PROGRAMACAO_MENSAL).toHaveLength(7 + 4 * 5 + 2)
-        expect(GRUPOS_PROGRAMACAO_MENSAL).toHaveLength(6)
+        expect(GRUPOS_PROGRAMACAO_MENSAL).toHaveLength(5)
     })
 
     it("ids únicos, com prefixo próprio que não colide com checagens por prefixo", () => {

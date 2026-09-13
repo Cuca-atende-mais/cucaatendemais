@@ -58,7 +58,7 @@ function criarSupabaseMock(opts: {
     from: (tabela: string) => criarChain(tabela),
     rpc: (nome: string, args?: Record<string, unknown>) => {
       chamadas.push({ tabela: "rpc:" + nome, metodo: "rpc", payload: args });
-      if (nome === "has_permission") {
+      if (nome === "has_permission_exata") {
         return { then: (resolve: (v: { data: unknown; error: null }) => unknown) => resolve({ data: opts.permitido, error: null }) };
       }
       if (nome === "get_openai_key") {
@@ -111,6 +111,15 @@ Deno.test("S-WM-32 AC7: sem a permissão exigida, a requisição é rejeitada (4
   assertEquals(resp.status, 403, "sem permissão, o endpoint deveria rejeitar com 403");
   const tentouGerarOuGravar = chamadas.some((c) => c.tabela === "documentos_rag");
   assertEquals(tentouGerarOuGravar, false, "sem permissão, nenhuma leitura/escrita em documentos_rag deveria acontecer");
+});
+
+Deno.test("S-PROG-16: a permissão conferida é a opção exata pgr_gerar_resumo", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock({ permitido: false, monthlyPrograms: [] }, chamadas);
+  await handler(requestFake(), mock);
+  const checagem = chamadas.find((c) => c.tabela.startsWith("rpc:has_permission"));
+  assertEquals(checagem?.tabela, "rpc:has_permission_exata");
+  assertEquals(checagem?.payload, { p_recurso: "pgr_gerar_resumo", p_acao: "read" });
 });
 
 // ── AC1/AC2: geração + substituição ──────────────────────────────────────────

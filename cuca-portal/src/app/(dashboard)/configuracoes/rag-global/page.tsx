@@ -2,14 +2,13 @@
 
 import { useState, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { useUser } from "@/lib/auth/user-provider"
+import { TIPOS_FORMULARIO_BASE_GLOBAL } from "@/lib/rag-global/base-global"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Switch } from "@/components/ui/switch"
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter,
     DialogHeader, DialogTitle,
@@ -39,19 +38,14 @@ type Documento = {
     created_at: string
 }
 
-// S-WM-51: "servicos_rede" é o valor técnico consumido por carregarServicosRede
-// (supabase/functions/motor-agente/index.ts) — mesma convenção snake_case de "resumo_rede"/
-// "monthly_program"/etc., não um rótulo em português como os demais (mesmo precedente já
-// existente com "FAQ" nesta lista). O Select abaixo usa o mesmo valor como rótulo exibido —
-// aparece como "servicos_rede" no dropdown, não "Serviços da Rede"; mudar isso exigiria separar
-// valor de rótulo no componente, fora do escopo desta story (registrado no Dev Agent Record).
-const TIPOS = ["Institucional", "Endereços", "Programas", "Horários", "Contatos", "FAQ", "servicos_rede", "Outro"]
+// S-WM-51: "servicos_rede" é o valor técnico consumido por carregarServicosRede (motor-agente).
+// S-PROG-16: lista única em `lib/rag-global/base-global.ts`, usada também pelas rotas.
+const TIPOS = TIPOS_FORMULARIO_BASE_GLOBAL
 
 const EMPTY_FORM = {
     titulo: "",
     tipo: "Institucional",
     conteudo: "",
-    ativo: true,
     modo: "texto" as "texto" | "pdf",
 }
 
@@ -63,11 +57,13 @@ const STATUS_CHUNK = (doc: Documento) => {
 }
 
 export default function RagGlobalPage() {
-    const { isDeveloper, hasPermission } = useUser()
-
     const [docs, setDocs] = useState<Documento[]>([])
     const [loading, setLoading] = useState(true)
     const [semPermissao, setSemPermissao] = useState(false)
+    // S-PROG-16: opções de quem está logado, devolvidas pela rota da lista.
+    const [opcoes, setOpcoes] = useState<Record<"ver" | "cadastrar" | "editar" | "ativar" | "excluir" | "reindexar" | "gerarResumo", boolean>>({
+        ver: false, cadastrar: false, editar: false, ativar: false, excluir: false, reindexar: false, gerarResumo: false,
+    })
     const [indexando, setIndexando] = useState<string | null>(null)
     const [gerandoResumoRede, setGerandoResumoRede] = useState(false)
     const [dialogOpen, setDialogOpen] = useState(false)
@@ -78,27 +74,31 @@ export default function RagGlobalPage() {
     const fileRef = useRef<HTMLInputElement>(null)
     const supabase = createClient()
 
-    useEffect(() => {
-        if (!isDeveloper && !hasPermission("programacao_rag_global", "read")) {
-            setSemPermissao(true)
-            return
-        }
-        setSemPermissao(false)
-        fetchDocs()
-    }, [isDeveloper, hasPermission])
+    useEffect(() => { fetchDocs() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+    // S-PROG-16: a lista vem do servidor, só com documentos da base global.
     const fetchDocs = async () => {
         setLoading(true)
-        const { data, error } = await supabase
-            .from("documentos_rag")
-            .select("*")
-            .is("unidade_cuca", null)
-            .order("created_at", { ascending: false })
-        if (error) toast.error("Erro ao carregar documentos")
-        // Exclui docs de módulos próprios (ex.: Academia Enem) que também têm unidade_cuca null,
-        // para que não vazem nesta gestão global. null-safe: docs antigos sem source_type permanecem.
-        else setDocs((data || []).filter(d => (d.metadados as Record<string, unknown> | null)?.source_type !== "academia_enem"))
-        setLoading(false)
+        try {
+            const res = await fetch("/api/rag-global", { cache: "no-store" })
+            const data = await res.json()
+            if (res.status === 401 || res.status === 403) { setSemPermissao(true); return }
+            if (!res.ok) throw new Error(data.error)
+            setSemPermissao(false)
+            setDocs(data.documentos ?? [])
+            setOpcoes(data.opcoes)
+        } catch {
+            toast.error("Erro ao carregar documentos")
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const chamarRota = async (url: string, init: RequestInit) => {
+        const res = await fetch(url, { ...init, headers: { "Content-Type": "application/json" } })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.error || "Erro na operação")
+        return data
     }
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -109,46 +109,38 @@ export default function RagGlobalPage() {
 
         setUploadandoPdf(true)
         try {
-            let pdfUrl: string | null = null
-            let metadados: Record<string, unknown> = { source_type: "rede_cuca_global" }
-
-            // Upload do PDF se necessário
+            // Upload do PDF continua pelo navegador (storage); o registro é gravado pelo servidor.
+            let pdf: { pdf_path: string; pdf_nome: string } | null = null
             if (form.modo === "pdf" && pdfFile) {
                 const path = `global/${Date.now()}_${pdfFile.name.replace(/\s+/g, "_")}`
                 const { error: uploadError } = await supabase.storage
                     .from("rag-documentos")
                     .upload(path, pdfFile, { contentType: "application/pdf", upsert: false })
                 if (uploadError) throw new Error("Erro no upload: " + uploadError.message)
-
-                const { data: urlData } = supabase.storage.from("rag-documentos").getPublicUrl(path)
-                pdfUrl = urlData?.publicUrl ?? null
-                metadados = { ...metadados, pdf_path: path, pdf_nome: pdfFile.name }
+                pdf = { pdf_path: path, pdf_nome: pdfFile.name }
             }
 
             const payload = {
                 titulo: form.titulo,
                 tipo: form.tipo,
-                conteudo: form.modo === "pdf" ? (pdfUrl ?? "") : form.conteudo,
-                unidade_cuca: null,
-                ativo: form.ativo,
-                metadados: editing
-                    ? { ...(editing.metadados ?? {}), source_type: "rede_cuca_global", ...(pdfUrl ? { pdf_path: metadados.pdf_path, pdf_nome: metadados.pdf_nome } : {}) }
-                    : metadados,
+                modo: form.modo,
+                conteudo: form.modo === "texto" ? form.conteudo : undefined,
+                ...(pdf ?? {}),
             }
 
             if (editing) {
-                const { error } = await supabase.from("documentos_rag").update(payload).eq("id", editing.id)
-                if (error) throw error
+                await chamarRota(`/api/rag-global/${editing.id}`, { method: "PATCH", body: JSON.stringify(payload) })
                 toast.success("Documento atualizado!")
             } else {
-                const { error } = await supabase.from("documentos_rag").insert(payload)
-                if (error) throw error
-                toast.success("Documento criado! Clique em Indexar para processar no RAG.")
+                const criado = await chamarRota("/api/rag-global", { method: "POST", body: JSON.stringify(payload) })
+                toast.success(criado.ativo
+                    ? "Documento criado! Clique em Indexar para processar no RAG."
+                    : "Documento criado inativo. Quem pode ativar coloca no assistente.")
             }
             fetchDocs()
             closeDialog()
-        } catch (err: any) {
-            toast.error(err.message ?? "Erro ao salvar")
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Erro ao salvar")
         } finally {
             setUploadandoPdf(false)
         }
@@ -157,27 +149,7 @@ export default function RagGlobalPage() {
     const handleIndexar = async (doc: Documento) => {
         setIndexando(doc.id)
         try {
-            const { data: { session } } = await supabase.auth.getSession()
-            const pdfPath = doc.metadados?.pdf_path as string | null
-
-            const res = await fetch(
-                `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/processar-documento`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${session?.access_token}`,
-                    },
-                    body: JSON.stringify({
-                        documento_id: doc.id,
-                        source_type: "rede_cuca_global",
-                        cuca_unit_id: null,
-                        ...(pdfPath && { pdf_path: pdfPath }),
-                    }),
-                }
-            )
-            const result = await res.json()
-            if (!res.ok) throw new Error(result.error)
+            const result = await chamarRota(`/api/rag-global/${doc.id}/reindexar`, { method: "POST" })
             toast.success(`${result.total_chunks} chunks indexados no RAG Global!`)
             fetchDocs()
         } catch (err) {
@@ -220,14 +192,26 @@ export default function RagGlobalPage() {
 
     const handleDelete = async (doc: Documento) => {
         if (!confirm("Remover este documento da base de conhecimento global?")) return
-        // Remover PDF do storage se existir
-        const pdfPath = doc.metadados?.pdf_path as string | null
-        if (pdfPath) {
-            await supabase.storage.from("rag-documentos").remove([pdfPath])
+        try {
+            await chamarRota(`/api/rag-global/${doc.id}`, { method: "DELETE" })
+            toast.success("Documento removido")
+            fetchDocs()
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Erro ao deletar")
         }
-        const { error } = await supabase.from("documentos_rag").delete().eq("id", doc.id)
-        if (error) toast.error("Erro ao deletar")
-        else { toast.success("Documento removido"); fetchDocs() }
+    }
+
+    // S-PROG-16: ativar/desativar é ação própria (saiu do formulário).
+    const handleAlternarAtivo = async (doc: Documento) => {
+        const ativar = !doc.ativo
+        if (!confirm(ativar ? "Colocar este documento no assistente?" : "Tirar este documento do assistente?")) return
+        try {
+            await chamarRota(`/api/rag-global/${doc.id}/ativo`, { method: "PATCH", body: JSON.stringify({ ativo: ativar }) })
+            toast.success(ativar ? "Documento ativado" : "Documento desativado")
+            fetchDocs()
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Erro ao alterar o documento")
+        }
     }
 
     const handleEdit = (doc: Documento) => {
@@ -237,7 +221,6 @@ export default function RagGlobalPage() {
             titulo: doc.titulo,
             tipo: doc.tipo,
             conteudo: doc.conteudo,
-            ativo: doc.ativo,
             modo: temPdf ? "pdf" : "texto",
         })
         setPdfFile(null)
@@ -280,7 +263,7 @@ export default function RagGlobalPage() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    {(isDeveloper || hasPermission("programacao_rag_global", "update")) && (
+                    {opcoes.gerarResumo && (
                         <Button
                             variant="outline"
                             onClick={handleGerarResumoRede}
@@ -292,12 +275,14 @@ export default function RagGlobalPage() {
                             Atualizar resumo de rede
                         </Button>
                     )}
+                    {opcoes.cadastrar && (
                     <Button
                         className="bg-blue-600 hover:bg-blue-700"
                         onClick={() => { setEditing(null); setForm(EMPTY_FORM); setDialogOpen(true) }}
                     >
                         <Plus className="mr-2 h-4 w-4" /> Novo Documento
                     </Button>
+                    )}
                 </div>
             </div>
 
@@ -359,9 +344,11 @@ export default function RagGlobalPage() {
                             <Globe className="mx-auto h-12 w-12 text-muted-foreground/40" />
                             <p className="text-muted-foreground">Nenhum documento global cadastrado</p>
                             <p className="text-xs text-muted-foreground">Adicione texto livre ou faça upload de um PDF com informações da Rede CUCA</p>
+                            {opcoes.cadastrar && (
                             <Button variant="outline" onClick={() => setDialogOpen(true)}>
                                 <Plus className="mr-2 h-4 w-4" /> Adicionar primeiro documento
                             </Button>
+                            )}
                         </div>
                     ) : (
                         <Table>
@@ -418,6 +405,7 @@ export default function RagGlobalPage() {
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex items-center justify-end gap-1">
+                                                    {opcoes.reindexar && (
                                                     <Button
                                                         variant="outline" size="sm"
                                                         onClick={() => handleIndexar(doc)}
@@ -428,13 +416,23 @@ export default function RagGlobalPage() {
                                                             : <Zap className="h-4 w-4" />}
                                                         <span className="ml-1 text-xs">Indexar</span>
                                                     </Button>
+                                                    )}
+                                                    {opcoes.ativar && (
+                                                    <Button variant="ghost" size="sm" onClick={() => handleAlternarAtivo(doc)}>
+                                                        <span className="text-xs">{doc.ativo ? "Desativar" : "Ativar"}</span>
+                                                    </Button>
+                                                    )}
+                                                    {opcoes.editar && (
                                                     <Button variant="ghost" size="sm" onClick={() => handleEdit(doc)}>
                                                         <Pencil className="h-4 w-4" />
                                                     </Button>
+                                                    )}
+                                                    {opcoes.excluir && (
                                                     <Button variant="ghost" size="sm" className="text-red-600"
                                                         onClick={() => handleDelete(doc)}>
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
+                                                    )}
                                                 </div>
                                             </TableCell>
                                         </TableRow>
@@ -558,11 +556,6 @@ export default function RagGlobalPage() {
                                 </div>
                             )}
 
-                            {/* Ativo */}
-                            <div className="flex items-center justify-between">
-                                <Label htmlFor="ativo">Documento ativo</Label>
-                                <Switch id="ativo" checked={form.ativo} onCheckedChange={v => f("ativo", v)} />
-                            </div>
                         </div>
 
                         <DialogFooter>
