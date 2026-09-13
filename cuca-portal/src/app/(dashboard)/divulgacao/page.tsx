@@ -22,7 +22,7 @@ import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 import { ROTULO_STATUS_CATEGORIA, type StatusCategoria } from "@/lib/programacao/permissoes-categoria"
 import {
-    ROTULO_ESTADO_RAG, mesmoMes, motivoBloqueioDisparo, type EstadoRag, type MesAno, type UnidadeSituacao,
+    ROTULO_ESTADO_RAG, mesmoMes, motivoBloqueioAprovarRag, motivoBloqueioDisparo, type EstadoRag, type MesAno, type UnidadeSituacao,
 } from "@/lib/divulgacao/niveis"
 
 /* ─── Tipos ─── */
@@ -195,7 +195,14 @@ export default function DivulgacaoPage() {
         : "Carregando"
     const podeDisparar = motivoBloqueio === null
 
-    const podeAprovarRag = !!situacao?.permissoes.aprovarRag && !!situacao.mesPermitido && situacao.nivel1 && situacao.precisamAprovar.length > 0
+    const motivoBloqueioRag = situacao
+        ? motivoBloqueioAprovarRag({
+            temPermissao: situacao.permissoes.aprovarRag,
+            mesPermitido: situacao.mesPermitido,
+            unidades,
+        })
+        : "Carregando"
+    const podeAprovarRag = motivoBloqueioRag === null
 
     const abrirModal = () => {
         if (!podeDisparar) {
@@ -320,12 +327,19 @@ export default function DivulgacaoPage() {
                     <Button variant="outline" size="sm" onClick={fetchData} disabled={carregando}>
                         <RefreshCw className={cn("h-4 w-4 mr-1.5", carregando && "animate-spin")} /> Atualizar
                     </Button>
-                    {podeAprovarRag && (
-                        <Button variant="outline" className="border-blue-500/40 text-blue-500 hover:bg-blue-500/10 font-semibold gap-2"
-                            onClick={() => setConfirmarRagAberto(true)} disabled={aprovandoRag}>
-                            <DatabaseZap className="h-4 w-4" /> {situacao?.rotuloAprovar}
+                    {/* S-PROG-15: sempre visível; desativado mostra o motivo, igual ao disparo */}
+                    <div className="flex flex-col items-end gap-0.5">
+                        <Button variant="outline" className="border-blue-500/40 text-blue-500 hover:bg-blue-500/10 font-semibold gap-2 disabled:opacity-50"
+                            onClick={() => setConfirmarRagAberto(true)} disabled={!podeAprovarRag || aprovandoRag}
+                            title={motivoBloqueioRag ?? undefined}>
+                            <DatabaseZap className="h-4 w-4" /> {situacao?.rotuloAprovar ?? "Aprovar RAG"}
                         </Button>
-                    )}
+                        {!podeAprovarRag && (
+                            <p className="text-[10px] text-muted-foreground text-right max-w-xs">
+                                {motivoBloqueioRag}
+                            </p>
+                        )}
+                    </div>
                     <div className="flex flex-col items-end gap-0.5">
                         <Button
                             className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold gap-2 disabled:opacity-50"
