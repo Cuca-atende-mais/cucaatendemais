@@ -7,12 +7,8 @@ import {
     ResultadoAutorizacao,
 } from "@/app/api/configuracoes/acompanhamento-envios/logic"
 import { validarCorpoAtualizacaoLimite, validarNovoDailyLimit } from "@/app/api/configuracoes/acompanhamento-envios/limite-diario/logic"
+import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
 
-const DEVELOPER_EMAILS = [
-    "valmir@cucateste.com",
-    "dev.cucaatendemais@gmail.com",
-    "admin@cucadev.com.br",
-]
 
 async function autorizar(
     supabase: Awaited<ReturnType<typeof createClient>>,

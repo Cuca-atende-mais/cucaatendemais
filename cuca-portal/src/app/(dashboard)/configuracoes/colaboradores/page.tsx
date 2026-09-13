@@ -67,6 +67,7 @@ export default function ColaboradoresPage() {
     const { profile, isDeveloper, hasPermission } = useUser()
 
     const canManageStatus = hasPermission('config_colaboradores', 'update')
+    const canDelete = hasPermission('config_colaboradores', 'delete')
 
     const supabase = createClient()
     const qc = useQueryClient()
@@ -118,7 +119,6 @@ export default function ColaboradoresPage() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         id: editingColaborador.id,
-                        user_id: editingColaborador.user_id,
                         nome_completo: formData.nome_completo,
                         telefone: formData.telefone,
                         role_id: formData.role_id,
@@ -414,7 +414,7 @@ export default function ColaboradoresPage() {
                                                 <Button variant="ghost" size="sm" onClick={() => handleEdit(colab)}>
                                                     Editar
                                                 </Button>
-                                                <Button
+                                                {canManageStatus && <Button
                                                     variant="ghost"
                                                     size="sm"
                                                     title="Reenviar convite / Redefinir senha"
@@ -424,8 +424,8 @@ export default function ColaboradoresPage() {
                                                     {resendingId === colab.id
                                                         ? <Loader2 className="w-4 h-4 animate-spin" />
                                                         : <Send className="w-4 h-4" />}
-                                                </Button>
-                                                {canManageStatus && (
+                                                </Button>}
+                                                {canDelete && (
                                                     <Button
                                                         variant="ghost"
                                                         size="sm"

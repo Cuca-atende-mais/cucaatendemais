@@ -6,12 +6,8 @@ import {
     ResultadoAutorizacao,
 } from "@/app/api/configuracoes/acompanhamento-envios/logic"
 import { validarCorpoReenvio } from "@/app/api/configuracoes/acompanhamento-envios/reenviar/logic"
+import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
 
-const DEVELOPER_EMAILS = [
-    "valmir@cucateste.com",
-    "dev.cucaatendemais@gmail.com",
-    "admin@cucadev.com.br",
-]
 
 // S-WM-59 (item 2): botão "Reenviar pendentes" — dispara envio real de WhatsApp, é uma
 // ESCRITA (can_update), não leitura. Gatear em can_read (como a listagem) deixaria

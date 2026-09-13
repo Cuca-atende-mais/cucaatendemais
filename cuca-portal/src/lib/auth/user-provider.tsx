@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useCallback, useState, useRef } from "react"
 import { User } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
+import { isDeveloperEmail } from "@/lib/auth/developers"
 
 type PermissionRecord = {
     module: string
@@ -44,8 +45,6 @@ const UserContext = createContext<UserContextType>({
     isDeveloper: false,
 })
 
-// Emails autorizados como Developer real (bypass total de RBAC + acesso ao Developer Console)
-const DEVELOPER_EMAILS = ['valmir@cucateste.com', 'dev.cucaatendemais@gmail.com', 'admin@cucadev.com.br']
 
 // Módulos exclusivos dos 2 Developers — ninguém mais acessa nem via RBAC
 const DEVELOPER_ONLY_MODULES = ['developer']
@@ -177,10 +176,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     // Intencionalmente vazio: supabase e fetchProfile são estáveis via useMemo/useCallback.
     // O listener onAuthStateChange deve registrar-se apenas uma vez.
 
+    // Developer é reconhecido pelo e-mail de login: a conta pode não ter cadastro em colaboradores.
+    const isDeveloper = isDeveloperEmail(user?.email ?? profile?.email)
+
     const hasPermission = useCallback((recurso: string, acao: string): boolean => {
+        if (isDeveloper) return true
         if (!profile) return false
 
-        if (DEVELOPER_EMAILS.includes(profile.email || '')) return true
         if (DEVELOPER_ONLY_MODULES.includes(recurso)) return false
         if (profile.funcao.nome === 'Super Admin Cuca') return true
 
@@ -194,10 +196,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             case 'delete': return resourcePerm.can_delete
             default: return false
         }
-    }, [profile])
-
-    // S27-03: isDeveloper baseado exclusivamente no email (não no nome do role)
-    const isDeveloper = DEVELOPER_EMAILS.includes(profile?.email || '')
+    }, [profile, isDeveloper])
 
     return (
         <UserContext.Provider value={{ user, profile, loading, hasPermission, isDeveloper }}>

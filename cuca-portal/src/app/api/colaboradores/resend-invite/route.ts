@@ -1,18 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient } from '@/lib/supabase/server'
+import { autorizarOperacaoColaborador } from '@/lib/auth/colaboradores-acesso-server'
 import { Resend } from 'resend'
 import SetupPasswordEmail from '@/emails/SetupPasswordEmail'
 import crypto from 'crypto'
 
 export async function POST(request: Request) {
     try {
-        const supabase = await createClient()
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
-        if (authError || !user) {
-            return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-        }
-
         const { colaboradorId } = await request.json()
         if (!colaboradorId) {
             return NextResponse.json({ error: 'ID do colaborador ausente' }, { status: 400 })
@@ -29,6 +23,10 @@ export async function POST(request: Request) {
         if (fetchError || !colab) {
             return NextResponse.json({ error: 'Colaborador não encontrado' }, { status: 404 })
         }
+
+        // Gera link de senha e desbloqueia a conta: exige permissão e nunca vale para conta Developer.
+        const acesso = await autorizarOperacaoColaborador({ operacao: 'resend-invite', emailAlvo: colab.email })
+        if (!acesso.ok) return acesso.resposta
 
         // Gerar novo setup_token (invalida o anterior)
         const setupToken = crypto.randomUUID()

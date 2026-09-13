@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { normalizarEscolaridade } from "@/lib/empregabilidade/escolaridade"
+import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
 
-const DEVELOPER_EMAILS = ["valmir@cucateste.com", "dev.cucaatendemais@gmail.com"]
 
 export async function POST(req: NextRequest) {
     try {

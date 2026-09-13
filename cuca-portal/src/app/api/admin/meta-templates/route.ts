@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
+import { DEVELOPER_EMAILS } from "@/lib/auth/developers"
 
-const DEVELOPER_EMAILS = [
-    "valmir@cucateste.com",
-    "dev.cucaatendemais@gmail.com",
-    "admin@cucadev.com.br",
-]
 
 async function assertDeveloper(): Promise<string | null> {
     const supabase = await createClient()
