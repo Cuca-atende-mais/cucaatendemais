@@ -28,9 +28,11 @@ import {
     Pencil
 } from "lucide-react"
 import toast from "react-hot-toast"
+import { ACOES_CRUD, GRUPOS_PROGRAMACAO_MENSAL, type CampoPermissao, type GrupoPermissao } from "@/lib/rbac/catalogo-programacao-mensal"
+import { limitarAcoes, linhaCompleta, marcarCampo, marcarLinha } from "@/lib/rbac/matriz-permissoes"
 import { Skeleton } from "@/components/ui/skeleton"
 
-const MODULE_GROUPS = [
+const MODULE_GROUPS: GrupoPermissao[] = [
     {
         category: 'Módulo de Leads',
         modules: [
@@ -71,6 +73,7 @@ const MODULE_GROUPS = [
             { id: 'programacao_pontual', label: 'Programação de Eventos: Pontual' },
         ]
     },
+    ...GRUPOS_PROGRAMACAO_MENSAL,
     {
         category: 'Empregabilidade',
         modules: [
@@ -143,9 +146,10 @@ type Permission = {
     can_create: boolean
     can_update: boolean
     can_delete: boolean
+    acoes: CampoPermissao[]
 }
 
-const uniqueModulesById = (modules: Array<{ id: string; label: string }>) => {
+const uniqueModulesById = <T extends { id: string }>(modules: T[]) => {
     const seen = new Set<string>()
     return modules.filter(module => {
         if (seen.has(module.id)) return false
@@ -226,9 +230,10 @@ export default function GestaoPerfisPage() {
         if (error) { toast.error("Erro ao carregar permissões"); return }
         const perms = validFlatModules.map(mod => {
             const existing = data?.find(d => d.module === mod.id)
+            const acoes = mod.acoes ?? ACOES_CRUD
             return existing
-                ? { ...existing, label: mod.label }
-                : { id: null, role_id: role.id, module: mod.id, label: mod.label, can_read: false, can_create: false, can_update: false, can_delete: false }
+                ? limitarAcoes({ ...existing, label: mod.label, acoes }, acoes)
+                : { id: null, role_id: role.id, module: mod.id, label: mod.label, acoes, can_read: false, can_create: false, can_update: false, can_delete: false }
         })
         setPermissions(perms as Permission[])
     }
@@ -268,30 +273,15 @@ export default function GestaoPerfisPage() {
     }
 
     const handleCheckboxChange = (moduleId: string, field: PermissionField, checked: boolean) => {
-        setPermissions(prev => prev.map(p => {
-            if (p.module !== moduleId) return p
-            const updated = { ...p, [field]: checked }
-            if (checked && field !== 'can_read') updated.can_read = true
-            if (!checked && field === 'can_read') { updated.can_create = false; updated.can_update = false; updated.can_delete = false }
-            return updated
-        }))
+        setPermissions(prev => prev.map(p => p.module === moduleId ? marcarCampo(p, field, checked, p.acoes) : p))
     }
 
     const handleRowSelectAll = (moduleId: string, check: boolean) => {
-        setPermissions(prev => prev.map(p =>
-            p.module === moduleId
-                ? { ...p, can_read: check, can_create: check, can_update: check, can_delete: check }
-                : p
-        ))
+        setPermissions(prev => prev.map(p => p.module === moduleId ? marcarLinha(p, check, p.acoes) : p))
     }
 
     const handleColumnSelectAll = (field: PermissionField, check: boolean) => {
-        setPermissions(prev => prev.map(p => {
-            const updated = { ...p, [field]: check }
-            if (check && field !== 'can_read') updated.can_read = true
-            if (!check && field === 'can_read') { updated.can_create = false; updated.can_update = false; updated.can_delete = false }
-            return updated
-        }))
+        setPermissions(prev => prev.map(p => marcarCampo(p, field, check, p.acoes)))
     }
 
     const savePermissionsMatrix = async () => {
@@ -302,7 +292,7 @@ export default function GestaoPerfisPage() {
             if (deleteError) throw deleteError
 
             const uniquePermissions = Array.from(new Map(permissions.map(p => [p.module, p])).values())
-            const toInsert = uniquePermissions.map(p => ({
+            const toInsert = uniquePermissions.map(p => limitarAcoes(p, p.acoes)).map(p => ({
                 role_id: selectedRole.id, module: p.module,
                 can_read: p.can_read, can_create: p.can_create, can_update: p.can_update, can_delete: p.can_delete
             }))
@@ -475,7 +465,8 @@ export default function GestaoPerfisPage() {
                                                     Módulo
                                                 </TableHead>
                                                 {COLS.map(col => {
-                                                    const allChecked = permissions.length > 0 && permissions.every(p => p[col.field])
+                                                    const comCampo = permissions.filter(p => p.acoes.includes(col.field))
+                                                    const allChecked = comCampo.length > 0 && comCampo.every(p => p[col.field])
                                                     return (
                                                         <TableHead key={col.field} className="text-center bg-card min-w-[100px] border-l border-border">
                                                             <div className="flex flex-col items-center gap-1.5 py-1">
@@ -507,7 +498,9 @@ export default function GestaoPerfisPage() {
                                                     </TableRow>
                                                     {group.modules.map(mod => {
                                                         const perm = permissions.find(p => p.module === mod.id)
-                                                        const isRowFull = Boolean(perm?.can_read && perm.can_create && perm.can_update && perm.can_delete)
+                                                        const acoesModulo = mod.acoes ?? ACOES_CRUD
+                                                        const acaoUnica = acoesModulo.length === 1
+                                                        const isRowFull = perm ? linhaCompleta(perm, acoesModulo) : false
                                                         return (
                                                             <TableRow key={mod.id} className="hover:bg-muted/20 transition-colors group/row border-b border-border/40">
                                                                 <TableCell className="py-3 pl-5 bg-card group-hover/row:bg-muted/20">
@@ -516,12 +509,20 @@ export default function GestaoPerfisPage() {
                                                                 </TableCell>
                                                                 {COLS.map(col => (
                                                                     <TableCell key={col.field} className="text-center border-l border-border/40 bg-card group-hover/row:bg-muted/20">
-                                                                        <Checkbox
-                                                                            checked={perm?.[col.field] ?? false}
-                                                                            onCheckedChange={c => handleCheckboxChange(mod.id, col.field, !!c)}
-                                                                            disabled={!podeGravarMatriz}
-                                                                            className={`w-5 h-5 rounded border-border ${col.checkClass}`}
-                                                                        />
+                                                                        {acoesModulo.includes(col.field) ? (
+                                                                            <div className="flex flex-col items-center gap-0.5">
+                                                                                <Checkbox
+                                                                                    checked={perm?.[col.field] ?? false}
+                                                                                    onCheckedChange={c => handleCheckboxChange(mod.id, col.field, !!c)}
+                                                                                    disabled={!podeGravarMatriz}
+                                                                                    aria-label={acaoUnica ? `Liberar ${mod.label}` : `${col.label} — ${mod.label}`}
+                                                                                    className={`w-5 h-5 rounded border-border ${col.checkClass}`}
+                                                                                />
+                                                                                {acaoUnica && <span className="text-[9px] text-muted-foreground">Liberar</span>}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <span className="text-muted-foreground/40 text-xs" aria-hidden>—</span>
+                                                                        )}
                                                                     </TableCell>
                                                                 ))}
                                                                 <TableCell className="text-center border-l border-border/40 bg-card group-hover/row:bg-muted/20">
