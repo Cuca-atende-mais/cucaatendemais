@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
-import { isDeveloperEmail } from "@/lib/auth/developers"
 import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
+import { PGP } from "@/lib/rbac/catalogo-programacao-pontual"
 import { opcaoLiberada } from "@/lib/programacao/permissoes-categoria"
 import { carregarAcessoPgm } from "@/lib/programacao/permissoes-categoria-server"
+import { STATUS_BLOQUEIAM_EXCLUSAO_PONTUAL, eventoExcluivel } from "@/lib/programacao/pontual"
 
 // S-PROG-13: mensal exige a opção "Excluir programação inteira" (a confirmação nominal continua na
-// tela) e a campanha precisa ser de unidade ao alcance de quem pede. Pontual segue só para as contas
-// Developer, como antes.
+// tela) e a campanha precisa ser de unidade ao alcance de quem pede. S-PROG-17: pontual exige
+// "Excluir evento" e o evento ao alcance da unidade.
 
 export async function DELETE(req: NextRequest) {
     try {
@@ -51,11 +52,36 @@ export async function DELETE(req: NextRequest) {
             const { error } = await admin.from("campanhas_mensais").delete().eq("id", id)
             if (error) throw error
         } else if (tipo === 'pontual') {
-            if (!isDeveloperEmail(user.email)) {
-                return NextResponse.json({ error: "Apenas developers/owners podem realizar esta ação." }, { status: 403 })
+            const acesso = await carregarAcessoPgm(user)
+            if (!opcaoLiberada(acesso.checar, PGP.excluir)) {
+                return NextResponse.json({ error: "Sem permissão para excluir evento pontual." }, { status: 403 })
             }
-            const { error } = await supabase.from("eventos_pontuais").delete().eq("id", id)
+
+            const admin = createAdminClient()
+            const { data: evento } = await admin
+                .from("eventos_pontuais")
+                .select("id, unidade_cuca, status")
+                .eq("id", id)
+                .maybeSingle()
+            if (!evento || !acesso.alcancaUnidade(evento.unidade_cuca as string | null)) {
+                return NextResponse.json({ error: "Evento não encontrado" }, { status: 404 })
+            }
+            if (!eventoExcluivel(evento.status as string)) {
+                return NextResponse.json({ error: "Evento com envio na fila, em andamento ou pausado não pode ser excluído. Cancele antes ou aguarde o fim do envio." }, { status: 422 })
+            }
+
+            // Condicional ao status: se o worker pegou o evento nesse meio tempo, não apaga.
+            // O documento do evento sai do RAG pelo gatilho `tr_evento_desativar_rag_ao_excluir`.
+            const { data: apagados, error } = await admin
+                .from("eventos_pontuais")
+                .delete()
+                .eq("id", id)
+                .not("status", "in", `(${STATUS_BLOQUEIAM_EXCLUSAO_PONTUAL.join(",")})`)
+                .select("id")
             if (error) throw error
+            if (!apagados?.length) {
+                return NextResponse.json({ error: "O evento mudou de status. Atualize a lista e tente de novo." }, { status: 409 })
+            }
         } else {
             return NextResponse.json({ error: "Tipo inválido" }, { status: 400 })
         }

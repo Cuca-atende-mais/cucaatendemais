@@ -72,6 +72,8 @@ export type EventoPontual = {
     expansiva: boolean
     categorias_alvo: string[] | null
     created_by: string | null
+    // S-PROG-17: último motivo de devolução (limpo ao autorizar)
+    motivo_devolucao?: string | null
     created_at: string
     updated_at: string
 }

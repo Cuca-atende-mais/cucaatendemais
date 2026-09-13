@@ -29,6 +29,7 @@ import {
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { ACOES_CRUD, GRUPOS_PROGRAMACAO_MENSAL, type CampoPermissao, type GrupoPermissao } from "@/lib/rbac/catalogo-programacao-mensal"
+import { GRUPOS_PROGRAMACAO_PONTUAL } from "@/lib/rbac/catalogo-programacao-pontual"
 import { limitarAcoes, linhaCompleta, marcarCampo, marcarLinha } from "@/lib/rbac/matriz-permissoes"
 import { Skeleton } from "@/components/ui/skeleton"
 
@@ -70,10 +71,11 @@ const MODULE_GROUPS: GrupoPermissao[] = [
         category: 'Programação',
         modules: [
             { id: 'programacao_mensal', label: 'Programação de Eventos: Mensal' },
-            { id: 'programacao_pontual', label: 'Programação de Eventos: Pontual' },
         ]
     },
     ...GRUPOS_PROGRAMACAO_MENSAL,
+    // S-PROG-17: substitui a linha antiga "Programação de Eventos: Pontual" (programacao_pontual).
+    ...GRUPOS_PROGRAMACAO_PONTUAL,
     {
         category: 'Empregabilidade',
         modules: [
