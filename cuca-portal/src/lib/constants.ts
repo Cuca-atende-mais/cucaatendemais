@@ -24,7 +24,8 @@ export const menuItems = [
         permission: { recurso: "programacao_mensal", acao: "read" },
         // Fallback for parent menu logic if needed, usually handles visibleChildren
         items: [
-            { title: "Mensal", url: "/programacao", permission: { recurso: "programacao_mensal", acao: "read" } },
+            // S-PROG-17: a página também lista a programação pontual.
+            { title: "Mensal", url: "/programacao", permissions: [{ recurso: "programacao_mensal", acao: "read" }, { recurso: "pgp_ver", acao: "read" }] },
             { title: "Atendimento", url: "/programacao/mensagens", permission: { recurso: "atendimentos_programacao", acao: "read" } },
         ],
     },

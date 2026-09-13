@@ -21,6 +21,9 @@ import toast from "react-hot-toast"
 import { Calendar, MapPin, Sparkles, Upload, X, Users } from "lucide-react"
 import { useUser } from "@/lib/auth/user-provider"
 import { EventoPontual } from "@/lib/types/database"
+import { PGP } from "@/lib/rbac/catalogo-programacao-pontual"
+import { opcaoLiberada, podeAcessarUnidade } from "@/lib/programacao/permissoes-categoria"
+import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
 
 interface UnifiedProgramModalProps {
     open: boolean
@@ -30,8 +33,12 @@ interface UnifiedProgramModalProps {
 }
 
 export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento }: UnifiedProgramModalProps) {
-    const { hasPermission, profile } = useUser()
+    const { profile, isDeveloper } = useUser()
     const [loading, setLoading] = useState(false)
+    // S-PROG-17: criar e editar seguem a opção própria; a unidade só oferece o que está ao alcance do perfil.
+    const checarPgm = useChecarPgm()
+    const podeSalvar = opcaoLiberada(checarPgm, editEvento ? PGP.editar : PGP.criar)
+    const unidadesPermitidas = unidadesCuca.filter(u => podeAcessarUnidade(profile?.unidade_cuca, u, isDeveloper))
     // S-PROG-13: o modal cria só evento pontual. A programação mensal é criada pela grade
     // (/programacao/criar) ou pela importação de planilha, que passam pelas permissões por categoria;
     // o antigo ramo "Mensal" gravava `campanhas_mensais` direto pelo navegador, sem categoria.
@@ -155,11 +162,14 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
                 }
 
                 if (editEvento) {
-                    // S25-03: Modo edição — UPDATE mantém status atual
-                    const { error } = await supabase.from("eventos_pontuais")
-                        .update(payload)
-                        .eq("id", editEvento.id)
-                    if (error) throw error
+                    // S25-03: Modo edição — mantém status atual. S-PROG-17: grava pelo servidor.
+                    const res = await fetch(`/api/programacao/pontual/${editEvento.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                    })
+                    const data = await res.json()
+                    if (!res.ok) throw new Error(data.error || "Erro ao atualizar o evento")
                     toast.success("Evento atualizado com sucesso!")
                 } else {
                     // S14-01: Validação de conflito de datas (somente no INSERT)
@@ -177,13 +187,14 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
                         if (!continuar) { setLoading(false); return }
                     }
 
-                    const { error } = await supabase.from("eventos_pontuais").insert({
-                        ...payload,
-                        flyer_url: flyerUrl,
-                        status: "aguardando_aprovacao",
-                        instancia_id: null,
+                    // S-PROG-17: grava pelo servidor (status, autor e unidade conferidos lá).
+                    const res = await fetch("/api/programacao/pontual", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
                     })
-                    if (error) throw error
+                    const data = await res.json()
+                    if (!res.ok) throw new Error(data.error || "Erro ao criar o evento")
                     toast.success("Evento enviado para aprovação!")
                 }
             }
@@ -294,7 +305,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
                                                 <SelectValue placeholder="Selecione..." />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                {unidadesCuca.map(u => (
+                                                {unidadesPermitidas.map(u => (
                                                     <SelectItem key={u} value={u}>{u}</SelectItem>
                                                 ))}
                                             </SelectContent>
@@ -416,7 +427,7 @@ export function UnifiedProgramModal({ open, onOpenChange, onSuccess, editEvento 
                     <Button
                         className={isPontual ? "bg-cuca-yellow text-cuca-dark hover:bg-yellow-500" : "bg-cuca-blue hover:bg-sky-800 text-white"}
                         onClick={handleSave}
-                        disabled={loading || !hasPermission("programacao_pontual", "create")}
+                        disabled={loading || !podeSalvar}
                     >
                         {loading ? "Salvando..." : "Enviar para Aprovação"}
                     </Button>

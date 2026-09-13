@@ -39,8 +39,10 @@ import toast from "react-hot-toast"
 import { UnifiedProgramModal } from "@/components/programacao/unified-program-modal"
 import { ImportPlanilhaModal } from "@/components/programacao/import-planilha-modal"
 import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
-import { opcaoLiberada } from "@/lib/programacao/permissoes-categoria"
+import { PGP } from "@/lib/rbac/catalogo-programacao-pontual"
+import { opcaoLiberada, podeAcessarUnidade } from "@/lib/programacao/permissoes-categoria"
 import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
+import { eventoExcluivel } from "@/lib/programacao/pontual"
 import * as XLSX from 'xlsx'
 import { useRouter } from "next/navigation"
 import { useUser } from "@/lib/auth/user-provider"
@@ -67,12 +69,10 @@ export default function ProgramacaoPage() {
     const router = useRouter()
     const qc = useQueryClient()
 
-    const { profile, isDeveloper, hasPermission } = useUser()
+    const { profile, isDeveloper } = useUser()
 
     // Vê todas as unidades quem não tem unidade atribuída (sem vínculo ou "Geral")
     const canSeeAllUnits = isDeveloper || !profile?.unidade_cuca || profile?.unidade_cuca === 'Geral' || profile?.funcao?.nome === 'Super Admin Cuca'
-
-    const canDelete = isDeveloper
 
     // S-PROG-13: cada botão da mensal segue a opção própria do perfil.
     const checarPgm = useChecarPgm()
@@ -80,6 +80,16 @@ export default function ProgramacaoPage() {
     const podeCriarMensal = opcaoLiberada(checarPgm, PGM_GERAL.criarZero) || opcaoLiberada(checarPgm, PGM_GERAL.duplicar)
     const podeImportarPlanilha = opcaoLiberada(checarPgm, PGM_GERAL.importarPlanilha)
     const podeExcluirMensal = opcaoLiberada(checarPgm, PGM_GERAL.excluirProgramacao)
+
+    // S-PROG-17: cada ação da pontual segue a opção própria e vale só para eventos ao alcance da unidade.
+    const podeVerPontual = opcaoLiberada(checarPgm, PGP.ver)
+    const podeCriarPontual = opcaoLiberada(checarPgm, PGP.criar)
+    const alcancaEvento = (e: EventoPontual) => podeAcessarUnidade(profile?.unidade_cuca, e.unidade_cuca, isDeveloper)
+    const podePontual = (e: EventoPontual, opcao: string) => alcancaEvento(e) && opcaoLiberada(checarPgm, opcao)
+    const podeEditarEvento = (e: EventoPontual) =>
+        (e.status === 'aguardando_aprovacao' || e.status === 'autorizado') && podePontual(e, PGP.editar)
+    const podeCancelarEvento = (e: EventoPontual) =>
+        ['aguardando_aprovacao', 'autorizado', 'aprovado'].includes(e.status) && podePontual(e, PGP.cancelar)
 
     const handleDelete = async (id: string, tipo: 'mensal' | 'pontual') => {
         if (!confirm("Tem certeza que deseja excluir esta programação permanentemente? Isso apagará todas as atividades vinculadas e NÃO PODE SER DESFEITO.")) return
@@ -133,7 +143,7 @@ export default function ProgramacaoPage() {
 
     // TanStack Query — substitui useEffect + fetchData manual
     const { data: progData, isLoading: loading } = useQuery({
-        queryKey: [...PROGRAMACAO_KEY, unidadeFilter, searchTerm, profile?.id, podeVerListaMensal],
+        queryKey: [...PROGRAMACAO_KEY, unidadeFilter, searchTerm, profile?.id, podeVerListaMensal, podeVerPontual],
         enabled: !!profile,
         staleTime: 20_000,
         queryFn: async () => {
@@ -153,7 +163,7 @@ export default function ProgramacaoPage() {
             }
 
             const [{ data: pData, error: pError }, { data: mData, error: mError }] = await Promise.all([
-                pQuery,
+                podeVerPontual ? pQuery : Promise.resolve({ data: [] as EventoPontual[], error: null }),
                 podeVerListaMensal ? mQuery : Promise.resolve({ data: [] as CampanhaMensal[], error: null }),
             ])
             if (pError) console.error("Erro eventos pontuais:", pError)
@@ -241,18 +251,57 @@ export default function ProgramacaoPage() {
         )
     }
 
+    // S-PROG-17: autorizar, devolver, disparar e cancelar passam pelo servidor, que confere opção,
+    // unidade e transição.
+    const mudarStatusPontual = async (id: string, novoStatus: string, motivo?: string) => {
+        const res = await fetch(`/api/programacao/pontual/${id}/status`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ novoStatus, motivo }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || "Erro ao mudar o status do evento.")
+    }
+
     const handleAutorizar = async (id: string) => {
         if (!confirm("Autorizar este evento para disparo? Após autorizar, o responsável poderá confirmar o envio.")) return
         try {
-            const { error } = await supabase
-                .from("eventos_pontuais")
-                .update({ status: "autorizado" })
-                .eq("id", id)
-            if (error) throw error
+            await mudarStatusPontual(id, "autorizado")
             toast.success("Evento autorizado! Agora pode ser disparado.")
             invalidateProg()
-        } catch (err: any) {
-            toast.error(err.message || "Erro ao autorizar o evento.")
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Erro ao autorizar o evento.")
+        }
+    }
+
+    const handleCancelarEvento = async (e: EventoPontual) => {
+        if (!confirm(`Cancelar o evento "${e.titulo}"? Ele sai da base do assistente e não será disparado.`)) return
+        try {
+            await mudarStatusPontual(e.id, "cancelado")
+            toast.success("Evento cancelado.")
+            invalidateProg()
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Erro ao cancelar o evento.")
+        }
+    }
+
+    const [eventoParaDevolver, setEventoParaDevolver] = useState<EventoPontual | null>(null)
+    const [motivoDevolucao, setMotivoDevolucao] = useState("")
+    const [devolvendo, setDevolvendo] = useState(false)
+
+    const handleDevolver = async () => {
+        if (!eventoParaDevolver || !motivoDevolucao.trim()) return
+        setDevolvendo(true)
+        try {
+            await mudarStatusPontual(eventoParaDevolver.id, "aguardando_aprovacao", motivoDevolucao)
+            toast.success("Evento devolvido para ajuste.")
+            setEventoParaDevolver(null)
+            setMotivoDevolucao("")
+            invalidateProg()
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Erro ao devolver o evento.")
+        } finally {
+            setDevolvendo(false)
         }
     }
 
@@ -300,16 +349,12 @@ export default function ProgramacaoPage() {
         if (!previewEvento) return
         setDisparando(true)
         try {
-            const { error } = await supabase
-                .from("eventos_pontuais")
-                .update({ status: "aprovado" })
-                .eq("id", previewEvento.id)
-            if (error) throw error
+            await mudarStatusPontual(previewEvento.id, "aprovado")
             toast.success("Evento aprovado! O worker irá disparar as mensagens em breve.")
             setPreviewEvento(null)
             invalidateProg()
-        } catch (err: any) {
-            toast.error(err.message || "Erro ao aprovar o evento.")
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Erro ao aprovar o evento.")
         } finally {
             setDisparando(false)
         }
@@ -347,15 +392,18 @@ export default function ProgramacaoPage() {
                 editEvento={editEvento}
             />
 
-            <Tabs defaultValue="mensal" className="w-full">
+            {/* S-PROG-17: perfil só com a pontual abre direto na aba Pontual */}
+            <Tabs key={podeVerListaMensal || !podeVerPontual ? "mensal" : "pontual"} defaultValue={podeVerListaMensal || !podeVerPontual ? "mensal" : "pontual"} className="w-full">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                     <TabsList className="bg-muted/50 p-1">
                         <TabsTrigger value="mensal" className="gap-2">
                             <Calendar className="h-4 w-4" /> Mensal
                         </TabsTrigger>
+                        {podeVerPontual && (
                         <TabsTrigger value="pontual" className="gap-2">
                             <Clock className="h-4 w-4" /> Pontual
                         </TabsTrigger>
+                        )}
                     </TabsList>
 
                     <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
@@ -437,7 +485,7 @@ export default function ProgramacaoPage() {
                                 </>
                             )}
 
-                            {hasPermission("programacao_pontual", "create") && (
+                            {podeCriarPontual && (
                                 <Button
                                     className="bg-cuca-yellow text-cuca-dark hover:bg-yellow-500 font-bold"
                                     onClick={() => setIsModalOpen(true)}
@@ -489,7 +537,14 @@ export default function ProgramacaoPage() {
                                                 {(() => { const [y,m,d] = p.data_inicio.split("-"); return `${d}/${m}/${y}` })()}
                                                 {p.data_fim && (() => { const [y,m,d] = p.data_fim!.split("-"); return ` — ${d}/${m}/${y}` })()}
                                             </TableCell>
-                                            <TableCell>{getStatusBadge(p.status)}</TableCell>
+                                            <TableCell>
+                                                {getStatusBadge(p.status)}
+                                                {p.status === 'aguardando_aprovacao' && p.motivo_devolucao && (
+                                                    <p className="text-xs text-amber-700 mt-1 max-w-[220px] truncate" title={p.motivo_devolucao}>
+                                                        Devolvido: {p.motivo_devolucao}
+                                                    </p>
+                                                )}
+                                            </TableCell>
                                             <TableCell className="text-right flex items-center justify-end gap-2">
                                                 {/* S25-02: Botão Visualizar — sempre visível */}
                                                 <Button
@@ -501,7 +556,7 @@ export default function ProgramacaoPage() {
                                                     <Eye className="h-4 w-4" />
                                                 </Button>
                                                 {/* S25-03: Botão Editar */}
-                                                {(p.status === 'aguardando_aprovacao' || p.status === 'autorizado') && hasPermission("programacao_pontual", "update") && (
+                                                {podeEditarEvento(p) && (
                                                     <Button
                                                         variant="ghost" size="sm"
                                                         onClick={() => { setEditEvento(p); setIsModalOpen(true) }}
@@ -511,7 +566,7 @@ export default function ProgramacaoPage() {
                                                         <Pencil className="h-3.5 w-3.5" />
                                                     </Button>
                                                 )}
-                                                {p.status === 'aguardando_aprovacao' && hasPermission("programacao_pontual", "update") && (
+                                                {p.status === 'aguardando_aprovacao' && podePontual(p, PGP.autorizar) && (
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
@@ -521,7 +576,17 @@ export default function ProgramacaoPage() {
                                                         <CheckCircle2 className="h-3.5 w-3.5" /> Autorizar
                                                     </Button>
                                                 )}
-                                                {p.status === 'autorizado' && hasPermission("programacao_pontual", "update") && (
+                                                {p.status === 'autorizado' && podePontual(p, PGP.devolver) && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() => { setEventoParaDevolver(p); setMotivoDevolucao("") }}
+                                                        className="text-amber-700 border-amber-700 hover:bg-amber-50 gap-1 text-xs"
+                                                    >
+                                                        Devolver
+                                                    </Button>
+                                                )}
+                                                {p.status === 'autorizado' && podePontual(p, PGP.disparar) && (
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
@@ -531,7 +596,18 @@ export default function ProgramacaoPage() {
                                                         <Send className="h-3.5 w-3.5" /> Disparar Evento
                                                     </Button>
                                                 )}
-                                                {canDelete && (
+                                                {podeCancelarEvento(p) && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleCancelarEvento(p)}
+                                                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                                        title="Cancelar evento"
+                                                    >
+                                                        <X className="h-4 w-4" />
+                                                    </Button>
+                                                )}
+                                                {eventoExcluivel(p.status) && podePontual(p, PGP.excluir) && (
                                                     <Button
                                                         variant="ghost"
                                                         size="sm"
@@ -755,8 +831,15 @@ export default function ProgramacaoPage() {
                                 </div>
                             )}
 
+                            {visualizarEvento.status === 'aguardando_aprovacao' && visualizarEvento.motivo_devolucao && (
+                                <div className="space-y-1 rounded-lg border border-amber-600/30 bg-amber-50/50 p-3">
+                                    <p className="text-xs text-amber-700 font-medium">Devolvido para ajuste</p>
+                                    <p className="text-sm whitespace-pre-line">{visualizarEvento.motivo_devolucao}</p>
+                                </div>
+                            )}
+
                             {/* Ações */}
-                            {(visualizarEvento.status === 'aguardando_aprovacao' || visualizarEvento.status === 'autorizado') && hasPermission("programacao_pontual", "update") && (
+                            {podeEditarEvento(visualizarEvento) && (
                                 <Button
                                     variant="outline"
                                     className="w-full gap-2"
@@ -773,6 +856,34 @@ export default function ProgramacaoPage() {
                     )}
                 </SheetContent>
             </Sheet>
+
+            {/* S-PROG-17: devolver evento autorizado, com motivo obrigatório */}
+            <Dialog open={!!eventoParaDevolver} onOpenChange={open => { if (!open) { setEventoParaDevolver(null); setMotivoDevolucao("") } }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Devolver para ajuste — {eventoParaDevolver?.titulo}</DialogTitle>
+                        <DialogDescription>
+                            O evento volta para aguardando aprovação e sai da base do assistente até ser autorizado de novo.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-1.5">
+                        <Label htmlFor="motivo-devolucao">Motivo</Label>
+                        <Textarea
+                            id="motivo-devolucao"
+                            rows={4}
+                            value={motivoDevolucao}
+                            onChange={e => setMotivoDevolucao(e.target.value)}
+                            placeholder="O que precisa ser ajustado?"
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setEventoParaDevolver(null)} disabled={devolvendo}>Cancelar</Button>
+                        <Button onClick={handleDevolver} disabled={devolvendo || !motivoDevolucao.trim()}>
+                            {devolvendo ? "Devolvendo..." : "Devolver"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* S17-01: Modal Prévia de Disparo Pontual */}
             <Dialog open={!!previewEvento} onOpenChange={open => !open && setPreviewEvento(null)}>
