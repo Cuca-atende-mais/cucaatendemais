@@ -116,6 +116,25 @@ export function resumoNiveis(unidades: UnidadeSituacao[]) {
 
 const curto = (unidade: string) => unidade.replace("Cuca ", "")
 
+/** Motivo do bloqueio do "Aprovar RAG"/"Atualizar RAG", ou null se liberado. */
+export function motivoBloqueioAprovarRag(p: {
+    temPermissao: boolean
+    mesPermitido: boolean
+    unidades: UnidadeSituacao[]
+}): string | null {
+    if (!p.temPermissao) return "Sem permissão para aprovar o RAG do mês"
+    if (!p.mesPermitido) return "Mês fora do permitido (só o vigente e o seguinte)"
+    const { nivel1, nivel2, precisamAprovar, indexando } = resumoNiveis(p.unidades)
+    if (!nivel1) {
+        const faltam = p.unidades.filter(u => !u.nivel1).map(u => `${curto(u.unidade)}: ${u.faltando.join(", ")}`)
+        return `Nível 1 pendente — ${faltam.join(" · ")}`
+    }
+    if (precisamAprovar.length > 0) return null
+    if (indexando.length > 0) return `Indexando — ${indexando.map(curto).join(", ")}. Aguarde terminar.`
+    if (nivel2) return "RAG do mês já está no ar nas 5 unidades"
+    return "Nenhuma unidade precisa de aprovação do RAG agora"
+}
+
 /** Motivo do bloqueio do "Disparar Aviso Global", ou null se liberado. */
 export function motivoBloqueioDisparo(p: {
     temPermissao: boolean

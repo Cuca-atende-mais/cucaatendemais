@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
-    estadoRag, mesPermitido, mesVigente, mesesPermitidos, motivoBloqueioDisparo, nivel1Unidade, proximoMes,
+    estadoRag, mesPermitido, mesVigente, mesesPermitidos, motivoBloqueioAprovarRag, motivoBloqueioDisparo, nivel1Unidade, proximoMes,
     resumoNiveis, unidadePrecisaAprovarRag, type UnidadeSituacao,
 } from "./niveis"
 
@@ -101,5 +101,20 @@ describe("bloqueio do disparo", () => {
         expect(motivoBloqueioDisparo({ ...base, unidades: [unidade({ nivel1: false, faltando: ["CURSOS (rascunho)"] })] })).toMatch(/Nível 1.*Barra: CURSOS/)
         expect(motivoBloqueioDisparo({ ...base, unidades: [unidade({ rag: "indexando" })] })).toMatch(/Nível 2.*Barra: indexando/)
         expect(motivoBloqueioDisparo({ ...base, temTemplate: false, unidades: [unidade()] })).toMatch(/Template/)
+    })
+})
+
+describe("bloqueio do Aprovar RAG", () => {
+    const base = { temPermissao: true, mesPermitido: true }
+    it("libera quando alguma unidade precisa aprovar", () => {
+        expect(motivoBloqueioAprovarRag({ ...base, unidades: [unidade({ statusCampanha: "autorizada", rag: "nao_aprovado" })] })).toBeNull()
+    })
+    it("diz por que está desativado", () => {
+        const pronta = unidade({ statusCampanha: "autorizada", rag: "nao_aprovado" })
+        expect(motivoBloqueioAprovarRag({ ...base, temPermissao: false, unidades: [pronta] })).toMatch(/permissão/)
+        expect(motivoBloqueioAprovarRag({ ...base, mesPermitido: false, unidades: [pronta] })).toMatch(/Mês fora/)
+        expect(motivoBloqueioAprovarRag({ ...base, unidades: [unidade({ nivel1: false, faltando: ["sem programação"] })] })).toMatch(/Nível 1.*Barra: sem programação/)
+        expect(motivoBloqueioAprovarRag({ ...base, unidades: [unidade()] })).toMatch(/já está no ar/)
+        expect(motivoBloqueioAprovarRag({ ...base, unidades: [unidade({ rag: "indexando" })] })).toMatch(/Indexando — Barra/)
     })
 })
