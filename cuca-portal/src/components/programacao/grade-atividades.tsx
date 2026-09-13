@@ -18,7 +18,7 @@ import { useMediaQuery } from "@/hooks/use-media-query"
 import { AtividadeForm, Categoria, DIAS_SEMANA, DIAS_SEMANA_ABREV, SESSOES_DIA_A_DIA, SEXOS } from "@/lib/programacao/tipos"
 import { aplicarMascaraDataDigitando, aplicarMascaraHoraDigitando, dataBrParaISO, exibirData, normalizarData, normalizarHora } from "@/lib/programacao/mascaras"
 import { campoBloqueadoParaPreencherAbaixo, preencherColunaAbaixo } from "@/lib/programacao/preencher-abaixo"
-import { NOMES_CATEGORIAS, type PermissoesCategoria } from "@/lib/programacao/permissoes-categoria"
+import { NOMES_CATEGORIAS, ROTULO_STATUS_CATEGORIA, type PermissoesCategoria, type StatusCategoria } from "@/lib/programacao/permissoes-categoria"
 import { RotuloComAjuda } from "@/components/programacao/ajuda-campo"
 import { CampoComAjuda } from "@/lib/programacao/ajuda"
 
@@ -140,17 +140,21 @@ interface GradeAtividadesProps {
     // Linhas criadas nesta sessão: editáveis por quem pode criar, mesmo sem "editar".
     linhaEditavel?: (atividade: AtividadeForm) => boolean
     onLinhaCriada?: (tempId: string) => void
+    // S-PROG-14: status de cada categoria, mostrado na aba (fora de rascunho a categoria é só leitura).
+    statusCategorias?: Partial<Record<Categoria, StatusCategoria>>
 }
 
 const TUDO_LIBERADO: PermissoesCategoria = { ver: true, criar: true, editar: true, excluir: true }
 
-export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAtivaChange, permissoes, linhaEditavel, onLinhaCriada }: GradeAtividadesProps) {
+export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAtivaChange, permissoes, linhaEditavel, onLinhaCriada, statusCategorias }: GradeAtividadesProps) {
     const permissaoDe = (cat: Categoria) => permissoes?.[cat] ?? TUDO_LIBERADO
     const categoriasVisiveis = NOMES_CATEGORIAS.filter(cat => permissaoDe(cat).ver)
     const [categoriaEscolhida, setCategoria] = useState<Categoria>("ESPORTES")
     const categoria = categoriasVisiveis.includes(categoriaEscolhida) ? categoriaEscolhida : (categoriasVisiveis[0] ?? categoriaEscolhida)
     const permissaoAtual = permissaoDe(categoria)
-    const podeEditarLinha = (a: AtividadeForm) => permissaoDe(a.categoria).editar || (linhaEditavel?.(a) ?? false)
+    const categoriaTravada = (cat: Categoria) => !!statusCategorias?.[cat] && statusCategorias[cat] !== "rascunho"
+    const podeEditarLinha = (a: AtividadeForm) =>
+        !categoriaTravada(a.categoria) && (permissaoDe(a.categoria).editar || (linhaEditavel?.(a) ?? false))
     const [linhaAtiva, setLinhaAtiva] = useState<string | null>(null)
     // S-PROG-11 (item 1): coluna em foco — junto com `linhaAtiva`, é o que "Preencher abaixo"
     // precisa saber (linha de origem + qual campo propagar). Setada via `onFoco` de cada célula.
@@ -269,6 +273,9 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
                             )}>
                             <Icone className={cn("h-4 w-4", !ativa && info.texto)} />
                             {cat}
+                            {categoriaTravada(cat) && statusCategorias?.[cat] && (
+                                <span className="text-[10px] font-medium opacity-80">· {ROTULO_STATUS_CATEGORIA[statusCategorias[cat]!]}</span>
+                            )}
                             {qtd > 0 && (
                                 <span className={cn(
                                     "min-w-5 h-5 px-1 rounded-full text-[11px] font-bold flex items-center justify-center",

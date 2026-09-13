@@ -24,7 +24,7 @@ import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Loader
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
 import { unidadesCuca } from "@/lib/constants"
-import { AtividadeForm } from "@/lib/programacao/tipos"
+import { AtividadeForm, type Categoria } from "@/lib/programacao/tipos"
 import { calcularProblemas, Problema } from "@/lib/programacao/revisao"
 import { montarAtividadePayload } from "@/lib/programacao/payload"
 import { atividadeFormDeLinhaExistente } from "@/lib/programacao/duplicar"
@@ -33,7 +33,8 @@ import { FichaAtividade } from "@/components/programacao/ficha-atividade"
 import { SelecionarOrigem } from "@/components/programacao/selecionar-origem"
 import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
 import {
-    categoriasEditaveis, mapaPermissoesCategorias, opcaoLiberada, permissoesDaCategoria, type OrigemCriacao,
+    categoriasEditaveis, mapaPermissoesCategorias, opcaoLiberada, permissoesComStatus, permissoesDaCategoria,
+    type OrigemCriacao, type StatusCategoria,
 } from "@/lib/programacao/permissoes-categoria"
 import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
 import { useUser } from "@/lib/auth/user-provider"
@@ -85,7 +86,13 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     // origem) são editáveis por quem pode criar; linhas já gravadas exigem "editar".
     const { loading: carregandoUsuario } = useUser()
     const checarPgm = useChecarPgm()
-    const permissoes = useMemo(() => mapaPermissoesCategorias(checarPgm), [checarPgm])
+    // S-PROG-14: categoria enviada ou autorizada fica somente leitura (é preciso devolver ou reabrir).
+    const [statusCategorias, setStatusCategorias] = useState<Partial<Record<Categoria, StatusCategoria>>>({})
+    const permissoes = useMemo(() => {
+        const base = mapaPermissoesCategorias(checarPgm)
+        return Object.fromEntries(Object.entries(base).map(([nome, p]) =>
+            [nome, permissoesComStatus(p, statusCategorias[nome as Categoria])])) as typeof base
+    }, [checarPgm, statusCategorias])
     const [linhasNovas, setLinhasNovas] = useState<Set<string>>(() => new Set())
     const marcarLinhaNova = (tempId: string) => setLinhasNovas(prev => new Set(prev).add(tempId))
     const linhaEditavel = (a: AtividadeInterna) => linhasNovas.has(a._tempId)
@@ -179,6 +186,13 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                 onCancel()
                 return
             }
+
+            const { data: stData } = await supabase
+                .from("campanha_categoria_status")
+                .select("categoria, status")
+                .eq("campanha_id", campanhaId)
+            if (cancelado) return
+            setStatusCategorias(Object.fromEntries((stData || []).map(s => [s.categoria, s.status])) as Partial<Record<Categoria, StatusCategoria>>)
 
             setMesSel(camp.mes)
             setAnoSel(camp.ano)
@@ -620,6 +634,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                             onAbrirFicha={handleAbrirFicha}
                             onLinhaAtivaChange={setAtividadeSelecionadaGrade}
                             permissoes={permissoes}
+                            statusCategorias={statusCategorias}
                             linhaEditavel={linhaEditavel}
                             onLinhaCriada={marcarLinhaNova}
                         />

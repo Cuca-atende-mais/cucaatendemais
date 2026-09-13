@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { PGM_GERAL, pgmCategoria } from "@/lib/rbac/catalogo-programacao-mensal"
 import {
-    categoriasEditaveis, checadorDePermissoes, mapaPermissoesCategorias, motivoRecusaCriacao, moduloDaTransicao,
-    origemValida, permissoesDaCategoria, podeAcessarUnidade, podeTransicionar, separarLinhasParaDuplicar, slugDaCategoria,
+    acaoDaTransicaoCategoria, categoriasEditaveis, checadorDePermissoes, mapaPermissoesCategorias, motivoRecusaCriacao,
+    origemValida, permissoesDaCategoria, podeAcessarUnidade, podeTransicionarCategoria, permissoesComStatus, separarLinhasParaDuplicar, slugDaCategoria, transicaoExigeMotivo, transicoesPossiveis,
     type LinhaPermissaoPgm,
 } from "./permissoes-categoria"
 
@@ -68,29 +68,40 @@ describe("permissões por categoria", () => {
     })
 })
 
-describe("transições de status", () => {
+describe("transições por categoria (S-PROG-14)", () => {
     it("mapeia cada transição para a ação do fluxo", () => {
-        expect(moduloDaTransicao("rascunho", "pendente")).toBe("enviar")
-        expect(moduloDaTransicao("pendente", "aprovado")).toBe("autorizar")
-        expect(moduloDaTransicao("pendente", "rascunho")).toBe("devolver")
-        expect(moduloDaTransicao("aprovado", "rascunho")).toBe("reabrir")
-        expect(moduloDaTransicao("rascunho", "aprovado")).toBeNull()
+        expect(acaoDaTransicaoCategoria("rascunho", "aguardando_autorizacao")).toBe("enviar")
+        expect(acaoDaTransicaoCategoria("aguardando_autorizacao", "autorizada")).toBe("autorizar")
+        expect(acaoDaTransicaoCategoria("aguardando_autorizacao", "rascunho")).toBe("devolver")
+        expect(acaoDaTransicaoCategoria("autorizada", "rascunho")).toBe("reabrir")
+        expect(acaoDaTransicaoCategoria("rascunho", "autorizada")).toBeNull()
+        expect(acaoDaTransicaoCategoria("autorizada", "aguardando_autorizacao")).toBeNull()
     })
 
-    it("coordenador esportivo autoriza campanha só de ESPORTES, não uma que também tem CURSOS", () => {
-        expect(podeTransicionar(coordenadorEsportivo, "pendente", "aprovado", ["ESPORTES", "ESPORTES"])).toBe(true)
-        expect(podeTransicionar(coordenadorEsportivo, "pendente", "aprovado", ["ESPORTES", "CURSOS"])).toBe(false)
-        expect(podeTransicionar(coordenadorEsportivo, "rascunho", "pendente", ["ESPORTES"])).toBe(false)
+    it("devolver e reabrir exigem motivo", () => {
+        expect(transicaoExigeMotivo("aguardando_autorizacao", "rascunho")).toBe(true)
+        expect(transicaoExigeMotivo("autorizada", "rascunho")).toBe(true)
+        expect(transicaoExigeMotivo("rascunho", "aguardando_autorizacao")).toBe(false)
     })
 
-    it("categoria desconhecida só passa para Developer", () => {
-        expect(podeTransicionar(coordenadorEsportivo, "pendente", "aprovado", ["OUTRA"])).toBe(false)
-        expect(podeTransicionar(checadorDePermissoes(null, true), "pendente", "aprovado", ["OUTRA"])).toBe(true)
+    it("coordenador esportivo autoriza ESPORTES e não CURSOS", () => {
+        expect(podeTransicionarCategoria(coordenadorEsportivo, "ESPORTES", "aguardando_autorizacao", "autorizada")).toBe(true)
+        expect(podeTransicionarCategoria(coordenadorEsportivo, "CURSOS", "aguardando_autorizacao", "autorizada")).toBe(false)
+        expect(podeTransicionarCategoria(coordenadorEsportivo, "ESPORTES", "rascunho", "aguardando_autorizacao")).toBe(false)
+        expect(podeTransicionarCategoria(checadorDePermissoes(null, true), "OUTRA", "aguardando_autorizacao", "autorizada")).toBe(false)
     })
 
-    it("campanha sem linhas exige a ação em pelo menos uma categoria", () => {
-        expect(podeTransicionar(coordenadorEsportivo, "pendente", "aprovado", [])).toBe(true)
-        expect(podeTransicionar(checadorDePermissoes([], false), "pendente", "aprovado", [])).toBe(false)
+    it("oferece as transições válidas a partir de cada status", () => {
+        expect(transicoesPossiveis("rascunho").map(t => t.acao)).toEqual(["enviar"])
+        expect(transicoesPossiveis("aguardando_autorizacao").map(t => t.acao).sort()).toEqual(["autorizar", "devolver"])
+        expect(transicoesPossiveis("autorizada").map(t => t.acao)).toEqual(["reabrir"])
+    })
+
+    it("categoria fora de rascunho fica só leitura", () => {
+        const tudo = { ver: true, criar: true, editar: true, excluir: true }
+        expect(permissoesComStatus(tudo, "rascunho")).toEqual(tudo)
+        expect(permissoesComStatus(tudo, undefined)).toEqual(tudo)
+        expect(permissoesComStatus(tudo, "autorizada")).toEqual({ ver: true, criar: false, editar: false, excluir: false })
     })
 })
 

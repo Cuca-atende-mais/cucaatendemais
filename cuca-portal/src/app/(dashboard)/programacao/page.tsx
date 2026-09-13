@@ -177,13 +177,22 @@ export default function ProgramacaoPage() {
                 }, {} as Record<string, Record<string, number>>)
             }
 
-            return { pontuais: pData ?? [], mensais: mData ?? [], contagemPorCategoria }
+            // S-PROG-14: categorias autorizadas e selo "No RAG" (vem do documento de RAG ativo, não do status).
+            let situacao: Record<string, { total: number; autorizadas: number; aguardando: number; noRag: boolean }> = {}
+            if (idsCampanhas.length > 0) {
+                const { data: sitData } = await supabase.rpc("pgm_situacao_campanhas", { p_ids: idsCampanhas })
+                situacao = Object.fromEntries((sitData ?? []).map((r: { campanha_id: string; total_categorias: number; autorizadas: number; aguardando: number; no_rag: boolean }) =>
+                    [r.campanha_id, { total: r.total_categorias, autorizadas: r.autorizadas, aguardando: r.aguardando, noRag: r.no_rag }]))
+            }
+
+            return { pontuais: pData ?? [], mensais: mData ?? [], contagemPorCategoria, situacao }
         },
     })
 
     const pontuais = progData?.pontuais ?? []
     const mensais = progData?.mensais ?? []
     const contagemPorCategoria = progData?.contagemPorCategoria ?? {}
+    const situacaoCampanhas = progData?.situacao ?? {}
     const invalidateProg = () => qc.invalidateQueries({ queryKey: PROGRAMACAO_KEY })
 
     const openCampanhaDetails = (campanha: CampanhaMensal) => {
@@ -213,12 +222,13 @@ export default function ProgramacaoPage() {
     // `getStatusBadge` acima (compartilhado com evento pontual, que tem outros estados e usa
     // `bg-amber-50` fixo — quebra no tema escuro). Só as 3 cores do design system, nunca literal.
     const STATUS_MENSAL_LABEL: Record<string, string> = {
-        rascunho: "Rascunho", pendente: "Pendente de aprovação", aprovado: "Aprovada",
+        rascunho: "Rascunho", pendente: "Pendente de aprovação", autorizada: "Autorizada", aprovado: "RAG aprovado",
     }
     const getStatusPillMensal = (status: string) => {
         const classes: Record<string, string> = {
             rascunho: "bg-muted text-muted-foreground border-border",
             pendente: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40",
+            autorizada: "bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/35",
             aprovado: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/35",
         }
         return (
@@ -569,8 +579,21 @@ export default function ProgramacaoPage() {
                                                     <MapPin className="h-3 w-3" /> {m.unidade_cuca}
                                                 </p>
                                             </div>
-                                            {getStatusPillMensal(m.status)}
+                                            <div className="flex flex-col items-end gap-1">
+                                                {getStatusPillMensal(m.status)}
+                                                {situacaoCampanhas[m.id]?.noRag && (
+                                                    <span className="inline-flex items-center text-[10.5px] font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+                                                        No RAG
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
+                                        {situacaoCampanhas[m.id] && situacaoCampanhas[m.id].total > 0 && (
+                                            <p className="text-[11.5px] text-muted-foreground -mt-1">
+                                                {situacaoCampanhas[m.id].autorizadas} de {situacaoCampanhas[m.id].total} categorias autorizadas
+                                                {situacaoCampanhas[m.id].aguardando > 0 && ` · ${situacaoCampanhas[m.id].aguardando} aguardando`}
+                                            </p>
+                                        )}
 
                                         {/* Faixa de números — só as 3 categorias do protótipo; ESPECIAIS não
                                             entra aqui (não está no recorte visual da story, evita inventar um
@@ -597,14 +620,15 @@ export default function ProgramacaoPage() {
                                                     <FileText className="h-3.5 w-3.5" /> Continuar edição
                                                 </Button>
                                             )}
-                                            {m.status === "pendente" && (
+                                            {/* S-PROG-14: enviar, autorizar, devolver e reabrir são por categoria, na tela da programação */}
+                                            {(situacaoCampanhas[m.id]?.aguardando ?? 0) > 0 && (
                                                 <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => openCampanhaDetails(m)}>
                                                     <CheckCircle2 className="h-3.5 w-3.5" /> Analisar
                                                 </Button>
                                             )}
-                                            {m.status === "aprovado" && (
+                                            {(m.status === "aprovado" || m.status === "autorizada") && (
                                                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => openCampanhaDetails(m)}>
-                                                    <Pencil className="h-3.5 w-3.5" /> Reabrir para editar
+                                                    <Pencil className="h-3.5 w-3.5" /> Reabrir categoria
                                                 </Button>
                                             )}
                                             <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground" onClick={() => openCampanhaDetails(m)}>

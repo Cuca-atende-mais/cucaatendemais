@@ -5,8 +5,8 @@ import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import {
     Megaphone, CheckCircle2, Clock, AlertCircle, Send,
-    RefreshCw, BarChart3, Loader2,
-    Building2, CalendarCheck, ShieldAlert, Info, ChevronLeft, ChevronRight, Smartphone,
+    RefreshCw, BarChart3, Loader2, RotateCcw,
+    Building2, CalendarCheck, ShieldAlert, Info, ChevronLeft, ChevronRight, Smartphone, DatabaseZap,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -17,21 +17,16 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
-import { unidadesCuca } from "@/lib/constants"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { useUser } from "@/lib/auth/user-provider"
+import { cn } from "@/lib/utils"
+import { ROTULO_STATUS_CATEGORIA, type StatusCategoria } from "@/lib/programacao/permissoes-categoria"
+import {
+    ROTULO_ESTADO_RAG, mesmoMes, motivoBloqueioDisparo, type EstadoRag, type MesAno, type UnidadeSituacao,
+} from "@/lib/divulgacao/niveis"
 
 /* ─── Tipos ─── */
-type StatusCampanha = "sem_planilha" | "pendente" | "aprovado" | "em_andamento"
 type StatusDisparo = "pendente" | "em_andamento" | "concluido" | "pausado" | "pausado_limite_diario" | "erro"
-type UnidadeStatus = {
-    unidade: string
-    status: StatusCampanha
-    total_atividades: number
-    campanha_id: string | null
-    updated_at: string | null
-}
 
 type DisparoHistorico = {
     id: string
@@ -56,32 +51,33 @@ type TemplateMeta = {
     corpo_texto: string
 }
 
+// S-PROG-15: resposta de /api/divulgacao/situacao
+type Situacao = {
+    vigente: MesAno
+    foraDeSincronia: string[]
+    permitidos: MesAno[]
+    selecionado: MesAno
+    mesPermitido: boolean
+    unidades: UnidadeSituacao[]
+    nivel1: boolean
+    nivel2: boolean
+    precisamAprovar: string[]
+    indexando: string[]
+    rotuloAprovar: string
+    permissoes: { aprovarRag: boolean; disparar: boolean }
+}
+
 /* ─── Constantes ─── */
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+const MESES_EXTENSO = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : "Erro desconhecido"
 
-const STATUS_CONFIG: Record<StatusCampanha, { label: string; color: string; icon: React.ReactNode }> = {
-    sem_planilha: {
-        label: "Sem planilha",
-        color: "bg-muted/60 text-muted-foreground border-border",
-        icon: <AlertCircle className="h-3.5 w-3.5" />,
-    },
-    pendente: {
-        label: "Aguardando aprovação",
-        color: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-        icon: <Clock className="h-3.5 w-3.5" />,
-    },
-    aprovado: {
-        label: "Aprovada ✓",
-        color: "bg-green-500/15 text-green-400 border-green-500/30",
-        icon: <CheckCircle2 className="h-3.5 w-3.5" />,
-    },
-    em_andamento: {
-        label: "Em andamento",
-        color: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-        icon: <Clock className="h-3.5 w-3.5" />,
-    },
+const COR_ESTADO_RAG: Record<EstadoRag, string> = {
+    nao_aprovado: "bg-muted/60 text-muted-foreground border-border",
+    indexando: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+    falhou: "bg-red-500/15 text-red-400 border-red-500/30",
+    no_ar: "bg-green-500/15 text-green-400 border-green-500/30",
 }
 
 const DISPARO_STATUS_CONFIG: Record<StatusDisparo, { label: string; color: string }> = {
@@ -94,29 +90,29 @@ const DISPARO_STATUS_CONFIG: Record<StatusDisparo, { label: string; color: strin
     erro: { label: "Erro", color: "bg-red-500/15 text-red-400" },
 }
 
+function Nivel({ numero, titulo, ok, detalhe }: { numero: number; titulo: string; ok: boolean; detalhe: string }) {
+    return (
+        <div className={cn("flex items-start gap-3 rounded-xl border p-4",
+            ok ? "border-green-500/30 bg-green-500/[0.06]" : "border-amber-500/30 bg-amber-500/[0.06]")}>
+            {ok ? <CheckCircle2 className="h-5 w-5 text-green-400 shrink-0" /> : <AlertCircle className="h-5 w-5 text-amber-400 shrink-0" />}
+            <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground">Nível {numero} — {titulo}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 break-words">{detalhe}</p>
+            </div>
+        </div>
+    )
+}
+
 /* ─── Componente ─── */
 export default function DivulgacaoPage() {
     const router = useRouter()
     const supabase = useMemo(() => createClient(), [])
-    const { hasPermission } = useUser()
-    const hoje = new Date()
-    const [mesAtual, setMesAtual] = useState(hoje.getMonth() + 1)
-    const [anoAtual, setAnoAtual] = useState(hoje.getFullYear())
-
-    const navegarMes = (delta: number) => {
-        setMesAtual(prev => {
-            const novoMes = prev + delta
-            if (novoMes < 1) { setAnoAtual(a => a - 1); return 12 }
-            if (novoMes > 12) { setAnoAtual(a => a + 1); return 1 }
-            return novoMes
-        })
-    }
+    const [mesSelecionado, setMesSelecionado] = useState<MesAno | null>(null)
 
     const [carregando, setCarregando] = useState(true)
     const [semPermissao, setSemPermissao] = useState(false)
-    const [unidades, setUnidades] = useState<UnidadeStatus[]>([])
+    const [situacao, setSituacao] = useState<Situacao | null>(null)
     const [historico, setHistorico] = useState<DisparoHistorico[]>([])
-    const [podeCriar, setPodeCriar] = useState(false)
 
     // Modal de disparo
     const [modalAberto, setModalAberto] = useState(false)
@@ -124,36 +120,28 @@ export default function DivulgacaoPage() {
     const [templateMeta, setTemplateMeta] = useState<TemplateMeta | null>(null)
     const [disparando, setDisparando] = useState(false)
 
+    // S-PROG-15: "Aprovar RAG"
+    const [confirmarRagAberto, setConfirmarRagAberto] = useState(false)
+    const [aprovandoRag, setAprovandoRag] = useState(false)
+
+    const carregarSituacao = useCallback(async (mes: MesAno | null) => {
+        const query = mes ? `?mes=${mes.mes}&ano=${mes.ano}` : ""
+        const res = await fetch(`/api/divulgacao/situacao${query}`, { cache: "no-store" })
+        const data = await res.json()
+        if (res.status === 401) { router.push("/login"); return null }
+        if (res.status === 403) { setSemPermissao(true); return null }
+        if (!res.ok) throw new Error(data.error || "Falha ao carregar a situação do mês")
+        setSituacao(data as Situacao)
+        return data as Situacao
+    }, [router])
+
     const fetchData = useCallback(async () => {
         setCarregando(true)
         try {
-            // 1. Verificar acesso ao módulo divulgacao via RBAC
-            const { data: { user } } = await supabase.auth.getUser()
-            if (!user) { router.push("/login"); return }
+            const sit = await carregarSituacao(mesSelecionado)
+            if (!sit) return
 
-            if (!hasPermission("divulgacao", "read")) { setSemPermissao(true); return }
-            setPodeCriar(hasPermission("divulgacao", "create"))
-
-            // 2. Buscar status das campanhas do mês atual por unidade
-            const { data: campanhas } = await supabase
-                .from("campanhas_mensais")
-                .select("id, unidade_cuca, status, total_atividades, updated_at")
-                .eq("mes", mesAtual)
-                .eq("ano", anoAtual)
-
-            const statusPorUnidade: UnidadeStatus[] = unidadesCuca.map(u => {
-                const camp = campanhas?.find(c => c.unidade_cuca === u)
-                return {
-                    unidade: u,
-                    status: (camp?.status as StatusCampanha) ?? "sem_planilha",
-                    total_atividades: camp?.total_atividades ?? 0,
-                    campanha_id: camp?.id ?? null,
-                    updated_at: camp?.updated_at ?? null,
-                }
-            })
-            setUnidades(statusPorUnidade)
-
-            // 3. A API expõe somente a configuração necessária à Divulgação;
+            // A API expõe somente a configuração necessária à Divulgação;
             // o lookup administrativo permanece protegido no servidor.
             const configResponse = await fetch("/api/divulgacao/disparar", { cache: "no-store" })
             const config = await configResponse.json()
@@ -161,38 +149,65 @@ export default function DivulgacaoPage() {
             setNumeroMeta(config.numero as NumeroMetaInstitucional | null)
             setTemplateMeta(config.template as TemplateMeta | null)
 
-            // 4. Histórico de disparos
             const { data: hist } = await supabase
                 .from("disparos_divulgacao")
                 .select("id, titulo, mes, ano, status, total_leads, total_enviados, total_erros, total_stop, created_at")
                 .order("created_at", { ascending: false })
                 .limit(10)
             setHistorico(hist ?? [])
-
         } catch (error: unknown) {
             toast.error("Erro ao carregar: " + getErrorMessage(error))
         } finally {
             setCarregando(false)
         }
-    }, [anoAtual, hasPermission, mesAtual, router, supabase])
+    }, [carregarSituacao, mesSelecionado, supabase])
 
     useEffect(() => { fetchData() }, [fetchData])
 
+    // Acompanha a indexação sem recarregar a página.
+    const indexando = situacao?.indexando.length ?? 0
+    useEffect(() => {
+        if (!situacao || indexando === 0) return
+        const id = setInterval(() => { carregarSituacao(situacao.selecionado).catch(() => undefined) }, 10000)
+        return () => clearInterval(id)
+    }, [carregarSituacao, indexando, situacao])
+
+    const mesAtual = situacao?.selecionado.mes ?? new Date().getMonth() + 1
+    const anoAtual = situacao?.selecionado.ano ?? new Date().getFullYear()
+    const unidades = situacao?.unidades ?? []
+    const indiceSelecionado = situacao ? situacao.permitidos.findIndex(p => mesmoMes(p, situacao.selecionado)) : -1
+
+    const navegarMes = (delta: number) => {
+        if (!situacao) return
+        const destino = situacao.permitidos[indiceSelecionado + delta]
+        if (destino) setMesSelecionado(destino)
+    }
+
+    const podeCriar = situacao?.permissoes.disparar ?? false
+    const motivoBloqueio = situacao
+        ? motivoBloqueioDisparo({
+            temPermissao: podeCriar,
+            mesPermitido: situacao.mesPermitido,
+            unidades,
+            temNumero: !!numeroMeta,
+            temTemplate: !!templateMeta,
+        })
+        : "Carregando"
+    const podeDisparar = motivoBloqueio === null
+
+    const podeAprovarRag = !!situacao?.permissoes.aprovarRag && !!situacao.mesPermitido && situacao.nivel1 && situacao.precisamAprovar.length > 0
+
     const abrirModal = () => {
-        if (!podeCriar) {
-            toast.error("Você não possui permissão para criar disparos de divulgação.")
-            return
-        }
-        if (!numeroMeta || !templateMeta) {
-            toast.error("Número ou template Meta Institucional indisponível.")
+        if (!podeDisparar) {
+            toast.error(motivoBloqueio ?? "Disparo indisponível")
             return
         }
         setModalAberto(true)
     }
 
     const handleDisparar = async () => {
-        if (!podeCriar || !numeroMeta || !templateMeta) {
-            toast.error("O disparo não está disponível para este usuário ou configuração.")
+        if (!podeDisparar) {
+            toast.error(motivoBloqueio ?? "O disparo não está disponível.")
             return
         }
         setDisparando(true)
@@ -220,23 +235,34 @@ export default function DivulgacaoPage() {
         }
     }
 
-    const aprovadas = unidades.filter(u => u.status === "aprovado").length
-    // SQS-44 AC-10: disparo somente quando TODAS as unidades estiverem aprovadas
-    const podeDisparar = podeCriar
-        && aprovadas === unidadesCuca.length
-        && !!numeroMeta
-        && !!templateMeta
-    const motivoBloqueio = !podeCriar
-        ? "Sem permissão divulgacao:create"
-        : aprovadas < unidadesCuca.length
-            ? `Aguardando aprovação: ${unidades.filter(u => u.status !== "aprovado").map(u => u.unidade.replace("Cuca ", "")).join(", ")}`
-            : !numeroMeta
-                ? "Número Meta Institucional indisponível"
-                : !templateMeta
-                    ? "Template Meta Institucional aprovado indisponível"
-                    : "Todas as unidades aprovadas — pronto para disparar"
+    const aprovarRag = async (unidade?: string) => {
+        setAprovandoRag(true)
+        try {
+            const res = await fetch("/api/divulgacao/aprovar-rag", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mes: mesAtual, ano: anoAtual, unidade }),
+            })
+            const data = await res.json()
+            if (!res.ok && !data.resultados) throw new Error(data.error || "Falha ao aprovar o RAG")
+            const falhas = (data.resultados ?? []).filter((r: { ok: boolean }) => !r.ok)
+            if (falhas.length > 0) {
+                toast.error(`Falhou em: ${falhas.map((f: { unidade: string }) => f.unidade.replace("Cuca ", "")).join(", ")}`)
+            } else {
+                toast.success("RAG enviado para indexação. Cada unidade entra no ar quando terminar; até lá o mês anterior continua respondendo.")
+            }
+            setConfirmarRagAberto(false)
+            await carregarSituacao(situacao?.selecionado ?? null)
+        } catch (error: unknown) {
+            toast.error("Erro: " + getErrorMessage(error))
+        } finally {
+            setAprovandoRag(false)
+        }
+    }
 
-    if (carregando) {
+    const aprovadas = unidades.filter(u => u.nivel1).length
+
+    if (carregando && !situacao) {
         return (
             <div className="flex-1 flex items-center justify-center p-12">
                 <Loader2 className="h-8 w-8 animate-spin text-yellow-500" />
@@ -254,6 +280,13 @@ export default function DivulgacaoPage() {
         )
     }
 
+    const detalheNivel1 = situacao?.nivel1
+        ? "Todas as programações do mês estão autorizadas pelos coordenadores."
+        : unidades.filter(u => !u.nivel1).map(u => `${u.unidade.replace("Cuca ", "")}: ${u.faltando.join(", ")}`).join(" · ")
+    const detalheNivel2 = situacao?.nivel2
+        ? "O RAG deste mês está no ar nas 5 unidades."
+        : unidades.filter(u => u.rag !== "no_ar").map(u => `${u.unidade.replace("Cuca ", "")}: ${ROTULO_ESTADO_RAG[u.rag].toLowerCase()}`).join(" · ")
+
     return (
         <div className="flex-1 flex flex-col gap-6 p-4 lg:p-8">
             {/* Header */}
@@ -265,43 +298,64 @@ export default function DivulgacaoPage() {
                     <div>
                         <h1 className="text-2xl font-bold text-foreground">Central de Divulgação</h1>
                         <p className="text-sm text-muted-foreground">
-                            {MESES[mesAtual - 1]}/{anoAtual} — {aprovadas} de {unidadesCuca.length} unidades aprovadas
+                            {MESES[mesAtual - 1]}/{anoAtual} — {aprovadas} de {unidades.length} unidades autorizadas
+                            {situacao && ` · no ar: ${MESES[situacao.vigente.mes - 1]}/${situacao.vigente.ano}`}
                         </p>
                     </div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                    {/* Seletor de mês */}
+                    {/* S-PROG-15: só o mês vigente (no ar no RAG) e o seguinte */}
                     <div className="flex items-center gap-1 border border-border rounded-lg px-1 py-1 bg-muted/30">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navegarMes(-1)}>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navegarMes(-1)} disabled={indiceSelecionado <= 0}>
                             <ChevronLeft className="h-4 w-4" />
                         </Button>
                         <span className="text-sm font-semibold text-foreground min-w-[80px] text-center">
                             {MESES[mesAtual - 1]}/{anoAtual}
                         </span>
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navegarMes(1)}>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navegarMes(1)}
+                            disabled={!situacao || indiceSelecionado < 0 || indiceSelecionado >= situacao.permitidos.length - 1}>
                             <ChevronRight className="h-4 w-4" />
                         </Button>
                     </div>
-                    <Button variant="outline" size="sm" onClick={fetchData}>
-                        <RefreshCw className="h-4 w-4 mr-1.5" /> Atualizar
+                    <Button variant="outline" size="sm" onClick={fetchData} disabled={carregando}>
+                        <RefreshCw className={cn("h-4 w-4 mr-1.5", carregando && "animate-spin")} /> Atualizar
                     </Button>
+                    {podeAprovarRag && (
+                        <Button variant="outline" className="border-blue-500/40 text-blue-500 hover:bg-blue-500/10 font-semibold gap-2"
+                            onClick={() => setConfirmarRagAberto(true)} disabled={aprovandoRag}>
+                            <DatabaseZap className="h-4 w-4" /> {situacao?.rotuloAprovar}
+                        </Button>
+                    )}
                     <div className="flex flex-col items-end gap-0.5">
                         <Button
                             className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold gap-2 disabled:opacity-50"
                             onClick={abrirModal}
                             disabled={!podeDisparar}
-                            title={motivoBloqueio}
+                            title={motivoBloqueio ?? undefined}
                         >
                             <Megaphone className="h-4 w-4" />
                             Disparar Aviso Global
                         </Button>
                         {!podeDisparar && (
-                            <p className="text-[10px] text-muted-foreground text-right">
+                            <p className="text-[10px] text-muted-foreground text-right max-w-xs">
                                 {motivoBloqueio}
                             </p>
                         )}
                     </div>
                 </div>
+            </div>
+
+            {situacao && situacao.foraDeSincronia.length > 0 && (
+                <div className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-500 text-sm">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>Unidades fora do mês vigente no RAG: {situacao.foraDeSincronia.map(u => u.replace("Cuca ", "")).join(", ")}.</span>
+                </div>
+            )}
+
+            {/* S-PROG-15: bloqueio duplo */}
+            <div className="grid gap-3 md:grid-cols-2">
+                <Nivel numero={1} titulo="Programações autorizadas" ok={!!situacao?.nivel1} detalhe={detalheNivel1} />
+                <Nivel numero={2} titulo={`RAG de ${MESES[mesAtual - 1]}/${anoAtual}`} ok={!!situacao?.nivel2} detalhe={detalheNivel2} />
             </div>
 
             <Card className="border-blue-500/20 bg-blue-500/[0.04] shadow-sm">
@@ -337,38 +391,41 @@ export default function DivulgacaoPage() {
                         Status da Programação — {MESES[mesAtual - 1]}/{anoAtual}
                     </CardTitle>
                     <CardDescription className="text-xs">
-                        Cada Gerente deve subir a planilha e clicar em &quot;Aprovar Programação&quot; antes do disparo global.
+                        Os coordenadores autorizam cada categoria na tela da programação. Com tudo autorizado, &quot;{situacao?.rotuloAprovar ?? "Aprovar RAG"}&quot; coloca o mês no ar.
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                     <div className="divide-y divide-border/50">
-                        {unidades.map(u => {
-                            const cfg = STATUS_CONFIG[u.status]
-                            return (
-                                <div key={u.unidade} className="flex items-center justify-between px-6 py-3.5 hover:bg-muted/30 transition-colors">
-                                    <div className="flex items-center gap-3">
-                                        <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                                        <span className="font-medium text-foreground text-sm">{u.unidade}</span>
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                        {u.total_atividades > 0 && (
-                                            <span className="text-xs text-muted-foreground hidden sm:block">
-                                                {u.total_atividades} atividades
-                                            </span>
-                                        )}
-                                        {u.updated_at && (
-                                            <span className="text-xs text-muted-foreground/60 hidden md:block">
-                                                {format(new Date(u.updated_at), "dd/MM HH:mm", { locale: ptBR })}
-                                            </span>
-                                        )}
-                                        <Badge className={`flex items-center gap-1.5 text-xs font-medium border ${cfg.color}`}>
-                                            {cfg.icon}
-                                            {cfg.label}
-                                        </Badge>
-                                    </div>
+                        {unidades.map(u => (
+                            <div key={u.unidade} className="flex flex-col lg:flex-row lg:items-center justify-between gap-2 px-6 py-3.5 hover:bg-muted/30 transition-colors">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                                    <span className="font-medium text-foreground text-sm">{u.unidade}</span>
+                                    {!u.campanhaId && <span className="text-xs text-muted-foreground">sem programação</span>}
                                 </div>
-                            )
-                        })}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    {u.categorias.map(c => (
+                                        <Badge key={c.categoria} variant="outline" className={cn("text-[10.5px]",
+                                            c.status === "autorizada" ? "border-green-500/30 text-green-400"
+                                                : c.status === "aguardando_autorizacao" ? "border-amber-500/30 text-amber-400" : "text-muted-foreground")}>
+                                            {c.categoria}: {ROTULO_STATUS_CATEGORIA[c.status as StatusCategoria] ?? c.status}
+                                        </Badge>
+                                    ))}
+                                    <Badge className={`flex items-center gap-1.5 text-xs font-medium border ${COR_ESTADO_RAG[u.rag]}`}>
+                                        {u.rag === "indexando" ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                            : u.rag === "no_ar" ? <CheckCircle2 className="h-3.5 w-3.5" />
+                                                : u.rag === "falhou" ? <AlertCircle className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
+                                        RAG: {ROTULO_ESTADO_RAG[u.rag]}
+                                    </Badge>
+                                    {u.rag === "falhou" && situacao?.permissoes.aprovarRag && situacao.mesPermitido && situacao.nivel1 && (
+                                        <Button size="sm" variant="outline" className="h-7 text-xs gap-1" disabled={aprovandoRag}
+                                            onClick={() => aprovarRag(u.unidade)}>
+                                            <RotateCcw className="h-3 w-3" /> Tentar de novo
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 </CardContent>
             </Card>
@@ -415,6 +472,30 @@ export default function DivulgacaoPage() {
                     )}
                 </CardContent>
             </Card>
+
+            {/* S-PROG-15: confirmação do "Aprovar RAG" */}
+            <Dialog open={confirmarRagAberto} onOpenChange={setConfirmarRagAberto}>
+                <DialogContent className="sm:max-w-[520px]">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <DatabaseZap className="h-5 w-5 text-blue-500" />
+                            {situacao?.rotuloAprovar} — {MESES_EXTENSO[mesAtual - 1]} de {anoAtual}
+                        </DialogTitle>
+                        <DialogDescription>
+                            O assistente do WhatsApp passará a responder com a programação de <strong>{MESES_EXTENSO[mesAtual - 1]} de {anoAtual}</strong> em
+                            {" "}{situacao?.precisamAprovar.map(u => u.replace("Cuca ", "")).join(", ")}. Cada unidade entra no ar quando terminar a
+                            indexação; até lá, o conteúdo atual continua respondendo.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setConfirmarRagAberto(false)} disabled={aprovandoRag}>Cancelar</Button>
+                        <Button className="bg-blue-600 hover:bg-blue-700 text-white font-bold" onClick={() => aprovarRag()} disabled={aprovandoRag}>
+                            {aprovandoRag ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <DatabaseZap className="h-4 w-4 mr-2" />}
+                            Confirmar
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Modal de Disparo */}
             <Dialog open={modalAberto} onOpenChange={setModalAberto}>

@@ -31,7 +31,10 @@ import { montarAbasExportacao, nomeArquivoExportacao } from "@/lib/programacao/e
 import { ProgramacaoPdfDocument } from "@/lib/programacao/programacao-pdf"
 import { useUser } from "@/lib/auth/user-provider"
 import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
-import { opcaoLiberada, permissoesDaCategoria, podeTransicionar } from "@/lib/programacao/permissoes-categoria"
+import {
+    NOMES_CATEGORIAS, ROTULO_STATUS_CATEGORIA, opcaoLiberada, permissoesDaCategoria, podeTransicionarCategoria,
+    slugDaCategoria, transicaoExigeMotivo, transicoesPossiveis, type AcaoFluxo, type StatusCategoria,
+} from "@/lib/programacao/permissoes-categoria"
 import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
 
 // S-PROG-04 (item 3): uma linha do histórico de transições — join com `colaboradores` pra
@@ -42,6 +45,7 @@ interface HistoricoItem {
     para_status: string
     motivo: string | null
     criado_em: string
+    categoria: string | null
     colaboradores: { nome_completo: string | null }[] | null
 }
 
@@ -58,21 +62,15 @@ export default function CampanhaMensalPage() {
     const [campanha, setCampanha] = useState<CampanhaMensal | null>(null)
     const [atividades, setAtividades] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
-    const [isAprovando, setIsAprovando] = useState(false)
     const [isAlterandoStatus, setIsAlterandoStatus] = useState(false)
     const [searchTerm, setSearchTerm] = useState("")
     const [categoriaFilter, setCategoriaFilter] = useState("all")
     const [categoriasUnicas, setCategoriasUnicas] = useState<string[]>([])
-    // S-PROG-13: linhas lidas do banco que ficaram fora da tela por categoria sem "ver".
-    const [linhasForaDoPerfil, setLinhasForaDoPerfil] = useState(0)
-
-    // S-PROG-04 (item 3): histórico de transições — linha do tempo na tela de aprovação.
+    // S-PROG-14: status de cada categoria e a transição que está sendo confirmada (motivo quando exigido).
+    const [statusCategorias, setStatusCategorias] = useState<Record<string, StatusCategoria>>({})
     const [historico, setHistorico] = useState<HistoricoItem[]>([])
-    // S-PROG-04 (item 2): "Devolver para ajuste" exige motivo obrigatório.
-    const [dialogDevolverAberto, setDialogDevolverAberto] = useState(false)
-    const [motivoDevolucao, setMotivoDevolucao] = useState("")
-    // S-PROG-04 (item 2): "Reabrir" uma aprovada exige confirmação (sai do ar).
-    const [dialogReabrirAberto, setDialogReabrirAberto] = useState(false)
+    const [transicaoAberta, setTransicaoAberta] = useState<{ categoria: string; de: StatusCategoria; para: StatusCategoria; acao: AcaoFluxo } | null>(null)
+    const [motivoTransicao, setMotivoTransicao] = useState("")
 
     const supabase = createClient()
 
@@ -82,15 +80,9 @@ export default function CampanhaMensalPage() {
     const checarPgm = useChecarPgm()
     const podeExportar = opcaoLiberada(checarPgm, PGM_GERAL.exportar)
     const podeVerHistorico = opcaoLiberada(checarPgm, PGM_GERAL.historico)
-    const categoriasDaCampanha = atividades.map(a => a.categoria as string | null)
-    // `atividades` já vem só com as categorias visíveis. Se alguma linha ficou de fora, o servidor
-    // recusaria qualquer transição (ele confere todas as categorias) — os botões não aparecem.
-    // Não usar `total_atividades`: o número gravado nem sempre bate com as linhas (set/2026 Pici:
-    // 124 gravado, 100 linhas). Depois do contrato, as linhas fora do perfil nem chegam aqui, e a
-    // rota responde 403 com a mensagem.
-    const temCategoriaForaDoPerfil = linhasForaDoPerfil > 0
-    const pode = (de: string, para: string) =>
-        !temCategoriaForaDoPerfil && podeTransicionar(checarPgm, de, para, categoriasDaCampanha)
+    // Categorias visíveis ao perfil que têm atividade nesta programação, na ordem padrão.
+    const categoriasVisiveis = NOMES_CATEGORIAS.filter(nome =>
+        atividades.some(a => slugDaCategoria(a.categoria) === slugDaCategoria(nome)))
 
     useEffect(() => {
         if (campanhaId && !carregandoUsuario) fetchData()
@@ -101,7 +93,7 @@ export default function CampanhaMensalPage() {
         if (!podeVerHistorico) { setHistorico([]); return }
         const { data } = await supabase
             .from("campanha_historico")
-            .select("id, de_status, para_status, motivo, criado_em, colaboradores(nome_completo)")
+            .select("id, de_status, para_status, motivo, criado_em, categoria, colaboradores(nome_completo)")
             .eq("campanha_id", campanhaId)
             .order("criado_em", { ascending: false })
         setHistorico(data || [])
@@ -124,7 +116,10 @@ export default function CampanhaMensalPage() {
 
             const visiveis = (actData || []).filter(a => permissoesDaCategoria(checarPgm, a.categoria).ver)
             setAtividades(visiveis)
-            setLinhasForaDoPerfil((actData || []).length - visiveis.length)
+
+            const { data: stData } = await supabase
+                .from("campanha_categoria_status").select("categoria, status").eq("campanha_id", campanhaId)
+            setStatusCategorias(Object.fromEntries((stData || []).map(s => [s.categoria as string, s.status as StatusCategoria])))
             if (visiveis) {
                 const distinctTags = Array.from(new Set(visiveis.map(a => a.categoria || "Diversos")))
                 setCategoriasUnicas(distinctTags as string[])
@@ -139,85 +134,62 @@ export default function CampanhaMensalPage() {
         }
     }
 
-    // S-PROG-04 (item 2/4): ponto único de transição — valida, bloqueia sem revisão, grava
-    // histórico (tudo do lado do servidor, ver /api/programacao/status). Devolve `true` em
-    // sucesso pra cada chamador decidir sua própria mensagem/estado local.
-    const executarTransicao = async (novoStatus: string, motivo?: string): Promise<boolean> => {
+    // S-PROG-14: transição de UMA categoria — o servidor confere permissão da categoria, unidade,
+    // campos obrigatórios e motivo, grava o histórico e deriva o status da programação. Não mexe no
+    // RAG: publicar é o "Aprovar RAG" da Divulgação.
+    const executarTransicao = async (categoria: string, para: StatusCategoria, motivo?: string): Promise<boolean> => {
         if (!campanha) return false
+        setIsAlterandoStatus(true)
         try {
             const res = await fetch("/api/programacao/status", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanha_id: campanha.id, novoStatus, motivo }),
+                body: JSON.stringify({ campanha_id: campanha.id, categoria, novoStatus: para, motivo }),
             })
             const data = await res.json()
             if (!res.ok) {
-                if (res.status === 409 && data.totalProblemas) {
-                    // S-PROG-11 (item 4, achado adicional): esta função só é chamada dentro desta
-                    // própria página, que já É a tela de atividades — não existe "abrir Ver
-                    // Atividades" pra fazer, o usuário já está vendo a grade abaixo.
-                    toast.error(`Não é possível enviar: ${data.totalProblemas} ponto(s) a revisar. Corrija nas atividades abaixo antes de tentar de novo.`)
-                } else {
-                    toast.error(data.error || "Erro ao alterar status")
-                }
+                toast.error(res.status === 409 && data.totalProblemas
+                    ? `Não é possível enviar ${categoria}: ${data.totalProblemas} ponto(s) a revisar. Corrija nas atividades antes de tentar de novo.`
+                    : data.error || "Erro ao alterar status")
                 return false
             }
-            setCampanha({ ...campanha, status: novoStatus })
+            setStatusCategorias(prev => ({ ...prev, [categoria]: para }))
+            if (data.statusCampanha) setCampanha({ ...campanha, status: data.statusCampanha })
             await fetchHistorico()
             return true
         } catch (e) {
             toast.error(e instanceof Error ? e.message : "Erro ao alterar status")
             return false
+        } finally {
+            setIsAlterandoStatus(false)
         }
     }
 
-    // Item 2: Aprovar (pendente → aprovado) — vai ao ar e dispara os embeddings do RAG (já
-    // condicional a `status = 'aprovado'` no trigger `trigger_indexar_campanha_mensal`).
-    const handleAprovarProgramacao = async () => {
-        if (!campanha || campanha.status !== "pendente") return
-        setIsAprovando(true)
-        const ok = await executarTransicao("aprovado")
-        setIsAprovando(false)
-        if (ok) toast.success("Programação aprovada! Foi ao ar e os embeddings do RAG foram gerados.")
+    const ROTULO_ACAO: Record<AcaoFluxo, string> = {
+        enviar: "Enviar para autorização",
+        autorizar: "Autorizar",
+        devolver: "Devolver para ajuste",
+        reabrir: "Reabrir",
+    }
+    const MENSAGEM_SUCESSO: Record<AcaoFluxo, string> = {
+        enviar: "enviada para autorização",
+        autorizar: "autorizada",
+        devolver: "devolvida para ajuste",
+        reabrir: "reaberta para edição",
     }
 
-    // Item 2: Finalizar/"Enviar para aprovação" (rascunho → pendente) — bloqueada no servidor se
-    // houver ponto a revisar.
-    const handleFinalizarProgramacao = async () => {
-        if (!campanha || campanha.status !== "rascunho") return
-        if (!confirm("Finalizar a programação e enviá-la para aprovação?")) return
-        setIsAlterandoStatus(true)
-        const ok = await executarTransicao("pendente")
-        setIsAlterandoStatus(false)
-        if (ok) toast.success("Programação enviada para aprovação!")
-    }
-
-    // Item 2: "Devolver para ajuste" (pendente → rascunho) — motivo obrigatório, registrado no
-    // histórico. Substitui o antigo "Reabrir para Edição" que não pedia motivo nenhum.
-    const handleConfirmarDevolucao = async () => {
-        if (!motivoDevolucao.trim()) {
-            toast.error("Informe o motivo da devolução.")
+    const confirmarTransicao = async () => {
+        if (!transicaoAberta) return
+        const { categoria, de, para, acao } = transicaoAberta
+        if (transicaoExigeMotivo(de, para) && !motivoTransicao.trim()) {
+            toast.error("Informe o motivo.")
             return
         }
-        setIsAlterandoStatus(true)
-        const ok = await executarTransicao("rascunho", motivoDevolucao.trim())
-        setIsAlterandoStatus(false)
+        const ok = await executarTransicao(categoria, para, motivoTransicao.trim() || undefined)
         if (ok) {
-            toast.success("Programação devolvida para ajuste.")
-            setDialogDevolverAberto(false)
-            setMotivoDevolucao("")
-        }
-    }
-
-    // Item 2: "Reabrir" uma aprovada (aprovado → rascunho) — sai do ar até nova aprovação (o
-    // mesmo trigger que gera o embedding na aprovação já desativa quando status != 'aprovado').
-    const handleConfirmarReabrir = async () => {
-        setIsAlterandoStatus(true)
-        const ok = await executarTransicao("rascunho")
-        setIsAlterandoStatus(false)
-        if (ok) {
-            toast.success("Programação reaberta — saiu do ar até ser aprovada de novo.")
-            setDialogReabrirAberto(false)
+            toast.success(`${categoria} ${MENSAGEM_SUCESSO[acao]}.`)
+            setTransicaoAberta(null)
+            setMotivoTransicao("")
         }
     }
 
@@ -317,9 +289,9 @@ export default function CampanhaMensalPage() {
                                     </button>
                                 </TooltipTrigger>
                                 <TooltipContent className="max-w-72 text-xs space-y-1">
-                                    <p><strong>Rascunho:</strong> em edição, fora do ar. Junta técnica envia para aprovação.</p>
-                                    <p><strong>Pendente:</strong> aguardando a coordenação aprovar ou devolver.</p>
-                                    <p><strong>Aprovado:</strong> no ar — o assistente do WhatsApp já responde com este conteúdo.</p>
+                                    <p><strong>Rascunho:</strong> alguma categoria em edição ou aguardando autorização.</p>
+                                    <p><strong>Autorizada:</strong> todas as categorias autorizadas; falta aprovar o RAG na Divulgação.</p>
+                                    <p><strong>Aprovado:</strong> RAG aprovado na Divulgação — o assistente do WhatsApp responde com este conteúdo.</p>
                                 </TooltipContent>
                             </Tooltip>
                         </div>
@@ -333,79 +305,13 @@ export default function CampanhaMensalPage() {
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap shrink-0">
-                    {temCategoriaForaDoPerfil && campanha.status !== "aprovado" && (
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Badge variant="outline" className="text-xs text-muted-foreground gap-1">
-                                    <HelpCircle className="h-3 w-3" /> Envio e autorização indisponíveis
-                                </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-64 text-xs">
-                                Esta programação tem atividades de categorias fora do seu perfil. Enviar, autorizar,
-                                devolver ou reabrir exige permissão em todas as categorias dela.
-                            </TooltipContent>
-                        </Tooltip>
-                    )}
-                    {/* Item 2: Finalizar/"Enviar para aprovação" (rascunho → pendente) */}
-                    {campanha.status === "rascunho" && pode("rascunho", "pendente") && (
-                        <Button
-                            variant="outline"
-                            className="border-amber-500/60 text-amber-600 hover:bg-amber-500/10 font-semibold"
-                            onClick={handleFinalizarProgramacao}
-                            disabled={isAlterandoStatus}
-                        >
-                            {isAlterandoStatus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                            Finalizar Programação
-                        </Button>
-                    )}
-                    {/* Item 2: "Devolver para ajuste" (pendente → rascunho) — motivo obrigatório */}
-                    {campanha.status === "pendente" && pode("pendente", "rascunho") && (
-                        <Button
-                            variant="outline"
-                            className="font-semibold"
-                            onClick={() => setDialogDevolverAberto(true)}
-                            disabled={isAlterandoStatus}
-                        >
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Devolver para ajuste
-                        </Button>
-                    )}
-                    {/* Item 2: "Reabrir" uma aprovada (aprovado → rascunho) — sai do ar */}
-                    {campanha.status === "aprovado" && pode("aprovado", "rascunho") && (
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Button
-                                    variant="outline"
-                                    className="font-semibold gap-2"
-                                    onClick={() => setDialogReabrirAberto(true)}
-                                    disabled={isAlterandoStatus}
-                                >
-                                    <Undo2 className="h-4 w-4" />
-                                    Reabrir para editar
-                                </Button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-64 text-xs">
-                                A programação sai do ar enquanto estiver sendo editada e volta quando for aprovada de novo.
-                            </TooltipContent>
-                        </Tooltip>
-                    )}
-                    {/* Item 2: Aprovar (pendente → aprovado) */}
-                    {campanha.status === "aprovado" ? (
-                        <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 px-4 py-2 text-sm font-semibold">
-                            <CheckCircle2 className="h-4 w-4 mr-2" /> Programação Aprovada
+                    {campanha.status === "autorizada" && (
+                        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30 px-3 py-1.5 text-xs font-semibold">
+                            <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Todas as categorias autorizadas — aguardando &quot;Aprovar RAG&quot; na Divulgação
                         </Badge>
-                    ) : campanha.status === "pendente" && pode("pendente", "aprovado") ? (
-                        <Button
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
-                            onClick={handleAprovarProgramacao}
-                            disabled={isAprovando}
-                        >
-                            {isAprovando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ThumbsUp className="mr-2 h-4 w-4" />}
-                            Aprovar Programação
-                        </Button>
-                    ) : null}
+                    )}
                     {/* S-PROG-05 (item 1): escolha do formato — nenhum é padrão implícito */}
-                    {podeExportar && (campanha.status === "aprovado" || campanha.status === "pendente") && (
+                    {podeExportar && (campanha.status === "aprovado" || campanha.status === "autorizada") && (
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button variant="outline" className="font-semibold gap-2" disabled={gerandoPdf}>
@@ -426,6 +332,56 @@ export default function CampanhaMensalPage() {
                 </div>
             </div>
 
+            {/* S-PROG-14: autorização por categoria */}
+            {categoriasVisiveis.length > 0 && (
+                <div className="bg-card p-5 rounded-2xl border border-border space-y-3">
+                    <p className="text-sm font-bold flex items-center gap-2">
+                        <Send className="h-4 w-4 text-muted-foreground" /> Autorização por categoria
+                    </p>
+                    <div className="divide-y divide-border/60">
+                        {categoriasVisiveis.map(categoria => {
+                            const status = statusCategorias[categoria] ?? "rascunho"
+                            const acoes = transicoesPossiveis(status).filter(t => podeTransicionarCategoria(checarPgm, categoria, status, t.para))
+                            return (
+                                <div key={categoria} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2.5">
+                                    <div className="flex items-center gap-2.5">
+                                        <span className="text-sm font-semibold">{categoria}</span>
+                                        <Badge variant="outline" className={cn("text-xs",
+                                            status === "autorizada" ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30"
+                                                : status === "aguardando_autorizacao" ? "bg-amber-500/10 text-amber-500 border-amber-500/30"
+                                                    : "text-muted-foreground")}>
+                                            {ROTULO_STATUS_CATEGORIA[status]}
+                                        </Badge>
+                                    </div>
+                                    <div className="flex gap-2 flex-wrap">
+                                        {acoes.map(t => (
+                                            <Button
+                                                key={t.acao}
+                                                size="sm"
+                                                variant={t.acao === "autorizar" ? "default" : "outline"}
+                                                className={cn(t.acao === "autorizar" && "bg-emerald-600 hover:bg-emerald-700 text-white")}
+                                                disabled={isAlterandoStatus}
+                                                onClick={() => { setMotivoTransicao(""); setTransicaoAberta({ categoria, de: status, para: t.para, acao: t.acao }) }}
+                                            >
+                                                {t.acao === "autorizar" ? <ThumbsUp className="h-3.5 w-3.5 mr-1.5" />
+                                                    : t.acao === "enviar" ? <Send className="h-3.5 w-3.5 mr-1.5" />
+                                                        : t.acao === "reabrir" ? <Undo2 className="h-3.5 w-3.5 mr-1.5" />
+                                                            : <Pencil className="h-3.5 w-3.5 mr-1.5" />}
+                                                {ROTULO_ACAO[t.acao]}
+                                            </Button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                        Autorizar não publica no assistente do WhatsApp: o mês entra no ar só pelo &quot;Aprovar RAG&quot; na Divulgação.
+                        Reabrir uma categoria de um mês que já está no ar não tira o mês do ar.
+                    </p>
+                </div>
+            )}
+
             {/* Item 3: histórico visível — linha do tempo de transições, com motivo quando houver */}
             {historico.length > 0 && (
                 <div className="bg-card p-5 rounded-2xl border border-border">
@@ -438,6 +394,7 @@ export default function CampanhaMensalPage() {
                                 <span className="h-2 w-2 rounded-full bg-primary mt-1.5 shrink-0" />
                                 <div>
                                     <p className="font-medium">
+                                        {h.categoria ? `${h.categoria}: ` : ""}
                                         {h.de_status ? `${h.de_status} → ${h.para_status}` : `Criada como ${h.para_status}`}
                                         <span className="text-muted-foreground font-normal ml-2">
                                             {format(new Date(h.criado_em), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
@@ -454,49 +411,38 @@ export default function CampanhaMensalPage() {
                 </div>
             )}
 
-            {/* Item 2: dialog "Devolver para ajuste" — motivo obrigatório */}
-            <AlertDialog open={dialogDevolverAberto} onOpenChange={setDialogDevolverAberto}>
+            {/* S-PROG-14: confirmação da transição de categoria (motivo em devolver e reabrir) */}
+            <AlertDialog open={!!transicaoAberta} onOpenChange={aberto => { if (!aberto) setTransicaoAberta(null) }}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Devolver para ajuste</AlertDialogTitle>
+                        <AlertDialogTitle>{transicaoAberta ? `${ROTULO_ACAO[transicaoAberta.acao]} — ${transicaoAberta.categoria}` : ""}</AlertDialogTitle>
                         <AlertDialogDescription>
-                            A programação volta para rascunho e sai da fila de aprovação. Explique o que precisa ser corrigido —
-                            o motivo fica registrado no histórico e a junta técnica vê ao reabrir.
+                            {transicaoAberta?.acao === "enviar" && "A categoria vai para o coordenador e fica somente leitura até ser autorizada ou devolvida."}
+                            {transicaoAberta?.acao === "autorizar" && "A categoria fica autorizada. A programação só entra no ar quando o RAG do mês for aprovado na Divulgação."}
+                            {transicaoAberta?.acao === "devolver" && "A categoria volta para rascunho. Explique o que precisa ser corrigido — o motivo fica no histórico."}
+                            {transicaoAberta?.acao === "reabrir" && "A categoria volta para rascunho para edição. Se o mês já está no ar, ele continua no ar com o conteúdo atual até o RAG ser aprovado de novo."}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
-                    <Textarea
-                        placeholder="Ex.: revisar horários de Esportes"
-                        value={motivoDevolucao}
-                        onChange={e => setMotivoDevolucao(e.target.value)}
-                        rows={3}
-                    />
+                    {transicaoAberta && transicaoExigeMotivo(transicaoAberta.de, transicaoAberta.para) && (
+                        <Textarea
+                            placeholder="Motivo (obrigatório)"
+                            value={motivoTransicao}
+                            onChange={e => setMotivoTransicao(e.target.value)}
+                            rows={3}
+                        />
+                    )}
                     <AlertDialogFooter>
-                        <AlertDialogCancel onClick={() => setMotivoDevolucao("")}>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleConfirmarDevolucao} disabled={isAlterandoStatus || !motivoDevolucao.trim()}>
-                            Devolver
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={e => { e.preventDefault(); confirmarTransicao() }}
+                            disabled={isAlterandoStatus || (!!transicaoAberta && transicaoExigeMotivo(transicaoAberta.de, transicaoAberta.para) && !motivoTransicao.trim())}
+                        >
+                            Confirmar
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
 
-            {/* Item 2: dialog "Reabrir" uma aprovada — sai do ar até nova aprovação */}
-            <AlertDialog open={dialogReabrirAberto} onOpenChange={setDialogReabrirAberto}>
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Reabrir para editar?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            A programação sai do ar imediatamente (o assistente do WhatsApp deixa de usar este conteúdo) e volta
-                            para rascunho. Só volta a valer depois de ser aprovada de novo.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleConfirmarReabrir} disabled={isAlterandoStatus}>
-                            Sim, reabrir
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
 
             {/* ── Filtros + Grid ── */}
             <div className="bg-card rounded-2xl border border-border flex-1 flex flex-col overflow-hidden">
