@@ -1,9 +1,6 @@
 -- S-PROG-16 (contract B): documentos do assistente (`documentos_rag`, `chunks_documentos`) deixam de
 -- aceitar gravação pela API de quem não é Developer.
--- NÃO APLICAR antes de: (1) merge + redeploy do `portal` com a S-PROG-16 (a página antiga da base global
--- grava direto na tabela); (2) deploy da Edge Function `gerar-resumo-rede` com a checagem `pgr_gerar_resumo`.
--- Aplicar separado do contract A e conferir o assistente e a indexação logo depois.
--- Ao aplicar, mover este arquivo para supabase/migrations com a versão devolvida pelo servidor.
+-- Aplicado em produção em 2026-09-13 (versão no nome do arquivo), após merge + redeploy do `portal`, deploy da `gerar-resumo-rede` (v3) e do contract A.
 -- Idempotente.
 --
 -- Quem continua gravando: chave de serviço (rotas /api/rag-global/**, Divulgação, Edge Functions, worker),

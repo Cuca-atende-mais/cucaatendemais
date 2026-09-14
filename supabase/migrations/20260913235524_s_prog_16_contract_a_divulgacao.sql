@@ -1,7 +1,5 @@
 -- S-PROG-16 (contract A): Divulgação deixa de consultar o módulo antigo `divulgacao`.
--- NÃO APLICAR antes de: merge + redeploy do `portal` com a S-PROG-16 (a tela nova de Perfis já não mostra
--- `divulgacao`; a antiga apaga `pgm_divulgacao_ver` ao salvar, por isso o passo 0).
--- Ao aplicar, mover este arquivo para supabase/migrations com a versão devolvida pelo servidor.
+-- Aplicado em produção em 2026-09-13 (versão no nome do arquivo), após merge + redeploy do `portal`.
 -- Idempotente.
 
 -- 0. Reespelha "Ver Divulgação" para perfis salvos na tela antiga (mesmo bloco da migration 20260913222009).
