@@ -133,6 +133,12 @@ _ETAPAS_OFERTA_ATENDENTE = {
     # S-EMP-AUD-023 passo 2: novas etapas de listagem por cargo consolidado
     "listou_cargos_consolidados",
     "listou_ocorrencias_cargo",
+    # 2026-09-15: entrou junto com a correção do loop de "Siim". Entrar AQUI (e não num conjunto
+    # separado só pro contador) é deliberado: `_resetar_fluxo_por_inatividade` usa este mesmo
+    # conjunto, então a etapa ganha o contador de falhas E a expiração de 24h no mesmo passo.
+    # Adicionar só o contador reintroduziria o BUG-04 da S-EMP-AUD-033 — conversa dormente
+    # voltando e sendo escalada pra atendente logo na 1ª mensagem, com o contador velho intacto.
+    "confirmando_interesse_vaga",
 }
 # S-EMP-AUD-033: BUG-04 da auditoria de 27/08 — uma conversa dormente há 9 dias voltou e foi
 # escalada pra atendente na 1ª mensagem, porque nenhuma etapa/contador tinha noção de tempo.
@@ -3561,9 +3567,19 @@ async def _processar_publico(
     # Depois do card da vaga: SIM segue o fluxo (re-entra na rota da vaga com
     # interesse_confirmado=True); NÃO desiste e cai em pos_candidatura (Concern 1).
     if etapa == "confirmando_interesse_vaga":
-        tem_negacao = any(p in t_lower for p in ("não", "nao"))
-        quer_sim = not tem_negacao and any(
-            p in t_lower for p in ("sim", "quero", "bora", "aceito", "candidatar", "claro", "pode", "ok", "isso")
+        # Achado em produção 2026-09-14 (conversa 742b26ee): a lead respondeu "Siim" 5 vezes
+        # seguidas e recebeu 6 vezes a mesma pergunta — "sim" não é substring de "siim", o
+        # escape semântico não resgata erro de digitação (ele só detecta sair/voltar/mudança de
+        # assunto) e esta etapa não tinha contador de falhas. A única saída era dizer "não", que
+        # CANCELA a candidatura que a pessoa estava tentando confirmar. As duas regex abaixo
+        # toleram alongamento de letra, o vício de digitação mais comum no WhatsApp
+        # ("siim", "simm", "sssim", "nãoo", "naaao").
+        tem_negacao = any(p in t_lower for p in ("não", "nao", "naum")) or bool(
+            re.search(r"\bn+[aã]+o+\b", t_lower)
+        )
+        quer_sim = not tem_negacao and (
+            bool(re.search(r"\bs+i+m+\b", t_lower))
+            or any(p in t_lower for p in ("sim", "quero", "bora", "aceito", "candidatar", "claro", "pode", "ok", "isso"))
         )
         if quer_sim:
             ocorrencia = {
@@ -3596,6 +3612,14 @@ async def _processar_publico(
         # se não for mudança de assunto, repete a pergunta sim/não.
         if await _escape_semantico_ou_none(
             texto, "publico", etapa, conversa_id, phone, instance_name, token, lead_id, unidade_cuca,
+        ):
+            return
+        # Anti-loop: depois de `_LIMIAR_FALHAS_OFERTA_ATENDENTE` respostas que nem o parser nem o
+        # classificador entenderam, oferece atendente humano em vez de repetir a pergunta pra
+        # sempre (a etapa entrou em `_ETAPAS_OFERTA_ATENDENTE` junto com esta correção).
+        if await _registrar_falha_e_oferecer_atendente(
+            fluxo=fluxo, etapa=etapa, conversa_id=conversa_id,
+            instance_name=instance_name, token=token, phone=phone, lead_id=lead_id,
         ):
             return
         await e(
@@ -4030,10 +4054,16 @@ async def _processar_publico(
             return
         arquivo_existente = fluxo.get("arquivo_pendente_url") or fluxo.get("curriculo_r2_url")
         resp = _interpretar_sim_nao(texto)
-        if arquivo_existente and resp is True:
+        # "quero enviar outro" (a resposta que a própria pergunta sugere) e variações são recusa
+        # explícita — ver `_RESPOSTAS_TROCAR_CURRICULO`. Sem isto, caíam no ramo ambíguo abaixo
+        # e repetiam a pergunta pra sempre.
+        quer_trocar = any(
+            re.search(rf"(?:^|\s){re.escape(p)}(?:\s|$|,|\.)", t_lower) for p in _RESPOSTAS_TROCAR_CURRICULO
+        )
+        if arquivo_existente and resp is True and not quer_trocar:
             await _finalizar_coleta_curriculo_chat(instance_name, token, phone, conversa_id, fluxo, lead_id=lead_id)
             return
-        if arquivo_existente and resp is None:
+        if arquivo_existente and resp is None and not quer_trocar:
             # Resposta ambígua ("pode ser", "esse aí") — NÃO descartar o currículo já recebido:
             # repergunta preservando o estado. Só um "não/quero enviar outro" explícito limpa.
             await e("Só confirmando: quer usar o currículo que já recebi? Responda *sim* ou *quero enviar outro*.")
@@ -4737,6 +4767,14 @@ async def _processar_publico(
 
 _PALAVRAS_SIM_PCD = ("sim", "isso", "sou", "tenho", "positivo", "claro", "afirmativo", "pcd", "yes", "uhum", "aham")
 _PALAVRAS_NAO_PCD = ("não", "nao", "negativo", "nunca", "jamais", "no")
+# Achado em produção 2026-09-15: a etapa `coletando_ou_confirmando_curriculo` pede ao lead
+# "Responda *sim* ou *quero enviar outro*" — mas `_interpretar_sim_nao` só conhece as listas
+# acima, e "quero enviar outro" não bate em NENHUMA delas. O lead respondia exatamente a frase
+# que o bot mandou responder e recebia a mesma pergunta de volta, indefinidamente (3 conversas
+# afetadas, até 7 repetições seguidas). Estas palavras valem SÓ nessa etapa — deliberadamente
+# fora de `_PALAVRAS_NAO_PCD`, que responde a "você é PCD?", onde "outro"/"trocar" não
+# significam "não".
+_RESPOSTAS_TROCAR_CURRICULO = ("outro", "outra", "novo", "nova", "trocar", "troca", "mudar", "atualizar", "substituir")
 
 # S-EMP-FSL-07: as 10 áreas do Banco de Talentos — CÓPIA EXATA de `AREAS_INTERESSE`
 # (candidatura/page.tsx:15), idêntica também ao classificador `talent_bank_matcher.py:22` e ao

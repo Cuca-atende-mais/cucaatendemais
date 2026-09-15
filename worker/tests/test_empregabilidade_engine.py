@@ -7858,3 +7858,127 @@ class TestRotaAssuntoInstitucionalHotfixIntencaoAmbigua:
         texto_enviado = mock_enviar.call_args.args[3]
         assert "wa.me/5585999401027" in texto_enviado
         assert "não entendi" not in texto_enviado.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Loops de sim/não confirmados em produção em 2026-09-14/15
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestLoopsConfirmacaoProducao:
+    """Regressões dos dois loops achados na investigação de 15/09.
+
+    Os dois têm a mesma forma: o parser determinístico devolve "ambíguo", o escape
+    semântico não resgata (ele só detecta sair/voltar/mudança de assunto) e a etapa
+    repergunta — pra sempre.
+    """
+
+    @pytest.mark.asyncio
+    async def test_quero_enviar_outro_pede_arquivo_novo(self, monkeypatch, _isola_enviar):
+        """Conv 6b854976 (09/09): o bot manda "Responda *sim* ou *quero enviar outro*",
+        a lead responde exatamente isso e recebe a mesma pergunta de volta."""
+        estado, fake_get, fake_set = _fluxo_mock(
+            "coletando_ou_confirmando_curriculo",
+            {"perfil": "publico", "banco_talentos": True, "arquivo_pendente_url": "document/x.pdf"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        finalizar = AsyncMock()
+        monkeypatch.setattr(emp, "_finalizar_coleta_curriculo_chat", finalizar)
+
+        await emp._processar_publico("Quero enviar outro", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        # Não reaproveita o currículo antigo e não repergunta: pede o arquivo novo.
+        finalizar.assert_not_awaited()
+        texto = _isola_enviar.call_args.args[3].lower()
+        assert "me envie o currículo" in texto
+        assert "só confirmando" not in texto
+        # E limpa o arquivo anterior, senão o próximo turno acha que ainda há um pendente.
+        assert estado["arquivo_pendente_url"] == ""
+
+    @pytest.mark.asyncio
+    async def test_sim_com_intencao_de_trocar_prevalece_a_troca(self, monkeypatch, _isola_enviar):
+        """"sim, quero enviar outro" — o "sim" é do assentimento, não do reaproveitamento."""
+        estado, fake_get, fake_set = _fluxo_mock(
+            "coletando_ou_confirmando_curriculo",
+            {"perfil": "publico", "banco_talentos": True, "arquivo_pendente_url": "document/x.pdf"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        finalizar = AsyncMock()
+        monkeypatch.setattr(emp, "_finalizar_coleta_curriculo_chat", finalizar)
+
+        await emp._processar_publico("sim, quero enviar outro", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        finalizar.assert_not_awaited()
+        assert "me envie o currículo" in _isola_enviar.call_args.args[3].lower()
+
+    @pytest.mark.asyncio
+    async def test_sim_simples_ainda_reaproveita_curriculo(self, monkeypatch, _isola_enviar):
+        """Guarda do caminho feliz: a correção acima não pode ter quebrado o "sim" puro."""
+        estado, fake_get, fake_set = _fluxo_mock(
+            "coletando_ou_confirmando_curriculo",
+            {"perfil": "publico", "banco_talentos": True, "arquivo_pendente_url": "document/x.pdf"},
+        )
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        finalizar = AsyncMock()
+        monkeypatch.setattr(emp, "_finalizar_coleta_curriculo_chat", finalizar)
+
+        await emp._processar_publico("sim", "5585999", "PID", "tok", "l1", "conv-1", "Barra")
+
+        finalizar.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_siim_com_erro_de_digitacao_confirma_a_vaga(self, monkeypatch, _isola_enviar):
+        """Conv 742b26ee (14/09): "Siim" 5x → a mesma pergunta 6x. "sim" não é
+        substring de "siim"."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_interesse_vaga", {
+            "perfil": "publico", "vaga_id_selecionada": "v3", "cargo_selecionado": "Consultor",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+        rotear = AsyncMock()
+        monkeypatch.setattr(emp, "_rotear_ocorrencia_escolhida", rotear)
+
+        await emp._processar_publico("Siim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        rotear.assert_awaited_once()
+        assert rotear.call_args.kwargs["fluxo"]["interesse_confirmado"] is True
+
+    @pytest.mark.asyncio
+    async def test_negacao_alongada_ainda_e_negacao(self, monkeypatch, _isola_enviar):
+        """"nãoo" não pode virar confirmação de candidatura por causa da tolerância."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_interesse_vaga", {
+            "perfil": "publico", "vaga_id_selecionada": "v3", "cargo_selecionado": "X",
+            "historico_vagas_aplicadas": [],
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+        rotear = AsyncMock()
+        monkeypatch.setattr(emp, "_rotear_ocorrencia_escolhida", rotear)
+
+        await emp._processar_publico("nãoo", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        rotear.assert_not_awaited()
+        assert estado["etapa"] == "pos_candidatura"
+
+    @pytest.mark.asyncio
+    async def test_ambiguo_repetido_oferece_atendente_em_vez_de_loop(self, monkeypatch, _isola_enviar):
+        """Anti-loop: na 3ª resposta que ninguém entendeu, oferece atendente humano —
+        antes a única saída era dizer "não", que cancela a candidatura."""
+        estado, fake_get, fake_set = _fluxo_mock("confirmando_interesse_vaga", {
+            "perfil": "publico", "vaga_id_selecionada": "v3", "cargo_selecionado": "X",
+            "falhas_atendente_etapa": emp._LIMIAR_FALHAS_OFERTA_ATENDENTE - 1,
+            "falhas_atendente_nome_etapa": "confirmando_interesse_vaga",
+        })
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        monkeypatch.setattr(emp, "supabase", _SupabaseFakeBloco6())
+        monkeypatch.setattr(emp, "_escape_semantico_ou_none", AsyncMock(return_value=False))
+
+        await emp._processar_publico("hmm sei lá", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra")
+
+        assert estado["etapa"] == "oferecendo_atendente_humano"
+        assert "atendente" in _isola_enviar.call_args.args[3].lower()
