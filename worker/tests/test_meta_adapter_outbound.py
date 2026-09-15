@@ -19,7 +19,13 @@ sys.modules.setdefault("openai", MagicMock())
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from meta_adapter_outbound import _meta_enviar, GRAPH_API_VERSION, _normalizar_telefone_br
+from meta_adapter_outbound import (
+    _meta_enviar,
+    _fatiar_texto_para_meta,
+    _LIMITE_CHARS_TEXTO_META,
+    GRAPH_API_VERSION,
+    _normalizar_telefone_br,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -315,6 +321,113 @@ def _payload_texto(phone_number_id="TEST_EMPREG", telefone="558599999999", texto
             }],
         }],
     }).encode()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Limite de 4096 chars da Meta (incidente 2026-09-14/15 — lista de vagas muda)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestLimiteCaracteresMeta:
+
+    def test_texto_dentro_do_limite_nao_e_fatiado(self):
+        """Caso normal: volta como parte única, sem alteração nenhuma no texto."""
+        texto = "linha curta\noutra linha"
+        assert _fatiar_texto_para_meta(texto) == [texto]
+
+    def test_texto_no_limite_exato_nao_e_fatiado(self):
+        """Fronteira: exatamente 4096 ainda é aceito pela Meta — não fatia."""
+        assert len(_fatiar_texto_para_meta("a" * _LIMITE_CHARS_TEXTO_META)) == 1
+
+    def test_fatia_preservando_linhas_inteiras(self):
+        """A lista de cargos é numerada — nenhum item pode ser cortado ao meio,
+        senão o lead não consegue digitar o número de volta."""
+        linhas = [f"*{i}.* Cargo numero {i} — 20 vagas — EMPRESA EXEMPLO LTDA" for i in range(1, 121)]
+        texto = "\n".join(linhas)
+        assert len(texto) > _LIMITE_CHARS_TEXTO_META
+
+        partes = _fatiar_texto_para_meta(texto)
+
+        assert len(partes) > 1
+        assert all(len(p) <= _LIMITE_CHARS_TEXTO_META for p in partes)
+        # Nenhuma linha perdida nem partida: reunir as partes reconstrói a lista original.
+        reunido = [ln for parte in partes for ln in parte.split("\n")]
+        assert reunido == linhas
+
+    def test_fatia_texto_continuo_sem_separador(self):
+        """Sem espaço nem quebra de linha (ex.: URL gigante): corte cru, mas entrega."""
+        partes = _fatiar_texto_para_meta("x" * (_LIMITE_CHARS_TEXTO_META + 500))
+        assert len(partes) == 2
+        assert all(len(p) <= _LIMITE_CHARS_TEXTO_META for p in partes)
+        assert "".join(partes) == "x" * (_LIMITE_CHARS_TEXTO_META + 500)
+
+    def test_cabecalho_na_primeira_parte_e_instrucao_na_ultima(self):
+        """Verificado contra o payload real do incidente (46 cargos, 4.722 chars,
+        conversa 6b391585): corta em 2 partes de 4.037 + 684, entre os cargos 40 e 41.
+
+        As duas pontas são o que decide se a mensagem fatiada ainda FUNCIONA, e não só
+        se foi entregue: o cabeçalho tem que abrir a 1ª parte (senão a primeira bolha
+        chega sem contexto) e a instrução "digite o número" tem que fechar a ÚLTIMA
+        (senão o lead lê o pedido de ação antes de ver metade das opções)."""
+        cabecalho = "💼 *Vagas abertas na Rede CUCA — Escolha um ou mais cargos:*\n"
+        corpo = [f"*{i}.* Cargo numero {i} — 20 vagas — EMPRESA EXEMPLO LTDA" for i in range(1, 121)]
+        rodape = "\nDigite o *número* do cargo para ver as vagas.\nDigite *menu* para ver outras opções."
+        mensagem = "\n".join([cabecalho] + corpo + [rodape])
+
+        partes = _fatiar_texto_para_meta(mensagem)
+
+        assert len(partes) > 1
+        assert partes[0].startswith("💼 *Vagas abertas")
+        assert "Digite o *número* do cargo" in partes[-1]
+        # Nenhum cargo perdido nem partido ao meio — a numeração é o que o lead digita de volta.
+        assert [l for p in partes for l in p.split("\n") if l.startswith("*")] == corpo
+
+    @pytest.mark.asyncio
+    async def test_mensagem_longa_e_enviada_em_partes(self):
+        """Regressão do incidente: a lista de 4.773 chars voltava False e o lead não
+        recebia NADA. Agora vira N requests, todos entregues, e retorna True."""
+        mock_httpx = _make_httpx_mock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        texto = "\n".join(f"*{i}.* Cargo {i}" for i in range(1, 700))
+        assert len(texto) > _LIMITE_CHARS_TEXTO_META
+
+        with patch.dict(sys.modules, {"httpx": mock_httpx}):
+            result = await _meta_enviar("PNID", "5585999999999", texto, "tok")
+
+        assert result is True
+        assert mock_client.post.call_count > 1
+        for chamada in mock_client.post.call_args_list:
+            corpo = chamada.kwargs["json"]["text"]["body"]
+            assert len(corpo) <= _LIMITE_CHARS_TEXTO_META
+
+    @pytest.mark.asyncio
+    async def test_falha_em_uma_parte_aborta_as_seguintes(self):
+        """Mesma decisão do loop de partes do motor-agente (S-WM-22): não manda fora
+        de ordem, e entrega parcial não conta como sucesso."""
+        mock_httpx = _make_httpx_mock()
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        erro_resp = MagicMock()
+        erro_resp.status_code = 400
+        erro_resp.json = MagicMock(return_value={"error": {"code": 131009}})
+        mock_client = AsyncMock()
+        # 1ª parte entregue; 2ª falha nas duas tentativas (envio + retry) → aborta a 3ª.
+        mock_client.post = AsyncMock(side_effect=[ok_resp, erro_resp, erro_resp, ok_resp])
+        mock_httpx.AsyncClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_httpx.AsyncClient.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        texto = "\n".join(f"*{i}.* Cargo {i}" for i in range(1, 1400))
+
+        with patch.dict(sys.modules, {"httpx": mock_httpx}):
+            result = await _meta_enviar("PNID", "5585999999999", texto, "tok")
+
+        assert result is False
+        assert mock_client.post.call_count == 3
 
 
 class TestPersistenciaInboundMeta:

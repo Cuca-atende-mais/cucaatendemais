@@ -9,6 +9,23 @@ logger = logging.getLogger("worker-cuca")
 
 GRAPH_API_VERSION = "v23.0"
 
+# Limite duro de caracteres do corpo de uma mensagem de texto da WhatsApp Cloud API.
+# Acima disso a Graph API rejeita o request inteiro (400) — a mensagem NÃO é entregue,
+# nem truncada: o lead simplesmente não recebe nada.
+#
+# Incidente de 2026-09-14/15 (origem desta guarda): a lista consolidada de cargos do fluxo
+# de Empregabilidade cresceu junto com as vagas publicadas (1.857 → 2.069 → 2.241 chars ao
+# longo do dia 14/09) e, depois da publicação de dois processos seletivos novos às 19:08 e
+# 19:27, passou para 4.773 chars. A partir das 19:21 NENHUMA listagem de vagas foi entregue
+# — 22 leads ficaram sem resposta por ~17h, e não havia rastro nenhum do problema, porque
+# `_enviar` (empregabilidade_engine.py) só grava em `mensagens` quando o envio dá certo e
+# nenhum chamador olhava o `False` de retorno.
+#
+# A guarda vive AQUI, no ponto único de saída, e não em quem monta o texto: os 4 canais
+# (Empregabilidade, Institucional, Academia Enem, envio manual do painel) compartilham este
+# adapter, e qualquer mensagem futura que cresça com o volume de dados passa por aqui.
+_LIMITE_CHARS_TEXTO_META = 4096
+
 
 def _normalizar_telefone_br(telefone: str) -> str:
     """
@@ -23,6 +40,38 @@ def _normalizar_telefone_br(telefone: str) -> str:
             telefone[4] != "9"):
         return telefone[:4] + "9" + telefone[4:]
     return telefone
+
+
+def _fatiar_texto_para_meta(text: str, limite: int = _LIMITE_CHARS_TEXTO_META) -> list[str]:
+    """Quebra um texto acima do limite da Meta em partes de até `limite` caracteres.
+
+    Preferência de corte, nesta ordem: quebra de linha → espaço → corte cru. Cortar em linha
+    importa aqui porque as mensagens grandes deste worker são listas numeradas ("*12.* Auxiliar
+    de Operações Logística — 100 vagas — ..."); quebrar no meio de um item deixaria a mensagem
+    ilegível e a numeração truncada, que é justamente o que o lead precisa digitar de volta.
+
+    Texto dentro do limite volta como lista de 1 elemento — o chamador não precisa de caminho
+    especial pro caso normal.
+    """
+    if len(text) <= limite:
+        return [text]
+
+    partes: list[str] = []
+    restante = text
+    while len(restante) > limite:
+        janela = restante[:limite]
+        corte = janela.rfind("\n")
+        if corte <= 0:
+            corte = janela.rfind(" ")
+        if corte <= 0:
+            # Sem nenhum separador na janela (texto contínuo, ex.: URL gigante): corte cru,
+            # que é pior de ler mas ainda entrega — melhor do que não entregar nada.
+            corte = limite
+        partes.append(restante[:corte].rstrip())
+        restante = restante[corte:].lstrip("\n ")
+    if restante:
+        partes.append(restante)
+    return partes
 
 
 async def _meta_enviar_uma_tentativa(
@@ -95,6 +144,10 @@ async def _meta_enviar(
     Falha antes do HTTP se phone_number_id ou token ausentes.
     Nunca expõe token em logs.
 
+    Texto acima de `_LIMITE_CHARS_TEXTO_META` é dividido e enviado em partes sequenciais
+    (ver a constante pro incidente que originou a guarda). True só quando TODAS as partes
+    foram entregues.
+
     Achado em produção 2026-08-18 (Enf. Álvaro/banco de talentos — mesmo
     padrão do incidente de 2026-08-13): falha pontual de envio (timeout/erro
     de rede/erro transitório da Graph API) deixava o candidato travado numa
@@ -134,12 +187,40 @@ async def _meta_enviar(
 
     to = _normalizar_telefone_br(to)
 
-    sucesso = await _meta_enviar_uma_tentativa(phone_number_id, to, text, token)
-    if sucesso or not retry:
-        return sucesso
+    async def _enviar_uma_parte(parte: str) -> bool:
+        ok = await _meta_enviar_uma_tentativa(phone_number_id, to, parte, token)
+        if ok or not retry:
+            return ok
+        logger.warning("[meta-outbound] 1ª tentativa falhou para %s — retry único", to)
+        return await _meta_enviar_uma_tentativa(phone_number_id, to, parte, token)
 
-    logger.warning("[meta-outbound] 1ª tentativa falhou para %s — retry único", to)
-    return await _meta_enviar_uma_tentativa(phone_number_id, to, text, token)
+    if len(text) <= _LIMITE_CHARS_TEXTO_META:
+        return await _enviar_uma_parte(text)
+
+    # Acima do limite da Meta: fatia e envia em sequência (ver `_LIMITE_CHARS_TEXTO_META`).
+    # WARNING de propósito, não INFO: passar do limite é sempre um sintoma de que alguma
+    # mensagem está crescendo junto com o volume de dados — a guarda entrega, mas quem
+    # monta o texto provavelmente precisa paginar de verdade.
+    partes = _fatiar_texto_para_meta(text)
+    logger.warning(
+        "[meta-outbound] Texto de %d chars acima do limite (%d) — dividido em %d partes para %s",
+        len(text),
+        _LIMITE_CHARS_TEXTO_META,
+        len(partes),
+        to,
+    )
+    for indice, parte in enumerate(partes):
+        if not await _enviar_uma_parte(parte):
+            # Mesma decisão do loop de partes do motor-agente institucional (S-WM-22,
+            # `meta_adapter_inbound.py`): aborta as restantes no 1º erro em vez de mandar
+            # fora de ordem. Retorna False — entrega parcial não é sucesso.
+            logger.error(
+                "[meta-outbound] Falha na parte %d/%d — abortando as restantes. "
+                "%d parte(s) entregue(s) antes da falha.",
+                indice + 1, len(partes), indice,
+            )
+            return False
+    return True
 
 
 async def _meta_marcar_lida_e_digitando(
