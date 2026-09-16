@@ -342,14 +342,50 @@ def _eh_pedido_opt_out(texto: str) -> bool:
     return any(padrao.search(t) for padrao in _PADROES_OPT_OUT)
 
 
+# S-AE-CONF-02: resposta de botão (Quick Reply). A Meta manda em DOIS formatos distintos,
+# e nenhum dos dois era entendido antes desta story — ambos caíam no `else` genérico de
+# `_parse_mensagem_meta` (mensagem="") e, por consequência, no guard
+# `_MIDIA_TIPOS_COM_INTERPRETACAO`, que ignora em silêncio. Resultado prático: o jovem
+# apertava o botão do template, a resposta virava "[Mídia enviada]" no histórico e ele não
+# recebia retorno nenhum.
+#
+#   template com botão  → type="button"       msg["button"]      = {"text": ..., "payload": ...}
+#   botão interativo    → type="interactive"  msg["interactive"] = {"type": "button_reply",
+#                                               "button_reply": {"id": ..., "title": ...}}
+#
+# Os dois viram `midia_tipo="text"` deliberadamente: o texto do botão É a mensagem do lead,
+# e o motor-agente já sabe tratar texto. Nada de caminho especial rio abaixo.
+_BOTAO_PAYLOAD_JA_LOGADO: dict[str, bool] = {"button": False, "interactive": False}
+
+
+def _logar_payload_botao_primeira_vez(msg_type: str, msg: dict) -> None:
+    """S-AE-CONF-02 (AC4): loga o payload CRU na primeira vez que cada formato de botão
+    chega no processo. Antes desta story nada de botão era registrado, então não havia como
+    conferir o formato real que a Meta manda — uma vez por formato basta pra isso e evita
+    encher o log a cada clique dos 621 disparos."""
+    if _BOTAO_PAYLOAD_JA_LOGADO.get(msg_type):
+        return
+    _BOTAO_PAYLOAD_JA_LOGADO[msg_type] = True
+    try:
+        bruto = json.dumps(msg, ensure_ascii=False)
+    except (TypeError, ValueError):
+        bruto = repr(msg)
+    logger.info(
+        "[meta-inbound] Primeiro clique de botão deste processo (type=%r) — payload cru: %s",
+        msg_type, bruto,
+    )
+
+
 # ─── Parser de Mensagem Meta ───────────────────────────────────────────────────
 async def _parse_mensagem_meta(msg: dict) -> tuple[str, str | None, str]:
     """
     Parseia uma mensagem Meta e retorna (texto, midia_url, midia_tipo).
 
-    text  → (body, None, "text")
-    audio → (transcrição_ou_vazio, None, "voz")   [mock se sem token]
-    image → ("", url_ou_none, "image")
+    text        → (body, None, "text")
+    audio       → (transcrição_ou_vazio, None, "voz")   [mock se sem token]
+    image       → ("", url_ou_none, "image")
+    button      → (texto_do_botão, None, "text")        [S-AE-CONF-02]
+    interactive → (título_da_opção, None, "text")       [S-AE-CONF-02]
     """
     msg_type = msg.get("type", "")
     token = os.getenv("META_SYSTEM_USER_TOKEN", "")
@@ -406,6 +442,40 @@ async def _parse_mensagem_meta(msg: dict) -> tuple[str, str | None, str]:
             if conteudo is not None:
                 midia_url = await _subir_anexo_supabase(conteudo, mimetype, "document")
         return "", midia_url, "document"
+
+    elif msg_type == "button":
+        # S-AE-CONF-02 (AC1): Quick Reply de TEMPLATE. `text` é o rótulo que o lead viu;
+        # `payload` é o valor configurado no template — na prática a Meta manda os dois
+        # iguais pra quick reply, mas `text` é o que o lead enxergou, então ele vem primeiro.
+        _logar_payload_botao_primeira_vez("button", msg)
+        botao = msg.get("button") or {}
+        texto = (botao.get("text") or botao.get("payload") or "").strip()
+        if not texto:
+            # AC5: não descarta calado — registra o que veio pra dar como investigar depois.
+            logger.warning(
+                "[meta-inbound] Botão (type='button') sem texto aproveitável — payload=%r", botao
+            )
+            return "", None, "button"
+        logger.info("[meta-inbound] Resposta de botão (template) lida: %r", texto)
+        return texto, None, "text"
+
+    elif msg_type == "interactive":
+        # S-AE-CONF-02 (AC1): botão/lista interativos fora de template. O subtipo nomeia o
+        # próprio campo que carrega a resposta ("button_reply" → msg["interactive"]["button_reply"]),
+        # então resolver por indireção cobre button_reply e list_reply sem ramo pra cada um.
+        _logar_payload_botao_primeira_vez("interactive", msg)
+        interativo = msg.get("interactive") or {}
+        subtipo = interativo.get("type", "")
+        resposta = interativo.get(subtipo) or {}
+        texto = (resposta.get("title") or resposta.get("id") or "").strip()
+        if not texto:
+            logger.warning(
+                "[meta-inbound] Botão interativo (subtipo=%r) sem texto aproveitável — payload=%r",
+                subtipo, interativo,
+            )
+            return "", None, "interactive"
+        logger.info("[meta-inbound] Resposta de botão (interativo, subtipo=%r) lida: %r", subtipo, texto)
+        return texto, None, "text"
 
     else:
         logger.info(f"[meta-inbound] Tipo '{msg_type}' não suportado — ignorado")
@@ -518,7 +588,9 @@ async def _subir_anexo_supabase(conteudo: bytes, mimetype: str, midia_tipo: str)
 # falha técnica, é conteúdo pro qual não existe extração de texto nenhuma (diferente de
 # "image", que ao menos resolve midia_url, e de "voz"/audio, que já passa por
 # transcrição Whisper). midia_tipo aqui é o `type` cru do webhook Meta (sticker, video,
-# document, location, contacts, reaction, button, interactive, order, system...) —
+# document, location, contacts, reaction, order, system...) — "button"/"interactive"
+# SAÍRAM desta lista em S-AE-CONF-02: ganharam ramo próprio no parser e chegam aqui já
+# como "text", com o rótulo do botão como mensagem real —
 # lista aberta de propósito: qualquer tipo que caia no `else` de _parse_mensagem_meta
 # (mensagem="") e não seja "text"/"voz"/"image" entra automaticamente aqui, sem
 # precisar atualizar esta constante a cada tipo novo que a Meta manda.

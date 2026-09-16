@@ -323,6 +323,107 @@ class TestParseMensagem:
         assert midia_tipo == tipo
 
 
+# ─── Resposta de botão / Quick Reply (S-AE-CONF-02) ───────────────────────────
+class TestParseRespostaBotao:
+    """S-AE-CONF-02: antes desta story os dois formatos de botão caíam no `else` genérico
+    (mensagem="", midia_tipo cru) e eram engolidos pelo guard de `_executar_dispatch` —
+    o lead apertava e ninguém era atendido. Agora viram texto normal."""
+
+    def setup_method(self):
+        # O log de payload cru é "uma vez por processo" — zerar entre testes pra que cada
+        # caso exercite o caminho de primeira chegada de forma independente.
+        from meta_adapter_inbound import _BOTAO_PAYLOAD_JA_LOGADO
+        for chave in _BOTAO_PAYLOAD_JA_LOGADO:
+            _BOTAO_PAYLOAD_JA_LOGADO[chave] = False
+
+    @pytest.mark.asyncio
+    async def test_botao_de_template_vira_texto_real(self):
+        """AC1+AC2: quick reply de template (type='button') entrega o rótulo como mensagem."""
+        msg = {
+            "type": "button",
+            "from": "558599999999",
+            "button": {"text": "Sim, eu vou!", "payload": "Sim, eu vou!"},
+        }
+        mensagem, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
+        assert mensagem == "Sim, eu vou!"
+        assert midia_url is None
+        # AC3: "text" está em _MIDIA_TIPOS_COM_INTERPRETACAO, então o dispatch acontece.
+        assert midia_tipo == "text"
+
+    @pytest.mark.asyncio
+    async def test_botao_de_template_cai_no_payload_quando_sem_text(self):
+        """`text` ausente não pode custar a resposta do lead — `payload` serve de fallback."""
+        msg = {"type": "button", "from": "558599999999", "button": {"payload": "NAO_VOU"}}
+        mensagem, _, midia_tipo = await _parse_mensagem_meta(msg)
+        assert mensagem == "NAO_VOU"
+        assert midia_tipo == "text"
+
+    @pytest.mark.asyncio
+    async def test_botao_interativo_vira_texto_real(self):
+        """AC1: botão interativo fora de template (type='interactive'/button_reply)."""
+        msg = {
+            "type": "interactive",
+            "from": "558599999999",
+            "interactive": {
+                "type": "button_reply",
+                "button_reply": {"id": "btn_sim", "title": "Sim, eu vou!"},
+            },
+        }
+        mensagem, midia_url, midia_tipo = await _parse_mensagem_meta(msg)
+        assert mensagem == "Sim, eu vou!"
+        assert midia_url is None
+        assert midia_tipo == "text"
+
+    @pytest.mark.asyncio
+    async def test_lista_interativa_tambem_e_lida(self):
+        """O subtipo nomeia o campo da resposta — list_reply funciona sem ramo próprio."""
+        msg = {
+            "type": "interactive",
+            "from": "558599999999",
+            "interactive": {
+                "type": "list_reply",
+                "list_reply": {"id": "op_2", "title": "Segunda opção", "description": "x"},
+            },
+        }
+        mensagem, _, midia_tipo = await _parse_mensagem_meta(msg)
+        assert mensagem == "Segunda opção"
+        assert midia_tipo == "text"
+
+    @pytest.mark.asyncio
+    async def test_botao_interativo_cai_no_id_quando_sem_title(self):
+        msg = {
+            "type": "interactive",
+            "from": "558599999999",
+            "interactive": {"type": "button_reply", "button_reply": {"id": "btn_nao"}},
+        }
+        mensagem, _, midia_tipo = await _parse_mensagem_meta(msg)
+        assert mensagem == "btn_nao"
+        assert midia_tipo == "text"
+
+    @pytest.mark.asyncio
+    async def test_botao_vazio_e_logado_e_nao_finge_ser_texto(self, caplog):
+        """AC5: payload sem nada aproveitável é REGISTRADO, não descartado calado. Preserva
+        o midia_tipo cru pra não empurrar mensagem vazia ao motor (que devolveria 400)."""
+        import logging
+        msg = {"type": "button", "from": "558599999999", "button": {}}
+        with caplog.at_level(logging.WARNING, logger="worker-cuca"):
+            mensagem, _, midia_tipo = await _parse_mensagem_meta(msg)
+        assert mensagem == ""
+        assert midia_tipo == "button"
+        assert any("sem texto aproveitável" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_payload_cru_logado_uma_vez_por_formato(self, caplog):
+        """AC4: primeira chegada de cada formato registra o payload cru; repetições não."""
+        import logging
+        msg = {"type": "button", "from": "558599999999", "button": {"text": "Sim, eu vou!"}}
+        with caplog.at_level(logging.INFO, logger="worker-cuca"):
+            await _parse_mensagem_meta(msg)
+            await _parse_mensagem_meta(msg)
+        primeiros = [r for r in caplog.records if "Primeiro clique de botão" in r.getMessage()]
+        assert len(primeiros) == 1
+
+
 # ─── Anexos de conversa (S-WM-68) ──────────────────────────────────────────────
 class TestSubirAnexoSupabase:
     @pytest.mark.asyncio
