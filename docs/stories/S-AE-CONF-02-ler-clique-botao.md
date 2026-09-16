@@ -1,6 +1,6 @@
 # S-AE-CONF-02 — Fazer o sistema entender o clique no botão
 
-**Status:** Ready for Review | **Prioridade:** P0 | **Esforço:** P | **Risco:** BAIXO
+**Status:** InReview (QA: CONCERNS — aprovado) | **Prioridade:** P0 | **Esforço:** P | **Risco:** BAIXO
 **Epic:** Confirmação de presença — Simulado Academia Enem 2026
 **Objetivo único da epic:** mandar o convite, receber o sim/não, e devolver a planilha de respostas
 para a Academia Enem. Nada além disso.
@@ -139,3 +139,91 @@ redeploy do `cuca-worker`**, que vem depois do merge. Não executei nada em prod
 |---|---|---|---|
 | 2026-09-16 | 0.1 | Draft inicial | @sm (River) |
 | 2026-09-16 | 1.0 | Implementação dos AC1-AC6 + 7 testes; status → Ready for Review | @dev (Dex) |
+
+---
+
+## QA Results
+
+**Revisor:** @qa (Quinn) · **Data:** 2026-09-16 · **Veredito: CONCERNS** — aprovado para seguir,
+com duas observações registradas. Nenhuma exige volta ao @dev.
+
+### 7 Quality Checks
+
+| # | Check | Resultado |
+|---|---|---|
+| 1 | Code review | ✅ Ramos isolados, `else` intacto, guard não alterado |
+| 2 | Testes | ✅ 91 passed no inbound; rodei por conta própria |
+| 3 | Acceptance Criteria | ✅ AC1-AC6 atendidos (ressalva no AC5, abaixo) |
+| 4 | Regressão | ✅ Nenhum `type` existente muda de caminho |
+| 5 | Performance | ✅ Parsing puro, sem I/O; log cru limitado a 1x por formato |
+| 6 | Segurança / LGPD | ✅ Verificado contra os rótulos reais — ver achado 2 |
+| 7 | Documentação | ✅ Comentário do guard corrigido junto (estava mentindo) |
+
+### Achado 1 — O problema era pior do que a story descrevia (MÉDIO, já resolvido pelo fix)
+
+A story dizia que o clique era gravado como `"[Mídia enviada]"`. **Não era.** Conferi a constraint
+em produção (banco `cuca`, read-only):
+
+```
+mensagens_tipo_check  CHECK (tipo IN ('text','image','audio','video','document','location'))
+```
+
+`"button"` e `"interactive"` **não estão na lista**. Antes desta story o insert em `mensagens`
+violava a constraint, caía no `except` e virava `logger.critical [DATA-LOSS]` — o clique não era
+gravado **de forma nenhuma**, nem como texto genérico. Ou seja: além de ninguém ser atendido, não
+sobrava nem o registro parcial que a story supunha existir.
+
+O fix resolve isso pelo caminho certo e sem querer: ao devolver `midia_tipo="text"`, o insert
+passa a respeitar a constraint. **Não é preciso mudar nada** — registro aqui porque a decisão de
+mapear para `"text"` tinha uma segunda justificativa que ninguém tinha visto, e porque a
+descrição do problema na story fica corrigida para quem ler depois.
+
+### Achado 2 — Os rótulos reais não disparam opt-out (verificado, sem ação)
+
+Este era o risco de regressão mais sério: com o botão virando texto normal, ele passa a atravessar
+`_eh_pedido_opt_out` (linha 1214). Um rótulo que casasse com um dos 7 padrões marcaria
+`opt_in=false` no lead — que é filtrado nos 3 pontos de disparo do `campanhas_engine`. O jovem
+confirmaria presença e sairia das campanhas futuras em silêncio.
+
+Rótulos reais, lidos de `meta_templates.observacoes` do `ae_simulado_v2` em produção:
+**"Sim, eu vou!"** e **"Nao poderei comparecer"**. Conferi os dois contra os 7 padrões de
+`_PADROES_OPT_OUT` — **nenhum casa**. Caminho limpo.
+
+⚠️ **Isso não é uma garantia permanente.** Um template futuro com botão rotulado "Cancelar" ou
+"Não quero mais receber" registraria opt-out de verdade. Vale como regra ao criar template novo
+com botão, não como pendência desta story.
+
+### Ressalva no AC5 (BAIXO, aceito)
+
+Quando o payload de botão vem sem texto aproveitável, o retorno preserva `"button"`/`"interactive"`
+— que, pelo achado 1, **também viola a constraint**. Nesse caminho a linha não é gravada.
+
+Aceito como está: o AC5 pede registro em vez de descarte silencioso, e o caso gera **dois** logs
+(o `warning` do @dev e o `critical [DATA-LOSS]`). A alternativa — devolver `"text"` para salvar a
+linha — empurraria mensagem vazia ao motor-agente, que responderia `400`. É troca ruim por um
+caso que só acontece com payload malformado da Meta.
+
+### Observação de sequenciamento — para o Junior, não para o código
+
+A ordem acordada é 01 → 02 → teste com 1-2 números → 04 → **envio dos 621** → 03 (porteiro).
+Com a 02 sozinha, o clique chega e é atendido — mas quem responde é o agente Institucional normal,
+com o que o RAG produzir para "Nao poderei comparecer". **Nada ainda garante resposta adequada
+nem guarda a confirmação** — isso é a 03.
+
+O teste obrigatório com 1-2 números vai mostrar exatamente o que o Institucional responde. Vale
+olhar esse retorno antes de liberar os 621: se vier ruim, é decisão sua adiantar a 03.
+
+### Fora de escopo, mas anotado para a 03
+
+`meta_templates` **não tem coluna de botões** — os rótulos vivem em `observacoes`, como texto
+livre. A 03 vai precisar casar a resposta do jovem contra os rótulos; hoje não existe fonte
+estruturada para isso no banco.
+
+### Banco de dados
+
+Nenhuma mudança de schema nesta story. Validação feita read-only contra `cuca` (produção),
+conforme `cuca-deploy-environments.md` §4.
+
+### Deploy
+
+Exige **redeploy do `cuca-worker`** após o merge. O teste com números reais só faz sentido depois.
