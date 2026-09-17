@@ -1,6 +1,6 @@
 # S-AE-CONF-03 — Porteiro: identificar de quem veio a resposta e guardar
 
-**Status:** InReview | **Prioridade:** P0 | **Esforço:** M | **Risco:** MÉDIO
+**Status:** Done | **Prioridade:** P0 | **Esforço:** M | **Risco:** MÉDIO
 **Epic:** Confirmação de presença — Simulado Academia Enem 2026
 **Objetivo único da epic:** mandar o convite, receber o sim/não, e devolver a planilha de respostas
 para a Academia Enem. Nada além disso.
@@ -768,3 +768,4 @@ redeploy do `cuca-worker` é necessário para o código valer em produção.
 | 2026-09-17 | 1.9 | QA 2ª rodada: correção do achado 1 **confirmada**; achado 7 — o teste que a protege não pega a regressão (`AssertionError` engolida por `carregar_config`). Status → **`InReview`** | @qa (Quinn) |
 | 2026-09-17 | 1.10 | Achado 7 corrigido: o teste passou a contar as tabelas consultadas em vez de levantar exceção; conferido por mutação (reverter a ordem faz o teste falhar). Status → **`Ready for Review`** | @dev (Dex) |
 | 2026-09-17 | 1.11 | QA gate 3ª rodada: **PASS** — achado 7 verificado por mutação independente; 6 falhas pré-existentes provadas como não relacionadas. Liberada para o @devops | @qa (Quinn) |
+| 2026-09-17 | 1.12 | Mergeado na `main` (PR #194) e `cuca-worker` redeployado sem erro. Porteiro no ar, **desligado** por configuração até a S-AE-CONF-04. Status → **`Done`** | @devops (Gage) |
