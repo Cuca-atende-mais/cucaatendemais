@@ -17,9 +17,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from academia_enem_porteiro import (  # noqa: E402
     RESPOSTA_CONFIRMOU,
     RESPOSTA_NAO_VAI,
+    TEXTO_HORARIOS,
     campanha_aberta,
     classificar_resposta,
     origem_da_resposta,
+    pergunta_horario,
+    processar_mensagem_campanha,
     registrar_resposta,
     variantes_telefone,
 )
@@ -108,6 +111,9 @@ class _Query:
         return MagicMock(data=list(self._dados))
 
 
+CATEGORIA_LOTE = "cat-lote-1"
+
+
 class _FakeSupabase:
     def __init__(self, *, na_categoria=True, entregas=None, leads=None, config=None):
         self.gravado = []
@@ -116,13 +122,16 @@ class _FakeSupabase:
                 "evento_id": EVENTO,
                 "categoria_evento_id": CATEGORIA,
                 "fechamento": "2026-09-20T12:00:00-03:00",
-                "lotes": {DISPARO: "Lote 1"},
+                "lotes": {CATEGORIA_LOTE: "Lote 1"},
             }}],
             "leads": leads if leads is not None else [
                 {"id": LEAD_CONVIDADO, "telefone": TEL_CONVITE},
                 {"id": LEAD_DUPLICADO, "telefone": TEL_RESPOSTA},
             ],
-            "lead_interesses": ([{"lead_id": LEAD_CONVIDADO, "categoria_id": CATEGORIA}] if na_categoria else []),
+            "lead_interesses": ([
+                {"lead_id": LEAD_CONVIDADO, "categoria_id": CATEGORIA},
+                {"lead_id": LEAD_CONVIDADO, "categoria_id": CATEGORIA_LOTE},
+            ] if na_categoria else []),
             "disparos": [{"id": DISPARO, "evento_id": EVENTO}],
             "logs_disparo": entregas if entregas is not None else [
                 {"lead_id": LEAD_CONVIDADO, "disparo_id": DISPARO, "status": "entregue", "created_at": "2026-09-17T01:22:23Z"},
@@ -191,23 +200,34 @@ def test_cenario_6_lead_fora_da_categoria_se_comporta_como_hoje():
     assert fake.gravado == []
 
 
-# ── Cenário 7 — na categoria, sem entrega comprovada ───────────────────────
+# ── Cenário 7 — a categoria é o único gatilho (decisão do Junior, 17/09) ───
 
-@pytest.mark.parametrize("status", ["enviado", "falhou", "aviso", "apagada"])
-def test_cenario_7_sem_entrega_comprovada_nao_anota(status):
-    fake = _FakeSupabase(entregas=[
-        {"lead_id": LEAD_CONVIDADO, "disparo_id": DISPARO, "status": status, "created_at": "x"},
-    ])
-    assert _registrar(fake) is None
-    assert fake.gravado == []
+def test_lead_na_categoria_sem_nenhum_envio_registrado_ainda_assim_e_anotado():
+    """Mudança consciente: antes exigia entrega comprovada. Agora a categoria basta.
+
+    O motivo: cada envio novo da programação pontual cria um evento pontual novo (ela não
+    reabre), e amarrar o porteiro ao histórico de disparo fazia a planilha ficar vazia sem dar
+    erro nenhum quando alguém esquecia de registrar o evento novo.
+    """
+    fake = _FakeSupabase()
+    fake.tabelas["logs_disparo"] = []
+    fake.tabelas["disparos"] = []
+    linha = _registrar(fake)
+    assert linha is not None
+    assert linha["lead_id"] == LEAD_CONVIDADO
+    assert linha["lote"] == "Lote 1"          # veio da categoria de lote, não do disparo
 
 
-def test_entrega_de_disparo_de_outro_modulo_nao_conta():
-    """Achado 6 do @po: `logs_disparo` é compartilhado — disparo fora do evento não vale."""
-    fake = _FakeSupabase(entregas=[
-        {"lead_id": LEAD_CONVIDADO, "disparo_id": "disparo-da-divulgacao", "status": "entregue", "created_at": "x"},
-    ])
-    assert _registrar(fake) is None
+def test_lote_vem_da_categoria_de_lote():
+    fake = _FakeSupabase()
+    assert _registrar(fake)["lote"] == "Lote 1"
+
+
+def test_sem_categoria_de_lote_o_lote_fica_vazio_mas_a_resposta_e_anotada():
+    fake = _FakeSupabase()
+    fake.tabelas["lead_interesses"] = [{"lead_id": LEAD_CONVIDADO, "categoria_id": CATEGORIA}]
+    linha = _registrar(fake)
+    assert linha is not None and linha["lote"] is None
 
 
 # ── Cenário 8 — depois do fechamento ───────────────────────────────────────
@@ -222,18 +242,23 @@ def test_cenario_8_depois_do_fechamento_nao_anota(monkeypatch):
 
 # ── Cenário 9 — chave ambígua ──────────────────────────────────────────────
 
-def test_cenario_9_dois_convidados_com_a_mesma_chave_nao_anota_nenhum():
+def test_cenario_9_dois_leads_da_campanha_com_a_mesma_chave_nao_anota_nenhum():
     fake = _FakeSupabase()
     fake.tabelas["lead_interesses"] = [
         {"lead_id": LEAD_CONVIDADO, "categoria_id": CATEGORIA},
         {"lead_id": LEAD_DUPLICADO, "categoria_id": CATEGORIA},
     ]
-    fake.tabelas["logs_disparo"] = [
-        {"lead_id": LEAD_CONVIDADO, "disparo_id": DISPARO, "status": "entregue", "created_at": "b"},
-        {"lead_id": LEAD_DUPLICADO, "disparo_id": DISPARO, "status": "entregue", "created_at": "a"},
-    ]
     assert _registrar(fake) is None
     assert fake.gravado == []
+
+
+def test_o_duplicado_fora_da_categoria_nao_atrapalha():
+    """O caso real de 17/09: a Meta entrega no cadastro sem o nono dígito, que não está na
+    categoria. A resposta tem que ser anotada no cadastro convidado mesmo assim."""
+    fake = _FakeSupabase()
+    linha = _registrar(fake)
+    assert linha["lead_id"] == LEAD_CONVIDADO
+    assert linha["lead_respondente_id"] == LEAD_DUPLICADO
 
 
 # ── Porteiro desligado ─────────────────────────────────────────────────────
@@ -277,3 +302,91 @@ def test_mensagem_irrelevante_nao_faz_nenhuma_consulta():
             f"O porteiro consultou {fake.consultadas} para a mensagem {texto!r}, que nunca "
             "viraria resposta da campanha"
         )
+
+
+# ── S-AE-CONF-07 — pergunta de horário respondida pelo porteiro ─────────────
+
+@pytest.mark.parametrize("texto,esperado", [
+    ("Qual o horario?", True),          # o texto exato do teste real de 17/09
+    ("que horas começa?", True),
+    ("a que horas abrem os portões?", True),
+    ("que horas termina?", True),
+    ("bom dia", False),
+    ("Sim, eu vou!", False),
+])
+def test_deteccao_de_pergunta_de_horario(texto, esperado):
+    assert pergunta_horario(texto) is esperado
+
+
+def test_lead_da_campanha_pergunta_horario_recebe_texto_fixo():
+    fake = _FakeSupabase()
+    r = processar_mensagem_campanha(
+        fake, lead_id_respondente=LEAD_DUPLICADO, telefone=TEL_RESPOSTA, mensagem="Qual o horario?",
+    )
+    assert r["responder"] == TEXTO_HORARIOS
+    assert "20 de setembro" in r["responder"] and "27 de setembro" in r["responder"]
+    assert fake.gravado == []  # pergunta de horário não é resposta de presença
+
+
+def test_quem_nao_e_da_campanha_pergunta_horario_e_segue_o_fluxo_normal():
+    """Quem não é da campanha não pode receber o texto do simulado — segue para o agente."""
+    fake = _FakeSupabase(na_categoria=False)
+    assert processar_mensagem_campanha(
+        fake, lead_id_respondente=LEAD_DUPLICADO, telefone=TEL_RESPOSTA, mensagem="Qual o horario?",
+    ) is None
+
+
+def test_resposta_de_presenca_nao_vira_resposta_de_horario():
+    fake = _FakeSupabase()
+    r = processar_mensagem_campanha(
+        fake, lead_id_respondente=LEAD_DUPLICADO, telefone=TEL_RESPOSTA, mensagem="Sim, eu vou!",
+    )
+    assert "responder" not in r
+    assert r["anotou"]["resposta"] == RESPOSTA_CONFIRMOU
+
+
+# ── Conversa do lead da campanha não é encerrada até o dia da prova ────────
+
+def test_lead_da_campanha_e_reconhecido_para_manter_a_conversa_aberta():
+    from academia_enem_porteiro import eh_lead_da_campanha
+    assert eh_lead_da_campanha(_FakeSupabase(), TEL_RESPOSTA) is True
+
+
+def test_quem_nao_e_da_campanha_encerra_normalmente():
+    from academia_enem_porteiro import eh_lead_da_campanha
+    assert eh_lead_da_campanha(_FakeSupabase(na_categoria=False), TEL_RESPOSTA) is False
+
+
+def test_campanha_fechada_deixa_a_conversa_encerrar_como_sempre(monkeypatch):
+    import academia_enem_porteiro as mod
+    monkeypatch.setattr(mod, "campanha_aberta", lambda cfg, agora=None: False)
+    assert mod.eh_lead_da_campanha(_FakeSupabase(), TEL_RESPOSTA) is False
+
+
+# ── Fluxo real pedido pelo Junior: responde sim/não e DEPOIS pergunta horário ──
+
+def test_responde_presenca_e_depois_pergunta_horario():
+    fake = _FakeSupabase()
+    primeira = processar_mensagem_campanha(
+        fake, lead_id_respondente=LEAD_DUPLICADO, telefone=TEL_RESPOSTA, mensagem="Sim, eu vou!",
+    )
+    assert primeira["anotou"]["resposta"] == RESPOSTA_CONFIRMOU
+    assert "responder" not in primeira          # a 1ª mensagem segue para o atendimento normal
+
+    segunda = processar_mensagem_campanha(
+        fake, lead_id_respondente=LEAD_DUPLICADO, telefone=TEL_RESPOSTA, mensagem="Qual o horario?",
+    )
+    assert segunda["responder"] == TEXTO_HORARIOS
+
+
+def test_limitacao_conhecida_mensagem_que_confirma_e_pergunta_junto():
+    """Documenta o comportamento atual (achado 9 do @qa): quando a MESMA mensagem confirma e
+    pergunta o horário, o porteiro anota e deixa a pergunta com o agente. Se isso incomodar, a
+    correção é devolver `responder` junto com `anotou`."""
+    fake = _FakeSupabase()
+    r = processar_mensagem_campanha(
+        fake, lead_id_respondente=LEAD_DUPLICADO, telefone=TEL_RESPOSTA,
+        mensagem="Sim, eu vou! Que horas começa?",
+    )
+    assert r["anotou"]["resposta"] == RESPOSTA_CONFIRMOU
+    assert "responder" not in r

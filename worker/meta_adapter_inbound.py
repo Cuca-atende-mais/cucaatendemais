@@ -736,12 +736,30 @@ async def _chamar_motor_agente(
         )
 
     elif data.get("encerrado"):
+        # S-AE-CONF-03 (17/09): lead da campanha do simulado NÃO tem a conversa encerrada
+        # enquanto a campanha estiver aberta — ele fica no túnel até o dia da prova, para que
+        # as perguntas seguintes (horário, local) continuem sendo tratadas. O motor-agente
+        # também marca `encerrada` por dentro, então aqui não basta "não marcar": é preciso
+        # desfazer, devolvendo para `ativa`. Caminho raro (só quando o agente decide encerrar),
+        # por isso pode pagar a consulta de quem é da campanha.
+        manter_aberta = False
+        try:
+            from academia_enem_porteiro import eh_lead_da_campanha  # noqa: PLC0415
+            manter_aberta = eh_lead_da_campanha(supabase, contrato_v2.get("telefone", ""))
+        except Exception as exc:
+            logger.warning("[AE-porteiro] Falha ao checar campanha no encerramento: %s", exc)
+
         try:
             supabase.table("conversas").update(
-                {"status": "encerrada", "updated_at": "now()"}
+                {"status": "ativa" if manter_aberta else "encerrada", "updated_at": "now()"}
             ).eq("id", conversa_id).execute()
+            if manter_aberta:
+                logger.info(
+                    "[AE-porteiro] Conversa %s mantida aberta — lead da campanha do simulado",
+                    conversa_id,
+                )
         except Exception as exc:
-            logger.warning("[meta-inbound] Erro ao setar encerrada: %s", exc)
+            logger.warning("[meta-inbound] Erro ao atualizar status no encerramento: %s", exc)
 
     mensagens = data.get("mensagens")
     if isinstance(mensagens, list) and all(isinstance(m, str) and m for m in mensagens) and mensagens:
@@ -1203,21 +1221,23 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             conversa_id, lead_id, midia_tipo, mensagem, exc,
         )
 
-    # ── Porteiro da confirmação de presença (S-AE-CONF-03) ────────────────
-    # Só ANOTA a resposta de quem é da campanha do simulado; não responde nada e não muda o
-    # atendimento de ninguém (AC6). Roda depois da mensagem já estar gravada, antes do dispatch,
-    # e é totalmente best-effort: qualquer erro aqui é logado e engolido — o Institucional segue
-    # exatamente como seguia. Lead fora da campanha sai no primeiro `return None` do módulo.
+    # ── Porteiro da confirmação de presença (S-AE-CONF-03 / S-AE-CONF-07) ──
+    # Anota a resposta de quem é da campanha do simulado (sim/não) sem mudar o atendimento de
+    # ninguém; e, só para quem é da campanha, responde a pergunta de horário com texto fixo —
+    # nesse caso o agente NÃO é chamado (ver S-AE-CONF-07: no teste real de 17/09 o agente
+    # respondeu sobre turma de natação a um "Qual o horario?"). Lead fora da campanha sai no
+    # primeiro passo do módulo. Best-effort: erro aqui vira log e o fluxo segue igual.
     try:
-        from academia_enem_porteiro import registrar_resposta  # noqa: PLC0415
-        registrar_resposta(
+        from academia_enem_porteiro import processar_mensagem_campanha  # noqa: PLC0415
+        _porteiro = processar_mensagem_campanha(
             supabase,
             lead_id_respondente=lead_id,
             telefone=telefone,
             mensagem=mensagem,
         )
     except Exception as exc:
-        logger.warning("[AE-porteiro] Falha ao anotar resposta de %s (ignorado): %s", telefone, exc)
+        logger.warning("[AE-porteiro] Falha ao processar mensagem de %s (ignorado): %s", telefone, exc)
+        _porteiro = None
 
     # ── Opt-out (AUD-12, LGPD) ────────────────────────────────────────────
     # Detectado ANTES do dispatch normal — registra opt_in=false via RPC já existente no banco
@@ -1264,6 +1284,30 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         logger.info(
             "[awaiting_human] IA silenciada — conversa %s em atendimento humano. Descartando inbound.",
             conversa_id,
+        )
+        return
+
+    # Resposta fixa de horário (S-AE-CONF-07) — enviada aqui, DEPOIS do guard de
+    # `awaiting_human` (achado 8 do @qa): se um colaborador assumiu a conversa, a IA fica calada,
+    # e isso vale para esta resposta também. A anotação da presença continua lá em cima, porque
+    # anotar não fala com o lead e não conflita com atendimento humano.
+    if _porteiro and _porteiro.get("responder"):
+        texto_porteiro = _porteiro["responder"]
+        try:
+            supabase.table("mensagens").insert({
+                "conversa_id": conversa_id,
+                "lead_id": lead_id,
+                "tipo": "text",
+                "conteudo": texto_porteiro,
+                "remetente": "agente",
+                "created_at": "now()",
+            }).execute()
+        except Exception as exc:
+            logger.error("[AE-porteiro] Erro ao salvar resposta de horário: %s", exc)
+
+        from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+        await _meta_enviar(
+            phone_number_id, telefone, texto_porteiro, os.getenv("META_SYSTEM_USER_TOKEN", ""),
         )
         return
 

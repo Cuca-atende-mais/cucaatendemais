@@ -743,6 +743,47 @@ O porteiro está **desligado** (`categoria_evento_id` nulo na configuração) e 
 até a **S-AE-CONF-04** criar a categoria `simulado 01`. O push não liga nada sozinho — mas o
 redeploy do `cuca-worker` é necessário para o código valer em produção.
 
+## Mudança de regra v2.0 (17/09) — a categoria é o único gatilho
+
+**Decisão do Junior, depois do teste real.** A AC2 exigia **duas** condições: categoria do evento
+**e** entrega comprovada de um disparo da campanha. Agora exige **uma**: estar na **categoria do
+evento**.
+
+**Por que mudou.** A programação pontual **não reabre para reenviar** — cada envio cria um evento
+pontual **novo**. Como os disparos da campanha eram identificados pelo evento, todo envio novo
+exigia alguém lembrar de registrar aquele evento na configuração. Esquecer não dava erro nenhum:
+a planilha simplesmente ficava vazia. No teste de 17/09 isso já aconteceu — a confirmação só foi
+gravada porque a entrega do dia anterior ainda valia.
+
+**O túnel, agora:** a saída mira a **categoria do lote** (é o público do disparo); a entrada é
+reconhecida pela **categoria do evento**. Mesma coisa que já governa o envio governa a escuta.
+
+**O que se perde:** quem está na categoria, nunca recebeu o convite e responde "sim" para outro
+assunto entra na planilha. Risco aceito e pequeno: a categoria é curada à mão e só tem gente do
+edital. O risco do outro lado — planilha vazia por esquecimento — é bem maior.
+
+**O que muda no texto das ACs:** AC2 item 2 e a AC2.4 (regra do lote pelo disparo) saem. O **lote
+passa a vir da categoria de lote** da pessoa, pelo mapa `lotes` da configuração
+(`categoria_id → nome`). AC2.2 (chave por telefone), AC2.1 (fechamento), AC2.3 (chave ambígua),
+AC5 (última resposta vale) e AC6 continuam iguais.
+
+## AC9 (v2.1, 17/09) — a conversa do lead da campanha não é encerrada
+
+**Instrução do Junior:** o lead da campanha fica **dentro do túnel até o dia da prova**. Não pode
+ter a conversa marcada como encerrada depois da despedida do agente — é o que garante que as
+perguntas seguintes (horário, local) continuem sendo tratadas como parte da campanha.
+
+**Como funciona:** quando o agente decide encerrar, o porteiro é consultado. Se for lead da
+campanha e a campanha estiver aberta (AC2.1), a conversa volta para **`ativa`**. Não basta "não
+marcar": o motor-agente também marca por dentro, então o inbound **desfaz**.
+
+Passado o fechamento, encerra normalmente — como qualquer conversa.
+
+**Custo:** a checagem só roda quando o agente decide encerrar, não em toda mensagem.
+
+**O que não muda:** o texto da despedida continua o mesmo (decisão da AC6). O que muda é só a
+conversa continuar aberta.
+
 ## Change Log
 
 | Data | Versão | Descrição | Autor |
@@ -769,3 +810,5 @@ redeploy do `cuca-worker` é necessário para o código valer em produção.
 | 2026-09-17 | 1.10 | Achado 7 corrigido: o teste passou a contar as tabelas consultadas em vez de levantar exceção; conferido por mutação (reverter a ordem faz o teste falhar). Status → **`Ready for Review`** | @dev (Dex) |
 | 2026-09-17 | 1.11 | QA gate 3ª rodada: **PASS** — achado 7 verificado por mutação independente; 6 falhas pré-existentes provadas como não relacionadas. Liberada para o @devops | @qa (Quinn) |
 | 2026-09-17 | 1.12 | Mergeado na `main` (PR #194) e `cuca-worker` redeployado sem erro. Porteiro no ar, **desligado** por configuração até a S-AE-CONF-04. Status → **`Done`** | @devops (Gage) |
+| 2026-09-17 | 2.0 | **Mudança de regra:** gatilho passa a ser só a categoria do evento; lote vem da categoria de lote. Motivo: cada envio pontual cria evento novo e o vínculo por disparo quebrava em silêncio | @dev (Dex) |
+| 2026-09-17 | 2.1 | AC9: conversa de lead da campanha não é encerrada enquanto a campanha estiver aberta (o inbound desfaz o encerramento do motor-agente) | @dev (Dex) |
