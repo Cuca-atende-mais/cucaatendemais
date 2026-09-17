@@ -23,10 +23,6 @@ logger = logging.getLogger(__name__)
 CHAVE_CONFIG = "academia_enem_confirmacao"
 TABELA = "confirmacoes_simulado_ae"
 
-#: Status de `logs_disparo` que a Meta confirma como entrega de verdade (AC2).
-#: `enviado` (aceito, sem confirmação), `falhou`, `aviso` e `apagada` NÃO contam.
-STATUS_ENTREGUE = ("entregue", "lido")
-
 RESPOSTA_CONFIRMOU = "confirmou"
 RESPOSTA_NAO_VAI = "nao_vai"
 
@@ -150,23 +146,57 @@ def campanha_aberta(cfg: dict, agora: datetime | None = None) -> bool:
     return (agora or datetime.now(timezone.utc)) < limite
 
 
-def _ids_disparos_da_campanha(supabase, evento_id: str) -> list[str]:
-    """Disparos da campanha = disparos do evento pontual do simulado (achado 6 do @po).
+def _resolver_lead_da_campanha(supabase, cfg: dict, telefone: str, contexto: str):
+    """Acha o lead da campanha a partir do telefone de quem mandou a mensagem.
 
-    `logs_disparo` é compartilhado com Institucional/Divulgação/Ouvidoria: sem esta restrição,
-    qualquer disparo institucional entregue faria o lead passar por "recebeu o convite".
+    **O gatilho é a categoria do evento, e só ela** (decisão do Junior, 17/09). O túnel é:
+    o disparo sai mirando a categoria do lote; a resposta entra e é reconhecida pela categoria do
+    evento. Não há conferência de registro de envio — a categoria é curada à mão, só tem gente do
+    edital, e depender do histórico de disparo tornava tudo frágil: cada envio novo cria um evento
+    pontual novo (a programação pontual não reabre), e esquecer de registrar um deles deixava a
+    planilha vazia sem dar erro nenhum.
+
+    Devolve `{lead_id, telefone, lotes}` ou None (com o motivo no log).
     """
-    res = supabase.table("disparos").select("id").eq("evento_id", evento_id).execute()
-    return [row["id"] for row in (res.data or [])]
+    variantes = variantes_telefone(telefone)
+    if not variantes:
+        return None
+
+    leads_res = supabase.table("leads").select("id, telefone").in_("telefone", variantes).execute()
+    candidatos = {row["id"]: row["telefone"] for row in (leads_res.data or [])}
+    if not candidatos:
+        return None
+
+    # Todas as categorias dos candidatos, de uma vez: serve para o gate (categoria do evento) e
+    # para descobrir o lote, sem consulta extra.
+    cat_res = supabase.table("lead_interesses").select("lead_id, categoria_id") \
+        .in_("lead_id", list(candidatos)).execute()
+    vinculos = cat_res.data or []
+
+    na_campanha = {v["lead_id"] for v in vinculos if v["categoria_id"] == cfg["categoria_evento_id"]}
+    if not na_campanha:
+        logger.info("[AE-porteiro][sem_categoria] %s não está na categoria do evento (%s)", telefone, contexto)
+        return None
+
+    if len(na_campanha) > 1:
+        logger.warning(
+            "[AE-porteiro][chave_ambigua] %s casa com mais de um lead da campanha (%s) — não "
+            "anotado, para não creditar a resposta na pessoa errada", telefone, sorted(na_campanha),
+        )
+        return None
+
+    lead_id = next(iter(na_campanha))
+    mapa_lotes = cfg.get("lotes") or {}
+    lote = next(
+        (mapa_lotes[v["categoria_id"]] for v in vinculos
+         if v["lead_id"] == lead_id and v["categoria_id"] in mapa_lotes),
+        None,
+    )
+    return {"lead_id": lead_id, "telefone": candidatos.get(lead_id), "lote": lote}
 
 
 def registrar_resposta(supabase, *, lead_id_respondente: str, telefone: str, mensagem: str) -> dict | None:
-    """O porteiro. Devolve a linha gravada, ou None quando não é caso de anotar.
-
-    Nunca levanta exceção de regra de negócio: quando não dá para anotar com segurança, loga o
-    motivo (`sem_categoria`, `sem_entrega`, `pos_fechamento`, `chave_ambigua`) e devolve None —
-    os motivos são distinguíveis de propósito, cada um é um cenário de teste diferente.
-    """
+    """Anota a resposta de quem é da campanha. Devolve a linha gravada, ou None."""
     # Classificação PRIMEIRO, de propósito: é a única etapa que não toca no banco, e descarta a
     # maioria esmagadora do tráfego do Institucional ("bom dia", áudio, foto — ~460 mensagens de
     # lead por dia, medidas em produção) antes de qualquer consulta. Inverter isso custaria um
@@ -186,64 +216,19 @@ def registrar_resposta(supabase, *, lead_id_respondente: str, telefone: str, men
         )
         return None
 
-    variantes = variantes_telefone(telefone)
-    if not variantes:
+    achado = _resolver_lead_da_campanha(supabase, cfg, telefone, contexto=f"resposta={resposta!r}")
+    if not achado:
         return None
 
-    leads_res = supabase.table("leads").select("id, telefone").in_("telefone", variantes).execute()
-    candidatos = {row["id"]: row["telefone"] for row in (leads_res.data or [])}
-    if not candidatos:
-        return None
-
-    ids = list(candidatos)
-    cat_res = supabase.table("lead_interesses").select("lead_id") \
-        .eq("categoria_id", cfg["categoria_evento_id"]).in_("lead_id", ids).execute()
-    na_categoria = {row["lead_id"] for row in (cat_res.data or [])}
-    if not na_categoria:
-        logger.info("[AE-porteiro][sem_categoria] %s não está na categoria do evento — ignorado", telefone)
-        return None
-
-    disparos = _ids_disparos_da_campanha(supabase, cfg["evento_id"])
-    if not disparos:
-        logger.warning("[AE-porteiro] Evento %s sem disparo nenhum — nada a conferir", cfg["evento_id"])
-        return None
-
-    entregas_res = supabase.table("logs_disparo") \
-        .select("lead_id, disparo_id, created_at") \
-        .in_("lead_id", list(na_categoria)) \
-        .in_("disparo_id", disparos) \
-        .in_("status", list(STATUS_ENTREGUE)) \
-        .order("created_at", desc=True).execute()
-    entregas = entregas_res.data or []
-    if not entregas:
-        # Também cobre o callback de `delivered` perdido: quem respondeu de verdade mas ficou
-        # com status `enviado` cai aqui — por isso o log, nunca descarte silencioso.
-        logger.info(
-            "[AE-porteiro][sem_entrega] %s está na categoria mas não tem entrega comprovada de "
-            "disparo da campanha — resposta %r não anotada", telefone, resposta,
-        )
-        return None
-
-    convidados = {e["lead_id"] for e in entregas}
-    if len(convidados) > 1:
-        logger.warning(
-            "[AE-porteiro][chave_ambigua] %s casa com mais de um convidado (%s) — não anotado, "
-            "para não creditar a confirmação na pessoa errada", telefone, sorted(convidados),
-        )
-        return None
-
-    entrega = entregas[0]  # mais recente — define o lote (AC1/AC2.4)
-    lead_convidado = entrega["lead_id"]
     linha = {
         "evento_id": cfg["evento_id"],
-        "lead_id": lead_convidado,
+        "lead_id": achado["lead_id"],
         "lead_respondente_id": lead_id_respondente,
-        "disparo_id": entrega["disparo_id"],
-        "lote": (cfg.get("lotes") or {}).get(entrega["disparo_id"]),
+        "lote": achado["lote"],
         "resposta": resposta,
         "origem": origem_da_resposta(mensagem),
         "mensagem": mensagem,
-        "telefone_convite": candidatos.get(lead_convidado),
+        "telefone_convite": achado["telefone"],
         "telefone_resposta": telefone,
         "respondido_em": datetime.now(timezone.utc).isoformat(),
         "atualizado_em": datetime.now(timezone.utc).isoformat(),
@@ -252,6 +237,87 @@ def registrar_resposta(supabase, *, lead_id_respondente: str, telefone: str, men
     supabase.table(TABELA).upsert(linha, on_conflict="evento_id,lead_id").execute()
     logger.info(
         "[AE-porteiro] Resposta %r (%s) anotada para lead convidado %s — lote=%s",
-        resposta, linha["origem"], lead_convidado, linha["lote"],
+        resposta, linha["origem"], achado["lead_id"], linha["lote"],
     )
     return linha
+
+
+# ── Pergunta de horário ────────────────────────────────────────────────────
+# Os horários não entraram no template (não deu tempo de aprovar a edição na Meta) e, no teste
+# real de 17/09, deixar o agente responder não funcionou: perguntado "Qual o horario?", ele
+# respondeu sobre turma de natação — o assunto anterior da conversa pesou mais que o documento
+# de FAQ. Para quem é da campanha, o porteiro responde direto, com texto fixo.
+
+_PADROES_HORARIO = (
+    r"\bque\s+horas?\b", r"\bqual\s+(o\s+)?hor[aá]rio\b", r"\bhor[aá]rio\b", r"\bhoras?\b",
+    r"\bque\s+hora\b", r"\bcomeca\b.*\bque\b", r"\babre\b.*\bport[oõ]es\b",
+    r"\bport[oõ]es\b", r"\btermina\b", r"\bacaba\b",
+)
+
+TEXTO_HORARIOS = (
+    "Aqui estão os horários do Simulado Academia Enem 👇\n\n"
+    "*20 de setembro (sábado)*\n"
+    "12:00 — portões abrem\n"
+    "13:00 — alunos em sala\n"
+    "13:30 — início da prova\n"
+    "15:00 — liberação para deixar o local\n"
+    "19:00 — fim da prova (alunos com necessidades especiais)\n"
+    "20:00 — fim da prova (demais alunos)\n\n"
+    "*27 de setembro (sábado)*\n"
+    "12:00 — portões abrem\n"
+    "13:00 — alunos em sala\n"
+    "13:30 — início da prova\n"
+    "15:00 — liberação para deixar o local\n"
+    "18:30 — fim da prova (alunos com necessidades especiais)\n"
+    "19:30 — fim da prova (demais alunos)\n\n"
+    "📍 Unichristus — Campus Benfica, Rua Princesa Isabel, 1920 "
+    "(entrada pela Rua Luís de Miranda, 536)"
+)
+
+
+def pergunta_horario(mensagem: str) -> bool:
+    """True quando a mensagem é pergunta de horário."""
+    texto = _sem_acento(mensagem or "")
+    if not texto:
+        return False
+    return any(re.search(padrao, texto) for padrao in _PADROES_HORARIO)
+
+
+def processar_mensagem_campanha(supabase, *, lead_id_respondente: str, telefone: str, mensagem: str) -> dict | None:
+    """Ponto de entrada único do porteiro, usado pelo inbound.
+
+    - Resposta de presença (sim/não) → anota e devolve `{"anotou": ...}`; o atendimento segue
+      normal (AC6).
+    - Pergunta de horário de quem é da campanha → devolve `{"responder": TEXTO_HORARIOS}`, e aí
+      o inbound responde isso **no lugar** do agente.
+    - Qualquer outra coisa → None, nada muda.
+    """
+    anotado = registrar_resposta(
+        supabase, lead_id_respondente=lead_id_respondente, telefone=telefone, mensagem=mensagem,
+    )
+    if anotado:
+        return {"anotou": anotado}
+
+    if not pergunta_horario(mensagem):
+        return None
+
+    cfg = carregar_config(supabase)
+    if not cfg or not campanha_aberta(cfg):
+        return None
+    if not _resolver_lead_da_campanha(supabase, cfg, telefone, contexto="pergunta de horário"):
+        return None
+
+    logger.info("[AE-porteiro] Pergunta de horário de %s respondida com texto fixo", telefone)
+    return {"responder": TEXTO_HORARIOS}
+
+
+def eh_lead_da_campanha(supabase, telefone: str) -> bool:
+    """True se o telefone é de alguém da campanha e a campanha ainda está aberta.
+
+    Usado num caminho raro (quando o agente decide encerrar a conversa), por isso pode pagar as
+    consultas — não roda em toda mensagem.
+    """
+    cfg = carregar_config(supabase)
+    if not cfg or not campanha_aberta(cfg):
+        return False
+    return _resolver_lead_da_campanha(supabase, cfg, telefone, contexto="checagem de encerramento") is not None
