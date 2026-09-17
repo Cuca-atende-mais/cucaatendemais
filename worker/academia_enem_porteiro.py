@@ -256,14 +256,14 @@ _PADROES_HORARIO = (
 
 TEXTO_HORARIOS = (
     "Aqui estão os horários do Simulado Academia Enem 👇\n\n"
-    "*20 de setembro (sábado)*\n"
+    "*20 de setembro (domingo)*\n"
     "12:00 — portões abrem\n"
     "13:00 — alunos em sala\n"
     "13:30 — início da prova\n"
     "15:00 — liberação para deixar o local\n"
     "19:00 — fim da prova (alunos com necessidades especiais)\n"
     "20:00 — fim da prova (demais alunos)\n\n"
-    "*27 de setembro (sábado)*\n"
+    "*27 de setembro (domingo)*\n"
     "12:00 — portões abrem\n"
     "13:00 — alunos em sala\n"
     "13:30 — início da prova\n"
