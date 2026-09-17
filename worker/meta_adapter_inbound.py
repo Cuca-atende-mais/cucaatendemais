@@ -1203,6 +1203,22 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             conversa_id, lead_id, midia_tipo, mensagem, exc,
         )
 
+    # ── Porteiro da confirmação de presença (S-AE-CONF-03) ────────────────
+    # Só ANOTA a resposta de quem é da campanha do simulado; não responde nada e não muda o
+    # atendimento de ninguém (AC6). Roda depois da mensagem já estar gravada, antes do dispatch,
+    # e é totalmente best-effort: qualquer erro aqui é logado e engolido — o Institucional segue
+    # exatamente como seguia. Lead fora da campanha sai no primeiro `return None` do módulo.
+    try:
+        from academia_enem_porteiro import registrar_resposta  # noqa: PLC0415
+        registrar_resposta(
+            supabase,
+            lead_id_respondente=lead_id,
+            telefone=telefone,
+            mensagem=mensagem,
+        )
+    except Exception as exc:
+        logger.warning("[AE-porteiro] Falha ao anotar resposta de %s (ignorado): %s", telefone, exc)
+
     # ── Opt-out (AUD-12, LGPD) ────────────────────────────────────────────
     # Detectado ANTES do dispatch normal — registra opt_in=false via RPC já existente no banco
     # (registrar_opt_out) e responde direto, sem rotear pro motor-agente/Empregabilidade. Não

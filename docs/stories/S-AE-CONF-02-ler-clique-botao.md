@@ -1,6 +1,6 @@
 # S-AE-CONF-02 — Fazer o sistema entender o clique no botão
 
-**Status:** InReview (QA: CONCERNS — aprovado) | **Prioridade:** P0 | **Esforço:** P | **Risco:** BAIXO
+**Status:** Done (QA: CONCERNS — aprovado) | **Prioridade:** P0 | **Esforço:** P | **Risco:** BAIXO
 **Epic:** Confirmação de presença — Simulado Academia Enem 2026
 **Objetivo único da epic:** mandar o convite, receber o sim/não, e devolver a planilha de respostas
 para a Academia Enem. Nada além disso.
@@ -139,6 +139,8 @@ redeploy do `cuca-worker`**, que vem depois do merge. Não executei nada em prod
 |---|---|---|---|
 | 2026-09-16 | 0.1 | Draft inicial | @sm (River) |
 | 2026-09-16 | 1.0 | Implementação dos AC1-AC6 + 7 testes; status → Ready for Review | @dev (Dex) |
+| 2026-09-16 | 1.1 | QA gate CONCERNS — aprovado com observações; status → InReview | @qa (Quinn) |
+| 2026-09-16 | 1.2 | Merge do PR #192 na `main` + redeploy do `cuca-worker`; status → Done | @devops (Gage) |
 
 ---
 
@@ -227,3 +229,26 @@ conforme `cuca-deploy-environments.md` §4.
 ### Deploy
 
 Exige **redeploy do `cuca-worker`** após o merge. O teste com números reais só faz sentido depois.
+
+---
+
+## DevOps Record
+
+**Agent:** @devops (Gage) · **Data:** 2026-09-16
+
+| Item | Estado |
+|---|---|
+| PR | [#192](https://github.com/Cuca-atende-mais/cucaatendemais/pull/192) — **MERGED** em `main` (merge commit `321e00b`) |
+| Redeploy `cuca-worker` | **Necessário** — Junior informou que foi feito; não verificável por aqui (EasyPanel MCP sem credencial) |
+| Redeploy `portal` | Não necessário — nenhum arquivo em `cuca-portal/` no PR |
+| Edge Functions | Nenhuma tocada nesta story |
+| Migrations | Nenhuma — story sem mudança de schema |
+
+**Arquivos do PR:** `worker/meta_adapter_inbound.py`, `worker/tests/test_meta_adapter_inbound.py`,
+`docs/stories/S-AE-CONF-02-ler-clique-botao.md`.
+
+### Pendência que NÃO é de deploy
+
+O **teste obrigatório com 1-2 números reais** (apertar os dois botões e conferir gravação +
+resposta) continua pendente — é pré-requisito do envio dos 621, conforme a própria story e a
+observação de sequenciamento do @qa.
