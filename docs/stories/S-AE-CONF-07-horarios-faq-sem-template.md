@@ -44,7 +44,7 @@ faz uma pergunta e ainda não escolheu unidade — que é exatamente o caso dele
 ```
 SIMULADO ACADEMIA ENEM 2026 — HORÁRIOS
 
-DIA 20 DE SETEMBRO DE 2026 (sábado)
+DIA 20 DE SETEMBRO DE 2026 (domingo)
 12:00 — portões abrem
 13:00 — alunos em sala
 13:30 — início da prova
@@ -52,7 +52,7 @@ DIA 20 DE SETEMBRO DE 2026 (sábado)
 19:00 — fim da prova para alunos com necessidades especiais
 20:00 — fim da prova para alunos sem necessidades especiais
 
-DIA 27 DE SETEMBRO DE 2026 (sábado)
+DIA 27 DE SETEMBRO DE 2026 (domingo)
 12:00 — portões abrem
 13:00 — alunos em sala
 13:30 — início da prova
@@ -177,7 +177,7 @@ enviado no lugar da resposta do agente:
 ```
 Aqui estão os horários do Simulado Academia Enem 👇
 
-*20 de setembro (sábado)*
+*20 de setembro (domingo)*
 12:00 — portões abrem
 13:00 — alunos em sala
 13:30 — início da prova
@@ -185,7 +185,7 @@ Aqui estão os horários do Simulado Academia Enem 👇
 19:00 — fim da prova (alunos com necessidades especiais)
 20:00 — fim da prova (demais alunos)
 
-*27 de setembro (sábado)*
+*27 de setembro (domingo)*
 12:00 — portões abrem
 13:00 — alunos em sala
 13:30 — início da prova
