@@ -7,7 +7,9 @@ import path from "node:path"
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    // tests/ estava de fora: os 4 arquivos ali existiam, estavam versionados e nunca
+    // rodavam por ninguém — cobertura só no papel. Incluídos em 2026-09-21.
+    include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
   },
   resolve: {
     alias: {

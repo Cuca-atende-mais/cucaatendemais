@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { test } from "vitest"
 import {
     mapMotorParaOrigem,
     validarCorpoReenvio,
-} from "../src/app/api/configuracoes/acompanhamento-envios/reenviar/logic.ts"
+} from "../src/app/api/configuracoes/acompanhamento-envios/reenviar/logic"
 
 test("mapMotorParaOrigem mapeia pontual para eventos_pontuais", () => {
     assert.equal(mapMotorParaOrigem("pontual"), "eventos_pontuais")
