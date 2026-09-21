@@ -121,6 +121,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
         || campanhaExistente.noRag === true
         || (campanhaExistente.autorizadas ?? 0) > 0
         || (campanhaExistente.aguardando ?? 0) > 0
+        || (campanhaExistente.aRecriar ?? 0) > 0
     )
 
     // Colaborador lotado numa unidade só cria para ela (mesma regra que o servidor aplica ao gravar).
@@ -317,8 +318,11 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                 }
                 const { data: sit } = await supabase.rpc("pgm_situacao_campanhas", { p_ids: [existente.id] })
                 if (cancelado) return
-                const s0 = (sit ?? [])[0] as { autorizadas?: number; aguardando?: number; no_rag?: boolean } | undefined
-                setCampanhaExistente({ ...existente, autorizadas: s0?.autorizadas ?? 0, aguardando: s0?.aguardando ?? 0, noRag: s0?.no_rag === true })
+                const s0 = (sit ?? [])[0] as { autorizadas?: number; aguardando?: number; no_rag?: boolean; a_recriar?: number } | undefined
+                setCampanhaExistente({
+                    ...existente, autorizadas: s0?.autorizadas ?? 0, aguardando: s0?.aguardando ?? 0,
+                    noRag: s0?.no_rag === true, aRecriar: s0?.a_recriar ?? 0,
+                })
                 setVerificandoDup(false)
             })
 
