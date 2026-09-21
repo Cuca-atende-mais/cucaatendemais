@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { test } from "vitest"
 import {
     erroConfiguracao,
     mensagemDuplicata,
     montarRegistroDisparo,
     periodoValido,
-} from "../src/app/api/divulgacao/disparar/logic.ts"
+} from "../src/app/api/divulgacao/disparar/logic"
 
 test("valida mês e ano e preserva mensagem de duplicata 409", () => {
     assert.equal(periodoValido(7, 2026), true)
