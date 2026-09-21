@@ -4,6 +4,13 @@
 !README.md
 !SCHEMA_BANCO_DADOS.md
 !docs/**/*.md
+# Exceções nominais (S-CICD): arquivos de prática de repositório que PRECISAM ir ao GitHub.
+# Uma linha por arquivo, de propósito — um curinga como !*.md ou !.github/**/*.md traria junto
+# os 200+ documentos internos de docs/ e as personas de .github/agents/ para um repo público.
+!CONTRIBUTING.md
+!.github/PULL_REQUEST_TEMPLATE.md
+!worker/CLAUDE.md
+!cuca-portal/CLAUDE.md
 *.xlsx
 
 # SQS-51 (A7): MCP config contém token Supabase — nunca versionar

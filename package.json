@@ -2,14 +2,15 @@
   "name": "cucaatendemais-workspace",
   "private": true,
   "scripts": {
-    "lint": "python3 -m py_compile worker/empregabilidade_engine.py",
-    "typecheck": "python3 -m py_compile worker/empregabilidade_engine.py",
-    "test": "npm run test:worker",
-    "build": "SUPABASE_URL=http://localhost SUPABASE_SERVICE_ROLE_KEY=dummy python3 -c \"import sys; sys.path.insert(0, 'worker'); import empregabilidade_engine\"",
-    "test:worker": "python3 -m pytest worker/tests/test_empregabilidade_engine.py -q",
-    "portal:lint": "npm --prefix cuca-portal run lint",
-    "portal:typecheck": "cd cuca-portal && npx tsc --noEmit --project tsconfig.json",
+    "test": "npm run test:worker && npm run test:portal",
+    "lint": "npm run portal:lint",
+    "typecheck": "npm run portal:typecheck",
+    "build": "npm run portal:build",
+    "test:worker": "python -m pytest worker/tests -q",
     "test:portal": "npm --prefix cuca-portal test",
+    "test:edge": "cd supabase/functions/gerar-resumo-rede && deno test --allow-all && cd ../motor-agente && deno test --allow-all",
+    "portal:lint": "npm --prefix cuca-portal run lint",
+    "portal:typecheck": "npm --prefix cuca-portal run typecheck",
     "portal:build": "npm --prefix cuca-portal run build"
   }
 }

@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Saída de build do OpenNext: 12 MB de código já compilado. Sem isto o ESLint
+    // estoura o teto de heap do Node (~2 GB) quando a pasta existe em disco.
+    ".open-next/**",
+    "coverage/**",
   ]),
 ]);
 
