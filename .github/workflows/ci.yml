@@ -1,0 +1,167 @@
+# Esteira de CI — versão 1
+#
+# DESENHO: nesta fase nenhum check é obrigatório na regra da `main` (hoje `rule1` exige
+# 0 checks). Um check vermelho aparece no PR mas NÃO impede o merge. Por isso os passos
+# falham de verdade em vez de usar `continue-on-error` em tudo: com `continue-on-error`
+# o job fica verde mesmo com teste quebrado, e aí ninguém vê o problema sem abrir o log.
+# Vermelho visível + merge liberado é mais honesto que verde falso.
+#
+# Exceções deliberadas (`continue-on-error: true`): lint e auditoria de dependências.
+# Esses dois são dívida pré-existente conhecida (267 erros de estilo, 27 vulnerabilidades)
+# e ficam informativos até serem reduzidos em stories próprias — não são "ainda não
+# confiáveis", são "não é pra travar por isso".
+#
+# `if: ${{ !cancelled() }}` nos passos seguintes garante que todos rodem mesmo se um
+# anterior falhar — sem isso, um vitest vermelho esconderia o resultado do typecheck e
+# do build.
+#
+# Versões vêm dos arquivos que definem produção, não de escolha: Python 3.11
+# (worker/Dockerfile), Node 20 (cuca-portal/Dockerfile), Deno 2 (supabase/config.toml).
+#
+# Contexto completo: docs/PLANO-EXECUCAO-CICD-2026-09-21.md
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# `develop` ficou de fora de propósito: último commit em 2026-07-19, 0 commits à frente
+# da main e 379 atrás — os PRs vão todos direto pra main. Gatilho nela seria config morta.
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    name: Worker — pytest
+    runs-on: ubuntu-latest
+    env:
+      # Valores FALSOS de propósito. A esteira não deve ter acesso a Supabase, Meta ou
+      # OpenAI de verdade. Existem só porque worker/talent_bank_matcher.py cria clientes
+      # no momento da IMPORTAÇÃO — sem eles a suíte nem chega a coletar.
+      OPENAI_API_KEY: dummy
+      SUPABASE_URL: http://localhost
+      SUPABASE_SERVICE_ROLE_KEY: dummy
+      SUPABASE_ANON_KEY: dummy
+      WHATSAPP_TOKEN: dummy
+      WHATSAPP_PHONE_ID: dummy
+      META_VERIFY_TOKEN: dummy
+      META_APP_SECRET: dummy
+      REDIS_URL: redis://localhost:6379
+      ENCRYPTION_KEY: dummy
+      JWT_SECRET: dummy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # igual ao worker/Dockerfile — não 3.12
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
+
+      - name: Instalar dependências
+        run: pip install -r worker/requirements.txt
+
+      # NÃO paralelizar (sem pytest-xdist, sem dividir por arquivo, sem rodar só o
+      # arquivo alterado). A suíte depende da ordem de coleta: test_academia_enem_engine.py
+      # substitui o módulo `supabase` por um dublê e os arquivos seguintes herdam isso.
+      # Rodar um arquivo isolado hoje quebra na coleta com "Invalid API key".
+      # A correção de verdade é tirar a criação de clientes do momento da importação
+      # (worker/talent_bank_matcher.py) — story própria. Até lá, job único.
+      - name: pytest
+        run: python -m pytest -q
+
+  portal:
+    name: Portal — vitest, tipos, lint, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cuca-portal
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20" # igual ao cuca-portal/Dockerfile (node:20-alpine)
+          cache: npm
+          cache-dependency-path: cuca-portal/package-lock.json
+
+      # `npm ci` só aqui dentro: o package.json da raiz não tem package-lock.json,
+      # então um npm ci na raiz falharia.
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: vitest
+        run: npm test
+
+      - name: Verificação de tipos
+        if: ${{ !cancelled() }}
+        run: npm run typecheck
+
+      # Informativo por decisão: 267 erros de estilo pré-existentes. Vira trava só depois
+      # de a dívida ser reduzida em story própria.
+      - name: ESLint (informativo)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: npm run lint
+
+      - name: Build
+        if: ${{ !cancelled() }}
+        run: npm run build
+
+  edge-functions:
+    name: Edge Functions — deno
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        funcao: [gerar-resumo-rede, motor-agente]
+    defaults:
+      run:
+        working-directory: supabase/functions/${{ matrix.funcao }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x # supabase/config.toml declara deno_version = 2
+
+      # --no-check porque existem 52 erros de tipo pré-existentes (44 deles de só 2
+      # causas-raiz) que fariam o `deno test` nem rodar. Os testes em si passam: 284.
+      # O sinal de tipo vem do passo seguinte, separado, pra não perder o sinal de teste.
+      - name: deno test
+        run: deno test --allow-all --no-check
+
+      # Informativo: expõe a dívida de tipo em todo PR sem travar. Sai daqui quando a
+      # story de correção dos tipos entrar.
+      - name: deno check (informativo)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: deno check index.ts
+
+  dependencias:
+    name: Auditoria de dependências (informativo)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cuca-portal
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: npm audit
+        continue-on-error: true
+        run: npm audit --omit=dev
