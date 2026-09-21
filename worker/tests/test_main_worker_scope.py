@@ -53,7 +53,15 @@ def test_worker_scope_academia_enem_nao_inicia_loops_de_outros_modulos(monkeypat
 
     agendadas = _rodar_startup_capturando_tasks(monkeypatch)
 
-    assert agendadas == []
+    # S-AE-09 passou a agendar a fila PRÓPRIA da Academia Enem neste serviço, então
+    # `agendadas == []` deixou de valer — o que o teste sempre quis garantir (e o
+    # docstring diz) é que nenhum loop de OUTRO módulo sobe aqui. Asseverar os loops
+    # nominalmente é mais forte que a lista vazia: pega tanto um loop alheio que volte
+    # quanto o loop da própria Academia Enem deixando de subir.
+    assert not any("campanhas_loop" in nome for nome in agendadas), agendadas
+    assert not any("empregabilidade_notify_loop" in nome for nome in agendadas), agendadas
+    assert not any("ocr_pending_loop" in nome for nome in agendadas), agendadas
+    assert any("academia_enem_disparo_loop" in nome for nome in agendadas), agendadas
 
 
 def test_worker_scope_env_var_ausente_cai_no_padrao_principal():
