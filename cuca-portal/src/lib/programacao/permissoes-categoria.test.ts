@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { PGM_GERAL, pgmCategoria } from "@/lib/rbac/catalogo-programacao-mensal"
 import {
     acaoDaTransicaoCategoria, categoriasEditaveis, checadorDePermissoes, mapaPermissoesCategorias, motivoRecusaCriacao,
-    motivoRecusaExclusao, motivoRecusaSubstituicao, unidadesAoAlcance,
+    categoriasParaExcluir, motivoRecusaSubstituicao, podeExcluirCategoriaNoStatus, temAlgumaOpcaoDeExcluir, unidadesAoAlcance,
     origemValida, permissoesDaCategoria, podeAcessarUnidade, podeTransicionarCategoria, permissoesComStatus, separarLinhasParaDuplicar, slugDaCategoria, transicaoExigeMotivo, transicoesPossiveis,
     type LinhaPermissaoPgm,
 } from "./permissoes-categoria"
@@ -122,9 +122,9 @@ describe("criar campanha nova (importar / grade)", () => {
         expect(motivoRecusaCriacao(coordenadorEsportivo, "duplicar", ["ESPORTES", "CURSOS"], null)).toMatch(/CURSOS/)
     })
 
-    it("substituir exige excluir programação inteira e excluir em todas as categorias existentes", () => {
+    it("substituir exige \"excluir minha programação\" em todas as categorias existentes", () => {
         const comExcluir = checadorDePermissoes([
-            unica(PGM_GERAL.importarPlanilha), unica(PGM_GERAL.excluirProgramacao),
+            unica(PGM_GERAL.importarPlanilha), unica(pgmCategoria("esportes").excluirMinha),
             crud(pgmCategoria("esportes").atividades),
         ], false)
         expect(motivoRecusaCriacao(coordenadorEsportivo, "duplicar", ["ESPORTES"], ["ESPORTES"])).toMatch(/substituir/)
@@ -164,15 +164,42 @@ describe("unidadesAoAlcance", () => {
     })
 })
 
-describe("motivoRecusaExclusao", () => {
-    it("não publicada: exclui quem tem a permissão", () => {
-        expect(motivoRecusaExclusao({ publicada: false, developer: false, temPermissao: true })).toBeNull()
-        expect(motivoRecusaExclusao({ publicada: false, developer: false, temPermissao: false })).toMatch(/Sem permissão/)
+describe("excluir minha programação (por categoria)", () => {
+    const esp = pgmCategoria("esportes")
+    const cur = pgmCategoria("cursos")
+    const dia = pgmCategoria("dia_a_dia")
+    const assistenteEsporte = checadorDePermissoes([unica(esp.excluirMinha)], false)
+    const supervisorCursos = checadorDePermissoes([unica(cur.excluirEnviada), unica(dia.excluirEnviada)], false)
+    const outubro = [
+        { categoria: "ESPORTES", status: "rascunho" },
+        { categoria: "CURSOS", status: "autorizada" },
+        { categoria: "DIA A DIA", status: "aguardando_autorizacao" },
+    ]
+
+    it("assistente em rascunho exclui só a parte dele", () => {
+        expect(categoriasParaExcluir({ checar: assistenteEsporte, developer: false, publicada: false, categorias: outubro }))
+            .toEqual({ categorias: ["ESPORTES"], recusa: null })
     })
-    it("publicada: só Developer, mesmo com a permissão", () => {
-        expect(motivoRecusaExclusao({ publicada: true, developer: false, temPermissao: true })).toMatch(/só pode ser excluída por Developer/)
-        expect(motivoRecusaExclusao({ publicada: true, developer: true, temPermissao: false })).toBeNull()
-        expect(motivoRecusaExclusao({ publicada: false, developer: true, temPermissao: false })).toBeNull()
+    it("assistente não exclui depois de enviar", () => {
+        const r = categoriasParaExcluir({ checar: assistenteEsporte, developer: false, publicada: false, categorias: [{ categoria: "ESPORTES", status: "aguardando_autorizacao" }] })
+        expect(r.categorias).toEqual([])
+        expect(r.recusa).toMatch(/só o supervisor/)
+    })
+    it("supervisor exclui as categorias dele mesmo autorizadas, e também em rascunho", () => {
+        expect(categoriasParaExcluir({ checar: supervisorCursos, developer: false, publicada: false, categorias: outubro }).categorias)
+            .toEqual(["CURSOS", "DIA A DIA"])
+        expect(podeExcluirCategoriaNoStatus(supervisorCursos, "CURSOS", "rascunho")).toBe(true)
+        expect(podeExcluirCategoriaNoStatus(supervisorCursos, "ESPORTES", "rascunho")).toBe(false)
+    })
+    it("publicada: só Developer, que exclui a programação inteira", () => {
+        expect(categoriasParaExcluir({ checar: supervisorCursos, developer: false, publicada: true, categorias: outubro }).recusa)
+            .toMatch(/só pode ser excluída por Developer/)
+        expect(categoriasParaExcluir({ checar: () => false, developer: true, publicada: true, categorias: outubro }).categorias)
+            .toEqual(["ESPORTES", "CURSOS", "DIA A DIA"])
+    })
+    it("botão aparece para quem tem alguma opção de excluir", () => {
+        expect(temAlgumaOpcaoDeExcluir(assistenteEsporte)).toBe(true)
+        expect(temAlgumaOpcaoDeExcluir(checadorDePermissoes([unica(PGM_GERAL.lista)], false))).toBe(false)
     })
 })
 

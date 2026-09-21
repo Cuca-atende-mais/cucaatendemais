@@ -6,6 +6,7 @@ import {
     ACOES_CRUD,
     CATEGORIAS_PROGRAMACAO,
     GRUPOS_PROGRAMACAO_MENSAL,
+    MODULOS_ESPELHADOS_S_PROG_12,
     MODULOS_PROGRAMACAO_MENSAL,
     PGM_DIVULGACAO,
     PGM_GERAL,
@@ -18,8 +19,8 @@ const tudo = { can_read: true, can_create: true, can_update: true, can_delete: t
 const nada = { can_read: false, can_create: false, can_update: false, can_delete: false }
 
 describe("catálogo de permissões da programação mensal", () => {
-    it("tem 7 gerais, 5 por categoria nas 4 categorias e 2 da Divulgação", () => {
-        expect(MODULOS_PROGRAMACAO_MENSAL).toHaveLength(7 + 4 * 5 + 2)
+    it("tem 6 gerais, 7 por categoria nas 4 categorias e 2 da Divulgação", () => {
+        expect(MODULOS_PROGRAMACAO_MENSAL).toHaveLength(6 + 4 * 7 + 2)
         expect(GRUPOS_PROGRAMACAO_MENSAL).toHaveLength(5)
     })
 
@@ -39,8 +40,12 @@ describe("catálogo de permissões da programação mensal", () => {
             const ids = pgmCategoria(c.slug)
             const acoes = (id: string) => MODULOS_PROGRAMACAO_MENSAL.find(m => m.id === id)?.acoes
             expect(acoes(ids.atividades)).toEqual(ACOES_CRUD)
-            for (const id of [ids.enviar, ids.autorizar, ids.devolver, ids.reabrir]) expect(acoes(id)).toEqual(ACAO_UNICA)
+            for (const id of [ids.enviar, ids.autorizar, ids.devolver, ids.reabrir, ids.excluirMinha, ids.excluirEnviada]) expect(acoes(id)).toEqual(ACAO_UNICA)
         }
+    })
+
+    it("\"Excluir programação inteira\" não aparece mais na tela de perfis", () => {
+        expect(MODULOS_PROGRAMACAO_MENSAL.map(m => m.id)).not.toContain(PGM_GERAL.excluirProgramacao)
     })
 })
 
@@ -48,7 +53,7 @@ describe("espelharPermissoes (item 4)", () => {
     it("perfil com mensal completo recebe tudo, menos Aprovar RAG", () => {
         const linhas = espelharPermissoes(tudo, { ...nada, can_create: true })
         const porId = new Map(linhas.map(l => [l.module, l]))
-        expect(linhas).toHaveLength(MODULOS_PROGRAMACAO_MENSAL.length)
+        expect(linhas).toHaveLength(MODULOS_ESPELHADOS_S_PROG_12.length)
         expect(porId.get(PGM_DIVULGACAO.aprovarRag)?.can_read).toBe(false)
         expect(porId.get(PGM_DIVULGACAO.dispararGlobal)?.can_read).toBe(true)
         expect(porId.get(pgmCategoria("cursos").atividades)).toMatchObject(tudo)
@@ -71,7 +76,7 @@ describe("espelharPermissoes (item 4)", () => {
         const sql = readFileSync(join(dir, arquivo!), "utf8")
         const pares = [...sql.matchAll(/\('(pgm_[a-z_]+)', '([a-z]+)'\)/g)].map(m => [m[1], m[2]] as const)
         const origemSql = new Map(pares)
-        expect(new Set(origemSql.keys())).toEqual(new Set(MODULOS_PROGRAMACAO_MENSAL.map(m => m.id)))
+        expect(new Set(origemSql.keys())).toEqual(new Set(MODULOS_ESPELHADOS_S_PROG_12))
 
         const esperado: Record<string, string> = {
             [PGM_GERAL.lista]: "read", [PGM_GERAL.historico]: "read", [PGM_GERAL.exportar]: "read",

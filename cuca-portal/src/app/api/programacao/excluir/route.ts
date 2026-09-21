@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
-import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
 import { PGP } from "@/lib/rbac/catalogo-programacao-pontual"
-import { motivoRecusaExclusao, opcaoLiberada } from "@/lib/programacao/permissoes-categoria"
+import { categoriasParaExcluir, opcaoLiberada, slugDaCategoria, temAlgumaOpcaoDeExcluir } from "@/lib/programacao/permissoes-categoria"
 import { carregarAcessoPgm } from "@/lib/programacao/permissoes-categoria-server"
 import { STATUS_BLOQUEIAM_EXCLUSAO_PONTUAL, eventoExcluivel } from "@/lib/programacao/pontual"
 import { isDeveloperEmail } from "@/lib/auth/developers"
 
-// S-PROG-13: mensal exige a opção "Excluir programação inteira" (a confirmação nominal continua na
-// tela) e a campanha precisa ser de unidade ao alcance de quem pede. Programação publicada (RAG dela
-// no ar) só pode ser excluída por Developer (decisão do Junior, 2026-09-21) — a regra fica aqui porque
-// a exclusão usa a chave de serviço, que não passa pelas políticas do banco. S-PROG-17: pontual exige
+// Mensal — "Excluir minha programação" (decisão do Junior, 2026-09-21): cada pessoa exclui só as
+// categorias dela, na unidade ao alcance. Rascunho: "excluir minha programação" (assistente). Enviada
+// ou autorizada: "excluir programação enviada ou autorizada" (supervisor) — a unidade fica travada até
+// recriar e autorizar. Publicada (RAG no ar) e programação inteira: só Developer. A regra fica aqui
+// porque a exclusão usa a chave de serviço, que não passa pelas políticas do banco; a gravação é
+// uma transação única em `pgm_excluir_categorias`. A confirmação nominal continua na tela. S-PROG-17: pontual exige
 // "Excluir evento" e o evento ao alcance da unidade.
 
 export async function DELETE(req: NextRequest) {
@@ -34,9 +35,8 @@ export async function DELETE(req: NextRequest) {
         if (tipo === 'mensal') {
             const acesso = await carregarAcessoPgm(user)
             const developer = isDeveloperEmail(user.email)
-            const temPermissao = opcaoLiberada(acesso.checar, PGM_GERAL.excluirProgramacao)
-            if (!temPermissao && !developer) {
-                return NextResponse.json({ error: "Sem permissão para excluir a programação inteira." }, { status: 403 })
+            if (!developer && !temAlgumaOpcaoDeExcluir(acesso.checar)) {
+                return NextResponse.json({ error: "Sem permissão para excluir programação." }, { status: 403 })
             }
 
             const admin = createAdminClient()
@@ -49,20 +49,53 @@ export async function DELETE(req: NextRequest) {
                 return NextResponse.json({ error: "Programação não encontrada" }, { status: 404 })
             }
 
-            const { data: publicada, error: pubErr } = await admin.rpc("pgm_campanha_publicada", { p_campanha_id: id })
+            const [{ data: publicada, error: pubErr }, { data: linhas, error: lErr }, { data: statusCats, error: sErr }] = await Promise.all([
+                admin.rpc("pgm_campanha_publicada", { p_campanha_id: id }),
+                admin.from("atividades_mensais").select("categoria").eq("campanha_id", id),
+                admin.from("campanha_categoria_status").select("categoria, status").eq("campanha_id", id),
+            ])
             if (pubErr) throw pubErr
-            const recusa = motivoRecusaExclusao({ publicada: publicada === true, developer, temPermissao })
+            if (lErr) throw lErr
+            if (sErr) throw sErr
+
+            const nomes = [...new Set((linhas ?? []).map(l => l.categoria as string).filter(Boolean))]
+            const statusDe = (nome: string) => (statusCats ?? []).find(s => slugDaCategoria(s.categoria as string) === slugDaCategoria(nome))?.status as string | undefined
+            const { categorias, recusa } = categoriasParaExcluir({
+                checar: acesso.checar,
+                developer,
+                publicada: publicada === true,
+                categorias: nomes.map(nome => ({ categoria: nome, status: statusDe(nome) ?? null })),
+            })
             if (recusa) {
                 return NextResponse.json({ error: recusa }, { status: 403 })
             }
 
-            // Primeiro deletar os eventos vinculados se não houver ON DELETE CASCADE
-            await supabase.from("eventos_mensais").delete().eq("campanha_id", id)
+            if (developer) {
+                // Programação inteira (todas as categorias), inclusive publicada — só Developer.
+                await supabase.from("eventos_mensais").delete().eq("campanha_id", id)
+                const { error } = await admin.from("campanhas_mensais").delete().eq("id", id)
+                if (error) throw error
+                return NextResponse.json({ success: true, message: "Programação excluída com sucesso." })
+            }
 
-            // Chave de serviço: a permissão já foi conferida acima (atividades e histórico saem
-            // junto pelo ON DELETE CASCADE).
-            const { error } = await admin.from("campanhas_mensais").delete().eq("id", id)
-            if (error) throw error
+            const { data: colaborador } = await admin.from("colaboradores").select("id").eq("user_id", user.id).maybeSingle()
+            const { data: resultado, error: rpcErr } = await admin.rpc("pgm_excluir_categorias", {
+                p_campanha_id: id,
+                p_categorias: categorias,
+                p_usuario_id: colaborador?.id ?? null,
+            })
+            if (rpcErr) {
+                const status = rpcErr.code === "42501" ? 403 : rpcErr.code === "P0002" ? 404 : 500
+                return NextResponse.json({ error: rpcErr.message }, { status })
+            }
+            const rotulo = categorias.join(", ")
+            return NextResponse.json({
+                success: true,
+                categorias,
+                message: resultado === "excluida"
+                    ? `Programação de ${rotulo} excluída. Não restou atividade de ninguém, então a programação do mês saiu.`
+                    : `Programação de ${rotulo} excluída. As outras categorias continuam como estavam.`,
+            })
         } else if (tipo === 'pontual') {
             const acesso = await carregarAcessoPgm(user)
             if (!opcaoLiberada(acesso.checar, PGP.excluir)) {

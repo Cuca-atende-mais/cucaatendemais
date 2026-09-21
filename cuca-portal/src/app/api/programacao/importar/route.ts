@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
 
         if (conflito) {
             const [{ data: statusCats, error: stErr }, { count: docsRag, error: ragErr }] = await Promise.all([
-                admin.from("campanha_categoria_status").select("status").eq("campanha_id", conflito.id),
+                admin.from("campanha_categoria_status").select("status, exigir_recriacao").eq("campanha_id", conflito.id),
                 admin.from("documentos_rag").select("id", { count: "exact", head: true })
                     .eq("tipo", "monthly_program").eq("metadados->>campanha_id", conflito.id),
             ])
@@ -93,7 +93,8 @@ export async function POST(req: NextRequest) {
             // 422 (não 409): a tela só abre o "Substituir?" com 409 + `conflito`; aqui não há o que confirmar.
             const recusaRascunho = motivoRecusaSubstituicao({
                 statusCampanha: conflito.status as string,
-                statusCategorias: (statusCats || []).map(l => l.status as string),
+                // Categoria excluída pelo supervisor (a recriar) conta como já enviada: não é rascunho novo.
+                statusCategorias: (statusCats || []).map(l => (l.exigir_recriacao ? "excluida" : l.status as string)),
                 temDocumentoRag: (docsRag ?? 0) > 0,
             })
             if (recusaRascunho) {
