@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { motivoRecusaCriacao, origemValida } from "@/lib/programacao/permissoes-categoria"
 import { carregarAcessoPgm } from "@/lib/programacao/permissoes-categoria-server"
+import { preencherDataAtividade } from "@/lib/programacao/payload"
 
 // S-PROG-13: esta rota grava com a chave de serviço (passa por cima das políticas), então a
 // checagem por categoria é toda feita aqui, ANTES de apagar ou inserir qualquer coisa:
@@ -51,6 +52,10 @@ export async function POST(req: NextRequest) {
         // 3. Permissão por origem e por categoria, antes de qualquer gravação
         const acesso = await carregarAcessoPgm(user)
         if (typeof campanha.unidade_cuca !== "string" || !campanha.unidade_cuca.trim()) {
+            return NextResponse.json({ error: "Payload inválido" }, { status: 400 })
+        }
+        if (!Number.isInteger(campanha.mes) || campanha.mes < 1 || campanha.mes > 12
+            || !Number.isInteger(campanha.ano) || campanha.ano < 2000 || campanha.ano > 2100) {
             return NextResponse.json({ error: "Payload inválido" }, { status: 400 })
         }
         if (!acesso.alcancaUnidade(campanha.unidade_cuca)) {
@@ -116,13 +121,24 @@ export async function POST(req: NextRequest) {
 
         // 5. Insere atividades em lotes de 50
         const CHUNK = 50
-        const batch = atividades.map((a: any) => ({ ...a, unidade_cuca: campanha.unidade_cuca, campanha_id: newCamp.id }))
+        // Data vazia (ESPORTES sempre; CURSOS/DIA A DIA duplicados) vira o dia 1 do mês — mesmo
+        // placeholder da função de edição `programacao_salvar_rascunho_categorias`.
+        const batch = preencherDataAtividade(atividades, campanha.mes, campanha.ano)
+            .map(a => ({ ...a, unidade_cuca: campanha.unidade_cuca, campanha_id: newCamp.id }))
 
         for (let i = 0; i < batch.length; i += CHUNK) {
             const { error: batchErr } = await admin
                 .from("atividades_mensais")
                 .insert(batch.slice(i, i + CHUNK))
-            if (batchErr) throw new Error(`Erro ao inserir atividades (lote ${Math.floor(i / CHUNK) + 1}): ` + batchErr.message)
+            if (batchErr) {
+                // Sem isso, a campanha ficava gravada VAZIA (só parte dos lotes, ou nenhum) e a
+                // próxima tentativa de salvar caía no conflito de mês/unidade. Desfaz a campanha
+                // recém-criada (CASCADE leva as atividades já inseridas) — a grade continua na tela
+                // e a pessoa pode salvar de novo.
+                const { error: rollbackErr } = await admin.from("campanhas_mensais").delete().eq("id", newCamp.id)
+                if (rollbackErr) console.error("[programacao/importar] falha ao desfazer campanha vazia", rollbackErr)
+                throw new Error(`Erro ao inserir atividades (lote ${Math.floor(i / CHUNK) + 1}): ` + batchErr.message)
+            }
         }
 
         return NextResponse.json({ campanha_id: newCamp.id })
