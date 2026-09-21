@@ -76,7 +76,7 @@ jobs:
       # A correção de verdade é tirar a criação de clientes do momento da importação
       # (worker/talent_bank_matcher.py) — story própria. Até lá, job único.
       - name: pytest
-        run: python -m pytest -q
+        run: python -m pytest -q -l --tb=long
 
   portal:
     name: Portal — vitest, tipos, lint, build
