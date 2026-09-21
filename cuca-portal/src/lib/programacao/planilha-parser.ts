@@ -133,3 +133,17 @@ export function lerColuna(row: unknown[], indices: Record<string, number>, chave
   const i = indices[chave]
   return i === undefined ? "" : String(row[i] ?? "")
 }
+
+/**
+ * Primeira data "dd/mm/aaaa" de um texto, em ISO ("aaaa-mm-dd"), ou null. Usada para a data de início
+ * de CURSOS a partir da coluna de período (ex.: "05/06/2026 26/06/2026 Quarta e Sexta"). Sem data
+ * legível fica vazio — nenhuma data é inventada (decisão do Junior, 2026-09-21).
+ */
+export function primeiraDataBr(texto: string | null | undefined): string | null {
+    const m = String(texto ?? "").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+    if (!m) return null
+    const [, d, mes, ano] = m
+    const dia = Number(d), numMes = Number(mes)
+    if (dia < 1 || dia > 31 || numMes < 1 || numMes > 12) return null
+    return `${ano}-${mes.padStart(2, "0")}-${d.padStart(2, "0")}`
+}

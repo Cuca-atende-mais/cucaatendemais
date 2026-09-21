@@ -38,6 +38,8 @@ export function motivosFaltantes(linha: LinhaParaAprovacao): string[] {
         if (vazio(meta.carga_horaria)) faltas.push("carga horária")
         if (vazio(meta.ementa)) faltas.push("ementa")
         if (vazio(meta.dias_semana)) faltas.push("dias da semana")
+        // Período é obrigatório (decisão do Junior, 2026-09-21): sem ele o curso não pode ser enviado.
+        if (vazio(meta.periodo)) faltas.push("período")
     } else if (linha.categoria === "ESPORTES") {
         if (vazio(meta.professor)) faltas.push("professor")
         if (vazio(meta.turma)) faltas.push("turma")

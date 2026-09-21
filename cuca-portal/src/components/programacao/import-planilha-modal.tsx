@@ -21,6 +21,7 @@ import {
     detectarCategoria,
     detectarColunas,
     lerColuna,
+    primeiraDataBr,
 } from "@/lib/programacao/planilha-parser"
 
 interface ImportPlanilhaModalProps {
@@ -251,7 +252,6 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                     const idx = deteccao.indices
 
                     let countNaAba = 0
-                    const fallbackDate = new Date(anoAtual, mesInt - 1, 1).toISOString().split('T')[0]
 
                     const parseTimeString = (timeStr: string | null | undefined): string | null => {
                         if (!timeStr) return null;
@@ -354,9 +354,10 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                                 horaFimStr = horaFimRaw.toLowerCase().trim()
                             }
 
-                            // FIX5: usa a data real do evento em vez do fallback de 1º do mês
+                            // FIX5: usa a data real do evento. Sem data legível fica vazio — é barrado no
+                            // "Enviar para autorização", nunca preenchido com o dia 1 do mês.
                             const dataRealRaw = lerColuna(row, idx, "data")
-                            let dataAtividade = fallbackDate
+                            let dataAtividade: string | null = null
                             if (dataRealRaw) {
                                 if (/\d{2}\/\d{2}\/\d{4}/.test(dataRealRaw)) {
                                     const parts = dataRealRaw.split('/')
@@ -409,7 +410,8 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                                 titulo: titulo.substring(0, 100),
                                 descricao: String(descricao).substring(0, 1500),
                                 local: String(local).substring(0, 255),
-                                data_atividade: fallbackDate,
+                                // ESPORTES nunca tem data; CURSOS usa o início do período, se legível.
+                                data_atividade: categoriaVal === "CURSOS" ? primeiraDataBr(meta.periodo) : null,
                                 hora_inicio: parseTimeString(horaInicioStr),
                                 hora_fim: parseTimeString(horaFimStr),
                                 categoria: categoriaVal,

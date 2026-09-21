@@ -3,12 +3,15 @@ import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
 import { PGP } from "@/lib/rbac/catalogo-programacao-pontual"
-import { opcaoLiberada } from "@/lib/programacao/permissoes-categoria"
+import { motivoRecusaExclusao, opcaoLiberada } from "@/lib/programacao/permissoes-categoria"
 import { carregarAcessoPgm } from "@/lib/programacao/permissoes-categoria-server"
 import { STATUS_BLOQUEIAM_EXCLUSAO_PONTUAL, eventoExcluivel } from "@/lib/programacao/pontual"
+import { isDeveloperEmail } from "@/lib/auth/developers"
 
 // S-PROG-13: mensal exige a opção "Excluir programação inteira" (a confirmação nominal continua na
-// tela) e a campanha precisa ser de unidade ao alcance de quem pede. S-PROG-17: pontual exige
+// tela) e a campanha precisa ser de unidade ao alcance de quem pede. Programação publicada (RAG dela
+// no ar) só pode ser excluída por Developer (decisão do Junior, 2026-09-21) — a regra fica aqui porque
+// a exclusão usa a chave de serviço, que não passa pelas políticas do banco. S-PROG-17: pontual exige
 // "Excluir evento" e o evento ao alcance da unidade.
 
 export async function DELETE(req: NextRequest) {
@@ -30,7 +33,9 @@ export async function DELETE(req: NextRequest) {
 
         if (tipo === 'mensal') {
             const acesso = await carregarAcessoPgm(user)
-            if (!opcaoLiberada(acesso.checar, PGM_GERAL.excluirProgramacao)) {
+            const developer = isDeveloperEmail(user.email)
+            const temPermissao = opcaoLiberada(acesso.checar, PGM_GERAL.excluirProgramacao)
+            if (!temPermissao && !developer) {
                 return NextResponse.json({ error: "Sem permissão para excluir a programação inteira." }, { status: 403 })
             }
 
@@ -42,6 +47,13 @@ export async function DELETE(req: NextRequest) {
                 .maybeSingle()
             if (!campanha || !acesso.alcancaUnidade(campanha.unidade_cuca as string | null)) {
                 return NextResponse.json({ error: "Programação não encontrada" }, { status: 404 })
+            }
+
+            const { data: publicada, error: pubErr } = await admin.rpc("pgm_campanha_publicada", { p_campanha_id: id })
+            if (pubErr) throw pubErr
+            const recusa = motivoRecusaExclusao({ publicada: publicada === true, developer, temPermissao })
+            if (recusa) {
+                return NextResponse.json({ error: recusa }, { status: 403 })
             }
 
             // Primeiro deletar os eventos vinculados se não houver ON DELETE CASCADE

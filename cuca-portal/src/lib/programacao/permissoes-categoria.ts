@@ -190,3 +190,38 @@ export function podeAcessarUnidade(
     if (!unidadeAlvo) return true
     return minha === unidadeAlvo
 }
+
+/** Unidades que aparecem no seletor da criação: as mesmas que o servidor aceita (`podeAcessarUnidade`). */
+export function unidadesAoAlcance(
+    unidades: readonly string[],
+    unidadeDoColaborador: string | null | undefined,
+    developer: boolean,
+): string[] {
+    return unidades.filter(u => podeAcessarUnidade(unidadeDoColaborador, u, developer))
+}
+
+/**
+ * Excluir programação inteira (decisão do Junior, 2026-09-21). Publicada = RAG dela no ar.
+ * Antes de publicar: quem tem "Excluir programação inteira". Publicada: só Developer.
+ */
+export function motivoRecusaExclusao(p: { publicada: boolean; developer: boolean; temPermissao: boolean }): string | null {
+    if (p.publicada) {
+        return p.developer ? null : "Programação publicada (no ar) só pode ser excluída por Developer."
+    }
+    return p.temPermissao ? null : "Sem permissão para excluir a programação inteira."
+}
+
+/**
+ * Substituir a programação do mês ao criar uma nova: só um rascunho que nunca foi publicado — todas as
+ * categorias em rascunho e nenhum documento de RAG da programação. Autorizada, aprovada ou publicada
+ * só sai por "Excluir programação inteira".
+ */
+export function motivoRecusaSubstituicao(p: {
+    statusCampanha: string | null | undefined
+    statusCategorias: (string | null | undefined)[]
+    temDocumentoRag: boolean
+}): string | null {
+    const nuncaSaiuDoRascunho = p.statusCampanha === "rascunho" && p.statusCategorias.every(s => !s || s === "rascunho")
+    if (nuncaSaiuDoRascunho && !p.temDocumentoRag) return null
+    return "Já existe programação enviada, autorizada ou publicada para este mês e unidade. Ela não pode ser substituída: abra a existente pela lista para editar, ou exclua pela ação \"Excluir programação inteira\"."
+}

@@ -18,9 +18,18 @@ describe("motivosFaltantes/linhaIncompleta — CURSOS", () => {
         const linha = {
             categoria: "CURSOS", titulo: "Violão", descricao: null, local: null,
             hora_inicio: "09:00", hora_fim: "12:00",
-            metadata: { educador: "Edmundo", vagas: "10", carga_horaria: "21", ementa: "Estudo de violão.", dias_semana: "Qua e Sex" },
+            metadata: { educador: "Edmundo", vagas: "10", carga_horaria: "21", ementa: "Estudo de violão.", dias_semana: "Qua e Sex", periodo: "05/10/2026 a 30/10/2026" },
         }
         expect(linhaIncompleta(linha)).toBe(false)
+    })
+
+    it("sem período é incompleta (bloqueia o envio para autorização)", () => {
+        const linha = {
+            categoria: "CURSOS", titulo: "Violão", descricao: null, local: null,
+            hora_inicio: "09:00", hora_fim: "12:00",
+            metadata: { educador: "Edmundo", vagas: "10", carga_horaria: "21", ementa: "Estudo de violão.", dias_semana: "Qua e Sex", periodo: "" },
+        }
+        expect(motivosFaltantes(linha)).toEqual(["período"])
     })
 })
 

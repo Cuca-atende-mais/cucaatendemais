@@ -34,7 +34,7 @@ import { SelecionarOrigem } from "@/components/programacao/selecionar-origem"
 import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
 import {
     categoriasEditaveis, mapaPermissoesCategorias, opcaoLiberada, permissoesComStatus, permissoesDaCategoria,
-    type OrigemCriacao, type StatusCategoria,
+    unidadesAoAlcance, type OrigemCriacao, type StatusCategoria,
 } from "@/lib/programacao/permissoes-categoria"
 import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
 import { useUser } from "@/lib/auth/user-provider"
@@ -84,7 +84,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
 
     // S-PROG-13: permissões por categoria. Linhas criadas nesta sessão (nova, duplicada ou vinda da
     // origem) são editáveis por quem pode criar; linhas já gravadas exigem "editar".
-    const { loading: carregandoUsuario } = useUser()
+    const { loading: carregandoUsuario, profile, isDeveloper } = useUser()
     const checarPgm = useChecarPgm()
     // S-PROG-14: categoria enviada ou autorizada fica somente leitura (é preciso devolver ou reabrir).
     const [statusCategorias, setStatusCategorias] = useState<Partial<Record<Categoria, StatusCategoria>>>({})
@@ -113,6 +113,23 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     const [unidadeSel, setUnidadeSel] = useState<string>(unidadeInicial)
     const [verificandoDup, setVerificandoDup] = useState(false)
     const [campanhaExistente, setCampanhaExistente] = useState<any>(null)
+    // Mês com programação enviada, autorizada ou publicada não pode ser substituído daqui — só pela
+    // ação "Excluir programação inteira" (o servidor confere de novo, inclusive rascunho já publicado).
+    const existenteBloqueia = !!campanhaExistente && campanhaExistente.status !== "rascunho"
+
+    // Colaborador lotado numa unidade só cria para ela (mesma regra que o servidor aplica ao gravar).
+    const unidadesPermitidas = useMemo(
+        () => unidadesAoAlcance(unidadesCuca, profile?.unidade_cuca, isDeveloper),
+        [profile?.unidade_cuca, isDeveloper],
+    )
+    useEffect(() => {
+        if (modoEdicao || carregandoUsuario || !profile) return
+        if (unidadeSel && !unidadesPermitidas.includes(unidadeSel)) {
+            setUnidadeSel(unidadesPermitidas.length === 1 ? unidadesPermitidas[0] : "")
+        } else if (!unidadeSel && unidadesPermitidas.length === 1) {
+            setUnidadeSel(unidadesPermitidas[0])
+        }
+    }, [modoEdicao, carregandoUsuario, profile, unidadesPermitidas, unidadeSel])
 
     // Atividades (Step 2) — S-PROG-01: grade editável, sem formulário-por-atividade
     const [atividades, setAtividades] = useState<AtividadeInterna[]>([])
@@ -405,6 +422,10 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
             toast.error("Adicione pelo menos uma atividade antes de salvar.")
             return
         }
+        if (existenteBloqueia) {
+            toast.error("Já existe programação enviada, autorizada ou publicada para este mês e unidade — ela não pode ser substituída.")
+            return
+        }
         if (campanhaExistente) {
             setConfirmarSubstituicaoAberto(true)
             return
@@ -514,12 +535,12 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                         <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_2fr] gap-4 p-4 rounded-xl border border-border bg-muted/20">
                             <div className="space-y-1.5">
                                 <Label className="font-semibold">Unidade CUCA *</Label>
-                                <Select value={unidadeSel} onValueChange={setUnidadeSel}>
+                                <Select value={unidadeSel} onValueChange={setUnidadeSel} disabled={unidadesPermitidas.length <= 1}>
                                     <SelectTrigger className="h-11 text-sm w-full">
                                         <SelectValue placeholder="Selecione a unidade" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {unidadesCuca.map(u => (
+                                        {unidadesPermitidas.map(u => (
                                             <SelectItem key={u} value={u}>{u}</SelectItem>
                                         ))}
                                     </SelectContent>
@@ -558,7 +579,16 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                                 <Loader2 className="h-3 w-3 animate-spin" /> Checando se já existe programação para este mês…
                             </p>
                         )}
-                        {!verificandoDup && campanhaExistente && (
+                        {!verificandoDup && existenteBloqueia && (
+                            <div className="flex items-start gap-2.5 p-3.5 rounded-xl border border-destructive/40 bg-destructive/10 text-destructive text-sm">
+                                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                                <span>
+                                    Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (status: <em>{campanhaExistente.status}</em>)
+                                    e ela <strong>não pode ser substituída</strong>. Confira se o mês está certo — para alterar a existente, abra-a pela lista.
+                                </span>
+                            </div>
+                        )}
+                        {!verificandoDup && campanhaExistente && !existenteBloqueia && (
                             <div className="flex items-start gap-2.5 p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-500 text-sm">
                                 <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                                 <span>
@@ -568,7 +598,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                             </div>
                         )}
 
-                        {unidadeSel ? (
+                        {existenteBloqueia ? null : unidadeSel ? (
                             <SelecionarOrigem
                                 unidade={unidadeSel}
                                 onEscolherZero={handleEscolherZero}

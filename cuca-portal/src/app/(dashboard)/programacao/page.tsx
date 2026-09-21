@@ -658,8 +658,11 @@ export default function ProgramacaoPage() {
                                             <div className="flex flex-col items-end gap-1">
                                                 {getStatusPillMensal(m.status)}
                                                 {situacaoCampanhas[m.id]?.noRag && (
-                                                    <span className="inline-flex items-center text-[10.5px] font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
-                                                        No RAG
+                                                    <span
+                                                        title="O RAG desta programação está no ar: o assistente responde com ela."
+                                                        className="inline-flex items-center text-[10.5px] font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                                                    >
+                                                        Publicada · no ar
                                                     </span>
                                                 )}
                                             </div>
@@ -710,7 +713,8 @@ export default function ProgramacaoPage() {
                                             <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground" onClick={() => openCampanhaDetails(m)}>
                                                 <FileText className="h-3.5 w-3.5" /> Ver
                                             </Button>
-                                            {podeExcluirMensal && (
+                                            {/* Publicada (RAG no ar): só Developer exclui — o servidor confere de novo. */}
+                                            {podeExcluirMensal && (!situacaoCampanhas[m.id]?.noRag || isDeveloper) && (
                                                 <Button
                                                     size="sm"
                                                     variant="ghost"

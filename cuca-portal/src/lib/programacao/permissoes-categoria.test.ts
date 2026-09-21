@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { PGM_GERAL, pgmCategoria } from "@/lib/rbac/catalogo-programacao-mensal"
 import {
     acaoDaTransicaoCategoria, categoriasEditaveis, checadorDePermissoes, mapaPermissoesCategorias, motivoRecusaCriacao,
+    motivoRecusaExclusao, motivoRecusaSubstituicao, unidadesAoAlcance,
     origemValida, permissoesDaCategoria, podeAcessarUnidade, podeTransicionarCategoria, permissoesComStatus, separarLinhasParaDuplicar, slugDaCategoria, transicaoExigeMotivo, transicoesPossiveis,
     type LinhaPermissaoPgm,
 } from "./permissoes-categoria"
@@ -148,5 +149,42 @@ describe("podeAcessarUnidade (regra de get_my_unit)", () => {
     it("campanha sem unidade é alcançável; Developer passa sempre", () => {
         expect(podeAcessarUnidade("Cuca Pici", null, false)).toBe(true)
         expect(podeAcessarUnidade("Cuca Pici", "Cuca Barra", true)).toBe(true)
+    })
+})
+
+describe("unidadesAoAlcance", () => {
+    const todas = ["Cuca Barra", "Cuca Jangurussu", "Cuca Pici"]
+    it("colaborador lotado numa unidade só vê a dele", () => {
+        expect(unidadesAoAlcance(todas, "Cuca Barra", false)).toEqual(["Cuca Barra"])
+    })
+    it("Geral, sem unidade ou Developer veem todas", () => {
+        expect(unidadesAoAlcance(todas, "Geral", false)).toEqual(todas)
+        expect(unidadesAoAlcance(todas, null, false)).toEqual(todas)
+        expect(unidadesAoAlcance(todas, "Cuca Barra", true)).toEqual(todas)
+    })
+})
+
+describe("motivoRecusaExclusao", () => {
+    it("não publicada: exclui quem tem a permissão", () => {
+        expect(motivoRecusaExclusao({ publicada: false, developer: false, temPermissao: true })).toBeNull()
+        expect(motivoRecusaExclusao({ publicada: false, developer: false, temPermissao: false })).toMatch(/Sem permissão/)
+    })
+    it("publicada: só Developer, mesmo com a permissão", () => {
+        expect(motivoRecusaExclusao({ publicada: true, developer: false, temPermissao: true })).toMatch(/só pode ser excluída por Developer/)
+        expect(motivoRecusaExclusao({ publicada: true, developer: true, temPermissao: false })).toBeNull()
+    })
+})
+
+describe("motivoRecusaSubstituicao", () => {
+    it("rascunho que nunca foi enviado nem publicado pode ser substituído", () => {
+        expect(motivoRecusaSubstituicao({ statusCampanha: "rascunho", statusCategorias: ["rascunho", null], temDocumentoRag: false })).toBeNull()
+    })
+    it("autorizada, aprovada ou com categoria enviada não pode", () => {
+        expect(motivoRecusaSubstituicao({ statusCampanha: "autorizada", statusCategorias: ["autorizada"], temDocumentoRag: false })).not.toBeNull()
+        expect(motivoRecusaSubstituicao({ statusCampanha: "aprovado", statusCategorias: [], temDocumentoRag: true })).not.toBeNull()
+        expect(motivoRecusaSubstituicao({ statusCampanha: "rascunho", statusCategorias: ["aguardando_autorizacao"], temDocumentoRag: false })).not.toBeNull()
+    })
+    it("rascunho reaberto de uma programação que já teve RAG não pode (exemplo: mês atual escolhido por engano)", () => {
+        expect(motivoRecusaSubstituicao({ statusCampanha: "rascunho", statusCategorias: ["rascunho"], temDocumentoRag: true })).not.toBeNull()
     })
 })
