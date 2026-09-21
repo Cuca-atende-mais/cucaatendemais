@@ -144,3 +144,20 @@ export function montarAtividadePayload(a: Partial<AtividadeForm>, unidade: strin
         },
     }
 }
+
+/**
+ * `atividades_mensais.data_atividade` é NOT NULL, mas a grade deixa a data vazia de propósito:
+ * ESPORTES nunca tem data (é recorrente, `montarAtividadePayload` grava `null`), e CURSOS/DIA A DIA
+ * podem ficar sem data (duplicação zera as datas — S-PROG-02). A função Postgres
+ * `programacao_salvar_rascunho[_categorias]` (caminho de EDIÇÃO) já resolve isso com o placeholder
+ * `make_date(ano, mes, 1)`; a rota de CRIAÇÃO (`POST /api/programacao/importar`) inseria o `null`
+ * direto e o lote inteiro falhava. Mesmo placeholder aqui, pra os dois caminhos gravarem igual.
+ */
+export function dataPlaceholderMes(mes: number, ano: number): string {
+    return `${String(ano).padStart(4, "0")}-${String(mes).padStart(2, "0")}-01`
+}
+
+export function preencherDataAtividade<T extends { data_atividade?: string | null }>(atividades: T[], mes: number, ano: number): T[] {
+    const placeholder = dataPlaceholderMes(mes, ano)
+    return atividades.map(a => ({ ...a, data_atividade: a?.data_atividade || placeholder }))
+}

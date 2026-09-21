@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { montarAtividadePayload } from "./payload"
+import { montarAtividadePayload, preencherDataAtividade, dataPlaceholderMes } from "./payload"
 import { AtividadeForm } from "./tipos"
 
 // S-PROG-03 (item 1 — expand/contract): garante que `montarAtividadePayload` grava as chaves
@@ -182,5 +182,29 @@ describe("montarAtividadePayload — chaves aditivas (S-PROG-01 item 4)", () => 
         const p = montarAtividadePayload(esportesForm(), "Cuca Mondubim")
         expect(p.metadata.meta).toBeNull()
         expect(p.metadata.diretoria).toBeNull()
+    })
+})
+
+describe("preencherDataAtividade (data vazia -> dia 1 do mês, mesmo placeholder da função de edição)", () => {
+    it("ESPORTES montado pela grade (data sempre null) recebe o dia 1 do mês da campanha", () => {
+        const esporte = montarAtividadePayload({
+            titulo: "Futsal", categoria: "ESPORTES", hora_inicio: "08:00", hora_fim: "09:00",
+            metadata: { turma: "A", professor: "Ana", sexo: "Misto", faixa_de: "10", dias_raw: ["Segunda"], vagas: 20 },
+        } as never, "Barra")
+        expect(esporte.data_atividade).toBeNull()
+        const [r] = preencherDataAtividade([esporte], 10, 2026)
+        expect(r.data_atividade).toBe("2026-10-01")
+    })
+
+    it("mantém a data quando já vem preenchida e completa só as vazias (null, undefined, \"\")", () => {
+        const r = preencherDataAtividade(
+            [{ data_atividade: "2026-10-15" }, { data_atividade: null }, {}, { data_atividade: "" }],
+            10, 2026,
+        )
+        expect(r.map(a => a.data_atividade)).toEqual(["2026-10-15", "2026-10-01", "2026-10-01", "2026-10-01"])
+    })
+
+    it("mês com um dígito sai com zero à esquerda", () => {
+        expect(dataPlaceholderMes(3, 2027)).toBe("2027-03-01")
     })
 })
