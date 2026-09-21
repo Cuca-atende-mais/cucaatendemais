@@ -2199,11 +2199,11 @@ class TestDebounceDispatch:
     # ── 5) S-WM-33: intervalo real de ~6s cai DENTRO da janela decidida → agrupa ─
     @pytest.mark.asyncio
     async def test_mensagens_com_intervalo_de_6s_ficam_dentro_da_janela_de_7s_e_agrupam(self, monkeypatch):
-        """S-WM-33: reproduz, em escala reduzida (fator 100x, sem esperar segundos reais), o
+        """S-WM-33: reproduz, em escala reduzida (fator 10x, sem esperar segundos reais), o
         cenário exato do incidente de 2026-07-14 ("Não precisa" / "Obrigado", 6,127s de
         intervalo real) testando contra o ponto de margem mais apertado já decidido pro
-        Junior (7s, escalado pra 0,07s) — a 2ª mensagem chega ANTES do timer da 1ª disparar
-        (6 < 7, escalado 0,06 < 0,07), então cancela e reagenda: resultado esperado é 1 SÓ
+        Junior (7s, escalado pra 0,7s) — a 2ª mensagem chega ANTES do timer da 1ª disparar
+        (6 < 7, escalado 0,6 < 0,7), então cancela e reagenda: resultado esperado é 1 SÓ
         dispatch, com o conteúdo da última mensagem. Com a janela ANTIGA (3s) esse mesmo
         intervalo teria gerado 2 dispatches separados — era exatamente o comportamento
         correto (não-bug) confirmado no diagnóstico prévio. O valor de produção atual é 10s
@@ -2213,7 +2213,16 @@ class TestDebounceDispatch:
         (isso é responsabilidade do teste anterior, `test_debounce_segundos_default_e_10s`).
         Usa `_dormir_debounce` real (não o stub instantâneo do autouse) sincronizado por um
         Event pra garantir que o debounce da 1ª mensagem já começou antes de medir o
-        intervalo — preserva a proporção real intervalo/janela sem depender de timing frágil.
+        intervalo — preserva a proporção real intervalo/janela.
+
+        ESCALA 10x, NÃO 100x (corrigido 2026-09-21): com fator 100x a margem entre intervalo
+        e janela era de 10ms, e essa margem precisa absorver TODO o processamento da 2ª
+        mensagem (parse do payload, chamadas ao banco mockado, registro do debounce) antes
+        dela conseguir cancelar o dispatch da 1ª. Em máquina mais lenta — inclusive num runner
+        de CI, que é compartilhado — esse processamento passa de 10ms, a 1ª dispara sozinha e
+        o teste falha sem que nada esteja errado no código. Com fator 10x a margem vira 100ms,
+        larga o bastante pra não depender da velocidade da máquina. Não aumentar a escala de
+        volta sem medir.
         """
         import meta_adapter_inbound
         from unittest.mock import AsyncMock
@@ -2224,7 +2233,7 @@ class TestDebounceDispatch:
             sleep_iniciado.set()
             await asyncio.sleep(segundos)
 
-        monkeypatch.setattr(meta_adapter_inbound, "_debounce_segundos", lambda: 0.07)
+        monkeypatch.setattr(meta_adapter_inbound, "_debounce_segundos", lambda: 0.7)
         monkeypatch.setattr(meta_adapter_inbound, "_dormir_debounce", _dormir_real_instrumentado)
 
         mock_sb = self._mock_supabase_conversa_unica("conv-debounce-3")
@@ -2242,7 +2251,7 @@ class TestDebounceDispatch:
 
             tarefa1 = asyncio.create_task(processar_webhook_meta(raw1))
             await sleep_iniciado.wait()
-            await asyncio.sleep(0.06)  # ~6s reais em escala 100x — intervalo real do incidente
+            await asyncio.sleep(0.6)  # ~6s reais em escala 10x — intervalo real do incidente
             tarefa2 = asyncio.create_task(processar_webhook_meta(raw2))
             await asyncio.gather(tarefa1, tarefa2)
 

@@ -632,7 +632,15 @@ class TestTransbordoNeutro:
             mensagens_enviadas.append(texto)
             return True
 
+        # _acionar_transbordo_empregabilidade também avisa o atendente humano via
+        # meta_adapter_inbound._notificar_transbordo (engine linha ~728). Sem mockar,
+        # a chamada real falha no ambiente de teste e o engine levanta
+        # RuntimeError("notificacao_transbordo_nao_enviada"), fazendo o lead receber
+        # a mensagem de erro genérica em vez da neutra que este teste espera.
+        notificar_mock = AsyncMock(return_value=True)
+
         with patch("empregabilidade_engine.supabase", mock_sb), \
+             patch("meta_adapter_inbound._notificar_transbordo", notificar_mock), \
              patch("empregabilidade_engine._enviar", _fake_enviar):
             await processar_mensagem_empregabilidade(
                 texto="quero falar com humano",
@@ -737,9 +745,35 @@ class TestLoopProativo:
             },
         ]
 
+        # As 3 simulações abaixo precisam bater com as consultas REAIS do tick
+        # (empregabilidade_engine._empregabilidade_notify_tick). Quando o código evoluiu,
+        # elas ficaram para trás e o mock devolvia vazio, fazendo o loop não enviar nada:
+        #   1. conversas: ganhou .limit(200) no fim da cadeia (engine ~6336)
+        #   2. telefone do lead: passou a ser busca em lote .in_("id", [...]) (engine ~6361),
+        #      não mais .eq().single() um a um
+        #   3. antes de gravar, _set_fluxo_async relê o estado e compara com etapa_esperada
+        #      (engine ~533). Sem _get_fluxo_async devolvendo a etapa certa, o código conclui
+        #      que o estado mudou por baixo e decide NÃO gravar — proteção correta contra
+        #      escrita conflitante, que o mock antigo disparava sem querer.
+        mock_conversas = MagicMock()
+        mock_conversas.select.return_value.eq.return_value.in_.return_value.limit.return_value.execute.return_value.data = conversas_fake
+
+        mock_leads = MagicMock()
+        mock_leads.select.return_value.in_.return_value.execute.return_value.data = [
+            {"id": "lead-uuid", "telefone": "5585999999999"}
+        ]
+
         mock_sb = MagicMock()
-        mock_sb.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value.data = conversas_fake
-        mock_sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {"telefone": "5585999999999"}
+        mock_sb.table.side_effect = lambda nome: {
+            "conversas": mock_conversas,
+            "leads": mock_leads,
+        }.get(nome, MagicMock())
+
+        async def _fake_get_fluxo_async(conversa_id):
+            for c in conversas_fake:
+                if c["id"] == conversa_id:
+                    return c["metadata"]["empreg_fluxo"]
+            return {}
 
         envio_count = []
 
@@ -758,6 +792,7 @@ class TestLoopProativo:
         with patch("empregabilidade_engine.supabase", mock_sb), \
              patch("empregabilidade_engine._enviar", _fake_enviar), \
              patch("empregabilidade_engine._set_fluxo", _fake_set_fluxo), \
+             patch("empregabilidade_engine._get_fluxo_async", _fake_get_fluxo_async), \
              patch("empregabilidade_engine._get_meta_phone", return_value=("PNID", "TOK")), \
              patch("asyncio.sleep", _fake_sleep):
             try:
@@ -820,7 +855,11 @@ class TestSendMessageEndpoint:
             "META_STUB_PHONE_NUMBER_ID_EMPREG": "PNID",
             "META_SYSTEM_USER_TOKEN": "TOKEN",
         }
-        with patch("worker.main._meta_enviar", meta_mock, create=True), \
+        # main.py importa _meta_enviar dentro da própria função (main.py:352), então o
+        # nome nunca existe no namespace de `worker.main` — patchear lá exigia create=True
+        # e o mock ficava órfão, deixando a rota chamar a função real e bater no
+        # graph.facebook.com de verdade durante o teste.
+        with patch("meta_adapter_outbound._meta_enviar", meta_mock), \
              patch.dict(os.environ, env):
             with TestClient(main_module.app) as client:
                 resp = client.post(
