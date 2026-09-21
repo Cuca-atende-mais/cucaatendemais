@@ -114,8 +114,14 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     const [verificandoDup, setVerificandoDup] = useState(false)
     const [campanhaExistente, setCampanhaExistente] = useState<any>(null)
     // Mês com programação enviada, autorizada ou publicada não pode ser substituído daqui — só pela
-    // ação "Excluir programação inteira" (o servidor confere de novo, inclusive rascunho já publicado).
-    const existenteBloqueia = !!campanhaExistente && campanhaExistente.status !== "rascunho"
+    // ação "Excluir programação inteira". Inclui a publicada com categoria reaberta (status volta a
+    // "rascunho", mas o RAG continua no ar). O servidor confere de novo (`motivoRecusaSubstituicao`).
+    const existenteBloqueia = !!campanhaExistente && (
+        campanhaExistente.status !== "rascunho"
+        || campanhaExistente.noRag === true
+        || (campanhaExistente.autorizadas ?? 0) > 0
+        || (campanhaExistente.aguardando ?? 0) > 0
+    )
 
     // Colaborador lotado numa unidade só cria para ela (mesma regra que o servidor aplica ao gravar).
     const unidadesPermitidas = useMemo(
@@ -302,9 +308,17 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
             .eq("mes", mesSel)
             .eq("ano", anoSel)
             .maybeSingle()
-            .then(({ data: existente }) => {
+            .then(async ({ data: existente }) => {
                 if (cancelado) return
-                setCampanhaExistente(existente || null)
+                if (!existente) {
+                    setCampanhaExistente(null)
+                    setVerificandoDup(false)
+                    return
+                }
+                const { data: sit } = await supabase.rpc("pgm_situacao_campanhas", { p_ids: [existente.id] })
+                if (cancelado) return
+                const s0 = (sit ?? [])[0] as { autorizadas?: number; aguardando?: number; no_rag?: boolean } | undefined
+                setCampanhaExistente({ ...existente, autorizadas: s0?.autorizadas ?? 0, aguardando: s0?.aguardando ?? 0, noRag: s0?.no_rag === true })
                 setVerificandoDup(false)
             })
 
@@ -583,7 +597,8 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                             <div className="flex items-start gap-2.5 p-3.5 rounded-xl border border-destructive/40 bg-destructive/10 text-destructive text-sm">
                                 <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                                 <span>
-                                    Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (status: <em>{campanhaExistente.status}</em>)
+                                    Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong>
+                                    ({campanhaExistente.noRag ? <em>publicada, no ar</em> : <>status: <em>{campanhaExistente.status}</em></>})
                                     e ela <strong>não pode ser substituída</strong>. Confira se o mês está certo — para alterar a existente, abra-a pela lista.
                                 </span>
                             </div>

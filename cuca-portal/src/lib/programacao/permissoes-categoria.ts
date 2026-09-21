@@ -205,9 +205,8 @@ export function unidadesAoAlcance(
  * Antes de publicar: quem tem "Excluir programação inteira". Publicada: só Developer.
  */
 export function motivoRecusaExclusao(p: { publicada: boolean; developer: boolean; temPermissao: boolean }): string | null {
-    if (p.publicada) {
-        return p.developer ? null : "Programação publicada (no ar) só pode ser excluída por Developer."
-    }
+    if (p.developer) return null
+    if (p.publicada) return "Programação publicada (no ar) só pode ser excluída por Developer."
     return p.temPermissao ? null : "Sem permissão para excluir a programação inteira."
 }
 

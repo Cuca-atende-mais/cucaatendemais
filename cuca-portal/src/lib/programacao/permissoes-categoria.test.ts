@@ -172,6 +172,7 @@ describe("motivoRecusaExclusao", () => {
     it("publicada: só Developer, mesmo com a permissão", () => {
         expect(motivoRecusaExclusao({ publicada: true, developer: false, temPermissao: true })).toMatch(/só pode ser excluída por Developer/)
         expect(motivoRecusaExclusao({ publicada: true, developer: true, temPermissao: false })).toBeNull()
+        expect(motivoRecusaExclusao({ publicada: false, developer: true, temPermissao: false })).toBeNull()
     })
 })
 
