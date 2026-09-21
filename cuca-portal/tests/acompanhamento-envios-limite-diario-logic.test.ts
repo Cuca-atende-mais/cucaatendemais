@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { test } from "vitest"
 import {
     validarCorpoAtualizacaoLimite,
     validarNovoDailyLimit,
-} from "../src/app/api/configuracoes/acompanhamento-envios/limite-diario/logic.ts"
+} from "../src/app/api/configuracoes/acompanhamento-envios/limite-diario/logic"
 
 test("validarNovoDailyLimit aceita valor dentro da camada confirmada", () => {
     assert.deepEqual(validarNovoDailyLimit(1500, 2000), { valido: true, valor: 1500 })

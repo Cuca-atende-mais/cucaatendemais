@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { test } from "vitest"
 import {
     avaliarAcesso,
     validarFiltros,
-} from "../src/app/api/configuracoes/acompanhamento-envios/logic.ts"
+} from "../src/app/api/configuracoes/acompanhamento-envios/logic"
 
 const DEV_EMAILS = ["dev@example.com"]
 
