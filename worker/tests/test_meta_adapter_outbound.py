@@ -639,7 +639,14 @@ class TestTransbordoNeutro:
         # a mensagem de erro genérica em vez da neutra que este teste espera.
         notificar_mock = AsyncMock(return_value=True)
 
+        # Relógio congelado dentro do expediente. Sem isto o teste depende da HORA em que a
+        # suíte roda: _acionar_transbordo_empregabilidade checa _dentro_horario_atendimento()
+        # (seg–sex, 08:00–16:59 em -03:00) e, fora da janela, manda a mensagem "nossa equipe
+        # não está disponível" em vez da neutra que este teste espera. Passava na máquina de
+        # desenvolvimento (rodada em horário comercial) e falhou no runner às 23:38 UTC.
+        # Mesmo padrão já usado em test_empregabilidade_engine.py (6 ocorrências).
         with patch("empregabilidade_engine.supabase", mock_sb), \
+             patch("empregabilidade_engine._dentro_horario_atendimento", lambda agora=None: True), \
              patch("meta_adapter_inbound._notificar_transbordo", notificar_mock), \
              patch("empregabilidade_engine._enviar", _fake_enviar):
             await processar_mensagem_empregabilidade(
