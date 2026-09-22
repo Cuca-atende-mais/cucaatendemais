@@ -133,11 +133,10 @@ export function motivoRecusaCriacao(
         if (!permissoesDaCategoria(checar, nome).criar) return `Sem permissão para criar atividades de ${nome ?? "(sem categoria)"}`
     }
     if (categoriasDaExistente) {
-        if (!opcaoLiberada(checar, PGM_GERAL.excluirProgramacao)) {
-            return "Sem permissão para substituir a programação existente deste mês"
-        }
+        // Substituir só vale para rascunho (`motivoRecusaSubstituicao`): exige "excluir minha
+        // programação" (ou a de supervisor) em todas as categorias que ela tem.
         for (const nome of new Set(categoriasDaExistente)) {
-            if (!permissoesDaCategoria(checar, nome).excluir) {
+            if (!podeExcluirCategoriaNoStatus(checar, nome, "rascunho")) {
                 return `Sem permissão para substituir: a programação existente tem atividades de ${nome ?? "(sem categoria)"}`
             }
         }
@@ -189,4 +188,72 @@ export function podeAcessarUnidade(
     if (minha === "" || minha === "Geral") return true
     if (!unidadeAlvo) return true
     return minha === unidadeAlvo
+}
+
+/** Unidades que aparecem no seletor da criação: as mesmas que o servidor aceita (`podeAcessarUnidade`). */
+export function unidadesAoAlcance(
+    unidades: readonly string[],
+    unidadeDoColaborador: string | null | undefined,
+    developer: boolean,
+): string[] {
+    return unidades.filter(u => podeAcessarUnidade(unidadeDoColaborador, u, developer))
+}
+
+/**
+ * "Excluir minha programação" (decisão do Junior, 2026-09-21): cada um exclui só as categorias dele.
+ * Categoria em rascunho: quem tem "excluir minha programação" (assistente) ou a de supervisor.
+ * Categoria enviada ou autorizada: só quem tem "excluir programação enviada ou autorizada" (supervisor).
+ */
+export function podeExcluirCategoriaNoStatus(checar: ChecarPermissao, nome: string | null | undefined, status: string | null | undefined): boolean {
+    const slug = slugDaCategoria(nome)
+    if (!slug) return false
+    const ids = pgmCategoria(slug)
+    const supervisor = opcaoLiberada(checar, ids.excluirEnviada)
+    if (!status || status === "rascunho") return supervisor || opcaoLiberada(checar, ids.excluirMinha)
+    return supervisor
+}
+
+export type CategoriaParaExcluir = { categoria: string; status: string | null }
+
+/**
+ * Quais categorias desta programação a pessoa exclui. Developer: todas (programação inteira).
+ * Publicada (RAG no ar): só Developer.
+ */
+export function categoriasParaExcluir(p: {
+    checar: ChecarPermissao
+    developer: boolean
+    publicada: boolean
+    categorias: CategoriaParaExcluir[]
+}): { categorias: string[]; recusa: string | null } {
+    const todas = p.categorias.map(c => c.categoria)
+    if (p.developer) return { categorias: todas, recusa: null }
+    if (p.publicada) return { categorias: [], recusa: "Programação publicada (no ar) só pode ser excluída por Developer." }
+    const minhas = p.categorias.filter(c => podeExcluirCategoriaNoStatus(p.checar, c.categoria, c.status)).map(c => c.categoria)
+    if (minhas.length === 0) {
+        return { categorias: [], recusa: "Nada seu para excluir nesta programação: depois de enviada, só o supervisor da categoria exclui." }
+    }
+    return { categorias: minhas, recusa: null }
+}
+
+/** O botão de excluir aparece para quem tem alguma opção de excluir em alguma categoria (o servidor decide o resto). */
+export function temAlgumaOpcaoDeExcluir(checar: ChecarPermissao): boolean {
+    return CATEGORIAS_PROGRAMACAO.some(c => {
+        const ids = pgmCategoria(c.slug)
+        return opcaoLiberada(checar, ids.excluirMinha) || opcaoLiberada(checar, ids.excluirEnviada)
+    })
+}
+
+/**
+ * Substituir a programação do mês ao criar uma nova: só um rascunho que nunca foi publicado — todas as
+ * categorias em rascunho e nenhum documento de RAG da programação. Autorizada, aprovada ou publicada
+ * só sai por "Excluir programação inteira".
+ */
+export function motivoRecusaSubstituicao(p: {
+    statusCampanha: string | null | undefined
+    statusCategorias: (string | null | undefined)[]
+    temDocumentoRag: boolean
+}): string | null {
+    const nuncaSaiuDoRascunho = p.statusCampanha === "rascunho" && p.statusCategorias.every(s => !s || s === "rascunho")
+    if (nuncaSaiuDoRascunho && !p.temDocumentoRag) return null
+    return "Já existe programação enviada, autorizada ou publicada para este mês e unidade. Ela não pode ser substituída: abra a existente pela lista para editar, ou exclua pela ação \"Excluir programação inteira\"."
 }

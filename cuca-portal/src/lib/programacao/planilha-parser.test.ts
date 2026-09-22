@@ -7,6 +7,7 @@ import {
   detectarCategoria,
   detectarColunas,
   lerColuna,
+  primeiraDataBr,
 } from "./planilha-parser"
 
 // ── detectarCategoria: nunca "adivinha" um typo, aborta (null) em vez de virar "Diversos" ────
@@ -200,4 +201,17 @@ describe("lerColuna", () => {
     const row = ["1", "Natação", "Cirillo"]
     expect(lerColuna(row, {}, "professor")).toBe("")
   })
+})
+
+describe("primeiraDataBr", () => {
+    it("pega a data de início do período de CURSOS", () => {
+        expect(primeiraDataBr("05/06/2026 26/06/2026 Quarta e Sexta")).toBe("2026-06-05")
+        expect(primeiraDataBr("2/7/2026 a 28/07/2026")).toBe("2026-07-02")
+    })
+    it("sem data legível devolve null (nada de dia 1 do mês)", () => {
+        expect(primeiraDataBr("")).toBeNull()
+        expect(primeiraDataBr(null)).toBeNull()
+        expect(primeiraDataBr("a combinar")).toBeNull()
+        expect(primeiraDataBr("40/13/2026")).toBeNull()
+    })
 })

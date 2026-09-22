@@ -45,6 +45,9 @@ export const pgmCategoria = (slug: SlugCategoria) => ({
     autorizar: `pgm_${slug}_autorizar`,
     devolver: `pgm_${slug}_devolver`,
     reabrir: `pgm_${slug}_reabrir`,
+    // Decisão do Junior (2026-09-21): excluir é por categoria, não mais a programação inteira.
+    excluirMinha: `pgm_${slug}_excluir_minha`,
+    excluirEnviada: `pgm_${slug}_excluir_enviada`,
 })
 
 export const GRUPOS_PROGRAMACAO_MENSAL: GrupoPermissao[] = [
@@ -55,7 +58,6 @@ export const GRUPOS_PROGRAMACAO_MENSAL: GrupoPermissao[] = [
             { id: PGM_GERAL.criarZero, label: "Criar programação do zero", acoes: ACAO_UNICA },
             { id: PGM_GERAL.duplicar, label: "Duplicar mês anterior", acoes: ACAO_UNICA },
             { id: PGM_GERAL.importarPlanilha, label: "Importar planilha", acoes: ACAO_UNICA },
-            { id: PGM_GERAL.excluirProgramacao, label: "Excluir programação inteira", acoes: ACAO_UNICA },
             { id: PGM_GERAL.exportar, label: "Exportar (XLSX/PDF)", acoes: ACAO_UNICA },
             { id: PGM_GERAL.historico, label: "Ver histórico", acoes: ACAO_UNICA },
         ],
@@ -70,6 +72,8 @@ export const GRUPOS_PROGRAMACAO_MENSAL: GrupoPermissao[] = [
                 { id: ids.autorizar, label: `${c.rotulo}: autorizar`, acoes: ACAO_UNICA },
                 { id: ids.devolver, label: `${c.rotulo}: devolver para ajuste`, acoes: ACAO_UNICA },
                 { id: ids.reabrir, label: `${c.rotulo}: reabrir autorizada`, acoes: ACAO_UNICA },
+                { id: ids.excluirMinha, label: `${c.rotulo}: excluir minha programação (em rascunho)`, acoes: ACAO_UNICA },
+                { id: ids.excluirEnviada, label: `${c.rotulo}: excluir programação enviada ou autorizada (antes de publicar)`, acoes: ACAO_UNICA },
             ],
         }
     }),
@@ -83,6 +87,17 @@ export const MODULOS_DIVULGACAO: ModuloPermissao[] = [
 ]
 
 export const MODULOS_PROGRAMACAO_MENSAL: ModuloPermissao[] = [...GRUPOS_PROGRAMACAO_MENSAL.flatMap(g => g.modules), ...MODULOS_DIVULGACAO]
+
+// Módulos que a migration `s_prog_12_espelha_permissoes_programacao` criou (histórico, não muda):
+// `pgm_excluir_programacao` saiu da tela e as opções de excluir por categoria vieram depois.
+export const MODULOS_ESPELHADOS_S_PROG_12: string[] = [
+    ...Object.values(PGM_GERAL),
+    ...CATEGORIAS_PROGRAMACAO.flatMap(c => {
+        const ids = pgmCategoria(c.slug)
+        return [ids.atividades, ids.enviar, ids.autorizar, ids.devolver, ids.reabrir]
+    }),
+    ...MODULOS_DIVULGACAO.map(m => m.id),
+]
 
 type Flags = { can_read: boolean; can_create: boolean; can_update: boolean; can_delete: boolean }
 export type LinhaPermissao = Flags & { module: string }

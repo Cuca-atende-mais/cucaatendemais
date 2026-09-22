@@ -58,7 +58,7 @@ export async function carregarSituacaoDivulgacao(selecionado: MesAno | null, ago
     const [{ data: atividades, error: errAtv }, { data: statusCats, error: errSt }, { data: docs, error: errDocs }] = ids.length
         ? await Promise.all([
             admin.from("atividades_mensais").select("campanha_id, categoria").in("campanha_id", ids),
-            admin.from("campanha_categoria_status").select("campanha_id, categoria, status").in("campanha_id", ids),
+            admin.from("campanha_categoria_status").select("campanha_id, categoria, status, exigir_recriacao").in("campanha_id", ids),
             admin.from("documentos_rag").select("id, ativo, created_at, metadados").eq("tipo", "monthly_program")
                 .in("metadados->>campanha_id", ids),
         ])
@@ -78,8 +78,10 @@ export async function carregarSituacaoDivulgacao(selecionado: MesAno | null, ago
             (atividades ?? []).filter(a => a.campanha_id === camp?.id).map(a => slugDaCategoria(a.categoria)).filter(Boolean),
         )
         const categorias = (statusCats ?? [])
-            .filter(s => s.campanha_id === camp?.id && slugsComAtividade.has(slugDaCategoria(s.categoria)))
-            .map(s => ({ categoria: s.categoria as string, status: s.status as string }))
+            // Categoria excluída pelo supervisor depois de enviada/autorizada continua obrigatória até
+            // ser recriada e autorizada (decisão do Junior, 2026-09-21).
+            .filter(s => s.campanha_id === camp?.id && (slugsComAtividade.has(slugDaCategoria(s.categoria)) || s.exigir_recriacao === true))
+            .map(s => ({ categoria: s.categoria as string, status: s.status as string, exigirRecriacao: s.exigir_recriacao === true }))
         const n1 = nivel1Unidade(camp?.status ?? null, categorias)
         return {
             unidade,

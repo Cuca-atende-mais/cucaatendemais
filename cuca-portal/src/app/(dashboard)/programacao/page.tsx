@@ -40,7 +40,7 @@ import { UnifiedProgramModal } from "@/components/programacao/unified-program-mo
 import { ImportPlanilhaModal } from "@/components/programacao/import-planilha-modal"
 import { PGM_GERAL } from "@/lib/rbac/catalogo-programacao-mensal"
 import { PGP } from "@/lib/rbac/catalogo-programacao-pontual"
-import { opcaoLiberada, podeAcessarUnidade } from "@/lib/programacao/permissoes-categoria"
+import { opcaoLiberada, podeAcessarUnidade, temAlgumaOpcaoDeExcluir } from "@/lib/programacao/permissoes-categoria"
 import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
 import { eventoExcluivel } from "@/lib/programacao/pontual"
 import * as XLSX from 'xlsx'
@@ -79,7 +79,8 @@ export default function ProgramacaoPage() {
     const podeVerListaMensal = opcaoLiberada(checarPgm, PGM_GERAL.lista)
     const podeCriarMensal = opcaoLiberada(checarPgm, PGM_GERAL.criarZero) || opcaoLiberada(checarPgm, PGM_GERAL.duplicar)
     const podeImportarPlanilha = opcaoLiberada(checarPgm, PGM_GERAL.importarPlanilha)
-    const podeExcluirMensal = opcaoLiberada(checarPgm, PGM_GERAL.excluirProgramacao)
+    // Excluir por categoria ("Excluir minha programação"); a programação inteira é só de Developer.
+    const podeExcluirMensal = isDeveloper || temAlgumaOpcaoDeExcluir(checarPgm)
 
     // S-PROG-17: cada ação da pontual segue a opção própria e vale só para eventos ao alcance da unidade.
     const podeVerPontual = opcaoLiberada(checarPgm, PGP.ver)
@@ -658,8 +659,11 @@ export default function ProgramacaoPage() {
                                             <div className="flex flex-col items-end gap-1">
                                                 {getStatusPillMensal(m.status)}
                                                 {situacaoCampanhas[m.id]?.noRag && (
-                                                    <span className="inline-flex items-center text-[10.5px] font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
-                                                        No RAG
+                                                    <span
+                                                        title="O RAG desta programação está no ar: o assistente responde com ela."
+                                                        className="inline-flex items-center text-[10.5px] font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                                                    >
+                                                        Publicada · no ar
                                                     </span>
                                                 )}
                                             </div>
@@ -710,10 +714,12 @@ export default function ProgramacaoPage() {
                                             <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground" onClick={() => openCampanhaDetails(m)}>
                                                 <FileText className="h-3.5 w-3.5" /> Ver
                                             </Button>
-                                            {podeExcluirMensal && (
+                                            {/* Publicada (RAG no ar): só Developer exclui — o servidor confere de novo. */}
+                                            {podeExcluirMensal && (!situacaoCampanhas[m.id]?.noRag || isDeveloper) && (
                                                 <Button
                                                     size="sm"
                                                     variant="ghost"
+                                                    title={isDeveloper ? "Excluir programação inteira" : "Excluir minha programação"}
                                                     className="ml-auto text-red-500 hover:text-red-700 hover:bg-red-500/10 h-8 w-8 p-0"
                                                     onClick={() => { setCampanhaParaExcluir(m); setTextoConfirmacaoExclusao("") }}
                                                 >
@@ -733,10 +739,16 @@ export default function ProgramacaoPage() {
             <AlertDialog open={!!campanhaParaExcluir} onOpenChange={open => !open && setCampanhaParaExcluir(null)}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Excluir programação permanentemente?</AlertDialogTitle>
+                        <AlertDialogTitle>{isDeveloper ? "Excluir programação inteira?" : "Excluir minha programação?"}</AlertDialogTitle>
                         <AlertDialogDescription>
-                            Isso apaga <strong>{campanhaParaExcluir && textoNominalEsperado(campanhaParaExcluir)}</strong> e todas as atividades
-                            vinculadas. Não pode ser desfeito. Para confirmar, digite <strong>{campanhaParaExcluir && textoNominalEsperado(campanhaParaExcluir)}</strong> abaixo.
+                            {isDeveloper ? (
+                                <>Isso apaga <strong>{campanhaParaExcluir && textoNominalEsperado(campanhaParaExcluir)}</strong> inteira, com as atividades de todas as categorias.</>
+                            ) : (
+                                <>Isso apaga <strong>só as categorias que são suas</strong> em <strong>{campanhaParaExcluir && textoNominalEsperado(campanhaParaExcluir)}</strong>.
+                                    As categorias das outras pessoas continuam como estão. Se a sua parte já tinha sido enviada ou autorizada,
+                                    a unidade fica travada até ela ser recriada e autorizada de novo.</>
+                            )}{" "}
+                            Não pode ser desfeito. Para confirmar, digite <strong>{campanhaParaExcluir && textoNominalEsperado(campanhaParaExcluir)}</strong> abaixo.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <Input

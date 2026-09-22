@@ -64,6 +64,14 @@ describe("nível 1", () => {
         expect(nivel1Unidade("autorizada", [{ categoria: "ESPORTES", status: "autorizada" }]).ok).toBe(true)
         expect(nivel1Unidade("aprovado", [{ categoria: "ESPORTES", status: "autorizada" }]).ok).toBe(true)
     })
+    it("categoria excluída pelo supervisor trava a unidade até recriar e autorizar", () => {
+        const r = nivel1Unidade("rascunho", [
+            { categoria: "CURSOS", status: "autorizada" },
+            { categoria: "ESPORTES", status: "rascunho", exigirRecriacao: true },
+        ])
+        expect(r.ok).toBe(false)
+        expect(r.faltando).toEqual(["ESPORTES (excluída — recriar e autorizar)"])
+    })
 })
 
 describe("aprovar RAG e resumo dos níveis", () => {

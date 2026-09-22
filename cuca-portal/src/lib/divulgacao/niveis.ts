@@ -72,7 +72,7 @@ export function estadoRag(
     return minutos <= minutosLimite ? "indexando" : "falhou"
 }
 
-export type CategoriaSituacao = { categoria: string; status: string }
+export type CategoriaSituacao = { categoria: string; status: string; exigirRecriacao?: boolean }
 
 /** Nível 1 de uma unidade: programação existe, tem atividade e todas as categorias estão autorizadas. */
 export function nivel1Unidade(
@@ -82,7 +82,9 @@ export function nivel1Unidade(
     if (categoriasComAtividade.length === 0) return { ok: false, faltando: ["sem atividades"] }
     const faltando = categoriasComAtividade
         .filter(c => c.status !== "autorizada")
-        .map(c => `${c.categoria} (${c.status === "aguardando_autorizacao" ? "aguardando autorização" : "rascunho"})`)
+        .map(c => `${c.categoria} (${c.exigirRecriacao && c.status === "rascunho"
+            ? "excluída — recriar e autorizar"
+            : c.status === "aguardando_autorizacao" ? "aguardando autorização" : "rascunho"})`)
     const campanhaOk = statusCampanha === "autorizada" || statusCampanha === "aprovado"
     if (faltando.length === 0 && !campanhaOk) faltando.push(`programação em ${statusCampanha}`)
     return { ok: faltando.length === 0, faltando }
