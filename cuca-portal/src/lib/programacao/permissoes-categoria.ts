@@ -233,3 +233,19 @@ export function temAlgumaOpcaoDeExcluir(checar: ChecarPermissao): boolean {
     })
 }
 
+/**
+ * Categorias que uma gravação de criação substitui na programação do mês: APENAS as que vêm na tela
+ * (ou no arquivo), nunca as do perfil da pessoa.
+ *
+ * Incidente 2026-09-22: a criação apagava a programação inteira do mês, levando a parte de outra
+ * pessoa. Ao corrigir, uma tentativa de declarar as categorias do perfil trouxe o mesmo estrago por
+ * outro caminho — Assistente Cursos (cursos, dia a dia, especiais) salvando só Cursos apagava os
+ * Especiais gravados pela Cultura. Quem cria não tem como "esvaziar" uma categoria que nem abriu,
+ * então declarar o que veio na tela é o suficiente.
+ */
+export function categoriasDaGravacao(categoriasEnviadas: (string | null | undefined)[]): string[] {
+    const nomes = categoriasEnviadas
+        .map(c => (c ?? "").trim())
+        .filter(c => slugDaCategoria(c) !== null)
+    return [...new Set(nomes)]
+}

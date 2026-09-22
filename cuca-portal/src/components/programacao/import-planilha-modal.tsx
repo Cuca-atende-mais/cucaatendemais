@@ -115,7 +115,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                 setExistingCampanha(extCamp)
                 setConfirmDeletePhase(true)
                 setIsLoading(false)
-                return // Sai e espera o usuário clicar em "Sim, Sobrescrever"
+                return // Sai e espera o usuário clicar em "Gravar a programação"
             }
 
             // Se não existe, roda direta a importação
@@ -587,7 +587,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                             <Button variant="outline" onClick={resetState} disabled={isLoading}>Cancelar</Button>
                             <Button variant="destructive" onClick={handleConfirmOverwrite} disabled={isLoading}>
                                 {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                                Gravar nesta programação
+                                Gravar a programação
                             </Button>
                         </div>
                     </div>

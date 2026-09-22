@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { PGM_GERAL, pgmCategoria } from "@/lib/rbac/catalogo-programacao-mensal"
 import {
     acaoDaTransicaoCategoria, categoriasEditaveis, checadorDePermissoes, mapaPermissoesCategorias, motivoRecusaCriacao,
-    categoriasParaExcluir, podeExcluirCategoriaNoStatus, temAlgumaOpcaoDeExcluir, unidadesAoAlcance,
+    categoriasDaGravacao, categoriasParaExcluir, podeExcluirCategoriaNoStatus, temAlgumaOpcaoDeExcluir, unidadesAoAlcance,
     origemValida, permissoesDaCategoria, podeAcessarUnidade, podeTransicionarCategoria, permissoesComStatus, separarLinhasParaDuplicar, slugDaCategoria, transicaoExigeMotivo, transicoesPossiveis,
     type LinhaPermissaoPgm,
 } from "./permissoes-categoria"
@@ -203,3 +203,20 @@ describe("excluir minha programação (por categoria)", () => {
     })
 })
 
+
+// Cenário relatado pelo Junior em 2026-09-22: numa mesma unidade, o funcionário de Esportes salva a
+// programação dele de outubro e o de Cursos salva a dele. As duas partes têm de continuar lá.
+describe("categoriasDaGravacao — criar não mexe em categoria que a pessoa não trouxe", () => {
+    it("declara só o que veio na tela, mesmo que o perfil cubra mais categorias", () => {
+        // Assistente Cursos (perfil cobre cursos, dia a dia e especiais) salvando só Cursos:
+        // Especiais gravado pela Cultura não entra na gravação, então não é apagado.
+        expect(categoriasDaGravacao(["CURSOS", "CURSOS"])).toEqual(["CURSOS"])
+    })
+    it("Esportes salva Esportes; Cursos salva Cursos — nenhuma declara a categoria da outra", () => {
+        expect(categoriasDaGravacao(["ESPORTES"])).toEqual(["ESPORTES"])
+        expect(categoriasDaGravacao(["CURSOS", "DIA A DIA"])).toEqual(["CURSOS", "DIA A DIA"])
+    })
+    it("ignora categoria vazia ou desconhecida", () => {
+        expect(categoriasDaGravacao([null, "", "OUTRA COISA", "ESPORTES"])).toEqual(["ESPORTES"])
+    })
+})

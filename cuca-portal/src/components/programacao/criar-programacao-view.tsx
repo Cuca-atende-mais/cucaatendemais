@@ -404,12 +404,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
             const res = await fetch("/api/programacao/importar", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    campanha: campanhaPayload, atividades: atividadesPayload, origem: origemCriacao,
-                    // Mesma declaração da edição: esta gravação responde pelas categorias que a pessoa
-                    // edita — inclusive uma que ela deixou vazia de propósito.
-                    categorias: categoriasEditaveis(permissoes),
-                }),
+                body: JSON.stringify({ campanha: campanhaPayload, atividades: atividadesPayload, origem: origemCriacao }),
             })
 
             const data = await res.json()
