@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
 
         // 2. Lê o payload
         const body = await req.json()
-        const { campanha, atividades, origem } = body as {
+        const { campanha, atividades, categorias: categoriasDeclaradas, origem } = body as {
             campanha: {
                 titulo: string
                 unidade_cuca: string
@@ -42,6 +42,11 @@ export async function POST(req: NextRequest) {
                 status?: string
             }
             atividades: any[]
+            // Categorias que esta gravação substitui na programação do mês. A tela de criação manda as
+            // categorias que a pessoa pode editar (mesma regra da edição), para que tirar todas as linhas
+            // de uma categoria dela também valha como "essa categoria ficou vazia". Ausente (planilha):
+            // as categorias que vieram no arquivo.
+            categorias?: string[]
             origem: unknown
         }
 
@@ -85,7 +90,14 @@ export async function POST(req: NextRequest) {
             // Não apaga nada: acrescenta as categorias de quem pede à programação que já existe.
             // A função confere, dentro do banco, permissão por categoria e se a categoria está em
             // rascunho; se a programação não estiver mais em rascunho, ela recusa com a razão.
-            const categorias = [...new Set(categoriasEnviadas.map(c => c ?? "").filter(c => slugDaCategoria(c)))]
+            const doPayload = [...new Set(categoriasEnviadas.map(c => c ?? "").filter(c => slugDaCategoria(c)))]
+            const declaradas = Array.isArray(categoriasDeclaradas)
+                ? [...new Set(categoriasDeclaradas.filter(c => typeof c === "string" && slugDaCategoria(c)))]
+                : []
+            // Toda categoria enviada precisa estar entre as declaradas — senão a gravação mexeria numa
+            // categoria que a tela não assumiu.
+            const faltaDeclarar = doPayload.find(c => !declaradas.some(d => slugDaCategoria(d) === slugDaCategoria(c)))
+            const categorias = declaradas.length > 0 && !faltaDeclarar ? declaradas : doPayload
             if (categorias.length === 0) {
                 return NextResponse.json({ error: "Payload inválido" }, { status: 400 })
             }

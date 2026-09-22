@@ -461,10 +461,12 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                     throw new Error("Erro ao salvar no banco: " + (errData.error || importRes.statusText))
                 }
 
-                const { campanha_id } = await importRes.json()
+                const { campanha_id, mesclada } = await importRes.json()
                 const newCamp = { id: campanha_id }
 
-                appendLog("success", "Finalizado", "Programação de " + mesObj.label + " importada com sucesso para o banco.")
+                appendLog("success", "Finalizado", mesclada
+                    ? "Categorias desta planilha gravadas na programação de " + mesObj.label + " que já existia. As demais categorias continuam como estavam."
+                    : "Programação de " + mesObj.label + " importada com sucesso para o banco.")
                 appendLog("info", "Classificação de Inteligência", "Iniciando estruturação automática de Eixos e Modalidades (Categorias) no Worker...")
 
                 // S19-02: Dispara a normalização de categorias no Worker via LLM em background
