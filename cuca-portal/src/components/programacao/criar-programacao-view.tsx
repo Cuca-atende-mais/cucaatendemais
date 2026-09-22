@@ -113,9 +113,9 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     const [unidadeSel, setUnidadeSel] = useState<string>(unidadeInicial)
     const [verificandoDup, setVerificandoDup] = useState(false)
     const [campanhaExistente, setCampanhaExistente] = useState<any>(null)
-    // Mês com programação enviada, autorizada ou publicada não pode ser substituído daqui — só pela
-    // ação "Excluir programação inteira". Inclui a publicada com categoria reaberta (status volta a
-    // "rascunho", mas o RAG continua no ar). O servidor confere de novo (`motivoRecusaSubstituicao`).
+    // Mês com programação enviada, autorizada ou publicada não aceita acréscimo por aqui (é preciso
+    // devolver ou reabrir a categoria pela lista). Inclui a publicada com categoria reaberta (status
+    // volta a "rascunho", mas o RAG continua no ar). O servidor confere de novo, na função do banco.
     const existenteBloqueia = !!campanhaExistente && (
         campanhaExistente.status !== "rascunho"
         || campanhaExistente.noRag === true
@@ -149,7 +149,6 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     // (antes disso, `/api/programacao/importar` apagava sem avisar; corrigido junto nesta story,
     // ver também o próprio endpoint).
     const [salvando, setSalvando] = useState(false)
-    const [confirmarSubstituicaoAberto, setConfirmarSubstituicaoAberto] = useState(false)
 
     // S-PROG-09 (item 4): indicador de alterações não salvas — só faz sentido em modo edição,
     // porque só ali o dado já está gravado no banco antes de abrir a tela ("Nada é gravado até
@@ -382,9 +381,9 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
     }
 
     // ── Submit: salvar como rascunho (criação nova) ────────────────────────────
-    // `confirmarSubstituicao` só é `true` depois que o usuário confirma explicitamente no
-    // AlertDialog (AC4 da S-PROG-02) — sem isso, o endpoint recusa apagar a campanha existente.
-    const executarSalvamento = async (confirmarSubstituicao: boolean) => {
+    // Mês que já tem programação nunca é substituído: as categorias desta pessoa entram na que já
+    // existe (incidente de 2026-09-22 — a segunda pessoa apagava a parte da primeira).
+    const executarSalvamento = async () => {
         setSalvando(true)
         try {
             const titulo = `Programação ${unidadeSel} — ${nomeMes} ${anoSel}`
@@ -405,23 +404,18 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
             const res = await fetch("/api/programacao/importar", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ campanha: campanhaPayload, atividades: atividadesPayload, confirmarSubstituicao, origem: origemCriacao }),
+                body: JSON.stringify({ campanha: campanhaPayload, atividades: atividadesPayload, origem: origemCriacao }),
             })
 
             const data = await res.json()
-            if (res.status === 409 && data.conflito) {
-                // Servidor detectou campanha existente que o cliente não sabia (corrida entre
-                // duas pessoas editando ao mesmo tempo) — mesmo tratamento do AlertDialog local.
-                setCampanhaExistente(data.conflito)
-                setConfirmarSubstituicaoAberto(true)
-                return
-            }
             if (!res.ok) throw new Error(data.error || "Erro ao salvar")
 
             // Aguarda 1.5s para a replicação do Supabase antes de voltar e atualizar
             // (mesmo padrão do import-planilha-modal que usa 3s de delay pelo mesmo motivo)
             setTimeout(() => {
-                toast.success("Programação salva como rascunho! Clique em 'Continuar edição' na lista para abrir.")
+                toast.success(data.mesclada
+                    ? "Suas atividades entraram na programação deste mês, que já existia. As outras categorias continuam como estavam."
+                    : "Programação salva como rascunho! Clique em 'Continuar edição' na lista para abrir.")
                 onSuccess()
             }, 1500)
         } catch (e) {
@@ -441,14 +435,10 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
             return
         }
         if (existenteBloqueia) {
-            toast.error("Já existe programação enviada, autorizada ou publicada para este mês e unidade — ela não pode ser substituída.")
+            toast.error("A programação deste mês já foi enviada, autorizada ou publicada — não dá para acrescentar por aqui. Abra a existente pela lista.")
             return
         }
-        if (campanhaExistente) {
-            setConfirmarSubstituicaoAberto(true)
-            return
-        }
-        executarSalvamento(false)
+        executarSalvamento()
     }
 
     // ── Contagem por categoria + painel de revisão (item 5) ────────────────────
@@ -603,7 +593,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                                 <span>
                                     Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong>
                                     ({campanhaExistente.noRag ? <em>publicada, no ar</em> : <>status: <em>{campanhaExistente.status}</em></>})
-                                    e ela <strong>não pode ser substituída</strong>. Confira se o mês está certo — para alterar a existente, abra-a pela lista.
+                                    e <strong>não aceita acréscimo por aqui</strong>. Confira se o mês está certo — para alterar a existente, abra-a pela lista.
                                 </span>
                             </div>
                         )}
@@ -611,8 +601,8 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                             <div className="flex items-start gap-2.5 p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-500 text-sm">
                                 <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                                 <span>
-                                    Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (status: <em>{campanhaExistente.status}</em>).
-                                    Salvar mais adiante criará uma nova versão — a existente será substituída ao confirmar.
+                                    Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (rascunho).
+                                    Ao salvar, <strong>suas categorias entram nela</strong> — nada do que as outras pessoas já montaram é apagado.
                                 </span>
                             </div>
                         )}
@@ -642,8 +632,8 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                             <div className="flex items-start gap-2.5 p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-500 text-sm">
                                 <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                                 <span>
-                                    Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (status: <em>{campanhaExistente.status}</em>).
-                                    Salvar criará uma nova versão — a existente será substituída ao confirmar.
+                                    Já existe programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (rascunho).
+                                    Ao salvar, <strong>suas categorias entram nela</strong> — nada do que as outras pessoas já montaram é apagado.
                                 </span>
                             </div>
                         )}
@@ -811,27 +801,6 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
                     )}
                 </div>
             </div>
-
-            {/* AC4 da S-PROG-02: confirmação explícita antes de substituir campanha existente —
-                nunca apaga sem esse passo (endpoint também recusa sem `confirmarSubstituicao`). */}
-            <AlertDialog open={confirmarSubstituicaoAberto} onOpenChange={setConfirmarSubstituicaoAberto}>
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Substituir programação existente?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            Já existe uma programação para <strong>{unidadeSel}</strong> em <strong>{nomeMes}/{anoSel}</strong> (status:{" "}
-                            <em>{campanhaExistente?.status}</em>). Salvar agora vai <strong>apagar a existente</strong> e gravar esta como nova versão
-                            (rascunho). Essa ação não pode ser desfeita.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => { setConfirmarSubstituicaoAberto(false); executarSalvamento(true) }}>
-                            Sim, substituir
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
 
             {/* S-PROG-09 (item 4, AC6): sair com alteração pendente pede confirmação — o dado já
                 está gravado no banco (é um rascunho reaberto), diferente da criação do zero. */}

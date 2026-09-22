@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { PGM_GERAL, pgmCategoria } from "@/lib/rbac/catalogo-programacao-mensal"
 import {
     acaoDaTransicaoCategoria, categoriasEditaveis, checadorDePermissoes, mapaPermissoesCategorias, motivoRecusaCriacao,
-    categoriasParaExcluir, motivoRecusaSubstituicao, podeExcluirCategoriaNoStatus, temAlgumaOpcaoDeExcluir, unidadesAoAlcance,
+    categoriasParaExcluir, podeExcluirCategoriaNoStatus, temAlgumaOpcaoDeExcluir, unidadesAoAlcance,
     origemValida, permissoesDaCategoria, podeAcessarUnidade, podeTransicionarCategoria, permissoesComStatus, separarLinhasParaDuplicar, slugDaCategoria, transicaoExigeMotivo, transicoesPossiveis,
     type LinhaPermissaoPgm,
 } from "./permissoes-categoria"
@@ -114,23 +114,23 @@ describe("criar campanha nova (importar / grade)", () => {
     })
 
     it("exige a opção da origem", () => {
-        expect(motivoRecusaCriacao(coordenadorEsportivo, "duplicar", ["ESPORTES"], null)).toBeNull()
-        expect(motivoRecusaCriacao(coordenadorEsportivo, "planilha", ["ESPORTES"], null)).toMatch(/Sem permissão/)
+        expect(motivoRecusaCriacao(coordenadorEsportivo, "duplicar", ["ESPORTES"])).toBeNull()
+        expect(motivoRecusaCriacao(coordenadorEsportivo, "planilha", ["ESPORTES"])).toMatch(/Sem permissão/)
     })
 
     it("exige criar em cada categoria enviada", () => {
-        expect(motivoRecusaCriacao(coordenadorEsportivo, "duplicar", ["ESPORTES", "CURSOS"], null)).toMatch(/CURSOS/)
+        expect(motivoRecusaCriacao(coordenadorEsportivo, "duplicar", ["ESPORTES", "CURSOS"])).toMatch(/CURSOS/)
     })
 
-    it("substituir exige \"excluir minha programação\" em todas as categorias existentes", () => {
-        const comExcluir = checadorDePermissoes([
-            unica(PGM_GERAL.importarPlanilha), unica(pgmCategoria("esportes").excluirMinha),
-            crud(pgmCategoria("esportes").atividades),
+    it("mês que já tem programação não é substituído: só exige criar nas categorias enviadas", () => {
+        // Incidente 2026-09-22: a criação apagava a programação existente com a parte de outra
+        // pessoa. Agora as categorias entram na existente e a permissão de cada uma é conferida
+        // no banco, então aqui só resta a checagem de "criar".
+        const soEsportes = checadorDePermissoes([
+            unica(PGM_GERAL.importarPlanilha), crud(pgmCategoria("esportes").atividades),
         ], false)
-        expect(motivoRecusaCriacao(coordenadorEsportivo, "duplicar", ["ESPORTES"], ["ESPORTES"])).toMatch(/substituir/)
-        expect(motivoRecusaCriacao(comExcluir, "planilha", ["ESPORTES"], ["ESPORTES", "CURSOS"])).toMatch(/CURSOS/)
-        expect(motivoRecusaCriacao(comExcluir, "planilha", ["ESPORTES"], ["ESPORTES"])).toBeNull()
-        expect(motivoRecusaCriacao(comExcluir, "planilha", ["ESPORTES"], [])).toBeNull()
+        expect(motivoRecusaCriacao(soEsportes, "planilha", ["ESPORTES"])).toBeNull()
+        expect(motivoRecusaCriacao(soEsportes, "planilha", ["ESPORTES", "CURSOS"])).toMatch(/CURSOS/)
     })
 })
 
@@ -203,16 +203,3 @@ describe("excluir minha programação (por categoria)", () => {
     })
 })
 
-describe("motivoRecusaSubstituicao", () => {
-    it("rascunho que nunca foi enviado nem publicado pode ser substituído", () => {
-        expect(motivoRecusaSubstituicao({ statusCampanha: "rascunho", statusCategorias: ["rascunho", null], temDocumentoRag: false })).toBeNull()
-    })
-    it("autorizada, aprovada ou com categoria enviada não pode", () => {
-        expect(motivoRecusaSubstituicao({ statusCampanha: "autorizada", statusCategorias: ["autorizada"], temDocumentoRag: false })).not.toBeNull()
-        expect(motivoRecusaSubstituicao({ statusCampanha: "aprovado", statusCategorias: [], temDocumentoRag: true })).not.toBeNull()
-        expect(motivoRecusaSubstituicao({ statusCampanha: "rascunho", statusCategorias: ["aguardando_autorizacao"], temDocumentoRag: false })).not.toBeNull()
-    })
-    it("rascunho reaberto de uma programação que já teve RAG não pode (exemplo: mês atual escolhido por engano)", () => {
-        expect(motivoRecusaSubstituicao({ statusCampanha: "rascunho", statusCategorias: ["rascunho"], temDocumentoRag: true })).not.toBeNull()
-    })
-})

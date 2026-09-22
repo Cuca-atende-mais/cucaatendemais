@@ -128,28 +128,27 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
         }
     }
 
-    // Parte 2: O Usuário confirmou que deseja sobrescrever a campanha existente
+    // Parte 2: O usuário confirmou acrescentar as categorias da planilha à programação existente
     const handleConfirmOverwrite = async () => {
         setConfirmDeletePhase(false)
         setIsLoading(true)
-        appendLog("info", "Substituição", "A programação anterior será substituída ao gravar, se o seu perfil permitir.")
+        appendLog("info", "Programação existente", "As categorias desta planilha serão gravadas na programação que já existe; as demais continuam como estão.")
 
         try {
-            // S-PROG-13: a exclusão da anterior não é mais feita pelo navegador. A rota
-            // /api/programacao/importar confere "excluir programação inteira" e "excluir atividade"
-            // em todas as categorias dela antes de apagar; sem permissão, nada é apagado.
-            await performExtractionAndInsert(null, true)
+            // A rota /api/programacao/importar não apaga a programação existente: grava as categorias
+            // da planilha dentro dela, conferindo a permissão de cada categoria no banco.
+            await performExtractionAndInsert(null)
 
         } catch (error: any) {
             appendLog("error", "Ops", error.message)
-            toast.error("Erro fatal ao substituir.")
+            toast.error("Erro ao gravar a programação.")
             setIsLoading(false)
         }
     }
 
 
     // Parte 3: Extração do Arquivo Fisico, match das abas e insert no Supabase
-    const performExtractionAndInsert = async (campanhaRecicladaId: string | null, confirmarSubstituicao = false) => {
+    const performExtractionAndInsert = async (campanhaRecicladaId: string | null) => {
         const mesInt = parseInt(mesSelecionado)
         const anoAtual = new Date().getFullYear()
         const mesObj = MESES.find(m => m.value === mesSelecionado)!
@@ -452,7 +451,6 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                             status: "rascunho"
                         },
                         atividades: atividadesToInsert,
-                        confirmarSubstituicao,
                         origem: "planilha",
                     }),
                     signal: AbortSignal.timeout(60000)
@@ -573,20 +571,21 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                         <div className="flex gap-3 mb-3 text-red-700">
                             <AlertTriangle className="h-6 w-6 shrink-0" />
                             <div>
-                                <h3 className="font-bold text-lg">Substituir Programação Existente?</h3>
+                                <h3 className="font-bold text-lg">Já existe programação neste mês</h3>
                                 <p className="text-sm mt-1">
-                                    O <strong>CUCA {unidadeCuca}</strong> já está com a programação de <strong>{MESES.find(m => m.value === String(existingCampanha.mes))?.label}</strong> carregada e online para os Jovens (RAG Ativo).
+                                    O <strong>CUCA {unidadeCuca}</strong> já tem a programação de <strong>{MESES.find(m => m.value === String(existingCampanha.mes))?.label}</strong> gravada.
                                 </p>
                             </div>
                         </div>
                         <p className="text-sm text-red-900 mb-4 ml-9 font-medium">
-                            Se você prosseguir, a <strong>planilha anterior será inteiramente APAGADA e sobreescrita</strong> com os novos dados desta planilha.
+                            As categorias que vierem nesta planilha <strong>substituem só elas mesmas</strong> dentro dessa programação.
+                            As categorias das outras pessoas continuam como estão. Programação já enviada, autorizada ou publicada não aceita acréscimo por aqui.
                         </p>
                         <div className="flex items-center gap-3 justify-end shrink-0">
                             <Button variant="outline" onClick={resetState} disabled={isLoading}>Cancelar</Button>
                             <Button variant="destructive" onClick={handleConfirmOverwrite} disabled={isLoading}>
                                 {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                                Sim, Sobrescrever Tudo
+                                Gravar nesta programação
                             </Button>
                         </div>
                     </div>

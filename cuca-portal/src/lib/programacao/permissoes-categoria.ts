@@ -115,31 +115,21 @@ export function origemValida(valor: unknown): valor is OrigemCriacao {
 }
 
 /**
- * Criar campanha nova (`/api/programacao/importar`): exige a opção da origem (do zero, duplicar ou
- * planilha) e "criar" em cada categoria enviada. Se já existe
- * campanha no mês, substituir exige "excluir programação inteira" e "excluir" em todas as categorias
- * que ela tem. Devolve o motivo da recusa, ou null.
+ * Criar programação (`/api/programacao/importar`): exige a opção da origem (do zero, duplicar ou
+ * planilha) e "criar" em cada categoria enviada. Mês que já tem programação não é substituído — as
+ * categorias entram na existente, e a permissão de cada uma é conferida no banco. Devolve o motivo
+ * da recusa, ou null.
  */
 export function motivoRecusaCriacao(
     checar: ChecarPermissao,
     origem: OrigemCriacao,
     categoriasDoArquivo: (string | null)[],
-    categoriasDaExistente: (string | null)[] | null,
 ): string | null {
     if (!opcaoLiberada(checar, MODULO_DA_ORIGEM[origem])) {
         return "Sem permissão para criar programação por este caminho"
     }
     for (const nome of new Set(categoriasDoArquivo)) {
         if (!permissoesDaCategoria(checar, nome).criar) return `Sem permissão para criar atividades de ${nome ?? "(sem categoria)"}`
-    }
-    if (categoriasDaExistente) {
-        // Substituir só vale para rascunho (`motivoRecusaSubstituicao`): exige "excluir minha
-        // programação" (ou a de supervisor) em todas as categorias que ela tem.
-        for (const nome of new Set(categoriasDaExistente)) {
-            if (!podeExcluirCategoriaNoStatus(checar, nome, "rascunho")) {
-                return `Sem permissão para substituir: a programação existente tem atividades de ${nome ?? "(sem categoria)"}`
-            }
-        }
     }
     return null
 }
@@ -243,17 +233,3 @@ export function temAlgumaOpcaoDeExcluir(checar: ChecarPermissao): boolean {
     })
 }
 
-/**
- * Substituir a programação do mês ao criar uma nova: só um rascunho que nunca foi publicado — todas as
- * categorias em rascunho e nenhum documento de RAG da programação. Autorizada, aprovada ou publicada
- * só sai por "Excluir programação inteira".
- */
-export function motivoRecusaSubstituicao(p: {
-    statusCampanha: string | null | undefined
-    statusCategorias: (string | null | undefined)[]
-    temDocumentoRag: boolean
-}): string | null {
-    const nuncaSaiuDoRascunho = p.statusCampanha === "rascunho" && p.statusCategorias.every(s => !s || s === "rascunho")
-    if (nuncaSaiuDoRascunho && !p.temDocumentoRag) return null
-    return "Já existe programação enviada, autorizada ou publicada para este mês e unidade. Ela não pode ser substituída: abra a existente pela lista para editar, ou exclua pela ação \"Excluir programação inteira\"."
-}

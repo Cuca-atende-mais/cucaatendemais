@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
-import { motivoRecusaCriacao, motivoRecusaSubstituicao, origemValida } from "@/lib/programacao/permissoes-categoria"
+import { motivoRecusaCriacao, origemValida, slugDaCategoria } from "@/lib/programacao/permissoes-categoria"
+import { mapearErroSalvarRascunho } from "@/lib/programacao/rascunho"
 import { carregarAcessoPgm } from "@/lib/programacao/permissoes-categoria-server"
 
 // S-PROG-13: esta rota grava com a chave de serviço (passa por cima das políticas), então a
@@ -10,10 +11,13 @@ import { carregarAcessoPgm } from "@/lib/programacao/permissoes-categoria-server
 //     atividade é gravada com a unidade da campanha;
 //   * a opção da origem (`origem`: zero, duplicar ou planilha);
 //   * "criar atividade" em cada categoria enviada;
-//   * substituir o mês exige "excluir programação inteira" e "excluir atividade" em todas as
-//     categorias da programação existente, e só vale para rascunho que nunca foi enviado nem publicado
-//     (decisão do Junior, 2026-09-21): autorizada, aprovada ou publicada só sai por "Excluir
-//     programação inteira" — escolher o mês atual por engano não pode derrubar o RAG no ar.
+//   * "criar atividade" em cada categoria enviada.
+//
+// Mês que JÁ TEM programação nunca é substituído (incidente de produção em 2026-09-22: duas pessoas
+// montaram outubro da mesma unidade e a segunda apagou a parte da primeira — a programação é uma só
+// por mês e unidade, compartilhada pelas categorias). As categorias de quem pede são gravadas DENTRO
+// da programação existente, pela mesma função da edição (`programacao_salvar_rascunho_categorias`),
+// que substitui só as categorias declaradas e confere a permissão de cada uma dentro do banco.
 // A campanha sempre nasce como rascunho: o envio para autorização é outro passo.
 
 export async function POST(req: NextRequest) {
@@ -28,7 +32,7 @@ export async function POST(req: NextRequest) {
 
         // 2. Lê o payload
         const body = await req.json()
-        const { campanha, atividades, confirmarSubstituicao, origem } = body as {
+        const { campanha, atividades, origem } = body as {
             campanha: {
                 titulo: string
                 unidade_cuca: string
@@ -38,11 +42,6 @@ export async function POST(req: NextRequest) {
                 status?: string
             }
             atividades: any[]
-            // S-PROG-02 (AC4): só apaga campanha existente com essa confirmação explícita —
-            // antes este endpoint apagava sem avisar (`campanhas_mensais_mes_ano_unidade_key` é
-            // UNIQUE, então inserir sem apagar primeiro sempre falhava; a correção não é pular o
-            // delete, é só fazê-lo sob confirmação, não incondicionalmente).
-            confirmarSubstituicao?: boolean
             origem: unknown
         }
 
@@ -65,7 +64,7 @@ export async function POST(req: NextRequest) {
 
         const checar = acesso.checar
         const categoriasEnviadas = atividades.map((a: { categoria?: string | null } | null) => a?.categoria ?? null)
-        const recusaCriacao = motivoRecusaCriacao(checar, origem, categoriasEnviadas, null)
+        const recusaCriacao = motivoRecusaCriacao(checar, origem, categoriasEnviadas)
         if (recusaCriacao) {
             return NextResponse.json({ error: recusaCriacao }, { status: 403 })
         }
@@ -73,7 +72,7 @@ export async function POST(req: NextRequest) {
         // 4. Usa admin client (service role) para bypassar o RLS no insert
         const admin = createAdminClient()
 
-        // Verifica campanha existente para o mesmo mês/ano/unidade ANTES de decidir apagar.
+        // Programação já existente para o mesmo mês/ano/unidade: as categorias de quem pede entram nela.
         const { data: conflito } = await admin
             .from("campanhas_mensais")
             .select("id, status, titulo")
@@ -83,51 +82,33 @@ export async function POST(req: NextRequest) {
             .maybeSingle()
 
         if (conflito) {
-            const [{ data: statusCats, error: stErr }, { count: docsRag, error: ragErr }] = await Promise.all([
-                admin.from("campanha_categoria_status").select("status, exigir_recriacao").eq("campanha_id", conflito.id),
-                admin.from("documentos_rag").select("id", { count: "exact", head: true })
-                    .eq("tipo", "monthly_program").eq("metadados->>campanha_id", conflito.id),
-            ])
-            if (stErr) throw new Error(stErr.message)
-            if (ragErr) throw new Error(ragErr.message)
-            // 422 (não 409): a tela só abre o "Substituir?" com 409 + `conflito`; aqui não há o que confirmar.
-            const recusaRascunho = motivoRecusaSubstituicao({
-                statusCampanha: conflito.status as string,
-                // Categoria excluída pelo supervisor (a recriar) conta como já enviada: não é rascunho novo.
-                statusCategorias: (statusCats || []).map(l => (l.exigir_recriacao ? "excluida" : l.status as string)),
-                temDocumentoRag: (docsRag ?? 0) > 0,
+            // Não apaga nada: acrescenta as categorias de quem pede à programação que já existe.
+            // A função confere, dentro do banco, permissão por categoria e se a categoria está em
+            // rascunho; se a programação não estiver mais em rascunho, ela recusa com a razão.
+            const categorias = [...new Set(categoriasEnviadas.map(c => c ?? "").filter(c => slugDaCategoria(c)))]
+            if (categorias.length === 0) {
+                return NextResponse.json({ error: "Payload inválido" }, { status: 400 })
+            }
+
+            // Com a sessão de quem pede (não com a chave de serviço): a função confere
+            // `pgm_pode_categoria` por dentro, e isso depende do usuário logado.
+            const { data, error } = await supabase.rpc("programacao_salvar_rascunho_categorias", {
+                p_campanha_id: conflito.id,
+                p_titulo: (conflito.titulo as string) || campanha.titulo,
+                p_atividades: atividades.map(a => ({ ...a, unidade_cuca: campanha.unidade_cuca })),
+                p_categorias: categorias,
             })
-            if (recusaRascunho) {
-                return NextResponse.json({ error: recusaRascunho }, { status: 422 })
-            }
-        }
-
-        if (conflito && !confirmarSubstituicao) {
-            return NextResponse.json({ error: "Já existe programação para este mês/unidade", conflito }, { status: 409 })
-        }
-
-        if (conflito) {
-            const { data: linhasExistentes, error: existErr } = await admin
-                .from("atividades_mensais")
-                .select("categoria")
-                .eq("campanha_id", conflito.id)
-            if (existErr) throw new Error(existErr.message)
-
-            const recusaSubstituicao = motivoRecusaCriacao(
-                checar, origem, categoriasEnviadas,
-                (linhasExistentes || []).map(l => l.categoria as string | null),
-            )
-            if (recusaSubstituicao) {
-                return NextResponse.json({ error: recusaSubstituicao }, { status: 403 })
+            if (error) {
+                const { status, error: mensagem } = mapearErroSalvarRascunho(error)
+                return NextResponse.json({ error: mensagem }, { status })
             }
 
-            // Condicional ao status: se ela saiu do rascunho depois da checagem acima, não apaga.
-            const { data: apagadas, error: delErr } = await admin
-                .from("campanhas_mensais").delete().eq("id", conflito.id).eq("status", "rascunho").select("id")
-            if (delErr) throw new Error("Erro ao substituir campanha: " + delErr.message)
-            if (!apagadas?.length) {
-                return NextResponse.json({ error: "A programação existente mudou de status. Atualize e tente de novo." }, { status: 409 })
-            }
+            const resultado = Array.isArray(data) ? data[0] : data
+            return NextResponse.json({
+                campanha_id: conflito.id,
+                mesclada: true,
+                total_atividades: resultado?.total_atividades,
+            })
         }
 
         const { data: newCamp, error: campErr } = await admin
@@ -156,10 +137,8 @@ export async function POST(req: NextRequest) {
                 .from("atividades_mensais")
                 .insert(batch.slice(i, i + CHUNK))
             if (batchErr) {
-                // Sem isso, a campanha ficava gravada VAZIA (só parte dos lotes, ou nenhum) e a
-                // próxima tentativa de salvar caía no conflito de mês/unidade. Desfaz a campanha
-                // recém-criada (CASCADE leva as atividades já inseridas) — a grade continua na tela
-                // e a pessoa pode salvar de novo.
+                // Sem isso, a campanha ficava gravada VAZIA e a próxima tentativa de salvar caía no
+                // conflito de mês/unidade. Desfaz a campanha recém-criada (CASCADE leva o que entrou).
                 const { error: rollbackErr } = await admin.from("campanhas_mensais").delete().eq("id", newCamp.id)
                 if (rollbackErr) console.error("[programacao/importar] falha ao desfazer campanha vazia", rollbackErr)
                 throw new Error(`Erro ao inserir atividades (lote ${Math.floor(i / CHUNK) + 1}): ` + batchErr.message)
