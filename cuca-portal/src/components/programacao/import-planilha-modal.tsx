@@ -119,7 +119,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
             }
 
             // Se não existe, roda direta a importação
-            await performExtractionAndInsert(null)
+            await performExtractionAndInsert()
 
         } catch (error: any) {
             appendLog("error", "Erro Critico", error.message)
@@ -137,7 +137,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
         try {
             // A rota /api/programacao/importar não apaga a programação existente: grava as categorias
             // da planilha dentro dela, conferindo a permissão de cada categoria no banco.
-            await performExtractionAndInsert(null)
+            await performExtractionAndInsert()
 
         } catch (error: any) {
             appendLog("error", "Ops", error.message)
@@ -148,7 +148,7 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
 
 
     // Parte 3: Extração do Arquivo Fisico, match das abas e insert no Supabase
-    const performExtractionAndInsert = async (campanhaRecicladaId: string | null) => {
+    const performExtractionAndInsert = async () => {
         const mesInt = parseInt(mesSelecionado)
         const anoAtual = new Date().getFullYear()
         const mesObj = MESES.find(m => m.value === mesSelecionado)!
