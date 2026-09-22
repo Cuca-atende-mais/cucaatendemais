@@ -38,10 +38,15 @@ concurrency:
 permissions:
   contents: read
 
+# RUNNER FIXADO: `ubuntu-24.04`, não `ubuntu-latest`. O GitHub migra o rótulo `latest`
+# para o Ubuntu 26 a partir de 19/10/2026, e migração de sistema operacional por baixo
+# quebra esteira num dia aleatório, sem ninguém ter mexido em nada. Subir de versão passa
+# a ser decisão explícita, num PR que pode ser testado e revertido.
+#
 jobs:
   worker:
     name: Worker — pytest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # Valores FALSOS de propósito. A esteira não deve ter acesso a Supabase, Meta ou
       # OpenAI de verdade. Existem só porque worker/talent_bank_matcher.py cria clientes
@@ -80,7 +85,7 @@ jobs:
 
   portal:
     name: Portal — vitest, tipos, lint, build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: cuca-portal
@@ -121,7 +126,7 @@ jobs:
 
   edge-functions:
     name: Edge Functions — deno
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -151,7 +156,7 @@ jobs:
 
   dependencias:
     name: Auditoria de dependências (informativo)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: cuca-portal
