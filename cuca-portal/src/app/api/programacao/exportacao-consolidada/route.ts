@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
         const [{ data: atividades, error: atvErr }, { data: statusCats, error: stErr }] = await Promise.all([
             admin
                 .from("atividades_mensais")
-                .select("titulo, categoria, local, data_atividade, hora_inicio, hora_fim, metadata")
+                .select("titulo, categoria, local, data_atividade, data_inicio, data_fim, hora_inicio, hora_fim, metadata")
                 .in("campanha_id", ids)
                 .range(0, 4999),
             admin

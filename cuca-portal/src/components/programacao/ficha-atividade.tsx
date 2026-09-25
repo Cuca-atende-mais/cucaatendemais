@@ -21,8 +21,8 @@ import { AtividadeForm, DIAS_SEMANA, DIAS_SEMANA_ABREV, LIMITE_CARACTERES, SESSO
 import { aplicarMascaraDataDigitando, aplicarMascaraHoraDigitando, dataBrParaISO, exibirData, normalizarData, normalizarHora } from "@/lib/programacao/mascaras"
 import { RotuloComAjuda } from "@/components/programacao/ajuda-campo"
 import { CampoComAjuda } from "@/lib/programacao/ajuda"
+import { aplicarDataFimEvento, aplicarDataInicioEvento } from "@/lib/programacao/datas-atividade"
 
-const NOMES_DIA_SEMANA = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"]
 
 interface FichaAtividadeProps {
     aberta: boolean
@@ -51,19 +51,10 @@ export function FichaAtividade({ aberta, atividade, indice, total, focoCampo, on
         set("dias_semana", next.map(d => DIAS_SEMANA_ABREV[d]).join(" e "))
     }
 
-    const handleDataDiaADia = (valorMascarado: string) => {
-        // Mesmo padrão do campo hora: enquanto a data não fecha, guarda o texto digitado bruto
-        // em vez de sobrescrever com null a cada tecla (era o bug reportado pelo @qa — campo
-        // sempre resetava pra vazio). Converte pra ISO e deriva dia_semana/data_real só quando a
-        // data digitada já é válida e completa.
-        const iso = dataBrParaISO(valorMascarado)
-        if (!iso) { setRoot("data_atividade", valorMascarado); return }
-        setRoot("data_atividade", iso)
-        const [ano, mes, dia] = iso.split("-").map(Number)
-        const dt = new Date(ano, mes - 1, dia)
-        set("dia_semana", NOMES_DIA_SEMANA[dt.getDay()])
-        set("data_real", `${String(dia).padStart(2, "0")}/${String(mes).padStart(2, "0")}`)
-    }
+    // S-PROG-19: uma única atualização (data início + dia da semana). Antes eram três chamadas seguidas
+    // montadas a partir da mesma atividade, e a última desfazia a primeira.
+    const handleDataDiaADia = (valorMascarado: string) => onChange(aplicarDataInicioEvento(atividade, valorMascarado))
+    const handleDataFimDiaADia = (valorMascarado: string) => onChange(aplicarDataFimEvento(atividade, valorMascarado))
 
     return (
         <Sheet open={aberta} onOpenChange={v => !v && onFechar()}>
@@ -79,7 +70,7 @@ export function FichaAtividade({ aberta, atividade, indice, total, focoCampo, on
                     {somenteLeitura && (
                         <p className="text-xs text-muted-foreground">Seu perfil só pode ver as atividades desta categoria.</p>
                     )}
-                    <CamposComuns atividade={atividade} set={set} setRoot={setRoot} toggleDia={toggleDia} handleDataDiaADia={handleDataDiaADia} focoCampo={focoCampo} />
+                    <CamposComuns atividade={atividade} set={set} setRoot={setRoot} toggleDia={toggleDia} handleDataDiaADia={handleDataDiaADia} handleDataFimDiaADia={handleDataFimDiaADia} focoCampo={focoCampo} />
 
                     {/* Meta e Diretoria — item 4: entram como campos da ficha em todas as categorias */}
                     <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border">
@@ -163,7 +154,7 @@ function CampoHora({ label, valor, onChange, autofocus }: { label: string; valor
     useEffect(() => { if (autofocus) refLocal.current?.focus() }, [autofocus])
     return (
         <div className="space-y-1.5">
-            <Label><RotuloComAjuda texto={label} campo="horario" /></Label>
+            <Label><RotuloComAjuda texto={label} campo="horario" obrigatorio /></Label>
             <Input
                 ref={refLocal}
                 inputMode="numeric"
@@ -178,13 +169,14 @@ function CampoHora({ label, valor, onChange, autofocus }: { label: string; valor
 }
 
 function CamposComuns({
-    atividade, set, setRoot, toggleDia, handleDataDiaADia, focoCampo,
+    atividade, set, setRoot, toggleDia, handleDataDiaADia, handleDataFimDiaADia, focoCampo,
 }: {
     atividade: AtividadeForm
     set: (chave: string, valor: string | string[] | null) => void
     setRoot: (chave: keyof AtividadeForm, valor: string | null) => void
     toggleDia: (d: string) => void
     handleDataDiaADia: (v: string) => void
+    handleDataFimDiaADia: (v: string) => void
     focoCampo?: string
 }) {
     const meta = atividade.metadata || {}
@@ -266,17 +258,24 @@ function CamposComuns({
             </div>
             <Campo label="Atividade" obrigatorio><Input value={meta.atividade || ""} onChange={e => set("atividade", e.target.value)} placeholder="Breve descrição" /></Campo>
             <div className="grid grid-cols-2 gap-3">
-                <Campo label="Data">
+                <Campo label="Data de início" obrigatorio>
                     <Input inputMode="numeric" maxLength={10} placeholder="--/--/----"
                         value={exibirData(atividade.data_atividade)}
                         onChange={e => handleDataDiaADia(aplicarMascaraDataDigitando(e.target.value))}
                         onBlur={e => { const r = normalizarData(e.target.value); if (r.ok) handleDataDiaADia(r.valor) }}
                     />
                 </Campo>
-                {meta.dia_semana && (
-                    <Campo label="Dia da semana"><p className="text-sm h-9 flex items-center px-3 bg-muted/40 rounded-md border border-border text-muted-foreground">{meta.dia_semana}</p></Campo>
-                )}
+                <Campo label="Data de fim" obrigatorio>
+                    <Input inputMode="numeric" maxLength={10} placeholder="--/--/----"
+                        value={exibirData(meta.data_fim_raw)}
+                        onChange={e => handleDataFimDiaADia(aplicarMascaraDataDigitando(e.target.value))}
+                        onBlur={e => { const r = normalizarData(e.target.value); if (r.ok) handleDataFimDiaADia(r.valor) }}
+                    />
+                </Campo>
             </div>
+            {meta.dia_semana && (
+                <p className="text-xs text-muted-foreground -mt-2">Começa numa {meta.dia_semana.toLowerCase()}.</p>
+            )}
             <div className="grid grid-cols-2 gap-3">
                 <CampoHora label="Início" valor={atividade.hora_inicio || ""} onChange={v => setRoot("hora_inicio", v)} autofocus={focoCampo === "hora_inicio"} />
                 <CampoHora label="Fim" valor={atividade.hora_fim || ""} onChange={v => setRoot("hora_fim", v)} autofocus={focoCampo === "hora_fim"} />

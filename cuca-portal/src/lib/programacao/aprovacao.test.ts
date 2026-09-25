@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { linhaIncompleta, motivosFaltantes } from "./aprovacao"
+import { campanhaExigeDatasInicioFim, linhaIncompleta, motivosFaltantes } from "./aprovacao"
 
 // Achado do @qa na revisão de S-PROG-02/03/04/05: o bloqueio de "Enviar para aprovação"
 // reusava `linhaTemProblema` (mede contaminação, não completude) — uma linha de CURSOS só com
@@ -79,5 +79,39 @@ describe("motivosFaltantes — sempre checa horário e título, em toda categori
             metadata: { professor: "Ricardo", turma: "Turma 1", vagas: "25", sexo: "Misto", faixa_etaria: "7 a 10 anos", dias_semana: "Seg e Qua" },
         }
         expect(motivosFaltantes(linha)).toContain("título")
+    })
+})
+
+describe("S-PROG-19 — data início/fim cobradas no envio a partir de outubro/2026", () => {
+    const dia = {
+        categoria: "DIA A DIA", titulo: "Hora Pintada", descricao: null, local: "Biblioteca",
+        data_atividade: "2026-10-07", hora_inicio: "14:00:00", hora_fim: "17:00:00",
+        metadata: { sessao: "Biblioteca", atividade: "Pintura" },
+    }
+
+    it("corte por mês: outubro/2026 em diante", () => {
+        expect(campanhaExigeDatasInicioFim(9, 2026)).toBe(false)
+        expect(campanhaExigeDatasInicioFim(10, 2026)).toBe(true)
+        expect(campanhaExigeDatasInicioFim(1, 2027)).toBe(true)
+        expect(campanhaExigeDatasInicioFim(null, 2026)).toBe(false)
+    })
+
+    it("sem a opção (setembro e antes), nada muda", () => {
+        expect(motivosFaltantes(dia)).toEqual([])
+    })
+
+    it("com a opção: falta data início/fim; hora fim antes do início no mesmo dia também barra", () => {
+        const op = { exigirDatasInicioFim: true }
+        expect(motivosFaltantes(dia, op)).toEqual(["data de início", "data de fim"])
+        expect(motivosFaltantes({ ...dia, data_inicio: "2026-10-07", data_fim: "2026-10-07" }, op)).toEqual([])
+        expect(motivosFaltantes({ ...dia, data_inicio: "2026-10-07", data_fim: "2026-10-07", hora_fim: "13:00:00" }, op))
+            .toEqual(["horário de fim antes do de início"])
+        expect(motivosFaltantes({ ...dia, data_inicio: "2026-10-07", data_fim: "2026-10-08", hora_fim: "13:00:00" }, op)).toEqual([])
+    })
+
+    it("ESPORTES não é afetado", () => {
+        const esp = { categoria: "ESPORTES", titulo: "Natação", descricao: null, local: null, hora_inicio: "07:00", hora_fim: "08:00",
+            metadata: { professor: "W", turma: "T1", vagas: "20", sexo: "Misto", faixa_etaria: "15 a 29 anos", dias_semana: "Ter e Qui" } }
+        expect(motivosFaltantes(esp, { exigirDatasInicioFim: true })).toEqual([])
     })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+    datasInicioFimDoTexto,
   CATEGORIAS_VALIDAS,
   COLUNAS_CURSOS,
   COLUNAS_DIA_A_DIA,
@@ -213,5 +214,26 @@ describe("primeiraDataBr", () => {
         expect(primeiraDataBr(null)).toBeNull()
         expect(primeiraDataBr("a combinar")).toBeNull()
         expect(primeiraDataBr("40/13/2026")).toBeNull()
+    })
+})
+
+describe("datasInicioFimDoTexto (S-PROG-19)", () => {
+    it("período de CURSOS com duas datas", () => {
+        expect(datasInicioFimDoTexto("06/10/2026 a 27/10/2026 (Quarta e Sexta)")).toEqual({ data_inicio: "2026-10-06", data_fim: "2026-10-27" })
+        expect(datasInicioFimDoTexto("02/09/2026\n\n 30/09/2026\n\n Quarta e Sexta")).toEqual({ data_inicio: "2026-09-02", data_fim: "2026-09-30" })
+    })
+    it("'26 e 27/01/2026' das ESPECIAIS", () => {
+        expect(datasInicioFimDoTexto("26 e 27/01/2026")).toEqual({ data_inicio: "2026-01-26", data_fim: "2026-01-27" })
+    })
+    it("uma data só: só o início; o fim fica vazio (nunca assumido igual ao início)", () => {
+        expect(datasInicioFimDoTexto("07/10/2026")).toEqual({ data_inicio: "2026-10-07", data_fim: null })
+        expect(datasInicioFimDoTexto("2026-10-07")).toEqual({ data_inicio: "2026-10-07", data_fim: null })
+        expect(datasInicioFimDoTexto("Período: 06/10/2026 (Quarta e Sexta)")).toEqual({ data_inicio: "2026-10-06", data_fim: null })
+    })
+    it("nunca inventa: fim antes do início fica vazio; data impossível é ignorada; nada legível fica vazio", () => {
+        expect(datasInicioFimDoTexto("02/10/2026 a 30/10/2020")).toEqual({ data_inicio: "2026-10-02", data_fim: null })
+        expect(datasInicioFimDoTexto("31/02/2026")).toEqual({ data_inicio: null, data_fim: null })
+        expect(datasInicioFimDoTexto("a combinar")).toEqual({ data_inicio: null, data_fim: null })
+        expect(datasInicioFimDoTexto(null)).toEqual({ data_inicio: null, data_fim: null })
     })
 })

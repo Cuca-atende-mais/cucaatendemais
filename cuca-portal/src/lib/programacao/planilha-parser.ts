@@ -147,3 +147,41 @@ export function primeiraDataBr(texto: string | null | undefined): string | null 
     if (dia < 1 || dia > 31 || numMes < 1 || numMes > 12) return null
     return `${ano}-${mes.padStart(2, "0")}-${d.padStart(2, "0")}`
 }
+
+/** "dd/mm/aaaa" (dia/mês com 1 ou 2 dígitos) → ISO, ou null se impossível (31/02, mês 13…). */
+function dataBrValidaParaISO(d: string, m: string, a: string): string | null {
+    const dia = Number(d), mes = Number(m), ano = Number(a)
+    const dt = new Date(ano, mes - 1, dia)
+    if (dt.getFullYear() !== ano || dt.getMonth() !== mes - 1 || dt.getDate() !== dia) return null
+    return `${a}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`
+}
+
+/**
+ * S-PROG-19: data início e data fim a partir do texto da planilha — mesma regra do preenchimento
+ * dos dados no banco (`pgm_datas_padrao`), nunca inventando data:
+ * - duas datas completas ("06/10/2026 a 27/10/2026", ou o "Período" de CURSOS) → início e fim;
+ *   fim antes do início = fim vazio;
+ * - "26 e 27/01/2026" (formato das ESPECIAIS na planilha de referência) → 26/01 a 27/01;
+ * - uma data só → só o início; o fim fica vazio aguardando alguém preencher (decisão do Junior,
+ *   2026-09-25: o fim nunca é assumido igual ao início);
+ * - nada legível → ambas vazias.
+ */
+export function datasInicioFimDoTexto(texto: string | null | undefined): { data_inicio: string | null; data_fim: string | null } {
+    const s = String(texto ?? "")
+    const doisDias = s.match(/(\d{1,2})\s*e\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+    if (doisDias) {
+        const [, d1, d2, m, a] = doisDias
+        const ini = dataBrValidaParaISO(d1, m, a)
+        const fim = dataBrValidaParaISO(d2, m, a)
+        if (ini) return { data_inicio: ini, data_fim: fim && fim >= ini ? fim : null }
+    }
+    const datas = [...s.matchAll(/(\d{1,2})\/(\d{1,2})\/(\d{4})/g)]
+        .map(([, d, m, a]) => dataBrValidaParaISO(d, m, a))
+        .filter((x): x is string => !!x)
+    if (datas.length === 0) {
+        const iso = s.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? null
+        return { data_inicio: iso, data_fim: null }
+    }
+    if (datas.length === 1) return { data_inicio: datas[0], data_fim: null }
+    return { data_inicio: datas[0], data_fim: datas[1] >= datas[0] ? datas[1] : null }
+}

@@ -184,3 +184,42 @@ describe("montarAtividadePayload — chaves aditivas (S-PROG-01 item 4)", () => 
         expect(p.metadata.diretoria).toBeNull()
     })
 })
+
+describe("S-PROG-19 — data_inicio/data_fim e período no texto", () => {
+    const evento = (fim: string) => ({
+        _tempId: "1", categoria: "DIA A DIA" as const, titulo: "Feira", descricao: null, local: "Anfiteatro",
+        data_atividade: "2026-10-26", hora_inicio: "08:00", hora_fim: "17:00",
+        metadata: { sessao: "Cultura", atividade: "Feira das Profissões", data_real: "26/10", dia_semana: "Segunda-feira", informacoes: "", data_fim_raw: fim },
+    })
+
+    it("evento de um dia: colunas iguais e texto exatamente como antes", () => {
+        const p = montarAtividadePayload(evento("2026-10-26"), "Cuca Pici")
+        expect(p).toMatchObject({ data_atividade: "2026-10-26", data_inicio: "2026-10-26", data_fim: "2026-10-26" })
+        expect(p.descricao).toContain("Data: 26/10 (Segunda-feira).")
+        expect(p.metadata).not.toHaveProperty("data_fim_raw")
+    })
+
+    it("evento de vários dias: período no texto que vai ao assistente", () => {
+        const p = montarAtividadePayload(evento("2026-10-27"), "Cuca Pici")
+        expect(p).toMatchObject({ data_inicio: "2026-10-26", data_fim: "2026-10-27" })
+        expect(p.descricao).toContain("Data: 26/10 a 27/10 (Segunda-feira).")
+    })
+
+    it("data fim ainda sendo digitada vai vazia (rascunho salva; o envio cobra)", () => {
+        expect(montarAtividadePayload(evento("27/10/2"), "Cuca Pici").data_fim).toBeNull()
+    })
+
+    it("CURSOS grava início e término nas colunas; ESPORTES fica sem datas", () => {
+        const c = montarAtividadePayload({
+            _tempId: "2", categoria: "CURSOS", titulo: "Violão", descricao: null, local: null, data_atividade: null,
+            hora_inicio: "09:00", hora_fim: "12:00",
+            metadata: { educador: "E", vagas: "10", carga_horaria: "20", requisitos: "", ementa: "x", data_inicio_raw: "2026-10-06", data_fim_raw: "2026-10-29", dias_raw: ["Terça"] },
+        }, "Cuca Pici")
+        expect(c).toMatchObject({ data_atividade: "2026-10-06", data_inicio: "2026-10-06", data_fim: "2026-10-29" })
+        const e = montarAtividadePayload({
+            _tempId: "3", categoria: "ESPORTES", titulo: "Natação", descricao: null, local: null, data_atividade: null,
+            hora_inicio: "07:00", hora_fim: "08:00", metadata: { professor: "W", turma: "1", faixa_de: "15", sexo: "Misto", vagas: "20", dias_raw: ["Terça"] },
+        }, "Cuca Pici")
+        expect(e).toMatchObject({ data_inicio: null, data_fim: null })
+    })
+})

@@ -6,6 +6,7 @@
  */
 import { AtividadeForm, TEXTOS_DE_EXEMPLO } from "./tipos"
 import { horaFimDepoisDoInicio } from "./mascaras"
+import { datasDaAtividade, horaFimAntesDoInicio } from "./datas-atividade"
 
 export type TipoProblema = "falta" | "erro"
 
@@ -59,6 +60,9 @@ function problemasDeObrigatoriedade(a: AtividadeForm, indice: number): Problema[
       if (ehDataIncompleta(meta.data_inicio_raw)) erro("data de início incompleta")
       if (ehDataIncompleta(meta.data_fim_raw)) erro("data de término incompleta")
     }
+    // S-PROG-19: término antes do início é erro (término igual ao início é válido).
+    const { data_inicio, data_fim } = datasDaAtividade(a)
+    if (data_inicio && data_fim && data_fim < data_inicio) erro("data de término antes da data de início")
     if (!meta.ementa?.trim()) falta("ementa em branco")
     if (!meta.dias_raw?.length) falta("nenhum dia da semana selecionado")
     // CURSOS não tem faixa_de/faixa_ate no contrato atual (só ESPORTES tem) — requisitos de
@@ -76,8 +80,13 @@ function problemasDeObrigatoriedade(a: AtividadeForm, indice: number): Problema[
   }
 
   if (a.categoria === "DIA A DIA" || a.categoria === "ESPECIAIS") {
-    if (!a.data_atividade) falta("data do evento em branco")
-    else if (ehDataIncompleta(a.data_atividade)) erro("data do evento incompleta")
+    // S-PROG-19: data início e data fim (fim igual ao início = evento de um dia).
+    if (!a.data_atividade) falta("data de início em branco")
+    else if (ehDataIncompleta(a.data_atividade)) erro("data de início incompleta")
+    if (!meta.data_fim_raw) falta("data de fim em branco")
+    else if (ehDataIncompleta(meta.data_fim_raw)) erro("data de fim incompleta")
+    const { data_inicio, data_fim } = datasDaAtividade(a)
+    if (data_inicio && data_fim && data_fim < data_inicio) erro("data de fim antes da data de início")
     if (!a.local?.trim()) falta("local em branco")
     if (!meta.sessao?.trim()) falta("sessão/eixo em branco")
     if (!meta.atividade?.trim()) falta("descrição da atividade em branco")
@@ -103,6 +112,13 @@ function problemasDeTextoDeExemplo(a: AtividadeForm, indice: number): Problema[]
 
 function problemasDeHorario(a: AtividadeForm, indice: number): Problema[] {
   if (!a.hora_inicio || !a.hora_fim) return []
+  // S-PROG-19: CURSOS, DIA A DIA e ESPECIAIS aceitam fim igual ao início ("de agora a agora"); em
+  // DIA A DIA/ESPECIAIS a comparação só vale quando começa e termina no mesmo dia.
+  if (a.categoria !== "ESPORTES") {
+    const { data_inicio, data_fim } = datasDaAtividade(a)
+    if (!horaFimAntesDoInicio(a.categoria, a.hora_inicio, a.hora_fim, data_inicio, data_fim)) return []
+    return [{ tipo: "erro", atividadeId: a._tempId, mensagem: `${rotuloLinha(a, indice)}: horário de fim antes do de início` }]
+  }
   if (horaFimDepoisDoInicio(a.hora_inicio, a.hora_fim)) return []
   return [{ tipo: "erro", atividadeId: a._tempId, mensagem: `${rotuloLinha(a, indice)}: horário de fim não é depois do de início` }]
 }
@@ -129,14 +145,19 @@ function problemasDeTextoLongo(a: AtividadeForm, indice: number): Problema[] {
   return problemas
 }
 
-/** Chave de duplicidade: mesma modalidade/curso/atividade + turma (quando existir) + horário +
- * dias — igual ao critério do item 5 ("mesma modalidade + turma + horário + dias"). */
+/** Chave de duplicidade: mesma modalidade/curso/atividade + turma (quando existir) + dias +
+ * S-PROG-19 (decisão do Junior, 2026-09-25): data início, data fim, hora início, hora fim e local.
+ * A mesma atividade em outro dia, outro horário ou outro local NÃO é repetida — só é quando tudo
+ * isso é igual. */
 function chaveDuplicidade(a: AtividadeForm): string | null {
   if (!a.titulo?.trim() || !a.hora_inicio) return null
   const meta = a.metadata || {}
   const turma = meta.turma || ""
   const dias = meta.dias_semana || ""
-  return [a.categoria, a.titulo.trim().toLowerCase(), turma.toLowerCase(), a.hora_inicio, dias].join("|")
+  const { data_inicio, data_fim } = datasDaAtividade(a)
+  const local = (a.local || "").trim().toLowerCase()
+  return [a.categoria, a.titulo.trim().toLowerCase(), turma.toLowerCase(), dias,
+    data_inicio || "", data_fim || "", a.hora_inicio, a.hora_fim || "", local].join("|")
 }
 
 function problemasDeDuplicidade(atividades: AtividadeForm[]): Problema[] {

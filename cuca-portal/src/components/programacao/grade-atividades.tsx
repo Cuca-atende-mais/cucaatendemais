@@ -21,6 +21,7 @@ import { campoBloqueadoParaPreencherAbaixo, preencherColunaAbaixo } from "@/lib/
 import { NOMES_CATEGORIAS, ROTULO_STATUS_CATEGORIA, type PermissoesCategoria, type StatusCategoria } from "@/lib/programacao/permissoes-categoria"
 import { RotuloComAjuda } from "@/components/programacao/ajuda-campo"
 import { CampoComAjuda } from "@/lib/programacao/ajuda"
+import { aplicarDataFimEvento, aplicarDataInicioEvento } from "@/lib/programacao/datas-atividade"
 
 // ─── Identidade visual por categoria ────────────────────────────────────────────
 // Cada categoria tem cor e ícone fixos — repete em toda a grade (aba, barra lateral da
@@ -80,9 +81,11 @@ const COLUNAS: Record<Categoria, Coluna[]> = {
         { key: "sessao", label: "Sessão", tipo: "sessao", obrigatorio: true, largura: "w-32" },
         { key: "titulo", label: "Programa", root: true, tipo: "texto", obrigatorio: true, largura: "min-w-32" },
         { key: "atividade", label: "Atividade", tipo: "texto", obrigatorio: true, largura: "min-w-40" },
-        { key: "data_atividade", label: "Data", root: true, tipo: "data_dia_a_dia", obrigatorio: true, largura: "w-28" },
+        // S-PROG-19: data início + data fim; hora fim obrigatória. Nada é preenchido sozinho (decisão do Junior).
+        { key: "data_atividade", label: "Data início", root: true, tipo: "data_dia_a_dia", obrigatorio: true, largura: "w-28" },
+        { key: "data_fim_raw", label: "Data fim", tipo: "data", obrigatorio: true, largura: "w-28" },
         { key: "hora_inicio", label: "Início", root: true, tipo: "hora", ajuda: "horario", obrigatorio: true, largura: "w-20" },
-        { key: "hora_fim", label: "Fim", root: true, tipo: "hora", ajuda: "horario", largura: "w-20" },
+        { key: "hora_fim", label: "Fim", root: true, tipo: "hora", ajuda: "horario", obrigatorio: true, largura: "w-20" },
         { key: "local", label: "Local", root: true, tipo: "texto", obrigatorio: true, largura: "min-w-32" },
         { key: "informacoes", label: "Informações", tipo: "texto_longo", ajuda: "informacoes", obrigatorio: true, limite: 600, largura: "min-w-40" },
     ],
@@ -90,15 +93,15 @@ const COLUNAS: Record<Categoria, Coluna[]> = {
         { key: "sessao", label: "Sessão", tipo: "sessao", obrigatorio: true, largura: "w-32" },
         { key: "titulo", label: "Programa", root: true, tipo: "texto", obrigatorio: true, largura: "min-w-32" },
         { key: "atividade", label: "Atividade", tipo: "texto", obrigatorio: true, largura: "min-w-40" },
-        { key: "data_atividade", label: "Data", root: true, tipo: "data_dia_a_dia", obrigatorio: true, largura: "w-28" },
+        // S-PROG-19: data início + data fim; hora fim obrigatória. Nada é preenchido sozinho (decisão do Junior).
+        { key: "data_atividade", label: "Data início", root: true, tipo: "data_dia_a_dia", obrigatorio: true, largura: "w-28" },
+        { key: "data_fim_raw", label: "Data fim", tipo: "data", obrigatorio: true, largura: "w-28" },
         { key: "hora_inicio", label: "Início", root: true, tipo: "hora", ajuda: "horario", obrigatorio: true, largura: "w-20" },
-        { key: "hora_fim", label: "Fim", root: true, tipo: "hora", ajuda: "horario", largura: "w-20" },
+        { key: "hora_fim", label: "Fim", root: true, tipo: "hora", ajuda: "horario", obrigatorio: true, largura: "w-20" },
         { key: "local", label: "Local", root: true, tipo: "texto", obrigatorio: true, largura: "min-w-32" },
         { key: "informacoes", label: "Informações", tipo: "texto_longo", ajuda: "informacoes", obrigatorio: true, limite: 600, largura: "min-w-40" },
     ],
 }
-
-const NOMES_DIA_SEMANA = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"]
 
 function novoTempId(): string {
     return Math.random().toString(36).slice(2)
@@ -183,18 +186,14 @@ export function GradeAtividades({ atividades, onChange, onAbrirFicha, onLinhaAti
     const setCampo = (tempId: string, col: Coluna, valor: string) => {
         atualizarAtividade(tempId, a => {
             if (col.key === "data_atividade" && col.tipo === "data_dia_a_dia") {
-                // Enquanto a data não fica completa/válida, `dataBrParaISO` retorna null — guarda o
-                // texto mascarado bruto tal como digitado (em vez de sobrescrever com null a cada
-                // tecla, que era o bug: campo sempre reset pra vazio). Só converte pra ISO (e
-                // deriva dia_semana/data_real) quando a data digitada já fecha corretamente.
-                const iso = dataBrParaISO(valor)
-                if (!iso) return { ...a, data_atividade: valor }
-                const [ano, mes, dia] = iso.split("-").map(Number)
-                const dt = new Date(ano, mes - 1, dia)
-                const metaPatch = { dia_semana: NOMES_DIA_SEMANA[dt.getDay()], data_real: `${String(dia).padStart(2, "0")}/${String(mes).padStart(2, "0")}` }
-                return { ...a, data_atividade: iso, metadata: { ...a.metadata, ...metaPatch } }
+                // Enquanto a data não fica completa/válida, guarda o texto mascarado bruto tal como
+                // digitado; quando fecha, deriva dia_semana/data_real.
+                return aplicarDataInicioEvento(a, valor)
             }
             if (col.root) return { ...a, [col.key]: valor }
+            if (col.key === "data_fim_raw" && (a.categoria === "DIA A DIA" || a.categoria === "ESPECIAIS")) {
+                return aplicarDataFimEvento(a, valor)
+            }
             if (col.tipo === "data") {
                 // Mesmo raciocínio: guarda o texto bruto até a data fechar; só então vira ISO.
                 const iso = dataBrParaISO(valor)

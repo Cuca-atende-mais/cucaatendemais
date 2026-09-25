@@ -61,7 +61,7 @@ function diaADiaCompleto(overrides: Partial<AtividadeForm> = {}): AtividadeForm 
     data_atividade: "2026-08-11",
     hora_inicio: "19:00",
     hora_fim: "21:00",
-    metadata: { sessao: "DPDH", atividade: "Oficina de passinho", informacoes: "" },
+    metadata: { sessao: "DPDH", atividade: "Oficina de passinho", informacoes: "", data_fim_raw: "2026-08-11" },
     ...overrides,
   }
 }
@@ -98,7 +98,8 @@ describe("calcularProblemas — obrigatoriedade", () => {
   it("DIA A DIA: exige data, local, sessão e descrição da atividade", () => {
     const vazio = diaADiaCompleto({ data_atividade: null, local: "", metadata: { sessao: "", atividade: "" } })
     const problemas = calcularProblemas([vazio])
-    expect(problemas.some(p => p.mensagem.includes("data do evento"))).toBe(true)
+    expect(problemas.some(p => p.mensagem.includes("data de início em branco"))).toBe(true)
+    expect(problemas.some(p => p.mensagem.includes("data de fim em branco"))).toBe(true)
     expect(problemas.some(p => p.mensagem.includes("local em branco"))).toBe(true)
     expect(problemas.some(p => p.mensagem.includes("sessão/eixo"))).toBe(true)
   })
@@ -124,9 +125,9 @@ describe("calcularProblemas — data incompleta (guardada como texto bruto, não
     expect(calcularProblemas([cursoCompleto()]).some(p => p.mensagem.includes("incompleta"))).toBe(false)
   })
 
-  it("DIA A DIA/ESPECIAIS: data do evento incompleta é detectada mesmo com o campo 'preenchido'", () => {
+  it("DIA A DIA/ESPECIAIS: data de início incompleta é detectada mesmo com o campo 'preenchido'", () => {
     const problemas = calcularProblemas([diaADiaCompleto({ data_atividade: "07/08/20" })])
-    expect(problemas.some(p => p.tipo === "erro" && p.mensagem.includes("data do evento incompleta"))).toBe(true)
+    expect(problemas.some(p => p.tipo === "erro" && p.mensagem.includes("data de início incompleta"))).toBe(true)
   })
 
   it("DIA A DIA/ESPECIAIS: data completa (ISO) não dispara falso positivo", () => {
@@ -187,5 +188,55 @@ describe("calcularProblemas — linha duplicada", () => {
     const b = esporteCompleto({ _tempId: "2", metadata: { ...esporteCompleto().metadata, turma: "Turma 02" } })
     const problemas = calcularProblemas([a, b])
     expect(problemas.some(p => p.mensagem.includes("linha repetida"))).toBe(false)
+  })
+})
+
+describe("S-PROG-19 — datas e horas de início e fim", () => {
+  const mensagens = (a: AtividadeForm[]) => calcularProblemas(a).map(p => `${p.tipo}: ${p.mensagem}`)
+
+  it("DIA A DIA/ESPECIAIS: fim igual ao início (data e hora) é válido — 'de hoje a hoje, de agora a agora'", () => {
+    const um = diaADiaCompleto({ hora_inicio: "19:00", hora_fim: "19:00" })
+    const esp = diaADiaCompleto({ _tempId: "9", categoria: "ESPECIAIS", titulo: "Feira", hora_inicio: "08:00", hora_fim: "08:00" })
+    expect(mensagens([um, esp])).toEqual([])
+  })
+
+  it("DIA A DIA: data de fim antes do início é erro", () => {
+    const a = diaADiaCompleto({ metadata: { ...diaADiaCompleto().metadata, data_fim_raw: "2026-08-10" } })
+    expect(mensagens([a])).toContain(`erro: "Comunidade em Pauta": data de fim antes da data de início`)
+  })
+
+  it("DIA A DIA: hora de fim antes do início só é erro quando começa e termina no mesmo dia", () => {
+    const mesmoDia = diaADiaCompleto({ hora_inicio: "19:00", hora_fim: "08:00" })
+    const variosDias = diaADiaCompleto({ _tempId: "4", titulo: "Feira", hora_inicio: "19:00", hora_fim: "08:00", metadata: { ...diaADiaCompleto().metadata, data_fim_raw: "2026-08-12" } })
+    expect(mensagens([mesmoDia])).toContain(`erro: "Comunidade em Pauta": horário de fim antes do de início`)
+    expect(mensagens([variosDias])).toEqual([])
+  })
+
+  it("CURSOS: término antes do início é erro; hora fim antes do início é erro mesmo com período de vários dias", () => {
+    const c = cursoCompleto({ hora_inicio: "12:00", hora_fim: "09:00", metadata: { ...cursoCompleto().metadata, data_inicio_raw: "2026-10-10", data_fim_raw: "2026-10-01" } })
+    const m = mensagens([c])
+    expect(m.some(x => x.includes("data de término antes da data de início"))).toBe(true)
+    expect(m.some(x => x.includes("horário de fim antes do de início"))).toBe(true)
+  })
+
+  it("CURSOS: hora fim igual à de início é válida", () => {
+    expect(mensagens([cursoCompleto({ hora_inicio: "09:00", hora_fim: "09:00" })])).toEqual([])
+  })
+
+  it("ESPORTES mantém a regra antiga (fim tem que ser depois do início)", () => {
+    expect(mensagens([esporteCompleto({ hora_inicio: "08:00", hora_fim: "08:00" })]).some(x => x.includes("não é depois do de início"))).toBe(true)
+  })
+
+  it("repetição liberada: mesma atividade em outro dia, outro horário ou outro local não é 'linha repetida'", () => {
+    const base = diaADiaCompleto({ _tempId: "a" })
+    const outroDia = diaADiaCompleto({ _tempId: "b", data_atividade: "2026-08-13", metadata: { ...diaADiaCompleto().metadata, data_fim_raw: "2026-08-13" } })
+    const outroHorario = diaADiaCompleto({ _tempId: "c", hora_fim: "22:00" })
+    const outroLocal = diaADiaCompleto({ _tempId: "d", local: "Quadra" })
+    const outroFim = diaADiaCompleto({ _tempId: "e", metadata: { ...diaADiaCompleto().metadata, data_fim_raw: "2026-08-12" } })
+    expect(mensagens([base, outroDia, outroHorario, outroLocal, outroFim]).some(x => x.includes("linha repetida"))).toBe(false)
+  })
+
+  it("tudo igual continua sendo 'linha repetida'", () => {
+    expect(mensagens([diaADiaCompleto({ _tempId: "a" }), diaADiaCompleto({ _tempId: "b" })]).some(x => x.includes("linha repetida"))).toBe(true)
   })
 })
