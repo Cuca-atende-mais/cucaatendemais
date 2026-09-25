@@ -11,11 +11,26 @@
  * ("falta algo?", não "isso parece contaminado?").
  */
 import { LinhaOrigemDuplicacao } from "./duplicar"
+import { horaFimAntesDoInicio } from "./datas-atividade"
 
 export interface LinhaParaAprovacao extends LinhaOrigemDuplicacao {
     hora_inicio?: string | null
     hora_fim?: string | null
     data_atividade?: string | null
+    data_inicio?: string | null
+    data_fim?: string | null
+}
+
+export interface OpcoesAprovacao {
+    /** S-PROG-19: campanha de outubro/2026 em diante — CURSOS, DIA A DIA e ESPECIAIS exigem data
+     * início e data fim gravadas (mesma regra de `pgm_mudar_status_categoria` no banco). */
+    exigirDatasInicioFim?: boolean
+}
+
+/** Mesmo corte da trava no banco: (ano, mês) ≥ (2026, 10). */
+export function campanhaExigeDatasInicioFim(mes: number | null | undefined, ano: number | null | undefined): boolean {
+    if (!mes || !ano) return false
+    return ano * 12 + mes >= 2026 * 12 + 10
 }
 
 function vazio(v: unknown): boolean {
@@ -24,7 +39,7 @@ function vazio(v: unknown): boolean {
 
 /** Lista os campos obrigatórios que faltam nesta linha, pelo rótulo em português — usada tanto
  * pra decidir se há problema (`.length > 0`) quanto pra montar uma mensagem legível. */
-export function motivosFaltantes(linha: LinhaParaAprovacao): string[] {
+export function motivosFaltantes(linha: LinhaParaAprovacao, opcoes: OpcoesAprovacao = {}): string[] {
     const meta = linha.metadata || {}
     const faltas: string[] = []
 
@@ -54,9 +69,17 @@ export function motivosFaltantes(linha: LinhaParaAprovacao): string[] {
         if (vazio(meta.atividade)) faltas.push("descrição da atividade")
     }
 
+    if (opcoes.exigirDatasInicioFim && (linha.categoria === "CURSOS" || linha.categoria === "DIA A DIA" || linha.categoria === "ESPECIAIS")) {
+        if (vazio(linha.data_inicio)) faltas.push("data de início")
+        if (vazio(linha.data_fim)) faltas.push("data de fim")
+        const di = linha.data_inicio ? String(linha.data_inicio) : null
+        const df = linha.data_fim ? String(linha.data_fim) : null
+        if (horaFimAntesDoInicio(linha.categoria, linha.hora_inicio, linha.hora_fim, di, df)) faltas.push("horário de fim antes do de início")
+    }
+
     return faltas
 }
 
-export function linhaIncompleta(linha: LinhaParaAprovacao): boolean {
-    return motivosFaltantes(linha).length > 0
+export function linhaIncompleta(linha: LinhaParaAprovacao, opcoes: OpcoesAprovacao = {}): boolean {
+    return motivosFaltantes(linha, opcoes).length > 0
 }

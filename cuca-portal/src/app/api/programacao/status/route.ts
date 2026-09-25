@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { createClient } from "@/lib/supabase/server"
-import { linhaIncompleta, LinhaParaAprovacao } from "@/lib/programacao/aprovacao"
+import { campanhaExigeDatasInicioFim, linhaIncompleta, LinhaParaAprovacao } from "@/lib/programacao/aprovacao"
 import {
     acaoDaTransicaoCategoria, podeTransicionarCategoria, slugDaCategoria, transicaoExigeMotivo,
 } from "@/lib/programacao/permissoes-categoria"
@@ -32,7 +32,7 @@ export async function PATCH(req: NextRequest) {
         const acesso = await carregarAcessoPgm(user)
         const { data: campanha, error: campErr } = await admin
             .from("campanhas_mensais")
-            .select("id, unidade_cuca")
+            .select("id, unidade_cuca, mes, ano")
             .eq("id", campanha_id)
             .maybeSingle()
         if (campErr) throw new Error(campErr.message)
@@ -63,11 +63,13 @@ export async function PATCH(req: NextRequest) {
         if (statusAtual === "rascunho" && novoStatus === "aguardando_autorizacao") {
             const { data: linhas, error: lErr } = await admin
                 .from("atividades_mensais")
-                .select("categoria, titulo, descricao, local, hora_inicio, hora_fim, data_atividade, metadata")
+                .select("categoria, titulo, descricao, local, hora_inicio, hora_fim, data_atividade, data_inicio, data_fim, metadata")
                 .eq("campanha_id", campanha_id)
             if (lErr) throw new Error(lErr.message)
             const daCategoria = (linhas as LinhaParaAprovacao[] || []).filter(l => slugDaCategoria(l.categoria) === slugDaCategoria(categoria))
-            const problemas = daCategoria.filter(linhaIncompleta)
+            // S-PROG-19: de outubro/2026 em diante, data início e data fim também são cobradas no envio.
+            const opcoes = { exigirDatasInicioFim: campanhaExigeDatasInicioFim(campanha.mes as number, campanha.ano as number) }
+            const problemas = daCategoria.filter(l => linhaIncompleta(l, opcoes))
             if (problemas.length > 0) {
                 return NextResponse.json({
                     error: `${problemas.length} ponto(s) a revisar em ${categoria} antes de enviar para autorização`,

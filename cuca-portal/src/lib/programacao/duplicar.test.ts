@@ -317,3 +317,39 @@ describe("atividadeFormDeLinhaExistente com zerar:false (reabrir rascunho, S-PRO
     expect(forma!.metadata.vagas).toBe("")
   })
 })
+
+describe("S-PROG-19 — colunas data_inicio/data_fim ao reabrir e na duplicação", () => {
+  const curso = {
+    categoria: "CURSOS", titulo: "Violão", descricao: null, local: null, data_atividade: "2026-08-31",
+    data_inicio: "2026-09-08", data_fim: "2026-09-29", hora_inicio: "09:00:00", hora_fim: "12:00:00",
+    metadata: { educador: "Eduardo", periodo: "08/09/2026 a 28/09/2026", dias_semana: "Ter e Qui" },
+  }
+  const evento = {
+    categoria: "DIA A DIA", titulo: "Feira", descricao: null, local: "Anfiteatro", data_atividade: "2026-10-07",
+    data_inicio: "2026-10-07", data_fim: "2026-10-08", hora_inicio: "08:00:00", hora_fim: "17:00:00",
+    metadata: { sessao: "Cultura", atividade: "Feira", dia_semana: "Quarta-feira", data_real: "07/10" },
+  }
+
+  it("reabrir: colunas têm prioridade sobre o texto do período", () => {
+    const f = atividadeFormDeLinhaExistente(curso, "t", { zerar: false })!
+    expect(f.metadata).toMatchObject({ data_inicio_raw: "2026-09-08", data_fim_raw: "2026-09-29" })
+    const e = atividadeFormDeLinhaExistente(evento, "t", { zerar: false })!
+    expect(e.data_atividade).toBe("2026-10-07")
+    expect(e.metadata.data_fim_raw).toBe("2026-10-08")
+  })
+
+  it("reabrir linha antiga (sem colunas): CURSOS volta pelo período; evento fica sem data fim", () => {
+    const f = atividadeFormDeLinhaExistente({ ...curso, data_inicio: null, data_fim: null }, "t", { zerar: false })!
+    expect(f.metadata).toMatchObject({ data_inicio_raw: "2026-09-08", data_fim_raw: "2026-09-28" })
+    const e = atividadeFormDeLinhaExistente({ ...evento, data_fim: undefined }, "t", { zerar: false })!
+    expect(e.metadata.data_fim_raw).toBe("")
+  })
+
+  it("duplicar zera as datas de início e fim", () => {
+    const f = atividadeFormDeLinhaExistente(curso, "t")!
+    expect(f.metadata).toMatchObject({ data_inicio_raw: "", data_fim_raw: "" })
+    const e = atividadeFormDeLinhaExistente(evento, "t")!
+    expect(e.data_atividade).toBeNull()
+    expect(e.metadata.data_fim_raw).toBe("")
+  })
+})

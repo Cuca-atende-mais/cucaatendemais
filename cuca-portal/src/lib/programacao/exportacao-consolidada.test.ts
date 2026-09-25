@@ -80,17 +80,18 @@ describe("montarAbasConsolidadas (S-PROG-18)", () => {
 
     it("DIA A DIA: ordenado por data e horário; local cai no metadata quando a coluna está vazia", () => {
         const d = aba("DIA A DIA")
-        expect(d.colunas.map(x => x.titulo)).toEqual(["Sessão", "Programa", "Atividade", "Data", "Dia da semana", "Horário início", "Horário fim", "Local", "Informações"])
+        // S-PROG-19: "Data" virou "Data início · Data fim". Linha sem a coluna nova: data fim vazia.
+        expect(d.colunas.map(x => x.titulo)).toEqual(["Sessão", "Programa", "Atividade", "Data início", "Data fim", "Dia da semana", "Horário início", "Horário fim", "Local", "Informações"])
         expect(d.linhas).toEqual([
-            ["Biblioteca", "Venha Jogar", "Jogos", "03/10/2026", "Sábado", "09:00", "12:00", "Sala 2", ""],
-            ["Biblioteca", "Hora Pintada", "Pintura livre", "09/10/2026", "Sexta-feira", "14:00", "17:00", "Biblioteca", "Aberto ao público"],
+            ["Biblioteca", "Venha Jogar", "Jogos", "03/10/2026", "", "Sábado", "09:00", "12:00", "Sala 2", ""],
+            ["Biblioteca", "Hora Pintada", "Pintura livre", "09/10/2026", "", "Sexta-feira", "14:00", "17:00", "Biblioteca", "Aberto ao público"],
         ])
     })
 
     it("categoria sem atividade sai vazia (só título e cabeçalho), com as cores da PICI", () => {
         const esp = aba("ESPECIAIS")
         expect(esp.linhas).toEqual([])
-        expect(esp.colunas.length).toBe(9)
+        expect(esp.colunas.length).toBe(10)
         expect(esp.cores).toEqual({ cabecalho: "FFD966", linhas: "FFF2CC" })
         expect(aba("CURSOS").cores).toEqual({ cabecalho: "F1C232", linhas: "FFD966" })
         expect(aba("ESPORTES").cores).toEqual({ cabecalho: "FF00FF" })
@@ -106,6 +107,25 @@ describe("montarAbasConsolidadas (S-PROG-18)", () => {
         expect(formatarData("2026-10-07")).toBe("07/10/2026")
         expect(formatarData(undefined)).toBe("")
         expect(nomeArquivoConsolidado("Cuca José Walter", 10, 2026)).toBe("Programacao_Consolidada_Cuca_José_Walter_Outubro_2026.xlsx")
+    })
+})
+
+describe("S-PROG-19 — colunas data_inicio/data_fim na exportação", () => {
+    it("evento de vários dias sai com início e fim; CURSOS usa as colunas antes do texto do período", () => {
+        const abas = montarAbasConsolidadas("Cuca Pici", 10, 2026, [
+            { titulo: "Feira", categoria: "ESPECIAIS", data_atividade: "2026-10-26", data_inicio: "2026-10-26", data_fim: "2026-10-27",
+              hora_inicio: "08:00:00", hora_fim: "17:00:00", local: "Anfiteatro", metadata: { sessao: "Cultura", atividade: "Feira das Profissões", dia_semana: "Segunda-feira" } },
+            { titulo: "Violão", categoria: "CURSOS", data_atividade: "2026-08-31", data_inicio: "2026-10-06", data_fim: "2026-10-29",
+              hora_inicio: "09:00:00", hora_fim: "12:00:00", metadata: { periodo: "01/10/2026 a 02/10/2026" } },
+            { titulo: "Teatro", categoria: "CURSOS", data_atividade: "2026-10-02", data_inicio: "2026-10-02", data_fim: null,
+              hora_inicio: "09:00:00", hora_fim: "12:00:00", metadata: { periodo: "02/10/2026 a 30/10/2020" } },
+        ])
+        const esp = abas.find(a => a.categoria === "ESPECIAIS")!
+        expect(esp.linhas[0].slice(3, 5)).toEqual(["26/10/2026", "27/10/2026"])
+        const cursos = abas.find(a => a.categoria === "CURSOS")!
+        expect(cursos.linhas.find(l => l[0] === "Violão")!.slice(4, 6)).toEqual(["06/10/2026", "29/10/2026"])
+        // Término sem data válida gravada fica vazio (não volta a ler o ano errado do texto).
+        expect(cursos.linhas.find(l => l[0] === "Teatro")!.slice(4, 6)).toEqual(["02/10/2026", ""])
     })
 })
 

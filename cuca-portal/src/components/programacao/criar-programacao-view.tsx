@@ -198,7 +198,7 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
 
             const { data: linhas, error: atvErr } = await supabase
                 .from("atividades_mensais")
-                .select("id, categoria, titulo, descricao, local, data_atividade, hora_inicio, hora_fim, metadata")
+                .select("id, categoria, titulo, descricao, local, data_atividade, data_inicio, data_fim, hora_inicio, hora_fim, metadata")
                 .eq("campanha_id", campanhaId)
                 .order("categoria", { ascending: true })
 

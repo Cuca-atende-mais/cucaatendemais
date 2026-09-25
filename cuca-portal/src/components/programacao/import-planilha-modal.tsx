@@ -22,6 +22,7 @@ import {
     detectarColunas,
     lerColuna,
     primeiraDataBr,
+    datasInicioFimDoTexto,
 } from "@/lib/programacao/planilha-parser"
 
 interface ImportPlanilhaModalProps {
@@ -384,6 +385,12 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                             descricao = `Programa (${categoriaVal}): ${titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${horaInicioStr} às ${horaFimStr}. Local: ${meta.local}. Informações: ${meta.informacoes}. Sessão: ${meta.sessao}.`
                             local = meta.local || "Não informado"
 
+                            // S-PROG-19: data início/fim do texto da coluna Data ("26 e 27/01/2026" vira
+                            // 26 a 27). O fim (data e hora) só entra se estiver na planilha — nunca é assumido
+                            // igual ao início; vazio aguarda a unidade preencher (decisão do Junior, 2026-09-25).
+                            const periodoEvento = datasInicioFimDoTexto(dataRealRaw)
+                            const dataInicioEvento = periodoEvento.data_inicio ?? dataAtividade
+
                             // Usa dataAtividade calculada acima
                             if (titulo && titulo.trim() !== "") {
                                 atividadesToInsert.push({
@@ -391,7 +398,9 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                                     titulo: titulo.substring(0, 100),
                                     descricao: String(descricao).substring(0, 1500),
                                     local: String(local).substring(0, 255),
-                                    data_atividade: dataAtividade,
+                                    data_atividade: dataInicioEvento,
+                                    data_inicio: dataInicioEvento,
+                                    data_fim: periodoEvento.data_fim,
                                     hora_inicio: parseTimeString(horaInicioStr),
                                     hora_fim: parseTimeString(horaFimStr),
                                     categoria: categoriaVal,
@@ -411,6 +420,9 @@ export function ImportPlanilhaModal({ open, onOpenChange, unidadeCuca, onSuccess
                                 local: String(local).substring(0, 255),
                                 // ESPORTES nunca tem data; CURSOS usa o início do período, se legível.
                                 data_atividade: categoriaVal === "CURSOS" ? primeiraDataBr(meta.periodo) : null,
+                                // S-PROG-19: CURSOS grava início e término do período (sem término na planilha: vazio).
+                                data_inicio: categoriaVal === "CURSOS" ? datasInicioFimDoTexto(meta.periodo).data_inicio : null,
+                                data_fim: categoriaVal === "CURSOS" ? datasInicioFimDoTexto(meta.periodo).data_fim : null,
                                 hora_inicio: parseTimeString(horaInicioStr),
                                 hora_fim: parseTimeString(horaFimStr),
                                 categoria: categoriaVal,

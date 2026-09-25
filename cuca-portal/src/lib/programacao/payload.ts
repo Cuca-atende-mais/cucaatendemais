@@ -15,6 +15,7 @@
  */
 import { AVISO_VAGAS } from "@/lib/programacao/rag"
 import { AtividadeForm, DIAS_SEMANA_ABREV } from "@/lib/programacao/tipos"
+import { datasDaAtividade, diaMes } from "@/lib/programacao/datas-atividade"
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function montarAtividadePayload(a: Partial<AtividadeForm>, unidade: string): any {
@@ -33,6 +34,9 @@ export function montarAtividadePayload(a: Partial<AtividadeForm>, unidade: strin
     // Só para montar texto (descrição/RAG e metadata.horario) — nunca vai direto pra coluna `time`.
     const hiTxt = hi || ""
     const hfTxt = hf || ""
+    // S-PROG-19: colunas `data_inicio`/`data_fim` (só ISO completa; texto ainda sendo digitado vai vazio,
+    // o rascunho salva e o envio para autorização cobra). ESPORTES: sempre vazias.
+    const { data_inicio, data_fim } = datasDaAtividade({ categoria: a.categoria as AtividadeForm["categoria"], data_atividade: a.data_atividade ?? null, metadata: meta })
 
     if (a.categoria === "CURSOS") {
         const fmtDate = (iso: string) => {
@@ -61,6 +65,8 @@ export function montarAtividadePayload(a: Partial<AtividadeForm>, unidade: strin
             descricao: descricao.substring(0, 1500),
             local: null,
             data_atividade: meta.data_inicio_raw || null,
+            data_inicio,
+            data_fim,
             hora_inicio: hi,
             hora_fim: hf,
             unidade_cuca: unidade,
@@ -95,6 +101,8 @@ export function montarAtividadePayload(a: Partial<AtividadeForm>, unidade: strin
             descricao: descricao.substring(0, 1500),
             local: null,
             data_atividade: null,
+            data_inicio: null,
+            data_fim: null,
             hora_inicio: hi,
             hora_fim: hf,
             unidade_cuca: unidade,
@@ -120,13 +128,19 @@ export function montarAtividadePayload(a: Partial<AtividadeForm>, unidade: strin
     // DIA A DIA / ESPECIAIS
     const categoriaLabel = a.categoria as string
     // Descricao no mesmo formato que o trigger usa para montar o RAG
-    const descricaoDiaDia = `Programa (${categoriaLabel}): ${a.titulo}. Atividade: ${meta.atividade}. Data: ${meta.data_real} (${meta.dia_semana}). Horário: ${hiTxt} às ${hfTxt}. Local: ${a.local}. Informações: ${meta.informacoes || ""}. Sessão: ${meta.sessao}.`
+    // S-PROG-19: evento de mais de um dia leva o período no texto ("Data: 26/01 a 27/01"). É daqui
+    // (`descricao`) que o documento do RAG e os trechos da busca tiram a data — evento de um dia sai
+    // exatamente como antes.
+    const dataTxt = data_inicio && data_fim && data_fim !== data_inicio ? `${meta.data_real} a ${diaMes(data_fim)}` : meta.data_real
+    const descricaoDiaDia = `Programa (${categoriaLabel}): ${a.titulo}. Atividade: ${meta.atividade}. Data: ${dataTxt} (${meta.dia_semana}). Horário: ${hiTxt} às ${hfTxt}. Local: ${a.local}. Informações: ${meta.informacoes || ""}. Sessão: ${meta.sessao}.`
     return {
         titulo: a.titulo,
         categoria: a.categoria,
         descricao: descricaoDiaDia.substring(0, 1500),
         local: a.local || null,
         data_atividade: a.data_atividade || null,
+        data_inicio,
+        data_fim,
         hora_inicio: hi,
         hora_fim: hf,
         unidade_cuca: unidade,

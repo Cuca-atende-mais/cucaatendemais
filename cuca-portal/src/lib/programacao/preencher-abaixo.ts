@@ -4,8 +4,8 @@
  * grade). Regras de negócio (S-PROG-11, "Decisões de comportamento"):
  *  - só a coluna em foco, nunca a linha inteira (linha inteira geraria atividade duplicada);
  *  - nunca sobrescreve célula já preenchida — só entra onde está vazio;
- *  - nunca propaga `data_atividade`, `hora_inicio`, `hora_fim` ou `vagas` — são os campos que
- *    variam linha a linha por contrato (mesmo campos que `duplicar.ts` sempre zera, S-PROG-08).
+ *  - nunca propaga `data_atividade`, as datas de início/fim (S-PROG-19), `hora_inicio`, `hora_fim`
+ *    ou `vagas` — são os campos que variam linha a linha por contrato (mesmos que `duplicar.ts` zera).
  */
 import { AtividadeForm } from "./tipos"
 
@@ -15,10 +15,9 @@ export interface ResultadoPreencherAbaixo {
 }
 
 /** Campos que nunca são propagados, independente de estarem vazios abaixo — mesmo contrato de
- * zeramento da S-PROG-08 (S-PROG-11 item 1). Lista literal da story: não expandir por conta
- * própria (ex.: `data_inicio_raw`/`data_fim_raw` de CURSOS NÃO estão nesta lista — a story não os
- * cita, então preencher abaixo é permitido neles). */
-const CAMPOS_BLOQUEADOS = new Set(["data_atividade", "hora_inicio", "hora_fim", "vagas"])
+ * zeramento da S-PROG-08 (S-PROG-11 item 1). S-PROG-19 (AC 6): as datas de início/fim também não
+ * propagam — `data_inicio_raw`/`data_fim_raw` de CURSOS e a `data_fim_raw` de DIA A DIA/ESPECIAIS. */
+const CAMPOS_BLOQUEADOS = new Set(["data_atividade", "data_inicio_raw", "data_fim_raw", "hora_inicio", "hora_fim", "vagas"])
 
 /** Exportado pra UI decidir se mostra/habilita o botão "Preencher abaixo" sem duplicar a lista. */
 export function campoBloqueadoParaPreencherAbaixo(colunaKey: string): boolean {

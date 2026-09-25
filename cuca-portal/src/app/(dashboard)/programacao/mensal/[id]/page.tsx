@@ -36,6 +36,8 @@ import {
     slugDaCategoria, transicaoExigeMotivo, transicoesPossiveis, type AcaoFluxo, type StatusCategoria,
 } from "@/lib/programacao/permissoes-categoria"
 import { useChecarPgm } from "@/lib/programacao/use-checar-pgm"
+import { campanhaExigeDatasInicioFim, motivosFaltantes, type LinhaParaAprovacao } from "@/lib/programacao/aprovacao"
+import { diaMes } from "@/lib/programacao/datas-atividade"
 
 // S-PROG-04 (item 3): uma linha do histórico de transições — join com `colaboradores` pra
 // mostrar o nome de quem fez a mudança (Supabase resolve FK many-to-one como objeto único).
@@ -80,6 +82,8 @@ export default function CampanhaMensalPage() {
     const checarPgm = useChecarPgm()
     const podeExportar = opcaoLiberada(checarPgm, PGM_GERAL.exportar)
     const podeVerHistorico = opcaoLiberada(checarPgm, PGM_GERAL.historico)
+    // S-PROG-19: de outubro/2026 em diante, data início e data fim também são cobradas no envio.
+    const opcoesEnvio = { exigirDatasInicioFim: campanhaExigeDatasInicioFim(campanha?.mes, campanha?.ano) }
     // Categorias visíveis ao perfil que têm atividade nesta programação, na ordem padrão.
     const categoriasVisiveis = NOMES_CATEGORIAS.filter(nome =>
         atividades.some(a => slugDaCategoria(a.categoria) === slugDaCategoria(nome)))
@@ -342,8 +346,15 @@ export default function CampanhaMensalPage() {
                         {categoriasVisiveis.map(categoria => {
                             const status = statusCategorias[categoria] ?? "rascunho"
                             const acoes = transicoesPossiveis(status).filter(t => podeTransicionarCategoria(checarPgm, categoria, status, t.para))
+                            // S-PROG-19: mesma checagem do servidor/banco, feita antes do clique — o botão
+                            // "Enviar" (e "Autorizar", que o banco também barra) fica bloqueado dizendo o que falta.
+                            const pendencias = atividades
+                                .filter(a => slugDaCategoria(a.categoria) === slugDaCategoria(categoria))
+                                .map(a => ({ titulo: (a.titulo as string) || "(sem título)", faltas: motivosFaltantes(a as LinhaParaAprovacao, opcoesEnvio) }))
+                                .filter(p => p.faltas.length > 0)
+                            const bloqueiaAcao = (acao: AcaoFluxo) => pendencias.length > 0 && (acao === "enviar" || acao === "autorizar")
                             return (
-                                <div key={categoria} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2.5">
+                                <div key={categoria} className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-2 py-2.5">
                                     <div className="flex items-center gap-2.5">
                                         <span className="text-sm font-semibold">{categoria}</span>
                                         <Badge variant="outline" className={cn("text-xs",
@@ -360,7 +371,8 @@ export default function CampanhaMensalPage() {
                                                 size="sm"
                                                 variant={t.acao === "autorizar" ? "default" : "outline"}
                                                 className={cn(t.acao === "autorizar" && "bg-emerald-600 hover:bg-emerald-700 text-white")}
-                                                disabled={isAlterandoStatus}
+                                                disabled={isAlterandoStatus || bloqueiaAcao(t.acao)}
+                                                title={bloqueiaAcao(t.acao) ? "Preencha o que falta nas atividades desta categoria antes" : undefined}
                                                 onClick={() => { setMotivoTransicao(""); setTransicaoAberta({ categoria, de: status, para: t.para, acao: t.acao }) }}
                                             >
                                                 {t.acao === "autorizar" ? <ThumbsUp className="h-3.5 w-3.5 mr-1.5" />
@@ -371,6 +383,14 @@ export default function CampanhaMensalPage() {
                                             </Button>
                                         ))}
                                     </div>
+                                    {acoes.some(t => bloqueiaAcao(t.acao)) && (
+                                        <p className="text-xs text-amber-600 sm:basis-full">
+                                            {pendencias.length} atividade(s) com campo a preencher antes de {status === "rascunho" ? "enviar" : "autorizar"}
+                                            {status !== "rascunho" && " (devolva para ajuste para corrigir)"}:{" "}
+                                            {pendencias.slice(0, 3).map(p => `"${p.titulo}": ${p.faltas.join(", ")}`).join("; ")}
+                                            {pendencias.length > 3 && `; e mais ${pendencias.length - 3}`}
+                                        </p>
+                                    )}
                                 </div>
                             )
                         })}
@@ -566,7 +586,8 @@ export default function CampanhaMensalPage() {
                                                 <span className="truncate font-medium">
                                                     {categoriaFilter === "CURSOS" ? meta.periodo || "—" :
                                                         categoriaFilter === "ESPORTES" ? meta.dias_semana || "—" :
-                                                            (categoriaFilter === "DIA A DIA" || categoriaFilter === "ESPECIAIS") ? `${meta.data_real || "—"} (${meta.dia_semana?.substring(0, 3) || ""})` :
+                                                            (categoriaFilter === "DIA A DIA" || categoriaFilter === "ESPECIAIS")
+                                                                ? `${meta.data_real || "—"}${act.data_fim && act.data_inicio && act.data_fim !== act.data_inicio ? ` a ${diaMes(act.data_fim)}` : ""} (${meta.dia_semana?.substring(0, 3) || ""})` :
                                                                 act.data_atividade ? format(new Date(act.data_atividade), "dd/MMM", { locale: ptBR }) : "—"}
                                                 </span>
                                             </div>

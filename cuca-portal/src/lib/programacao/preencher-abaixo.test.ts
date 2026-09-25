@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { preencherColunaAbaixo } from "./preencher-abaixo"
+import { campoBloqueadoParaPreencherAbaixo, preencherColunaAbaixo } from "./preencher-abaixo"
 import { AtividadeForm } from "./tipos"
 
 function linha(tempId: string, categoria: AtividadeForm["categoria"], overrides: Partial<AtividadeForm> = {}): AtividadeForm {
@@ -136,5 +136,12 @@ describe("preencherColunaAbaixo", () => {
     const r = preencherColunaAbaixo(atividades, "inexistente", "professor", false)
     expect(r.linhasPreenchidas).toBe(0)
     expect(r.atividades).toEqual(atividades)
+  })
+})
+
+describe("S-PROG-19 — datas de início/fim não propagam", () => {
+  it("data_inicio_raw e data_fim_raw estão bloqueadas", () => {
+    expect(campoBloqueadoParaPreencherAbaixo("data_inicio_raw")).toBe(true)
+    expect(campoBloqueadoParaPreencherAbaixo("data_fim_raw")).toBe(true)
   })
 })

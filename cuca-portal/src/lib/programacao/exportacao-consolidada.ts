@@ -17,6 +17,9 @@ export interface AtividadeConsolidada {
     categoria: string | null
     local?: string | null
     data_atividade?: string | null
+    // S-PROG-19: colunas de período (CURSOS/DIA A DIA/ESPECIAIS); linhas antigas podem não ter.
+    data_inicio?: string | null
+    data_fim?: string | null
     hora_inicio?: string | null
     hora_fim?: string | null
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,7 +96,7 @@ export function limparTurma(turma: unknown): string {
 }
 
 const comparar = (x: string, y: string) => x.localeCompare(y, "pt-BR", { sensitivity: "base", numeric: true })
-const chaveData = (a: AtividadeConsolidada) => texto(a.data_atividade) || "9999-99-99"
+const chaveData = (a: AtividadeConsolidada) => texto(a.data_inicio) || texto(a.data_atividade) || "9999-99-99"
 
 const porTituloEHorario = (a: AtividadeConsolidada, b: AtividadeConsolidada) =>
     comparar(texto(a.titulo), texto(b.titulo))
@@ -109,7 +112,8 @@ const COLUNAS_EVENTO: ColunaConsolidada[] = [
     { titulo: "Sessão", largura: 16 },
     { titulo: "Programa", largura: 30 },
     { titulo: "Atividade", largura: 40, textoLongo: true },
-    { titulo: "Data", largura: 12 },
+    { titulo: "Data início", largura: 12 },
+    { titulo: "Data fim", largura: 12 },
     { titulo: "Dia da semana", largura: 14 },
     { titulo: "Horário início", largura: 13 },
     { titulo: "Horário fim", largura: 12 },
@@ -123,7 +127,9 @@ const extratorEvento: Extrator = (a) => {
         texto(m.sessao),
         texto(a.titulo),
         texto(m.atividade),
-        formatarData(a.data_atividade) || texto(m.data_real),
+        formatarData(a.data_inicio) || formatarData(a.data_atividade) || texto(m.data_real),
+        // Linha sem a coluna (até agosto/2026): data fim vazia — nunca inventada.
+        formatarData(a.data_fim),
         texto(m.dia_semana),
         formatarHora(a.hora_inicio),
         formatarHora(a.hora_fim),
@@ -177,12 +183,15 @@ const DEFINICOES: DefinicaoAba[] = [
         ],
         extrator: (a) => {
             const m = a.metadata || {}
-            // `periodo` é "dd/mm/aaaa a dd/mm/aaaa" (grade nova) ou texto solto (importação antiga);
-            // sem período legível, cai na `data_atividade` (= início) — nunca inventa o término.
+            // S-PROG-19: colunas `data_inicio`/`data_fim` primeiro. Linha antiga sem elas: `periodo`
+            // ("dd/mm/aaaa a dd/mm/aaaa" ou texto solto); sem período legível, início = `data_atividade`
+            // e término vazio — nunca inventa o término.
             const { data_inicio_raw, data_fim_raw } = parsePeriodoCursos(m.periodo)
+            const inicio = formatarData(a.data_inicio) || data_inicio_raw || formatarData(a.data_atividade)
+            const termino = a.data_inicio ? formatarData(a.data_fim) : data_fim_raw
             return [
                 texto(a.titulo), texto(m.educador), texto(m.vagas), texto(m.carga_horaria),
-                data_inicio_raw || formatarData(a.data_atividade), data_fim_raw, texto(m.dias_semana),
+                inicio, termino, texto(m.dias_semana),
                 formatarHora(a.hora_inicio), formatarHora(a.hora_fim), texto(m.requisitos), texto(m.ementa),
             ]
         },

@@ -135,6 +135,10 @@ export interface LinhaOrigemDuplicacao {
   data_atividade?: string | null
   hora_inicio?: string | null
   hora_fim?: string | null
+  // S-PROG-19: colunas de período (CURSOS/DIA A DIA/ESPECIAIS). Linha antiga sem elas cai no
+  // comportamento de antes (`periodo` em CURSOS; sem data fim em DIA A DIA/ESPECIAIS).
+  data_inicio?: string | null
+  data_fim?: string | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata: Record<string, any> | null
 }
@@ -206,9 +210,9 @@ export function atividadeFormDeLinhaExistente(
   }
 
   if (categoria === "CURSOS") {
-    const { data_inicio_raw, data_fim_raw } = zerar
-      ? { data_inicio_raw: "", data_fim_raw: "" }
-      : periodoCursosParaISO(meta.periodo)
+    const doPeriodo = zerar ? { data_inicio_raw: "", data_fim_raw: "" } : periodoCursosParaISO(meta.periodo)
+    const data_inicio_raw = zerar ? "" : (linha.data_inicio || doPeriodo.data_inicio_raw)
+    const data_fim_raw = zerar ? "" : (linha.data_fim || doPeriodo.data_fim_raw)
     return {
       ...base,
       metadata: {
@@ -240,6 +244,8 @@ export function atividadeFormDeLinhaExistente(
       // data real porque foram gravados pelo mesmo cálculo na última vez que a linha foi salva.
       dia_semana: zerar ? "" : valorMeta(meta.dia_semana),
       data_real: zerar ? "" : valorMeta(meta.data_real),
+      // S-PROG-19: data fim (a data início continua em `data_atividade`). Zerada na duplicação.
+      data_fim_raw: zerar ? "" : (linha.data_fim || ""),
       meta: meta.meta || null,
       diretoria: meta.diretoria || null,
     },
