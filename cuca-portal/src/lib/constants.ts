@@ -27,6 +27,8 @@ export const menuItems = [
             // S-PROG-17: a página também lista a programação pontual.
             { title: "Mensal", url: "/programacao", permissions: [{ recurso: "programacao_mensal", acao: "read" }, { recurso: "pgp_ver", acao: "read" }] },
             { title: "Atendimento", url: "/programacao/mensagens", permission: { recurso: "atendimentos_programacao", acao: "read" } },
+            // S-PROG-18: opção própria, nasce desmarcada em todos os perfis (a Rede Cuca libera).
+            { title: "Exportar planilha", url: "/programacao/exportar", permission: { recurso: "pgm_exportacao_consolidada_ver", acao: "read" } },
         ],
     },
     {

@@ -26,6 +26,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "docx": "^9.7.1",
+    "exceljs": "^4.4.0",
     "heic-decode": "^2.1.0",
     "jpeg-js": "^0.4.4",
     "lucide-react": "^0.564.0",

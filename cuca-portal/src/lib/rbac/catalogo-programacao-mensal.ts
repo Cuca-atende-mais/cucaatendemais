@@ -34,6 +34,14 @@ export const PGM_GERAL = {
     historico: "pgm_historico",
 } as const
 
+// S-PROG-18: tela "Exportar planilha" (consolidada por unidade). Fora de PGM_GERAL de propósito:
+// PGM_GERAL entra no espelhamento da S-PROG-12 e estas opções nascem desmarcadas em todos os perfis
+// (decisão do Junior, 2026-09-25) — a Rede Cuca marca depois na tela de Perfis.
+export const PGM_EXPORTACAO_CONSOLIDADA = {
+    ver: "pgm_exportacao_consolidada_ver",
+    exportar: "pgm_exportacao_consolidada_exportar",
+} as const
+
 export const PGM_DIVULGACAO = {
     aprovarRag: "pgm_rag_aprovar",
     dispararGlobal: "pgm_disparo_global",
@@ -60,6 +68,13 @@ export const GRUPOS_PROGRAMACAO_MENSAL: GrupoPermissao[] = [
             { id: PGM_GERAL.importarPlanilha, label: "Importar planilha", acoes: ACAO_UNICA },
             { id: PGM_GERAL.exportar, label: "Exportar (XLSX/PDF)", acoes: ACAO_UNICA },
             { id: PGM_GERAL.historico, label: "Ver histórico", acoes: ACAO_UNICA },
+        ],
+    },
+    {
+        category: "Programação Mensal — Exportação consolidada",
+        modules: [
+            { id: PGM_EXPORTACAO_CONSOLIDADA.ver, label: "Ver a tela de exportação consolidada", acoes: ACAO_UNICA },
+            { id: PGM_EXPORTACAO_CONSOLIDADA.exportar, label: "Baixar a planilha consolidada", acoes: ACAO_UNICA },
         ],
     },
     ...CATEGORIAS_PROGRAMACAO.map(c => {
