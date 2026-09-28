@@ -46,13 +46,26 @@ export async function POST(request: NextRequest) {
             )
         }
 
-        // 3. Verificar se já existe candidatura desse talent para essa vaga
-        const { data: existente } = await supabase
+        // 3. Verificar se já existe candidatura desse talent para essa vaga.
+        // ACHADO-013 (custo-llm): antes comparava `telefone = talent.telefone || ""`, mas gravava
+        // `null` — talento sem telefone nunca casava — e `.maybeSingle()` devolve erro (data null)
+        // quando já há 2+ linhas, o que desligava a checagem de vez. Agora: pela marca do talento
+        // (sempre gravada) OU pelo telefone, quando houver, e com `.limit(1)`.
+        const { data: porTalento } = await supabase
             .from("candidaturas")
             .select("id")
             .eq("vaga_id", vaga_id)
-            .eq("telefone", talent.telefone || "")
-            .maybeSingle()
+            .eq("observacoes", `banco_talentos:${talent_id}`)
+            .limit(1)
+        const { data: porTelefone } = talent.telefone
+            ? await supabase
+                .from("candidaturas")
+                .select("id")
+                .eq("vaga_id", vaga_id)
+                .eq("telefone", talent.telefone)
+                .limit(1)
+            : { data: [] as { id: string }[] }
+        const existente = (porTalento && porTalento.length > 0) || (porTelefone && porTelefone.length > 0)
 
         if (existente) {
             return NextResponse.json({ error: "Este candidato já está inscrito nesta vaga." }, { status: 409 })

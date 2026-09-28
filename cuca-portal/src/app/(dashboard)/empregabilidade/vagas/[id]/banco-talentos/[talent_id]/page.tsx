@@ -90,6 +90,20 @@ export default function BancoTalentosDetalhesPage() {
     const aprovarParaVaga = async () => {
         setAprovando(true)
         try {
+            // ACHADO-013 (custo-llm): sem esta checagem, cada clique criava uma candidatura nova
+            // e disparava outra análise de IA do mesmo currículo (89 repetições num caso real).
+            // Mesma chave da rota /api/empregabilidade/talent-bank/convocar: talento + vaga.
+            const { data: existentes } = await supabase
+                .from("candidaturas")
+                .select("id")
+                .eq("vaga_id", vagaId)
+                .eq("observacoes", `banco_talentos:${talentId}`)
+                .limit(1)
+            if (existentes && existentes.length > 0) {
+                toast("Este talento já foi aprovado para esta vaga.")
+                return
+            }
+
             // Criar nova candidatura para esta vaga (copia CV e dados do talent)
             const { data: novaCandidatura, error: insErr } = await supabase
                 .from("candidaturas")
