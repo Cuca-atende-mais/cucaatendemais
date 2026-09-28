@@ -2,7 +2,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import type { Database } from "./database.types.ts";
 
-const GPT_MODEL = "gpt-4o";
+// Modelo da resposta final (chamarGPT). Trocado de gpt-4o para gpt-4o-mini em 2026-09-28 por
+// custo (diagnóstico de consumo OpenAI de 23/09) — mesmo modelo que a Empregabilidade já usa.
+// Rollback = voltar para "gpt-4o" e redeployar a function.
+const GPT_MODEL = "gpt-4o-mini";
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const MAX_HISTORICO = 10;
 
@@ -1517,7 +1520,7 @@ function formatarChunks(chunks: { conteudo: string; fonte_tipo?: string }[]): st
  * ultrapassam 40 chunks hoje: José Walter/Pici em 55, Jangurussu/Mondubim em 47, Barra em 42).
  * Removido sem substituir por outro número fixo: qualquer chute (80, 100...) sofre do mesmo
  * problema — não há tendência estável de quantas atividades um mês vai ter (varia 89-146 nas 5
- * unidades, sem teto prático). Seguro sem limite: `gpt-4o` (GPT_MODEL) tem janela de 128k
+ * unidades, sem teto prático). Seguro sem limite: `gpt-4o-mini` (GPT_MODEL) tem janela de 128k
  * tokens; o pior caso real hoje (~64k caracteres somando prompt_sistema + guardrail +
  * prompt_contexto + este documento + histórico) fica em ~16k tokens — folga de >100k tokens
  * antes de qualquer risco de estourar o contexto, mesmo com o dado crescendo várias vezes o
