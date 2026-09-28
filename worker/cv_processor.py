@@ -7,6 +7,7 @@ import base64
 import httpx
 from openai import AsyncOpenAI
 from supabase import create_client, Client
+from llm_usage import registrar_uso
 
 logger = logging.getLogger("cv_processor")
 
@@ -152,6 +153,7 @@ async def process_cv_from_text(candidatura_id: str, cv_text: str, vaga_id: str, 
             temperature=0.0,
             response_format={"type": "json_object"},
         )
+        registrar_uso(response, feature="ocr")  # PLANO-023: consumo em ai_usage_logs
 
         json_data = _parse_model_json(response.choices[0].message.content, "process_cv_from_text")
 
@@ -287,6 +289,7 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str, cargo_e
             temperature=0.0,
             response_format={"type": "json_object"},
         )
+        registrar_uso(response, feature="ocr")  # PLANO-023: consumo em ai_usage_logs
 
         json_data = _parse_model_json(response.choices[0].message.content, "process_cv_ocr")
 
@@ -378,6 +381,7 @@ async def process_cv_espontaneo(nome: str, telefone: str, cv_url: str):
             temperature=0.0,
             response_format={"type": "json_object"},
         )
+        registrar_uso(response, feature="ocr")  # PLANO-023: consumo em ai_usage_logs
 
         json_data = _parse_model_json(response.choices[0].message.content, "process_cv_espontaneo")
 
@@ -456,6 +460,7 @@ IMPORTANTE: as três últimas chaves (habilidades_identificadas, experiencias_an
             temperature=0.0,
             response_format={"type": "json_object"},
         )
+        registrar_uso(response, feature="ocr")  # PLANO-023: consumo em ai_usage_logs
 
         json_data = _parse_model_json(response.choices[0].message.content, "process_cv_talent_bank_id")
         skills = {**json_data, "origem": "talent_bank_ocr_demanda", "ocr_processado": True}

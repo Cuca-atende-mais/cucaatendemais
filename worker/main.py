@@ -16,6 +16,7 @@ import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
+from llm_usage import registrar_uso
 
 load_dotenv()
 
@@ -271,6 +272,7 @@ Retorne APENAS o JSON, sem markdown."""
             response_format={"type": "json_object"},
             temperature=0.0
         )
+        registrar_uso(response, feature="ouvidoria")  # PLANO-023: consumo em ai_usage_logs
 
         result = json.loads(response.choices[0].message.content)
         tipo = result.get("tipo")

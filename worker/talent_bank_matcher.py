@@ -5,6 +5,7 @@ import asyncio
 import re
 from openai import AsyncOpenAI
 from supabase import create_client, Client
+from llm_usage import registrar_uso
 
 logger = logging.getLogger("talent_bank_matcher")
 
@@ -169,6 +170,7 @@ Retorne SOMENTE JSON válido, sem markdown:
             temperature=0.2,
             max_tokens=max_tokens,
         )
+        registrar_uso(response, feature="matching")  # PLANO-023: consumo em ai_usage_logs
         raw = response.choices[0].message.content.strip()
         logger.warning(f"[_ranquear_batch] GPT raw (200): {raw[:200]!r} finish={response.choices[0].finish_reason}")
         if raw.startswith("```"):

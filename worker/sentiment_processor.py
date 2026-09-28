@@ -3,6 +3,7 @@ import json
 import logging
 from openai import AsyncOpenAI
 from supabase import create_client, Client
+from llm_usage import registrar_uso
 
 logger = logging.getLogger("sentiment_processor")
 
@@ -36,6 +37,7 @@ async def analyse_manifestation_sentiment(registro_id: str, texto: str):
             response_format={"type": "json_object"},
             temperature=0.0
         )
+        registrar_uso(response, feature="sentiment")  # PLANO-023: consumo em ai_usage_logs
         
         result = json.loads(response.choices[0].message.content)
         

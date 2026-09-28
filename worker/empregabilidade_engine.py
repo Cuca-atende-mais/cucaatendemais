@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from urllib.parse import urlencode, urlparse, parse_qs
 from supabase import create_client, Client
+from llm_usage import registrar_uso
 
 logger = logging.getLogger("empregabilidade_engine")
 
@@ -1202,6 +1203,7 @@ async def _chamar_ia_normalizacao_cargos(titulos_unicos: list[str]) -> dict:
         temperature=0.0,
         max_tokens=800,
     )
+    registrar_uso(response, feature="empregabilidade_cargos")  # PLANO-023: consumo em ai_usage_logs
     return json.loads(response.choices[0].message.content)
 
 
@@ -2055,6 +2057,7 @@ async def _chamar_ia_classificar_troca_rota(texto: str) -> dict:
         temperature=0.0,
         max_tokens=30,
     )
+    registrar_uso(response, feature="empregabilidade_rota")  # PLANO-023: consumo em ai_usage_logs
     return json.loads(response.choices[0].message.content)
 
 
