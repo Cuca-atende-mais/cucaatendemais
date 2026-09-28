@@ -184,8 +184,15 @@ async def process_cv_from_text(candidatura_id: str, cv_text: str, vaga_id: str, 
         }).eq("id", candidatura_id).execute()
 
 
-async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str, cargo_escolhido: str = ""):
-    """Lê o currículo com GPT-4o Vision / Document, e salva os dados OCR na candidatura."""
+async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str, cargo_escolhido: str = "",
+                         ocr_token: str | None = None) -> bool:
+    """Lê o currículo com GPT-4o Vision / Document, e salva os dados OCR na candidatura.
+
+    PLANO-028: devolve True só quando o resultado foi gravado. Com `ocr_token` (reserva feita por
+    `ocr_reserva.processar_cv_com_reserva`), toda gravação na candidatura confere o token — se
+    outro executor assumiu a candidatura no meio (reserva expirada), o resultado desta execução
+    é descartado em vez de sobrescrever o mais recente.
+    """
     logger.info(f"Iniciando OCR para candidatura {candidatura_id} ({cv_url})")
 
     try:
@@ -321,7 +328,13 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str, cargo_e
             "primeiro_emprego": json_data.get("primeiro_emprego"),
             "experiencia_meses": json_data.get("experiencia_meses"),
         }
-        supabase.table("candidaturas").update(update_candidatura).eq("id", candidatura_id).execute()
+        consulta = supabase.table("candidaturas").update(update_candidatura).eq("id", candidatura_id)
+        if ocr_token:
+            consulta = consulta.eq("ocr_token", ocr_token)
+        gravado = consulta.execute()
+        if ocr_token and not gravado.data:
+            logger.warning(f"[ocr] Reserva de {candidatura_id} foi assumida por outro executor — resultado descartado")
+            return False
 
         # S29-01: Preencher telefone da candidatura com o extraído do OCR, apenas se o campo estiver vazio
         telefone_ocr = json_data.get("telefone")
@@ -332,12 +345,17 @@ async def process_cv_ocr(candidatura_id: str, cv_url: str, vaga_id: str, cargo_e
                 logger.info(f"[S29-01] Telefone {telefone_ocr} extraído do currículo e salvo na candidatura {candidatura_id}")
         
         logger.info(f"OCR finalizado para {candidatura_id}. Score: {match_score}. Veredito: {veredito}")
+        return True
 
     except Exception as e:
         logger.error(f"Erro ao processar OCR da candidatura {candidatura_id}: {str(e)}")
-        supabase.table("candidaturas").update({
+        consulta = supabase.table("candidaturas").update({
             "matching_justificativa": f"Erro OCR: {str(e)[:50]}"
-        }).eq("id", candidatura_id).execute()
+        }).eq("id", candidatura_id)
+        if ocr_token:
+            consulta = consulta.eq("ocr_token", ocr_token)
+        consulta.execute()
+        return False
 
 
 async def process_cv_espontaneo(nome: str, telefone: str, cv_url: str):
@@ -360,18 +378,26 @@ async def process_cv_espontaneo(nome: str, telefone: str, cv_url: str):
         """
 
         is_pdf = cv_url.lower().endswith(".pdf")
-        media_type = "application/pdf" if is_pdf else "image/jpeg"
+
+        # ACHADO-014 (custo-llm): no PDF a IA recebia só o texto "[Currículo PDF em base64 -
+        # URL: ...]", nunca o conteúdo — pagava-se a chamada sem nada para ler. Agora o texto é
+        # extraído (mesmo caminho de `process_cv_talent_bank_id`); PDF sem texto (escaneado) não
+        # vai à IA.
+        if is_pdf:
+            texto_pdf = extract_text_from_pdf(base64.b64decode(file_b64))
+            if len(texto_pdf) <= 200:
+                logger.warning(f"OCR espontâneo: PDF de {nome} sem texto extraível — não enviado à IA")
+                return
+            conteudo_usuario = f"Extraia as informações deste currículo:\n\n{texto_pdf[:6000]}"
+        else:
+            conteudo_usuario = [
+                {"type": "text", "text": "Extraia as informações deste currículo:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{file_b64}", "detail": "high"}},
+            ]
 
         messages = [
             {"role": "system", "content": prompt_sys},
-            {"role": "user", "content": [
-                {"type": "text", "text": "Extraia as informações deste currículo:"},
-                {
-                    "type": "image_url" if not is_pdf else "text",
-                    **({"image_url": {"url": f"data:{media_type};base64,{file_b64}", "detail": "high"}}
-                       if not is_pdf else {"text": f"[Currículo PDF em base64 - URL: {cv_url}]"}),
-                },
-            ]}
+            {"role": "user", "content": conteudo_usuario},
         ]
 
         response = await client.chat.completions.create(
@@ -385,14 +411,16 @@ async def process_cv_espontaneo(nome: str, telefone: str, cv_url: str):
 
         json_data = _parse_model_json(response.choices[0].message.content, "process_cv_espontaneo")
 
-        # Atualizar talent_bank pelo telefone
-        supabase.table("talent_bank").update({
-            "skills_jsonb": {
-                **json_data,
-                "origem": "candidatura_espontanea",
-                "ocr_processado": True,
-            }
-        }).eq("telefone", telefone).execute()
+        # Atualizar talent_bank pelo telefone. ACHADO-014: a tabela guarda telefones em vários
+        # formatos ("(85) 99999-9999", "(85)999999999", só dígitos...); a busca exata perdia a
+        # linha em silêncio. A função do banco compara só os dígitos (sem o 55).
+        atualizado = supabase.rpc("atualizar_skills_talento_por_telefone", {
+            "p_telefone": telefone,
+            "p_skills": {**json_data, "origem": "candidatura_espontanea", "ocr_processado": True},
+        }).execute()
+        if not atualizado.data:
+            logger.warning(f"OCR espontâneo: nenhum talento encontrado para o telefone de {nome} — resultado não gravado")
+            return
 
         logger.info(f"OCR espontâneo finalizado para {nome}")
 
