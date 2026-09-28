@@ -28,7 +28,9 @@ const FEATURE_LABEL: Record<string, string> = {
     matching: "Triagem de currículos",
     intencao: "Detecção de intenção",
     categorias: "Categorias da programação",
-    ouvidoria: "Ouvidoria (insights)",
+    ouvidoria: "Ouvidoria (manifestação)",
+    empregabilidade_cargos: "Empregabilidade (cargos)",
+    empregabilidade_rota: "Empregabilidade (troca de rota)",
 }
 
 export default function DevConsumoPage() {
@@ -86,7 +88,7 @@ export default function DevConsumoPage() {
         <div className="space-y-6 p-4 md:p-6">
             <div>
                 <h1 className="text-2xl font-bold flex items-center gap-2"><DollarSign className="h-6 w-6 text-primary" /> Consumo OpenAI</h1>
-                <p className="text-sm text-muted-foreground mt-1">Tokens e custo real no mês atual. Ainda não entram: embeddings, transcrição de áudio e a triagem de unidade — o total aqui fica abaixo da fatura da OpenAI.</p>
+                <p className="text-sm text-muted-foreground mt-1">Tokens e custo real no mês atual. Entram: respostas do Institucional e as chamadas de IA do worker (currículo, triagem, intenção, Empregabilidade, ouvidoria, sentimento, categorias; áudio só em volume, sem custo). Ainda não entram: embeddings, escolha de unidade, resumo da rede, Academia Enem e as rotas de IA do portal — por isso o total fica abaixo da fatura da OpenAI.</p>
             </div>
 
             {/* Cards Totais */}
