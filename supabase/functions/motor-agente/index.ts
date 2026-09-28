@@ -1591,6 +1591,30 @@ function formatarChunks(chunks: { conteudo: string; fonte_tipo?: string }[]): st
  * Walter) documentado em S-WM-35 — é complementar, não substituto. Sem o fix do rótulo, mais
  * dado chega ao prompt, mas o dado errado (idade lida como horário etc.) continua errado.
  */
+/**
+ * PLANO-026: cada trecho da programação traz o mesmo cabeçalho (mês/ano/unidade + título) — ele
+ * existe de propósito para a busca vetorial, onde um trecho chega sozinho e precisa dizer de que
+ * mês é (`processar-documento`, `montarChunksPorAtividade`). Quando a programação INTEIRA de uma
+ * unidade é carregada, todos os trechos são do mesmo documento e o cabeçalho se repetia até 137
+ * vezes (~21% do bloco). Aqui ele sai uma vez só, no topo.
+ *
+ * Segurança: o cabeçalho é o conjunto de linhas iniciais idênticas nos dois primeiros trechos,
+ * parando na primeira linha de atividade ("• ...") — títulos se repetem entre turmas da mesma
+ * atividade e nunca podem ser tomados por cabeçalho. Só é removido de trechos que começam
+ * EXATAMENTE com ele; trecho com formato diferente fica intacto. Com menos de 2 trechos, ou sem
+ * cabeçalho comum, o texto sai igual ao de antes.
+ */
+export function consolidarCabecalhoProgramacao(conteudos: string[]): string {
+  if (conteudos.length < 2) return conteudos.join("\n");
+  const a = conteudos[0].split("\n");
+  const b = conteudos[1].split("\n");
+  let n = 0;
+  while (n < a.length - 1 && n < b.length - 1 && a[n] === b[n] && !a[n].startsWith("•")) n++;
+  if (n === 0) return conteudos.join("\n");
+  const cabecalho = a.slice(0, n).join("\n") + "\n";
+  return cabecalho + conteudos.map((c) => (c.startsWith(cabecalho) ? c.slice(cabecalho.length) : c)).join("\n");
+}
+
 async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClient<Database>>, unidade: string): Promise<string> {
   const { data: doc } = await supabase.from("documentos_rag").select("id").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   if (!doc) return "";
@@ -1603,7 +1627,9 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
   // S-PROG-03 (item 2.2): este caminho NAO passa por formatarChunks — sanitiza aqui tambem,
   // senao a visao geral da programacao (o maior bloco de contexto que vai ao GPT) continuaria
   // trazendo "Vagas: N" de todos os ~40 chunks.
-  return chunks.map((c: { conteudo: string }) => removerVagasDoTexto(c.conteudo)).join("\n");
+  // PLANO-026: cabeçalho repetido sai dos trechos e aparece uma vez no topo (ver
+  // consolidarCabecalhoProgramacao). Só neste caminho — a busca vetorial continua com o cabeçalho.
+  return consolidarCabecalhoProgramacao(chunks.map((c: { conteudo: string }) => removerVagasDoTexto(c.conteudo)));
 }
 
 // S-PROG-10 (item 3): nomes de mês por extenso, em português. Array JS/TS é indexado a partir de
