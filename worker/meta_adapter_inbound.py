@@ -1425,6 +1425,27 @@ async def _executar_dispatch(
                 midia_tipo, conversa_id,
             )
             return
+        # ACHADO-016 (custo-llm): limite de respostas de IA por conversa. Acima do limite, resposta
+        # pronta (ou silêncio, se o aviso já foi dado) em vez de outra chamada à OpenAI. Falha
+        # aberta: erro na checagem atende normalmente. Roda depois do guard de awaiting_human.
+        from limite_ia import mensagem_se_excedeu  # noqa: PLC0415
+        aviso_limite = mensagem_se_excedeu(supabase, conversa_id)
+        if aviso_limite is not None:
+            if aviso_limite:
+                try:
+                    supabase.table("mensagens").insert({
+                        "conversa_id": conversa_id,
+                        "lead_id": lead_id,
+                        "tipo": "text",
+                        "conteudo": aviso_limite,
+                        "remetente": "agente",
+                        "created_at": "now()",
+                    }).execute()
+                except Exception as exc:
+                    logger.error(f"[meta-inbound] Erro ao salvar aviso de limite de IA: {exc}")
+                from meta_adapter_outbound import _meta_enviar  # noqa: PLC0415
+                await _meta_enviar(phone_number_id, telefone, aviso_limite, os.getenv("META_SYSTEM_USER_TOKEN", ""))
+            return
         try:
             from meta_adapter_outbound import _meta_enviar, _meta_marcar_lida_e_digitando  # noqa: PLC0415
             token = os.getenv("META_SYSTEM_USER_TOKEN", "")

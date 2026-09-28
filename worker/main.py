@@ -138,7 +138,7 @@ async def security_middleware(request: Request, call_next):
     return response
 
 
-OCR_MAX_TENTATIVAS = 3
+from ocr_reserva import OCR_MAX_TENTATIVAS, processar_cv_com_reserva  # PLANO-028
 
 async def ocr_pending_loop():
     """Loop que verifica candidaturas com CV mas sem análise e dispara OCR automaticamente.
@@ -150,7 +150,6 @@ async def ocr_pending_loop():
     incrementa a tentativa ANTES de processar: um CV que falha N vezes (ou trava o
     worker e volta no restart) sai da fila em vez de bloquear os demais.
     """
-    from cv_processor import process_cv_ocr
     logger.info("[ocr-loop] Loop de OCR pendente iniciado.")
     while True:
         try:
@@ -164,16 +163,14 @@ async def ocr_pending_loop():
             pendentes = res.data or []
             for p in pendentes:
                 if p.get("arquivo_cv_url") and p.get("vaga_id"):
-                    # Marca a tentativa antes de processar — assim um CV que erra ou
-                    # trava o worker esgota o contador e libera a fila, em vez de
-                    # reentrar para sempre.
-                    supabase.table("candidaturas").update(
-                        {"ocr_tentativas": (p.get("ocr_tentativas") or 0) + 1}
-                    ).eq("id", p["id"]).execute()
+                    # PLANO-028: a reserva atômica incrementa `ocr_tentativas` na mesma operação
+                    # (o CV que erra ou trava continua esgotando o contador e liberando a fila) e
+                    # impede que o endpoint /process-cv processe o mesmo currículo ao mesmo tempo.
                     logger.info(f"[ocr-loop] Disparando OCR para candidatura {p['id']}")
                     # SQS-49: passa cargo_escolhido para análise contextualizada em selecao_evento
-                    await process_cv_ocr(p["id"], p["arquivo_cv_url"], p["vaga_id"],
-                                         cargo_escolhido=p.get("cargo_escolhido") or "")
+                    await processar_cv_com_reserva(p["id"], p["arquivo_cv_url"], p["vaga_id"],
+                                                   cargo_escolhido=p.get("cargo_escolhido") or "",
+                                                   origem="loop")
         except Exception as e:
             logger.error(f"[ocr-loop] Erro: {e}")
         await asyncio.sleep(60)
@@ -415,8 +412,9 @@ async def process_cv_endpoint(request: Request, background_tasks: BackgroundTask
         if not candidatura_id or not cv_url or not vaga_id:
             return Response(status_code=400, content="Faltando parâmetros obligatórios")
 
-        from cv_processor import process_cv_ocr
-        background_tasks.add_task(process_cv_ocr, candidatura_id, cv_url, vaga_id)
+        # PLANO-028: a reserva acontece dentro da task (o handler responde antes de ela rodar);
+        # se outro executor já estiver com a candidatura, a task só loga e sai.
+        background_tasks.add_task(processar_cv_com_reserva, candidatura_id, cv_url, vaga_id, "", "endpoint")
         
         return {"status": "processing_started"}
     except Exception as e:
