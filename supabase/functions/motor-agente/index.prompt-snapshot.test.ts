@@ -66,7 +66,7 @@ const CENARIOS: Cenario[] = [
   { nome: "agente sem programacao, engajado", mensagem: "o banheiro estava sujo", agente_tipo: "sofia", metadata: { conversa_engajada: true }, chunksBusca: CHUNK_FAQ },
 ];
 
-async function rodar(c: Cenario): Promise<{ chat: unknown[]; camadas: unknown[] }> {
+async function rodar(c: Cenario, agora = AGORA_FIXO): Promise<{ chat: unknown[]; camadas: unknown[] }> {
   const chat: unknown[] = [];
   const fetchOriginal = globalThis.fetch;
   const DateOriginal = globalThis.Date;
@@ -74,9 +74,9 @@ async function rodar(c: Cenario): Promise<{ chat: unknown[]; camadas: unknown[] 
     // deno-lint-ignore no-explicit-any
     constructor(...args: any[]) {
       // deno-lint-ignore no-explicit-any
-      if (args.length === 0) super(AGORA_FIXO); else super(...(args as [any]));
+      if (args.length === 0) super(agora); else super(...(args as [any]));
     }
-    static now() { return AGORA_FIXO; }
+    static override now() { return agora; }
   }
   globalThis.Date = DataFixa as DateConstructor;
   globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
@@ -97,7 +97,7 @@ async function rodar(c: Cenario): Promise<{ chat: unknown[]; camadas: unknown[] 
     "rpc:get_openai_key": { data: "fake" },
     "leads": { data: { id: "lead-1", nome: "Fulano", opt_in: true, bloqueado: false } },
     "conversas": { data: { id: "conv-1", status: "ativa", metadata: c.metadata ?? {}, lead_id: "lead-1", primeira_interacao_lead_em: "2026-09-01T00:00:00Z" } },
-    "mensagens": { data: (c.historico ?? []).map((m, i) => ({ ...m, created_at: new DateOriginal(AGORA_FIXO - 60000 * (i + 1)).toISOString() })) },
+    "mensagens": { data: (c.historico ?? []).map((m, i) => ({ ...m, created_at: new DateOriginal(agora - 60000 * (i + 1)).toISOString() })) },
     "prompts_agentes": { data: { prompt_sistema: "SISTEMA DO AGENTE", prompt_contexto: "CONTEXTO DO AGENTE", temperatura: 0.7, max_tokens: 500, menu_boas_vindas: null, updated_at: "2026-09-08T13:52:12Z" } },
     "documentos_rag": { data: c.semProgramacao ? null : { id: "doc-1", conteudo: "TEXTO DO DOCUMENTO", metadados: { vigencia_mes: 9, vigencia_ano: 2026, campanha_id: "camp-1" } } },
     "atividades_mensais": { data: [{ titulo: "Judô Infantil", categoria: "ESPORTES", metadata: { horario: "ter e qui 18h", faixa_etaria: "7 a 14" } }] },
@@ -134,4 +134,22 @@ Deno.test("prompt enviado à OpenAI continua idêntico em todos os caminhos de m
   }
   const gravado = JSON.parse(await Deno.readTextFile(ARQUIVO));
   for (const c of CENARIOS) assertEquals(atual[c.nome], gravado[c.nome], "cenário mudou: " + c.nome);
+});
+
+// PLANO-025: o cache da OpenAI só reaproveita o prefixo idêntico entre chamadas. Duas mensagens da
+// mesma conversa em horários diferentes (data/hora diferentes no prompt) precisam compartilhar o
+// começo do prompt até o fim do bloco de serviços da rede — antes, a data na 2ª posição quebrava
+// o prefixo logo depois do prompt de sistema.
+Deno.test("PLANO-025: prompt de horários diferentes compartilha o prefixo até o fim dos serviços", async () => {
+  const cenario = CENARIOS.find((c) => c.nome === "conversa engajada, pergunta especifica")!;
+  const sistema = (r: { chat: unknown[] }) =>
+    String((r.chat[r.chat.length - 1] as { messages: { content: string }[] }).messages[0].content);
+  const a = sistema(await rodar(cenario, AGORA_FIXO));
+  const b = sistema(await rodar(cenario, AGORA_FIXO + 3 * 60 * 60 * 1000 + 17 * 60 * 1000));
+  let comum = 0;
+  while (comum < a.length && a[comum] === b[comum]) comum++;
+  const fimServicos = a.indexOf("TEXTO DO DOCUMENTO", a.indexOf("--- SERVICOS DA REDE")) + "TEXTO DO DOCUMENTO".length;
+  assertEquals(a === b, false, "a data precisa aparecer no prompt (senão o teste não prova nada)");
+  assertEquals(comum >= fimServicos, true, `prefixo comum (${comum}) termina antes do fim dos serviços (${fimServicos})`);
+  assertEquals(a.indexOf("DATA E HORA ATUAL") > fimServicos, true, "a data deve vir depois dos serviços");
 });

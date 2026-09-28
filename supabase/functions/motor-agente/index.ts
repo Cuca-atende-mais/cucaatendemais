@@ -2493,12 +2493,19 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     }
 
     // 10. Prompt final
-    // PLANO-023: cada parte tem nome — o texto enviado é a junção das partes (idêntico ao de
-    // antes), e os tamanhos vão para `ai_usage_logs.blocos_contexto`. `contextRAG` entra
-    // desmembrado nos blocos de `blocosContexto`, só no registro.
+    // PLANO-023: cada parte tem nome — o texto enviado é a junção das partes, e os tamanhos vão
+    // para `ai_usage_logs.blocos_contexto`. `contextRAG` entra desmembrado nos blocos de
+    // `blocosContexto`, só no registro.
+    // PLANO-025: ordem pensada para o cache da OpenAI, que só reaproveita o PREFIXO idêntico entre
+    // chamadas. O que não muda de uma mensagem para outra vem primeiro — sistema, segurança,
+    // contexto do agente e `contextRAG`, que sempre começa pelo bloco de serviços da rede — e o
+    // que muda a cada mensagem vem depois: `DATA_ATUAL` (tem hora:minuto) e `CONTEXTO_DISPARO`.
+    // Antes, a data ficava na 2ª posição e quebrava o prefixo logo depois do prompt de sistema.
+    // Mesmo conteúdo, só a posição mudou.
     const partesPrompt: [string, string][] = [
-      ["prompt_sistema", prompt.prompt_sistema], ["data_atual", DATA_ATUAL], ["instrucao_seguranca", INSTRUCAO_SEGURANCA],
-      ["prompt_contexto", prompt.prompt_contexto || ""], ["contexto_disparo", CONTEXTO_DISPARO], ["contexto_rag", contextRAG],
+      ["prompt_sistema", prompt.prompt_sistema], ["instrucao_seguranca", INSTRUCAO_SEGURANCA],
+      ["prompt_contexto", prompt.prompt_contexto || ""], ["contexto_rag", contextRAG],
+      ["data_atual", DATA_ATUAL], ["contexto_disparo", CONTEXTO_DISPARO],
       ["unidade", "UNIDADE: " + (unidadeEfetiva || "Nao informada")],
       // TOM-04: regra genérica, sem dado do usuário — o dado (nome) vai isolado no turno
       // "user" (contextoNomeLead), sem diretiva junto. Separar dado de instrução fecha a
