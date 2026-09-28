@@ -378,6 +378,26 @@ def _logar_payload_botao_primeira_vez(msg_type: str, msg: dict) -> None:
     )
 
 
+def extrair_botao(msg: dict) -> dict | None:
+    """PLANO-024: tipo, identificador e texto do botão clicado, lidos do webhook CRU.
+
+    `_parse_mensagem_meta` normaliza clique de botão para texto (de propósito — o motor-agente
+    trata texto), e com isso a informação "veio de um clique" se perdia antes do porteiro. Sem
+    ela, "Sim, eu vou!" digitado à mão era indistinguível do clique. O identificador (`payload`
+    do botão de template, `id` do botão interativo) é o que o template define; o texto é o rótulo
+    que o lead viu. Devolve None para qualquer mensagem que não seja clique.
+    """
+    tipo = msg.get("type", "")
+    if tipo == "button":
+        botao = msg.get("button") or {}
+        return {"tipo": "button", "id": (botao.get("payload") or "").strip(), "texto": (botao.get("text") or "").strip()}
+    if tipo == "interactive":
+        interativo = msg.get("interactive") or {}
+        resposta = interativo.get(interativo.get("type", "")) or {}
+        return {"tipo": "interactive", "id": (resposta.get("id") or "").strip(), "texto": (resposta.get("title") or "").strip()}
+    return None
+
+
 # ─── Parser de Mensagem Meta ───────────────────────────────────────────────────
 async def _parse_mensagem_meta(msg: dict) -> tuple[str, str | None, str]:
     """
@@ -518,6 +538,7 @@ async def build_contrato_v2(meta_payload: dict, instancia_data: dict) -> dict:
         "mensagem":     mensagem,
         "midia_url":    midia_url,
         "midia_tipo":   midia_tipo,
+        "botao":        extrair_botao(msg),  # PLANO-024: None quando não é clique de botão
         "data_atual":   data_atual,
         "wamid":        wamid,
     }
@@ -1236,6 +1257,8 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             lead_id_respondente=lead_id,
             telefone=telefone,
             mensagem=mensagem,
+            # {} = "sabemos que NÃO foi clique" (texto digitado); None só em chamadores antigos.
+            botao=contrato_v2.get("botao") or {},
         )
     except Exception as exc:
         logger.warning("[AE-porteiro] Falha ao processar mensagem de %s (ignorado): %s", telefone, exc)
@@ -1289,7 +1312,7 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
         )
         return
 
-    # Resposta fixa de horário (S-AE-CONF-07) — enviada aqui, DEPOIS do guard de
+    # Resposta fixa de horário (S-AE-CONF-07) e de clique de presença (PLANO-024) — enviada aqui, DEPOIS do guard de
     # `awaiting_human` (achado 8 do @qa): se um colaborador assumiu a conversa, a IA fica calada,
     # e isso vale para esta resposta também. A anotação da presença continua lá em cima, porque
     # anotar não fala com o lead e não conflita com atendimento humano.

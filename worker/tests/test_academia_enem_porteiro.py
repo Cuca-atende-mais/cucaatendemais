@@ -390,3 +390,79 @@ def test_limitacao_conhecida_mensagem_que_confirma_e_pergunta_junto():
     )
     assert r["anotou"]["resposta"] == RESPOSTA_CONFIRMOU
     assert "responder" not in r
+
+
+# ── PLANO-024 — clique no botão respondido com texto fixo, sem IA ───────────
+
+from academia_enem_porteiro import (  # noqa: E402
+    TEXTO_CONFIRMOU_PADRAO,
+    TEXTO_RECUSOU_PADRAO,
+    clique_de_presenca,
+)
+from meta_adapter_inbound import extrair_botao  # noqa: E402
+
+BOTAO_SIM = {"tipo": "button", "id": "Sim, eu vou!", "texto": "Sim, eu vou!"}
+BOTAO_NAO = {"tipo": "button", "id": "Não poderei comparecer", "texto": "Não poderei comparecer"}
+
+
+def _processar(fake, mensagem, botao):
+    return processar_mensagem_campanha(
+        fake, lead_id_respondente=LEAD_DUPLICADO, telefone=TEL_RESPOSTA, mensagem=mensagem, botao=botao,
+    )
+
+
+def test_024_clique_confirma_anota_e_responde_texto_fixo():
+    fake = _FakeSupabase()
+    r = _processar(fake, "Sim, eu vou!", BOTAO_SIM)
+    assert r["anotou"]["resposta"] == RESPOSTA_CONFIRMOU and r["anotou"]["origem"] == "botao"
+    assert r["responder"] == "Presença confirmada! ✅ Te esperamos. Se tiver qualquer dúvida, é só mandar aqui. 😊"
+    assert len(fake.gravado) == 1  # gravou antes de devolver a resposta
+
+
+def test_024_clique_confirma_usa_o_nome_do_evento_configurado():
+    cfg = {"evento_id": EVENTO, "categoria_evento_id": CATEGORIA, "fechamento": "2026-09-20T12:00:00-03:00",
+           "lotes": {}, "evento_nome": "Simulado Academia Enem"}
+    r = _processar(_FakeSupabase(config=cfg), "Sim, eu vou!", BOTAO_SIM)
+    assert r["responder"] == TEXTO_CONFIRMOU_PADRAO.replace("{evento}", "Simulado Academia Enem")
+
+
+def test_024_clique_recusa_responde_texto_de_recusa():
+    r = _processar(_FakeSupabase(), "Não poderei comparecer", BOTAO_NAO)
+    assert r["anotou"]["resposta"] == RESPOSTA_NAO_VAI
+    assert r["responder"] == TEXTO_RECUSOU_PADRAO
+
+
+def test_024_texto_digitado_igual_ao_botao_vai_ao_agente():
+    r = _processar(_FakeSupabase(), "Sim, eu vou!", {})
+    assert r["anotou"]["origem"] == "texto"
+    assert "responder" not in r
+
+
+def test_024_confirmacao_com_pergunta_vai_ao_agente():
+    r = _processar(_FakeSupabase(), "confirmo, mas posso chegar atrasado?", {})
+    assert r["anotou"]["resposta"] == RESPOSTA_CONFIRMOU
+    assert "responder" not in r
+
+
+def test_024_clique_em_outro_botao_nao_e_presenca():
+    outro = {"tipo": "interactive", "id": "ver_programacao", "texto": "Ver programação"}
+    assert clique_de_presenca(outro) is None
+    assert _processar(_FakeSupabase(), "Ver programação", outro) is None
+
+
+def test_024_quem_nao_e_da_campanha_segue_o_fluxo_normal():
+    assert _processar(_FakeSupabase(na_categoria=False), "Sim, eu vou!", BOTAO_SIM) is None
+
+
+def test_024_falha_ao_gravar_nao_responde():
+    fake = _FakeSupabase()
+    fake._upsert = lambda linha: (_ for _ in ()).throw(RuntimeError("banco fora"))
+    with pytest.raises(RuntimeError):
+        _processar(fake, "Sim, eu vou!", BOTAO_SIM)
+
+
+def test_024_extrai_botao_do_webhook_cru():
+    assert extrair_botao({"type": "button", "button": {"text": "Sim, eu vou!", "payload": "Sim, eu vou!"}}) == BOTAO_SIM
+    assert extrair_botao({"type": "interactive", "interactive": {"type": "button_reply", "button_reply": {"id": "b1", "title": "Ok"}}}) == \
+        {"tipo": "interactive", "id": "b1", "texto": "Ok"}
+    assert extrair_botao({"type": "text", "text": {"body": "Sim, eu vou!"}}) is None
