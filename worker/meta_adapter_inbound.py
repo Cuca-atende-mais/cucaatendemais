@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 
 from meta_adapter_outbound import _normalizar_telefone_br
+from llm_usage import registrar_uso
 
 logger = logging.getLogger("worker-cuca")
 
@@ -294,6 +295,7 @@ async def _transcrever_audio_meta(audio_bytes: bytes, mimetype: str) -> str | No
         buf = io.BytesIO(audio_bytes)
         buf.name = f"audio.{ext}"
         tr = await oa.audio.transcriptions.create(model="whisper-1", file=buf, language="pt")
+        registrar_uso(tr, feature="transcription", modelo="whisper-1", blocos={"audio_bytes": len(audio_bytes)})  # PLANO-023: consumo em ai_usage_logs
         return tr.text
     except Exception as exc:
         logger.error(f"[meta-inbound] Whisper erro: {exc}")

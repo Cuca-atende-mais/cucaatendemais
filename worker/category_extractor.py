@@ -3,6 +3,7 @@ import logging
 from supabase import create_client, Client
 from openai import OpenAI
 import json
+from llm_usage import registrar_uso
 
 logger = logging.getLogger("worker-category-extractor")
 
@@ -84,6 +85,7 @@ Formato de Saída JSON esperado:
                 ],
                 response_format={"type": "json_object"}
             )
+            registrar_uso(response, feature="categorias")  # PLANO-023: consumo em ai_usage_logs
             
             # O type=json_object força retorno de um objeto {"atividades": [...]} se induzido.
             # Como pedimos uma lista no prompt, para garantir com json_object, devemos ajustar a saída.

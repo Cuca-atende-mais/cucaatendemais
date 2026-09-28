@@ -1335,7 +1335,15 @@ export function deveTentarNovamente(status: number, tentativa: number): boolean 
   return statusTransitorio && tentativa < GPT_MAX_TENTATIVAS;
 }
 
-async function chamarGPT(prompt_sistema: string, historico: { role: string; content: string }[], apiKey: string, temperatura: number, max_tokens: number, tentativa = 0): Promise<{ texto: string }> {
+/** Corpo da resposta de chat/completions que interessa ao registro de consumo (PLANO-023). */
+export type RespostaOpenAIUso = {
+  id?: string;
+  model?: string;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
+};
+
+async function chamarGPT(prompt_sistema: string, historico: { role: string; content: string }[], apiKey: string, temperatura: number, max_tokens: number, tentativa = 0, aoConsumir?: (corpo: RespostaOpenAIUso, latenciaMs: number) => void): Promise<{ texto: string }> {
+  const inicio = Date.now();
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST", headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ model: GPT_MODEL, temperature: temperatura, max_tokens: max_tokens, messages: [{ role: "system", content: prompt_sistema }, ...historico] }),
@@ -1346,11 +1354,65 @@ async function chamarGPT(prompt_sistema: string, historico: { role: string; cont
     const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
     console.log("[motor-agente v18] Rate limit OpenAI (tentativa " + (tentativa + 1) + "/" + GPT_MAX_TENTATIVAS + "), aguardando " + esperaSegundos + "s antes de tentar de novo");
     await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
-    return chamarGPT(prompt_sistema, historico, apiKey, temperatura, max_tokens, tentativa + 1);
+    return chamarGPT(prompt_sistema, historico, apiKey, temperatura, max_tokens, tentativa + 1, aoConsumir);
   }
 
   if (!resp.ok) throw new Error("GPT-4o error: " + await resp.text());
-  return { texto: (await resp.json()).choices[0].message.content };
+  const corpo = await resp.json();
+  // PLANO-023: registra o consumo ANTES de ler a resposta — se algo falhar depois, o gasto já
+  // ficou anotado. Só quando há `usage` (um 429/5xx não cobra token). Falha no registro nunca
+  // chega ao cidadão.
+  if (aoConsumir && corpo?.usage) {
+    try { aoConsumir(corpo, Date.now() - inicio); } catch (e) { console.error("[motor-agente v18] Falha ao preparar registro de consumo:", e); }
+  }
+  return { texto: corpo.choices[0].message.content };
+}
+
+// ── PLANO-023: registro de consumo por chamada em `ai_usage_logs` ─────────────────────────
+// Preço por modelo vem de system_config (`openai_precos_usd_por_milhao`, JSON em texto), com
+// cache por isolate — muda preço sem deploy e sem uma consulta extra por turno. Sem preço
+// configurado, o custo fica NULL (nunca um valor chutado).
+type PrecosModelo = Record<string, { in: number; cached_in: number; out: number }>;
+const PRECOS_TTL_MS = 10 * 60 * 1000;
+let precosCache: { valor: PrecosModelo | null; expiraEm: number } = { valor: null, expiraEm: 0 };
+/** Só para testes: esquece o preço em cache. */
+export function redefinirCachePrecos(): void { precosCache = { valor: null, expiraEm: 0 }; }
+
+async function carregarPrecosOpenAI(supabase: ReturnType<typeof createClient<Database>>): Promise<PrecosModelo | null> {
+  if (Date.now() < precosCache.expiraEm) return precosCache.valor;
+  let valor: PrecosModelo | null = null;
+  try {
+    // deno-lint-ignore no-explicit-any
+    const { data } = await (supabase as any).from("system_config").select("valor").eq("chave", "openai_precos_usd_por_milhao").single();
+    if (data?.valor) valor = JSON.parse(String(data.valor));
+  } catch (e) {
+    console.error("[motor-agente v18] Tabela de preços OpenAI ilegível — custo fica NULL:", e);
+  }
+  precosCache = { valor, expiraEm: Date.now() + PRECOS_TTL_MS };
+  return valor;
+}
+
+/** Custo em US$ de uma chamada. O modelo devolvido pela OpenAI vem com data
+ * ("gpt-4o-mini-2024-07-18"): usa a chave de preço mais longa que casa como prefixo. */
+export function calcularCustoUsd(modelo: string, tokensPrompt: number, tokensCached: number, tokensCompletion: number, precos: PrecosModelo | null): number | null {
+  if (!precos) return null;
+  const chave = Object.keys(precos)
+    .filter((k) => modelo === k || modelo.startsWith(k + "-"))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!chave) return null;
+  const p = precos[chave];
+  return ((tokensPrompt - tokensCached) * p.in + tokensCached * p.cached_in + tokensCompletion * p.out) / 1_000_000;
+}
+
+async function registrarUsoLLM(supabase: ReturnType<typeof createClient<Database>>, linha: Record<string, unknown>): Promise<void> {
+  try {
+    // `tokens_total` e `custo_estimado_usd` são colunas GERADAS no banco — não podem ser enviadas.
+    // deno-lint-ignore no-explicit-any
+    const { error } = await (supabase as any).from("ai_usage_logs").insert(linha);
+    if (error) console.error("[motor-agente v18] Falha ao gravar ai_usage_logs:", error.message ?? error);
+  } catch (e) {
+    console.error("[motor-agente v18] Exceção ao gravar ai_usage_logs:", e);
+  }
 }
 
 async function salvarMensagemAgente(supabase: ReturnType<typeof createClient<Database>>, conversa_id: string, lead_id: string, conteudo: string) {
@@ -1851,7 +1913,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // paralelizados.
     const [{ data: hist }, { data: prompt }] = await Promise.all([
       supabase.from("mensagens").select("conteudo,remetente").eq("conversa_id", conversa.id).order("created_at", { ascending: false }).limit(MAX_HISTORICO),
-      supabase.from("prompts_agentes").select("prompt_sistema,prompt_contexto,temperatura,max_tokens,menu_boas_vindas").eq("agente_tipo", agente_tipo).eq("ativo", true).single(),
+      supabase.from("prompts_agentes").select("prompt_sistema,prompt_contexto,temperatura,max_tokens,menu_boas_vindas,updated_at").eq("agente_tipo", agente_tipo).eq("ativo", true).single(),
     ]);
     const historico = (hist || []).reverse().map((m: { conteudo: string; remetente: string }) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
     if (!prompt) throw new Error("Prompt nao encontrado para: " + agente_tipo);
@@ -2151,6 +2213,18 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
 
     // 6. Contexto RAG
     let contextRAG = "";
+    // PLANO-023: o contexto é montado como uma lista de blocos nomeados, e `contextRAG` é
+    // derivado dela (mesma ordem, mesmos separadores) logo antes do prompt final. A mesma lista
+    // alimenta o registro de consumo (`ai_usage_logs.blocos_contexto`) — o que é registrado nunca
+    // diverge do que foi enviado. Cada branch abaixo começa com `reiniciarBlocos(...)`, que faz o
+    // papel do antigo `contextRAG = contextServicos` (S-WM-51) e nunca apaga o bloco de serviços
+    // por engano.
+    const blocosContexto: { nome: string; texto: string }[] = [];
+    const adicionarBloco = (nome: string, texto: string) => { if (texto) blocosContexto.push({ nome, texto }); };
+    const reiniciarBlocos = (comServicos: boolean) => {
+      blocosContexto.length = 0;
+      if (comServicos) adicionarBloco("servicos_rede", contextServicos);
+    };
     // S-WM-AUD-007 / Plano 012: os pontos abaixo SO escrevem nesta variavel — nenhum deles muda
     // `contextRAG`, condicao ou fluxo. O insert acontece uma unica vez, no fim do Passo 6.5.
     // Default `nao_aplicavel`: turno que nao chega a fazer busca de atividade (handover,
@@ -2172,10 +2246,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // no-op no tráfego real. Carregado 1x, ANTES da cadeia if/else abaixo, porque é pequeno
     // (algumas linhas — padrão comum + exceções por unidade) e relevante com ou sem unidade
     // conhecida, ao contrário de monthly_program/resumo_rede que são mutuamente exclusivos entre
-    // si. Cada branch da cadeia abaixo inicializa contextRAG com este valor (nunca "") antes de
-    // somar seu próprio conteúdo — nenhum branch pode usar "contextRAG = ..." direto sem antes
-    // passar por "contextRAG = contextServicos", senão sobrescreve este bloco em silêncio (a
-    // primeira escrita de cada branch sempre foi atribuição, não concatenação).
+    // si. Cada branch da cadeia abaixo começa com `reiniciarBlocos(true)` (PLANO-023; antes era
+    // "contextRAG = contextServicos"), que recoloca este bloco antes do conteúdo do branch — só o
+    // branch de agentes sem programação usa `reiniciarBlocos(false)`, como antes.
     const servicosRedeConteudo = isAgenteProgramacao ? await carregarServicosRede(supabase) : "";
     const contextServicos = servicosRedeConteudo ? "\n\n--- SERVICOS DA REDE (comuns + excecoes por unidade) ---\n" + servicosRedeConteudo : "";
     const ultimaMsgAgente = [...historico].reverse().find((m) => m.role === 'assistant');
@@ -2242,9 +2315,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // S-WM-51: contextRAG inicializado com contextServicos (nunca "" direto) — ver comentário
       // na declaração de contextServicos, acima. Sem isso, "if (conteudoPrograma)" falso (mês sem
       // programação carregada) deixaria contextRAG em "" de novo, perdendo o bloco de serviços.
-      contextRAG = contextServicos;
+      reiniciarBlocos(true);
       if (conteudoPrograma) {
-        contextRAG += "\n\n--- PROGRAMACAO MENSAL ATUAL (" + unidadeEfetiva + ") ---" + instrucaoArea + "\n" + conteudoPrograma;
+        adicionarBloco("programacao_completa", "\n\n--- PROGRAMACAO MENSAL ATUAL (" + unidadeEfetiva + ") ---" + instrucaoArea + "\n" + conteudoPrograma);
         // @qa FAIL-2: este e o caminho MAIS COMUM do Institucional (carrega os 85-137 chunks da
         // unidade direto, sem embedding) e nao era contado como camada nenhuma — o turno virava
         // `nao_aplicavel`, e a metrica diria que quase nao ha RAG acontecendo.
@@ -2261,7 +2334,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       if (trocaComPedidoEspecifico || trocouUnidade) {
         const conteudoAtividadeEspecifica = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
         if (conteudoAtividadeEspecifica) {
-          contextRAG += "\n\n--- ATIVIDADE ESPECIFICA (dado exato) ---\n" + conteudoAtividadeEspecifica;
+          adicionarBloco("atividade_especifica", "\n\n--- ATIVIDADE ESPECIFICA (dado exato) ---\n" + conteudoAtividadeEspecifica);
           // Sobrescreve `programacao_completa` de proposito: quando a camada deterministica
           // respondeu, e ELA a fonte do dado exato — o resumo geral e so pano de fundo.
           logRAG = { camada: "deterministica_metadata" };
@@ -2276,7 +2349,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_limite: 3,
       });
       if (chunksEventos && chunksEventos.length > 0) {
-        contextRAG += "\n\n--- EVENTOS E FAQ ---\n" + formatarChunks(chunksEventos);
+        adicionarBloco("eventos_faq", "\n\n--- EVENTOS E FAQ ---\n" + formatarChunks(chunksEventos));
         // So marca vetorial se a camada deterministica nao tiver respondido antes — o que manda
         // e a fonte da ATIVIDADE, nao o complemento de eventos.
         if (logRAG.camada === "nao_aplicavel") logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksEventos) };
@@ -2303,9 +2376,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       else if (conteudoAtividade) logRAG = { camada: "deterministica_texto" };
       // S-WM-51: mesma inicialização com contextServicos que o branch anterior — ver comentário
       // na declaração de contextServicos.
-      contextRAG = contextServicos;
+      reiniciarBlocos(true);
       if (conteudoAtividade) {
-        contextRAG += "\n\n--- CONTEXTO (atividade especifica) ---\n" + conteudoAtividade;
+        adicionarBloco("atividade_contexto", "\n\n--- CONTEXTO (atividade especifica) ---\n" + conteudoAtividade);
       } else {
         const embedding = await gerarEmbedding(textoFinal, openaiKey);
         const { data: chunksPrograma } = await supabase.rpc("buscar_chunks_similares", {
@@ -2318,7 +2391,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         // "o GPT respondeu errado" e "a busca nao trouxe o chunk certo" eram indistinguiveis no log.
         console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
         if (chunksPrograma && chunksPrograma.length > 0) {
-          contextRAG += "\n\n--- CONTEXTO ---\n" + formatarChunks(chunksPrograma);
+          adicionarBloco("contexto_vetorial", "\n\n--- CONTEXTO ---\n" + formatarChunks(chunksPrograma));
           logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksPrograma) };
         } else {
           logRAG = { camada: "sem_match_rag" };
@@ -2345,10 +2418,10 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_limite: 5,
       });
       console.log("[motor-agente v18] perguntaGeralAtiva: resumo_rede " + (resumoRede ? "carregado" : "ausente") + ", " + (chunksFaq?.length ?? 0) + " chunks FAQ");
-      const blocosRede: string[] = [];
-      if (resumoRede) blocosRede.push("--- RESUMO DA REDE (atividades por unidade) ---\n" + resumoRede);
+      const blocosRede: { nome: string; texto: string }[] = [];
+      if (resumoRede) blocosRede.push({ nome: "resumo_rede", texto: "--- RESUMO DA REDE (atividades por unidade) ---\n" + resumoRede });
       if (chunksFaq && chunksFaq.length > 0) {
-        blocosRede.push("--- CONTEXTO (FAQ) ---\n" + formatarChunks(chunksFaq));
+        blocosRede.push({ nome: "faq", texto: "--- CONTEXTO (FAQ) ---\n" + formatarChunks(chunksFaq) });
         logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksFaq) };
       } else if (resumoRede) {
         // @qa FAIL-3: resumo_rede presente e nenhum chunk de FAQ — o turno USOU o resumo como
@@ -2359,8 +2432,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         logRAG = { camada: "sem_match_rag" };
       }
       // S-WM-51: mesma inicialização com contextServicos dos outros 2 branches.
-      contextRAG = contextServicos;
-      if (blocosRede.length > 0) contextRAG += "\n\n" + blocosRede.join("\n\n");
+      reiniciarBlocos(true);
+      // Mesmo texto de antes: "\n\n" + A + "\n\n" + B == ("\n\n" + A) + ("\n\n" + B).
+      for (const b of blocosRede) adicionarBloco(b.nome, "\n\n" + b.texto);
     } else {
       const fontes = RAG_FONTES_POR_AGENTE[agente_tipo] || ["FAQ"];
       const embedding = await gerarEmbedding(textoFinal, openaiKey);
@@ -2370,8 +2444,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         p_unidade_cuca: temUnidadeDefinida ? unidadeEfetiva : null,
         p_limite: 5,
       });
+      reiniciarBlocos(false);
       if (chunks && chunks.length > 0) {
-        contextRAG = "\n\n--- CONTEXTO ---\n" + formatarChunks(chunks);
+        adicionarBloco("contexto_vetorial", "\n\n--- CONTEXTO ---\n" + formatarChunks(chunks));
         logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunks) };
       }
     }
@@ -2383,8 +2458,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // story, AC5) ou mês corrente (AC3) — só os dois `if`s abaixo tocam `contextRAG`.
     if (temUnidadeDefinida && isAgenteProgramacao) {
       const diretivaVigenciaMes = await calcularDiretivaVigenciaMes(supabase, unidadeEfetiva as string);
-      if (diretivaVigenciaMes) contextRAG += diretivaVigenciaMes;
+      if (diretivaVigenciaMes) adicionarBloco("diretiva_vigencia", diretivaVigenciaMes);
     }
+    contextRAG = blocosContexto.map((b) => b.texto).join("");
 
     // S-WM-AUD-007 / Plano 012: UM insert por turno, aqui — nao um por ponto de busca (seriam 6).
     // Sem `await` de proposito: a latencia do insert nao pode entrar no tempo de resposta ao
@@ -2417,36 +2493,39 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     }
 
     // 10. Prompt final
-    const promptFinal = [
-      prompt.prompt_sistema, DATA_ATUAL, INSTRUCAO_SEGURANCA,
-      prompt.prompt_contexto || "", CONTEXTO_DISPARO, contextRAG,
-      "UNIDADE: " + (unidadeEfetiva || "Nao informada"),
+    // PLANO-023: cada parte tem nome — o texto enviado é a junção das partes (idêntico ao de
+    // antes), e os tamanhos vão para `ai_usage_logs.blocos_contexto`. `contextRAG` entra
+    // desmembrado nos blocos de `blocosContexto`, só no registro.
+    const partesPrompt: [string, string][] = [
+      ["prompt_sistema", prompt.prompt_sistema], ["data_atual", DATA_ATUAL], ["instrucao_seguranca", INSTRUCAO_SEGURANCA],
+      ["prompt_contexto", prompt.prompt_contexto || ""], ["contexto_disparo", CONTEXTO_DISPARO], ["contexto_rag", contextRAG],
+      ["unidade", "UNIDADE: " + (unidadeEfetiva || "Nao informada")],
       // TOM-04: regra genérica, sem dado do usuário — o dado (nome) vai isolado no turno
       // "user" (contextoNomeLead), sem diretiva junto. Separar dado de instrução fecha a
       // superfície de prompt injection (lead.nome é controlado pelo próprio usuário) e mantém
       // a regra comportamental no prompt de sistema, onde é seguida de forma confiável — uma
       // instrução de moderação num turno "user" antecipado, longe do ponto de geração, é
       // seguida com muito menos confiabilidade.
-      "Se o contexto informar o nome do lead, use-o com moderacao (1-2x, em momentos naturais da conversa).",
+      ["regra_nome", "Se o contexto informar o nome do lead, use-o com moderacao (1-2x, em momentos naturais da conversa)."],
       // S-WM-34 (VAL-23): trocaComPedidoEspecifico bifurca a instrução — resumo geral (comportamento
       // atual preservado, AC4) quando a troca foi "pelada" (só o nome da unidade ou pedido vago);
       // resposta direta ao pedido (sem resumo geral) quando a mensagem que trocou de unidade já
       // trazia um pedido específico junto (AC3) — o contexto de programação já foi carregado de
       // qualquer forma (conteudoPrograma, acima), então a resposta direta tem o dado disponível.
-      trocouUnidade && !trocaComPedidoEspecifico
+      ["instrucao_troca_unidade", trocouUnidade && !trocaComPedidoEspecifico
         ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade. Inicie com uma mensagem de transicao amigavel (ex: 'Claro! Vou te mostrar o que tem no [unidade] 😊') e apresente um resumo geral da programacao usando formato compacto."
-        : "",
-      trocouUnidade && trocaComPedidoEspecifico
+        : ""],
+      ["instrucao_troca_com_pedido", trocouUnidade && trocaComPedidoEspecifico
         ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade E ja fez um pedido especifico na mesma mensagem. Inicie com uma mensagem de transicao amigavel curta (ex: 'Claro! Vou verificar isso no [unidade] 😊') e responda DIRETAMENTE ao pedido especifico usando os dados disponiveis acima — programacao mensal e/ou o bloco '--- SERVICOS DA REDE (comuns + excecoes por unidade) ---' (se presente) — NAO apresente um resumo geral da programacao."
-        : "",
-      contextRAG.includes("ATIVIDADE ESPECIFICA") || contextRAG.includes("atividade especifica")
+        : ""],
+      ["instrucao_atividade", contextRAG.includes("ATIVIDADE ESPECIFICA") || contextRAG.includes("atividade especifica")
         ? "INSTRUCAO CRITICA: existe um bloco de atividade especifica com dado exato no contexto. Use esse bloco como fonte principal e liste TODAS as turmas/linhas compatíveis presentes nele. Nao resuma, nao escolha só algumas e nao omita opcoes. Preserve quando existir: categoria, titulo/modalidade, turma, professor/responsavel, dias, horario, vagas, sexo, faixa etaria/idade e local."
-        : "",
+        : ""],
       // VAL-07: para Institucional/maria, só dizer "primeira mensagem" quando for de fato
       // conversaGenuinamenteNova (não reabertura) — evita mandar essa instrução pro GPT numa
       // conversa retomada minutos depois. Outros agente_tipo (Sofia/Ouvidoria) continuam no
       // conversaJustCreated original, sem mudança — decisão sobre eles fica fora deste escopo.
-      (isAgenteProgramacao ? conversaGenuinamenteNova : conversaJustCreated) ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : "",
+      ["instrucao_primeira_mensagem", (isAgenteProgramacao ? conversaGenuinamenteNova : conversaJustCreated) ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : ""],
       // Achado 2026-07-24: CONTEXTO_DISPARO (acima) era só um fato passivo no meio do prompt,
       // sem nenhuma diretiva de uso — diferente dos outros blocos deste array, que sempre vêm
       // com uma INSTRUCAO explícita dizendo como reagir. Gated no mesmo `ultimoDisparo` de
@@ -2455,17 +2534,18 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // de `conversas` antes desta mensagem chegar (breadcrumb do disparo) — nesse caso
       // conversaGenuinamenteNova/conversaJustCreated já são false, então as duas nunca disparam
       // juntas pro mesmo turno.
-      ultimoDisparo
+      ["instrucao_disparo", ultimoDisparo
         ? "INSTRUCAO: O lead recebeu recentemente o aviso institucional citado em ULTIMO DISPARO. Reconheca isso de forma natural e breve na resposta (ex: 'Vi que voce recebeu nosso aviso sobre...') antes de seguir com o resto — NAO trate esta mensagem como se fosse a primeira interacao da conversa, mesmo que pareca uma saudacao."
-        : "",
+        : ""],
       // S-WM-32 (AC8, achado de Junior em teste ao vivo): pergunta de rede inteira sem unidade
       // ja gerou alucinacao silenciosa antes desta story ("tem curso de natacao?" respondido com
       // uma lista de modalidades sem fonte real verificavel) — vale tanto enquanto o
       // resumo_rede ainda nao existe/nao foi gerado quanto depois, se o resumo_rede ativo nao
       // cobrir a atividade perguntada. Reforco condicional (so quando perguntaGeralAtiva=true),
       // nao generico em INSTRUCAO_SEGURANCA, pra nao confundir respostas de 1 unidade especifica.
-      perguntaGeralAtiva ? "INSTRUCAO CRITICA: esta pergunta e sobre a rede CUCA inteira, sem unidade especifica. Use APENAS o bloco '--- RESUMO DA REDE ---' (se presente acima) e o '--- CONTEXTO (FAQ) ---' pra responder sobre quais unidades oferecem o que. Se a atividade perguntada NAO aparecer em nenhum desses blocos, NUNCA componha ou invente uma lista de atividades/modalidades — diga com suas proprias palavras que voce nao tem a programacao consolidada da rede toda pra essa pergunta especifica, e sugira ajudar escolhendo uma unidade." : "",
-    ].filter(Boolean).join("\n\n");
+      ["instrucao_pergunta_geral", perguntaGeralAtiva ? "INSTRUCAO CRITICA: esta pergunta e sobre a rede CUCA inteira, sem unidade especifica. Use APENAS o bloco '--- RESUMO DA REDE ---' (se presente acima) e o '--- CONTEXTO (FAQ) ---' pra responder sobre quais unidades oferecem o que. Se a atividade perguntada NAO aparecer em nenhum desses blocos, NUNCA componha ou invente uma lista de atividades/modalidades — diga com suas proprias palavras que voce nao tem a programacao consolidada da rede toda pra essa pergunta especifica, e sugira ajudar escolhendo uma unidade." : ""],
+    ];
+    const promptFinal = partesPrompt.map(([, texto]) => texto).filter(Boolean).join("\n\n");
 
     // TOM-04: o worker já captura e grava lead.nome (push_name do WhatsApp), mas esse dado
     // nunca chegava ao prompt do GPT. Aqui vai só o FATO, sem diretiva — a regra de como usar
@@ -2478,7 +2558,37 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     };
 
     // 11. GPT
-    const { texto: respostaGerada } = await chamarGPT(promptFinal, [contextoNomeLead, ...historico], openaiKey, prompt.temperatura, prompt.max_tokens);
+    // PLANO-023: tamanho (caracteres) de cada bloco que foi no prompt — mesma fonte que gerou o texto.
+    const blocosUso: Record<string, number> = {};
+    for (const [nome, texto] of partesPrompt) if (nome !== "contexto_rag" && texto) blocosUso[nome] = (blocosUso[nome] ?? 0) + texto.length;
+    for (const b of blocosContexto) blocosUso[b.nome] = (blocosUso[b.nome] ?? 0) + b.texto.length;
+    blocosUso.historico = [contextoNomeLead, ...historico].reduce((n, m) => n + m.content.length, 0);
+    const conversaIdUso = conversa?.id ?? null;
+    const registrarConsumo = (corpo: RespostaOpenAIUso, latenciaMs: number) => {
+      manterVivoAposResposta((async () => {
+        const u = corpo.usage ?? {};
+        const tokensPrompt = u.prompt_tokens ?? 0;
+        const tokensCached = u.prompt_tokens_details?.cached_tokens ?? 0;
+        const tokensCompletion = u.completion_tokens ?? 0;
+        const modelo = corpo.model ?? GPT_MODEL;
+        await registrarUsoLLM(supabase, {
+          agente_tipo,
+          feature: "chat",
+          modelo,
+          tokens_prompt: tokensPrompt,
+          tokens_completion: tokensCompletion,
+          tokens_prompt_cached: tokensCached,
+          custo_usd: calcularCustoUsd(modelo, tokensPrompt, tokensCached, tokensCompletion, await carregarPrecosOpenAI(supabase)),
+          conversa_id: conversaIdUso,
+          latencia_ms: latenciaMs,
+          prompt_versao: (prompt as { updated_at?: string | null }).updated_at ?? null,
+          blocos_contexto: blocosUso,
+          openai_request_id: corpo.id ?? null,
+          camada_rag: logRAG.camada,
+        });
+      })());
+    };
+    const { texto: respostaGerada } = await chamarGPT(promptFinal, [contextoNomeLead, ...historico], openaiKey, prompt.temperatura, prompt.max_tokens, 0, registrarConsumo);
     let resposta = respostaGerada;
     let handover = false; let encerrado = false;
     const avaliacaoHandover = removerTag(resposta, "handover");

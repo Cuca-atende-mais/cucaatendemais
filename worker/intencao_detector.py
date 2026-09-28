@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+from llm_usage import registrar_uso
 
 logger = logging.getLogger("intencao_detector")
 
@@ -102,6 +103,7 @@ class IntencaoDetector:
                 temperature=0.0,
                 max_tokens=30,
             )
+            registrar_uso(response, feature="intencao")  # PLANO-023: consumo em ai_usage_logs
             result = json.loads(response.choices[0].message.content)
             intencao = result.get("intencao", "ambiguo")
             if intencao not in _CATEGORIAS_VALIDAS:
@@ -230,6 +232,7 @@ async def _chamar_gpt_contextual(
         temperature=0.0,
         max_tokens=100,
     )
+    registrar_uso(response, feature="intencao")  # PLANO-023: consumo em ai_usage_logs
     return json.loads(response.choices[0].message.content)
 
 
