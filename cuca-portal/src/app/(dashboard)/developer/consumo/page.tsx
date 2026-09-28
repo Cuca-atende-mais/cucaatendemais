@@ -10,9 +10,14 @@ type UsageRow = {
     modelo: string
     agente_tipo: string
     tokens_total: number
-    custo_estimado_usd: number
+    // PLANO-023: custo real (modelo + cache). `custo_estimado_usd` é coluna gerada com preço fixo
+    // (US$ 5/15 por milhão) e superestima o gpt-4o-mini em ~30x — não é mais usada aqui.
+    custo_usd: number | string | null
     created_at: string
 }
+
+// PostgREST corta cada resposta em 1.000 linhas: o mês é lido em páginas até acabar.
+const PAGINA = 1000
 
 const FEATURE_LABEL: Record<string, string> = {
     chat: "Chat / Resposta IA",
@@ -20,6 +25,10 @@ const FEATURE_LABEL: Record<string, string> = {
     embedding: "Embedding (RAG)",
     sentiment: "Análise de Sentimento",
     ocr: "OCR / Documento",
+    matching: "Triagem de currículos",
+    intencao: "Detecção de intenção",
+    categorias: "Categorias da programação",
+    ouvidoria: "Ouvidoria (insights)",
 }
 
 export default function DevConsumoPage() {
@@ -33,12 +42,20 @@ export default function DevConsumoPage() {
     }, [])
 
     const fetchUsage = async () => {
-        const { data } = await supabase
-            .from("ai_usage_logs")
-            .select("feature, modelo, agente_tipo, tokens_total, custo_estimado_usd, created_at")
-            .gte("created_at", new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString())
-            .order("created_at", { ascending: false })
-        setRows(data || [])
+        const inicioMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+        const todas: UsageRow[] = []
+        for (let de = 0; ; de += PAGINA) {
+            const { data, error } = await supabase
+                .from("ai_usage_logs")
+                .select("feature, modelo, agente_tipo, tokens_total, custo_usd, created_at")
+                .gte("created_at", inicioMes)
+                .order("created_at", { ascending: false })
+                .range(de, de + PAGINA - 1)
+            if (error || !data) break
+            todas.push(...(data as UsageRow[]))
+            if (data.length < PAGINA) break
+        }
+        setRows(todas)
     }
 
     const fetchBudget = async () => {
@@ -46,13 +63,14 @@ export default function DevConsumoPage() {
         if (data) setBudget(parseFloat(data.valor))
     }
 
-    const totalCusto = rows.reduce((acc, r) => acc + (r.custo_estimado_usd || 0), 0)
+    const custoDe = (r: UsageRow) => Number(r.custo_usd) || 0
+    const totalCusto = rows.reduce((acc, r) => acc + custoDe(r), 0)
     const totalTokens = rows.reduce((acc, r) => acc + (r.tokens_total || 0), 0)
     const pctBudget = Math.min((totalCusto / budget) * 100, 100)
 
     const byFeature = rows.reduce((acc, r) => {
         const k = r.feature || "chat"
-        acc[k] = (acc[k] || 0) + (r.custo_estimado_usd || 0)
+        acc[k] = (acc[k] || 0) + custoDe(r)
         return acc
     }, {} as Record<string, number>)
 
@@ -68,7 +86,7 @@ export default function DevConsumoPage() {
         <div className="space-y-6 p-4 md:p-6">
             <div>
                 <h1 className="text-2xl font-bold flex items-center gap-2"><DollarSign className="h-6 w-6 text-primary" /> Consumo OpenAI</h1>
-                <p className="text-sm text-muted-foreground mt-1">Monitoramento de tokens e custo estimado no mês atual.</p>
+                <p className="text-sm text-muted-foreground mt-1">Tokens e custo real no mês atual. Ainda não entram: embeddings, transcrição de áudio e a triagem de unidade — o total aqui fica abaixo da fatura da OpenAI.</p>
             </div>
 
             {/* Cards Totais */}
