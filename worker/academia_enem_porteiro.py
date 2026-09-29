@@ -101,10 +101,51 @@ def classificar_resposta(mensagem: str) -> str | None:
     return None
 
 
-def origem_da_resposta(mensagem: str) -> str:
-    """Botão do template ou texto digitado (AC1/AC3)."""
+def origem_da_resposta(mensagem: str, botao: dict | None = None) -> str:
+    """Botão do template ou texto digitado (AC1/AC3).
+
+    PLANO-024: com a informação do webhook (`botao`), a origem vem do TIPO da mensagem — "Sim,
+    eu vou!" digitado à mão é texto. Sem ela (chamadores antigos), mantém a comparação por texto.
+    """
+    if botao is not None:
+        return ORIGEM_BOTAO if clique_de_presenca(botao) else ORIGEM_TEXTO
     texto = _sem_acento(mensagem or "")
     return ORIGEM_BOTAO if texto in (BOTAO_CONFIRMA, BOTAO_RECUSA) else ORIGEM_TEXTO
+
+
+def clique_de_presenca(botao: dict | None) -> str | None:
+    """PLANO-024: `confirmou`/`nao_vai` se a mensagem foi CLIQUE no botão de confirmar/recusar do
+    template da campanha; None para texto digitado ou clique em qualquer outro botão.
+
+    Confere o identificador do botão (`payload`/`id`, o que o template define) e o rótulo — na
+    quick reply de template a Meta manda os dois iguais (S-AE-CONF-02).
+    """
+    if not botao:
+        return None
+    for valor in (botao.get("id"), botao.get("texto")):
+        v = _sem_acento(valor or "")
+        if v == BOTAO_CONFIRMA:
+            return RESPOSTA_CONFIRMOU
+        if v == BOTAO_RECUSA:
+            return RESPOSTA_NAO_VAI
+    return None
+
+
+# PLANO-024: textos aprovados em 28/09/2026 (Junior + sócio). Editáveis por campanha em
+# `configuracoes.academia_enem_confirmacao` (`texto_confirmou`, `texto_recusou`, `evento_nome`).
+TEXTO_CONFIRMOU_PADRAO = "Presença confirmada! ✅ Te esperamos no {evento}. Se tiver qualquer dúvida, é só mandar aqui. 😊"
+TEXTO_RECUSOU_PADRAO = "Tudo bem, obrigado por avisar! 💙 Se mudar de ideia ou quiser saber das próximas oportunidades, é só chamar aqui."
+
+
+def texto_resposta_clique(cfg: dict, resposta: str) -> str:
+    """Texto fixo para o clique. Sem `evento_nome` configurado, o convite fica genérico."""
+    if resposta == RESPOSTA_CONFIRMOU:
+        modelo = (cfg or {}).get("texto_confirmou") or TEXTO_CONFIRMOU_PADRAO
+        evento = (cfg or {}).get("evento_nome")
+        if "{evento}" in modelo and not evento:
+            modelo = modelo.replace(" no {evento}", "").replace("{evento}", "evento")
+        return modelo.replace("{evento}", evento or "")
+    return (cfg or {}).get("texto_recusou") or TEXTO_RECUSOU_PADRAO
 
 
 def carregar_config(supabase) -> dict | None:
@@ -195,7 +236,8 @@ def _resolver_lead_da_campanha(supabase, cfg: dict, telefone: str, contexto: str
     return {"lead_id": lead_id, "telefone": candidatos.get(lead_id), "lote": lote}
 
 
-def registrar_resposta(supabase, *, lead_id_respondente: str, telefone: str, mensagem: str) -> dict | None:
+def registrar_resposta(supabase, *, lead_id_respondente: str, telefone: str, mensagem: str,
+                       botao: dict | None = None) -> dict | None:
     """Anota a resposta de quem é da campanha. Devolve a linha gravada, ou None."""
     # Classificação PRIMEIRO, de propósito: é a única etapa que não toca no banco, e descarta a
     # maioria esmagadora do tráfego do Institucional ("bom dia", áudio, foto — ~460 mensagens de
@@ -226,7 +268,7 @@ def registrar_resposta(supabase, *, lead_id_respondente: str, telefone: str, men
         "lead_respondente_id": lead_id_respondente,
         "lote": achado["lote"],
         "resposta": resposta,
-        "origem": origem_da_resposta(mensagem),
+        "origem": origem_da_resposta(mensagem, botao),
         "mensagem": mensagem,
         "telefone_convite": achado["telefone"],
         "telefone_resposta": telefone,
@@ -283,7 +325,8 @@ def pergunta_horario(mensagem: str) -> bool:
     return any(re.search(padrao, texto) for padrao in _PADROES_HORARIO)
 
 
-def processar_mensagem_campanha(supabase, *, lead_id_respondente: str, telefone: str, mensagem: str) -> dict | None:
+def processar_mensagem_campanha(supabase, *, lead_id_respondente: str, telefone: str, mensagem: str,
+                                botao: dict | None = None) -> dict | None:
     """Ponto de entrada único do porteiro, usado pelo inbound.
 
     - Resposta de presença (sim/não) → anota e devolve `{"anotou": ...}`; o atendimento segue
@@ -294,8 +337,18 @@ def processar_mensagem_campanha(supabase, *, lead_id_respondente: str, telefone:
     """
     anotado = registrar_resposta(
         supabase, lead_id_respondente=lead_id_respondente, telefone=telefone, mensagem=mensagem,
+        botao=botao,
     )
     if anotado:
+        # PLANO-024: clique no botão de confirmar/recusar → texto fixo, sem chamar a IA. Só depois
+        # de a presença ter sido GRAVADA (registrar_resposta já fez o upsert; se falhar, levanta e
+        # o inbound segue para o agente como antes). Texto digitado ("Sim, eu vou!" à mão, "sim,
+        # mas posso chegar atrasado?") não entra aqui e continua indo ao agente. O envio acontece
+        # no inbound, depois dos guards de awaiting_human/bloqueio/opt-out.
+        clique = clique_de_presenca(botao)
+        if clique:
+            logger.info("[AE-porteiro] Clique %r de %s respondido com texto fixo (sem IA)", clique, telefone)
+            return {"anotou": anotado, "responder": texto_resposta_clique(carregar_config(supabase) or {}, clique)}
         return {"anotou": anotado}
 
     if not pergunta_horario(mensagem):
