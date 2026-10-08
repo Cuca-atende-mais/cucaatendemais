@@ -2,20 +2,23 @@ import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { exigirPermissao } from "@/lib/rbac/exigir-permissao-servidor"
 import { aplicarStatusCandidatura } from "@/lib/empregabilidade/aplicar-status-candidatura"
+import { ehStatusEditavel } from "@/lib/empregabilidade/status-candidatura"
 
-// Rejeita a candidatura e devolve a pessoa ao Banco de Talentos pela regra compartilhada da S-EMP-GES-01
-// (telefone normalizado, sem duplicar cadastro, sem apagar habilidades, protegendo quem está em processo).
-// S-EMP-GES-01 AC16: antes desta story a rota rodava sem checar usuário.
+// S-EMP-GES-01: mudança de status pela tela do candidato, pela mesma regra da tela Feedback.
+// Permissão igual à de escrita em `candidaturas` hoje (policy com `empreg_banco_cv`).
 export async function POST(
-    _request: NextRequest,
+    request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
     const permissao = await exigirPermissao("empreg_banco_cv", "update")
     if (!permissao.ok) return permissao.resposta
 
     const { id: candidaturaId } = await params
+    const body = await request.json().catch(() => ({}))
+    if (!ehStatusEditavel(body?.status)) {
+        return NextResponse.json({ error: "Status inválido." }, { status: 400 })
+    }
 
-    // Só age sobre candidatura que o usuário enxerga pela RLS de leitura.
     const { data: visivel } = await permissao.supabase
         .from("candidaturas")
         .select("id")
@@ -23,7 +26,7 @@ export async function POST(
         .maybeSingle()
     if (!visivel) return NextResponse.json({ error: "Candidatura não encontrada." }, { status: 404 })
 
-    const resultado = await aplicarStatusCandidatura(createAdminClient(), candidaturaId, "rejeitado")
+    const resultado = await aplicarStatusCandidatura(createAdminClient(), candidaturaId, body.status)
     if (!resultado.ok) return NextResponse.json({ error: resultado.erro }, { status: 500 })
-    return NextResponse.json({ ok: true, talento: resultado.talento, motivo: resultado.motivo })
+    return NextResponse.json({ ok: true, talento: resultado.talento })
 }

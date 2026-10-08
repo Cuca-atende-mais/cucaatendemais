@@ -31,6 +31,7 @@ import toast from "react-hot-toast"
 import { ACOES_CRUD, GRUPOS_PROGRAMACAO_MENSAL, type CampoPermissao, type GrupoPermissao } from "@/lib/rbac/catalogo-programacao-mensal"
 import { GRUPOS_PROGRAMACAO_PONTUAL } from "@/lib/rbac/catalogo-programacao-pontual"
 import { GRUPOS_DIVULGACAO_RAG_GLOBAL, completarVerDivulgacao } from "@/lib/rbac/catalogo-divulgacao-rag-global"
+import { GRUPOS_EMPREGABILIDADE_GESTAO } from "@/lib/rbac/catalogo-empregabilidade-gestao"
 import { limitarAcoes, linhaCompleta, marcarCampo, marcarLinha } from "@/lib/rbac/matriz-permissoes"
 import { Skeleton } from "@/components/ui/skeleton"
 
@@ -90,6 +91,8 @@ const MODULE_GROUPS: GrupoPermissao[] = [
             { id: 'empreg_curriculos', label: 'Empregabilidade: Criar / Editar Currículo' },
         ]
     },
+    // EMP-GES: permissões detalhadas do Emprega+, nascendo desmarcadas.
+    ...GRUPOS_EMPREGABILIDADE_GESTAO,
     {
         category: 'Academia Enem',
         modules: [
