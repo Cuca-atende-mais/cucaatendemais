@@ -126,16 +126,17 @@ export default function EmpresasPage() {
                 handleCloseDialog()
             }
         } else {
-            // Criar
-            const { error } = await supabase
-                .from("empresas")
-                .insert({
-                    ...formData
-                })
+            // Criar — S-EMP-GES-01 (AC15): pela rota de servidor, com contato obrigatório.
+            const res = await fetch("/api/empregabilidade/empresa", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(formData),
+            })
+            const data = await res.json().catch(() => ({}))
 
-            if (error) {
-                console.error("Erro ao criar empresa:", error)
-                toast.error("Erro ao criar empresa. Verifique se o CNPJ já existe.")
+            if (!res.ok) {
+                console.error("Erro ao criar empresa:", data.error)
+                toast.error(data.error || "Erro ao criar empresa.")
             } else {
                 toast.success("Empresa criada com sucesso!")
                 fetchEmpresas()
@@ -384,9 +385,10 @@ export default function EmpresasPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="email">E-mail</Label>
+                                    <Label htmlFor="email">E-mail{!editingEmpresa && " *"}</Label>
                                     <Input
                                         id="email"
+                                        required={!editingEmpresa}
                                         type="email"
                                         value={formData.email}
                                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -394,9 +396,10 @@ export default function EmpresasPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="telefone">Telefone</Label>
+                                    <Label htmlFor="telefone">Telefone{!editingEmpresa && " *"}</Label>
                                     <Input
                                         id="telefone"
+                                        required={!editingEmpresa}
                                         value={formData.telefone}
                                         onChange={(e) => setFormData({ ...formData, telefone: e.target.value })}
                                         placeholder="(85) 99999-9999"
@@ -430,9 +433,10 @@ export default function EmpresasPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2 md:col-span-2">
-                                    <Label htmlFor="contato_responsavel">Contato Responsável (Nome)</Label>
+                                    <Label htmlFor="contato_responsavel">Contato Responsável (Nome){!editingEmpresa && " *"}</Label>
                                     <Input
                                         id="contato_responsavel"
+                                        required={!editingEmpresa}
                                         value={formData.contato_responsavel}
                                         onChange={(e) => setFormData({ ...formData, contato_responsavel: e.target.value })}
                                         placeholder="Nome do RH ou responsável"

@@ -175,6 +175,13 @@ _ETAPA_ANTERIOR = {
 }
 _RESPOSTAS_ENTREVISTA_BINARIA = ("sim", "s", "não", "nao", "n", "✅", "❌")
 _CONFIRMA_ENTREVISTA = ("sim", "s", "✅")
+
+
+def _confirmacao_presenca_selecao_ativa() -> bool:
+    """S-EMP-GES-01 (D3, 2026-10-08): a resposta automática de SIM/NÃO para quem está "selecionado" numa
+    seleção fica pausada — o candidato aguarda a empresa se comunicar. Religar = definir
+    EMPREG_CONFIRMACAO_PRESENCA_SELECAO_ATIVA=true no cuca-worker; ausente ou outro valor mantém pausado."""
+    return os.getenv("EMPREG_CONFIRMACAO_PRESENCA_SELECAO_ATIVA", "").strip().lower() == "true"
 _ETAPAS_NOTIFY_PORTAL = (
     "aguardando_retorno_vaga",
     "aguardando_retorno_edicao",
@@ -5841,7 +5848,7 @@ async def _processar_mensagem_empregabilidade_locked(
     # Só intercepta quando fluxo está vazio e resposta é exatamente SIM ou NÃO/NAO.
     # Risco de falso positivo é mínimo pois exige candidatura selecionada com cargo_escolhido.
     t_conf = texto.strip().lower()
-    if not fluxo and t_conf in _RESPOSTAS_ENTREVISTA_BINARIA:
+    if not fluxo and t_conf in _RESPOSTAS_ENTREVISTA_BINARIA and _confirmacao_presenca_selecao_ativa():
         tel_limpo = re.sub(r"\D", "", phone)
         if tel_limpo.startswith("55") and len(tel_limpo) > 11:
             tel_limpo = tel_limpo[2:]

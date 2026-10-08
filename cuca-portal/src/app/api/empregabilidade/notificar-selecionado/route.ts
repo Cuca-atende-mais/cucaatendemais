@@ -1,8 +1,19 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { exigirPermissao } from "@/lib/rbac/exigir-permissao-servidor"
+import { avisoSelecionadoAtivo } from "@/lib/empregabilidade/status-candidatura"
 
 // S16-05: Enviar WhatsApp ao candidato aprovado
+// S-EMP-GES-01: exige sessão e permissão (AC16) e fica pausado por padrão (AC9 / D3) — o candidato
+// fica como "selecionado" aguardando a empresa se comunicar.
 export async function POST(request: Request) {
+    const permissao = await exigirPermissao("empreg_banco_cv", "update")
+    if (!permissao.ok) return permissao.resposta
+
+    if (!avisoSelecionadoAtivo()) {
+        console.info("[notificar-selecionado] Aviso ao candidato pausado (EMPREG_NOTIFICAR_SELECIONADO_ATIVO != true). Nada enviado.")
+        return NextResponse.json({ ok: true, enviado: false, pausado: true })
+    }
+
     try {
         const { candidatura_id, nome, titulo_vaga, unidade_cuca } = await request.json()
 
@@ -10,7 +21,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "Faltam parâmetros" }, { status: 400 })
         }
 
-        const supabase = await createClient()
+        const supabase = permissao.supabase
 
         // S29-08: busca telefone, nome e cargo diretamente do banco (pode ter sido preenchido pelo OCR)
         const { data: cand } = await supabase
@@ -74,7 +85,7 @@ export async function POST(request: Request) {
             throw new Error(`Worker retornou erro: ${err}`)
         }
 
-        return NextResponse.json({ ok: true })
+        return NextResponse.json({ ok: true, enviado: true })
     } catch (error: any) {
         console.error("Erro S16-05:", error)
         return NextResponse.json({ ok: false, error: error.message }, { status: 500 })

@@ -7982,3 +7982,73 @@ class TestLoopsConfirmacaoProducao:
 
         assert estado["etapa"] == "oferecendo_atendente_humano"
         assert "atendente" in _isola_enviar.call_args.args[3].lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-GES-01 (D3) — resposta automática SIM/NÃO de seleção pausada por padrão
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestConfirmacaoPresencaSelecaoPausada:
+
+    def _mocks(self, monkeypatch):
+        # Fluxo realmente vazio: é a única condição em que o interceptador SQS-49 age.
+        monkeypatch.setattr(emp, "_get_fluxo", lambda conversa_id: {})
+        monkeypatch.setattr(emp, "_set_fluxo", lambda conversa_id, novo: None)
+
+        mock_conversas = MagicMock()
+        mock_conversas.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "metadata": {}
+        }
+        mock_candidaturas = MagicMock()
+        # Sem convite_enviado pendente (interceptador :5700 não age).
+        sel_eq_eq = mock_candidaturas.select.return_value.eq.return_value.eq.return_value
+        sel_eq_eq.execute.return_value.data = []
+        # Candidatura de seleção "selecionado" com cargo e presença nula (alvo do interceptador SQS-49).
+        (sel_eq_eq.not_.is_.return_value.is_.return_value.order.return_value.limit.return_value
+            .execute.return_value.data) = [{"id": "cand-ev", "cargo_escolhido": "Vendedor", "confirmacao_presenca": None}]
+        mock_sb = _mock_sb_multi_tabela({
+            "conversas": mock_conversas,
+            "candidaturas": mock_candidaturas,
+        })
+        monkeypatch.setattr(emp, "supabase", mock_sb)
+
+        import intencao_detector  # noqa: PLC0415
+        monkeypatch.setattr(intencao_detector, "avaliar_mensagem_contextual", AsyncMock(return_value={"intencao": "indefinida"}))
+        monkeypatch.setattr(emp, "_ultima_mensagem_bot_async", AsyncMock(return_value=None))
+        monkeypatch.setattr(emp, "_log_intencao_async", AsyncMock())
+        rotear = AsyncMock()
+        monkeypatch.setattr(emp, "_rotear_por_intencao", rotear)
+        return mock_candidaturas, rotear
+
+    def test_flag_desligada_por_padrao(self, monkeypatch):
+        monkeypatch.delenv("EMPREG_CONFIRMACAO_PRESENCA_SELECAO_ATIVA", raising=False)
+        assert emp._confirmacao_presenca_selecao_ativa() is False
+        monkeypatch.setenv("EMPREG_CONFIRMACAO_PRESENCA_SELECAO_ATIVA", "false")
+        assert emp._confirmacao_presenca_selecao_ativa() is False
+        monkeypatch.setenv("EMPREG_CONFIRMACAO_PRESENCA_SELECAO_ATIVA", " TRUE ")
+        assert emp._confirmacao_presenca_selecao_ativa() is True
+
+    @pytest.mark.asyncio
+    async def test_pausado_sim_segue_fluxo_normal_sem_gravar_presenca(self, monkeypatch, _isola_enviar):
+        monkeypatch.delenv("EMPREG_CONFIRMACAO_PRESENCA_SELECAO_ATIVA", raising=False)
+        mock_candidaturas, rotear = self._mocks(monkeypatch)
+
+        await emp.processar_mensagem_empregabilidade(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra", "Fulano",
+        )
+
+        for chamada in mock_candidaturas.update.call_args_list:
+            assert "confirmacao_presenca" not in chamada.args[0]
+        rotear.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_religado_sim_grava_presenca_como_antes(self, monkeypatch, _isola_enviar):
+        monkeypatch.setenv("EMPREG_CONFIRMACAO_PRESENCA_SELECAO_ATIVA", "true")
+        mock_candidaturas, rotear = self._mocks(monkeypatch)
+
+        await emp.processar_mensagem_empregabilidade(
+            "sim", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra", "Fulano",
+        )
+
+        mock_candidaturas.update.assert_called_once_with({"confirmacao_presenca": "confirmado"})
+        rotear.assert_not_awaited()

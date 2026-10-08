@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
+import { mensagemRejeicao } from "@/lib/empregabilidade/status-candidatura"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -199,6 +200,16 @@ export default function CandidatoDetalhesPage() {
         }
     }
 
+    const mudarStatusNoServidor = async (novoStatus: string) => {
+        const res = await fetch(`/api/empregabilidade/candidaturas/${candidaturaId}/status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: novoStatus }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.error || "Erro ao atualizar o status")
+    }
+
     const alterarStatus = async (novoStatus: string) => {
         // Rejeição sempre passa pela API para popular o banco de talentos
         if (novoStatus === 'rejeitado') {
@@ -207,22 +218,9 @@ export default function CandidatoDetalhesPage() {
         }
         setSalvandoStatus(true)
         try {
-            const { error } = await supabase
-                .from("candidaturas")
-                .update({ status: novoStatus, updated_at: new Date().toISOString() })
-                .eq("id", candidaturaId)
-            if (error) throw error
+            // S-EMP-GES-01: mesma regra da tela Feedback (status + reflexo no Banco de Talentos).
+            await mudarStatusNoServidor(novoStatus)
             setCandidatura((prev: any) => ({ ...prev, status: novoStatus }))
-
-            // Sincronizar status no talent_bank pelo telefone da candidatura
-            const telefone = candidatura?.telefone
-            if (telefone) {
-                const tbStatus = novoStatus === "contratado" ? "contratado" : "selecionado"
-                await supabase
-                    .from("talent_bank")
-                    .update({ status: tbStatus, updated_at: new Date().toISOString() })
-                    .eq("telefone", telefone)
-            }
 
             // Invalidar cache TB desta vaga para forçar reload na próxima visita
             try { localStorage.removeItem(`talent_triagem_${vagaId}`) } catch {}
@@ -252,22 +250,10 @@ export default function CandidatoDetalhesPage() {
     const aprovarCandidato = async () => {
         setAprovando(true)
         try {
-            const { error } = await supabase
-                .from("candidaturas")
-                .update({ status: "selecionado", updated_at: new Date().toISOString() })
-                .eq("id", candidaturaId)
-            if (error) throw error
+            await mudarStatusNoServidor("selecionado")
             setCandidatura((prev: any) => ({ ...prev, status: "selecionado" }))
 
-            // Sincronizar status no talent_bank
-            if (candidatura?.telefone) {
-                await supabase
-                    .from("talent_bank")
-                    .update({ status: "selecionado", updated_at: new Date().toISOString() })
-                    .eq("telefone", candidatura.telefone)
-            }
-
-            // Notificar candidato via WhatsApp
+            // Notificar candidato via WhatsApp (pausado por padrão — S-EMP-GES-01 D3)
             const res = await fetch("/api/empregabilidade/notificar-selecionado", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -281,8 +267,10 @@ export default function CandidatoDetalhesPage() {
             const data = await res.json()
             // Invalidar cache TB desta vaga para forçar reload na próxima visita
             try { localStorage.removeItem(`talent_triagem_${vagaId}`) } catch {}
-            if (data.ok) {
+            if (data.ok && data.enviado) {
                 toast.success("Candidato aprovado e notificado por WhatsApp!")
+            } else if (data.ok) {
+                toast.success("Candidato aprovado! Ele fica como selecionado aguardando o contato da empresa.")
             } else {
                 toast.success("Candidato aprovado! " + (data.motivo || "WhatsApp não enviado."))
             }
@@ -301,7 +289,7 @@ export default function CandidatoDetalhesPage() {
             })
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || "Erro ao rejeitar candidato")
-            toast.success("Candidato rejeitado e adicionado ao Banco de Talentos!")
+            toast.success(mensagemRejeicao(data.talento, data.motivo))
             router.push(`/empregabilidade/vagas/${vagaId}?t=${Date.now()}`)
         } catch (err: any) {
             toast.error("Erro: " + err.message)
