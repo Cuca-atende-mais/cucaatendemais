@@ -24,6 +24,11 @@ import {
   handler,
   deveReconhecerDisparoRecente,
   deveAcionarHandoverInstitucional,
+  resolverDigitoPelaListaDoAgente,
+  textoUltimoBlocoAgente,
+  palavrasChaveProgramacao,
+  extrairItensProgramacao,
+  montarBlocoProgramacaoRede,
 } from "./index.ts";
 
 // ── Mock mínimo e encadeável do client Supabase, usado pelos testes AUD-04 abaixo ───────────
@@ -1393,87 +1398,90 @@ Deno.test("S-WM-49 VAL-20: handler repassa histórico ao avaliarSelecaoUnidade e
   assertStringIncludes(promptClassificador, "Mensagem do lead: é sim");
 });
 
-Deno.test("S-WM-32 AC2/AC3: pergunta de rede na 1ª mensagem carrega resumo_rede + FAQ, nunca monthly_program/eventos_pontuais sem unidade", async () => {
-  const chamadas: ChamadaRegistrada[] = [];
-  const respostas = respostasBaseHandler({});
-  respostas["documentos_rag"] = { data: { id: "doc-resumo-rede", conteudo: "Natação: Cuca Barra, Cuca Mondubim" } };
-  // FAQ precisa vir com conteúdo real no mock — senão a asserção de "FAQ combinado" passaria
-  // por acidente batendo só no texto da instrução de honestidade (que também cita o nome do
-  // bloco "CONTEXTO (FAQ)"), não no bloco de fato. Achado durante mutation testing desta Task.
+// Achado 2026-10-09: o contrato do S-WM-32 mudou — pergunta de rede sem unidade NÃO usa mais o
+// resumo_rede (documento à parte, ficou com dado de julho em outubro). A fonte de programação é
+// só o monthly_program ativo de cada unidade, filtrado pelas palavras da pergunta.
+const PROGRAMACAO_MONDUBIM_TESTE = "PROGRAMAÇÃO MENSAL DE OUTUBRO DE 2026 — Cuca Mondubim\n== CURSOS ==\n• Curso de Libras Básico II\n  Detalhes: Curso: Curso de Libras Básico II. Educador: Surdan. Vagas: 15. Período: 07/10/2026 a 30/10/2026 (Qua e Sex). Horário: 09:00 às 12:00. Ementa: texto longo. A quantidade de vagas muda com frequencia; oriente a pessoa a procurar a unidade CUCA para verificar a disponibilidade.\n  Horário: 09:00:00 às 12:00:00\n• Violão Fácil\n  Detalhes: Curso: Violão Fácil. Educador: X. Horário: 09:00 às 12:00.\n";
+const PROGRAMACAO_BARRA_TESTE = "PROGRAMAÇÃO MENSAL DE OUTUBRO DE 2026 — Cuca Barra\n== ESPORTES ==\n• JUDÔ\n  Detalhes: Esporte Modalidade: JUDÔ - Turma TURMA 1. Dias: Ter e Qui. Horário: 18:00 às 19:00.\n";
+
+function respostasRedeComMonthlyProgram(metadata: Record<string, unknown>): Record<string, RespostaSupabaseMock> {
+  const respostas = respostasBaseHandler(metadata);
+  respostas["documentos_rag"] = { data: [
+    { unidade_cuca: "Cuca Mondubim", conteudo: PROGRAMACAO_MONDUBIM_TESTE, tipo: "monthly_program" },
+    { unidade_cuca: "Cuca Barra", conteudo: PROGRAMACAO_BARRA_TESTE, tipo: "monthly_program" },
+  ] };
   respostas["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "O CUCA funciona de seg a sáb.", fonte_tipo: "FAQ" }] };
-  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  return respostas;
+}
+
+Deno.test("Achado 2026-10-09: pergunta de rede na 1ª mensagem usa só o monthly_program ativo (+ FAQ), nunca resumo_rede nem busca vetorial de programação sem unidade", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const supabaseMock = criarSupabaseMock(respostasRedeComMonthlyProgram({}), chamadas);
 
   const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
-    () => handler(requestFake("quais unidades têm natação?"), supabaseMock),
+    () => handler(requestFake("Bom dia, gostaria de informações sobre curso de libras, posso me inscrever?"), supabaseMock),
     JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true }),
   );
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
 
-  const promptFinal = bodiesEnviados.find((b) => b.includes("RESUMO DA REDE"));
-  assertStringIncludes(promptFinal ?? "", "Natação: Cuca Barra, Cuca Mondubim", "AC2: o resumo_rede ativo deveria ser carregado por inteiro e ir pro prompt final");
-  assertStringIncludes(promptFinal ?? "", "O CUCA funciona de seg a sáb.", "AC2: FAQ isolado deveria continuar sendo combinado junto com o resumo_rede (conteúdo real do chunk, não só o nome do bloco), sem 3ª classificação");
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO VIGENTE DA REDE")) ?? "";
+  assertStringIncludes(promptFinal, "Cuca Mondubim", "o bloco da rede deveria trazer a unidade que tem Libras no monthly_program ativo");
+  assertStringIncludes(promptFinal, "Curso de Libras Básico II", "o bloco da rede deveria trazer o título real da programação");
+  assertStringIncludes(promptFinal, "(Qua e Sex)", "o bloco da rede deveria trazer dias/horário reais do monthly_program");
+  assertStringIncludes(promptFinal, "Nao encontrada pelo nome na programacao de: Cuca Barra", "unidades sem o nome encontrado precisam aparecer, sem afirmar ausência");
+  assertEquals(promptFinal.includes("Violão Fácil"), false, "itens que não casam com a pergunta não entram no bloco");
+  assertEquals(promptFinal.includes("Vagas: 15"), false, "quantidade de vagas nunca vai pro prompt");
+  assertEquals(promptFinal.includes("RESUMO DA REDE"), false, "resumo_rede não é mais fonte de programação");
+  assertStringIncludes(promptFinal, "O CUCA funciona de seg a sáb.", "FAQ continua combinado para assuntos que não são programação");
 
+  const consultouResumoRede = chamadas.some((c) => c.tabela === "documentos_rag" && c.metodo === "eq" && c.args?.[1] === "resumo_rede");
+  assertEquals(consultouResumoRede, false, "o motor-agente não pode nem consultar documentos do tipo resumo_rede");
   const chamouBuscaVetorialSemUnidadeParaProgramacao = chamadas.some((c) =>
     c.tabela === "rpc:buscar_chunks_similares" &&
-    (c.args?.[1] as { p_unidade_cuca?: unknown; p_tipos?: string[] })?.p_unidade_cuca === null &&
-    ((c.args?.[1] as { p_tipos?: string[] })?.p_tipos ?? []).some((t) => t === "monthly_program" || t === "eventos_pontuais")
+    (c.args?.[0] as { p_unidade_cuca?: unknown })?.p_unidade_cuca === null &&
+    ((c.args?.[0] as { p_tipos?: string[] })?.p_tipos ?? []).some((t) => t === "monthly_program" || t === "eventos_pontuais")
   );
-  assertEquals(chamouBuscaVetorialSemUnidadeParaProgramacao, false, "AC3: buscar_chunks_similares NUNCA pode ser chamado com p_unidade_cuca:null para monthly_program/eventos_pontuais — só resumo_rede (carregamento direto) cobre pergunta de rede");
+  assertEquals(chamouBuscaVetorialSemUnidadeParaProgramacao, false, "buscar_chunks_similares NUNCA pode ser chamado com p_unidade_cuca:null para monthly_program/eventos_pontuais");
 });
 
-Deno.test("S-WM-32 AC2: pergunta de rede dentro de aguardando_unidade também carrega resumo_rede + FAQ", async () => {
+Deno.test("Achado 2026-10-09: pergunta de rede dentro de aguardando_unidade também usa o monthly_program ativo", async () => {
   const chamadas: ChamadaRegistrada[] = [];
-  const respostas = respostasBaseHandler({ aguardando_unidade: true });
-  respostas["documentos_rag"] = { data: { id: "doc-resumo-rede", conteudo: "Judô: Cuca Pici, Cuca José Walter" } };
-  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const supabaseMock = criarSupabaseMock(respostasRedeComMonthlyProgram({ aguardando_unidade: true }), chamadas);
 
   const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
     () => handler(requestFake("onde tem judô?"), supabaseMock),
     JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true }),
   );
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  const promptFinal = bodiesEnviados.find((b) => b.includes("RESUMO DA REDE"));
-  assertStringIncludes(promptFinal ?? "", "Judô: Cuca Pici, Cuca José Walter", "resumo_rede deveria ser carregado também quando perguntaGeralAtiva vem do branch aguardando_unidade");
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO VIGENTE DA REDE")) ?? "";
+  assertStringIncludes(promptFinal, "Cuca Barra:\\n• JUDÔ — Esporte Modalidade: JUDÔ", "judô da Barra deveria vir do monthly_program ativo também no branch aguardando_unidade");
 });
 
-Deno.test("S-WM-32 AC2: pergunta de rede dentro de conversa_engajada (3º branch) também carrega resumo_rede + FAQ", async () => {
+Deno.test("Achado 2026-10-09: pergunta de rede dentro de conversa_engajada (3º branch) também usa o monthly_program ativo", async () => {
   const chamadas: ChamadaRegistrada[] = [];
-  const respostas = respostasBaseHandler({ conversa_engajada: true });
-  respostas["documentos_rag"] = { data: { id: "doc-resumo-rede", conteudo: "Karatê: Cuca Barra, Cuca Jangurussu" } };
-  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const supabaseMock = criarSupabaseMock(respostasRedeComMonthlyProgram({ conversa_engajada: true }), chamadas);
 
   const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
-    () => handler(requestFake("quais unidades ensinam karatê?"), supabaseMock),
-    // VAL-19 (S-WM-50, achado @po): pergunta_geral precisa ser true aqui — "quais unidades
-    // ensinam karatê?" é pergunta de rede de verdade, mesmo padrão dos 2 testes irmãos desta
-    // S-WM-32 (branches "1ª mensagem" e "aguardando_unidade", que já usam pergunta_geral:true).
-    // Antes do fix do VAL-19, este mock com pergunta_geral:false "passava" só porque o
-    // catch-all buggy de decidirConversaEngajada ativava perguntaGeralAtiva=true de qualquer
-    // jeito — não era um comportamento real pretendido, e sim o bug mascarando o mock errado.
+    () => handler(requestFake("quais unidades têm libras?"), supabaseMock),
     JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true, pedido_depende_unidade: false }),
   );
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  const promptFinal = bodiesEnviados.find((b) => b.includes("RESUMO DA REDE"));
-  assertStringIncludes(promptFinal ?? "", "Karatê: Cuca Barra, Cuca Jangurussu", "resumo_rede deveria ser carregado também quando perguntaGeralAtiva vem do 3º branch conversa_engajada (S-WM-31)");
+  const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO VIGENTE DA REDE")) ?? "";
+  assertStringIncludes(promptFinal, "Curso de Libras Básico II");
 });
 
-Deno.test("S-WM-32 AC8: sem resumo_rede disponível, o prompt reforça honestidade sobre a limitação (não compor lista sem fonte)", async () => {
+Deno.test("Achado 2026-10-09: atividade que não existe na programação vigente → sem bloco de programação e com instrução de honestidade", async () => {
   const chamadas: ChamadaRegistrada[] = [];
-  const respostas = respostasBaseHandler({});
-  respostas["documentos_rag"] = { data: { id: "doc-1" } }; // sem campo `conteudo` — resumo_rede ainda não existe/não foi gerado
-  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const supabaseMock = criarSupabaseMock(respostasRedeComMonthlyProgram({}), chamadas);
 
   const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
-    () => handler(requestFake("tem curso de natação?"), supabaseMock),
+    () => handler(requestFake("tem curso de mecânica de motocicletas?"), supabaseMock),
     JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: true }),
   );
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
-  const promptFinal = bodiesEnviados.find((b) => b.includes("INSTRUCAO CRITICA"));
-  assertStringIncludes(
-    promptFinal ?? "",
-    "nao tem a programacao consolidada da rede toda",
-    "AC8: sem resumo_rede (ou sem cobertura da atividade perguntada), o prompt precisa instruir o GPT a admitir a limitação honestamente, em vez de compor uma lista de atividades sem fonte real — achado de Junior em teste ao vivo (alucinação silenciosa)",
-  );
+  const promptFinal = bodiesEnviados.find((b) => b.includes("INSTRUCAO CRITICA")) ?? "";
+  assertEquals(promptFinal.includes("PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa"), false, "sem match de título não pode haver bloco de programação");
+  assertStringIncludes(promptFinal, "nao encontrou essa atividade na programacao deste mes", "o prompt precisa mandar admitir que não encontrou, sem compor lista");
 });
 
 Deno.test("S-WM-32: pergunta de UNIDADE ESPECÍFICA (não perguntaGeralAtiva) não recebe a instrução de honestidade de rede nem tenta carregar resumo_rede", async () => {
@@ -2656,4 +2664,125 @@ Deno.test("S-WM-70 (AC2, achado @po): conversa_engajada + quer_sair=true — mar
     true,
     "AC2: precisa marcar conversas.status='encerrada' de verdade, mesmo efeito que a tag [[ENCERRAR]] produz noutro caminho — reproduz a armadilha registrada pelo @po (o early-return antigo não tocava o status)",
   );
+});
+
+// ── Achado 2026-10-09: dígito solto respondendo a uma lista numerada montada pelo GPT ────────
+Deno.test("Achado 2026-10-09: resolverDigitoPelaListaDoAgente usa a linha que o agente mostrou, não o menu fixo", () => {
+  const listaJoao = "Bom dia, Fulano! 😊\n\nQuer saber sobre a Libras em alguma unidade específica? As opções disponíveis são:\n\n1️⃣ Cuca Mondubim - Libras (básico e intermediário)\n2️⃣ Cuca Pici - Libras (intermediário)\n\nPosso te ajudar?";
+  assertEquals(resolverDigitoPelaListaDoAgente("1", listaJoao), "Cuca Mondubim", "caso real: '1' era Mondubim na lista, o mapa fixo gravava Cuca Barra");
+  assertEquals(resolverDigitoPelaListaDoAgente("2", listaJoao), "Cuca Pici");
+  assertEquals(resolverDigitoPelaListaDoAgente("3", listaJoao), undefined, "número que não existe na lista não vira unidade");
+  assertEquals(resolverDigitoPelaListaDoAgente("1", "1️⃣ **Cuca Mondubim** — Libras"), "Cuca Mondubim", "negrito markdown na linha");
+  assertEquals(resolverDigitoPelaListaDoAgente("3", "1️⃣ Cuca Barra: \n   - Violão\n2️⃣ Cuca Jangurussu: \n3️⃣ Cuca José Walter: \n4️⃣ Cuca Mondubim:"), "Cuca José Walter", "caso Samira: '3' era José Walter, o mapa fixo gravava Mondubim");
+  assertEquals(resolverDigitoPelaListaDoAgente("1", "1️⃣ Esportes\n2️⃣ Cursos e Oficinas"), undefined, "menu de categoria não vira unidade");
+  assertEquals(resolverDigitoPelaListaDoAgente("3", MENU_UNIDADES), "Cuca Mondubim", "o menu de unidades do código continua funcionando");
+  assertEquals(resolverDigitoPelaListaDoAgente("1", "Pra te ajudar certinho com isso, me diz qual unidade CUCA:\n\n" + MENU_UNIDADES), "Cuca Barra");
+  assertEquals(resolverDigitoPelaListaDoAgente("1", "Qual unidade você prefere?"), undefined, "sem lista numerada o dígito não vira unidade");
+});
+
+Deno.test("Achado 2026-10-09: detectarUnidadeDireta com bloco do agente não cai no mapa fixo; sem bloco mantém o comportamento antigo", () => {
+  assertEquals(detectarUnidadeDireta("1", "1️⃣ Cuca Mondubim - Libras\n2️⃣ Cuca Pici - Libras"), "Cuca Mondubim");
+  assertEquals(detectarUnidadeDireta("1", ""), undefined, "sem lista anterior, dígito solto não é unidade");
+  assertEquals(detectarUnidadeDireta("1"), "Cuca Barra", "sem bloco (fallback do aguardando_unidade) o mapa fixo continua");
+  assertEquals(detectarUnidadeDireta("quero saber da barra", "1️⃣ Cuca Mondubim"), "Cuca Barra", "nome por extenso continua valendo");
+});
+
+Deno.test("Achado 2026-10-09: textoUltimoBlocoAgente junta as partes do agente antes da mensagem atual do lead", () => {
+  const historico = [
+    { role: "user", content: "oi" },
+    { role: "assistant", content: "parte 1\n1️⃣ Cuca Pici" },
+    { role: "assistant", content: "parte 2" },
+    { role: "user", content: "1" },
+  ];
+  assertEquals(textoUltimoBlocoAgente(historico), "parte 1\n1️⃣ Cuca Pici\nparte 2");
+  assertEquals(textoUltimoBlocoAgente([{ role: "user", content: "1" }]), "");
+});
+
+Deno.test("Achado 2026-10-09: palavrasChaveProgramacao e montarBlocoProgramacaoRede", () => {
+  assertEquals(palavrasChaveProgramacao("Bom dia 🌹 Gostaria de informações sobre curso de libras posso me inscrever?"), ["libras"]);
+  assertEquals(palavrasChaveProgramacao("posso me inscrever? tem vaga?"), []);
+  const itens = [
+    ...extrairItensProgramacao("Cuca Mondubim", PROGRAMACAO_MONDUBIM_TESTE),
+    ...extrairItensProgramacao("Cuca Barra", PROGRAMACAO_BARRA_TESTE),
+  ];
+  assertEquals(itens.length, 3);
+  assertEquals(itens[0].detalhe.includes("Ementa"), false, "ementa fica fora");
+  assertEquals(itens[0].detalhe.includes("Vagas"), false, "vagas ficam fora");
+  assertEquals(montarBlocoProgramacaoRede(itens, []), "");
+  assertEquals(montarBlocoProgramacaoRede(itens, ["mecanica"]), "", "atividade inexistente → sem bloco");
+  const bloco = montarBlocoProgramacaoRede(itens, ["libras"]);
+  assertStringIncludes(bloco, "Cuca Mondubim:\n• Curso de Libras Básico II — Curso: Curso de Libras Básico II.");
+  assertStringIncludes(bloco, "Nao encontrada pelo nome na programacao de: Cuca Barra — ");
+  assertStringIncludes(bloco, "NAO afirme que ela nao tem a atividade", "o rodapé não pode induzir afirmação de ausência");
+  assertEquals(bloco.includes("SEM essa atividade"), false);
+  const titulosReais = [
+    { unidade: "Cuca Jos\u00e9 Walter", titulo: "KARAT\u00ca", detalhe: "" },
+    { unidade: "Cuca Jos\u00e9 Walter", titulo: "NATA\u00c7\u00c3O", detalhe: "" },
+    { unidade: "Cuca Jos\u00e9 Walter", titulo: "NATA\u00c7\u00c3O INFANTIL", detalhe: "" },
+    { unidade: "Cuca Barra", titulo: "Dia da Crian\u00e7a", detalhe: "" },
+    { unidade: "Cuca Barra", titulo: "Dan\u00e7a Contempor\u00e2nea - Caminhos para a cena", detalhe: "" },
+  ];
+  assertEquals(montarBlocoProgramacaoRede(titulosReais, palavrasChaveProgramacao("tem curso de arte?")), "", "'arte' não pode casar com Karatê");
+  const blocoNatacaoInfantil = montarBlocoProgramacaoRede(titulosReais, palavrasChaveProgramacao("tem natação infantil?"));
+  assertStringIncludes(blocoNatacaoInfantil, "NATAÇÃO INFANTIL");
+  assertEquals(blocoNatacaoInfantil.includes("• NATAÇÃO\n") || blocoNatacaoInfantil.endsWith("• NATAÇÃO"), false, "com todas as palavras casando, a natação adulta fica fora");
+  assertStringIncludes(montarBlocoProgramacaoRede(titulosReais, palavrasChaveProgramacao("tem atividade pro dia da criança?")), "Dia da Criança");
+  assertStringIncludes(montarBlocoProgramacaoRede(titulosReais, palavrasChaveProgramacao("aula de dança")), "Dança Contemporânea");
+  const comSiglas = [
+    ...titulosReais,
+    { unidade: "Cuca Barra", titulo: "MMA", detalhe: "" },
+    { unidade: "Cuca Mondubim", titulo: "K-POP - Hist\u00f3ria e T\u00e9cnicas em Dan\u00e7a", detalhe: "" },
+  ];
+  assertEquals(palavrasChaveProgramacao("tem MMA?"), ["mma"], "sigla de 3 letras entra; 'tem' não");
+  assertEquals(palavrasChaveProgramacao("tem k-pop?"), ["kpop"]);
+  assertStringIncludes(montarBlocoProgramacaoRede(comSiglas, palavrasChaveProgramacao("tem MMA?")), "• MMA");
+  assertStringIncludes(montarBlocoProgramacaoRede(comSiglas, palavrasChaveProgramacao("quero fazer kpop")), "K-POP");
+  assertStringIncludes(montarBlocoProgramacaoRede(comSiglas, palavrasChaveProgramacao("tem aula de k-pop?")), "K-POP");
+  assertEquals(palavrasChaveProgramacao("oi, tem pra mim?"), [], "palavras de 1-2 letras e de 3 letras comuns ficam fora");
+
+  // @qa (43d3eb4): grafias diferentes entre pergunta e título não podem virar "unidade X não tem".
+  const grafiasReais = [
+    { unidade: "Cuca Barra", titulo: "JIU-JITSU", detalhe: "" },
+    { unidade: "Cuca Barra", titulo: "MUAYTHAI", detalhe: "" },
+    { unidade: "Cuca Jangurussu", titulo: "JIU JITSU", detalhe: "" },
+    { unidade: "Cuca Jangurussu", titulo: "MUAY THAI", detalhe: "" },
+    { unidade: "Cuca Mondubim", titulo: "Jiu Jitsu", detalhe: "" },
+    { unidade: "Cuca Mondubim", titulo: "Muay -Thai", detalhe: "" },
+    { unidade: "Cuca Mondubim", titulo: "Karat\u00ea", detalhe: "" },
+    { unidade: "Cuca Pici", titulo: "KARAT\u00ca", detalhe: "" },
+  ];
+  for (const pergunta of ["tem jiu-jitsu?", "tem jiu jitsu?", "tem jiujitsu?"]) {
+    const b = montarBlocoProgramacaoRede(grafiasReais, palavrasChaveProgramacao(pergunta));
+    for (const t of ["JIU-JITSU", "JIU JITSU", "Jiu Jitsu"]) assertStringIncludes(b, "• " + t, pergunta + " deveria trazer " + t);
+    assertStringIncludes(b, "Nao encontrada pelo nome na programacao de: Cuca Pici — ", pergunta + ": só Pici fica sem jiu-jitsu nesta lista");
+  }
+  for (const pergunta of ["onde tem muay thai?", "tem muay-thai?", "tem muaythai?"]) {
+    const b = montarBlocoProgramacaoRede(grafiasReais, palavrasChaveProgramacao(pergunta));
+    for (const t of ["MUAYTHAI", "MUAY THAI", "Muay -Thai"]) assertStringIncludes(b, "• " + t, pergunta + " deveria trazer " + t);
+    assertStringIncludes(b, "Nao encontrada pelo nome na programacao de: Cuca Pici — ", pergunta + ": só Pici fica sem muay thai nesta lista");
+  }
+  assertEquals(montarBlocoProgramacaoRede(grafiasReais, palavrasChaveProgramacao("tem arte?")), "", "'arte' continua sem casar com Karatê");
+  const resumido = montarBlocoProgramacaoRede(itens, ["libras", "judo"], 50);
+  assertStringIncludes(resumido, "Lista resumida", "acima do limite cai para só os títulos");
+});
+
+Deno.test("Achado 2026-10-09 (handler): '1' respondendo à lista do GPT grava a unidade da LINHA 1, não Cuca Barra", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ conversa_engajada: true, aguardando_unidade: false, menu_categoria_ativo: false });
+  // Ordem decrescente (o handler faz .reverse()): mensagem atual do lead primeiro.
+  respostas["mensagens"] = { data: [
+    { conteudo: "1", remetente: "lead" },
+    { conteudo: "Quer saber sobre a Libras em alguma unidade específica? As opções disponíveis são:\n\n1️⃣ Cuca Mondubim - Libras (básico e intermediário)\n2️⃣ Cuca Pici - Libras (intermediário)", remetente: "agente" },
+    { conteudo: "Gostaria de informações sobre curso de libras posso me inscrever?", remetente: "lead" },
+  ] };
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp } = await comFetchMockadoCapturandoBody(() => handler(requestFake("1"), supabaseMock));
+  assertEquals(resp.status, 200);
+  const unidadesGravadas = chamadas
+    .filter((c) => c.tabela === "rpc:merge_conversa_metadata")
+    .map((c) => (c.args?.[0] as { p_patch?: Record<string, unknown> })?.p_patch?.unidade_selecionada)
+    .filter(Boolean);
+  assertEquals(unidadesGravadas.includes("Cuca Mondubim"), true, "deveria gravar Cuca Mondubim (linha 1 da lista mostrada)");
+  assertEquals(unidadesGravadas.includes("Cuca Barra"), false, "nunca Cuca Barra pelo menu fixo");
 });

@@ -887,6 +887,25 @@ export const INSTRUCAO_SEGURANCA = [
   "   quantidade de vagas muda com frequencia, orientando a pessoa a procurar a unidade CUCA",
   "   para verificar a disponibilidade. A regra 6 ja proibia vagas na listagem geral; esta",
   "   regra fecha tambem o caso da pergunta sobre uma atividade especifica.",
+  // Achado 2026-10-09 (conversa 1657d9b0): com a programacao da Barra carregada e o historico
+  // falando de Libras no Mondubim, o GPT inventou "Seg e Qua 18:00 as 20:00" — horario que nao
+  // existe em nenhum documento. E a lista inicial veio de um resumo de julho ja vencido.
+  "",
+  "9. FONTE UNICA DE PROGRAMACAO — REGRA CRITICA:",
+  "   Atividades, cursos, modalidades, turmas, dias, horarios, faixa etaria, professor e QUAIS",
+  "   UNIDADES oferecem cada atividade so podem vir dos blocos de programacao mensal carregados",
+  "   NESTA resposta (programacao mensal atual da unidade, atividade especifica com dado exato,",
+  "   trechos de contexto da programacao, ou programacao vigente da rede).",
+  "   O FAQ e o bloco de servicos da rede servem para assuntos que nao sao programacao",
+  "   (matricula, documentos, funcionamento, servicos) e NUNCA sao fonte de atividade, dia ou horario.",
+  "   Suas proprias mensagens anteriores no historico NAO sao fonte: se elas citarem atividade,",
+  "   dia, horario ou unidade que nao estejam nos blocos desta resposta, NAO repita — podem estar",
+  "   desatualizadas.",
+  "   A programacao carregada e da UNIDADE informada no fim deste prompt. Se a pessoa perguntar de",
+  "   uma atividade que nao esta nessa programacao, diga que nao encontrou essa atividade na",
+  "   programacao deste mes dessa unidade — nunca complete com dia ou horario de cabeca.",
+  "   Ao oferecer unidades como opcoes numeradas, escreva SEMPRE o nome da unidade em cada linha",
+  "   (ex.: '1️⃣ Cuca Mondubim').",
 ].join("\n");
 
 const UNIDADES_VALIDAS = ['Cuca Barra', 'Cuca Jangurussu', 'Cuca Mondubim', 'Cuca Pici', 'Cuca José Walter'];
@@ -1211,9 +1230,170 @@ export function calcularPrecisaVisaoGeral(params: { conversaJustCreated: boolean
  * na resolução dentro de `aguardando_unidade` quanto na 1ª mensagem de uma conversa nova
  * (decidirPrimeiraMensagem) — extraída pra não duplicar a mesma lógica nos dois lugares (AUD-07).
  */
-export function detectarUnidadeDireta(texto: string): string | undefined {
+export function detectarUnidadeDireta(texto: string, ultimoBlocoAgente?: string): string | undefined {
   const msgLower = texto.toLowerCase().trim();
+  // Achado 2026-10-09 (conversa 1657d9b0): o GPT montou uma lista própria "1️⃣ Cuca Mondubim /
+  // 2️⃣ Cuca Pici", o lead respondeu "1" e o UNIDADES_MAP fixo gravou Cuca Barra. Quando o
+  // caller passa o bloco anterior do agente, o dígito solto é resolvido pela LINHA daquele
+  // número no que o agente realmente mostrou — nunca pelo menu fixo às cegas.
+  if (ehSelecaoMenu(msgLower) && ultimoBlocoAgente !== undefined) {
+    return resolverDigitoPelaListaDoAgente(msgLower, ultimoBlocoAgente);
+  }
   return Object.entries(UNIDADES_MAP).find(([k]) => contemPalavra(msgLower, k))?.[1];
+}
+
+/**
+ * Resolve um dígito solto (1-5) contra a lista numerada que o agente mostrou no turno anterior:
+ * pega a linha daquele número e procura NOME de unidade nela. Linha sem nome de unidade (ex.:
+ * menu de categoria "1️⃣ Esportes") ou número inexistente na lista → `undefined` (o dígito não
+ * vira unidade). O MENU_UNIDADES do código resolve pelo mesmo caminho ("1️⃣ Barra").
+ */
+export function resolverDigitoPelaListaDoAgente(digito: string, ultimoBlocoAgente: string): string | undefined {
+  const numero = digito.trim();
+  if (!/^[1-5]$/.test(numero) || !ultimoBlocoAgente) return undefined;
+  const blocoSemMenuFixo = ultimoBlocoAgente.includes(MENU_UNIDADES) ? MENU_UNIDADES + "\n" : ultimoBlocoAgente;
+  let linha = "";
+  for (const l of blocoSemMenuFixo.split("\n")) {
+    const s = l.trim().replace(/[️⃣*]/g, "");
+    if (s.startsWith(numero + " ") || s.startsWith(numero + ".") || s.startsWith(numero + ")")) {
+      linha = l;
+      break;
+    }
+  }
+  if (!linha) return undefined;
+  const linhaLower = linha.toLowerCase();
+  return Object.entries(NOMES_UNIDADES_POR_PALAVRA).find(([k]) => contemPalavra(linhaLower, k))?.[1];
+}
+
+/**
+ * Texto do último bloco de mensagens do agente ANTES da mensagem atual do lead (o histórico já
+ * inclui a mensagem atual, gravada pelo worker). Junta as partes consecutivas do agente porque
+ * uma resposta longa é enviada dividida em várias mensagens (dividirRespostaEmPartes).
+ */
+export function textoUltimoBlocoAgente(historico: { role: string; content: string }[]): string {
+  let i = historico.length - 1;
+  while (i >= 0 && historico[i].role !== "assistant") i--;
+  const partes: string[] = [];
+  while (i >= 0 && historico[i].role === "assistant") {
+    partes.unshift(historico[i].content);
+    i--;
+  }
+  return partes.join("\n");
+}
+
+// Palavras comuns em pergunta de programação que não identificam atividade nenhuma — ficam fora
+// do filtro de títulos (normalizadas, sem acento).
+const PALAVRAS_NAO_ATIVIDADE = new Set([
+  "gostaria", "informacoes", "informacao", "sobre", "curso", "cursos", "quero", "queria", "saber",
+  "posso", "pode", "podem", "inscrever", "inscricao", "inscricoes", "matricula", "matricular", "fazer",
+  "para", "como", "qual", "quais", "onde", "quando", "unidade", "unidades", "cuca", "cucas", "rede",
+  "horario", "horarios", "vaga", "vagas", "noite", "manha", "tarde", "dias", "semana", "atividade",
+  "atividades", "oficina", "oficinas", "aula", "aulas", "tenho", "anos", "ainda", "tambem", "voces",
+  "voce", "existe", "existem", "algum", "alguma", "alguns", "algumas", "mais", "esse", "essa", "isso",
+  "aqui", "obrigado", "obrigada", "tudo", "gente", "programacao", "turma", "turmas", "basico", "basica",
+  "intermediario", "avancado", "quanto", "valor", "gratis", "gratuito", "preciso",
+  "trabalho", "trabalhar", "trabalha", "depois", "antes", "favor", "entao", "sabado", "domingo",
+  "segunda", "terca", "quarta", "quinta", "sexta", "disponivel", "disponiveis", "oferece", "oferecem",
+  "tendo", "esta", "estao", "vcs", "pra", "pro", "nao", "sim", "dia", "hoje", "amanha", "mes",
+  "outubro", "novembro", "dezembro", "proximo", "proxima", "filho", "filha", "esporte", "esportes",
+  "esportiva", "esportivas", "gratuitos", "gratuitas", "gratuita", "ofertados", "ofertadas",
+  "funciona", "funcionam", "funcionamento", "processo", "area", "areas", "acontece", "acontecem",
+  "quem", "pois", "mandar", "respeito", "principalmente", "realmente", "relacionadas", "relacionados",
+  "oferecer", "beneficios", "abertas", "abertos", "aberto", "aberta", "consultar", "disponibilidade",
+  // 3 letras (entram no filtro desde que siglas como MMA passaram a contar)
+  "tem", "que", "uma", "uns", "bom", "boa", "ola", "sou", "meu", "seu", "sua", "dos", "das", "nos",
+  "nas", "por", "com", "sem", "ate", "ver", "ser", "faz", "vai", "ter", "ano", "mae", "pai", "ela",
+  "ele", "eles", "elas", "aos", "num", "nem", "mas", "foi", "vou", "sei", "quer", "tbm", "obg", "mim",
+  "teu", "tua", "ali", "isso", "rua", "tchau", "aula", "via", "voc", "qto", "qnd", "pfv", "blz",
+  "sao", "faco", "estao",
+]);
+
+/**
+ * Palavras da mensagem que podem identificar uma atividade (>= 3 letras, fora da lista acima).
+ * 3 letras é o mínimo de propósito: siglas como MMA entram, "de"/"no" não. "k-pop" vira "kpop"
+ * antes de quebrar em palavras.
+ */
+export function palavrasChaveProgramacao(mensagem: string): string[] {
+  const palavras = normalizarTexto(mensagem).replace(/([a-z0-9])-([a-z0-9])/g, "$1$2").split(/[^a-z0-9]+/).filter((p) => p.length >= 3 && !PALAVRAS_NAO_ATIVIDADE.has(p));
+  return [...new Set(palavras)];
+}
+
+export type ItemProgramacao = { unidade: string; titulo: string; detalhe: string };
+
+/**
+ * Quebra o `conteudo` de um `monthly_program` em itens ("• TÍTULO" + linha "Detalhes:").
+ * O detalhe sai sem ementa, sem a frase padrão de vagas e sem "Vagas: N".
+ */
+export function extrairItensProgramacao(unidade: string, conteudo: string): ItemProgramacao[] {
+  const itens: ItemProgramacao[] = [];
+  const linhas = conteudo.split("\n");
+  for (let i = 0; i < linhas.length; i++) {
+    const m = linhas[i].match(/^•\s+(.+)$/);
+    if (!m) continue;
+    const linhaDetalhe = (linhas[i + 1] ?? "").trim();
+    let detalhe = linhaDetalhe.startsWith("Detalhes:") ? linhaDetalhe.slice("Detalhes:".length).trim() : "";
+    detalhe = detalhe.split(/\s*Ementa:/)[0];
+    detalhe = detalhe.replace(/\s*A quantidade de vagas muda[^.]*\./gi, "");
+    detalhe = removerVagasDoTexto(detalhe).trim();
+    itens.push({ unidade, titulo: m[1].trim(), detalhe });
+  }
+  return itens;
+}
+
+const UNIDADES_ORDEM = ["Cuca Barra", "Cuca Jangurussu", "Cuca Mondubim", "Cuca Pici", "Cuca José Walter"];
+
+/**
+ * Monta o bloco de programação da rede inteira filtrado pela pergunta, a partir SÓ dos
+ * `monthly_program` ativos (uma por unidade). Retorna "" quando nenhuma palavra da mensagem
+ * casa com título de atividade — o caller trata como "não é pergunta de programação / não
+ * encontrado". Acima de `limiteCaracteres`, cai para só os títulos por unidade.
+ */
+export function montarBlocoProgramacaoRede(itens: ItemProgramacao[], palavras: string[], limiteCaracteres = 12000): string {
+  if (palavras.length === 0) return "";
+  // Compara em forma compacta (sem espaço nem hífen), sempre a partir do INÍCIO de uma palavra
+  // do título: "jiujitsu", "jiu-jitsu" e "jiu jitsu" casam com "JIU-JITSU", "JIU JITSU" e
+  // "JIUJITSU"; "danca" pega "Danças"; "arte" não pega "Karatê". Duas palavras vizinhas da
+  // pergunta que casam juntas ("muay"+"thai" → "MUAYTHAI") contam como as duas. Ficam só os
+  // itens com mais pontos ("natação infantil" → só NATAÇÃO INFANTIL, não toda a natação).
+  const pontos = (it: ItemProgramacao) => {
+    const palavrasTitulo = normalizarTexto(it.titulo).split(/[^a-z0-9]+/).filter(Boolean);
+    const sufixos = palavrasTitulo.map((_, i) => palavrasTitulo.slice(i).join(""));
+    const casa = (p: string) => sufixos.some((sx) => sx.startsWith(p));
+    let total = 0;
+    for (let j = 0; j < palavras.length; j++) {
+      if (j + 1 < palavras.length && casa(palavras[j] + palavras[j + 1])) {
+        total += 2;
+        j++;
+      } else if (casa(palavras[j])) {
+        total += 1;
+      }
+    }
+    return total;
+  };
+  const melhor = itens.reduce((m, it) => Math.max(m, pontos(it)), 0);
+  if (melhor === 0) return "";
+  const encontrados = itens.filter((it) => pontos(it) === melhor);
+
+  const unidadesComProgramacao = [...new Set(itens.map((it) => it.unidade))];
+  const unidadesComMatch = UNIDADES_ORDEM.filter((u) => encontrados.some((it) => it.unidade === u));
+  const unidadesSemMatch = UNIDADES_ORDEM.filter((u) => unidadesComProgramacao.includes(u) && !unidadesComMatch.includes(u));
+  const rodape = unidadesSemMatch.length > 0
+    // Não afirma ausência: a programação pode trazer a mesma atividade com outro nome ou com erro
+    // de digitação ("Balé" x "Ballet", "Viollão"). O bot só pode dizer que não encontrou pelo nome.
+    ? "\nNao encontrada pelo nome na programacao de: " + unidadesSemMatch.join(", ") + " — se a pessoa se interessar por uma dessas unidades, NAO afirme que ela nao tem a atividade; diga que nao encontrou pelo nome e sugira confirmar direto com a unidade."
+    : "";
+
+  const completo = unidadesComMatch.map((u) =>
+    u + ":\n" + encontrados.filter((it) => it.unidade === u).map((it) => "• " + it.titulo + (it.detalhe ? " — " + it.detalhe : "")).join("\n")
+  ).join("\n\n");
+  if (completo.length <= limiteCaracteres) return completo + rodape;
+
+  const resumido = unidadesComMatch.map((u) => {
+    const contagem = new Map<string, number>();
+    for (const it of encontrados.filter((e) => e.unidade === u)) contagem.set(it.titulo, (contagem.get(it.titulo) ?? 0) + 1);
+    return u + ": " + [...contagem.entries()].map(([t, n]) => n > 1 ? t + " (" + n + " turmas)" : t).join("; ");
+  }).join("\n");
+  return resumido + "\n(Lista resumida: para dias e horarios, pergunte de qual unidade a pessoa quer saber.)" + rodape;
 }
 
 export type DecisaoPrimeiraMensagem = {
@@ -1798,22 +1978,27 @@ async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createC
 }
 
 /**
- * S-WM-32 (Escopo item 2/5): carrega o `resumo_rede` ativo por INTEIRO, direto de
- * `documentos_rag.conteudo` — nunca via `chunks_documentos`/`buscar_chunks_similares`
- * (`resumo_rede` nunca é chunkeado nem embeddado, ver migration
- * `20260713200000_swm32_resumo_rede_skip_indexacao.sql`). `unidade_cuca=null` por definição
- * (é um índice de rede inteira, não de 1 unidade) — não recebe parâmetro de unidade.
- * Retorna "" quando ainda não existe nenhum `resumo_rede` ativo (ex.: antes da 1ª geração via
- * botão do portal) — o caller trata isso como "sem dado consolidado", nunca como erro.
+ * Achado 2026-10-09: programação de atividades sai SOMENTE do `monthly_program` ativo de cada
+ * unidade. O antigo `resumo_rede` (documento à parte, inserido à mão em julho e nunca trocado)
+ * deixou de ser lido aqui — mandava lista de cursos de julho para leads em outubro. Carrega o
+ * `conteudo` dos documentos ativos (1 por unidade; se houver mais de um, vale o mais recente)
+ * e devolve os itens já separados.
  */
-async function carregarResumoRede(supabase: ReturnType<typeof createClient<Database>>): Promise<string> {
-  const { data: doc } = await supabase.from("documentos_rag").select("conteudo").eq("tipo", "resumo_rede").eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
-  return doc?.conteudo || "";
+async function carregarItensProgramacaoRede(supabase: ReturnType<typeof createClient<Database>>): Promise<ItemProgramacao[]> {
+  const { data: docs } = await supabase.from("documentos_rag").select("unidade_cuca, conteudo, created_at").eq("tipo", "monthly_program").eq("ativo", true).order("created_at", { ascending: false });
+  const vistos = new Set<string>();
+  const itens: ItemProgramacao[] = [];
+  for (const d of (Array.isArray(docs) ? docs : []) as { unidade_cuca: string | null; conteudo: string | null }[]) {
+    if (!d.unidade_cuca || !d.conteudo || vistos.has(d.unidade_cuca)) continue;
+    vistos.add(d.unidade_cuca);
+    itens.push(...extrairItensProgramacao(d.unidade_cuca, d.conteudo));
+  }
+  return itens;
 }
 
 /**
  * S-WM-51: carrega o documento de servicos institucionais ("servicos_rede") ativo por INTEIRO,
- * mesmo padrão de `carregarResumoRede` acima — nunca via `chunks_documentos`/
+ * carregado por inteiro direto de `documentos_rag.conteudo` — nunca via `chunks_documentos`/
  * `buscar_chunks_similares` (ver migration `20260720000000_swm51_servicos_rede_skip_indexacao.sql`,
  * que estende no trigger `tr_indexar_documento` a mesma exceção já aplicada ao `resumo_rede`,
  * evitando chunk/embedding à toa). `unidade_cuca=null` por definição — é um documento único com o
@@ -2010,13 +2195,17 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // `unidadeEfetiva` (fora do `if` abaixo) de propósito — o Passo 6 (fora deste `if`) também
     // precisa ler/escrever o mesmo tracker.
     let metadataAtual: Record<string, unknown> = conversa?.metadata || {};
+    // Achado 2026-10-09: dígito solto é resolvido contra a lista que o agente REALMENTE mostrou
+    // no turno anterior (ver resolverDigitoPelaListaDoAgente), não contra o menu fixo.
+    const blocoAnteriorAgente = textoUltimoBlocoAgente(historico);
 
     if (unidade_cuca === 'Geral') {
       const unidadeSalva = metadataAtual.unidade_selecionada as string | undefined;
       const aguardando = metadataAtual.aguardando_unidade as boolean | undefined;
 
       if (unidadeSalva) {
-        const novaUnidade = detectarTrocaUnidade(textoFinal, unidadeSalva);
+        const unidadePorDigito = ehSelecaoMenu(textoFinal) ? resolverDigitoPelaListaDoAgente(textoFinal, blocoAnteriorAgente) : undefined;
+        const novaUnidade = detectarTrocaUnidade(textoFinal, unidadeSalva) ?? (unidadePorDigito && unidadePorDigito !== unidadeSalva ? unidadePorDigito : null);
         if (novaUnidade) {
           metadataAtual = { ...metadataAtual, unidade_selecionada: novaUnidade, aguardando_unidade: false };
           await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
@@ -2063,7 +2252,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           unidadeEfetiva = unidadeSalva;
         }
       } else if (aguardando) {
-        const unidadeDetectadaDireta = detectarUnidadeDireta(textoFinal);
+        // aguardando_unidade só é gravado junto com o MENU_UNIDADES do código, então aqui (e só
+        // aqui) o mapa fixo 1-5 continua valendo como fallback.
+        const unidadeDetectadaDireta = detectarUnidadeDireta(textoFinal, blocoAnteriorAgente) ?? detectarUnidadeDireta(textoFinal);
         let avaliacaoSemantica: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDireta) {
@@ -2126,7 +2317,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         // S-WM-31 (item 6 do Escopo): 3º branch — conversa já engajada (passou por cortesia ou
         // pergunta_geral antes), sem unidade_selecionada nem aguardando_unidade pendentes.
         // Reavalia com a MESMA detecção usada nos outros branches, sem repetir saudação.
-        const unidadeDetectadaDiretaEngajada = detectarUnidadeDireta(textoFinal);
+        const unidadeDetectadaDiretaEngajada = detectarUnidadeDireta(textoFinal, blocoAnteriorAgente);
         let avaliacaoSemanticaEngajada: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDiretaEngajada) {
@@ -2177,7 +2368,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           console.log("[motor-agente v18] Pergunta geral identificada (conversa engajada): segue pro RAG geral (FAQ isolado)");
         }
       } else {
-        const unidadeDetectadaDireta1a = detectarUnidadeDireta(textoFinal);
+        const unidadeDetectadaDireta1a = detectarUnidadeDireta(textoFinal, blocoAnteriorAgente);
         let avaliacaoSemantica1a: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDireta1a) {
@@ -2429,31 +2620,33 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // (sempre geral), monthly_program é 5/5 SEMPRE atrelado a uma unidade — misturar tipos
       // aqui (como RAG_FONTES_POR_AGENTE faz) vazaria conteúdo de uma unidade aleatória (a mais
       // parecida por embedding) numa resposta que ainda não tem unidade definida.
-      // S-WM-32 (Escopo item 5): também carrega o resumo_rede ativo por inteiro (carregamento
-      // direto, nunca via buscar_chunks_similares — item 6 do Escopo, monthly_program/
-      // eventos_pontuais continuam exigindo unidade exata, sem exceção) — cobre pergunta de
-      // enumeração/agregação ("quais unidades têm X") que busca vetorial de FAQ isolado nunca
-      // respondia com dado real, mesmo unificando os 3 pontos de entrada de perguntaGeralAtiva
-      // (1ª mensagem, aguardando_unidade, conversa_engajada) sem precisar de 3ª classificação.
-      const resumoRede = await carregarResumoRede(supabase);
-      const embedding = await gerarEmbedding(textoFinal, openaiKey);
+      // Achado 2026-10-09: pergunta de programação sem unidade (ex.: "tem curso de libras?") é
+      // respondida SÓ com o monthly_program ativo das unidades, filtrado pelas palavras da
+      // mensagem — nunca mais pelo resumo_rede. Sem match de título = não é pergunta de
+      // programação (ou a atividade não existe neste mês): segue só com FAQ, e a instrução de
+      // pergunta geral proíbe citar atividade/dia/horário sem esse bloco.
+      const palavrasProgramacao = palavrasChaveProgramacao(textoFinal);
+      const [itensRede, embedding] = await Promise.all([
+        palavrasProgramacao.length > 0 ? carregarItensProgramacaoRede(supabase) : Promise.resolve([] as ItemProgramacao[]),
+        gerarEmbedding(textoFinal, openaiKey),
+      ]);
+      const blocoProgramacaoRede = montarBlocoProgramacaoRede(itensRede, palavrasProgramacao);
       const { data: chunksFaq } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embedding.join(",") + "]",
         p_tipos: ["FAQ"],
         p_unidade_cuca: null,
         p_limite: 5,
       });
-      console.log("[motor-agente v18] perguntaGeralAtiva: resumo_rede " + (resumoRede ? "carregado" : "ausente") + ", " + (chunksFaq?.length ?? 0) + " chunks FAQ");
+      console.log("[motor-agente v18] perguntaGeralAtiva: programacao_rede " + (blocoProgramacaoRede ? "encontrada" : "sem match") + " (palavras=" + palavrasProgramacao.join(",") + "), " + (chunksFaq?.length ?? 0) + " chunks FAQ");
       const blocosRede: { nome: string; texto: string }[] = [];
-      if (resumoRede) blocosRede.push({ nome: "resumo_rede", texto: "--- RESUMO DA REDE (atividades por unidade) ---\n" + resumoRede });
+      if (blocoProgramacaoRede) blocosRede.push({ nome: "programacao_rede", texto: "--- PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa de cada unidade, filtrada pela pergunta) ---\n" + blocoProgramacaoRede });
       if (chunksFaq && chunksFaq.length > 0) {
         blocosRede.push({ nome: "faq", texto: "--- CONTEXTO (FAQ) ---\n" + formatarChunks(chunksFaq) });
+      }
+      if (blocoProgramacaoRede) {
+        logRAG = { camada: "programacao_rede", chunksRetornados: chunksFaq && chunksFaq.length > 0 ? mapearChunks(chunksFaq) : undefined };
+      } else if (chunksFaq && chunksFaq.length > 0) {
         logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksFaq) };
-      } else if (resumoRede) {
-        // @qa FAIL-3: resumo_rede presente e nenhum chunk de FAQ — o turno USOU o resumo como
-        // contexto (e o caminho das perguntas sobre a rede inteira, "quais unidades tem natacao")
-        // e virava `nao_aplicavel`, sumindo da medicao.
-        logRAG = { camada: "resumo_rede" };
       } else {
         logRAG = { camada: "sem_match_rag" };
       }
@@ -2576,7 +2769,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // resumo_rede ainda nao existe/nao foi gerado quanto depois, se o resumo_rede ativo nao
       // cobrir a atividade perguntada. Reforco condicional (so quando perguntaGeralAtiva=true),
       // nao generico em INSTRUCAO_SEGURANCA, pra nao confundir respostas de 1 unidade especifica.
-      ["instrucao_pergunta_geral", perguntaGeralAtiva ? "INSTRUCAO CRITICA: esta pergunta e sobre a rede CUCA inteira, sem unidade especifica. Use APENAS o bloco '--- RESUMO DA REDE ---' (se presente acima) e o '--- CONTEXTO (FAQ) ---' pra responder sobre quais unidades oferecem o que. Se a atividade perguntada NAO aparecer em nenhum desses blocos, NUNCA componha ou invente uma lista de atividades/modalidades — diga com suas proprias palavras que voce nao tem a programacao consolidada da rede toda pra essa pergunta especifica, e sugira ajudar escolhendo uma unidade." : ""],
+      ["instrucao_pergunta_geral", perguntaGeralAtiva ? "INSTRUCAO CRITICA: esta pergunta e sobre a rede CUCA inteira, sem unidade especifica. Para qualquer informacao de programacao (quais atividades existem, em quais unidades, dias, horarios, turmas), use EXCLUSIVAMENTE o bloco '--- PROGRAMACAO VIGENTE DA REDE ---' (se presente acima); o '--- CONTEXTO (FAQ) ---' serve so para assuntos que nao sao programacao. Se esse bloco NAO estiver presente ou nao trouxer a atividade perguntada, NUNCA componha ou invente uma lista de atividades, unidades, dias ou horarios: se a pessoa citou uma atividade, diga com suas proprias palavras que nao encontrou essa atividade na programacao deste mes; se a pergunta for geral (ex.: 'quais cursos tem?'), nao liste nada de cabeca. Nos dois casos, pergunte de qual unidade a pessoa quer saber para mostrar a programacao dela." : ""],
     ];
     const promptFinal = partesPrompt.map(([, texto]) => texto).filter(Boolean).join("\n\n");
 
