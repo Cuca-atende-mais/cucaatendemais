@@ -29,6 +29,12 @@ import {
   palavrasChaveProgramacao,
   extrairItensProgramacao,
   montarBlocoProgramacaoRede,
+  recortarSessao,
+  LIMITE_SESSAO_MS,
+  LIMPEZA_ESTADO_SESSAO,
+  pareceIntencaoTrocaUnidade,
+  pedeOutrasUnidades,
+  montarBlocoRedeComAtividadeDaSessao,
 } from "./index.ts";
 
 // ── Mock mínimo e encadeável do client Supabase, usado pelos testes AUD-04 abaixo ───────────
@@ -2785,4 +2791,209 @@ Deno.test("Achado 2026-10-09 (handler): '1' respondendo à lista do GPT grava a 
     .filter(Boolean);
   assertEquals(unidadesGravadas.includes("Cuca Mondubim"), true, "deveria gravar Cuca Mondubim (linha 1 da lista mostrada)");
   assertEquals(unidadesGravadas.includes("Cuca Barra"), false, "nunca Cuca Barra pelo menu fixo");
+});
+
+
+// ── S-WM-71: sessão nova, atividade fora da unidade e "outras unidades" ──────────────────────
+const AGORA_S71 = Date.parse("2026-10-09T16:12:00Z");
+const quandoS71 = (msAtras: number) => new Date(AGORA_S71 - msAtras).toISOString();
+const HORA = 60 * 60 * 1000;
+
+Deno.test("S-WM-71 AC12: recortarSessao — quebra só em intervalo MAIOR que 2h, independente de status", () => {
+  const velha = [
+    { id: "a", created_at: quandoS71(72 * HORA) },
+    { id: "b", created_at: quandoS71(72 * HORA - 1000) },
+    { id: "c", created_at: quandoS71(0) },
+  ];
+  const r1 = recortarSessao(velha);
+  assertEquals(r1.sessaoNova, true, "(a) mensagem atual depois de 3 dias abre sessão nova");
+  assertEquals(r1.mensagens.map((m) => m.id), ["c"], "histórico fica só com a sessão atual");
+
+  const recente = [{ id: "a", created_at: quandoS71(30 * 60 * 1000) }, { id: "b", created_at: quandoS71(0) }];
+  assertEquals(recortarSessao(recente).sessaoNova, false, "(b) 30 min depois não é sessão nova");
+  assertEquals(recortarSessao(recente).mensagens.length, 2);
+
+  const exato = [{ id: "a", created_at: quandoS71(LIMITE_SESSAO_MS) }, { id: "b", created_at: quandoS71(0) }];
+  assertEquals(recortarSessao(exato).sessaoNova, false, "(c) exatamente o limite não é sessão nova (limite exclusivo)");
+
+  const semData = [{ id: "a" }, { id: "b" }];
+  assertEquals(recortarSessao(semData), { mensagens: semData, sessaoNova: false }, "sem created_at não corta");
+
+  const quebraNoMeio = [
+    { id: "a", created_at: quandoS71(5 * HORA) },
+    { id: "b", created_at: quandoS71(10 * 60 * 1000) },
+    { id: "c", created_at: quandoS71(0) },
+  ];
+  const r2 = recortarSessao(quebraNoMeio);
+  assertEquals(r2.mensagens.map((m) => m.id), ["b", "c"], "a quebra antiga continua cortando o histórico");
+  assertEquals(r2.sessaoNova, false, "mas a mensagem atual já não abre sessão (a anterior abriu)");
+});
+
+Deno.test("S-WM-71 AC10: pareceIntencaoTrocaUnidade e pedeOutrasUnidades — plural sim, 'outro' solto não", () => {
+  for (const f of ["procure em outras unidades", "tem nos outros cucas?", "em quais cucas tem libras?", "quero saber de outra unidade", "qual unidade é mais perto?"]) {
+    assertEquals(pareceIntencaoTrocaUnidade(f), true, f);
+  }
+  for (const f of ["tem em outro horário?", "tem outro professor?", "é em outro lugar da sala?", "obrigado", "tem natação?"]) {
+    assertEquals(pareceIntencaoTrocaUnidade(f), false, f);
+    assertEquals(pedeOutrasUnidades(f), false, f);
+  }
+  for (const f of ["procure em outras unidades", "tem nos outros cucas?", "e nas demais unidades?", "em quais unidades tem?"]) {
+    assertEquals(pedeOutrasUnidades(f), true, f);
+  }
+  assertEquals(pedeOutrasUnidades("quero saber da unidade do Pici"), false);
+});
+
+Deno.test("S-WM-71: montarBlocoRedeComAtividadeDaSessao usa a atividade das mensagens anteriores do lead", () => {
+  const itens = [...extrairItensProgramacao("Cuca Mondubim", PROGRAMACAO_MONDUBIM_TESTE), ...extrairItensProgramacao("Cuca Barra", PROGRAMACAO_BARRA_TESTE)];
+  const historico = [
+    { role: "user", content: "Gostaria de informações sobre curso de libras posso me inscrever?" },
+    { role: "assistant", content: "Não encontrei Libras no CUCA Barra." },
+    { role: "user", content: "procure em outras unidades" },
+  ];
+  const bloco = montarBlocoRedeComAtividadeDaSessao(itens, "procure em outras unidades", historico);
+  assertStringIncludes(bloco, "Curso de Libras Básico II");
+  assertEquals(montarBlocoRedeComAtividadeDaSessao(itens, "procure em outras unidades", [{ role: "user", content: "procure em outras unidades" }]), "", "sem atividade na sessão → vazio");
+});
+
+// Mock de mensagens em ordem DECRESCENTE (o handler faz .reverse()), com created_at.
+function mensagensS71(itens: { conteudo: string; remetente: string; msAtras: number }[]) {
+  return { data: itens.map((m) => ({ conteudo: m.conteudo, remetente: m.remetente, created_at: quandoS71(m.msAtras) })) };
+}
+const patchesMerge = (chamadas: ChamadaRegistrada[]) =>
+  chamadas.filter((c) => c.tabela === "rpc:merge_conversa_metadata").map((c) => (c.args?.[0] as { p_patch?: Record<string, unknown> })?.p_patch ?? {});
+
+Deno.test("S-WM-71 AC1/AC2/AC3: 'ola' depois de 3 dias zera a sessão (preserva ultimo_disparo) e não leva o histórico antigo", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra", conversa_engajada: true, menu_categoria_ativo: false, ultimo_disparo: { titulo: "Aviso X", enviado_em: "2026-09-28T19:00:00Z" } });
+  respostas["mensagens"] = mensagensS71([
+    { conteudo: "ola", remetente: "lead", msAtras: 0 },
+    { conteudo: "MENSAGEM-ANTIGA: Verificando minha base, o número é (85) 3101-2040", remetente: "agente", msAtras: 11 * 24 * HORA },
+    { conteudo: "MENSAGEM-ANTIGA: esse número está errado", remetente: "lead", msAtras: 11 * 24 * HORA + 1000 },
+  ]);
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("ola"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false }),
+  );
+  assertEquals(resp.status, 200);
+  const patches = patchesMerge(chamadas);
+  assertEquals(patches[0], LIMPEZA_ESTADO_SESSAO, "o primeiro merge do turno é a limpeza da sessão");
+  assertEquals("ultimo_disparo" in patches[0], false, "a limpeza não toca em ultimo_disparo");
+  assertEquals(
+    patches.filter((p) => "ultimo_disparo" in p).every((p) => JSON.stringify(p.ultimo_disparo) === JSON.stringify({ titulo: "Aviso X", enviado_em: "2026-09-28T19:00:00Z" })),
+    true,
+    "merges seguintes do turno só regravam ultimo_disparo com o MESMO valor (nunca apagam nem trocam)",
+  );
+  assertEquals(patches.some((p) => p.unidade_selecionada === "Cuca Barra"), false, "a unidade antiga não volta a ser gravada");
+  assertEquals(bodiesEnviados.some((b) => b.includes("MENSAGEM-ANTIGA")), false, "AC3: mensagens da sessão antiga não vão para o modelo nem para o classificador");
+  const corpo = await resp.json();
+  assertEquals(String(corpo.resposta ?? "").includes("Barra"), false, "AC2: a retomada não cumprimenta como Cuca Barra");
+});
+
+Deno.test("S-WM-71 AC12b/AC4: conversa encerrada mas mensagem anterior há 30 min → mesma sessão, unidade mantida", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra", conversa_engajada: true });
+  respostas["conversas"] = { data: { id: "conv-1", status: "encerrada", metadata: { unidade_selecionada: "Cuca Barra", conversa_engajada: true }, lead_id: "lead-1" } };
+  respostas["mensagens"] = mensagensS71([
+    { conteudo: "tem judô?", remetente: "lead", msAtras: 0 },
+    { conteudo: "MESMA-SESSAO: posso ajudar?", remetente: "agente", msAtras: 30 * 60 * 1000 },
+  ]);
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(() => handler(requestFake("tem judô?"), supabaseMock));
+  assertEquals(resp.status, 200);
+  assertEquals(patchesMerge(chamadas).some((p) => p.unidade_selecionada === null), false, "não zera a sessão");
+  const promptFinal = bodiesEnviados.at(-1) ?? "";
+  assertStringIncludes(promptFinal, "UNIDADE: Cuca Barra");
+  assertStringIncludes(promptFinal, "MESMA-SESSAO", "histórico da sessão continua indo");
+});
+
+Deno.test("S-WM-71 AC5: outro agente_tipo (sofia) não recorta sessão nem zera metadata", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra" });
+  respostas["mensagens"] = mensagensS71([
+    { conteudo: "oi", remetente: "lead", msAtras: 0 },
+    { conteudo: "SOFIA-ANTIGA: resposta de semanas atrás", remetente: "agente", msAtras: 20 * 24 * HORA },
+  ]);
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const req = new Request("http://localhost/motor-agente", { method: "POST", body: JSON.stringify({ mensagem: "oi", telefone: "5585999999999", canal_origem: "test", agente_tipo: "sofia", unidade_cuca: "Geral" }) });
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(() => handler(req, supabaseMock));
+  assertEquals(resp.status, 200);
+  assertEquals(patchesMerge(chamadas).some((p) => p.unidade_selecionada === null), false);
+  assertEquals(bodiesEnviados.some((b) => b.includes("SOFIA-ANTIGA")), true, "sofia continua recebendo o histórico completo");
+});
+
+function respostasS71ComUnidade(): Record<string, RespostaSupabaseMock> {
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra", conversa_engajada: true, menu_categoria_ativo: false });
+  respostas["documentos_rag"] = { data: [
+    { unidade_cuca: "Cuca Mondubim", conteudo: PROGRAMACAO_MONDUBIM_TESTE },
+    { unidade_cuca: "Cuca Barra", conteudo: PROGRAMACAO_BARRA_TESTE },
+  ] };
+  // AC13: a busca vetorial devolve 5 trechos da Barra mesmo sem a atividade.
+  respostas["rpc:buscar_chunks_similares"] = { data: Array.from({ length: 5 }, (_, i) => ({ conteudo: "Trecho Barra " + i, fonte_tipo: "monthly_program", documento_id: "doc-barra", similaridade: 0.4 })) };
+  return respostas;
+}
+
+Deno.test("S-WM-71 AC6/AC13: unidade Barra + 'curso de libras' → bloco da rede com Libras e instrução de oferecer troca", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasS71ComUnidade();
+  respostas["mensagens"] = mensagensS71([{ conteudo: "Gostaria de informações sobre curso de libras posso me inscrever?", remetente: "lead", msAtras: 0 }]);
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(() => handler(requestFake("Gostaria de informações sobre curso de libras posso me inscrever?"), supabaseMock));
+  assertEquals(resp.status, 200);
+  const promptFinal = bodiesEnviados.at(-1) ?? "";
+  assertStringIncludes(promptFinal, "PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa");
+  assertStringIncludes(promptFinal, "Curso de Libras Básico II");
+  assertStringIncludes(promptFinal, "nao foi encontrada pelo nome na programacao da UNIDADE atual");
+  assertStringIncludes(promptFinal, "1️⃣ Cuca Mondubim");
+});
+
+Deno.test("S-WM-71 AC7: unidade Barra + atividade que a Barra tem → sem bloco da rede, caminho de hoje", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasS71ComUnidade();
+  respostas["mensagens"] = mensagensS71([{ conteudo: "tem judô?", remetente: "lead", msAtras: 0 }]);
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(() => handler(requestFake("tem judô?"), supabaseMock));
+  assertEquals(resp.status, 200);
+  const promptFinal = bodiesEnviados.at(-1) ?? "";
+  assertEquals(promptFinal.includes("PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa"), false);
+  assertEquals(promptFinal.includes("nao foi encontrada pelo nome na programacao da UNIDADE atual"), false);
+});
+
+Deno.test("S-WM-71 AC8/AC11: 'procure em outras unidades' depois de perguntar de libras → busca na rede, sem recusa", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasS71ComUnidade();
+  respostas["mensagens"] = mensagensS71([
+    { conteudo: "procure em outras unidades", remetente: "lead", msAtras: 0 },
+    { conteudo: "Não encontrei informações sobre Libras no CUCA Barra.", remetente: "agente", msAtras: 30 * 1000 },
+    { conteudo: "Gostaria de informações sobre curso de libras posso me inscrever?", remetente: "lead", msAtras: 45 * 1000 },
+  ]);
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("procure em outras unidades"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false }),
+  );
+  assertEquals(resp.status, 200);
+  const promptFinal = bodiesEnviados.find((b) => b.includes("a pessoa pediu para procurar em outras unidades")) ?? "";
+  assertStringIncludes(promptFinal, "Curso de Libras Básico II", "busca a atividade da sessão (libras) na rede");
+  assertStringIncludes(promptFinal, "Responda com base no bloco");
+  const corpo = await resp.json();
+  assertEquals(String(corpo.resposta ?? "").includes("Só pra confirmar"), false, "não cai no menu de ambiguidade");
+  const buscaSemUnidade = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares" && (c.args?.[0] as { p_unidade_cuca?: unknown })?.p_unidade_cuca === null);
+  assertEquals(buscaSemUnidade, false, "AC11: nenhuma busca vetorial sem unidade");
+});
+
+Deno.test("S-WM-71 AC9: 'procure em outras unidades' sem atividade na sessão → pergunta o que procura, nunca recusa", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasS71ComUnidade();
+  respostas["mensagens"] = mensagensS71([{ conteudo: "procure em outras unidades", remetente: "lead", msAtras: 0 }]);
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("procure em outras unidades"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false }),
+  );
+  assertEquals(resp.status, 200);
+  const promptFinal = bodiesEnviados.find((b) => b.includes("nao deu para identificar qual atividade")) ?? "";
+  assertStringIncludes(promptFinal, "NAO use a frase de recusa de assunto fora do CUCA");
+  assertEquals(promptFinal.includes("PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa"), false);
 });

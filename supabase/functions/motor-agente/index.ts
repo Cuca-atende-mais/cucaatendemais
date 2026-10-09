@@ -306,7 +306,19 @@ function contemNomeUnidadeComTypo(texto: string, chave: string): boolean {
  */
 export function pareceIntencaoTrocaUnidade(texto: string): boolean {
   const lower = texto.toLowerCase();
-  return /\bunidade\b/.test(lower) || /\btrocar\b|\btroca\b|\bmudar\b/.test(lower) || /\boutra\s+cuca\b|\boutro\s+cuca\b/.test(lower);
+  // S-WM-71: plural ("unidades", "cucas") e "outras unidades/cucas" também contam. Sempre com o
+  // substantivo — "tem em outro horário?" não pode virar troca de unidade.
+  return /\bunidades?\b/.test(lower) || /\btrocar\b|\btroca\b|\bmudar\b/.test(lower) || /\boutr[ao]s?\s+cucas?\b|\bcucas\b/.test(lower);
+}
+
+/**
+ * S-WM-71 (Item 3): pedido explícito para procurar em OUTRAS unidades, sem dizer qual
+ * ("procure em outras unidades", "tem nos outros cucas?", "em quais unidades tem?"). Sempre com o
+ * substantivo unidade/cuca — "outro horário" não conta.
+ */
+export function pedeOutrasUnidades(texto: string): boolean {
+  const lower = normalizarTexto(texto);
+  return /\b(outr[ao]s?|demais)\s+(unidades?|cucas?)\b/.test(lower) || /\b(em|nas|de)\s+quais\s+(unidades|cucas)\b/.test(lower);
 }
 
 /** Detecta se a mensagem menciona uma unidade diferente da atual */
@@ -1281,6 +1293,42 @@ export function textoUltimoBlocoAgente(historico: { role: string; content: strin
   return partes.join("\n");
 }
 
+/**
+ * S-WM-71 (Item 1): intervalo entre duas mensagens seguidas que separa uma sessão da outra.
+ * Decisão do Junior (09/10/2026): 2h, o mesmo prazo da rotina que encerra a conversa.
+ */
+export const LIMITE_SESSAO_MS = 2 * 60 * 60 * 1000;
+
+/** Chaves de `conversas.metadata` que descrevem "onde o lead está agora" — zeradas em sessão nova.
+ * `ultimo_disparo` e qualquer outra chave ficam intactas. */
+export const LIMPEZA_ESTADO_SESSAO: { unidade_selecionada: null; aguardando_unidade: boolean; menu_categoria_ativo: boolean; conversa_engajada: boolean } = {
+  unidade_selecionada: null,
+  aguardando_unidade: false,
+  menu_categoria_ativo: false,
+  conversa_engajada: false,
+};
+
+/**
+ * S-WM-71 (Item 1): recorta o histórico (ordem cronológica) na última quebra de sessão — um
+ * intervalo MAIOR que `limiteMs` entre duas mensagens seguidas. `sessaoNova` é true quando a quebra
+ * fica logo antes da última mensagem (a mensagem atual do lead abre a sessão). O critério é só o
+ * tempo, independente de `conversas.status` (o cron de encerramento roda a cada 30 min, e a
+ * conversa da campanha do simulado fica `ativa` de propósito). Mensagem sem `created_at` não
+ * quebra a sessão.
+ */
+export function recortarSessao<T extends { created_at?: string | null }>(mensagensAsc: T[], limiteMs = LIMITE_SESSAO_MS): { mensagens: T[]; sessaoNova: boolean } {
+  let inicio = 0;
+  for (let i = mensagensAsc.length - 1; i > 0; i--) {
+    const anterior = Date.parse(mensagensAsc[i - 1].created_at ?? "");
+    const atual = Date.parse(mensagensAsc[i].created_at ?? "");
+    if (!Number.isNaN(anterior) && !Number.isNaN(atual) && atual - anterior > limiteMs) {
+      inicio = i;
+      break;
+    }
+  }
+  return { mensagens: mensagensAsc.slice(inicio), sessaoNova: inicio > 0 && inicio === mensagensAsc.length - 1 };
+}
+
 // Palavras comuns em pergunta de programação que não identificam atividade nenhuma — ficam fora
 // do filtro de títulos (normalizadas, sem acento).
 const PALAVRAS_NAO_ATIVIDADE = new Set([
@@ -1306,6 +1354,9 @@ const PALAVRAS_NAO_ATIVIDADE = new Set([
   "ele", "eles", "elas", "aos", "num", "nem", "mas", "foi", "vou", "sei", "quer", "tbm", "obg", "mim",
   "teu", "tua", "ali", "isso", "rua", "tchau", "aula", "via", "voc", "qto", "qnd", "pfv", "blz",
   "sao", "faco", "estao",
+  // S-WM-71: verbos e pronomes de "procure em outras unidades"
+  "procure", "procura", "procurar", "procurem", "verifique", "verificar", "veja", "olhe", "outra",
+  "outras", "outro", "outros", "demais", "nelas", "neles", "tambem",
 ]);
 
 /**
@@ -1341,6 +1392,21 @@ export function extrairItensProgramacao(unidade: string, conteudo: string): Item
 }
 
 const UNIDADES_ORDEM = ["Cuca Barra", "Cuca Jangurussu", "Cuca Mondubim", "Cuca Pici", "Cuca José Walter"];
+
+/**
+ * S-WM-71 (Item 3): quando o lead pede "procure em outras unidades" sem citar a atividade, usa a
+ * atividade da sessão — tenta a mensagem atual e depois as mensagens anteriores DO LEAD na sessão,
+ * da mais recente para a mais antiga, e fica com o primeiro bloco que casar com algum título.
+ */
+export function montarBlocoRedeComAtividadeDaSessao(itens: ItemProgramacao[], textoAtual: string, historico: { role: string; content: string }[]): string {
+  const mensagensLead = historico.filter((m) => m.role === "user").map((m) => m.content).reverse();
+  const anteriores = mensagensLead[0] === textoAtual ? mensagensLead.slice(1) : mensagensLead;
+  for (const texto of [textoAtual, ...anteriores]) {
+    const bloco = montarBlocoProgramacaoRede(itens, palavrasChaveProgramacao(texto));
+    if (bloco) return bloco;
+  }
+  return "";
+}
 
 /**
  * Monta o bloco de programação da rede inteira filtrado pela pergunta, a partir SÓ dos
@@ -1984,12 +2050,16 @@ async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createC
  * `conteudo` dos documentos ativos (1 por unidade; se houver mais de um, vale o mais recente)
  * e devolve os itens já separados.
  */
-async function carregarItensProgramacaoRede(supabase: ReturnType<typeof createClient<Database>>): Promise<ItemProgramacao[]> {
-  const { data: docs } = await supabase.from("documentos_rag").select("unidade_cuca, conteudo, created_at").eq("tipo", "monthly_program").eq("ativo", true).order("created_at", { ascending: false });
+async function carregarItensProgramacaoRede(supabase: ReturnType<typeof createClient<Database>>, unidade?: string): Promise<ItemProgramacao[]> {
+  // S-WM-71: `unidade` restringe a uma unidade só (checagem barata do Item 2 antes de carregar a rede).
+  let consulta = supabase.from("documentos_rag").select("unidade_cuca, conteudo, created_at").eq("tipo", "monthly_program").eq("ativo", true);
+  if (unidade) consulta = consulta.eq("unidade_cuca", unidade);
+  const { data: docs } = await consulta.order("created_at", { ascending: false });
   const vistos = new Set<string>();
   const itens: ItemProgramacao[] = [];
   for (const d of (Array.isArray(docs) ? docs : []) as { unidade_cuca: string | null; conteudo: string | null }[]) {
     if (!d.unidade_cuca || !d.conteudo || vistos.has(d.unidade_cuca)) continue;
+    if (unidade && d.unidade_cuca !== unidade) continue;
     vistos.add(d.unidade_cuca);
     itens.push(...extrairItensProgramacao(d.unidade_cuca, d.conteudo));
   }
@@ -2123,10 +2193,17 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // 4. Histórico + 5. Prompt — S-WM-43 (PERF-02, Par 2): sem dependência de dado entre si,
     // paralelizados.
     const [{ data: hist }, { data: prompt }] = await Promise.all([
-      supabase.from("mensagens").select("conteudo,remetente").eq("conversa_id", conversa.id).order("created_at", { ascending: false }).limit(MAX_HISTORICO),
+      supabase.from("mensagens").select("conteudo,remetente,created_at").eq("conversa_id", conversa.id).order("created_at", { ascending: false }).limit(MAX_HISTORICO),
       supabase.from("prompts_agentes").select("prompt_sistema,prompt_contexto,temperatura,max_tokens,menu_boas_vindas,updated_at").eq("agente_tipo", agente_tipo).eq("ativo", true).single(),
     ]);
-    const historico = (hist || []).reverse().map((m: { conteudo: string; remetente: string }) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
+    // S-WM-71 (Item 1): no Institucional/maria o histórico que vai para o modelo e para os
+    // classificadores é só o da sessão atual (corte em intervalo > LIMITE_SESSAO_MS). As mensagens
+    // antigas continuam no banco. Outros agente_tipo seguem com o histórico completo, como antes.
+    const histAsc = ((hist || []) as { conteudo: string; remetente: string; created_at?: string | null }[]).reverse();
+    const ehAgenteDeProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
+    const recorteSessao = ehAgenteDeProgramacao ? recortarSessao(histAsc) : { mensagens: histAsc, sessaoNova: false };
+    const sessaoNova = recorteSessao.sessaoNova;
+    const historico = recorteSessao.mensagens.map((m) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
     if (!prompt) throw new Error("Prompt nao encontrado para: " + agente_tipo);
 
     // S-WM-AUD-007 (@qa FAIL-1 + LOW da Revisao 2): os turnos que retornam ANTES do Passo 6 nao
@@ -2195,6 +2272,16 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // `unidadeEfetiva` (fora do `if` abaixo) de propósito — o Passo 6 (fora deste `if`) também
     // precisa ler/escrever o mesmo tracker.
     let metadataAtual: Record<string, unknown> = conversa?.metadata || {};
+    // S-WM-71 (Item 1): sessão nova (mais de 2h desde a mensagem anterior) zera o estado de "onde
+    // o lead está" — unidade, espera por unidade, menu de categoria, engajamento. `ultimo_disparo`
+    // fica. Mesmo padrão do tracker: grava via merge e atualiza `metadataAtual` em seguida.
+    if (sessaoNova) {
+      await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: LIMPEZA_ESTADO_SESSAO });
+      metadataAtual = { ...metadataAtual, ...LIMPEZA_ESTADO_SESSAO };
+      console.log("[motor-agente v18] Sessao nova (intervalo > " + (LIMITE_SESSAO_MS / 3600000) + "h): estado da conversa zerado");
+    }
+    // S-WM-71 (Item 3): "procure em outras unidades" sem dizer qual — busca na rede no Passo 6.
+    const pedidoOutrasUnidades = ehAgenteDeProgramacao && pedeOutrasUnidades(textoFinal);
     // Achado 2026-10-09: dígito solto é resolvido contra a lista que o agente REALMENTE mostrou
     // no turno anterior (ver resolverDigitoPelaListaDoAgente), não contra o menu fixo.
     const blocoAnteriorAgente = textoUltimoBlocoAgente(historico);
@@ -2234,6 +2321,11 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
             // mesma classe de bug: trocouUnidade=true aqui também dispara "resumo geral" hoje).
             trocaComPedidoEspecifico = avaliacaoTroca.pedido_depende_unidade === true;
             console.log("[motor-agente v18] Troca de unidade (semantica): " + unidadeSalva + " -> " + avaliacaoTroca.unidade);
+          } else if (pedidoOutrasUnidades) {
+            // S-WM-71 (Item 3): "procure em outras unidades" sem descrever nenhuma — o classificador
+            // não achou unidade, então mantém a salva e o Passo 6 procura a atividade da sessão na
+            // rede, em vez do menu de ambiguidade ou da recusa.
+            unidadeEfetiva = unidadeSalva;
           } else if (avaliacaoTroca.mudou_de_assunto && !avaliacaoTroca.pergunta_geral && !avaliacaoTroca.quer_sair) {
             // Ambiguidade real: o sinal semântico indica que o lead mudou de assunto (não é
             // cortesia, nem pergunta geral, nem despedida) mas não deu pra identificar qual
@@ -2456,6 +2548,10 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     const mapearChunks = (cs: { documento_id: string; fonte_tipo?: string; similaridade?: number }[]) =>
       cs.map((c) => ({ documento_id: c.documento_id, fonte_tipo: c.fonte_tipo ?? "desconhecido", similaridade: c.similaridade ?? null }));
     const temUnidadeDefinida = unidadeEfetiva && unidadeEfetiva !== 'Geral';
+    // S-WM-71: sinais para as instruções do prompt (Itens 2 e 3).
+    let atividadeForaDaUnidade = false;
+    let outrasUnidadesComAtividade: boolean | null = null; // null = não houve pedido de outras unidades
+    const blocoProgramacaoRedeTexto = (bloco: string) => "\n\n--- PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa de cada unidade, filtrada pela pergunta) ---\n" + bloco;
     const isAgenteProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
     // S-WM-51: gateado em isAgenteProgramacao (não literal 'Institucional') por consistência com
     // todos os outros gates deste Passo 6 — 'maria' não tem número WhatsApp ativo hoje
@@ -2571,6 +2667,20 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         // e a fonte da ATIVIDADE, nao o complemento de eventos.
         if (logRAG.camada === "nao_aplicavel") logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksEventos) };
       }
+    } else if (temUnidadeDefinida && isAgenteProgramacao && pedidoOutrasUnidades) {
+      // S-WM-71 (Item 3): "procure em outras unidades" — busca a atividade da sessão na rede
+      // inteira (só monthly_program ativo). Sem atividade identificável, o prompt manda perguntar
+      // o que a pessoa procura, nunca a frase de recusa de assunto fora do CUCA.
+      reiniciarBlocos(true);
+      const blocoRede = montarBlocoRedeComAtividadeDaSessao(await carregarItensProgramacaoRede(supabase), textoFinal, historico);
+      outrasUnidadesComAtividade = blocoRede !== "";
+      if (blocoRede) {
+        adicionarBloco("programacao_rede", blocoProgramacaoRedeTexto(blocoRede));
+        logRAG = { camada: "programacao_rede" };
+      } else {
+        logRAG = { camada: "sem_match_rag" };
+      }
+      console.log("[motor-agente v18] Pedido de outras unidades: atividade da sessao " + (blocoRede ? "encontrada na rede" : "nao identificada"));
     } else if (temUnidadeDefinida && isAgenteProgramacao) {
       // Pergunta de acompanhamento (conversa em andamento, mesma unidade, sem selecao de menu):
       // 3 camadas, cada uma cai pra proxima automaticamente quando retorna null (mesmo padrao
@@ -2612,6 +2722,23 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksPrograma) };
         } else {
           logRAG = { camada: "sem_match_rag" };
+        }
+      }
+      // S-WM-71 (Item 2): a pergunta cita palavras que não casam com nenhum título da programação
+      // da unidade atual e casam com título de outra unidade → leva o bloco da rede para o bot dizer
+      // onde existe e oferecer a troca. Critério determinístico (casamento de títulos), nunca a
+      // busca vetorial (que quase sempre devolve 5 trechos).
+      const palavrasAtividade = palavrasChaveProgramacao(textoFinal);
+      if (palavrasAtividade.length > 0) {
+        const itensUnidade = await carregarItensProgramacaoRede(supabase, unidadeEfetiva as string);
+        if (itensUnidade.length > 0 && montarBlocoProgramacaoRede(itensUnidade, palavrasAtividade) === "") {
+          const blocoRede = montarBlocoProgramacaoRede(await carregarItensProgramacaoRede(supabase), palavrasAtividade);
+          if (blocoRede) {
+            adicionarBloco("programacao_rede", blocoProgramacaoRedeTexto(blocoRede));
+            atividadeForaDaUnidade = true;
+            logRAG = { camada: "programacao_rede" };
+            console.log("[motor-agente v18] Atividade fora da unidade " + unidadeEfetiva + ": encontrada em outra(s) unidade(s) (palavras=" + palavrasAtividade.join(",") + ")");
+          }
         }
       }
     } else if (isAgenteProgramacao && perguntaGeralAtiva) {
@@ -2769,6 +2896,14 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // resumo_rede ainda nao existe/nao foi gerado quanto depois, se o resumo_rede ativo nao
       // cobrir a atividade perguntada. Reforco condicional (so quando perguntaGeralAtiva=true),
       // nao generico em INSTRUCAO_SEGURANCA, pra nao confundir respostas de 1 unidade especifica.
+      // S-WM-71 (Item 2): a atividade não está na unidade atual, mas existe em outra.
+      ["instrucao_atividade_outra_unidade", atividadeForaDaUnidade
+        ? "INSTRUCAO: a atividade perguntada nao foi encontrada pelo nome na programacao da UNIDADE atual, mas aparece no bloco '--- PROGRAMACAO VIGENTE DA REDE ---'. Diga que nao encontrou pelo nome nessa unidade, informe em quais unidades ela aparece usando so os dados desse bloco, e pergunte se a pessoa quer saber de uma delas, com as opcoes numeradas e o nome da unidade em cada linha (ex.: '1️⃣ Cuca Mondubim')."
+        : ""],
+      // S-WM-71 (Item 3): pedido de procurar em outras unidades.
+      ["instrucao_outras_unidades", outrasUnidadesComAtividade === null ? "" : outrasUnidadesComAtividade
+        ? "INSTRUCAO: a pessoa pediu para procurar em outras unidades. Responda com base no bloco '--- PROGRAMACAO VIGENTE DA REDE ---': em quais unidades a atividade aparece e os dados delas, e pergunte de qual unidade quer saber mais, com as opcoes numeradas e o nome da unidade em cada linha (ex.: '1️⃣ Cuca Mondubim')."
+        : "INSTRUCAO: a pessoa pediu para procurar em outras unidades, mas nao deu para identificar qual atividade ela procura. Pergunte com suas palavras qual atividade ela quer encontrar ou de qual unidade quer saber. NAO diga que nao pode ajudar e NAO use a frase de recusa de assunto fora do CUCA."],
       ["instrucao_pergunta_geral", perguntaGeralAtiva ? "INSTRUCAO CRITICA: esta pergunta e sobre a rede CUCA inteira, sem unidade especifica. Para qualquer informacao de programacao (quais atividades existem, em quais unidades, dias, horarios, turmas), use EXCLUSIVAMENTE o bloco '--- PROGRAMACAO VIGENTE DA REDE ---' (se presente acima); o '--- CONTEXTO (FAQ) ---' serve so para assuntos que nao sao programacao. Se esse bloco NAO estiver presente ou nao trouxer a atividade perguntada, NUNCA componha ou invente uma lista de atividades, unidades, dias ou horarios: se a pessoa citou uma atividade, diga com suas proprias palavras que nao encontrou essa atividade na programacao deste mes; se a pergunta for geral (ex.: 'quais cursos tem?'), nao liste nada de cabeca. Nos dois casos, pergunte de qual unidade a pessoa quer saber para mostrar a programacao dela." : ""],
     ];
     const promptFinal = partesPrompt.map(([, texto]) => texto).filter(Boolean).join("\n\n");
