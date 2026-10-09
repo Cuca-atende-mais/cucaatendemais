@@ -1378,7 +1378,9 @@ export function montarBlocoProgramacaoRede(itens: ItemProgramacao[], palavras: s
   const unidadesComMatch = UNIDADES_ORDEM.filter((u) => encontrados.some((it) => it.unidade === u));
   const unidadesSemMatch = UNIDADES_ORDEM.filter((u) => unidadesComProgramacao.includes(u) && !unidadesComMatch.includes(u));
   const rodape = unidadesSemMatch.length > 0
-    ? "\nUnidades SEM essa atividade na programacao vigente: " + unidadesSemMatch.join(", ") + "."
+    // Não afirma ausência: a programação pode trazer a mesma atividade com outro nome ou com erro
+    // de digitação ("Balé" x "Ballet", "Viollão"). O bot só pode dizer que não encontrou pelo nome.
+    ? "\nNao encontrada pelo nome na programacao de: " + unidadesSemMatch.join(", ") + " — se a pessoa se interessar por uma dessas unidades, NAO afirme que ela nao tem a atividade; diga que nao encontrou pelo nome e sugira confirmar direto com a unidade."
     : "";
 
   const completo = unidadesComMatch.map((u) =>

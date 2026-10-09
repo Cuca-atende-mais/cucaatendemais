@@ -1428,7 +1428,7 @@ Deno.test("Achado 2026-10-09: pergunta de rede na 1ª mensagem usa só o monthly
   assertStringIncludes(promptFinal, "Cuca Mondubim", "o bloco da rede deveria trazer a unidade que tem Libras no monthly_program ativo");
   assertStringIncludes(promptFinal, "Curso de Libras Básico II", "o bloco da rede deveria trazer o título real da programação");
   assertStringIncludes(promptFinal, "(Qua e Sex)", "o bloco da rede deveria trazer dias/horário reais do monthly_program");
-  assertStringIncludes(promptFinal, "Unidades SEM essa atividade na programacao vigente: Cuca Barra", "unidades sem a atividade precisam aparecer explicitamente");
+  assertStringIncludes(promptFinal, "Nao encontrada pelo nome na programacao de: Cuca Barra", "unidades sem o nome encontrado precisam aparecer, sem afirmar ausência");
   assertEquals(promptFinal.includes("Violão Fácil"), false, "itens que não casam com a pergunta não entram no bloco");
   assertEquals(promptFinal.includes("Vagas: 15"), false, "quantidade de vagas nunca vai pro prompt");
   assertEquals(promptFinal.includes("RESUMO DA REDE"), false, "resumo_rede não é mais fonte de programação");
@@ -2712,7 +2712,9 @@ Deno.test("Achado 2026-10-09: palavrasChaveProgramacao e montarBlocoProgramacaoR
   assertEquals(montarBlocoProgramacaoRede(itens, ["mecanica"]), "", "atividade inexistente → sem bloco");
   const bloco = montarBlocoProgramacaoRede(itens, ["libras"]);
   assertStringIncludes(bloco, "Cuca Mondubim:\n• Curso de Libras Básico II — Curso: Curso de Libras Básico II.");
-  assertStringIncludes(bloco, "Unidades SEM essa atividade na programacao vigente: Cuca Barra.");
+  assertStringIncludes(bloco, "Nao encontrada pelo nome na programacao de: Cuca Barra — ");
+  assertStringIncludes(bloco, "NAO afirme que ela nao tem a atividade", "o rodapé não pode induzir afirmação de ausência");
+  assertEquals(bloco.includes("SEM essa atividade"), false);
   const titulosReais = [
     { unidade: "Cuca Jos\u00e9 Walter", titulo: "KARAT\u00ca", detalhe: "" },
     { unidade: "Cuca Jos\u00e9 Walter", titulo: "NATA\u00c7\u00c3O", detalhe: "" },
@@ -2752,13 +2754,12 @@ Deno.test("Achado 2026-10-09: palavrasChaveProgramacao e montarBlocoProgramacaoR
   for (const pergunta of ["tem jiu-jitsu?", "tem jiu jitsu?", "tem jiujitsu?"]) {
     const b = montarBlocoProgramacaoRede(grafiasReais, palavrasChaveProgramacao(pergunta));
     for (const t of ["JIU-JITSU", "JIU JITSU", "Jiu Jitsu"]) assertStringIncludes(b, "• " + t, pergunta + " deveria trazer " + t);
-    assertEquals(b.includes("SEM essa atividade"), true);
-    assertStringIncludes(b, "SEM essa atividade na programacao vigente: Cuca Pici.", pergunta + ": só Pici não tem jiu-jitsu nesta lista");
+    assertStringIncludes(b, "Nao encontrada pelo nome na programacao de: Cuca Pici — ", pergunta + ": só Pici fica sem jiu-jitsu nesta lista");
   }
   for (const pergunta of ["onde tem muay thai?", "tem muay-thai?", "tem muaythai?"]) {
     const b = montarBlocoProgramacaoRede(grafiasReais, palavrasChaveProgramacao(pergunta));
     for (const t of ["MUAYTHAI", "MUAY THAI", "Muay -Thai"]) assertStringIncludes(b, "• " + t, pergunta + " deveria trazer " + t);
-    assertStringIncludes(b, "SEM essa atividade na programacao vigente: Cuca Pici.", pergunta + ": só Pici não tem muay thai nesta lista");
+    assertStringIncludes(b, "Nao encontrada pelo nome na programacao de: Cuca Pici — ", pergunta + ": só Pici fica sem muay thai nesta lista");
   }
   assertEquals(montarBlocoProgramacaoRede(grafiasReais, palavrasChaveProgramacao("tem arte?")), "", "'arte' continua sem casar com Karatê");
   const resumido = montarBlocoProgramacaoRede(itens, ["libras", "judo"], 50);
