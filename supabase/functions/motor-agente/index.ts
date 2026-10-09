@@ -1300,11 +1300,21 @@ const PALAVRAS_NAO_ATIVIDADE = new Set([
   "funciona", "funcionam", "funcionamento", "processo", "area", "areas", "acontece", "acontecem",
   "quem", "pois", "mandar", "respeito", "principalmente", "realmente", "relacionadas", "relacionados",
   "oferecer", "beneficios", "abertas", "abertos", "aberto", "aberta", "consultar", "disponibilidade",
+  // 3 letras (entram no filtro desde que siglas como MMA passaram a contar)
+  "tem", "que", "uma", "uns", "bom", "boa", "ola", "sou", "meu", "seu", "sua", "dos", "das", "nos",
+  "nas", "por", "com", "sem", "ate", "ver", "ser", "faz", "vai", "ter", "ano", "mae", "pai", "ela",
+  "ele", "eles", "elas", "aos", "num", "nem", "mas", "foi", "vou", "sei", "quer", "tbm", "obg", "mim",
+  "teu", "tua", "ali", "isso", "rua", "tchau", "aula", "via", "voc", "qto", "qnd", "pfv", "blz",
+  "sao", "faco", "estao",
 ]);
 
-/** Palavras da mensagem que podem identificar uma atividade (>= 4 letras, fora da lista acima). */
+/**
+ * Palavras da mensagem que podem identificar uma atividade (>= 3 letras, fora da lista acima).
+ * 3 letras é o mínimo de propósito: siglas como MMA entram, "de"/"no" não. "k-pop" vira "kpop"
+ * antes de quebrar em palavras.
+ */
 export function palavrasChaveProgramacao(mensagem: string): string[] {
-  const palavras = normalizarTexto(mensagem).split(/[^a-z0-9]+/).filter((p) => p.length >= 4 && !PALAVRAS_NAO_ATIVIDADE.has(p));
+  const palavras = normalizarTexto(mensagem).replace(/([a-z0-9])-([a-z0-9])/g, "$1$2").split(/[^a-z0-9]+/).filter((p) => p.length >= 3 && !PALAVRAS_NAO_ATIVIDADE.has(p));
   return [...new Set(palavras)];
 }
 
@@ -1344,7 +1354,9 @@ export function montarBlocoProgramacaoRede(itens: ItemProgramacao[], palavras: s
   // "Karatê"). Ficam só os itens que casam com MAIS palavras da pergunta ("natação infantil" →
   // só NATAÇÃO INFANTIL, não toda a natação).
   const pontos = (it: ItemProgramacao) => {
-    const palavrasTitulo = normalizarTexto(it.titulo).split(/[^a-z0-9]+/);
+    // "K-POP" no título também vira "kpop", pra casar com quem digita "kpop".
+    const tituloNorm = normalizarTexto(it.titulo);
+    const palavrasTitulo = [...tituloNorm.split(/[^a-z0-9]+/), ...tituloNorm.replace(/([a-z0-9])-([a-z0-9])/g, "$1$2").split(/[^a-z0-9]+/)];
     return palavras.filter((p) => palavrasTitulo.some((w) => w.startsWith(p))).length;
   };
   const melhor = itens.reduce((m, it) => Math.max(m, pontos(it)), 0);

@@ -2726,6 +2726,17 @@ Deno.test("Achado 2026-10-09: palavrasChaveProgramacao e montarBlocoProgramacaoR
   assertEquals(blocoNatacaoInfantil.includes("• NATAÇÃO\n") || blocoNatacaoInfantil.endsWith("• NATAÇÃO"), false, "com todas as palavras casando, a natação adulta fica fora");
   assertStringIncludes(montarBlocoProgramacaoRede(titulosReais, palavrasChaveProgramacao("tem atividade pro dia da criança?")), "Dia da Criança");
   assertStringIncludes(montarBlocoProgramacaoRede(titulosReais, palavrasChaveProgramacao("aula de dança")), "Dança Contemporânea");
+  const comSiglas = [
+    ...titulosReais,
+    { unidade: "Cuca Barra", titulo: "MMA", detalhe: "" },
+    { unidade: "Cuca Mondubim", titulo: "K-POP - Hist\u00f3ria e T\u00e9cnicas em Dan\u00e7a", detalhe: "" },
+  ];
+  assertEquals(palavrasChaveProgramacao("tem MMA?"), ["mma"], "sigla de 3 letras entra; 'tem' não");
+  assertEquals(palavrasChaveProgramacao("tem k-pop?"), ["kpop"]);
+  assertStringIncludes(montarBlocoProgramacaoRede(comSiglas, palavrasChaveProgramacao("tem MMA?")), "• MMA");
+  assertStringIncludes(montarBlocoProgramacaoRede(comSiglas, palavrasChaveProgramacao("quero fazer kpop")), "K-POP");
+  assertStringIncludes(montarBlocoProgramacaoRede(comSiglas, palavrasChaveProgramacao("tem aula de k-pop?")), "K-POP");
+  assertEquals(palavrasChaveProgramacao("oi, tem pra mim?"), [], "palavras de 1-2 letras e de 3 letras comuns ficam fora");
   const resumido = montarBlocoProgramacaoRede(itens, ["libras", "judo"], 50);
   assertStringIncludes(resumido, "Lista resumida", "acima do limite cai para só os títulos");
 });
