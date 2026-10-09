@@ -2229,6 +2229,17 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         mensagem_lead: textoFinal,
       }));
 
+    // S-WM-71 (Item 1): sessão nova (mais de 2h desde a mensagem anterior) zera o estado de "onde
+    // o lead está" — unidade, espera por unidade, menu de categoria, engajamento. `ultimo_disparo`
+    // fica. Roda ANTES de qualquer retorno antecipado (ex.: handover logo abaixo) — senão uma sessão
+    // aberta com pedido de atendente humano nunca seria zerada (achado C1 do @qa).
+    let metadataInicialDaSessao: Record<string, unknown> = (conversa?.metadata as Record<string, unknown>) || {};
+    if (sessaoNova) {
+      await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: LIMPEZA_ESTADO_SESSAO });
+      metadataInicialDaSessao = { ...metadataInicialDaSessao, ...LIMPEZA_ESTADO_SESSAO };
+      console.log("[motor-agente v18] Sessao nova (intervalo > " + (LIMITE_SESSAO_MS / 3600000) + "h): estado da conversa zerado");
+    }
+
     if (deveAcionarHandoverInstitucional(textoFinal, agente_tipo)) {
       const resposta = "Vou te encaminhar para um atendente humano, só um momento!";
       await salvarMensagemAgente(supabase, conversa.id, lead.id, resposta);
@@ -2271,15 +2282,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // sobre `conversa.metadata` direto) e atualizá-lo logo em seguida. Escopo no nível de
     // `unidadeEfetiva` (fora do `if` abaixo) de propósito — o Passo 6 (fora deste `if`) também
     // precisa ler/escrever o mesmo tracker.
-    let metadataAtual: Record<string, unknown> = conversa?.metadata || {};
-    // S-WM-71 (Item 1): sessão nova (mais de 2h desde a mensagem anterior) zera o estado de "onde
-    // o lead está" — unidade, espera por unidade, menu de categoria, engajamento. `ultimo_disparo`
-    // fica. Mesmo padrão do tracker: grava via merge e atualiza `metadataAtual` em seguida.
-    if (sessaoNova) {
-      await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: LIMPEZA_ESTADO_SESSAO });
-      metadataAtual = { ...metadataAtual, ...LIMPEZA_ESTADO_SESSAO };
-      console.log("[motor-agente v18] Sessao nova (intervalo > " + (LIMITE_SESSAO_MS / 3600000) + "h): estado da conversa zerado");
-    }
+    let metadataAtual: Record<string, unknown> = metadataInicialDaSessao;
     // S-WM-71 (Item 3): "procure em outras unidades" sem dizer qual — busca na rede no Passo 6.
     const pedidoOutrasUnidades = ehAgenteDeProgramacao && pedeOutrasUnidades(textoFinal);
     // Achado 2026-10-09: dígito solto é resolvido contra a lista que o agente REALMENTE mostrou

@@ -2997,3 +2997,18 @@ Deno.test("S-WM-71 AC9: 'procure em outras unidades' sem atividade na sessão �
   assertStringIncludes(promptFinal, "NAO use a frase de recusa de assunto fora do CUCA");
   assertEquals(promptFinal.includes("PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa"), false);
 });
+
+Deno.test("S-WM-71 C1 (@qa): sessão nova aberta com pedido de atendente humano também é zerada (antes do handover)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasBaseHandler({ unidade_selecionada: "Cuca Barra", conversa_engajada: true });
+  respostas["mensagens"] = mensagensS71([
+    { conteudo: "não consigo acessar minha conta no Cuca Pici", remetente: "lead", msAtras: 0 },
+    { conteudo: "resposta antiga", remetente: "agente", msAtras: 5 * HORA },
+  ]);
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const { resp } = await comFetchMockadoCapturandoBody(() => handler(requestFake("não consigo acessar minha conta no Cuca Pici"), supabaseMock));
+  assertEquals(resp.status, 200);
+  const corpo = await resp.json();
+  assertEquals(corpo.handover, true, "o turno continua sendo de handover");
+  assertEquals(patchesMerge(chamadas)[0], LIMPEZA_ESTADO_SESSAO, "a limpeza de sessão acontece antes do retorno do handover");
+});
