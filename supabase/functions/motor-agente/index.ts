@@ -1350,14 +1350,25 @@ const UNIDADES_ORDEM = ["Cuca Barra", "Cuca Jangurussu", "Cuca Mondubim", "Cuca 
  */
 export function montarBlocoProgramacaoRede(itens: ItemProgramacao[], palavras: string[], limiteCaracteres = 12000): string {
   if (palavras.length === 0) return "";
-  // Casa pelo INÍCIO de cada palavra do título ("danca" pega "Danças", mas "arte" não pega
-  // "Karatê"). Ficam só os itens que casam com MAIS palavras da pergunta ("natação infantil" →
-  // só NATAÇÃO INFANTIL, não toda a natação).
+  // Compara em forma compacta (sem espaço nem hífen), sempre a partir do INÍCIO de uma palavra
+  // do título: "jiujitsu", "jiu-jitsu" e "jiu jitsu" casam com "JIU-JITSU", "JIU JITSU" e
+  // "JIUJITSU"; "danca" pega "Danças"; "arte" não pega "Karatê". Duas palavras vizinhas da
+  // pergunta que casam juntas ("muay"+"thai" → "MUAYTHAI") contam como as duas. Ficam só os
+  // itens com mais pontos ("natação infantil" → só NATAÇÃO INFANTIL, não toda a natação).
   const pontos = (it: ItemProgramacao) => {
-    // "K-POP" no título também vira "kpop", pra casar com quem digita "kpop".
-    const tituloNorm = normalizarTexto(it.titulo);
-    const palavrasTitulo = [...tituloNorm.split(/[^a-z0-9]+/), ...tituloNorm.replace(/([a-z0-9])-([a-z0-9])/g, "$1$2").split(/[^a-z0-9]+/)];
-    return palavras.filter((p) => palavrasTitulo.some((w) => w.startsWith(p))).length;
+    const palavrasTitulo = normalizarTexto(it.titulo).split(/[^a-z0-9]+/).filter(Boolean);
+    const sufixos = palavrasTitulo.map((_, i) => palavrasTitulo.slice(i).join(""));
+    const casa = (p: string) => sufixos.some((sx) => sx.startsWith(p));
+    let total = 0;
+    for (let j = 0; j < palavras.length; j++) {
+      if (j + 1 < palavras.length && casa(palavras[j] + palavras[j + 1])) {
+        total += 2;
+        j++;
+      } else if (casa(palavras[j])) {
+        total += 1;
+      }
+    }
+    return total;
   };
   const melhor = itens.reduce((m, it) => Math.max(m, pontos(it)), 0);
   if (melhor === 0) return "";

@@ -2737,6 +2737,30 @@ Deno.test("Achado 2026-10-09: palavrasChaveProgramacao e montarBlocoProgramacaoR
   assertStringIncludes(montarBlocoProgramacaoRede(comSiglas, palavrasChaveProgramacao("quero fazer kpop")), "K-POP");
   assertStringIncludes(montarBlocoProgramacaoRede(comSiglas, palavrasChaveProgramacao("tem aula de k-pop?")), "K-POP");
   assertEquals(palavrasChaveProgramacao("oi, tem pra mim?"), [], "palavras de 1-2 letras e de 3 letras comuns ficam fora");
+
+  // @qa (43d3eb4): grafias diferentes entre pergunta e título não podem virar "unidade X não tem".
+  const grafiasReais = [
+    { unidade: "Cuca Barra", titulo: "JIU-JITSU", detalhe: "" },
+    { unidade: "Cuca Barra", titulo: "MUAYTHAI", detalhe: "" },
+    { unidade: "Cuca Jangurussu", titulo: "JIU JITSU", detalhe: "" },
+    { unidade: "Cuca Jangurussu", titulo: "MUAY THAI", detalhe: "" },
+    { unidade: "Cuca Mondubim", titulo: "Jiu Jitsu", detalhe: "" },
+    { unidade: "Cuca Mondubim", titulo: "Muay -Thai", detalhe: "" },
+    { unidade: "Cuca Mondubim", titulo: "Karat\u00ea", detalhe: "" },
+    { unidade: "Cuca Pici", titulo: "KARAT\u00ca", detalhe: "" },
+  ];
+  for (const pergunta of ["tem jiu-jitsu?", "tem jiu jitsu?", "tem jiujitsu?"]) {
+    const b = montarBlocoProgramacaoRede(grafiasReais, palavrasChaveProgramacao(pergunta));
+    for (const t of ["JIU-JITSU", "JIU JITSU", "Jiu Jitsu"]) assertStringIncludes(b, "• " + t, pergunta + " deveria trazer " + t);
+    assertEquals(b.includes("SEM essa atividade"), true);
+    assertStringIncludes(b, "SEM essa atividade na programacao vigente: Cuca Pici.", pergunta + ": só Pici não tem jiu-jitsu nesta lista");
+  }
+  for (const pergunta of ["onde tem muay thai?", "tem muay-thai?", "tem muaythai?"]) {
+    const b = montarBlocoProgramacaoRede(grafiasReais, palavrasChaveProgramacao(pergunta));
+    for (const t of ["MUAYTHAI", "MUAY THAI", "Muay -Thai"]) assertStringIncludes(b, "• " + t, pergunta + " deveria trazer " + t);
+    assertStringIncludes(b, "SEM essa atividade na programacao vigente: Cuca Pici.", pergunta + ": só Pici não tem muay thai nesta lista");
+  }
+  assertEquals(montarBlocoProgramacaoRede(grafiasReais, palavrasChaveProgramacao("tem arte?")), "", "'arte' continua sem casar com Karatê");
   const resumido = montarBlocoProgramacaoRede(itens, ["libras", "judo"], 50);
   assertStringIncludes(resumido, "Lista resumida", "acima do limite cai para só os títulos");
 });
