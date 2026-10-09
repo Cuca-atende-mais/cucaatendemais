@@ -2934,7 +2934,7 @@ function respostasS71ComUnidade(): Record<string, RespostaSupabaseMock> {
   return respostas;
 }
 
-Deno.test("S-WM-71 AC6/AC13: unidade Barra + 'curso de libras' → bloco da rede com Libras e instrução de oferecer troca", async () => {
+Deno.test("S-WM-71 (Item 2 retirado em 09/10): unidade Barra + 'curso de libras' → sem bloco da rede, sem oferta automática de outra unidade", async () => {
   const chamadas: ChamadaRegistrada[] = [];
   const respostas = respostasS71ComUnidade();
   respostas["mensagens"] = mensagensS71([{ conteudo: "Gostaria de informações sobre curso de libras posso me inscrever?", remetente: "lead", msAtras: 0 }]);
@@ -2942,10 +2942,8 @@ Deno.test("S-WM-71 AC6/AC13: unidade Barra + 'curso de libras' → bloco da rede
   const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(() => handler(requestFake("Gostaria de informações sobre curso de libras posso me inscrever?"), supabaseMock));
   assertEquals(resp.status, 200);
   const promptFinal = bodiesEnviados.at(-1) ?? "";
-  assertStringIncludes(promptFinal, "PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa");
-  assertStringIncludes(promptFinal, "Curso de Libras Básico II");
-  assertStringIncludes(promptFinal, "nao foi encontrada pelo nome na programacao da UNIDADE atual");
-  assertStringIncludes(promptFinal, "1️⃣ Cuca Mondubim");
+  assertEquals(promptFinal.includes("PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa"), false, "decisão do Junior: mostrar onde existe vira 'perguntar a unidade' (S-WM-72)");
+  assertStringIncludes(promptFinal, "UNIDADE: Cuca Barra");
 });
 
 Deno.test("S-WM-71 AC7: unidade Barra + atividade que a Barra tem → sem bloco da rede, caminho de hoje", async () => {

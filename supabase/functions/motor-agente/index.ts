@@ -2050,16 +2050,12 @@ async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createC
  * `conteudo` dos documentos ativos (1 por unidade; se houver mais de um, vale o mais recente)
  * e devolve os itens já separados.
  */
-async function carregarItensProgramacaoRede(supabase: ReturnType<typeof createClient<Database>>, unidade?: string): Promise<ItemProgramacao[]> {
-  // S-WM-71: `unidade` restringe a uma unidade só (checagem barata do Item 2 antes de carregar a rede).
-  let consulta = supabase.from("documentos_rag").select("unidade_cuca, conteudo, created_at").eq("tipo", "monthly_program").eq("ativo", true);
-  if (unidade) consulta = consulta.eq("unidade_cuca", unidade);
-  const { data: docs } = await consulta.order("created_at", { ascending: false });
+async function carregarItensProgramacaoRede(supabase: ReturnType<typeof createClient<Database>>): Promise<ItemProgramacao[]> {
+  const { data: docs } = await supabase.from("documentos_rag").select("unidade_cuca, conteudo, created_at").eq("tipo", "monthly_program").eq("ativo", true).order("created_at", { ascending: false });
   const vistos = new Set<string>();
   const itens: ItemProgramacao[] = [];
   for (const d of (Array.isArray(docs) ? docs : []) as { unidade_cuca: string | null; conteudo: string | null }[]) {
     if (!d.unidade_cuca || !d.conteudo || vistos.has(d.unidade_cuca)) continue;
-    if (unidade && d.unidade_cuca !== unidade) continue;
     vistos.add(d.unidade_cuca);
     itens.push(...extrairItensProgramacao(d.unidade_cuca, d.conteudo));
   }
@@ -2551,8 +2547,8 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     const mapearChunks = (cs: { documento_id: string; fonte_tipo?: string; similaridade?: number }[]) =>
       cs.map((c) => ({ documento_id: c.documento_id, fonte_tipo: c.fonte_tipo ?? "desconhecido", similaridade: c.similaridade ?? null }));
     const temUnidadeDefinida = unidadeEfetiva && unidadeEfetiva !== 'Geral';
-    // S-WM-71: sinais para as instruções do prompt (Itens 2 e 3).
-    let atividadeForaDaUnidade = false;
+    // S-WM-71: sinal para a instrução do prompt do Item 3. (O Item 2 — mostrar sozinho onde a
+    // atividade existe — foi retirado por decisão do Junior em 09/10: vira "perguntar a unidade" na S-WM-72.)
     let outrasUnidadesComAtividade: boolean | null = null; // null = não houve pedido de outras unidades
     const blocoProgramacaoRedeTexto = (bloco: string) => "\n\n--- PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa de cada unidade, filtrada pela pergunta) ---\n" + bloco;
     const isAgenteProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
@@ -2727,23 +2723,6 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           logRAG = { camada: "sem_match_rag" };
         }
       }
-      // S-WM-71 (Item 2): a pergunta cita palavras que não casam com nenhum título da programação
-      // da unidade atual e casam com título de outra unidade → leva o bloco da rede para o bot dizer
-      // onde existe e oferecer a troca. Critério determinístico (casamento de títulos), nunca a
-      // busca vetorial (que quase sempre devolve 5 trechos).
-      const palavrasAtividade = palavrasChaveProgramacao(textoFinal);
-      if (palavrasAtividade.length > 0) {
-        const itensUnidade = await carregarItensProgramacaoRede(supabase, unidadeEfetiva as string);
-        if (itensUnidade.length > 0 && montarBlocoProgramacaoRede(itensUnidade, palavrasAtividade) === "") {
-          const blocoRede = montarBlocoProgramacaoRede(await carregarItensProgramacaoRede(supabase), palavrasAtividade);
-          if (blocoRede) {
-            adicionarBloco("programacao_rede", blocoProgramacaoRedeTexto(blocoRede));
-            atividadeForaDaUnidade = true;
-            logRAG = { camada: "programacao_rede" };
-            console.log("[motor-agente v18] Atividade fora da unidade " + unidadeEfetiva + ": encontrada em outra(s) unidade(s) (palavras=" + palavrasAtividade.join(",") + ")");
-          }
-        }
-      }
     } else if (isAgenteProgramacao && perguntaGeralAtiva) {
       // VAL-12: pergunta institucional real sem unidade escolhida ainda — busca só em FAQ.
       // documentos_rag confirma (produção, 2026-07-10): FAQ é 4/4 documentos sem unidade_cuca
@@ -2899,10 +2878,6 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // resumo_rede ainda nao existe/nao foi gerado quanto depois, se o resumo_rede ativo nao
       // cobrir a atividade perguntada. Reforco condicional (so quando perguntaGeralAtiva=true),
       // nao generico em INSTRUCAO_SEGURANCA, pra nao confundir respostas de 1 unidade especifica.
-      // S-WM-71 (Item 2): a atividade não está na unidade atual, mas existe em outra.
-      ["instrucao_atividade_outra_unidade", atividadeForaDaUnidade
-        ? "INSTRUCAO: a atividade perguntada nao foi encontrada pelo nome na programacao da UNIDADE atual, mas aparece no bloco '--- PROGRAMACAO VIGENTE DA REDE ---'. Diga que nao encontrou pelo nome nessa unidade, informe em quais unidades ela aparece usando so os dados desse bloco, e pergunte se a pessoa quer saber de uma delas, com as opcoes numeradas e o nome da unidade em cada linha (ex.: '1️⃣ Cuca Mondubim')."
-        : ""],
       // S-WM-71 (Item 3): pedido de procurar em outras unidades.
       ["instrucao_outras_unidades", outrasUnidadesComAtividade === null ? "" : outrasUnidadesComAtividade
         ? "INSTRUCAO: a pessoa pediu para procurar em outras unidades. Responda com base no bloco '--- PROGRAMACAO VIGENTE DA REDE ---': em quais unidades a atividade aparece e os dados delas, e pergunte de qual unidade quer saber mais, com as opcoes numeradas e o nome da unidade em cada linha (ex.: '1️⃣ Cuca Mondubim')."
