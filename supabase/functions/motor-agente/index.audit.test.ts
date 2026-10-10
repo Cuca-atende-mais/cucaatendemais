@@ -45,6 +45,8 @@ import {
   montarConsultaComContexto,
   validarInterpretacaoTurno,
   temSinalDeProgramacao,
+  lerMensagemAtual,
+  consolidarInterpretacao,
 } from "./index.ts";
 
 // ── Mock mínimo e encadeável do client Supabase, usado pelos testes AUD-04 abaixo ───────────
@@ -3330,4 +3332,20 @@ Deno.test("S-WM-72 AC20: 'procure em outras unidades' aplica o contexto da sess�
   const prompt = bodies.find((b) => b.includes("a pessoa pediu para procurar em outras unidades")) ?? "";
   assertStringIncludes(prompt, "Ballet Infantil", "balé para 7 anos do Mondubim");
   assertEquals(prompt.includes("Balé Clássico - Turma 01 —"), false, "a turma de 15 a 29 anos não entra para 7 anos");
+});
+
+
+Deno.test("S-WM-72 (avaliação real 10/10): escopo só vale se a MENSAGEM ATUAL disser; contexto da mensagem atual entra", () => {
+  // O modelo deduziu a unidade pela resposta da Maria — a salvaguarda descarta.
+  const voleiDeduzido = consolidarInterpretacao(validarInterpretacaoTurno({ tipo: "pergunta_programacao", atividade: "vôlei", escopo: "Cuca Barra" }), "de vôlei");
+  assertEquals(voleiDeduzido.escopo, null);
+  const noite = consolidarInterpretacao(validarInterpretacaoTurno({ tipo: "continuacao", atividade: "libras", escopo: "Cuca Mondubim" }), "e tem à noite?");
+  assertEquals(noite.escopo, null);
+  assertEquals(noite.contexto.turno, "noite");
+  const fem = consolidarInterpretacao(validarInterpretacaoTurno({ tipo: "pergunta_programacao", atividade: "futsal" }), "tem futsal feminino?");
+  assertEquals(fem.contexto.genero, "feminino");
+  assertEquals(consolidarInterpretacao(validarInterpretacaoTurno({ escopo: "Cuca Pici" }), "quero capoeira no Pici").escopo, "Cuca Pici");
+  assertEquals(consolidarInterpretacao(validarInterpretacaoTurno({}), "tem capoeira em toda a rede?").escopo, ESCOLHA_REDE);
+  assertEquals(lerMensagemAtual("minha filha tem 7 anos e quer de manhã").contexto, { idade: 7, turno: "manha" });
+  assertEquals(lerMensagemAtual("3").escopo, null, "dígito não é escopo aqui (é resposta a menu, tratada antes)");
 });

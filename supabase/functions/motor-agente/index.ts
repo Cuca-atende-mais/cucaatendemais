@@ -1086,18 +1086,21 @@ export async function interpretarTurnoProgramacao(texto: string, openaiKey: stri
             "Não existem outras áreas (não existe 'Atividades Culturais' nem 'Tecnologia' como área).",
             "",
             "Retorne SOMENTE JSON com as chaves:",
-            "- \"tipo\": \"pergunta_programacao\" (pede informação sobre atividade/curso/esporte/evento ou o que tem), \"continuacao\" (pergunta sobre a MESMA atividade já em conversa: horário, turno, idade, vaga, professor), \"afirmacao\" (conta algo, não pergunta: 'minha filha vai ficar no balé'), \"nao_programacao\" (matrícula, documentos, endereço, outro assunto) ou \"cortesia_ou_saida\".",
+            "- \"tipo\": \"pergunta_programacao\" (pede informação sobre atividade/curso/esporte/evento, o que tem, ou o que É uma atividade: 'o que é jazz?'), \"continuacao\" (pergunta sobre a MESMA atividade já em conversa: horário, turno, idade, vaga, professor), \"afirmacao\" (conta algo, não pergunta: 'minha filha vai ficar no balé'), \"nao_programacao\" (matrícula, documentos, endereço, outro assunto) ou \"cortesia_ou_saida\".",
             "- \"atividade\": a atividade de que a pessoa está falando AGORA (pode ter sido citada em mensagem anterior da conversa, no caso de continuação), ou null.",
             "- \"termos_busca\": 1 a 4 palavras para buscar a atividade no título, com variações de grafia (ex.: balé -> [\"bale\",\"ballet\"]; futebol -> [\"futsal\",\"futebol\"]). [] se não houver atividade.",
             "- \"area\": \"CURSOS\", \"ESPORTES\", \"DIA A DIA\" ou null. A palavra 'curso(s)'/'oficina(s)' sem atividade = CURSOS. Se houver atividade, a área é a da atividade, mesmo que a pessoa diga 'curso de natação' (natação = ESPORTES).",
-            "- \"contexto\": objeto com TODA condição relevante citada em qualquer mensagem do lead nesta conversa (idade em número, genero 'feminino'/'masculino', turno 'manha'/'tarde'/'noite', dia, nivel, deficiencia, dificuldade, local, para quem é). {} se nada.",
-            "- \"escopo\": nome exato da unidade se a mensagem atual disser onde (Cuca Barra, Cuca Jangurussu, Cuca Mondubim, Cuca Pici, Cuca José Walter), \"REDE\" se pedir toda a rede/todas as unidades/'em quais unidades', ou null.",
+            "- \"contexto\": objeto com TODA condição relevante citada nas mensagens do lead nesta conversa, INCLUSIVE na mensagem atual (idade em número, genero 'feminino'/'masculino' — ex.: 'futsal feminino' => genero feminino, turno 'manha'/'tarde'/'noite' — ex.: 'à noite' => turno noite, dia, nivel, deficiencia, dificuldade, local, para quem é). {} se nada.",
+            "- \"escopo\": SOMENTE se a MENSAGEM ATUAL DO LEAD disser onde: nome exato da unidade (Cuca Barra, Cuca Jangurussu, Cuca Mondubim, Cuca Pici, Cuca José Walter) ou \"REDE\" se pedir toda a rede/todas as unidades/'em quais unidades'. NUNCA deduza a unidade das mensagens da Maria nem de mensagens anteriores: se a mensagem atual não disser, escopo=null.",
             "",
             "Exemplos:",
             "- 'olá, quero saber sobre capoeira e como faço a matrícula' => tipo=pergunta_programacao, atividade=capoeira, area=ESPORTES, escopo=null.",
             "- 'quais cursos tem?' => tipo=pergunta_programacao, atividade=null, area=CURSOS.",
             "- 'tem curso de natação?' => atividade=natação, area=ESPORTES.",
             "- 'minha filha vai ficar no balé' => tipo=afirmacao.",
+            "- 'o que é jazz?' => tipo=pergunta_programacao, atividade=jazz, area=CURSOS.",
+            "- 'tem futsal feminino?' => atividade=futsal, area=ESPORTES, contexto={genero:'feminino'}.",
+            "- Maria falou do Cuca Barra e o lead responde 'de vôlei' => escopo=null (o lead não disse a unidade).",
             "- conversa sobre libras e agora 'e tem à noite?' => tipo=continuacao, atividade=libras, contexto.turno=noite.",
             "- 'minha filha tem 7 anos' antes e agora 'tem balé?' => tipo=pergunta_programacao, atividade=balé, contexto={idade:7, genero:'feminino', para:'filha'}.",
             "- 'quero capoeira no Pici' => escopo='Cuca Pici'. 'tem capoeira em toda a rede?' => escopo='REDE'.",
@@ -1727,6 +1730,34 @@ export function descreverContexto(contexto: Record<string, unknown>): string {
     .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== "")
     .map(([k, v]) => k + ": " + String(v))
     .join(", ");
+}
+
+/**
+ * S-WM-72 (avaliação com o modelo real, 10/10): o que a MENSAGEM ATUAL diz, extraído sem LLM.
+ * - escopo: unidade citada pelo nome ou pedido de rede — o interpretador chegou a deduzir a unidade
+ *   pela resposta da Maria; aqui só vale o que o lead escreveu;
+ * - contexto: idade, turno e gênero ditos na própria mensagem (o modelo às vezes não os põe).
+ */
+export function lerMensagemAtual(texto: string): { escopo: string | null; contexto: Record<string, string | number> } {
+  const norm = normalizarTexto(texto);
+  const unidade = /^\s*\d{1,2}\s*$/.test(norm) ? undefined : detectarUnidadeDireta(texto);
+  const rede = /\b(toda a rede|rede toda|rede inteira|toda rede|todas as unidades|em todas|em quais (unidades|cucas)|nas outras unidades|outros cucas|qualquer unidade)\b/.test(norm);
+  const contexto: Record<string, string | number> = {};
+  const idade = extrairIdadeDaMensagem(texto);
+  if (idade !== null) contexto.idade = idade;
+  if (/\b(a|de|pela|durante a) noite\b|\bnoturno|\bnoturna/.test(norm)) contexto.turno = "noite";
+  else if (/\b(a|de|pela) tarde\b|\bvespertin/.test(norm)) contexto.turno = "tarde";
+  else if (/\b(de|pela|a) manha\b|\bmatutin|\bcedo\b/.test(norm)) contexto.turno = "manha";
+  if (/\bfeminin|\bmeninas\b|\bmulheres\b/.test(norm)) contexto.genero = "feminino";
+  else if (/\bmasculin|\bmeninos\b|\bhomens\b/.test(norm)) contexto.genero = "masculino";
+  return { escopo: unidade ?? (rede ? ESCOLHA_REDE : null), contexto };
+}
+
+/** Junta a interpretação do modelo com o que a mensagem atual diz: o escopo é SÓ o da mensagem;
+ * o contexto da mensagem atual entra por cima do que o modelo inferiu. */
+export function consolidarInterpretacao(interp: InterpretacaoTurno, texto: string): InterpretacaoTurno {
+  const lido = lerMensagemAtual(texto);
+  return { ...interp, escopo: lido.escopo, contexto: { ...interp.contexto, ...lido.contexto } };
 }
 
 export type InterpretacaoTurno = {
@@ -2743,12 +2774,12 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         const podeTerSinal = palavrasChaveProgramacao(textoFinal).length > 0 || areaPeloVocabulario(textoFinal) !== null || ehPerguntaGeralDeProgramacao(textoFinal);
         const itensRede = podeTerSinal ? await carregarItensProgramacaoRede(supabase, usarCacheProgramacao) : [];
         if ((podeTerSinal && temSinalDeProgramacao(textoFinal, itensRede)) || escopoSessao === ESCOLHA_REDE) {
-          const interp = await interpretarTurnoProgramacao(textoFinal, openaiKey, historico);
+          const interp = consolidarInterpretacao(await interpretarTurnoProgramacao(textoFinal, openaiKey, historico), textoFinal);
           const contexto = { ...contextoSessao, ...interp.contexto };
           console.log("[motor-agente v18] Interpretacao S-WM-72: tipo=" + interp.tipo + " atividade=" + interp.atividade + " area=" + interp.area + " escopo=" + interp.escopo + " contexto=" + descreverContexto(contexto));
           if (interp.tipo === "pergunta_programacao" || interp.tipo === "continuacao") {
             const area = interp.area ?? areaPeloVocabulario(textoFinal);
-            const escopoNaMensagem = interp.escopo ?? (detectarUnidadeDireta(textoFinal) ?? null);
+            const escopoNaMensagem = interp.escopo; // já consolidado: só o que a mensagem atual diz
             const escopo = escopoNaMensagem ?? escopoSessao;
             if (!escopo) {
               const sobre = interp.atividade ?? (area ? ROTULO_AREA[area] : "");
