@@ -1757,7 +1757,9 @@ export function lerMensagemAtual(texto: string): { escopo: string | null; contex
  * o contexto da mensagem atual entra por cima do que o modelo inferiu. */
 export function consolidarInterpretacao(interp: InterpretacaoTurno, texto: string): InterpretacaoTurno {
   const lido = lerMensagemAtual(texto);
-  return { ...interp, escopo: lido.escopo, contexto: { ...interp.contexto, ...lido.contexto } };
+  // O modelo às vezes devolve a atividade sem as variações de grafia — a busca usa a própria atividade.
+  const termos = interp.termos_busca.length || !interp.atividade ? interp.termos_busca : palavrasChaveProgramacao(interp.atividade);
+  return { ...interp, termos_busca: termos, escopo: lido.escopo, contexto: { ...interp.contexto, ...lido.contexto } };
 }
 
 export type InterpretacaoTurno = {

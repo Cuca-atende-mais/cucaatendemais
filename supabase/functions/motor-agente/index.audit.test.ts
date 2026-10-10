@@ -3344,6 +3344,8 @@ Deno.test("S-WM-72 (avaliação real 10/10): escopo só vale se a MENSAGEM ATUAL
   assertEquals(noite.contexto.turno, "noite");
   const fem = consolidarInterpretacao(validarInterpretacaoTurno({ tipo: "pergunta_programacao", atividade: "futsal" }), "tem futsal feminino?");
   assertEquals(fem.contexto.genero, "feminino");
+  assertEquals(fem.termos_busca, ["futsal"], "sem variações do modelo, os termos saem da própria atividade");
+  assertEquals(consolidarInterpretacao(validarInterpretacaoTurno({ atividade: "natação" }), "tem curso de natação?").termos_busca, ["natacao"]);
   assertEquals(consolidarInterpretacao(validarInterpretacaoTurno({ escopo: "Cuca Pici" }), "quero capoeira no Pici").escopo, "Cuca Pici");
   assertEquals(consolidarInterpretacao(validarInterpretacaoTurno({}), "tem capoeira em toda a rede?").escopo, ESCOLHA_REDE);
   assertEquals(lerMensagemAtual("minha filha tem 7 anos e quer de manhã").contexto, { idade: 7, turno: "manha" });
