@@ -3227,8 +3227,12 @@ Deno.test("S-WM-72 AC6/AC7: Barra + filha de 7 anos + 'tem balé?' → mostra o 
   const { bodies } = await comFetchS72(() => handler(requestFake("tem balé?"), mock), interpS72({ atividade: "balé", termos_busca: ["bale", "ballet"], area: "CURSOS", contexto: { idade: 7, genero: "feminino", para: "filha" } }));
   const prompt = promptFinalS72(bodies);
   assertStringIncludes(prompt, "Ballet Infantil");
-  assertEquals(prompt.includes("Balé Clássico - Turma 01 —"), false, "a turma 15-29 da Barra não entra como adequada");
-  assertStringIncludes(prompt, "No Cuca Barra nao foi encontrada essa atividade");
+  const posNota = prompt.indexOf("Tem pelo nome, mas NAO para o contexto informado");
+  const posBaleBarra = prompt.indexOf("Balé Clássico - Turma 01 —");
+  assertEquals(posBaleBarra > posNota && posNota > -1, true, "a turma 15-29 da Barra só aparece na nota de 'fora do contexto', nunca como adequada");
+  assertStringIncludes(prompt, "No Cuca Barra nao ha essa atividade para esse contexto");
+  assertStringIncludes(prompt, "Tem pelo nome, mas NAO para o contexto informado", "a Barra tem balé (para outra faixa) — isso aparece, não vira 'não tem'");
+  assertEquals(prompt.includes("Nao encontrada pelo nome na programacao de: Cuca Barra"), false, "nunca afirmar ausência do nome na Barra");
   assertStringIncludes(prompt, "idade: 7");
   assertEquals(patchesMerge(chamadas).some((p) => (p.prog_contexto as Record<string, unknown> | undefined)?.idade === 7), true, "o contexto fica na sessão");
 });
@@ -3294,4 +3298,36 @@ Deno.test("S-WM-72 AC16: '1' respondendo ao menu de áreas da unidade não passa
   const { chamadasInterpretador, bodies } = await comFetchS72(() => handler(requestFake("1"), mock), interpS72({}));
   assertEquals(chamadasInterpretador, 0);
   assertStringIncludes(promptFinalS72(bodies), "O usuário selecionou a área: Esportes");
+});
+
+
+Deno.test("S-WM-72 AC15b: escopo 'rede' + '3' respondendo à lista de atividades do bot → consulta a atividade da linha 3", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const lista = "Na rede tem:\n1️⃣ **Hora Pintada** — Mondubim\n2️⃣ **Ballet Infantil** — Mondubim\n3️⃣ **Curso de Libras Básico II** — Mondubim";
+  const mock = criarSupabaseMock(respostasS72({ prog_escopo: ESCOLHA_REDE, conversa_engajada: true }, [
+    { conteudo: "3", remetente: "lead", msAtras: 0 },
+    { conteudo: lista, remetente: "agente", msAtras: 10000 },
+  ]), chamadas);
+  const { bodies, chamadasInterpretador } = await comFetchS72(() => handler(requestFake("3"), mock), interpS72({}));
+  assertEquals(chamadasInterpretador, 0, "a linha escolhida resolve sem o interpretador");
+  const prompt = promptFinalS72(bodies);
+  assertStringIncludes(prompt, "PERGUNTA DO LEAD QUE VOCE ESTA RESPONDENDO AGORA (ele acabou de escolher onde quer saber): Curso de Libras Básico II");
+  assertStringIncludes(prompt, "Curso de Libras Básico II — Curso:");
+});
+
+Deno.test("S-WM-72 AC20: 'procure em outras unidades' aplica o contexto da sessão (idade)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock(respostasS72({ unidade_selecionada: "Cuca Barra", conversa_engajada: true, prog_contexto: { idade: 7 } }, [
+    { conteudo: "procure em outras unidades", remetente: "lead", msAtras: 0 },
+    { conteudo: "No Cuca Barra não encontrei.", remetente: "agente", msAtras: 10000 },
+    { conteudo: "tem balé?", remetente: "lead", msAtras: 20000 },
+  ]), chamadas);
+  const { bodies } = await comFetchS72(
+    () => handler(requestFake("procure em outras unidades"), mock),
+    interpS72({}),
+    { unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false },
+  );
+  const prompt = bodies.find((b) => b.includes("a pessoa pediu para procurar em outras unidades")) ?? "";
+  assertStringIncludes(prompt, "Ballet Infantil", "balé para 7 anos do Mondubim");
+  assertEquals(prompt.includes("Balé Clássico - Turma 01 —"), false, "a turma de 15 a 29 anos não entra para 7 anos");
 });

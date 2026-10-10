@@ -1459,8 +1459,19 @@ const PALAVRAS_NAO_ATIVIDADE = new Set([
  */
 export function palavrasChaveProgramacao(mensagem: string): string[] {
   const palavras = normalizarTexto(mensagem).replace(/([a-z0-9])-([a-z0-9])/g, "$1$2").split(/[^a-z0-9]+/).filter((p) => p.length >= 3 && !PALAVRAS_NAO_ATIVIDADE.has(p));
-  return [...new Set(palavras)];
+  // S-WM-72: variações de grafia que aparecem nos títulos reais ("Balé" e "Ballet" no mesmo mês,
+  // "Viollão"), para o casamento por título não depender de como a pessoa escreveu.
+  const comVariantes = palavras.flatMap((p) => [p, ...(VARIANTES_GRAFIA_ATIVIDADE[p] ?? [])]);
+  return [...new Set(comVariantes)];
 }
+
+const VARIANTES_GRAFIA_ATIVIDADE: Record<string, string[]> = {
+  bale: ["ballet"],
+  ballet: ["bale"],
+  bales: ["ballet"],
+  futebol: ["futsal"],
+  violao: ["viollao"],
+};
 
 export type AreaProgramacao = "CURSOS" | "ESPORTES" | "DIA A DIA";
 export type ItemProgramacao = { unidade: string; titulo: string; detalhe: string; area?: AreaProgramacao | null };
@@ -1528,6 +1539,11 @@ export function montarPerguntaEscopo(introducao: string): string {
   const linhas = UNIDADES_MENU_ESCOPO.map((u, i) => (i + 1) + "️⃣ " + u);
   linhas.push((UNIDADES_MENU_ESCOPO.length + 1) + "️⃣ " + ROTULO_REDE);
   return introducao + "\n\n" + linhas.join("\n");
+}
+
+/** Texto limpo da linha N de uma lista numerada (sem o número, o emoji e o negrito). */
+export function textoDaLinhaNumerada(numero: string, bloco: string): string {
+  return linhaNumeradaDaLista(numero, bloco).replace(/^[\s\d\ufe0f\u20e3.)*]+/, "").replace(/\*\*/g, "").split(/\s+[—–-]\s+/)[0].trim();
 }
 
 /** Texto da linha N de uma lista numerada (1️⃣, "1.", "1)", com ou sem negrito). */
@@ -1646,13 +1662,19 @@ export function montarConsultaComContexto(
   if (candidatos.length > 0) {
     const area = candidatos.find((it) => it.area)?.area ?? consulta.area;
     const filtrados = filtrarItensPorContexto(candidatos, consulta.contexto);
+    // Unidades que TÊM a atividade pelo nome, mas não para o contexto informado (ex.: balé só de 15 a
+    // 29 anos na Barra, para uma criança de 7). Nunca dizer que essas unidades não têm a atividade.
+    const foraDoContexto = candidatos.filter((it) => !filtrados.includes(it));
+    const notaForaDoContexto = foraDoContexto.length
+      ? "\nTem pelo nome, mas NAO para o contexto informado (" + descreverContexto(consulta.contexto) + ") — nao diga que essas unidades nao tem a atividade:\n" + formatarItensPorUnidade(foraDoContexto, foraDoContexto)
+      : "";
     if (consulta.escopo === ESCOLHA_REDE) {
-      return filtrados.length ? { situacao: "rede", bloco: formatarItensPorUnidade(filtrados, itensRede), area } : { situacao: "nenhuma", bloco: "", area };
+      return filtrados.length ? { situacao: "rede", bloco: formatarItensPorUnidade(filtrados, filtrados) + notaForaDoContexto, area } : { situacao: "nenhuma", bloco: notaForaDoContexto.trim(), area };
     }
     const naUnidade = filtrados.filter((it) => it.unidade === consulta.escopo);
     if (naUnidade.length) return { situacao: "na_unidade", bloco: formatarItensPorUnidade(naUnidade, naUnidade), area };
-    if (filtrados.length) return { situacao: "outras_unidades", bloco: formatarItensPorUnidade(filtrados, itensRede), area };
-    return { situacao: "nenhuma", bloco: "", area };
+    if (filtrados.length) return { situacao: "outras_unidades", bloco: formatarItensPorUnidade(filtrados, filtrados) + notaForaDoContexto, area };
+    return { situacao: "nenhuma", bloco: notaForaDoContexto.trim(), area };
   }
   // Atividade identificada (pelo interpretador) que não casa com nenhum título da rede: nenhuma
   // unidade tem — o bot oferece a mesma área, nunca só "não tem".
@@ -2708,6 +2730,14 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         }
       }
 
+      // A2) escopo "rede" na sessão + número respondendo à lista que o bot mandou ("3") → a linha
+      // escolhida vira a consulta (o roteamento normal pula dígitos, e sem unidade salva o "3" cairia
+      // no classificador antigo).
+      if (!consultaProgramacao && !pendente && escopoSessao === ESCOLHA_REDE && /^\d{1,2}$/.test(textoFinal.trim())) {
+        const linha = textoDaLinhaNumerada(textoFinal.trim(), blocoAnteriorAgente);
+        if (linha) consultaProgramacao = { texto: linha, atividade: linha, termos: [], area: null, contexto: contextoSessao, escopo: ESCOLHA_REDE, perguntaOriginal: true };
+      }
+
       // B) mensagem nova com cara de programação → interpretador semântico
       if (!consultaProgramacao && !ehSelecaoMenu(textoFinal) && !pedidoOutrasUnidades) {
         const podeTerSinal = palavrasChaveProgramacao(textoFinal).length > 0 || areaPeloVocabulario(textoFinal) !== null || ehPerguntaGeralDeProgramacao(textoFinal);
@@ -3075,7 +3105,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       const porSituacao: Record<string, string> = {
         na_unidade: "Responda usando o bloco '--- PROGRAMACAO VIGENTE ---' (programacao do " + nomeEscopo + ").",
         rede: "Responda usando o bloco '--- PROGRAMACAO VIGENTE ---', dizendo em quais unidades da rede tem.",
-        outras_unidades: "No " + nomeEscopo + " nao foi encontrada essa atividade" + (contextoTxt ? " para esse contexto" : "") + ". Diga isso e informe, usando so o bloco '--- PROGRAMACAO VIGENTE ---', em quais unidades tem; pergunte se a pessoa quer saber de alguma delas, " + opcoesNumeradas + ".",
+        outras_unidades: "No " + nomeEscopo + " nao ha essa atividade" + (contextoTxt ? " para esse contexto (" + contextoTxt + "); se o bloco mostrar que ela existe la para outro publico, diga isso tambem" : "") + ". Diga isso e informe, usando so o bloco '--- PROGRAMACAO VIGENTE ---', em quais unidades tem; pergunte se a pessoa quer saber de alguma delas, " + opcoesNumeradas + ".",
         nenhuma: "Nao foi encontrado(a) " + sobre + (contextoTxt ? " para esse contexto (" + contextoTxt + ")" : "") + " em nenhuma unidade na programacao deste mes. Diga isso com suas palavras e pergunte se e onde a pessoa quer saber de outras opcoes de " + (r.area ? ROTULO_AREA[r.area] : "programacao") + (contextoTxt ? " para esse contexto" : "") + " — no " + (c.escopo === ESCOLHA_REDE ? "uma unidade especifica" : nomeEscopo + ", em outra unidade") + " ou em toda a Rede CUCA. NUNCA responda so 'nao tem'.",
         area: "Liste so os nomes das atividades do bloco '--- PROGRAMACAO VIGENTE ---' (area " + (r.area ? ROTULO_AREA[r.area] : "") + ", " + nomeEscopo + "), de forma compacta, e pergunte qual interessa para mostrar dias e horarios. Nao liste atividades de outras areas.",
         sem_atividade: "Responda a pergunta usando o FAQ e os servicos da rede, se cobrirem; para programacao, pergunte qual atividade ou area a pessoa procura. Nao invente atividades.",
