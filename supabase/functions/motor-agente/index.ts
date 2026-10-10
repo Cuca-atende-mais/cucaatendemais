@@ -30,7 +30,7 @@ const NOMES_UNIDADES_POR_PALAVRA: Record<string, string> = Object.fromEntries(
   Object.entries(UNIDADES_MAP).filter(([chave]) => !/^\d$/.test(chave))
 );
 
-export const MENU_UNIDADES = "Sobre qual unidade CUCA voc\u00ea quer saber? \ud83d\ude0a\n\n1\ufe0f\u20e3 Barra\n2\ufe0f\u20e3 Jangurussu\n3\ufe0f\u20e3 Mondubim\n4\ufe0f\u20e3 Pici\n5\ufe0f\u20e3 Jos\u00e9 Walter";
+export const MENU_UNIDADES = "Sobre qual unidade CUCA voc\u00ea quer saber? \ud83d\ude0a\n\n1\ufe0f\u20e3 Barra\n2\ufe0f\u20e3 Jangurussu\n3\ufe0f\u20e3 Mondubim\n4\ufe0f\u20e3 Pici\n5\ufe0f\u20e3 Jos\u00e9 Walter\n6\ufe0f\u20e3 Toda a Rede CUCA";
 
 export function ehSelecaoMenu(texto: string): boolean {
   return /^[1-5]$/.test(texto.trim());
@@ -986,6 +986,19 @@ export function montarContextoHistoricoSelecaoUnidade(historico: { role: string;
   return "Historico recente (use apenas para entender respostas curtas/elipticas):\n" + mensagensRecentes.join("\n");
 }
 
+/**
+ * S-WM-72: contexto do interpretador = TODAS as mensagens do lead na sessão atual (o histórico já
+ * vem recortado pela S-WM-71) + a última resposta da Maria, truncada. É assim que "minha filha tem
+ * 7 anos", dito duas mensagens antes, chega à interpretação de "tem balé?".
+ */
+export function montarContextoSessaoParaInterpretacao(historico: { role: string; content: string }[] = [], textoAtual = ""): string {
+  const atual = textoAtual.trim();
+  const anteriores = historico.filter((m) => m.content.trim() !== "");
+  if (anteriores.length && anteriores[anteriores.length - 1].role === "user" && anteriores[anteriores.length - 1].content.trim() === atual) anteriores.pop();
+  const linhas = anteriores.slice(-10).map((m) => (m.role === "assistant" ? "Maria: " + m.content.replace(/[\r\n]+/g, " ").trim().slice(0, 300) : "Lead: " + m.content.replace(/[\r\n]+/g, " ").trim()));
+  return linhas.length ? "Conversa desta sessão (mais antiga primeiro):\n" + linhas.join("\n") : "Conversa desta sessão: nenhuma mensagem anterior.";
+}
+
 export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, historico: { role: string; content: string }[] = [], tentativa = 0): Promise<AvaliacaoSelecaoUnidade> {
   try {
     const contextoHistorico = montarContextoHistoricoSelecaoUnidade(historico, texto);
@@ -1040,6 +1053,75 @@ export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, hi
   } catch (exc) {
     console.error("[motor-agente v18] avaliarSelecaoUnidade erro, fallback seguro:", exc);
     return AVALIACAO_SELECAO_UNIDADE_DEFAULT;
+  }
+}
+
+/**
+ * S-WM-72 (R1): interpretador semântico do turno. Lê as mensagens do lead NA SESSÃO ATUAL (o
+ * histórico já vem recortado pela S-WM-71) e devolve o tipo da mensagem, a atividade (com variações
+ * de grafia para buscar no título), a área REAL da programação, o contexto citado em qualquer
+ * mensagem da sessão (sem lista fechada) e o escopo que a própria mensagem já define. Só é chamado
+ * quando o filtro barato (`temSinalDeProgramacao`) vê cara de programação. Qualquer falha cai em
+ * `INTERPRETACAO_PADRAO` (nao_programacao) — o fluxo de hoje segue, nunca um palpite.
+ */
+export async function interpretarTurnoProgramacao(texto: string, openaiKey: string, historico: { role: string; content: string }[] = [], tentativa = 0): Promise<InterpretacaoTurno> {
+  try {
+    const contextoHistorico = montarContextoSessaoParaInterpretacao(historico, texto);
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + openaiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        max_tokens: 220,
+        response_format: { type: "json_object" },
+        messages: [{
+          role: "user",
+          content: [
+            "Você interpreta mensagens de leads da Rede CUCA (centros de juventude de Fortaleza) para um atendente virtual.",
+            "A programação mensal tem EXATAMENTE 3 áreas (use o código exato):",
+            "- CURSOS = Cursos e Oficinas: dança (balé/ballet, jazz, danças urbanas, k-pop, ritmos), teatro, música (violão, canto), Libras, fotografia, informática/tecnologia, design, yoga, currículo.",
+            "- ESPORTES = natação, lutas (judô, jiu-jitsu, karatê, muay thai, boxe, MMA, capoeira), futsal, vôlei, basquete, handebol, hidroginástica, funcional, pilates, ginástica, corrida, triathlon.",
+            "- DIA A DIA = eventos e atividades abertas (Dia da Criança, ensaios abertos, Hora Pintada, Venha Jogar).",
+            "Não existem outras áreas (não existe 'Atividades Culturais' nem 'Tecnologia' como área).",
+            "",
+            "Retorne SOMENTE JSON com as chaves:",
+            "- \"tipo\": \"pergunta_programacao\" (pede informação sobre atividade/curso/esporte/evento ou o que tem), \"continuacao\" (pergunta sobre a MESMA atividade já em conversa: horário, turno, idade, vaga, professor), \"afirmacao\" (conta algo, não pergunta: 'minha filha vai ficar no balé'), \"nao_programacao\" (matrícula, documentos, endereço, outro assunto) ou \"cortesia_ou_saida\".",
+            "- \"atividade\": a atividade de que a pessoa está falando AGORA (pode ter sido citada em mensagem anterior da conversa, no caso de continuação), ou null.",
+            "- \"termos_busca\": 1 a 4 palavras para buscar a atividade no título, com variações de grafia (ex.: balé -> [\"bale\",\"ballet\"]; futebol -> [\"futsal\",\"futebol\"]). [] se não houver atividade.",
+            "- \"area\": \"CURSOS\", \"ESPORTES\", \"DIA A DIA\" ou null. A palavra 'curso(s)'/'oficina(s)' sem atividade = CURSOS. Se houver atividade, a área é a da atividade, mesmo que a pessoa diga 'curso de natação' (natação = ESPORTES).",
+            "- \"contexto\": objeto com TODA condição relevante citada em qualquer mensagem do lead nesta conversa (idade em número, genero 'feminino'/'masculino', turno 'manha'/'tarde'/'noite', dia, nivel, deficiencia, dificuldade, local, para quem é). {} se nada.",
+            "- \"escopo\": nome exato da unidade se a mensagem atual disser onde (Cuca Barra, Cuca Jangurussu, Cuca Mondubim, Cuca Pici, Cuca José Walter), \"REDE\" se pedir toda a rede/todas as unidades/'em quais unidades', ou null.",
+            "",
+            "Exemplos:",
+            "- 'olá, quero saber sobre capoeira e como faço a matrícula' => tipo=pergunta_programacao, atividade=capoeira, area=ESPORTES, escopo=null.",
+            "- 'quais cursos tem?' => tipo=pergunta_programacao, atividade=null, area=CURSOS.",
+            "- 'tem curso de natação?' => atividade=natação, area=ESPORTES.",
+            "- 'minha filha vai ficar no balé' => tipo=afirmacao.",
+            "- conversa sobre libras e agora 'e tem à noite?' => tipo=continuacao, atividade=libras, contexto.turno=noite.",
+            "- 'minha filha tem 7 anos' antes e agora 'tem balé?' => tipo=pergunta_programacao, atividade=balé, contexto={idade:7, genero:'feminino', para:'filha'}.",
+            "- 'quero capoeira no Pici' => escopo='Cuca Pici'. 'tem capoeira em toda a rede?' => escopo='REDE'.",
+            "",
+            contextoHistorico,
+            "",
+            "Mensagem do lead: " + texto,
+          ].join("\n"),
+        }],
+      }),
+    });
+
+    if (deveTentarNovamente(resp.status, tentativa)) {
+      const corpoErro = await resp.text();
+      const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
+      await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
+      return interpretarTurnoProgramacao(texto, openaiKey, historico, tentativa + 1);
+    }
+    if (!resp.ok) return INTERPRETACAO_PADRAO;
+    const body = await resp.json();
+    return validarInterpretacaoTurno(JSON.parse(body.choices[0].message.content));
+  } catch (exc) {
+    console.error("[motor-agente v18] interpretarTurnoProgramacao erro, fallback seguro:", exc);
+    return INTERPRETACAO_PADRAO;
   }
 }
 
@@ -1301,11 +1383,18 @@ export const LIMITE_SESSAO_MS = 2 * 60 * 60 * 1000;
 
 /** Chaves de `conversas.metadata` que descrevem "onde o lead está agora" — zeradas em sessão nova.
  * `ultimo_disparo` e qualquer outra chave ficam intactas. */
-export const LIMPEZA_ESTADO_SESSAO: { unidade_selecionada: null; aguardando_unidade: boolean; menu_categoria_ativo: boolean; conversa_engajada: boolean } = {
+export const LIMPEZA_ESTADO_SESSAO: {
+  unidade_selecionada: null; aguardando_unidade: boolean; menu_categoria_ativo: boolean; conversa_engajada: boolean;
+  prog_pendente: null; prog_escopo: null; prog_contexto: null;
+} = {
   unidade_selecionada: null,
   aguardando_unidade: false,
   menu_categoria_ativo: false,
   conversa_engajada: false,
+  // S-WM-72: pergunta pendente, escopo "toda a rede" e contexto da sessão também não atravessam sessões.
+  prog_pendente: null,
+  prog_escopo: null,
+  prog_contexto: null,
 };
 
 /**
@@ -1357,6 +1446,10 @@ const PALAVRAS_NAO_ATIVIDADE = new Set([
   // S-WM-71: verbos e pronomes de "procure em outras unidades"
   "procure", "procura", "procurar", "procurem", "verifique", "verificar", "veja", "olhe", "outra",
   "outras", "outro", "outros", "demais", "nelas", "neles", "tambem",
+  // S-WM-72: cortesia e verbos comuns que não identificam atividade (o filtro barato não pode
+  // consultar a programação por causa deles)
+  "tudo", "bem", "acho", "mudar", "trocar", "ainda", "certo", "beleza", "entendi", "otimo", "legal",
+  "obrigada", "valeu", "sabe", "pode", "seria", "gostei", "queria", "preciso", "minha", "meu", "sua",
 ]);
 
 /**
@@ -1369,7 +1462,8 @@ export function palavrasChaveProgramacao(mensagem: string): string[] {
   return [...new Set(palavras)];
 }
 
-export type ItemProgramacao = { unidade: string; titulo: string; detalhe: string };
+export type AreaProgramacao = "CURSOS" | "ESPORTES" | "DIA A DIA";
+export type ItemProgramacao = { unidade: string; titulo: string; detalhe: string; area?: AreaProgramacao | null };
 
 /**
  * Quebra o `conteudo` de um `monthly_program` em itens ("• TÍTULO" + linha "Detalhes:").
@@ -1378,7 +1472,16 @@ export type ItemProgramacao = { unidade: string; titulo: string; detalhe: string
 export function extrairItensProgramacao(unidade: string, conteudo: string): ItemProgramacao[] {
   const itens: ItemProgramacao[] = [];
   const linhas = conteudo.split("\n");
+  // S-WM-72: a seção ("== CURSOS ==", "== ESPORTES ==", "== DIA A DIA ==") vira a área do item —
+  // é a área real do dado, usada para "quais cursos tem?" e para as alternativas da mesma área.
+  let area: AreaProgramacao | null = null;
   for (let i = 0; i < linhas.length; i++) {
+    const secao = linhas[i].match(/^==\s*(.+?)\s*==$/);
+    if (secao) {
+      const nome = normalizarTexto(secao[1]);
+      area = nome.startsWith("curso") ? "CURSOS" : nome.startsWith("esporte") ? "ESPORTES" : nome.startsWith("dia a dia") ? "DIA A DIA" : null;
+      continue;
+    }
     const m = linhas[i].match(/^•\s+(.+)$/);
     if (!m) continue;
     const linhaDetalhe = (linhas[i + 1] ?? "").trim();
@@ -1386,7 +1489,7 @@ export function extrairItensProgramacao(unidade: string, conteudo: string): Item
     detalhe = detalhe.split(/\s*Ementa:/)[0];
     detalhe = detalhe.replace(/\s*A quantidade de vagas muda[^.]*\./gi, "");
     detalhe = removerVagasDoTexto(detalhe).trim();
-    itens.push({ unidade, titulo: m[1].trim(), detalhe });
+    itens.push({ unidade, titulo: m[1].trim(), detalhe, area });
   }
   return itens;
 }
@@ -1408,6 +1511,221 @@ export function montarBlocoRedeComAtividadeDaSessao(itens: ItemProgramacao[], te
   return "";
 }
 
+// ── S-WM-72: escopo (unidade ou rede), área e contexto ───────────────────────────────────────
+export const ROTULO_REDE = "Toda a Rede CUCA";
+/** Valor especial para "toda a rede" — nunca vai para `unidade_selecionada`. */
+export const ESCOLHA_REDE = "REDE";
+export const ROTULO_AREA: Record<AreaProgramacao, string> = {
+  CURSOS: "Cursos e Oficinas",
+  ESPORTES: "Esportes",
+  "DIA A DIA": "Dia a Dia (eventos e atividades abertas)",
+};
+export const PERGUNTA_AREA = "Qual área te interessa? 😊\n\n1️⃣ Cursos e Oficinas\n2️⃣ Esportes\n3️⃣ Dia a Dia (eventos e atividades abertas)";
+const UNIDADES_MENU_ESCOPO = ["Cuca Barra", "Cuca Jangurussu", "Cuca Mondubim", "Cuca Pici", "Cuca José Walter"];
+
+/** Pergunta de escopo: as 5 unidades pelo nome + "Toda a Rede CUCA". */
+export function montarPerguntaEscopo(introducao: string): string {
+  const linhas = UNIDADES_MENU_ESCOPO.map((u, i) => (i + 1) + "️⃣ " + u);
+  linhas.push((UNIDADES_MENU_ESCOPO.length + 1) + "️⃣ " + ROTULO_REDE);
+  return introducao + "\n\n" + linhas.join("\n");
+}
+
+/** Texto da linha N de uma lista numerada (1️⃣, "1.", "1)", com ou sem negrito). */
+function linhaNumeradaDaLista(numero: string, bloco: string): string {
+  for (const l of bloco.split("\n")) {
+    const t = l.trim().replace(/[️⃣*]/g, "");
+    if (t.startsWith(numero + " ") || t.startsWith(numero + ".") || t.startsWith(numero + ")")) return l;
+  }
+  return "";
+}
+
+/**
+ * S-WM-72: resolve a resposta à pergunta de escopo — unidade (nome exato) ou `ESCOLHA_REDE`.
+ * Dígito vale pela linha da lista que o bot mostrou; "toda a rede"/"todas" valem por texto; "aqui
+ * mesmo"/"essa mesmo" valem a unidade atual. `undefined` quando não deu para resolver.
+ */
+export function resolverEscolhaDeEscopo(texto: string, blocoAnterior: string, unidadeAtual?: string | null): string | undefined {
+  const norm = normalizarTexto(texto).trim();
+  if (/^[1-9]$/.test(norm)) {
+    const linha = linhaNumeradaDaLista(norm, blocoAnterior);
+    if (!linha) return undefined;
+    if (normalizarTexto(linha).includes(normalizarTexto(ROTULO_REDE))) return ESCOLHA_REDE;
+    const linhaLower = linha.toLowerCase();
+    return Object.entries(NOMES_UNIDADES_POR_PALAVRA).find(([k]) => contemPalavra(linhaLower, k))?.[1];
+  }
+  if (/\b(toda a rede|rede toda|rede inteira|toda rede|todas as unidades|em todas|todas|qualquer unidade|qualquer uma)\b/.test(norm)) return ESCOLHA_REDE;
+  const porNome = Object.entries(NOMES_UNIDADES_POR_PALAVRA).find(([k]) => contemPalavra(norm, normalizarTexto(k)))?.[1];
+  if (porNome) return porNome;
+  if (unidadeAtual && /\b(aqui mesmo|essa mesmo|essa mesma|nessa mesmo|nessa|nesta|a mesma|mesma unidade)\b/.test(norm)) return unidadeAtual;
+  return undefined;
+}
+
+/** S-WM-72 (R6): quando uma resposta pronta mostra o menu de unidades, guarda a mensagem do lead
+ * como pergunta pendente — é ela que vai ser respondida quando a pessoa escolher (inclusive "6"). */
+export function pendenteSeMenuDeUnidades(resposta: string, textoLead: string): Record<string, unknown> {
+  return resposta.includes(ROTULO_REDE) ? { prog_pendente: { texto: textoLead, atividade: null, termos: [], area: areaPeloVocabulario(textoLead), contexto: {} } } : {};
+}
+
+/** S-WM-72: resolve a resposta à pergunta de área (dígito pela lista ou palavra). */
+export function resolverEscolhaDeArea(texto: string, blocoAnterior: string): AreaProgramacao | undefined {
+  const norm = normalizarTexto(texto).trim();
+  const alvo = /^[1-9]$/.test(norm) ? normalizarTexto(linhaNumeradaDaLista(norm, blocoAnterior)) : norm;
+  if (!alvo) return undefined;
+  if (/\b(cursos?|oficinas?)\b/.test(alvo)) return "CURSOS";
+  if (/\b(esportes?|modalidades?)\b/.test(alvo)) return "ESPORTES";
+  if (/\b(dia a dia|eventos?)\b/.test(alvo)) return "DIA A DIA";
+  return undefined;
+}
+
+/** S-WM-72: área pelo vocabulário do lead ("quais cursos" = Cursos e Oficinas). */
+export function areaPeloVocabulario(texto: string): AreaProgramacao | null {
+  const norm = normalizarTexto(texto);
+  if (/\b(cursos?|oficinas?)\b/.test(norm)) return "CURSOS";
+  if (/\b(esportes?|modalidades?|treinos?|lutas?)\b/.test(norm)) return "ESPORTES";
+  if (/\b(eventos?)\b/.test(norm)) return "DIA A DIA";
+  return null;
+}
+
+/** S-WM-72: pergunta geral de programação ("o que tem", "quais atividades"). */
+export function ehPerguntaGeralDeProgramacao(texto: string): boolean {
+  const norm = normalizarTexto(texto);
+  return /\b(o que tem|o que (o )?cuca (tem|oferece)|o que voces (tem|oferecem)|quais (sao )?(as |os )?(atividades|cursos|oficinas|esportes|modalidades|opcoes)|que (cursos|atividades|esportes)|programacao)\b/.test(norm);
+}
+
+/**
+ * S-WM-72 (filtro barato, sem LLM): a mensagem tem cara de programação? Título casado na
+ * programação ativa, vocabulário de área ou pergunta geral. Só quando é true o interpretador
+ * semântico é chamado.
+ */
+export function temSinalDeProgramacao(texto: string, itens: ItemProgramacao[]): boolean {
+  if (areaPeloVocabulario(texto) || ehPerguntaGeralDeProgramacao(texto)) return true;
+  return itensQueCasamComPalavras(itens, palavrasChaveProgramacao(texto)).length > 0;
+}
+
+/** Faixa etária escrita no detalhe do item ("Idade: 15 a 29 anos", "Requisitos: Crianças de 07 à 12 anos"). */
+export function faixaEtariaDoDetalhe(detalhe: string): string | null {
+  const idade = detalhe.match(/Idade:\s*([^)]+)\)/i);
+  const req = detalhe.match(/Requisitos:\s*([^.]*(?:\.\d[^.]*)?)/i);
+  const bruto = idade?.[1] ?? req?.[1] ?? null;
+  if (!bruto) return null;
+  return normalizarTexto(bruto).replace(/entre\s+(\d{1,3})\s+e\s+(\d{1,3})/, "$1 a $2");
+}
+
+/** S-WM-72 (R5): só os nomes (sem repetição) por unidade — resposta curta para "quais cursos tem?". */
+export function listarNomesPorUnidade(itens: ItemProgramacao[]): string {
+  return UNIDADES_ORDEM
+    .map((u) => ({ u, nomes: [...new Set(itens.filter((it) => it.unidade === u).map((it) => it.titulo))] }))
+    .filter((x) => x.nomes.length > 0)
+    .map((x) => x.u + ": " + x.nomes.join("; "))
+    .join("\n");
+}
+
+/**
+ * S-WM-72 (R4): monta o bloco e a situação da consulta de programação com contexto.
+ * - atividade casada: filtra pelo contexto; com escopo de unidade, procura nela, depois nas outras;
+ * - só área: lista os nomes da área no escopo (com o contexto aplicado);
+ * - nada: "sem_atividade".
+ */
+export function montarConsultaComContexto(
+  itensRede: ItemProgramacao[],
+  consulta: { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string },
+): { situacao: "na_unidade" | "outras_unidades" | "nenhuma" | "rede" | "area" | "sem_atividade"; bloco: string; area: AreaProgramacao | null } {
+  const fontesDePalavras = consulta.atividade || consulta.termos.length ? [consulta.atividade ?? "", ...consulta.termos] : [consulta.texto];
+  const palavras = [...new Set(fontesDePalavras.flatMap((t) => palavrasChaveProgramacao(t)))];
+  const candidatos = itensQueCasamComPalavras(itensRede, palavras);
+  if (candidatos.length > 0) {
+    const area = candidatos.find((it) => it.area)?.area ?? consulta.area;
+    const filtrados = filtrarItensPorContexto(candidatos, consulta.contexto);
+    if (consulta.escopo === ESCOLHA_REDE) {
+      return filtrados.length ? { situacao: "rede", bloco: formatarItensPorUnidade(filtrados, itensRede), area } : { situacao: "nenhuma", bloco: "", area };
+    }
+    const naUnidade = filtrados.filter((it) => it.unidade === consulta.escopo);
+    if (naUnidade.length) return { situacao: "na_unidade", bloco: formatarItensPorUnidade(naUnidade, naUnidade), area };
+    if (filtrados.length) return { situacao: "outras_unidades", bloco: formatarItensPorUnidade(filtrados, itensRede), area };
+    return { situacao: "nenhuma", bloco: "", area };
+  }
+  if (consulta.area) {
+    const daArea = filtrarItensPorContexto(itensRede.filter((it) => it.area === consulta.area && (consulta.escopo === ESCOLHA_REDE || it.unidade === consulta.escopo)), consulta.contexto);
+    return { situacao: "area", bloco: listarNomesPorUnidade(daArea), area: consulta.area };
+  }
+  return { situacao: "sem_atividade", bloco: "", area: null };
+}
+
+/** Contexto que a programação NÃO traz — nunca vira filtro nem afirmação de adequação. */
+export const CONTEXTO_SEM_DADO = ["deficiencia", "acessibilidade", "dificuldade", "local", "bairro", "saude", "condicao"];
+
+/**
+ * S-WM-72 (R4): aplica o contexto que EXISTE nos dados — idade (faixa no detalhe), gênero
+ * ("Público: Feminino/Masculino/Misto") e turno (primeiro horário do detalhe). Item sem o dado
+ * correspondente fica (não esconder turma por falta de informação). Diferente de
+ * `filtrarLinhasPorIdade`, aqui o vazio é um resultado válido: é ele que dispara a busca nas outras
+ * unidades.
+ */
+export function filtrarItensPorContexto(itens: ItemProgramacao[], contexto: Record<string, unknown>): ItemProgramacao[] {
+  const idade = typeof contexto.idade === "number" ? contexto.idade : typeof contexto.idade === "string" && /^\d{1,3}$/.test(contexto.idade.trim()) ? Number(contexto.idade) : null;
+  const genero = typeof contexto.genero === "string" ? normalizarTexto(contexto.genero) : "";
+  const turno = typeof contexto.turno === "string" ? normalizarTexto(contexto.turno) : "";
+  return itens.filter((it) => {
+    if (idade !== null) {
+      const faixa = faixaEtariaDoDetalhe(it.detalhe);
+      if (faixa && faixaAceitaIdade(faixa, idade) === false) return false;
+    }
+    if (genero.startsWith("fem") || genero.startsWith("masc")) {
+      const publico = it.detalhe.match(/P[uú]blico:\s*(Feminino|Masculino|Misto)/i)?.[1]?.toLowerCase();
+      if (publico && publico !== "misto" && !publico.startsWith(genero.slice(0, 3))) return false;
+    }
+    if (turno === "manha" || turno === "tarde" || turno === "noite") {
+      const h = it.detalhe.match(/(\d{1,2}):\d{2}\s*(?:as|às|a)\s*\d{1,2}:\d{2}/i);
+      if (h) {
+        const hora = Number(h[1]);
+        const turnoItem = hora < 12 ? "manha" : hora < 18 ? "tarde" : "noite";
+        if (turnoItem !== turno) return false;
+      }
+    }
+    return true;
+  });
+}
+
+/** Descrição curta do contexto para as instruções do prompt ("idade: 7, genero: feminino"). */
+export function descreverContexto(contexto: Record<string, unknown>): string {
+  return Object.entries(contexto)
+    .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== "")
+    .map(([k, v]) => k + ": " + String(v))
+    .join(", ");
+}
+
+export type InterpretacaoTurno = {
+  tipo: "pergunta_programacao" | "continuacao" | "afirmacao" | "nao_programacao" | "cortesia_ou_saida";
+  atividade: string | null;
+  termos_busca: string[];
+  area: AreaProgramacao | null;
+  contexto: Record<string, string | number | boolean>;
+  /** unidade exata (uma das 5), `ESCOLHA_REDE`, ou null quando a mensagem não diz. */
+  escopo: string | null;
+};
+
+export const INTERPRETACAO_PADRAO: InterpretacaoTurno = { tipo: "nao_programacao", atividade: null, termos_busca: [], area: null, contexto: {}, escopo: null };
+
+/** Valida o JSON do interpretador — nunca confia cegamente no LLM (mesmo padrão de validarAvaliacaoSelecaoUnidade). */
+export function validarInterpretacaoTurno(data: unknown): InterpretacaoTurno {
+  const obj = (data && typeof data === "object") ? data as Record<string, unknown> : {};
+  const tipos = ["pergunta_programacao", "continuacao", "afirmacao", "nao_programacao", "cortesia_ou_saida"];
+  const tipo = (typeof obj.tipo === "string" && tipos.includes(obj.tipo) ? obj.tipo : "nao_programacao") as InterpretacaoTurno["tipo"];
+  const areas: AreaProgramacao[] = ["CURSOS", "ESPORTES", "DIA A DIA"];
+  const area = typeof obj.area === "string" && (areas as string[]).includes(obj.area) ? obj.area as AreaProgramacao : null;
+  const atividade = typeof obj.atividade === "string" && obj.atividade.trim() ? obj.atividade.trim().slice(0, 80) : null;
+  const termos = Array.isArray(obj.termos_busca) ? obj.termos_busca.filter((t): t is string => typeof t === "string" && t.trim() !== "").slice(0, 6).map((t) => t.slice(0, 40)) : [];
+  const contexto: Record<string, string | number | boolean> = {};
+  if (obj.contexto && typeof obj.contexto === "object") {
+    for (const [k, v] of Object.entries(obj.contexto as Record<string, unknown>).slice(0, 12)) {
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") contexto[normalizarTexto(k).slice(0, 30)] = typeof v === "string" ? v.slice(0, 80) : v;
+    }
+  }
+  const escopoBruto = typeof obj.escopo === "string" ? obj.escopo : null;
+  const escopo = escopoBruto === ESCOLHA_REDE ? ESCOLHA_REDE : (escopoBruto && UNIDADES_VALIDAS.includes(escopoBruto) ? escopoBruto : null);
+  return { tipo, atividade, termos_busca: termos, area, contexto, escopo };
+}
+
 /**
  * Monta o bloco de programação da rede inteira filtrado pela pergunta, a partir SÓ dos
  * `monthly_program` ativos (uma por unidade). Retorna "" quando nenhuma palavra da mensagem
@@ -1415,7 +1733,16 @@ export function montarBlocoRedeComAtividadeDaSessao(itens: ItemProgramacao[], te
  * encontrado". Acima de `limiteCaracteres`, cai para só os títulos por unidade.
  */
 export function montarBlocoProgramacaoRede(itens: ItemProgramacao[], palavras: string[], limiteCaracteres = 12000): string {
-  if (palavras.length === 0) return "";
+  return formatarItensPorUnidade(itensQueCasamComPalavras(itens, palavras), itens, limiteCaracteres);
+}
+
+/**
+ * Itens cujo título casa com as palavras da pergunta (ver regras abaixo). Vazio quando nenhuma
+ * palavra casa. Separado de `formatarItensPorUnidade` para a S-WM-72 poder filtrar por contexto
+ * (idade, gênero, turno) entre o casamento e a formatação.
+ */
+export function itensQueCasamComPalavras(itens: ItemProgramacao[], palavras: string[]): ItemProgramacao[] {
+  if (palavras.length === 0) return [];
   // Compara em forma compacta (sem espaço nem hífen), sempre a partir do INÍCIO de uma palavra
   // do título: "jiujitsu", "jiu-jitsu" e "jiu jitsu" casam com "JIU-JITSU", "JIU JITSU" e
   // "JIUJITSU"; "danca" pega "Danças"; "arte" não pega "Karatê". Duas palavras vizinhas da
@@ -1437,8 +1764,15 @@ export function montarBlocoProgramacaoRede(itens: ItemProgramacao[], palavras: s
     return total;
   };
   const melhor = itens.reduce((m, it) => Math.max(m, pontos(it)), 0);
-  if (melhor === 0) return "";
-  const encontrados = itens.filter((it) => pontos(it) === melhor);
+  if (melhor === 0) return [];
+  return itens.filter((it) => pontos(it) === melhor);
+}
+
+/** Formata itens já escolhidos, agrupados por unidade, com o rodapé das unidades (de `todosItens`)
+ * onde nada foi encontrado pelo nome. Acima do limite, só os títulos. */
+export function formatarItensPorUnidade(encontrados: ItemProgramacao[], todosItens: ItemProgramacao[], limiteCaracteres = 12000): string {
+  if (encontrados.length === 0) return "";
+  const itens = todosItens;
 
   const unidadesComProgramacao = [...new Set(itens.map((it) => it.unidade))];
   const unidadesComMatch = UNIDADES_ORDEM.filter((u) => encontrados.some((it) => it.unidade === u));
@@ -2050,7 +2384,20 @@ async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createC
  * `conteudo` dos documentos ativos (1 por unidade; se houver mais de um, vale o mais recente)
  * e devolve os itens já separados.
  */
-async function carregarItensProgramacaoRede(supabase: ReturnType<typeof createClient<Database>>): Promise<ItemProgramacao[]> {
+// S-WM-72: o roteamento consulta a programação da rede em muitos turnos (~190 KB por carga). Cache
+// curto no isolate (o cliente do banco é criado por requisição, então o cache fica no módulo) —
+// desligado quando o handler recebe um cliente de teste.
+const TTL_CACHE_PROGRAMACAO_MS = 90 * 1000;
+let cacheItensProgramacao: { em: number; itens: ItemProgramacao[] } | null = null;
+
+async function carregarItensProgramacaoRede(supabase: ReturnType<typeof createClient<Database>>, usarCache = false): Promise<ItemProgramacao[]> {
+  if (usarCache && cacheItensProgramacao && Date.now() - cacheItensProgramacao.em < TTL_CACHE_PROGRAMACAO_MS) return cacheItensProgramacao.itens;
+  const itens = await carregarItensProgramacaoRedeSemCache(supabase);
+  if (usarCache) cacheItensProgramacao = { em: Date.now(), itens };
+  return itens;
+}
+
+async function carregarItensProgramacaoRedeSemCache(supabase: ReturnType<typeof createClient<Database>>): Promise<ItemProgramacao[]> {
   const { data: docs } = await supabase.from("documentos_rag").select("unidade_cuca, conteudo, created_at").eq("tipo", "monthly_program").eq("ativo", true).order("created_at", { ascending: false });
   const vistos = new Set<string>();
   const itens: ItemProgramacao[] = [];
@@ -2285,7 +2632,99 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // no turno anterior (ver resolverDigitoPelaListaDoAgente), não contra o menu fixo.
     const blocoAnteriorAgente = textoUltimoBlocoAgente(historico);
 
-    if (unidade_cuca === 'Geral') {
+    // ── S-WM-72: roteamento de programação (Institucional/maria, número Geral) ─────────────────
+    // Roda antes da seção 5b e só assume o turno quando tem certeza: resposta à pergunta de
+    // escopo/área que ELE fez, ou mensagem com cara de programação que o interpretador semântico
+    // classifica como pergunta/continuação. Em qualquer outro caso, a seção 5b de hoje segue igual.
+    type ConsultaProgramacao = { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; perguntaOriginal: boolean };
+    type PendenteProgramacao = { texto: string; atividade: string | null; termos?: string[]; area: AreaProgramacao | null; contexto?: Record<string, unknown>; aguardando_area?: boolean };
+    let consultaProgramacao: ConsultaProgramacao | null = null;
+    const usarCacheProgramacao = !supabaseOverride;
+    if (ehAgenteDeProgramacao && unidade_cuca === 'Geral') {
+      const pendente = (metadataAtual.prog_pendente ?? null) as PendenteProgramacao | null;
+      const escopoSessao: string | null = (metadataAtual.unidade_selecionada as string | null) || (metadataAtual.prog_escopo === ESCOLHA_REDE ? ESCOLHA_REDE : null);
+      const contextoSessao = (metadataAtual.prog_contexto ?? {}) as Record<string, unknown>;
+      const gravarMetadata = async (patch: Record<string, unknown>) => {
+        metadataAtual = { ...metadataAtual, ...patch };
+        await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: metadataAtual as unknown as Database["public"]["Functions"]["merge_conversa_metadata"]["Args"]["p_patch"] });
+      };
+      // R9: mesmo contrato dos outros retornos antecipados.
+      const responderPerguntaPronta = async (resposta: string, patch: Record<string, unknown>, camada: string) => {
+        const respostaFinal = evitarRepeticaoLiteral(resposta, historico);
+        await gravarMetadata({ ...patch, conversa_engajada: true, aguardando_unidade: false });
+        await salvarMensagemAgente(supabase, conversa!.id, lead.id, respostaFinal);
+        logarTurnoSemBusca(camada);
+        return new Response(JSON.stringify({ success: true, resposta: respostaFinal, handover: false }), { headers: { "Content-Type": "application/json" } });
+      };
+      const patchEscopo = (escopo: string): Record<string, unknown> => escopo === ESCOLHA_REDE
+        ? { unidade_selecionada: null, prog_escopo: ESCOLHA_REDE }
+        : { unidade_selecionada: escopo, prog_escopo: null };
+      const primeiraRespostaDaSessao = !historico.some((m) => m.role === "assistant");
+      const introducaoPergunta = (sobre: string) => {
+        const nome = sanitizarNomeLead(lead.nome);
+        const primeiroNome = nome === "Nao informado" ? "" : nome.split(" ")[0];
+        const saudacao = primeiraRespostaDaSessao ? (primeiroNome ? "Olá, " + primeiroNome + "! " : "Olá! ") : "";
+        const disparo = metadataAtual.ultimo_disparo as { titulo?: string; enviado_em?: string } | undefined;
+        // R2/decisão 3: resposta a disparo reconhece o aviso na mesma mensagem.
+        const aviso = primeiraRespostaDaSessao && disparo?.titulo && deveReconhecerDisparoRecente(disparo, false) ? "Vi que você recebeu nosso aviso sobre " + disparo.titulo + ". " : "";
+        return saudacao + aviso + "De qual unidade você quer saber" + (sobre ? " sobre " + sobre : "") + "? Se preferir, vejo em toda a Rede CUCA 😊";
+      };
+
+      // A) resposta à pergunta pronta do turno anterior
+      if (pendente) {
+        if (pendente.aguardando_area && blocoAnteriorAgente.includes("Qual área te interessa")) {
+          const area = resolverEscolhaDeArea(textoFinal, blocoAnteriorAgente);
+          if (area) {
+            consultaProgramacao = { texto: pendente.texto, atividade: null, termos: [], area, contexto: pendente.contexto ?? contextoSessao, escopo: escopoSessao ?? ESCOLHA_REDE, perguntaOriginal: true };
+            await gravarMetadata({ prog_pendente: null, conversa_engajada: true, aguardando_unidade: false });
+          }
+        } else if (blocoAnteriorAgente.includes(ROTULO_REDE)) {
+          const escolha = resolverEscolhaDeEscopo(textoFinal, blocoAnteriorAgente, metadataAtual.unidade_selecionada as string | null);
+          if (escolha) {
+            await gravarMetadata({ ...patchEscopo(escolha), prog_pendente: null, conversa_engajada: true, aguardando_unidade: false });
+            const semAtividadeNemArea = !pendente.atividade && !(pendente.termos?.length) && !pendente.area;
+            if (escolha === ESCOLHA_REDE && semAtividadeNemArea && ehPerguntaGeralDeProgramacao(pendente.texto)) {
+              // R5: pergunta geral sem área + toda a rede → pergunta a área (3 áreas reais).
+              return await responderPerguntaPronta(PERGUNTA_AREA, { prog_pendente: { ...pendente, aguardando_area: true } }, "pergunta_area");
+            }
+            consultaProgramacao = { texto: pendente.texto, atividade: pendente.atividade, termos: pendente.termos ?? [], area: pendente.area, contexto: pendente.contexto ?? contextoSessao, escopo: escolha, perguntaOriginal: true };
+          }
+        } else {
+          // A última mensagem do bot já não é a pergunta pronta — pendência velha não vale mais.
+          await gravarMetadata({ prog_pendente: null });
+        }
+      }
+
+      // B) mensagem nova com cara de programação → interpretador semântico
+      if (!consultaProgramacao && !ehSelecaoMenu(textoFinal) && !pedidoOutrasUnidades) {
+        const podeTerSinal = palavrasChaveProgramacao(textoFinal).length > 0 || areaPeloVocabulario(textoFinal) !== null || ehPerguntaGeralDeProgramacao(textoFinal);
+        const itensRede = podeTerSinal ? await carregarItensProgramacaoRede(supabase, usarCacheProgramacao) : [];
+        if ((podeTerSinal && temSinalDeProgramacao(textoFinal, itensRede)) || escopoSessao === ESCOLHA_REDE) {
+          const interp = await interpretarTurnoProgramacao(textoFinal, openaiKey, historico);
+          const contexto = { ...contextoSessao, ...interp.contexto };
+          console.log("[motor-agente v18] Interpretacao S-WM-72: tipo=" + interp.tipo + " atividade=" + interp.atividade + " area=" + interp.area + " escopo=" + interp.escopo + " contexto=" + descreverContexto(contexto));
+          if (interp.tipo === "pergunta_programacao" || interp.tipo === "continuacao") {
+            const area = interp.area ?? areaPeloVocabulario(textoFinal);
+            const escopoNaMensagem = interp.escopo ?? (detectarUnidadeDireta(textoFinal) ?? null);
+            const escopo = escopoNaMensagem ?? escopoSessao;
+            if (!escopo) {
+              const sobre = interp.atividade ?? (area ? ROTULO_AREA[area] : "");
+              const pendenteNovo: PendenteProgramacao = { texto: textoFinal, atividade: interp.atividade, termos: interp.termos_busca, area, contexto };
+              return await responderPerguntaPronta(montarPerguntaEscopo(introducaoPergunta(sobre)), { prog_pendente: pendenteNovo, prog_contexto: contexto }, "pergunta_escopo");
+            }
+            if (escopoNaMensagem) await gravarMetadata({ ...patchEscopo(escopoNaMensagem), conversa_engajada: true, aguardando_unidade: false });
+            if (escopo === ESCOLHA_REDE && !interp.atividade && !interp.termos_busca.length && !area) {
+              return await responderPerguntaPronta(PERGUNTA_AREA, { prog_pendente: { texto: textoFinal, atividade: null, area: null, contexto, aguardando_area: true }, prog_contexto: contexto }, "pergunta_area");
+            }
+            consultaProgramacao = { texto: textoFinal, atividade: interp.atividade, termos: interp.termos_busca, area, contexto, escopo, perguntaOriginal: false };
+          }
+          if (descreverContexto(interp.contexto)) await gravarMetadata({ prog_contexto: contexto });
+        }
+      }
+      if (consultaProgramacao) unidadeEfetiva = consultaProgramacao.escopo === ESCOLHA_REDE ? ROTULO_REDE : consultaProgramacao.escopo;
+    }
+
+    if (unidade_cuca === 'Geral' && !consultaProgramacao) {
       const unidadeSalva = metadataAtual.unidade_selecionada as string | undefined;
       const aguardando = metadataAtual.aguardando_unidade as boolean | undefined;
 
@@ -2388,6 +2827,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // no branch de 1ª mensagem de novo — não precisa da flag.
           metadataAtual = {
             ...metadataAtual,
+            ...pendenteSeMenuDeUnidades(respostaFinal, textoFinal),
             aguardando_unidade: decisao.aguardandoUnidade,
             ...(decisao.aguardandoUnidade ? {} : { conversa_engajada: true }),
           };
@@ -2437,7 +2877,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           console.log("[motor-agente v18] Disparo recente não reconhecido (conversa engajada) — ignora resposta canned, segue pro GPT");
         } else if (decisaoEngajada.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoEngajada.resposta, historico);
-          metadataAtual = { ...metadataAtual, aguardando_unidade: decisaoEngajada.aguardandoUnidade };
+          metadataAtual = { ...metadataAtual, ...pendenteSeMenuDeUnidades(respostaFinal, textoFinal), aguardando_unidade: decisaoEngajada.aguardandoUnidade };
           await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           // S-WM-70: este early-return não passava pelo trecho que processa a tag [[ENCERRAR]]
@@ -2501,6 +2941,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
           // cair aqui de novo — não precisa da flag.
           metadataAtual = {
             ...metadataAtual,
+            ...pendenteSeMenuDeUnidades(respostaFinal, textoFinal),
             aguardando_unidade: decisaoPrimeira.aguardandoUnidade,
             ...(decisaoPrimeira.aguardandoUnidade ? {} : { conversa_engajada: true }),
           };
@@ -2591,14 +3032,49 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // apaga `unidade_selecionada`/`aguardando_unidade` que a seção 5b acabou de gravar no mesmo
     // turno (achado do @qa Quinn, reproduzido: update apagava a unidade recém-escolhida).
     if (isAgenteProgramacao) {
-      const menuCategoriaAtivoNovo = Boolean(temUnidadeDefinida) && precisaVisaoGeral;
+      const menuCategoriaAtivoNovo = !consultaProgramacao && Boolean(temUnidadeDefinida) && precisaVisaoGeral;
       if (menuCategoriaAtivoNovo !== menuCategoriaAtivoAnterior) {
         metadataAtual = { ...metadataAtual, menu_categoria_ativo: menuCategoriaAtivoNovo };
         await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
       }
     }
 
-    if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
+    // S-WM-72: instrução da consulta de programação com contexto (vazia fora desse ramo).
+    let instrucaoConsultaProgramacao = "";
+    if (consultaProgramacao) {
+      const c = consultaProgramacao;
+      reiniciarBlocos(true);
+      const itensRede = await carregarItensProgramacaoRede(supabase, usarCacheProgramacao);
+      const r = montarConsultaComContexto(itensRede, c);
+      const nomeEscopo = c.escopo === ESCOLHA_REDE ? ROTULO_REDE : c.escopo;
+      const contextoTxt = descreverContexto(c.contexto);
+      const sobre = c.atividade ?? (r.area ? ROTULO_AREA[r.area] : "o que a pessoa perguntou");
+      if (r.bloco) adicionarBloco("programacao_contexto", "\n\n--- PROGRAMACAO VIGENTE (programacao mensal ativa, filtrada pela pergunta" + (contextoTxt ? " e pelo contexto: " + contextoTxt : "") + ") ---\n" + r.bloco);
+      // Parte que não é programação (matrícula, documentos, inscrição): FAQ, pela pergunta original.
+      const embeddingConsulta = await gerarEmbedding(c.texto, openaiKey);
+      const { data: chunksFaqConsulta } = await supabase.rpc("buscar_chunks_similares", {
+        query_embedding: "[" + embeddingConsulta.join(",") + "]",
+        p_tipos: ["FAQ"], // FAQ é geral (sem unidade); p_unidade_cuca omitido = NULL no banco
+        p_limite: 3,
+      });
+      if (chunksFaqConsulta && chunksFaqConsulta.length > 0) adicionarBloco("faq", "\n\n--- CONTEXTO (FAQ) ---\n" + formatarChunks(chunksFaqConsulta));
+      const opcoesNumeradas = "com as opcoes numeradas e o nome da unidade em cada linha (ex.: '1️⃣ Cuca Mondubim')";
+      const porSituacao: Record<string, string> = {
+        na_unidade: "Responda usando o bloco '--- PROGRAMACAO VIGENTE ---' (programacao do " + nomeEscopo + ").",
+        rede: "Responda usando o bloco '--- PROGRAMACAO VIGENTE ---', dizendo em quais unidades da rede tem.",
+        outras_unidades: "No " + nomeEscopo + " nao foi encontrada essa atividade" + (contextoTxt ? " para esse contexto" : "") + ". Diga isso e informe, usando so o bloco '--- PROGRAMACAO VIGENTE ---', em quais unidades tem; pergunte se a pessoa quer saber de alguma delas, " + opcoesNumeradas + ".",
+        nenhuma: "Nao foi encontrado(a) " + sobre + (contextoTxt ? " para esse contexto (" + contextoTxt + ")" : "") + " em nenhuma unidade na programacao deste mes. Diga isso com suas palavras e pergunte se e onde a pessoa quer saber de outras opcoes de " + (r.area ? ROTULO_AREA[r.area] : "programacao") + (contextoTxt ? " para esse contexto" : "") + " — no " + (c.escopo === ESCOLHA_REDE ? "uma unidade especifica" : nomeEscopo + ", em outra unidade") + " ou em toda a Rede CUCA. NUNCA responda so 'nao tem'.",
+        area: "Liste so os nomes das atividades do bloco '--- PROGRAMACAO VIGENTE ---' (area " + (r.area ? ROTULO_AREA[r.area] : "") + ", " + nomeEscopo + "), de forma compacta, e pergunte qual interessa para mostrar dias e horarios. Nao liste atividades de outras areas.",
+        sem_atividade: "Responda a pergunta usando o FAQ e os servicos da rede, se cobrirem; para programacao, pergunte qual atividade ou area a pessoa procura. Nao invente atividades.",
+      };
+      const semDado = Object.keys(c.contexto).filter((k) => CONTEXTO_SEM_DADO.some((x) => k.startsWith(x)));
+      instrucaoConsultaProgramacao = "INSTRUCAO CRITICA (programacao com contexto): " + porSituacao[r.situacao]
+        + (contextoTxt ? " Considere o contexto da conversa: " + contextoTxt + "." : "")
+        + (semDado.length ? " A programacao NAO informa adequacao para: " + semDado.join(", ") + " — nunca afirme que a atividade e adequada; diga que a programacao nao traz essa informacao e sugira confirmar com a unidade." : "")
+        + " Se a pergunta tambem tiver uma parte que nao e programacao (ex.: matricula, documentos), responda essa parte com o FAQ e os servicos da rede.";
+      logRAG = { camada: "programacao_contexto", atividadeResolvida: c.atividade };
+      console.log("[motor-agente v18] Consulta S-WM-72: situacao=" + r.situacao + " escopo=" + nomeEscopo + " atividade=" + c.atividade + " contexto=" + contextoTxt);
+    } else if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
       // S-WM-43 (PERF-02, Par 3): carregarProgramacaoMensal e gerarEmbedding não dependem de
       // dado um do outro (o embedding usa textoFinal, não conteudoPrograma) — paralelizados.
       // `buscarAtividadeDeterministica` (abaixo, condicional a trocaComPedidoEspecifico ||
@@ -2671,7 +3147,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // inteira (só monthly_program ativo). Sem atividade identificável, o prompt manda perguntar
       // o que a pessoa procura, nunca a frase de recusa de assunto fora do CUCA.
       reiniciarBlocos(true);
-      const blocoRede = montarBlocoRedeComAtividadeDaSessao(await carregarItensProgramacaoRede(supabase), textoFinal, historico);
+      // S-WM-72 (R8): aplica também o contexto da sessão (idade, gênero, turno).
+      const itensComContexto = filtrarItensPorContexto(await carregarItensProgramacaoRede(supabase, !supabaseOverride), (metadataAtual.prog_contexto ?? {}) as Record<string, unknown>);
+      const blocoRede = montarBlocoRedeComAtividadeDaSessao(itensComContexto, textoFinal, historico);
       outrasUnidadesComAtividade = blocoRede !== "";
       if (blocoRede) {
         adicionarBloco("programacao_rede", blocoProgramacaoRedeTexto(blocoRede));
@@ -2860,7 +3338,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // conversaGenuinamenteNova (não reabertura) — evita mandar essa instrução pro GPT numa
       // conversa retomada minutos depois. Outros agente_tipo (Sofia/Ouvidoria) continuam no
       // conversaJustCreated original, sem mudança — decisão sobre eles fica fora deste escopo.
-      ["instrucao_primeira_mensagem", (isAgenteProgramacao ? conversaGenuinamenteNova : conversaJustCreated) ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : ""],
+      ["instrucao_primeira_mensagem", !consultaProgramacao && (isAgenteProgramacao ? conversaGenuinamenteNova : conversaJustCreated) ? "INSTRUCAO: Esta e a primeira mensagem. Combine saudacao e menu em uma unica resposta." : ""],
       // Achado 2026-07-24: CONTEXTO_DISPARO (acima) era só um fato passivo no meio do prompt,
       // sem nenhuma diretiva de uso — diferente dos outros blocos deste array, que sempre vêm
       // com uma INSTRUCAO explícita dizendo como reagir. Gated no mesmo `ultimoDisparo` de
@@ -2882,6 +3360,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       ["instrucao_outras_unidades", outrasUnidadesComAtividade === null ? "" : outrasUnidadesComAtividade
         ? "INSTRUCAO: a pessoa pediu para procurar em outras unidades. Responda com base no bloco '--- PROGRAMACAO VIGENTE DA REDE ---': em quais unidades a atividade aparece e os dados delas, e pergunte de qual unidade quer saber mais, com as opcoes numeradas e o nome da unidade em cada linha (ex.: '1️⃣ Cuca Mondubim')."
         : "INSTRUCAO: a pessoa pediu para procurar em outras unidades, mas nao deu para identificar qual atividade ela procura. Pergunte com suas palavras qual atividade ela quer encontrar ou de qual unidade quer saber. NAO diga que nao pode ajudar e NAO use a frase de recusa de assunto fora do CUCA."],
+      // S-WM-72 (R3/R4): pergunta original (no turno da escolha o lead mandou só "3") + instrução da consulta.
+      ["pergunta_original", consultaProgramacao?.perguntaOriginal ? "PERGUNTA DO LEAD QUE VOCE ESTA RESPONDENDO AGORA (ele acabou de escolher onde quer saber): " + consultaProgramacao.texto : ""],
+      ["instrucao_programacao_contexto", instrucaoConsultaProgramacao],
       ["instrucao_pergunta_geral", perguntaGeralAtiva ? "INSTRUCAO CRITICA: esta pergunta e sobre a rede CUCA inteira, sem unidade especifica. Para qualquer informacao de programacao (quais atividades existem, em quais unidades, dias, horarios, turmas), use EXCLUSIVAMENTE o bloco '--- PROGRAMACAO VIGENTE DA REDE ---' (se presente acima); o '--- CONTEXTO (FAQ) ---' serve so para assuntos que nao sao programacao. Se esse bloco NAO estiver presente ou nao trouxer a atividade perguntada, NUNCA componha ou invente uma lista de atividades, unidades, dias ou horarios: se a pessoa citou uma atividade, diga com suas proprias palavras que nao encontrou essa atividade na programacao deste mes; se a pergunta for geral (ex.: 'quais cursos tem?'), nao liste nada de cabeca. Nos dois casos, pergunte de qual unidade a pessoa quer saber para mostrar a programacao dela." : ""],
     ];
     const promptFinal = partesPrompt.map(([, texto]) => texto).filter(Boolean).join("\n\n");
