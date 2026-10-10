@@ -35,6 +35,16 @@ import {
   pareceIntencaoTrocaUnidade,
   pedeOutrasUnidades,
   montarBlocoRedeComAtividadeDaSessao,
+  ROTULO_REDE,
+  ESCOLHA_REDE,
+  PERGUNTA_AREA,
+  montarPerguntaEscopo,
+  resolverEscolhaDeEscopo,
+  resolverEscolhaDeArea,
+  filtrarItensPorContexto,
+  montarConsultaComContexto,
+  validarInterpretacaoTurno,
+  temSinalDeProgramacao,
 } from "./index.ts";
 
 // ── Mock mínimo e encadeável do client Supabase, usado pelos testes AUD-04 abaixo ───────────
@@ -3009,4 +3019,279 @@ Deno.test("S-WM-71 C1 (@qa): sessão nova aberta com pedido de atendente humano 
   const corpo = await resp.json();
   assertEquals(corpo.handover, true, "o turno continua sendo de handover");
   assertEquals(patchesMerge(chamadas)[0], LIMPEZA_ESTADO_SESSAO, "a limpeza de sessão acontece antes do retorno do handover");
+});
+
+
+// ── S-WM-72: pergunta de programação pelo contexto, escopo da sessão e busca nas outras unidades ──
+const PROG_BARRA_S72 = [
+  "PROGRAMAÇÃO MENSAL DE OUTUBRO DE 2026 — Cuca Barra",
+  "== CURSOS ==",
+  "• Balé Clássico - Turma 01",
+  "  Detalhes: Curso: Balé Clássico. Educador: Ana. Horário: 09:00 às 10:00. Requisitos: 15 a 29 anos.",
+  "== ESPORTES ==",
+  "• CAPOEIRA",
+  "  Detalhes: Esporte Modalidade: CAPOEIRA - Turma T1. Professor: Beto. Público: Misto (Idade: 15 a 29 anos). Dias: Ter e Qui. Horário: 18:00 às 19:00.",
+  "• NATAÇÃO",
+  "  Detalhes: Esporte Modalidade: NATAÇÃO - Turma T1. Professor: Caio. Público: Misto (Idade: 15 a 29 anos). Dias: Seg. Horário: 08:00 às 09:00.",
+  "• FUTSAL",
+  "  Detalhes: Esporte Modalidade: FUTSAL - Turma T1. Professor: Davi. Público: Masculino (Idade: 15 a 29 anos). Dias: Qua. Horário: 19:00 às 20:00.",
+].join("\n");
+const PROG_MONDUBIM_S72 = [
+  "PROGRAMAÇÃO MENSAL DE OUTUBRO DE 2026 — Cuca Mondubim",
+  "== CURSOS ==",
+  "• Ballet Infantil: Dança, Imaginação e Criatividade",
+  "  Detalhes: Curso: Ballet Infantil. Educador: Edu. Horário: 14:00 às 15:00. Requisitos: Crianças de 06 à 10 anos.",
+  "• Curso de Libras Básico II",
+  "  Detalhes: Curso: Curso de Libras Básico II. Educador: Fê. Horário: 09:00 às 12:00. Requisitos: 15 a 29 anos.",
+  "== ESPORTES ==",
+  "• Capoeira",
+  "  Detalhes: Esporte Modalidade: Capoeira - Turma T2. Professor: Gil. Público: Misto (Idade: 15 a 29 anos). Dias: Sex. Horário: 07:00 às 08:00.",
+  "• FUTSAL",
+  "  Detalhes: Esporte Modalidade: FUTSAL - Turma T3. Professor: Hugo. Público: Feminino (Idade: 15 a 29 anos). Dias: Seg. Horário: 17:00 às 18:00.",
+  "== DIA A DIA ==",
+  "• Hora Pintada",
+  "  Detalhes: Atividade: Hora Pintada. Horário: 15:00 às 17:00.",
+].join("\n");
+const ITENS_S72 = [...extrairItensProgramacao("Cuca Barra", PROG_BARRA_S72), ...extrairItensProgramacao("Cuca Mondubim", PROG_MONDUBIM_S72)];
+const MENU_ESCOPO_S72 = montarPerguntaEscopo("De qual unidade você quer saber sobre capoeira? Se preferir, vejo em toda a Rede CUCA 😊");
+
+Deno.test("S-WM-72: itens ganham a área real pela seção do monthly_program", () => {
+  const area = (t: string) => ITENS_S72.find((i) => i.titulo === t)?.area;
+  assertEquals(area("Balé Clássico - Turma 01"), "CURSOS");
+  assertEquals(area("CAPOEIRA"), "ESPORTES");
+  assertEquals(area("Hora Pintada"), "DIA A DIA");
+});
+
+Deno.test("S-WM-72 AC15: resolverEscolhaDeEscopo — número pela lista mostrada, 'toda a rede', nome, 'aqui mesmo'", () => {
+  assertEquals(resolverEscolhaDeEscopo("3", MENU_ESCOPO_S72), "Cuca Mondubim");
+  assertEquals(resolverEscolhaDeEscopo("6", MENU_ESCOPO_S72), ESCOLHA_REDE);
+  assertEquals(resolverEscolhaDeEscopo("toda a rede", MENU_ESCOPO_S72), ESCOLHA_REDE);
+  assertEquals(resolverEscolhaDeEscopo("no pici", MENU_ESCOPO_S72), "Cuca Pici");
+  assertEquals(resolverEscolhaDeEscopo("aqui mesmo", MENU_ESCOPO_S72, "Cuca Barra"), "Cuca Barra");
+  const listaAtividades = Array.from({ length: 13 }, (_, i) => (i + 1) + "️⃣ Atividade " + (i + 1)).join("\n");
+  assertEquals(resolverEscolhaDeEscopo("6", listaAtividades), undefined, "'6' de uma lista de atividades nunca é 'toda a rede'");
+  assertEquals(resolverEscolhaDeEscopo("6", ""), undefined, "sem lista anterior, '6' não é escolha");
+  assertEquals(resolverEscolhaDeArea("1", PERGUNTA_AREA), "CURSOS");
+  assertEquals(resolverEscolhaDeArea("esportes", PERGUNTA_AREA), "ESPORTES");
+});
+
+Deno.test("S-WM-72 AC6/AC10: filtrarItensPorContexto aplica idade, gênero e turno que existem nos dados", () => {
+  const titulos = (ctx: Record<string, unknown>) => filtrarItensPorContexto(ITENS_S72, ctx).map((i) => i.unidade + "/" + i.titulo);
+  const idade7 = titulos({ idade: 7 });
+  assertEquals(idade7.includes("Cuca Mondubim/Ballet Infantil: Dança, Imaginação e Criatividade"), true);
+  assertEquals(idade7.includes("Cuca Barra/Balé Clássico - Turma 01"), false, "15 a 29 anos não serve para 7 anos");
+  assertEquals(idade7.includes("Cuca Mondubim/Hora Pintada"), true, "item sem faixa no dado não é escondido");
+  const feminino = titulos({ genero: "feminino" });
+  assertEquals(feminino.includes("Cuca Barra/FUTSAL"), false, "futsal masculino sai");
+  assertEquals(feminino.includes("Cuca Mondubim/FUTSAL"), true, "futsal feminino fica");
+  assertEquals(titulos({ turno: "noite" }).includes("Cuca Barra/CAPOEIRA"), true);
+  assertEquals(titulos({ turno: "noite" }).includes("Cuca Mondubim/Capoeira"), false);
+});
+
+Deno.test("S-WM-72 AC7/AC8/AC11: montarConsultaComContexto — unidade, outras unidades, nenhuma, área", () => {
+  const base = { texto: "", atividade: null as string | null, termos: [] as string[], area: null as null | "CURSOS" | "ESPORTES" | "DIA A DIA", contexto: {} as Record<string, unknown>, escopo: "Cuca Barra" };
+  assertEquals(montarConsultaComContexto(ITENS_S72, { ...base, atividade: "capoeira", termos: ["capoeira"] }).situacao, "na_unidade");
+  const bale7 = montarConsultaComContexto(ITENS_S72, { ...base, atividade: "balé", termos: ["bale", "ballet"], contexto: { idade: 7 } });
+  assertEquals(bale7.situacao, "outras_unidades", "exemplo do Junior: Barra sem balé para 7 anos → procura nas outras");
+  assertStringIncludes(bale7.bloco, "Ballet Infantil");
+  assertEquals(bale7.area, "CURSOS", "balé é Cursos e Oficinas nos dados");
+  assertEquals(montarConsultaComContexto(ITENS_S72, { ...base, atividade: "judô", termos: ["judo"] }).situacao, "nenhuma");
+  const cursosRede = montarConsultaComContexto(ITENS_S72, { ...base, texto: "quais cursos tem?", area: "CURSOS", escopo: ESCOLHA_REDE });
+  assertEquals(cursosRede.situacao, "area");
+  assertStringIncludes(cursosRede.bloco, "Curso de Libras Básico II");
+  assertEquals(cursosRede.bloco.includes("CAPOEIRA") || cursosRede.bloco.includes("Capoeira"), false, "'quais cursos' não lista Esportes");
+});
+
+Deno.test("S-WM-72: validarInterpretacaoTurno nunca confia cegamente no LLM", () => {
+  const v = validarInterpretacaoTurno({ tipo: "inventado", area: "CULTURA", escopo: "Cuca Inexistente", contexto: { Idade: 7, lista: [1] }, termos_busca: ["bale", 3] });
+  assertEquals(v.tipo, "nao_programacao");
+  assertEquals(v.area, null, "só as 3 áreas reais");
+  assertEquals(v.escopo, null);
+  assertEquals(v.contexto, { idade: 7 });
+  assertEquals(v.termos_busca, ["bale"]);
+  assertEquals(validarInterpretacaoTurno({ escopo: "REDE" }).escopo, ESCOLHA_REDE);
+  assertEquals(temSinalDeProgramacao("obrigado", ITENS_S72), false);
+  assertEquals(temSinalDeProgramacao("qual o endereço?", ITENS_S72), false);
+  assertEquals(temSinalDeProgramacao("tem capoeira?", ITENS_S72), true);
+});
+
+// fetch que responde o interpretador, o classificador antigo e a resposta final separadamente
+function comFetchS72(fn: () => Promise<Response>, interpretacao: Record<string, unknown>, classificador: Record<string, unknown> = { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false }) {
+  const fetchOriginal = globalThis.fetch;
+  const bodies: string[] = [];
+  let chamadasInterpretador = 0;
+  let chamadasChat = 0;
+  globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+    const urlStr = String(url instanceof Request ? url.url : url);
+    if (urlStr.includes("/v1/embeddings")) return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [0, 0, 0] }] }), { status: 200 }));
+    if (urlStr.includes("/v1/chat/completions")) {
+      const corpo = String(init?.body ?? "");
+      bodies.push(corpo);
+      chamadasChat++;
+      let conteudo = "Resposta de teste";
+      if (corpo.includes("Você interpreta mensagens de leads")) { chamadasInterpretador++; conteudo = JSON.stringify(interpretacao); }
+      else if (corpo.includes("Retorne SOMENTE JSON com as chaves:")) conteudo = JSON.stringify(classificador);
+      return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: conteudo } }] }), { status: 200 }));
+    }
+    throw new Error("fetch não-mockado: " + urlStr);
+  }) as typeof fetch;
+  return fn().then(async (resp) => ({ resp, corpo: await resp.json(), bodies, chamadasInterpretador, chamadasChat })).finally(() => { globalThis.fetch = fetchOriginal; });
+}
+function respostasS72(metadata: Record<string, unknown>, mensagens: { conteudo: string; remetente: string; msAtras: number }[]) {
+  const r = respostasBaseHandler(metadata);
+  r["documentos_rag"] = { data: [{ unidade_cuca: "Cuca Barra", conteudo: PROG_BARRA_S72 }, { unidade_cuca: "Cuca Mondubim", conteudo: PROG_MONDUBIM_S72 }] };
+  r["rpc:buscar_chunks_similares"] = { data: [{ conteudo: "Matrícula: leve RG e comprovante de residência.", fonte_tipo: "FAQ" }] };
+  r["mensagens"] = mensagensS71(mensagens);
+  return r;
+}
+const promptFinalS72 = (bodies: string[]) => bodies.filter((b) => !b.includes("Você interpreta mensagens de leads") && !b.includes("Retorne SOMENTE JSON com as chaves:")).at(-1) ?? "";
+const interpS72 = (o: Record<string, unknown>) => ({ tipo: "pergunta_programacao", atividade: null, termos_busca: [], area: null, contexto: {}, escopo: null, ...o });
+
+Deno.test("S-WM-72 AC1: 1ª mensagem 'capoeira e matrícula' → pergunta a unidade (5 + Toda a Rede), com nome, e guarda a pergunta", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const texto = "olá, quero saber sobre capoeira e como faço a matrícula";
+  const mock = criarSupabaseMock(respostasS72({}, [{ conteudo: texto, remetente: "lead", msAtras: 0 }]), chamadas);
+  const { resp, corpo, chamadasInterpretador } = await comFetchS72(() => handler(requestFake(texto), mock), interpS72({ atividade: "capoeira", termos_busca: ["capoeira"], area: "ESPORTES" }));
+  assertEquals(resp.status, 200);
+  assertStringIncludes(corpo.resposta, "Olá, Fulano!");
+  assertStringIncludes(corpo.resposta, "sobre capoeira");
+  assertStringIncludes(corpo.resposta, "5️⃣ Cuca José Walter");
+  assertStringIncludes(corpo.resposta, "6️⃣ " + ROTULO_REDE);
+  assertEquals(chamadasInterpretador, 1);
+  const pend = patchesMerge(chamadas).map((p) => p.prog_pendente).filter(Boolean).at(-1) as { texto: string } | undefined;
+  assertEquals(pend?.texto, texto, "a pergunta original fica pendente");
+});
+
+Deno.test("S-WM-72 AC2: '3' responde a pergunta original pelo Mondubim (capoeira + matrícula), sem resumo geral", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const texto = "olá, quero saber sobre capoeira e como faço a matrícula";
+  const meta = { conversa_engajada: true, prog_pendente: { texto, atividade: "capoeira", termos: ["capoeira"], area: "ESPORTES", contexto: {} } };
+  const mock = criarSupabaseMock(respostasS72(meta, [
+    { conteudo: "3", remetente: "lead", msAtras: 0 },
+    { conteudo: MENU_ESCOPO_S72, remetente: "agente", msAtras: 20000 },
+    { conteudo: texto, remetente: "lead", msAtras: 30000 },
+  ]), chamadas);
+  const { resp, bodies } = await comFetchS72(() => handler(requestFake("3"), mock), interpS72({}));
+  assertEquals(resp.status, 200);
+  const prompt = promptFinalS72(bodies);
+  assertStringIncludes(prompt, "PERGUNTA DO LEAD QUE VOCE ESTA RESPONDENDO AGORA");
+  assertStringIncludes(prompt, "capoeira e como faço a matrícula");
+  assertStringIncludes(prompt, "Capoeira - Turma T2", "capoeira do Mondubim");
+  assertEquals(prompt.includes("CAPOEIRA - Turma T1"), false, "não traz a da Barra");
+  assertStringIncludes(prompt, "Matrícula: leve RG", "parte de matrícula vem do FAQ");
+  assertEquals(prompt.includes("resumo geral da programacao"), false);
+  const patches = patchesMerge(chamadas);
+  assertEquals(patches.some((p) => p.unidade_selecionada === "Cuca Mondubim" && p.prog_pendente === null), true);
+});
+
+Deno.test("S-WM-72 AC3: '6' responde pela rede inteira e grava o escopo 'rede'", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const meta = { conversa_engajada: true, prog_pendente: { texto: "tem capoeira?", atividade: "capoeira", termos: ["capoeira"], area: "ESPORTES", contexto: {} } };
+  const mock = criarSupabaseMock(respostasS72(meta, [
+    { conteudo: "6", remetente: "lead", msAtras: 0 },
+    { conteudo: MENU_ESCOPO_S72, remetente: "agente", msAtras: 20000 },
+  ]), chamadas);
+  const { bodies } = await comFetchS72(() => handler(requestFake("6"), mock), interpS72({}));
+  const prompt = promptFinalS72(bodies);
+  assertStringIncludes(prompt, "CAPOEIRA - Turma T1");
+  assertStringIncludes(prompt, "Capoeira - Turma T2");
+  assertStringIncludes(prompt, "UNIDADE: " + ROTULO_REDE);
+  assertEquals(patchesMerge(chamadas).some((p) => p.prog_escopo === ESCOLHA_REDE && p.unidade_selecionada === null), true);
+});
+
+Deno.test("S-WM-72 AC4: unidade já escolhida na sessão → 'e natação?' responde pela Barra sem perguntar", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock(respostasS72({ unidade_selecionada: "Cuca Barra", conversa_engajada: true }, [{ conteudo: "e natação?", remetente: "lead", msAtras: 0 }]), chamadas);
+  const { corpo, bodies } = await comFetchS72(() => handler(requestFake("e natação?"), mock), interpS72({ atividade: "natação", termos_busca: ["natacao"], area: "ESPORTES" }));
+  assertEquals(String(corpo.resposta).includes(ROTULO_REDE), false, "não mostra o menu de escopo");
+  const prompt = promptFinalS72(bodies);
+  assertStringIncludes(prompt, "NATAÇÃO - Turma T1");
+  assertStringIncludes(prompt, "programacao do Cuca Barra");
+});
+
+Deno.test("S-WM-72 AC5: afirmação não pergunta unidade", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock(respostasS72({ conversa_engajada: true }, [{ conteudo: "minha filha vai ficar no balé", remetente: "lead", msAtras: 0 }]), chamadas);
+  const { corpo, bodies } = await comFetchS72(() => handler(requestFake("minha filha vai ficar no balé"), mock), interpS72({ tipo: "afirmacao", atividade: "balé" }));
+  assertEquals(String(corpo.resposta ?? "").includes(ROTULO_REDE), false);
+  assertEquals(bodies.some((b) => b.includes("INSTRUCAO CRITICA (programacao com contexto)")), false, "segue o fluxo de hoje");
+});
+
+Deno.test("S-WM-72 AC6/AC7: Barra + filha de 7 anos + 'tem balé?' → mostra o balé infantil do Mondubim e oferece a troca", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock(respostasS72({ unidade_selecionada: "Cuca Barra", conversa_engajada: true }, [
+    { conteudo: "tem balé?", remetente: "lead", msAtras: 0 },
+    { conteudo: "Legal! Posso te ajudar com mais alguma coisa?", remetente: "agente", msAtras: 10000 },
+    { conteudo: "minha filha tem 7 anos", remetente: "lead", msAtras: 20000 },
+  ]), chamadas);
+  const { bodies } = await comFetchS72(() => handler(requestFake("tem balé?"), mock), interpS72({ atividade: "balé", termos_busca: ["bale", "ballet"], area: "CURSOS", contexto: { idade: 7, genero: "feminino", para: "filha" } }));
+  const prompt = promptFinalS72(bodies);
+  assertStringIncludes(prompt, "Ballet Infantil");
+  assertEquals(prompt.includes("Balé Clássico - Turma 01 —"), false, "a turma 15-29 da Barra não entra como adequada");
+  assertStringIncludes(prompt, "No Cuca Barra nao foi encontrada essa atividade");
+  assertStringIncludes(prompt, "idade: 7");
+  assertEquals(patchesMerge(chamadas).some((p) => (p.prog_contexto as Record<string, unknown> | undefined)?.idade === 7), true, "o contexto fica na sessão");
+});
+
+Deno.test("S-WM-72 AC8/AC9: nenhuma unidade tem → oferece a mesma área; contexto sem dado nunca vira adequação", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock(respostasS72({ unidade_selecionada: "Cuca Barra", conversa_engajada: true }, [{ conteudo: "tem judô pra pessoa com deficiência?", remetente: "lead", msAtras: 0 }]), chamadas);
+  const { bodies } = await comFetchS72(() => handler(requestFake("tem judô pra pessoa com deficiência?"), mock), interpS72({ atividade: "judô", termos_busca: ["judo"], area: "ESPORTES", contexto: { deficiencia: "não informada" } }));
+  const prompt = promptFinalS72(bodies);
+  assertStringIncludes(prompt, "NUNCA responda so 'nao tem'");
+  assertStringIncludes(prompt, "outras opcoes de Esportes");
+  assertStringIncludes(prompt, "nunca afirme que a atividade e adequada");
+});
+
+Deno.test("S-WM-72 AC11/AC13: 'quais cursos tem em toda a rede?' → só Cursos e Oficinas, sem perguntar; 'quero capoeira no Pici' → sem menu", async () => {
+  const c1: ChamadaRegistrada[] = [];
+  const m1 = criarSupabaseMock(respostasS72({}, [{ conteudo: "quais cursos tem em toda a rede?", remetente: "lead", msAtras: 0 }]), c1);
+  const r1 = await comFetchS72(() => handler(requestFake("quais cursos tem em toda a rede?"), m1), interpS72({ area: "CURSOS", escopo: "REDE" }));
+  const p1 = promptFinalS72(r1.bodies);
+  assertStringIncludes(p1, "Curso de Libras Básico II");
+  assertEquals(p1.includes("CAPOEIRA") || p1.includes("Hora Pintada"), false, "só a área de cursos");
+  assertEquals(String(r1.corpo.resposta).includes(ROTULO_REDE), false);
+
+  const c2: ChamadaRegistrada[] = [];
+  const m2 = criarSupabaseMock(respostasS72({}, [{ conteudo: "quero capoeira no Pici", remetente: "lead", msAtras: 0 }]), c2);
+  const r2 = await comFetchS72(() => handler(requestFake("quero capoeira no Pici"), m2), interpS72({ atividade: "capoeira", termos_busca: ["capoeira"], area: "ESPORTES", escopo: "Cuca Pici" }));
+  assertEquals(String(r2.corpo.resposta).includes(ROTULO_REDE), false, "escopo já dito na mensagem não pergunta");
+  assertEquals(patchesMerge(c2).some((p) => p.unidade_selecionada === "Cuca Pici"), true);
+});
+
+Deno.test("S-WM-72 AC11b: 'o que tem no cuca?' em toda a rede → pergunta a área com as 3 áreas reais", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock(respostasS72({}, [{ conteudo: "o que tem no cuca em toda a rede?", remetente: "lead", msAtras: 0 }]), chamadas);
+  const { corpo } = await comFetchS72(() => handler(requestFake("o que tem no cuca em toda a rede?"), mock), interpS72({ escopo: "REDE" }));
+  assertEquals(corpo.resposta, PERGUNTA_AREA);
+  assertEquals(String(corpo.resposta).includes("Tecnologia") || String(corpo.resposta).includes("Atividades Culturais"), false);
+});
+
+Deno.test("S-WM-72 AC14: resposta a disparo recente reconhece o aviso junto com a pergunta de unidade", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const meta = { ultimo_disparo: { titulo: "Programação de Outubro", enviado_em: new Date(Date.now() - 3600000).toISOString() } };
+  const mock = criarSupabaseMock(respostasS72(meta, [{ conteudo: "tem capoeira?", remetente: "lead", msAtras: 0 }]), chamadas);
+  const { corpo } = await comFetchS72(() => handler(requestFake("tem capoeira?"), mock), interpS72({ atividade: "capoeira", termos_busca: ["capoeira"], area: "ESPORTES" }));
+  assertStringIncludes(corpo.resposta, "Vi que você recebeu nosso aviso sobre Programação de Outubro");
+  assertStringIncludes(corpo.resposta, "6️⃣ " + ROTULO_REDE);
+});
+
+Deno.test("S-WM-72 AC17/AC18: sem sinal de programação não chama o interpretador nem lê a programação; sessão nova zera o estado novo", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock(respostasS72({ conversa_engajada: true }, [{ conteudo: "obrigado", remetente: "lead", msAtras: 0 }]), chamadas);
+  const { chamadasInterpretador } = await comFetchS72(() => handler(requestFake("obrigado"), mock), interpS72({}));
+  assertEquals(chamadasInterpretador, 0);
+  assertEquals(chamadas.some((c) => c.tabela === "documentos_rag" && c.metodo === "eq" && c.args?.[1] === "monthly_program"), false);
+  assertEquals("prog_pendente" in LIMPEZA_ESTADO_SESSAO && "prog_escopo" in LIMPEZA_ESTADO_SESSAO && "prog_contexto" in LIMPEZA_ESTADO_SESSAO, true);
+});
+
+Deno.test("S-WM-72 AC16: '1' respondendo ao menu de áreas da unidade não passa pelo roteamento novo", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock(respostasS72({ unidade_selecionada: "Cuca Barra", conversa_engajada: true, menu_categoria_ativo: true }, [
+    { conteudo: "1", remetente: "lead", msAtras: 0 },
+    { conteudo: "Aqui no CUCA Barra:\n1️⃣ Esportes\n2️⃣ Cursos e Oficinas\n3️⃣ Dia a Dia (eventos e atividades abertas)", remetente: "agente", msAtras: 10000 },
+  ]), chamadas);
+  const { chamadasInterpretador, bodies } = await comFetchS72(() => handler(requestFake("1"), mock), interpS72({}));
+  assertEquals(chamadasInterpretador, 0);
+  assertStringIncludes(promptFinalS72(bodies), "O usuário selecionou a área: Esportes");
 });

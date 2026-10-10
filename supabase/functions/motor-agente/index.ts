@@ -1599,7 +1599,17 @@ export function ehPerguntaGeralDeProgramacao(texto: string): boolean {
  */
 export function temSinalDeProgramacao(texto: string, itens: ItemProgramacao[]): boolean {
   if (areaPeloVocabulario(texto) || ehPerguntaGeralDeProgramacao(texto)) return true;
-  return itensQueCasamComPalavras(itens, palavrasChaveProgramacao(texto)).length > 0;
+  const palavras = palavrasChaveProgramacao(texto);
+  if (itensQueCasamComPalavras(itens, palavras).length > 0) return true;
+  // Atividade que NÃO está na programação deste mês ("tem xadrez?") também precisa passar pelo
+  // interpretador — senão cai no fluxo antigo e vira só "não tem" (decisão do Junior, 09/10).
+  return palavras.length > 0 && pareceProcurarAtividade(texto);
+}
+
+/** Pergunta ou pedido de atividade ("tem ...?", "aula de", "turma de", "quero fazer/aprender"). */
+export function pareceProcurarAtividade(texto: string): boolean {
+  const norm = normalizarTexto(texto);
+  return /\b(tem|tera|existe|existem|ha|oferece|oferecem)\b|\b(aulas?|turmas?|curso|cursos) de\b|\b(fazer|praticar|aprender|treinar|jogar|dancar|lutar)\b/.test(norm);
 }
 
 /** Faixa etária escrita no detalhe do item ("Idade: 15 a 29 anos", "Requisitos: Crianças de 07 à 12 anos"). */
@@ -1644,6 +1654,9 @@ export function montarConsultaComContexto(
     if (filtrados.length) return { situacao: "outras_unidades", bloco: formatarItensPorUnidade(filtrados, itensRede), area };
     return { situacao: "nenhuma", bloco: "", area };
   }
+  // Atividade identificada (pelo interpretador) que não casa com nenhum título da rede: nenhuma
+  // unidade tem — o bot oferece a mesma área, nunca só "não tem".
+  if (consulta.atividade || consulta.termos.length) return { situacao: "nenhuma", bloco: "", area: consulta.area };
   if (consulta.area) {
     const daArea = filtrarItensPorContexto(itensRede.filter((it) => it.area === consulta.area && (consulta.escopo === ESCOLHA_REDE || it.unidade === consulta.escopo)), consulta.contexto);
     return { situacao: "area", bloco: listarNomesPorUnidade(daArea), area: consulta.area };
