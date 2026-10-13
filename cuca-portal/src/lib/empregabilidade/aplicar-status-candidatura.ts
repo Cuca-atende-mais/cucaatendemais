@@ -22,7 +22,7 @@ export interface ResultadoStatus {
 }
 
 const CAMPOS_CANDIDATURA =
-    "id, vaga_id, nome, telefone, data_nascimento, arquivo_cv_url, dados_ocr_json, area_interesse, created_at, pcd_candidato, pcd_tipo_candidato"
+    "id, vaga_id, nome, telefone, data_nascimento, arquivo_cv_url, dados_ocr_json, area_interesse, created_at, pcd_candidato, pcd_tipo_candidato, vagas(tipo)"
 
 export async function aplicarStatusCandidatura(
     admin: SupabaseClient,
@@ -44,6 +44,11 @@ export async function aplicarStatusCandidatura(
             .update({ status: novoStatus, updated_at: agora })
             .eq("id", candidaturaId)
         if (upErr) throw upErr
+
+        // S-EMP-GES-07: inscrito de seleção não tem Banco de Talentos — nem consulta, nem reflexo.
+        if (cand.vagas?.tipo === "selecao_evento") {
+            return { candidaturaId, ok: true, talento: "nenhuma", motivo: "selecao" }
+        }
 
         const chave = chaveTelefone(cand.telefone)
         let talentos: Record<string, unknown>[] = []

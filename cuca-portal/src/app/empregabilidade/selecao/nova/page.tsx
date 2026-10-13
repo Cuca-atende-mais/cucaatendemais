@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { AlertTriangle, Building2, Calendar, CheckCircle2, FileText, Loader2, MapPin, Plus, Trash2 } from "lucide-react"
+import { AlertTriangle, Building2, Calendar, CheckCircle2, Loader2, MapPin, Plus, Trash2 } from "lucide-react"
 import toast from "react-hot-toast"
 import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
 
@@ -46,8 +46,7 @@ function SelecaoNovaContent() {
     const [datasSelecao, setDatasSelecao] = useState<DataHora[]>([{ data: "", hora: "08:00" }])
     const [unidades, setUnidades] = useState<any[]>([])
     const [unidadeSelecionada, setUnidadeSelecionada] = useState(unidadeCucaParam)
-    // SQS-56: campo bloqueante (AC1) + local + observações (AC2)
-    const [coletaCurriculo, setColetaCurriculo] = useState(true)
+    // SQS-56 (AC2): local + observações. S-EMP-GES-07: seleção não coleta currículo.
     const [localEntrevista, setLocalEntrevista] = useState("")
     const [observacoesSelecao, setObservacoesSelecao] = useState("")
 
@@ -111,7 +110,6 @@ function SelecaoNovaContent() {
                     email_responsavel: emailParam,
                     telefone_responsavel: telParam,
                     link_params: linkParams,
-                    coleta_curriculo: coletaCurriculo,
                     observacoes_selecao: observacoesSelecao || null,
                     local_entrevista: localEntrevista || null,
                 }),
@@ -323,33 +321,13 @@ function SelecaoNovaContent() {
                         </CardContent>
                     </Card>
 
-                    {/* SQS-56: campo bloqueante — decide se o candidato precisa mandar currículo antes (AC1) */}
                     <Card>
                         <CardHeader className="pb-3">
                             <CardTitle className="text-base flex items-center gap-2">
-                                <FileText className="h-4 w-4" /> Currículo prévio
+                                <MapPin className="h-4 w-4" /> Local e observações
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-3">
-                            <div>
-                                <Label className="text-xs">Você precisa receber o currículo dos candidatos antes da seleção? *</Label>
-                                <Select
-                                    value={coletaCurriculo ? "sim" : "nao"}
-                                    onValueChange={v => setColetaCurriculo(v === "sim")}
-                                >
-                                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="sim">Sim, preciso do currículo antes</SelectItem>
-                                        <SelectItem value="nao">Não, só preciso que compareçam no dia</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                                {!coletaCurriculo && (
-                                    <p className="text-xs text-muted-foreground mt-2">
-                                        Os candidatos receberão a convocação na hora e só confirmarão presença (nome e telefone) —
-                                        sem enviar currículo pelo WhatsApp.
-                                    </p>
-                                )}
-                            </div>
                             <div>
                                 <Label className="text-xs flex items-center gap-1">
                                     <MapPin className="h-3.5 w-3.5" /> Local da seleção

@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, Plus, Save, Trash2, CalendarDays, Briefcase, FileText, MapPin } from "lucide-react"
+import { Loader2, Plus, Save, Trash2, CalendarDays, Briefcase, MapPin } from "lucide-react"
 import toast from "react-hot-toast"
 
 interface SelecaoModalProps {
@@ -46,9 +46,6 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
     const [status, setStatus] = useState("pre_cadastro")
     const [cargos, setCargos] = useState<CargoLinha[]>([cargoVazio()])
     const [datasSelecao, setDatasSelecao] = useState<DataHora[]>([{ data: "", hora: "08:00" }])
-    // SQS-56: campo bloqueante — decide se o candidato passa pelo fluxo normal
-    // de currículo ou só confirma presença (AC1/AC2)
-    const [coletaCurriculo, setColetaCurriculo] = useState(true)
     const [observacoesSelecao, setObservacoesSelecao] = useState("")
     const [localEntrevista, setLocalEntrevista] = useState("")
 
@@ -80,7 +77,6 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                     ? selecao.datas_selecao
                     : [{ data: "", hora: "08:00" }]
             )
-            setColetaCurriculo(selecao.coleta_curriculo ?? true)
             setObservacoesSelecao(selecao.observacoes_selecao || "")
             setLocalEntrevista(selecao.local_entrevista || "")
         } else {
@@ -89,7 +85,6 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
             setStatus("pre_cadastro")
             setCargos([cargoVazio()])
             setDatasSelecao([{ data: "", hora: "08:00" }])
-            setColetaCurriculo(true)
             setObservacoesSelecao("")
             setLocalEntrevista("")
         }
@@ -129,7 +124,6 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                     faixa_etaria: cargosValidos[0]?.faixa_etaria || "A partir de 14 anos",
                     total_vagas: cargosValidos.reduce((acc, c) => acc + (parseInt(c.quantidade) || 1), 0),
                     descricao: cargosValidos.map(c => `${c.titulo}${c.quantidade ? ` (${c.quantidade})` : ""}`).join(", "),
-                    coleta_curriculo: coletaCurriculo,
                     observacoes_selecao: observacoesSelecao || null,
                     local_entrevista: localEntrevista || null,
                 }).eq("id", selecao.id)
@@ -145,7 +139,6 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                         unidade_cuca: unidadeCuca === "global" ? null : unidadeCuca,
                         cargos_lista: cargosValidos,
                         datas_selecao: datasValidas,
-                        coleta_curriculo: coletaCurriculo,
                         observacoes_selecao: observacoesSelecao || null,
                         local_entrevista: localEntrevista || null,
                     }),
@@ -326,28 +319,6 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                                     </div>
                                 ))}
                             </div>
-                        </div>
-
-                        {/* SQS-56: campo bloqueante — decide o fluxo do candidato (AC1) */}
-                        <div className="space-y-1">
-                            <Label className="flex items-center gap-1">
-                                <FileText className="h-3.5 w-3.5" /> Precisa do currículo antes? <span className="text-destructive">*</span>
-                            </Label>
-                            <Select
-                                value={coletaCurriculo ? "sim" : "nao"}
-                                onValueChange={v => setColetaCurriculo(v === "sim")}
-                            >
-                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="sim">Sim — coletar currículo normalmente</SelectItem>
-                                    <SelectItem value="nao">Não — só presença no dia (candidato confirma nome e telefone)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                            {!coletaCurriculo && (
-                                <p className="text-xs text-amber-500">
-                                    Análise de CV pela IA, convite de entrevista e envio de currículo ficam desativados para esta seleção.
-                                </p>
-                            )}
                         </div>
 
                         {/* Local — reaproveita vagas.local_entrevista (não é campo novo desta story) */}
