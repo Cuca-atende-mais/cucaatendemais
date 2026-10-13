@@ -18,7 +18,7 @@ import {
     Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
-    Loader2, Plus, CalendarDays, Users, Globe, FileText, FileX2, Search, Building2, ArrowRight,
+    Loader2, Plus, CalendarDays, Users, Globe, Search, Building2, ArrowRight,
 } from "lucide-react"
 import { SelecaoModal } from "@/components/empregabilidade/selecao-modal"
 import { useUser } from "@/lib/auth/user-provider"
@@ -169,9 +169,8 @@ export default function SelecoesPage() {
                         <TableHeader className="bg-muted/30">
                             <TableRow>
                                 <TableHead className="w-[26%]">Empresa</TableHead>
-                                <TableHead className="w-[30%]">Cargos</TableHead>
-                                <TableHead className="w-[14%]">Data</TableHead>
-                                <TableHead className="w-[14%]">Currículo</TableHead>
+                                <TableHead className="w-[37%]">Cargos</TableHead>
+                                <TableHead className="w-[17%]">Data</TableHead>
                                 <TableHead className="w-[10%]">Status</TableHead>
                                 <TableHead className="w-[10%] text-center">Candidatura</TableHead>
                                 <TableHead className="w-28"></TableHead>
@@ -179,11 +178,11 @@ export default function SelecoesPage() {
                         </TableHeader>
                         <TableBody>
                             {isLoading ? (
-                                <TableRow><TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                                <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
                                     <Loader2 className="h-5 w-5 animate-spin inline-block" />
                                 </TableCell></TableRow>
                             ) : selecoes.length === 0 ? (
-                                <TableRow><TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                                <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
                                     {todas.length === 0
                                         ? "Nenhuma seleção cadastrada."
                                         : "Nenhuma seleção encontrada com os filtros aplicados."}
@@ -248,17 +247,6 @@ export default function SelecoesPage() {
                                                     {datas.length > 1 && <span className="text-xs opacity-70"> +{datas.length - 1}</span>}
                                                 </span>
                                             ) : "—"}
-                                        </TableCell>
-                                        <TableCell>
-                                            {v.coleta_curriculo ? (
-                                                <Badge variant="outline" className="gap-1 text-xs whitespace-nowrap">
-                                                    <FileText className="h-3 w-3" /> Com currículo
-                                                </Badge>
-                                            ) : (
-                                                <Badge variant="outline" className="gap-1 text-xs whitespace-nowrap text-amber-600 border-amber-500/40 bg-amber-500/10">
-                                                    <FileX2 className="h-3 w-3" /> Só presença
-                                                </Badge>
-                                            )}
                                         </TableCell>
                                         <TableCell><StatusBadge status={v.status} /></TableCell>
                                         <TableCell className="text-center">

@@ -96,4 +96,25 @@ describe("aplicarStatusCandidatura", () => {
         expect(r.ok).toBe(false)
         expect(ops).toEqual([])
     })
+
+    describe("S-EMP-GES-07: inscrito de seleção não tem Banco de Talentos", () => {
+        const inscrito = { ...candidatura, vagas: { tipo: "selecao_evento" } }
+
+        for (const status of ["selecionado", "contratado", "rejeitado"] as const) {
+            it(`${status}: só muda o status, sem consultar nem gravar no Banco de Talentos`, async () => {
+                const { cliente, ops, rpcs } = adminFalso({ candidatura: inscrito, talentos: [{ id: "t1" }] })
+                const r = await aplicarStatusCandidatura(cliente, "c1", status)
+                expect(r).toEqual({ candidaturaId: "c1", ok: true, talento: "nenhuma", motivo: "selecao" })
+                expect(ops).toEqual([expect.objectContaining({ tabela: "candidaturas", tipo: "update", dados: expect.objectContaining({ status }) })])
+                expect(rpcs).toEqual([])
+            })
+        }
+
+        it("vaga normal continua com a regra do Banco de Talentos", async () => {
+            const { cliente, ops } = adminFalso({ candidatura: { ...candidatura, vagas: { tipo: "vaga_normal" } }, talentos: [{ id: "t1" }] })
+            const r = await aplicarStatusCandidatura(cliente, "c1", "selecionado")
+            expect(r.talento).toBe("travar")
+            expect(ops.filter(o => o.tabela === "talent_bank")).toHaveLength(1)
+        })
+    })
 })

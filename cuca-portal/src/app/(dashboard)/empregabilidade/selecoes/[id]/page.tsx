@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import {
     ArrowLeft, Loader2, PenLine, Plus, Trash2, MessageSquare, Users, CalendarDays,
-    MapPin, Building2, FileText, FileX2, Info, Briefcase, CheckCircle2, XCircle,
+    MapPin, Building2, FileText, Info, Briefcase, CheckCircle2, XCircle,
     Send, RotateCcw, Phone,
 } from "lucide-react"
 import toast from "react-hot-toast"
@@ -242,15 +242,6 @@ export default function SelecaoDetalhePage() {
                                     <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-0.5 rounded">
                                         #{vaga.numero_vaga}
                                     </span>
-                                )}
-                                {vaga.coleta_curriculo ? (
-                                    <Badge variant="outline" className="gap-1 text-xs">
-                                        <FileText className="h-3 w-3" /> Com currículo prévio
-                                    </Badge>
-                                ) : (
-                                    <Badge variant="outline" className="gap-1 text-xs text-amber-600 border-amber-500/40 bg-amber-500/10">
-                                        <FileX2 className="h-3 w-3" /> Só presença
-                                    </Badge>
                                 )}
                             </div>
                             <div className="flex items-center gap-1.5 text-sm text-muted-foreground">

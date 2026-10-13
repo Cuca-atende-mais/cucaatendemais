@@ -4,6 +4,7 @@
 //   D2 — selecionado/contratado trava o talento; só "rejeitado" devolve ao Banco de Talentos.
 //   D4 — quem tem processo ativo em outra vaga continua travado mesmo sendo rejeitado aqui.
 //   D5 — sem currículo, não se cria cadastro novo no Banco de Talentos.
+// S-EMP-GES-07 (2026-10-13): seleção por evento não tem Banco de Talentos — só o status muda.
 // Este módulo é puro (sem banco); a execução fica em aplicar-status-candidatura.ts.
 
 export const STATUS_EDITAVEIS = ["pendente", "selecionado", "contratado", "rejeitado"] as const
@@ -61,7 +62,7 @@ export type AcaoTalento =
     | { tipo: "travar"; status: "selecionado" | "contratado" }
     | { tipo: "liberar" }
     | { tipo: "criar" }
-    | { tipo: "nenhuma"; motivo: "status_sem_reflexo" | "sem_cadastro" | "processo_ativo" | "sem_curriculo" }
+    | { tipo: "nenhuma"; motivo: "status_sem_reflexo" | "sem_cadastro" | "processo_ativo" | "sem_curriculo" | "selecao" }
 
 export function decidirAcaoTalento(entrada: {
     novoStatus: StatusEditavel
@@ -93,6 +94,7 @@ export interface CandidaturaParaTalento {
     created_at: string | null
     pcd_candidato: boolean | null
     pcd_tipo_candidato: string | null
+    vagas?: { tipo: string | null } | null
 }
 
 function primeiroEmprego(ocr: DadosOcr): boolean {
