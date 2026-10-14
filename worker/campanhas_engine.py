@@ -483,18 +483,22 @@ def _montar_parametros_named(variaveis: list[dict] | None, valores: list[str]) -
     ]
 
 
-async def _enviar_template_meta(
+async def _enviar_template_meta_detalhado(
     phone_number_id: str,
     to: str,
     token: str,
     template_name: str,
     components: list,
-) -> tuple[bool, str | None]:
-    """POST Graph API v23.0 com type=template. Retorna (sucesso, wamid).
+) -> dict:
+    """POST Graph API v23.0 com type=template. Retorna {ok, wamid, wa_id, erro}.
 
     S-WM-57: captura o wamid (WhatsApp message ID) da resposta de sucesso da Graph
     API — necessário pra correlacionar com os eventos statuses[] (entregue/lido/
     falhou) que o webhook da Meta manda depois, ver worker/meta_adapter_inbound.py.
+
+    S-EMP-GES-02: devolve também o `wa_id` do destinatário (contacts[0].wa_id) — é o
+    número no formato que a Meta usa no `from` quando a pessoa responde, e o erro da
+    Meta (código + mensagem) quando o envio é recusado.
     """
     numero = _normalizar_numero_meta(to)
     url = f"https://graph.facebook.com/v23.0/{phone_number_id}/messages"
@@ -517,16 +521,38 @@ async def _enviar_template_meta(
             )
         if resp.status_code in (200, 201):
             wamid = None
+            wa_id = None
             try:
-                wamid = resp.json().get("messages", [{}])[0].get("id")
+                dados = resp.json()
+                wamid = (dados.get("messages") or [{}])[0].get("id")
+                wa_id = (dados.get("contacts") or [{}])[0].get("wa_id")
             except Exception:
                 pass
-            return True, wamid
+            return {"ok": True, "wamid": wamid, "wa_id": wa_id, "erro": None}
         logger.warning(f"[Meta] HTTP {resp.status_code} para {to}: {resp.text[:200]}")
-        return False, None
+        erro = f"HTTP {resp.status_code}"
+        try:
+            err = resp.json().get("error") or {}
+            if err:
+                erro = f"{err.get('code', resp.status_code)}: {err.get('message', '')}".strip()
+        except Exception:
+            pass
+        return {"ok": False, "wamid": None, "wa_id": None, "erro": erro}
     except Exception as exc:
         logger.error(f"[Meta] Erro ao enviar template {template_name!r} para {to}: {type(exc).__name__}")
-        return False, None
+        return {"ok": False, "wamid": None, "wa_id": None, "erro": type(exc).__name__}
+
+
+async def _enviar_template_meta(
+    phone_number_id: str,
+    to: str,
+    token: str,
+    template_name: str,
+    components: list,
+) -> tuple[bool, str | None]:
+    """POST Graph API v23.0 com type=template. Retorna (sucesso, wamid) — contrato dos disparos."""
+    r = await _enviar_template_meta_detalhado(phone_number_id, to, token, template_name, components)
+    return r["ok"], r["wamid"]
 
 
 # ─── Processamento de itens de disparo ───────────────────────────────────────

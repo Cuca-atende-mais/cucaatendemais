@@ -26,6 +26,7 @@ import toast from "react-hot-toast"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useUser } from "@/lib/auth/user-provider"
+import { SeloSemResposta, useDiasSemResposta } from "@/components/empregabilidade/selo-sem-resposta"
 import { VAGAS_KEY } from "@/hooks/queries/use-vagas"
 
 export default function VagasPage() {
@@ -114,6 +115,7 @@ export default function VagasPage() {
     })
 
     const vagas = data?.vagas ?? []
+    const diasSemResposta = useDiasSemResposta(vagas.map(v => v.id))
     const empresasMap = data?.empresasMap ?? {}
     const unidadesMap = data?.unidadesMap ?? {}
     const candidaturasCount = data?.candidaturasCount ?? {}
@@ -274,7 +276,12 @@ export default function VagasPage() {
                                             <Badge variant="outline" className="text-amber-600 border-amber-500/40 bg-amber-50/50">Não definida</Badge>
                                         )}
                                     </TableCell>
-                                    <TableCell>{getStatusBadge(v.status)}</TableCell>
+                                    <TableCell>
+                                        <div className="flex flex-wrap items-center gap-1">
+                                            {getStatusBadge(v.status)}
+                                            <SeloSemResposta dias={diasSemResposta.get(v.id)} />
+                                        </div>
+                                    </TableCell>
                                     <TableCell className="text-center">
                                         <Button
                                             size="sm"
@@ -367,6 +374,7 @@ export default function VagasPage() {
                                     <Badge variant="outline" className="text-amber-600 border-amber-500/40 bg-amber-50/50">Não definida</Badge>
                                 )}
                                 {getStatusBadge(v.status)}
+                                <SeloSemResposta dias={diasSemResposta.get(v.id)} />
                             </div>
 
                             <div className="flex items-center gap-2 pt-1">

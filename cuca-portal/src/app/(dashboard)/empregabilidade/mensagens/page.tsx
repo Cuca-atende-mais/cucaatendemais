@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ChatSidebar from "@/components/chat/chat-sidebar";
 import ChatWindow from "@/components/chat/chat-window";
 import { ChatMasterDetail } from "@/components/chat/chat-master-detail";
@@ -9,8 +10,10 @@ import { Badge } from "@/components/ui/badge";
 // Constante estável fora do componente — evita recriar canal Realtime a cada render
 const CANAL_EMPREGABILIDADE = "Empregabilidade";
 
-export default function EmpregabilidadeMensagensPage() {
-    const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+function EmpregabilidadeMensagensConteudo() {
+    // S-EMP-GES-02: "Abrir no Atendimento" da tela Feedback chega com ?conversa=<id>.
+    const searchParams = useSearchParams();
+    const [activeConversationId, setActiveConversationId] = useState<string | null>(searchParams.get("conversa"));
 
     return (
         <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-background">
@@ -42,5 +45,14 @@ export default function EmpregabilidadeMensagensPage() {
                 }
             />
         </div>
+    );
+}
+
+// useSearchParams exige boundary de Suspense no build estático.
+export default function EmpregabilidadeMensagensPage() {
+    return (
+        <Suspense fallback={null}>
+            <EmpregabilidadeMensagensConteudo />
+        </Suspense>
     );
 }

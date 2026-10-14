@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import { SelecaoModal } from "@/components/empregabilidade/selecao-modal"
 import { useUser } from "@/lib/auth/user-provider"
+import { SeloSemResposta, useDiasSemResposta } from "@/components/empregabilidade/selo-sem-resposta"
 
 export const SELECOES_KEY = ["empregabilidade", "selecoes"] as const
 
@@ -104,6 +105,8 @@ export default function SelecoesPage() {
         const cargos = (v.cargos_lista || []).map(c => c.titulo).join(" ").toLowerCase()
         return nomeEmpresa(v).toLowerCase().includes(s) || cargos.includes(s)
     })
+
+    const diasSemResposta = useDiasSemResposta(selecoes.map(v => v.id))
 
     const invalidate = () => qc.invalidateQueries({ queryKey: SELECOES_KEY })
 
@@ -248,7 +251,12 @@ export default function SelecoesPage() {
                                                 </span>
                                             ) : "—"}
                                         </TableCell>
-                                        <TableCell><StatusBadge status={v.status} /></TableCell>
+                                        <TableCell>
+                                            <div className="flex flex-wrap items-center gap-1">
+                                                <StatusBadge status={v.status} />
+                                                <SeloSemResposta dias={diasSemResposta.get(v.id)} />
+                                            </div>
+                                        </TableCell>
                                         <TableCell className="text-center">
                                             <Button
                                                 size="sm"

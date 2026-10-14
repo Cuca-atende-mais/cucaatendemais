@@ -64,7 +64,6 @@ export default function SelecaoDetalhePage() {
     const { hasPermission } = useUser()
 
     const [editOpen, setEditOpen] = useState(false)
-    const [feedbackLoading, setFeedbackLoading] = useState(false)
     const [statusVagaLoading, setStatusVagaLoading] = useState(false)
     const [savingStatusId, setSavingStatusId] = useState<string | null>(null)
     const [removendo, setRemovendo] = useState<Candidatura | null>(null)
@@ -178,18 +177,9 @@ export default function SelecaoDetalhePage() {
         }
     }
 
-    const solicitarFeedback = async () => {
-        setFeedbackLoading(true)
-        try {
-            const res = await fetch(`/api/empregabilidade/vagas/${selecaoId}/solicitar-feedback`, { method: "POST" })
-            const json = await res.json()
-            if (!res.ok) throw new Error(json.error || "Erro ao solicitar feedback")
-            toast.success("Solicitação de feedback enviada via WhatsApp!")
-        } catch (err: unknown) {
-            toast.error(getErrorMessage(err, "Falha ao solicitar feedback."))
-        } finally {
-            setFeedbackLoading(false)
-        }
+    // S-EMP-GES-02 (AC9): o pedido de feedback sai só pela tela Feedback.
+    const solicitarFeedback = () => {
+        router.push(`/empregabilidade/feedback?vaga=${selecaoId}`)
     }
 
     if (isLoading) {
@@ -334,9 +324,8 @@ export default function SelecaoDetalhePage() {
                                 variant="outline" size="sm"
                                 className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 ml-auto"
                                 onClick={solicitarFeedback}
-                                disabled={feedbackLoading}
                             >
-                                {feedbackLoading ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5 mr-1.5" />}
+                                <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
                                 Solicitar feedback da empresa
                             </Button>
                         </div>

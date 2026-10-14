@@ -877,6 +877,65 @@ class TestSendMessageEndpoint:
         assert resp.status_code == 200
         assert resp.json()["status"] == "sent"
 
+    def test_template_sem_conversa_devolve_wamid_e_wa_id(self):
+        """S-EMP-GES-02 (AC6): template sem conversa_id sai pelo número de Empregabilidade e
+        devolve wamid e wa_id."""
+        from fastapi.testclient import TestClient
+        import worker.main as main_module
+
+        envio = AsyncMock(return_value={"ok": True, "wamid": "wamid.T1", "wa_id": "5585988887777", "erro": None})
+        texto = AsyncMock(return_value=True)
+        with patch("campanhas_engine._enviar_template_meta_detalhado", envio), \
+             patch("meta_adapter_outbound._meta_enviar", texto), \
+             patch("empregabilidade_engine._get_meta_phone", return_value=("PNID_EMP", "TOKEN")), \
+             patch.dict(os.environ, {"WEBHOOK_INTERNAL_TOKEN": "tok_interno"}):
+            with TestClient(main_module.app) as client:
+                resp = client.post(
+                    "/send-message/tok_interno",
+                    json={"number": "5585988887777", "template_name": "tpl", "components": [{"type": "body"}]},
+                )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "sent", "wamid": "wamid.T1", "wa_id": "5585988887777", "origem_id": "PNID_EMP"}
+        envio.assert_awaited_once_with("PNID_EMP", "5585988887777", "TOKEN", "tpl", [{"type": "body"}])
+        texto.assert_not_awaited()
+
+    def test_template_sem_conversa_falha_devolve_502_com_erro(self):
+        """S-EMP-GES-02 (AC3): recusa da Meta volta 502 com o motivo."""
+        from fastapi.testclient import TestClient
+        import worker.main as main_module
+
+        envio = AsyncMock(return_value={"ok": False, "wamid": None, "wa_id": None, "erro": "132000: params"})
+        with patch("campanhas_engine._enviar_template_meta_detalhado", envio), \
+             patch("empregabilidade_engine._get_meta_phone", return_value=("PNID_EMP", "TOKEN")), \
+             patch.dict(os.environ, {"WEBHOOK_INTERNAL_TOKEN": "tok_interno"}):
+            with TestClient(main_module.app) as client:
+                resp = client.post(
+                    "/send-message/tok_interno",
+                    json={"number": "5585988887777", "template_name": "tpl"},
+                )
+
+        assert resp.status_code == 502
+        assert resp.json() == {"error": "132000: params"}
+
+    def test_texto_sem_conversa_segue_contrato_antigo(self):
+        """S-EMP-GES-02 (AC6): texto sem conversa_id continua indo por _meta_enviar, resposta igual."""
+        from fastapi.testclient import TestClient
+        import worker.main as main_module
+
+        envio = AsyncMock()
+        texto = AsyncMock(return_value=True)
+        with patch("campanhas_engine._enviar_template_meta_detalhado", envio), \
+             patch("meta_adapter_outbound._meta_enviar", texto), \
+             patch("empregabilidade_engine._get_meta_phone", return_value=("PNID_EMP", "TOKEN")), \
+             patch.dict(os.environ, {"WEBHOOK_INTERNAL_TOKEN": "tok_interno"}):
+            with TestClient(main_module.app) as client:
+                resp = client.post("/send-message/tok_interno", json={"number": "5585988887777", "text": "Olá"})
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "sent"}
+        envio.assert_not_awaited()
+
     def test_rejeita_contrato_antigo_phone_message(self):
         """AC #13: {phone, message} → 400."""
         from fastapi.testclient import TestClient

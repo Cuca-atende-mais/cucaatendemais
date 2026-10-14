@@ -2314,7 +2314,7 @@ async def test_webhook_statuses_atualiza_ledger_por_wamid():
         await processar_webhook_meta(raw)
 
     mock_supabase.table.assert_any_call("logs_disparo")
-    update_call = mock_supabase.table.return_value.update.call_args
+    update_call = mock_supabase.table.return_value.update.call_args_list[0]
     assert update_call is not None, "logs_disparo.update nunca foi chamado"
     assert update_call.args[0]["status"] == "entregue"
     eq_call = mock_supabase.table.return_value.update.return_value.eq.call_args
@@ -2340,7 +2340,7 @@ async def test_webhook_status_fora_de_ordem_protegido_por_or_atomico_na_query():
     with patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase):
         await processar_webhook_meta(raw)
 
-    update_call = mock_supabase.table.return_value.update.call_args
+    update_call = mock_supabase.table.return_value.update.call_args_list[0]
     assert update_call is not None, "logs_disparo.update nunca foi chamado"
     assert update_call.args[0]["status_timestamp_meta"] is not None, (
         "status_timestamp_meta nao foi gravado a partir do timestamp do evento da Meta"
@@ -2369,7 +2369,7 @@ async def test_webhook_status_deleted_e_warning_mapeados_corretamente():
     with patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase_deleted):
         await processar_webhook_meta(json.dumps(payload_deleted).encode())
 
-    update_call_deleted = mock_supabase_deleted.table.return_value.update.call_args
+    update_call_deleted = mock_supabase_deleted.table.return_value.update.call_args_list[0]
     assert update_call_deleted is not None, "logs_disparo.update nunca foi chamado (deleted)"
     assert update_call_deleted.args[0]["status"] == "apagada"
 
@@ -2382,10 +2382,62 @@ async def test_webhook_status_deleted_e_warning_mapeados_corretamente():
     with patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase_warning):
         await processar_webhook_meta(json.dumps(payload_warning).encode())
 
-    update_call_warning = mock_supabase_warning.table.return_value.update.call_args
+    update_call_warning = mock_supabase_warning.table.return_value.update.call_args_list[0]
     assert update_call_warning is not None, "logs_disparo.update nunca foi chamado (warning)"
     assert update_call_warning.args[0]["status"] == "aviso"
     assert update_call_warning.args[0]["erro"] == "470"
+
+@pytest.mark.asyncio
+async def test_webhook_status_atualiza_feedback_solicitacoes_por_wamid():
+    """S-EMP-GES-02 (AC5): o mesmo evento statuses[] atualiza feedback_solicitacoes pelo wamid,
+    com a mesma proteção de ordem, depois de logs_disparo."""
+    from unittest.mock import MagicMock
+
+    payload = _payload_status(
+        wamid="wamid.FB", status="failed",
+        errors=[{"code": 131049, "title": "Not delivered"}],
+    )
+    mock_supabase = MagicMock()
+    with patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase):
+        await processar_webhook_meta(json.dumps(payload).encode())
+
+    tabelas = [c.args[0] for c in mock_supabase.table.call_args_list]
+    assert tabelas.index("logs_disparo") < tabelas.index("feedback_solicitacoes")
+    updates = mock_supabase.table.return_value.update.call_args_list
+    fb = [c.args[0] for c in updates if "status_envio" in c.args[0]]
+    assert fb == [{
+        "status_envio": "falhou",
+        "erro_envio": "131049",
+        "status_timestamp_meta": fb[0]["status_timestamp_meta"],
+    }]
+    assert fb[0]["status_timestamp_meta"] is not None
+    eq_calls = mock_supabase.table.return_value.update.return_value.eq.call_args_list
+    assert all(c.args == ("wamid", "wamid.FB") for c in eq_calls)
+    or_calls = mock_supabase.table.return_value.update.return_value.eq.return_value.or_.call_args_list
+    assert len(or_calls) == len(updates)
+
+
+@pytest.mark.asyncio
+async def test_webhook_falha_no_feedback_nao_afeta_logs_disparo():
+    """S-EMP-GES-02 (AC5): erro ao atualizar feedback_solicitacoes só loga — logs_disparo já foi
+    atualizado e o processamento segue."""
+    from unittest.mock import MagicMock
+
+    tabela_ok = MagicMock()
+
+    def _table(nome):
+        if nome == "feedback_solicitacoes":
+            raise RuntimeError("tabela indisponível")
+        return tabela_ok
+
+    mock_supabase = MagicMock()
+    mock_supabase.table.side_effect = _table
+    payload = _payload_status(wamid="wamid.ISO", status="read")
+    with patch("meta_adapter_inbound._get_supabase", return_value=mock_supabase):
+        await processar_webhook_meta(json.dumps(payload).encode())
+
+    primeira = tabela_ok.update.call_args_list[0].args[0]
+    assert primeira["status"] == "lido"
 
 
 class TestNormalizacaoTelefoneContratoV2:
