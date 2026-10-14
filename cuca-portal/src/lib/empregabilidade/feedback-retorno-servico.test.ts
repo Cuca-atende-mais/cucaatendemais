@@ -51,7 +51,7 @@ describe("página pública com token do pedido (AC1, AC11)", () => {
         })
     })
 
-    it("token que não é de pedido → null (segue o link antigo)", async () => {
+    it("token que não é de nenhum pedido → null (link inválido)", async () => {
         const { cliente } = cenario()
         expect(await carregarPedidoPublico(cliente, "outro")).toBeNull()
     })

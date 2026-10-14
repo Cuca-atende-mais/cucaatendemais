@@ -1,36 +1,11 @@
 // S-EMP-GES-03: regras do retorno da empresa que não dependem do banco — resposta pelo link, link de uso
-// único, motivo da rejeição (tela interna), reenviar, selo "sem resposta" e taxa de retorno.
+// único, reenviar, selo "sem resposta" e taxa de retorno.
 
 /** Só estes mudam pelo link: quem a equipe já marcou como Contratado ou Rejeitado não é mexido pela empresa. */
 export const STATUS_AVALIAVEIS_PELA_EMPRESA = ["pendente", "selecionado"] as const
 
 export function avaliavelPelaEmpresa(status: unknown): boolean {
     return typeof status === "string" && (STATUS_AVALIAVEIS_PELA_EMPRESA as readonly string[]).includes(status)
-}
-
-// ── Motivo da rejeição (AC4) ────────────────────────────────────────────────────────────────────────
-
-export const MOTIVOS_REJEICAO = [
-    "Perfil não compatível",
-    "Experiência insuficiente",
-    "Não compareceu",
-    "Desistiu",
-    "Outro",
-] as const
-
-export const MAX_TEXTO_OUTRO = 120
-
-/** Valida o motivo enviado pela tela. Sem motivo é válido (é opcional). "Outro" grava "Outro: <texto>". */
-export function motivoParaGravar(motivo: unknown, outro: unknown): { ok: true; valor: string | null } | { ok: false; erro: string } {
-    if (motivo === undefined || motivo === null || motivo === "") return { ok: true, valor: null }
-    if (typeof motivo !== "string" || !(MOTIVOS_REJEICAO as readonly string[]).includes(motivo)) {
-        return { ok: false, erro: "Motivo da rejeição inválido." }
-    }
-    if (motivo !== "Outro") return { ok: true, valor: motivo }
-    const texto = typeof outro === "string" ? outro.replace(/\s+/g, " ").trim() : ""
-    if (!texto) return { ok: false, erro: "Descreva o motivo em \"Outro\"." }
-    if (texto.length > MAX_TEXTO_OUTRO) return { ok: false, erro: `O motivo pode ter até ${MAX_TEXTO_OUTRO} caracteres.` }
-    return { ok: true, valor: `Outro: ${texto}` }
 }
 
 // ── Pedido e link (AC5, AC7, AC11) ──────────────────────────────────────────────────────────────────

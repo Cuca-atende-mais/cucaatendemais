@@ -4,7 +4,6 @@ import { exigirPermissao } from "@/lib/rbac/exigir-permissao-servidor"
 import { EPM_FEEDBACK } from "@/lib/rbac/catalogo-empregabilidade-gestao"
 import { aplicarStatusCandidatura, type ResultadoStatus } from "@/lib/empregabilidade/aplicar-status-candidatura"
 import { ehStatusEditavel } from "@/lib/empregabilidade/status-candidatura"
-import { motivoParaGravar } from "@/lib/empregabilidade/feedback-retorno"
 
 // S-EMP-GES-01 (AC6-AC10, AC13): mudança de status pela tela Feedback, um a um ou em lote.
 // Não avisa o jovem (decisão 5 do épico / D3). Devolve o resultado por candidatura para a tela
@@ -38,12 +37,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Status inválido." }, { status: 400 })
     }
     const status = body.status
-    // S-EMP-GES-03 (AC4): motivo opcional, só na mudança para Rejeitado.
-    const motivo = motivoParaGravar(body?.motivo_rejeicao, body?.motivo_outro)
-    if (!motivo.ok) return NextResponse.json({ error: motivo.erro }, { status: 400 })
-    if (motivo.valor && status !== "rejeitado") {
-        return NextResponse.json({ error: "Motivo só vale para a mudança para Rejeitado." }, { status: 400 })
-    }
     const unicos = Array.from(new Set(ids as string[]))
 
     // Mesma regra de unidade da leitura: só candidaturas desta vaga que o usuário enxerga pela RLS.
@@ -67,13 +60,7 @@ export async function POST(request: NextRequest) {
             resultados.push({ candidaturaId: id, ok: false, erro: "Status atual não pode ser alterado por esta tela." })
             continue
         }
-        const r = await aplicarStatusCandidatura(admin, id, status)
-        // Rejeitar de novo grava o motivo desta vez (ou limpa, se não houver).
-        if (r.ok && status === "rejeitado") {
-            const { error: mErr } = await admin.from("candidaturas").update({ motivo_rejeicao: motivo.valor }).eq("id", id)
-            if (mErr) console.error(`[feedback/status] Falha ao gravar o motivo de ${id}:`, mErr)
-        }
-        resultados.push(r)
+        resultados.push(await aplicarStatusCandidatura(admin, id, status))
     }
 
     const atualizados = resultados.filter(r => r.ok).length

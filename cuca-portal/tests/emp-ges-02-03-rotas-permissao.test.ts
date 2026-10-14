@@ -79,7 +79,7 @@ describe("feedback/solicitacoes", () => {
     })
 })
 
-describe("S-EMP-GES-03: reenviar e motivo da rejeição", () => {
+describe("S-EMP-GES-03: reenviar", () => {
     it("reenviar sem sessão → 401; sem epm_feedback_reenviar → 403, sem tocar no banco", async () => {
         const rota = await import("@/app/api/empregabilidade/feedback/solicitacoes/[id]/reenviar/route")
         const ctx = { params: Promise.resolve({ id: VAGA }) }
@@ -89,17 +89,6 @@ describe("S-EMP-GES-03: reenviar e motivo da rejeição", () => {
         estado.permitidas.add("epm_feedback_ver")
         expect((await rota.POST(post({}), ctx)).status).toBe(403)
         expect(estado.rpcsChamadas).toEqual(["epm_feedback_reenviar"])
-        expect(adminUsado).not.toHaveBeenCalled()
-    })
-
-    it("feedback/status recusa motivo fora da lista e motivo em status que não é Rejeitado", async () => {
-        estado.user = { id: "u1" }
-        estado.permitidas.add("epm_feedback_status_lote")
-        const fbStatus = await import("@/app/api/empregabilidade/feedback/status/route")
-        const corpo = { modo: "lote", vaga_id: VAGA, candidatura_ids: [CAND] }
-        expect((await fbStatus.POST(post({ ...corpo, status: "rejeitado", motivo_rejeicao: "Inventado" }))).status).toBe(400)
-        expect((await fbStatus.POST(post({ ...corpo, status: "selecionado", motivo_rejeicao: "Desistiu" }))).status).toBe(400)
-        expect((await fbStatus.POST(post({ ...corpo, status: "rejeitado", motivo_rejeicao: "Outro", motivo_outro: "" }))).status).toBe(400)
         expect(adminUsado).not.toHaveBeenCalled()
     })
 })

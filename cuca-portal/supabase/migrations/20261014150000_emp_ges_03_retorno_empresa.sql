@@ -1,10 +1,9 @@
--- S-EMP-GES-03: retorno da empresa pelo link do pedido de feedback — motivo da rejeição na tela interna,
--- "em análise" e "substituída" no pedido. Idempotente e aditiva: só colunas novas e nullable.
+-- S-EMP-GES-03: retorno da empresa pelo link do pedido de feedback — "em análise" e "substituída" no
+-- pedido. Idempotente e aditiva: só colunas novas e nullable.
+-- (A versão aplicada em 14/10 criava também candidaturas.motivo_rejeicao; o motivo saiu do escopo no mesmo
+-- dia e a coluna é removida em 20261014170000_emp_ges_03_sem_motivo_rejeicao.sql.)
 
--- 1. Motivo da rejeição (opcional, só pela tela interna). Lista fixa ou "Outro: <texto curto>".
-ALTER TABLE public.candidaturas ADD COLUMN IF NOT EXISTS motivo_rejeicao text;
-
--- 2. Situação do pedido além de enviado/respondido:
+-- 1. Situação do pedido além de enviado/respondido:
 --    em_analise  = a empresa abriu o link e sinalizou "Ainda em análise" (nenhum candidato muda);
 --    substituida = a equipe reenviou; o pedido novo está em substituida_por.
 --    Em qualquer das duas, e com respondido_em preenchido, o link deixa de valer (uso único).
@@ -21,4 +20,4 @@ BEGIN
     END IF;
 END $$;
 
--- 3. Taxa de retorno por empresa (tela Feedback) lê por empresa_id — índice já existe (GES-02).
+-- 2. Taxa de retorno por empresa (tela Feedback) lê por empresa_id — índice já existe (GES-02).

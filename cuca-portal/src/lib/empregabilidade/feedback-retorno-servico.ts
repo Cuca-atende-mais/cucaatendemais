@@ -60,7 +60,7 @@ function linkInativo(pedido: PedidoToken): ResultadoPublico<never> | null {
     return estado === "ativo" ? null : { ok: false, status: 410, erro: MENSAGEM_LINK_INATIVO[estado] }
 }
 
-/** `null` quando o token não é de um pedido (é um link antigo de `vagas_feedback_tokens`). */
+/** `null` quando o token não é de nenhum pedido (link inválido). */
 export async function carregarPedidoPublico(
     admin: SupabaseClient,
     token: string,

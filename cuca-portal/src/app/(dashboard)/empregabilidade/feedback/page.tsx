@@ -34,7 +34,7 @@ import {
     vagaEntraNoSeletor,
 } from "@/lib/empregabilidade/feedback-tela"
 import { VALIDADE_LINK_HORAS, rotuloStatusEnvio, statusFeedback, type StatusFeedback } from "@/lib/empregabilidade/feedback-solicitacao"
-import { MAX_TEXTO_OUTRO, MOTIVOS_REJEICAO, diasSemResposta, podeReenviar, taxaRetorno, textoSelo } from "@/lib/empregabilidade/feedback-retorno"
+import { diasSemResposta, podeReenviar, taxaRetorno, textoSelo } from "@/lib/empregabilidade/feedback-retorno"
 
 // S-EMP-GES-01: tela Feedback — escolher empresa e vaga/seleção, ver os candidatos enviados (ou os
 // inscritos, na seleção), mudar status um a um ou em lote e manter o contato da vaga. Tudo na página,
@@ -200,11 +200,6 @@ function FeedbackConteudo() {
     const [reenviando, setReenviando] = useState<string | null>(null)
     const [pedidosEmpresa, setPedidosEmpresa] = useState<PedidoEmpresa[] | null>(null)
 
-    // Motivo da rejeição (GES-03, AC4): opcional, no lote e na mudança individual para Rejeitado.
-    const [motivo, setMotivo] = useState("")
-    const [motivoOutro, setMotivoOutro] = useState("")
-    const [rejeitandoId, setRejeitandoId] = useState<string | null>(null)
-
     // Seletor: vagas com currículo enviado e seleções com inscritos, de qualquer status (AC2 / D1).
     useEffect(() => {
         if (carregandoUsuario || !podeVer) return
@@ -301,9 +296,6 @@ function FeedbackConteudo() {
         setConfirmandoLote(false)
         setConfirmandoPedido(false)
         setErroPedido(null)
-        setRejeitandoId(null)
-        setMotivo("")
-        setMotivoOutro("")
         try {
             const [{ data: v, error: vErr }, { data: cands, error: cErr }] = await Promise.all([
                 supabase
@@ -399,11 +391,10 @@ function FeedbackConteudo() {
     }
 
     const enviarStatus = async (ids: string[], status: StatusEditavel, modo: "individual" | "lote"): Promise<ResultadoLote | null> => {
-        const comMotivo = status === "rejeitado" && motivo ? { motivo_rejeicao: motivo, motivo_outro: motivoOutro } : {}
         const res = await fetch("/api/empregabilidade/feedback/status", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ vaga_id: vagaId, candidatura_ids: ids, status, modo, ...comMotivo }),
+            body: JSON.stringify({ vaga_id: vagaId, candidatura_ids: ids, status, modo }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
@@ -427,16 +418,6 @@ function FeedbackConteudo() {
         } finally {
             setLinhaSalvando(null)
         }
-    }
-
-    const escolherStatusIndividual = (id: string, status: StatusEditavel) => {
-        if (status === "rejeitado") {
-            setRejeitandoId(id)
-            setMotivo("")
-            setMotivoOutro("")
-            return
-        }
-        mudarIndividual(id, status)
     }
 
     const reenviar = async (solicitacaoId: string) => {
@@ -522,24 +503,6 @@ function FeedbackConteudo() {
     const telefonePedido = vaga?.telefone_responsavel || vaga?.empresas?.telefone || ""
     const diasSemRetorno = !ehSelecao ? diasSemResposta(solicitacoes[0]) : null
     const taxa = pedidosEmpresa ? taxaRetorno(pedidosEmpresa) : null
-    const motivoIncompleto = motivo === "Outro" && !motivoOutro.trim()
-
-    const campoMotivo = (
-        <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm">Motivo (opcional)</span>
-            <Select value={motivo || "nenhum"} onValueChange={v => setMotivo(v === "nenhum" ? "" : v)}>
-                <SelectTrigger className="h-8 w-56 bg-white"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="nenhum">Sem motivo</SelectItem>
-                    {MOTIVOS_REJEICAO.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-                </SelectContent>
-            </Select>
-            {motivo === "Outro" && (
-                <Input className="h-8 w-64 bg-white" maxLength={MAX_TEXTO_OUTRO} placeholder="Descreva o motivo"
-                    value={motivoOutro} onChange={e => setMotivoOutro(e.target.value)} />
-            )}
-        </div>
-    )
 
     const nomePorId = useMemo(() => new Map(candidatos.map(c => [c.id, c.nome || "Sem nome"])), [candidatos])
 
@@ -743,29 +706,10 @@ function FeedbackConteudo() {
                                     {textoConfirmacaoLote(marcados.size, statusLote)}
                                     {statusLote === "rejeitado" && " Quem não estiver em outro processo volta ao Banco de Talentos."}
                                 </span>
-                                {statusLote === "rejeitado" && campoMotivo}
                                 <div className="flex gap-2">
                                     <Button variant="outline" size="sm" onClick={() => setConfirmandoLote(false)} disabled={aplicando}>Cancelar</Button>
-                                    <Button size="sm" onClick={aplicarLote} disabled={aplicando || (statusLote === "rejeitado" && motivoIncompleto)} className="gap-2">
+                                    <Button size="sm" onClick={aplicarLote} disabled={aplicando} className="gap-2">
                                         {aplicando && <Loader2 className="h-4 w-4 animate-spin" />}
-                                        Confirmar
-                                    </Button>
-                                </div>
-                            </div>
-                        )}
-
-                        {rejeitandoId && (
-                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-rose-300 bg-rose-50 p-3 text-rose-900">
-                                <span className="flex items-center gap-2 font-medium">
-                                    <AlertTriangle className="h-4 w-4" />
-                                    Mudar {nomePorId.get(rejeitandoId) ?? "o candidato"} para Rejeitado? Se não estiver em outro processo, volta ao Banco de Talentos.
-                                </span>
-                                {campoMotivo}
-                                <div className="flex gap-2">
-                                    <Button variant="outline" size="sm" onClick={() => setRejeitandoId(null)} disabled={linhaSalvando === rejeitandoId}>Cancelar</Button>
-                                    <Button size="sm" className="gap-2" disabled={linhaSalvando === rejeitandoId || motivoIncompleto}
-                                        onClick={async () => { const id = rejeitandoId; await mudarIndividual(id, "rejeitado"); setRejeitandoId(null) }}>
-                                        {linhaSalvando === rejeitandoId && <Loader2 className="h-4 w-4 animate-spin" />}
                                         Confirmar
                                     </Button>
                                 </div>
@@ -833,7 +777,7 @@ function FeedbackConteudo() {
                                                             <Select
                                                                 value={c.status}
                                                                 disabled={linhaSalvando === c.id}
-                                                                onValueChange={v => { if (v !== c.status) escolherStatusIndividual(c.id, v as StatusEditavel) }}
+                                                                onValueChange={v => { if (v !== c.status) mudarIndividual(c.id, v as StatusEditavel) }}
                                                             >
                                                                 <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                                                                 <SelectContent>

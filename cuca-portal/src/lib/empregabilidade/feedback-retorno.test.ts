@@ -4,7 +4,6 @@ import {
     diasSemResposta,
     estadoLink,
     lerResposta,
-    motivoParaGravar,
     podeReenviar,
     taxaRetorno,
     ultimaPorVaga,
@@ -12,24 +11,6 @@ import {
 
 const agora = new Date("2026-10-14T12:00:00Z")
 const base = { status_envio: "entregue", expires_at: "2026-10-15T12:00:00Z", respondido_em: null, situacao: null }
-
-describe("motivo da rejeição na tela interna (AC4)", () => {
-    it("é opcional", () => {
-        expect(motivoParaGravar(undefined, undefined)).toEqual({ ok: true, valor: null })
-        expect(motivoParaGravar("", "")).toEqual({ ok: true, valor: null })
-    })
-
-    it("aceita só a lista fixa", () => {
-        expect(motivoParaGravar("Desistiu", undefined)).toEqual({ ok: true, valor: "Desistiu" })
-        expect(motivoParaGravar("Qualquer coisa", undefined).ok).toBe(false)
-    })
-
-    it("\"Outro\" exige texto curto e grava junto", () => {
-        expect(motivoParaGravar("Outro", "  vaga   congelada ")).toEqual({ ok: true, valor: "Outro: vaga congelada" })
-        expect(motivoParaGravar("Outro", " ").ok).toBe(false)
-        expect(motivoParaGravar("Outro", "x".repeat(121)).ok).toBe(false)
-    })
-})
 
 describe("link de uso único (AC5, AC7, AC11)", () => {
     it("ativo só sem resposta, sem situação e no prazo", () => {

@@ -1,76 +1,24 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createAdminClient as createClient } from "@/lib/supabase/admin"
+import { createAdminClient } from "@/lib/supabase/admin"
 import { carregarPedidoPublico } from "@/lib/empregabilidade/feedback-retorno-servico"
 
 /**
  * GET /api/empregabilidade/vagas/feedback-token/[token]
- * Valida token de feedback e retorna dados da vaga + candidatos usando admin client.
- * Público (sem auth), mas protegido pelo token.
- * S-EMP-GES-03: token de um pedido (feedback_solicitacoes) mostra só os candidatos do pedido (`modo: "pedido"`);
- * tokens antigos (vagas_feedback_tokens) seguem o caminho de antes (`modo: "legado"`).
+ * Público (sem login): o token do pedido de feedback é a única credencial.
+ * S-EMP-GES-03: só tokens de pedido (feedback_solicitacoes); devolve a vaga e os candidatos do pedido, só com o nome.
  */
 export async function GET(
     _request: NextRequest,
     { params }: { params: Promise<{ token: string }> }
 ) {
     const { token } = await params
-    const supabase = createClient()
-
     try {
-        const pedido = await carregarPedidoPublico(supabase, token)
-        if (pedido) {
-            if (!pedido.ok) return NextResponse.json({ error: pedido.erro }, { status: pedido.status })
-            return NextResponse.json({ modo: "pedido", vaga: pedido.dados.vaga, candidates: pedido.dados.candidatos })
-        }
-
-        // 1. Validar token
-        const { data: tokenData, error: tokenErr } = await supabase
-            .from("vagas_feedback_tokens")
-            .select(`
-                vaga_id,
-                expires_at,
-                used,
-                cuca_unit_id,
-                vagas (
-                    id,
-                    titulo,
-                    empresas (nome)
-                )
-            `)
-            .eq("token", token)
-            .single()
-
-        if (tokenErr || !tokenData) {
-            return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 404 })
-        }
-
-        if (tokenData.used) {
-            return NextResponse.json({ error: "Este link já foi utilizado." }, { status: 410 })
-        }
-
-        if (new Date(tokenData.expires_at) < new Date()) {
-            return NextResponse.json({ error: "Este link expirou. Por favor, solicite um novo." }, { status: 410 })
-        }
-
-        const vacancy = tokenData.vagas as any
-        const unitId = tokenData.cuca_unit_id || null
-
-        // 2. Buscar candidatos da vaga (todos pendentes/selecionados — unidade é exibida no header apenas)
-        const { data: candData, error: candErr } = await supabase
-            .from("candidaturas")
-            .select("id, nome, status")
-            .eq("vaga_id", vacancy.id)
-            .in("status", ["pendente", "selecionado"])
-        if (candErr) throw candErr
-
-        return NextResponse.json({
-            modo: "legado",
-            vaga: vacancy,
-            candidates: candData || [],
-            cuca_unit_id: unitId,
-        })
-    } catch (err: any) {
+        const pedido = await carregarPedidoPublico(createAdminClient(), token)
+        if (!pedido) return NextResponse.json({ error: "Link inválido." }, { status: 404 })
+        if (!pedido.ok) return NextResponse.json({ error: pedido.erro }, { status: pedido.status })
+        return NextResponse.json({ vaga: pedido.dados.vaga, candidates: pedido.dados.candidatos })
+    } catch (err) {
         console.error("[feedback-token] Erro:", err)
-        return NextResponse.json({ error: err.message || "Erro interno" }, { status: 500 })
+        return NextResponse.json({ error: "Erro interno." }, { status: 500 })
     }
 }
