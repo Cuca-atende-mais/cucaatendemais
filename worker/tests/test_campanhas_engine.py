@@ -607,6 +607,39 @@ async def test_enviar_template_meta_retorna_none_em_falha(monkeypatch):
     assert resultado == (False, None)
 
 
+@pytest.mark.asyncio
+async def test_enviar_template_meta_detalhado_devolve_wamid_e_wa_id(monkeypatch):
+    """S-EMP-GES-02 (AC6): além do wamid, devolve o wa_id do destinatário (contacts[0].wa_id) —
+    é o número no formato que a Meta usa no `from` quando a pessoa responde."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "contacts": [{"input": "5585999999999", "wa_id": "558599999999"}],
+        "messages": [{"id": "wamid.DET"}],
+    }
+    monkeypatch.setattr(camp.httpx, "AsyncClient", _mock_httpx_async_client(mock_resp=mock_resp))
+
+    r = await camp._enviar_template_meta_detalhado("phone-1", "5585999999999", "token-1", "tpl", [])
+
+    assert r == {"ok": True, "wamid": "wamid.DET", "wa_id": "558599999999", "erro": None}
+
+
+@pytest.mark.asyncio
+async def test_enviar_template_meta_detalhado_devolve_erro_da_meta(monkeypatch):
+    """S-EMP-GES-02 (AC3): recusa da Meta volta com código e mensagem, para a tela mostrar o motivo."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 400
+    mock_resp.text = "erro"
+    mock_resp.json.return_value = {"error": {"code": 132000, "message": "Number of parameters does not match"}}
+    monkeypatch.setattr(camp.httpx, "AsyncClient", _mock_httpx_async_client(mock_resp=mock_resp))
+
+    r = await camp._enviar_template_meta_detalhado("phone-1", "5585999999999", "token-1", "tpl", [])
+
+    assert r["ok"] is False
+    assert r["wamid"] is None
+    assert r["erro"] == "132000: Number of parameters does not match"
+
+
 def _mock_supabase_disparo_pontual(template_data, disparo_id_criado="disparo-pontual-1"):
     """Mock de supabase com tabelas independentes por nome (via side_effect em
     .table()) — necessário porque este fluxo grava em 2 tabelas diferentes

@@ -24,7 +24,6 @@ import { differenceInYears, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { mascaraTelefone, limparTelefone } from "@/lib/utils"
 import { NIVEIS_ESCOLARIDADE } from "@/constants/empregabilidade"
-import { useUser } from "@/lib/auth/user-provider"
 
 function formatarExperiencia(meses: number | null | undefined): string {
     if (!meses || meses === 0) return "Sem experiência informada"
@@ -96,7 +95,6 @@ export default function VagaDetalhesPage() {
     const id = params.id as string
     const supabase = createClient()
 
-    const { profile } = useUser()
     const [vaga, setVaga] = useState<Vaga | null>(null)
     const [candidatos, setCandidatos] = useState<Candidatura[]>([])
     const [loading, setLoading] = useState(true)
@@ -178,7 +176,6 @@ export default function VagaDetalhesPage() {
         tipo: "presencial"
     })
     const [summoning, setSummoning] = useState(false)
-    const [solicitandoFeedback, setSolicitandoFeedback] = useState(false)
 
     const refreshParam = searchParams.get("t")
     useEffect(() => { if (id) fetchData() }, [id, refreshParam])
@@ -405,24 +402,9 @@ export default function VagaDetalhesPage() {
         }
     }
 
-    const solicitarFeedbackEmpresa = async () => {
-        if (!id) return
-        setSolicitandoFeedback(true)
-        try {
-            const res = await fetch(`/api/empregabilidade/vagas/${id}/solicitar-feedback`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ cuca_unit_id: profile?.unidade_cuca || null }),
-            })
-            const data = await res.json()
-            if (!res.ok) throw new Error(data.error || "Erro ao solicitar feedback")
-            
-            toast.success("Solicitação de feedback enviada para a empresa via WhatsApp!")
-        } catch (err: any) {
-            toast.error(err.message)
-        } finally {
-            setSolicitandoFeedback(false)
-        }
+    // S-EMP-GES-02 (AC9): o pedido de feedback sai só pela tela Feedback, escolhendo os candidatos.
+    const solicitarFeedbackEmpresa = () => {
+        if (id) router.push(`/empregabilidade/feedback?vaga=${id}`)
     }
 
     // SQS-64: envio (ou reenvio) individual de currículo para a empresa — reaproveita a mesma rota
@@ -531,9 +513,8 @@ export default function VagaDetalhesPage() {
                                     variant="outline" 
                                     className="ml-2 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 h-7 text-[10px]"
                                     onClick={solicitarFeedbackEmpresa}
-                                    disabled={solicitandoFeedback}
                                 >
-                                    {solicitandoFeedback ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <MessageSquare className="h-3 w-3 mr-1" />}
+                                    <MessageSquare className="h-3 w-3 mr-1" />
                                     Solicitar Feedback da Empresa
                                 </Button>
                             </div>

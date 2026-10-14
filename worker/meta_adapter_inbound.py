@@ -1048,6 +1048,23 @@ async def processar_webhook_meta(raw_body: bytes) -> None:
             except Exception as exc:
                 logger.warning(f"[meta-inbound] Erro ao atualizar status (Academia Enem) de wamid={wamid_status!r}: {exc}")
 
+            # S-EMP-GES-02: pedido de feedback à empresa tem registro próprio (feedback_solicitacoes),
+            # fora de logs_disparo (a CHECK de lá exige um disparo). Mesmo padrão do bloco acima:
+            # try isolado, mesma proteção de ordem; em qualquer outro envio é no-op (wamid não existe lá).
+            try:
+                query_fb = supabase_status.table("feedback_solicitacoes").update({
+                    "status_envio": _STATUS_MAP[status_meta],
+                    "erro_envio": erro_codigo,
+                    "status_timestamp_meta": status_timestamp_meta,
+                }).eq("wamid", wamid_status)
+                if status_timestamp_meta:
+                    query_fb = query_fb.or_(
+                        f"status_timestamp_meta.is.null,status_timestamp_meta.lte.{status_timestamp_meta}"
+                    )
+                query_fb.execute()
+            except Exception as exc:
+                logger.warning(f"[meta-inbound] Erro ao atualizar status (feedback) de wamid={wamid_status!r}: {exc}")
+
     # Ignorar eventos de status (delivery, read) sem messages[]
     if not messages:
         logger.info("[meta-inbound] Evento sem messages[] (status update) — ignorado")

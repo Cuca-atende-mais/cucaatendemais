@@ -366,14 +366,14 @@ async def send_manual_message(token: str, request: Request):
             if canal_ativo == "meta":
                 meta_token = os.getenv("META_SYSTEM_USER_TOKEN", "")
                 if template_name:
-                    from campanhas_engine import _enviar_template_meta  # noqa: PLC0415
-                    ok, _wamid = await _enviar_template_meta(
+                    from campanhas_engine import _enviar_template_meta_detalhado  # noqa: PLC0415
+                    r = await _enviar_template_meta_detalhado(
                         origem_id, number, meta_token, template_name, template_components
                     )
-                    if ok:
+                    if r["ok"]:
                         logger.info(f"[send-manual] Template {template_name!r} enviado via Meta para {number}")
-                        return {"status": "sent"}
-                    return Response(status_code=502, content="Falha no envio de template Meta")
+                        return {"status": "sent", "wamid": r["wamid"], "wa_id": r["wa_id"]}
+                    return JSONResponse(status_code=502, content={"error": r["erro"] or "Falha no envio de template Meta"})
                 else:
                     ok = await _meta_enviar(origem_id, number, text, meta_token)
                     if ok:
@@ -391,6 +391,17 @@ async def send_manual_message(token: str, request: Request):
             # Fallback legado (AC 14): sem conversa_id — usa meta_phone_numbers (Empregabilidade)
             from empregabilidade_engine import _get_meta_phone  # noqa: PLC0415
             phone_number_id, meta_token = _get_meta_phone("Empregabilidade")
+            if template_name:
+                # S-EMP-GES-02: template pelo número de Empregabilidade, sem conversa (o portal grava a
+                # mensagem na conversa depois, com o wa_id devolvido aqui).
+                from campanhas_engine import _enviar_template_meta_detalhado  # noqa: PLC0415
+                r = await _enviar_template_meta_detalhado(
+                    phone_number_id, number, meta_token, template_name, template_components
+                )
+                if r["ok"]:
+                    logger.info(f"[send-manual] Template {template_name!r} enviado via Meta (Empregabilidade) para {number}")
+                    return {"status": "sent", "wamid": r["wamid"], "wa_id": r["wa_id"], "origem_id": phone_number_id}
+                return JSONResponse(status_code=502, content={"error": r["erro"] or "Falha no envio de template Meta"})
             ok = await _meta_enviar(phone_number_id, number, text, meta_token)
             if ok:
                 logger.info(f"[send-manual] Mensagem enviada para {number} via Meta (fallback legado)")

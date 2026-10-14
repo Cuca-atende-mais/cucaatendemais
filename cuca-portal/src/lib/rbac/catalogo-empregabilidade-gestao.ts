@@ -10,6 +10,7 @@ export const EPM_FEEDBACK = {
     statusIndividual: "epm_feedback_status_individual",
     statusLote: "epm_feedback_status_lote",
     contatoEditar: "epm_feedback_contato_editar",
+    solicitar: "epm_feedback_solicitar",
 } as const
 
 export const GRUPOS_EMPREGABILIDADE_GESTAO: GrupoPermissao[] = [
@@ -20,6 +21,7 @@ export const GRUPOS_EMPREGABILIDADE_GESTAO: GrupoPermissao[] = [
             { id: EPM_FEEDBACK.statusIndividual, label: "Mudar o status de um candidato por vez", acoes: ACAO_UNICA },
             { id: EPM_FEEDBACK.statusLote, label: "Mudar o status de vários candidatos em lote", acoes: ACAO_UNICA },
             { id: EPM_FEEDBACK.contatoEditar, label: "Editar o contato da vaga (nome, telefone, e-mail)", acoes: ACAO_UNICA },
+            { id: EPM_FEEDBACK.solicitar, label: "Solicitar feedback à empresa", acoes: ACAO_UNICA },
         ],
     },
 ]
