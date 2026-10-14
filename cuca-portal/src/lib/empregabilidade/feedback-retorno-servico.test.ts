@@ -4,10 +4,11 @@ import { bancoFalso, type Linha } from "./banco-falso.test-util"
 // A regra de status (e o Banco de Talentos) é a da tela interna: aqui só se confere que a página pública
 // chama exatamente ela, com o status certo, para cada candidato. A regra tem os próprios testes.
 const aplicados: { id: string; status: string }[] = []
+const falhaEm = new Set<string>()
 vi.mock("./aplicar-status-candidatura", () => ({
     aplicarStatusCandidatura: async (_admin: unknown, id: string, status: string) => {
         aplicados.push({ id, status })
-        return { candidaturaId: id, ok: true }
+        return falhaEm.has(id) ? { candidaturaId: id, ok: false, erro: "falhou" } : { candidaturaId: id, ok: true }
     },
 }))
 
@@ -38,7 +39,7 @@ function cenario(pedido: Partial<Linha> = {}) {
     })
 }
 
-beforeEach(() => { aplicados.length = 0 })
+beforeEach(() => { aplicados.length = 0; falhaEm.clear() })
 
 describe("página pública com token do pedido (AC1, AC11)", () => {
     it("mostra só os candidatos do pedido que ainda aguardam, e só o nome", async () => {
@@ -95,6 +96,15 @@ describe("resposta da empresa (AC2, AC3, AC5)", () => {
         expect(r && !r.ok && r.status).toBe(400)
         expect(aplicados).toEqual([])
         expect(db.feedback_solicitacoes[0].respondido_em).toBeNull()
+    })
+
+    it("falha ao aplicar o status num candidato não perde a resposta da empresa", async () => {
+        const { db, cliente } = cenario()
+        falhaEm.add("c1")
+        const r = await responderPedido(cliente, "tok", { nenhum: false, selecionados: ["c2"] }, agora)
+        expect(r).toEqual({ ok: true, dados: { selecionados: 1, rejeitados: 0, falhas: 1 } })
+        expect(Object.fromEntries(db.feedback_solicitacao_itens.map(i => [i.candidatura_id, i.resposta_status])))
+            .toEqual({ c1: "rejeitado", c2: "selecionado", c3: null })
     })
 
     it("uso único: a segunda resposta é recusada", async () => {

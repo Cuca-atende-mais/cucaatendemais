@@ -137,6 +137,17 @@ export async function responderPedido(
         return { ok: false, status: 410, erro: MENSAGEM_LINK_INATIVO.respondido }
     }
 
+    // A resposta da empresa é gravada antes de aplicar o status: se a aplicação falhar num candidato,
+    // a decisão dela não se perde (fica a diferença visível entre resposta_status e o status atual).
+    for (const [candidaturaId, status] of decisao.decisao) {
+        const { error } = await admin
+            .from("feedback_solicitacao_itens")
+            .update({ resposta_status: status })
+            .eq("solicitacao_id", pedido.id)
+            .eq("candidatura_id", candidaturaId)
+        if (error) console.error(`[feedback-retorno] Falha ao registrar a resposta de ${candidaturaId}:`, error)
+    }
+
     let selecionados = 0
     let rejeitados = 0
     let falhas = 0
@@ -149,12 +160,6 @@ export async function responderPedido(
         }
         if (status === "selecionado") selecionados += 1
         else rejeitados += 1
-        const { error } = await admin
-            .from("feedback_solicitacao_itens")
-            .update({ resposta_status: status })
-            .eq("solicitacao_id", pedido.id)
-            .eq("candidatura_id", candidaturaId)
-        if (error) console.error(`[feedback-retorno] Falha ao registrar a resposta de ${candidaturaId}:`, error)
     }
     return { ok: true, dados: { selecionados, rejeitados, falhas } }
 }
