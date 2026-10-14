@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient as createClient } from "@/lib/supabase/admin"
+import { carregarPedidoPublico } from "@/lib/empregabilidade/feedback-retorno-servico"
 
 /**
  * GET /api/empregabilidade/vagas/feedback-token/[token]
  * Valida token de feedback e retorna dados da vaga + candidatos usando admin client.
- * Público (sem auth), mas protegido pelo UUID do token.
+ * Público (sem auth), mas protegido pelo token.
+ * S-EMP-GES-03: token de um pedido (feedback_solicitacoes) mostra só os candidatos do pedido (`modo: "pedido"`);
+ * tokens antigos (vagas_feedback_tokens) seguem o caminho de antes (`modo: "legado"`).
  */
 export async function GET(
     _request: NextRequest,
@@ -14,6 +17,12 @@ export async function GET(
     const supabase = createClient()
 
     try {
+        const pedido = await carregarPedidoPublico(supabase, token)
+        if (pedido) {
+            if (!pedido.ok) return NextResponse.json({ error: pedido.erro }, { status: pedido.status })
+            return NextResponse.json({ modo: "pedido", vaga: pedido.dados.vaga, candidates: pedido.dados.candidatos })
+        }
+
         // 1. Validar token
         const { data: tokenData, error: tokenErr } = await supabase
             .from("vagas_feedback_tokens")
@@ -55,6 +64,7 @@ export async function GET(
         if (candErr) throw candErr
 
         return NextResponse.json({
+            modo: "legado",
             vaga: vacancy,
             candidates: candData || [],
             cuca_unit_id: unitId,

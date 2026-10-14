@@ -3,6 +3,8 @@
 /**
  * TASK 2.5: UI/UX - Formulário Dinâmico de Feedback Público
  * Link: /feedback-empresa/[token]
+ * S-EMP-GES-03: link de pedido (modo "pedido") abre o formulário só com os candidatos do pedido;
+ * links antigos (modo "legado") seguem com o formulário de antes.
  */
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
@@ -17,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner"
 import { CheckCircle2, Clock, MapPin, XCircle, AlertCircle, Loader2 } from "lucide-react"
+import { FormularioPedido, type DadosPedido } from "./formulario-pedido"
 
 type Candidato = {
   id: string
@@ -42,6 +45,7 @@ export default function VagaFeedbackPage() {
   const [globalHora, setGlobalHora] = useState("")
   const [globalLocal, setGlobalLocal] = useState("")
   const [cucaUnitId, setCucaUnitId] = useState<string | null>(null)
+  const [pedido, setPedido] = useState<DadosPedido | null>(null)
 
   useEffect(() => {
     fetchData()
@@ -54,6 +58,11 @@ export default function VagaFeedbackPage() {
 
       if (!res.ok) {
         setError(data.error || "Link inválido ou expirado.")
+        return
+      }
+
+      if (data.modo === "pedido") {
+        setPedido({ vaga: data.vaga, candidates: data.candidates || [] })
         return
       }
 
@@ -117,6 +126,10 @@ export default function VagaFeedbackPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (pedido && !loading && !error) {
+    return <FormularioPedido token={String(token)} dados={pedido} />
   }
 
   if (submitted) {

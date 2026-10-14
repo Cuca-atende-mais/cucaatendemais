@@ -85,11 +85,16 @@ export interface SolicitacaoResumo {
     status_envio: string
     expires_at: string | null
     respondido_em: string | null
+    situacao?: string | null
 }
 
-/** Status do feedback no acompanhamento. "Respondido" entra com a GES-03. */
-export function statusFeedback(s: SolicitacaoResumo, agora: Date = new Date()): "aguardando" | "expirado" | "respondido" | "nao_enviado" {
+export type StatusFeedback = "aguardando" | "expirado" | "respondido" | "nao_enviado" | "em_analise" | "substituida"
+
+/** Status do feedback no acompanhamento (respondido, em análise e substituído vêm da GES-03). */
+export function statusFeedback(s: SolicitacaoResumo, agora: Date = new Date()): StatusFeedback {
     if (s.respondido_em) return "respondido"
+    if (s.situacao === "substituida") return "substituida"
+    if (s.situacao === "em_analise") return "em_analise"
     if (s.status_envio === "falhou" || s.status_envio === "pendente") return "nao_enviado"
     if (s.expires_at && new Date(s.expires_at).getTime() <= agora.getTime()) return "expirado"
     return "aguardando"

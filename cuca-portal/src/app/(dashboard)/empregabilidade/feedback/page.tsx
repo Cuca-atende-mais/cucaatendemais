@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import Link from "next/link"
-import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, Lock, MessageSquareReply, Save, Send } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Clock, ExternalLink, Loader2, Lock, MessageSquareReply, RotateCcw, Save, Send } from "lucide-react"
 import toast from "react-hot-toast"
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/lib/auth/user-provider"
@@ -33,7 +33,8 @@ import {
     textoConfirmacaoLote,
     vagaEntraNoSeletor,
 } from "@/lib/empregabilidade/feedback-tela"
-import { VALIDADE_LINK_HORAS, rotuloStatusEnvio, statusFeedback } from "@/lib/empregabilidade/feedback-solicitacao"
+import { VALIDADE_LINK_HORAS, rotuloStatusEnvio, statusFeedback, type StatusFeedback } from "@/lib/empregabilidade/feedback-solicitacao"
+import { MAX_TEXTO_OUTRO, MOTIVOS_REJEICAO, diasSemResposta, podeReenviar, taxaRetorno, textoSelo } from "@/lib/empregabilidade/feedback-retorno"
 
 // S-EMP-GES-01: tela Feedback — escolher empresa e vaga/seleção, ver os candidatos enviados (ou os
 // inscritos, na seleção), mudar status um a um ou em lote e manter o contato da vaga. Tudo na página,
@@ -97,7 +98,16 @@ interface Solicitacao {
     erro_envio: string | null
     expires_at: string | null
     respondido_em: string | null
+    situacao: string | null
+    situacao_em: string | null
     conversa_id: string | null
+}
+
+interface PedidoEmpresa {
+    status_envio: string
+    expires_at: string | null
+    respondido_em: string | null
+    situacao: string | null
 }
 
 const COR_ENVIO: Record<string, string> = {
@@ -110,11 +120,19 @@ const COR_ENVIO: Record<string, string> = {
     apagada: "bg-slate-100 text-slate-700 border-slate-300",
 }
 
-const ROTULO_FEEDBACK: Record<ReturnType<typeof statusFeedback>, string> = {
+const ROTULO_FEEDBACK: Record<StatusFeedback, string> = {
     aguardando: "Aguardando",
     expirado: "Expirado",
     respondido: "Respondido",
     nao_enviado: "Não enviado",
+    em_analise: "Empresa sinalizou: em análise",
+    substituida: "Substituída",
+}
+
+function rotuloFeedback(s: Solicitacao): string {
+    const st = statusFeedback(s)
+    if (st === "respondido" && s.respondido_em) return `Respondido em ${format(new Date(s.respondido_em), "dd/MM", { locale: ptBR })}`
+    return ROTULO_FEEDBACK[st]
 }
 
 const PAGINA = 1000
@@ -154,6 +172,7 @@ function FeedbackConteudo() {
     const podeLote = hasPermission(EPM_FEEDBACK.statusLote, "read")
     const podeEditarContato = hasPermission(EPM_FEEDBACK.contatoEditar, "read")
     const podeSolicitar = hasPermission(EPM_FEEDBACK.solicitar, "read")
+    const podeReenviarPedido = hasPermission(EPM_FEEDBACK.reenviar, "read")
 
     const [vagas, setVagas] = useState<VagaOpcao[]>([])
     const [carregandoVagas, setCarregandoVagas] = useState(true)
@@ -178,6 +197,13 @@ function FeedbackConteudo() {
     const [confirmandoPedido, setConfirmandoPedido] = useState(false)
     const [enviandoPedido, setEnviandoPedido] = useState(false)
     const [erroPedido, setErroPedido] = useState<string | null>(null)
+    const [reenviando, setReenviando] = useState<string | null>(null)
+    const [pedidosEmpresa, setPedidosEmpresa] = useState<PedidoEmpresa[] | null>(null)
+
+    // Motivo da rejeição (GES-03, AC4): opcional, no lote e na mudança individual para Rejeitado.
+    const [motivo, setMotivo] = useState("")
+    const [motivoOutro, setMotivoOutro] = useState("")
+    const [rejeitandoId, setRejeitandoId] = useState<string | null>(null)
 
     // Seletor: vagas com currículo enviado e seleções com inscritos, de qualquer status (AC2 / D1).
     useEffect(() => {
@@ -242,6 +268,25 @@ function FeedbackConteudo() {
 
     const vagasDaEmpresa = useMemo(() => vagas.filter(v => v.empresa_id === empresaId), [vagas, empresaId])
 
+    // Taxa de retorno da empresa (GES-03, AC10). Leitura pela RLS de epm_feedback_ver.
+    useEffect(() => {
+        if (!empresaId || !podeVer) {
+            setPedidosEmpresa(null)
+            return
+        }
+        let cancelado = false
+        supabase
+            .from("feedback_solicitacoes")
+            .select("status_envio, expires_at, respondido_em, situacao")
+            .eq("empresa_id", empresaId)
+            .then(({ data, error }) => {
+                if (cancelado) return
+                if (error) console.error("[feedback] Erro ao carregar a taxa de retorno:", error)
+                else setPedidosEmpresa((data ?? []) as PedidoEmpresa[])
+            })
+        return () => { cancelado = true }
+    }, [empresaId, podeVer, supabase, solicitacoes.length])
+
     // ?vaga=<id> abre já selecionado (AC2).
     useEffect(() => {
         if (!vagaId || empresaId) return
@@ -256,6 +301,9 @@ function FeedbackConteudo() {
         setConfirmandoLote(false)
         setConfirmandoPedido(false)
         setErroPedido(null)
+        setRejeitandoId(null)
+        setMotivo("")
+        setMotivoOutro("")
         try {
             const [{ data: v, error: vErr }, { data: cands, error: cErr }] = await Promise.all([
                 supabase
@@ -351,10 +399,11 @@ function FeedbackConteudo() {
     }
 
     const enviarStatus = async (ids: string[], status: StatusEditavel, modo: "individual" | "lote"): Promise<ResultadoLote | null> => {
+        const comMotivo = status === "rejeitado" && motivo ? { motivo_rejeicao: motivo, motivo_outro: motivoOutro } : {}
         const res = await fetch("/api/empregabilidade/feedback/status", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ vaga_id: vagaId, candidatura_ids: ids, status, modo }),
+            body: JSON.stringify({ vaga_id: vagaId, candidatura_ids: ids, status, modo, ...comMotivo }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
@@ -377,6 +426,36 @@ function FeedbackConteudo() {
             await carregarVaga(vagaId)
         } finally {
             setLinhaSalvando(null)
+        }
+    }
+
+    const escolherStatusIndividual = (id: string, status: StatusEditavel) => {
+        if (status === "rejeitado") {
+            setRejeitandoId(id)
+            setMotivo("")
+            setMotivoOutro("")
+            return
+        }
+        mudarIndividual(id, status)
+    }
+
+    const reenviar = async (solicitacaoId: string) => {
+        setReenviando(solicitacaoId)
+        setErroPedido(null)
+        try {
+            const res = await fetch(`/api/empregabilidade/feedback/solicitacoes/${solicitacaoId}/reenviar`, { method: "POST" })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) {
+                setErroPedido(data.error || "Não foi possível reenviar o pedido.")
+                return
+            }
+            toast.success("Pedido reenviado à empresa.")
+            if (data.aviso) toast.error(data.aviso)
+        } catch {
+            setErroPedido("Não foi possível reenviar o pedido.")
+        } finally {
+            setReenviando(null)
+            carregarSolicitacoes(vagaId)
         }
     }
 
@@ -441,6 +520,26 @@ function FeedbackConteudo() {
     }
 
     const telefonePedido = vaga?.telefone_responsavel || vaga?.empresas?.telefone || ""
+    const diasSemRetorno = !ehSelecao ? diasSemResposta(solicitacoes[0]) : null
+    const taxa = pedidosEmpresa ? taxaRetorno(pedidosEmpresa) : null
+    const motivoIncompleto = motivo === "Outro" && !motivoOutro.trim()
+
+    const campoMotivo = (
+        <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm">Motivo (opcional)</span>
+            <Select value={motivo || "nenhum"} onValueChange={v => setMotivo(v === "nenhum" ? "" : v)}>
+                <SelectTrigger className="h-8 w-56 bg-white"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="nenhum">Sem motivo</SelectItem>
+                    {MOTIVOS_REJEICAO.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                </SelectContent>
+            </Select>
+            {motivo === "Outro" && (
+                <Input className="h-8 w-64 bg-white" maxLength={MAX_TEXTO_OUTRO} placeholder="Descreva o motivo"
+                    value={motivoOutro} onChange={e => setMotivoOutro(e.target.value)} />
+            )}
+        </div>
+    )
 
     const nomePorId = useMemo(() => new Map(candidatos.map(c => [c.id, c.nome || "Sem nome"])), [candidatos])
 
@@ -502,6 +601,13 @@ function FeedbackConteudo() {
                             </SelectContent>
                         </Select>
                     </div>
+                    {empresaId && taxa && (
+                        <p className="text-sm text-muted-foreground md:col-span-2">
+                            {taxa.enviadas === 0
+                                ? "Nenhum pedido de feedback enviado a esta empresa ainda."
+                                : `Respondeu ${taxa.respondidas} de ${taxa.enviadas} ${taxa.enviadas === 1 ? "solicitação" : "solicitações"} (${taxa.percentual}%).`}
+                        </p>
+                    )}
                     {!carregandoVagas && empresas.length === 0 && (
                         <p className="text-sm text-muted-foreground md:col-span-2">
                             Nenhuma vaga com currículo enviado nem seleção com inscritos ao seu alcance.
@@ -552,8 +658,13 @@ function FeedbackConteudo() {
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
                                 <CardTitle className="text-lg">{ehSelecao ? "Inscritos na seleção" : "Candidatos enviados à empresa"}</CardTitle>
-                                <CardDescription>
+                                <CardDescription className="flex flex-wrap items-center gap-2">
                                     {marcados.size} de {marcaveis.length} marcados
+                                    {diasSemRetorno !== null && (
+                                        <Badge variant="outline" className="gap-1 border-amber-300 bg-amber-50 text-amber-900">
+                                            <Clock className="h-3 w-3" /> {textoSelo(diasSemRetorno)}
+                                        </Badge>
+                                    )}
                                 </CardDescription>
                             </div>
                             {ehSelecao ? (
@@ -632,10 +743,29 @@ function FeedbackConteudo() {
                                     {textoConfirmacaoLote(marcados.size, statusLote)}
                                     {statusLote === "rejeitado" && " Quem não estiver em outro processo volta ao Banco de Talentos."}
                                 </span>
+                                {statusLote === "rejeitado" && campoMotivo}
                                 <div className="flex gap-2">
                                     <Button variant="outline" size="sm" onClick={() => setConfirmandoLote(false)} disabled={aplicando}>Cancelar</Button>
-                                    <Button size="sm" onClick={aplicarLote} disabled={aplicando} className="gap-2">
+                                    <Button size="sm" onClick={aplicarLote} disabled={aplicando || (statusLote === "rejeitado" && motivoIncompleto)} className="gap-2">
                                         {aplicando && <Loader2 className="h-4 w-4 animate-spin" />}
+                                        Confirmar
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+
+                        {rejeitandoId && (
+                            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-rose-300 bg-rose-50 p-3 text-rose-900">
+                                <span className="flex items-center gap-2 font-medium">
+                                    <AlertTriangle className="h-4 w-4" />
+                                    Mudar {nomePorId.get(rejeitandoId) ?? "o candidato"} para Rejeitado? Se não estiver em outro processo, volta ao Banco de Talentos.
+                                </span>
+                                {campoMotivo}
+                                <div className="flex gap-2">
+                                    <Button variant="outline" size="sm" onClick={() => setRejeitandoId(null)} disabled={linhaSalvando === rejeitandoId}>Cancelar</Button>
+                                    <Button size="sm" className="gap-2" disabled={linhaSalvando === rejeitandoId || motivoIncompleto}
+                                        onClick={async () => { const id = rejeitandoId; await mudarIndividual(id, "rejeitado"); setRejeitandoId(null) }}>
+                                        {linhaSalvando === rejeitandoId && <Loader2 className="h-4 w-4 animate-spin" />}
                                         Confirmar
                                     </Button>
                                 </div>
@@ -703,7 +833,7 @@ function FeedbackConteudo() {
                                                             <Select
                                                                 value={c.status}
                                                                 disabled={linhaSalvando === c.id}
-                                                                onValueChange={v => { if (v !== c.status) mudarIndividual(c.id, v as StatusEditavel) }}
+                                                                onValueChange={v => { if (v !== c.status) escolherStatusIndividual(c.id, v as StatusEditavel) }}
                                                             >
                                                                 <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                                                                 <SelectContent>
@@ -761,14 +891,23 @@ function FeedbackConteudo() {
                                                     {rotuloStatusEnvio(s.status_envio, s.erro_envio)}
                                                 </Badge>
                                             </TableCell>
-                                            <TableCell>{ROTULO_FEEDBACK[statusFeedback(s)]}</TableCell>
+                                            <TableCell>{rotuloFeedback(s)}</TableCell>
                                             <TableCell className="text-right">
+                                                <div className="flex items-center justify-end gap-3">
+                                                {podeReenviarPedido && podeReenviar(s) && (
+                                                    <Button variant="outline" size="sm" className="h-7 gap-1" disabled={reenviando !== null}
+                                                        onClick={() => reenviar(s.id)}>
+                                                        {reenviando === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                                                        Reenviar
+                                                    </Button>
+                                                )}
                                                 {s.conversa_id && (
                                                     <Link href={`/empregabilidade/mensagens?conversa=${s.conversa_id}`}
                                                         className="inline-flex items-center gap-1 text-sm text-cuca-blue hover:underline whitespace-nowrap">
                                                         Abrir no Atendimento <ExternalLink className="h-3.5 w-3.5" />
                                                     </Link>
                                                 )}
+                                                </div>
                                             </TableCell>
                                         </TableRow>
                                     ))}

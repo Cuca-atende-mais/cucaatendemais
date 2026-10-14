@@ -28,7 +28,7 @@ function recursosChecados(): Set<string> {
 }
 
 describe("catálogo Emprega+ (EMP-GES)", () => {
-    it("GES-01 e GES-02: permissões de ação única, num grupo próprio", () => {
+    it("GES-01 a GES-03: permissões de ação única, num grupo próprio", () => {
         expect(MODULOS_EMPREGABILIDADE_GESTAO).toEqual(Object.values(EPM_FEEDBACK))
         for (const grupo of GRUPOS_EMPREGABILIDADE_GESTAO) {
             for (const m of grupo.modules) expect(m.acoes).toEqual(ACAO_UNICA)

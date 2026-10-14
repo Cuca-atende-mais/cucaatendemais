@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient as createClient } from "@/lib/supabase/admin"
+import { responderPedido, sinalizarEmAnalise } from "@/lib/empregabilidade/feedback-retorno-servico"
+import { lerResposta } from "@/lib/empregabilidade/feedback-retorno"
 
 /**
  * TASK 2.5.5: Submissão do Formulário de Feedback
  * POST /api/empregabilidade/vagas/feedback-submit
+ * S-EMP-GES-03: token de pedido (feedback_solicitacoes) → { token, isBypass } ou { token, nenhum } ou
+ * { token, selecionados: [...] }. Token antigo (vagas_feedback_tokens) segue o caminho de antes.
  */
 export async function POST(request: NextRequest) {
     const supabaseAdmin = createClient()
@@ -12,8 +16,17 @@ export async function POST(request: NextRequest) {
         const body = await request.json()
         const { token, isBypass, evaluations } = body
 
-        if (!token) {
+        if (!token || typeof token !== "string") {
             return NextResponse.json({ error: "Token ausente." }, { status: 400 })
+        }
+
+        if (isBypass === true) {
+            const r = await sinalizarEmAnalise(supabaseAdmin, token)
+            if (r) return r.ok ? NextResponse.json({ success: true, ...r.dados }) : NextResponse.json({ error: r.erro }, { status: r.status })
+        } else {
+            const lida = lerResposta(body)
+            const r = lida.ok ? await responderPedido(supabaseAdmin, token, lida.resposta) : await sinalizarSeForPedido(supabaseAdmin, token, lida.erro)
+            if (r) return r.ok ? NextResponse.json({ success: true, ...r.dados }) : NextResponse.json({ error: r.erro }, { status: r.status })
         }
 
         // 1. Validar e buscar vaga_id do token
@@ -69,76 +82,18 @@ export async function POST(request: NextRequest) {
 
         if (updateTokenErr) throw updateTokenErr
 
-        // 4. Enviar confirmação WhatsApp para a empresa
-        if (!isBypass) {
-            try {
-                const { data: vaga } = await supabaseAdmin
-                    .from("vagas")
-                    .select("titulo, unidade_cuca, empresas(telefone, nome)")
-                    .eq("id", tokenData.vaga_id)
-                    .single()
-
-                const empresa = (vaga as any)?.empresas
-                const telefoneRH = empresa?.telefone
-
-                if (vaga && telefoneRH) {
-                    const { data: phoneNumber } = await supabaseAdmin
-                        .from("meta_phone_numbers")
-                        .select("phone_number_id")
-                        .eq("canal_tipo", "Empregabilidade")
-                        .eq("ativo", true)
-                        .limit(1)
-                        .maybeSingle()
-
-                    if (phoneNumber) {
-                        const metaToken = process.env.META_SYSTEM_USER_TOKEN
-                        // Igualdade exata em coluna array precisa da sintaxe de array literal do
-                        // Postgres ('{"Empregabilidade"}'), não de um array JS — ver route.ts de
-                        // divulgacao/disparar para o detalhe do bug (client serializa via toString()).
-                        const { data: tpl } = await supabaseAdmin
-                            .from("meta_templates")
-                            .select("nome")
-                            .eq("automacoes", '{"Empregabilidade"}')
-                            .contains("phone_number_ids", [phoneNumber.phone_number_id])
-                            .eq("ativo", true)
-                            .eq("status", "aprovado")
-                            .limit(1)
-                            .maybeSingle()
-                        const telLimpo = telefoneRH.replace(/\D/g, "")
-                        const number = telLimpo.startsWith("55") ? telLimpo : `55${telLimpo}`
-                        if (!tpl) {
-                            console.info(`[feedback-submit] notificaria ${number} mas nenhum template aprovado em meta_templates`)
-                        } else if (metaToken) {
-                            const aprovados = (evaluations || []).filter((e: any) => e.status === "aprovado_empresa").length
-                            await fetch(`https://graph.facebook.com/v23.0/${phoneNumber.phone_number_id}/messages`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${metaToken}` },
-                                body: JSON.stringify({
-                                    messaging_product: "whatsapp",
-                                    to: number,
-                                    type: "template",
-                                    template: {
-                                        name: tpl.nome,
-                                        language: { code: "pt_BR" },
-                                        components: [{ type: "body", parameters: [
-                                            { type: "text", text: (vaga as any).titulo || "" },
-                                            { type: "text", text: empresa.nome || "" },
-                                            { type: "text", text: String(aprovados) },
-                                        ]}],
-                                    },
-                                }),
-                            }).catch(e => console.error("[feedback-submit] Falha ao enviar confirmação Meta:", e))
-                        }
-                    }
-                }
-            } catch (wErr) {
-                console.error("[feedback-submit] Erro ao enviar confirmação WhatsApp (não crítico):", wErr)
-            }
-        }
+        // S-EMP-GES-03 (AC6): a confirmação por template saiu — mandava parâmetros que não batiam com o
+        // corpo do template aprovado. Depois do envio nada é mandado à empresa.
 
         return NextResponse.json({ success: true })
     } catch (err: any) {
         console.error("[feedback-submit] Erro:", err)
         return NextResponse.json({ error: err.message || "Erro interno" }, { status: 500 })
     }
+}
+
+// Corpo inválido: se o token é de um pedido, responde o erro de validação; se é antigo, segue o caminho de antes.
+async function sinalizarSeForPedido(admin: ReturnType<typeof createClient>, token: string, erro: string) {
+    const { data } = await admin.from("feedback_solicitacoes").select("id").eq("token", token).maybeSingle()
+    return data ? { ok: false as const, status: 400, erro } : null
 }

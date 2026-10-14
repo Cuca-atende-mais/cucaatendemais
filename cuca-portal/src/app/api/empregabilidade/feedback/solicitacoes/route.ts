@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { exigirPermissao } from "@/lib/rbac/exigir-permissao-servidor"
 import { EPM_FEEDBACK } from "@/lib/rbac/catalogo-empregabilidade-gestao"
-import { ehStatusEditavel } from "@/lib/empregabilidade/status-candidatura"
-import { telefoneDestino } from "@/lib/empregabilidade/feedback-solicitacao"
-import { enviarPedidoFeedback, type EnviarTemplate } from "@/lib/empregabilidade/feedback-solicitacao-servico"
+import { enviarPedidoFeedback } from "@/lib/empregabilidade/feedback-solicitacao-servico"
+import { montarEntradaPedido } from "@/lib/empregabilidade/feedback-pedido-entrada"
+import { enviarPeloWorker } from "@/lib/empregabilidade/enviar-template-worker"
 
 // S-EMP-GES-02 (AC2, AC3, AC7, AC11): "Solicitar feedback dos marcados" — cria 1 solicitação só com os
 // candidatos marcados, envia o template aprovado com o link e grava a mensagem no Atendimento.
@@ -12,25 +12,6 @@ import { enviarPedidoFeedback, type EnviarTemplate } from "@/lib/empregabilidade
 
 const MAX_POR_PEDIDO = 500
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-const enviarPeloWorker: EnviarTemplate = async (numero, template, componentes) => {
-    const workerUrl = process.env.WORKER_URL || "http://127.0.0.1:8000"
-    const token = process.env.WEBHOOK_INTERNAL_TOKEN
-    if (!token) return { ok: false, erro: "Integração com o worker não configurada (WEBHOOK_INTERNAL_TOKEN)." }
-    try {
-        const res = await fetch(`${workerUrl}/send-message/${token}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ number: numero, template_name: template, components: componentes }),
-        })
-        const corpo = await res.json().catch(() => ({}))
-        if (!res.ok) return { ok: false, erro: corpo?.error || `Worker respondeu ${res.status}.` }
-        return { ok: true, wamid: corpo?.wamid ?? null, wa_id: corpo?.wa_id ?? null, origem_id: corpo?.origem_id ?? null }
-    } catch (e) {
-        console.error("[feedback/solicitacoes] Erro ao chamar o worker:", e)
-        return { ok: false, erro: "Não foi possível falar com o worker." }
-    }
-}
 
 export async function POST(request: NextRequest) {
     const permissao = await exigirPermissao(EPM_FEEDBACK.solicitar)
@@ -50,56 +31,16 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Máximo de ${MAX_POR_PEDIDO} candidatos por pedido.` }, { status: 400 })
     }
 
-    // Mesma regra de unidade da tela: só vaga e candidaturas que o usuário enxerga pela RLS.
-    const { data: vaga, error: vErr } = await permissao.supabase
-        .from("vagas")
-        .select("id, tipo, titulo, empresa_id, nome_responsavel, telefone_responsavel, email_responsavel, empresas(nome, nome_fantasia, telefone, email, contato_responsavel)")
-        .eq("id", vagaId)
-        .maybeSingle()
-    if (vErr) return NextResponse.json({ error: "Erro ao carregar a vaga." }, { status: 500 })
-    if (!vaga) return NextResponse.json({ error: "Vaga não encontrada ou sem acesso." }, { status: 404 })
-    if (vaga.tipo === "selecao_evento") {
-        return NextResponse.json({ error: "Seleção não usa este pedido de feedback." }, { status: 400 })
-    }
+    const preparado = await montarEntradaPedido(permissao.supabase, {
+        vagaId,
+        candidaturaIds: unicos,
+        criadoPor: permissao.user.id,
+        urlBase: process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin,
+    })
+    if (!preparado.ok) return NextResponse.json({ error: preparado.erro }, { status: preparado.status })
 
-    const { data: cands, error: cErr } = await permissao.supabase
-        .from("candidaturas")
-        .select("id, status, email_enviado_em")
-        .eq("vaga_id", vagaId)
-        .in("id", unicos)
-    if (cErr) return NextResponse.json({ error: "Erro ao conferir os candidatos." }, { status: 500 })
-    const validos = new Set((cands ?? []).filter(c => c.email_enviado_em && ehStatusEditavel(c.status)).map(c => c.id as string))
-    const invalidos = unicos.filter(id => !validos.has(id))
-    if (invalidos.length > 0) {
-        return NextResponse.json({ error: `${invalidos.length} candidato(s) marcado(s) não foram enviados à empresa nesta vaga ou não podem receber feedback.` }, { status: 400 })
-    }
-
-    const empresa = (Array.isArray(vaga.empresas) ? vaga.empresas[0] : vaga.empresas) as
-        { nome: string | null; nome_fantasia: string | null; telefone: string | null; email: string | null; contato_responsavel: string | null } | null
-    // Mesmo contato que a tela mostra: o da vaga e, na falta, o da empresa.
-    const telefone = vaga.telefone_responsavel || empresa?.telefone || ""
-    const numero = telefoneDestino(telefone)
-    if (!numero) {
-        return NextResponse.json({ error: "A vaga não tem um telefone de contato válido. Ajuste o contato antes de enviar." }, { status: 400 })
-    }
-
-    const urlBase = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin
     try {
-        const r = await enviarPedidoFeedback(createAdminClient(), {
-            vagaId,
-            empresaId: vaga.empresa_id,
-            candidaturaIds: unicos,
-            contato: {
-                nome: vaga.nome_responsavel || empresa?.contato_responsavel || null,
-                telefone,
-                email: vaga.email_responsavel || empresa?.email || null,
-            },
-            numeroDestino: numero,
-            nomeEmpresa: empresa?.nome_fantasia || empresa?.nome || "",
-            tituloVaga: vaga.titulo || "",
-            urlBase,
-            criadoPor: permissao.user.id,
-        }, enviarPeloWorker)
+        const r = await enviarPedidoFeedback(createAdminClient(), preparado.entrada, enviarPeloWorker)
         if (!r.ok) return NextResponse.json({ error: r.erro, solicitacao_id: r.solicitacaoId ?? null }, { status: r.status })
         return NextResponse.json({
             ok: true,
@@ -113,7 +54,7 @@ export async function POST(request: NextRequest) {
     }
 }
 
-// S-EMP-GES-02 (AC4): acompanhamento dos pedidos da vaga, do mais novo ao mais antigo. Nunca devolve o token.
+// S-EMP-GES-02 (AC4) + GES-03 (respondido, em análise, substituído): acompanhamento dos pedidos da vaga, do mais novo ao mais antigo. Nunca devolve o token.
 export async function GET(request: NextRequest) {
     const permissao = await exigirPermissao(EPM_FEEDBACK.ver)
     if (!permissao.ok) return permissao.resposta
@@ -128,7 +69,7 @@ export async function GET(request: NextRequest) {
     const admin = createAdminClient()
     const { data, error } = await admin
         .from("feedback_solicitacoes")
-        .select("id, created_at, criado_por, status_envio, erro_envio, expires_at, respondido_em, conversa_id, feedback_solicitacao_itens(count)")
+        .select("id, created_at, criado_por, status_envio, erro_envio, expires_at, respondido_em, situacao, situacao_em, conversa_id, feedback_solicitacao_itens(count)")
         .eq("vaga_id", vagaId)
         .order("created_at", { ascending: false })
         .limit(100)
@@ -152,6 +93,8 @@ export async function GET(request: NextRequest) {
             erro_envio: s.erro_envio,
             expires_at: s.expires_at,
             respondido_em: s.respondido_em,
+            situacao: s.situacao,
+            situacao_em: s.situacao_em,
             conversa_id: s.conversa_id,
         }
     })
