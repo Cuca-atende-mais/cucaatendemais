@@ -121,6 +121,12 @@ export async function registrarNoAtendimento(
         wamid: p.wamid,
     })
     if (mErr) throw mErr
+
+    // A lista do Atendimento ordena por conversas.updated_at e escuta mudanças em `conversas` (não em
+    // `mensagens`): sem isto, numa conversa antiga a mensagem fica gravada mas a conversa não sobe na
+    // lista. Só a data muda — status e estado da conversa ficam como estão. Falha aqui não desfaz o envio.
+    const { error: dErr } = await admin.from("conversas").update({ updated_at: new Date().toISOString() }).eq("id", conversa.id)
+    if (dErr) console.error("[feedback-solicitacao] Mensagem gravada, mas falhou ao atualizar a data da conversa:", dErr)
     return { leadId: lead.id, conversaId: conversa.id }
 }
 

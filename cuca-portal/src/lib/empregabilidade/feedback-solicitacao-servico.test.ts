@@ -104,8 +104,20 @@ describe("registrarNoAtendimento (AC7)", () => {
         expect(r).toEqual({ leadId: "lead-1", conversaId: "conv-1" })
         expect(db.leads).toHaveLength(1)
         expect(db.leads[0].opt_in).toBe(true)
-        expect(db.conversas).toEqual([{ id: "conv-1", lead_id: "lead-1", origem_id: "PNID_EMP", status: "awaiting_human" }])
+        expect(db.conversas).toEqual([{ id: "conv-1", lead_id: "lead-1", origem_id: "PNID_EMP", status: "awaiting_human", updated_at: expect.any(String) }])
         expect(db.mensagens[0]).toMatchObject({ conversa_id: "conv-1", lead_id: "lead-1", wamid: "wamid.9" })
+    })
+
+    it("conversa antiga sobe na lista do Atendimento: updated_at passa a ser o momento do envio", async () => {
+        const { db, cliente } = bancoFalso({
+            leads: [{ id: "lead-1", telefone: "558591733321", opt_in: false }],
+            conversas: [{ id: "conv-1", lead_id: "lead-1", origem_id: "PNID_EMP", status: "ativa", updated_at: "2026-09-28T19:52:59Z" }],
+        })
+        const antes = Date.now()
+        await registrarNoAtendimento(cliente, { ...base, waId: "558591733321" })
+        const atualizada = new Date(db.conversas[0].updated_at as string).getTime()
+        expect(atualizada).toBeGreaterThanOrEqual(antes - 1000)
+        expect(db.conversas[0]).toMatchObject({ status: "ativa", lead_id: "lead-1", origem_id: "PNID_EMP" })
     })
 
     it("wa_id de 12 dígitos casa com o lead gravado com o 9 (como o webhook de entrada grava)", async () => {
