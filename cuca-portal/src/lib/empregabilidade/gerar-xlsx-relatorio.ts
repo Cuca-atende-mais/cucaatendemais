@@ -29,7 +29,8 @@ const FORMATO_NUMERO: Record<string, string> = {
 }
 
 function valorCelula(c: Celula): ExcelJS.CellValue {
-    if (c.formula) return { formula: c.formula }
+    // Fórmula + valor já calculado: o Excel recalcula ao abrir; visualizadores que não calculam mostram o número.
+    if (c.formula) return c.resultado === undefined ? { formula: c.formula } : { formula: c.formula, result: c.resultado }
     return c.valor ?? ""
 }
 
@@ -125,6 +126,7 @@ export async function gerarXlsxRelatorio(abas: AbaPlanilha[], autor: string): Pr
     const wb = new ExcelJS.Workbook()
     wb.creator = autor || "Cuca Atende+"
     wb.created = new Date()
+    wb.calcProperties.fullCalcOnLoad = true
 
     for (const aba of abas) {
         const ws = wb.addWorksheet(aba.nome, {

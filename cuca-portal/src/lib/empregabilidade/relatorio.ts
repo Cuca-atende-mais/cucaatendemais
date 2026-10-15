@@ -249,6 +249,8 @@ export interface Celula {
     valor?: string | number | null
     /** Fórmula do Excel, sem "=". */
     formula?: string
+    /** Valor já calculado da fórmula: quem abre sem recalcular (visualizador de e-mail, celular) vê o número. */
+    resultado?: number | string
     formato?: Formato
 }
 
@@ -395,6 +397,7 @@ export function montarAbaIndicadores(p: {
     LINHAS_INDICADORES.forEach((def, i) => linhaDoRotulo.set(def.rotulo, linhaCabecalho + 1 + i))
 
     const chavesValor = p.comIndicadoresDaRede ? [...p.chaves, CHAVE_SEM_UNIDADE] : p.chaves
+    const totalPorRotulo = new Map<string, number>()
     for (const def of LINHAS_INDICADORES) {
         const r = linhaDoRotulo.get(def.rotulo) as number
         if (def.daRede && !p.comIndicadoresDaRede) {
@@ -402,28 +405,36 @@ export function montarAbaIndicadores(p: {
             continue
         }
         const celulas: Celula[] = [{ valor: def.rotulo }]
+        const indDe = (rotulo: string) => LINHAS_INDICADORES.find(d => d.rotulo === rotulo)?.ind as Indicador
+        const doMes = (m: string) => def.somaDe
+            ? def.somaDe.reduce((s, x) => s + valor(ctx.serie, chavesValor, indDe(x), m), 0)
+            : valor(ctx.serie, chavesValor, def.ind as Indicador, m)
         ctx.meses.forEach((m, j) => {
             const col = letraColuna(2 + j)
             if (def.somaDe) {
-                celulas.push({ formula: def.somaDe.map(s => `${col}${linhaDoRotulo.get(s)}`).join("+"), formato: "inteiro" })
+                celulas.push({ formula: def.somaDe.map(s => `${col}${linhaDoRotulo.get(s)}`).join("+"), resultado: doMes(m), formato: "inteiro" })
             } else {
-                celulas.push({ valor: valor(ctx.serie, chavesValor, def.ind as Indicador, m), formato: "inteiro" })
+                celulas.push({ valor: doMes(m), formato: "inteiro" })
             }
         })
         const primeira = letraColuna(2)
         const ultima = letraColuna(1 + nMeses)
-        celulas.push({ formula: `SUM(${primeira}${r}:${ultima}${r})`, formato: "inteiro" })
+        const total = ctx.meses.reduce((s, m) => s + doMes(m), 0)
+        totalPorRotulo.set(def.rotulo, total)
+        celulas.push({ formula: `SUM(${primeira}${r}:${ultima}${r})`, resultado: total, formato: "inteiro" })
         const anterior = def.somaDe
-            ? def.somaDe.reduce((s, x) => s + totalPeriodo(ctx.anterior, chavesValor, LINHAS_INDICADORES.find(d => d.rotulo === x)?.ind as Indicador, ctx.mesesAnteriores), 0)
+            ? def.somaDe.reduce((s, x) => s + totalPeriodo(ctx.anterior, chavesValor, indDe(x), ctx.mesesAnteriores), 0)
             : totalPeriodo(ctx.anterior, chavesValor, def.ind as Indicador, ctx.mesesAnteriores)
         celulas.push({ valor: anterior, formato: "inteiro" })
         const T = `${letraColuna(colTotal)}${r}`
         const A = `${letraColuna(colAnterior)}${r}`
-        celulas.push({ formula: `IF(${A}=0,"",(${T}-${A})/${A})`, formato: "percentual" })
+        celulas.push({ formula: `IF(${A}=0,"",(${T}-${A})/${A})`, resultado: variacao(total, anterior) ?? "", formato: "percentual" })
         linhas.push({ tipo: def.rotulo.startsWith("  ") ? "dado" : "total", celulas })
     }
 
-    const totalDe = (rotulo: string): Celula => ({ formula: `${letraColuna(colTotal)}${linhaDoRotulo.get(rotulo)}`, formato: "inteiro" })
+    const totalDe = (rotulo: string): Celula => ({
+        formula: `${letraColuna(colTotal)}${linhaDoRotulo.get(rotulo)}`, resultado: totalPorRotulo.get(rotulo) ?? 0, formato: "inteiro",
+    })
     linhas[idxDestaqueValor] = { tipo: "destaque_valor", celulas: destaques.map(totalDe) }
 
     linhas.push({ tipo: "vazia", celulas: [] })
@@ -462,17 +473,22 @@ export function montarAbaMatriz(p: { unidades: Unidade[]; incluiRede: boolean; c
         linhas.push({ tipo: "secao", mesclar: true, celulas: [{ valor: bloco.titulo }] })
         linhas.push({ tipo: "cabecalho", celulas: [{ valor: "Unidade" }, ...ctx.meses.map(m => ({ valor: rotuloMes(m) })), { valor: "Total" }] })
         const primeiraDados = linhas.length + 1
+        const somaColunas = new Array(nMeses + 1).fill(0)
         for (const u of linhasUnidade) {
             const r = linhas.length + 1
             const v = (m: string) => bloco.ind === "vagas"
                 ? valor(ctx.serie, [u.chave], "vagas_normais", m) + valor(ctx.serie, [u.chave], "selecoes", m)
                 : valor(ctx.serie, [u.chave], bloco.ind, m)
+            const valores = ctx.meses.map(v)
+            const totalLinha = valores.reduce((s, x) => s + x, 0)
+            valores.forEach((x, j) => { somaColunas[j] += x })
+            somaColunas[nMeses] += totalLinha
             linhas.push({
                 tipo: "dado",
                 celulas: [
                     { valor: u.rotulo },
-                    ...ctx.meses.map(m => ({ valor: v(m), formato: "inteiro" as const })),
-                    { formula: `SUM(${letraColuna(2)}${r}:${letraColuna(1 + nMeses)}${r})`, formato: "inteiro" },
+                    ...valores.map(x => ({ valor: x, formato: "inteiro" as const })),
+                    { formula: `SUM(${letraColuna(2)}${r}:${letraColuna(1 + nMeses)}${r})`, resultado: totalLinha, formato: "inteiro" },
                 ],
             })
         }
@@ -483,7 +499,7 @@ export function montarAbaMatriz(p: { unidades: Unidade[]; incluiRede: boolean; c
                 { valor: "Total" },
                 ...Array.from({ length: nMeses + 1 }, (_, j) => {
                     const col = letraColuna(2 + j)
-                    return { formula: `SUM(${col}${primeiraDados}:${col}${ultimaDados})`, formato: "inteiro" as const }
+                    return { formula: `SUM(${col}${primeiraDados}:${col}${ultimaDados})`, resultado: somaColunas[j], formato: "inteiro" as const }
                 }),
             ],
         })
@@ -560,8 +576,8 @@ export function montarAbaDetalhe(p: { vagas: VagaDetalhe[]; unidades: Unidade[];
             tipo: "total",
             celulas: [
                 { valor: "Total" }, { valor: "" }, { valor: "" }, { valor: "" }, { valor: "" }, { valor: "" },
-                { formula: `SUM(G${r1}:G${r2})`, formato: "inteiro" },
-                { formula: `SUM(H${r1}:H${r2})`, formato: "inteiro" },
+                { formula: `SUM(G${r1}:G${r2})`, resultado: p.vagas.reduce((s, v) => s + (v.postos ?? 0), 0), formato: "inteiro" },
+                { formula: `SUM(H${r1}:H${r2})`, resultado: p.vagas.reduce((s, v) => s + v.encaminhados, 0), formato: "inteiro" },
                 { valor: "" },
             ],
         })

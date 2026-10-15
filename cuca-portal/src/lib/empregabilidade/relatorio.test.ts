@@ -133,14 +133,18 @@ describe("planilha (AC5, AC6, AC12)", () => {
         const enc = aba.linhas[8].celulas
         expect(enc[0].valor).toBe("Encaminhamentos")
         expect([enc[1].valor, enc[2].valor]).toEqual([17, 5])
-        expect(enc[3].formula).toBe("SUM(B9:C9)")
+        expect(enc[3]).toMatchObject({ formula: "SUM(B9:C9)", resultado: 22 })
         expect(enc[4].valor).toBe(30)
         expect(enc[5].formula).toBe('IF(E9=0,"",(D9-E9)/E9)')
+        expect(enc[5].resultado).toBeCloseTo(-8 / 30)
+        // Sem base de comparação, a variação calculada é vazia, como a fórmula.
+        expect(aba.linhas[7].celulas[5].resultado).toBe("")
         // Vagas cadastradas (linha 11) = vagas normais (12) + seleções (13), por fórmula.
-        expect(aba.linhas[10].celulas[1].formula).toBe("B12+B13")
+        expect(aba.linhas[10].celulas[1]).toMatchObject({ formula: "B12+B13", resultado: 6 })
         expect(aba.linhas[11].celulas[1].valor).toBe(5) // 3 Pici + 2 rede
         // Destaque (linha 5) aponta para a coluna Total.
         expect(aba.linhas[4].celulas.map(c => c.formula)).toEqual(["D8", "D9", "D10", "D11", "D14"])
+        expect(aba.linhas[4].celulas.map(c => c.resultado)).toEqual([64, 22, 25, 6, 150])
         expect(aba.linhas.some(l => l.tipo === "nota")).toBe(true)
     })
 
@@ -169,7 +173,7 @@ describe("planilha (AC5, AC6, AC12)", () => {
         expect(aba.linhas[3].tipo).toBe("alerta")
         expect(aba.linhas[3].celulas.map(c => c.valor).slice(3, 6)).toEqual(["Vaga", "Pici", "Unidade de destino"])
         expect(aba.linhas[4].celulas.map(c => c.valor).slice(3, 6)).toEqual(["Seleção", "Rede Cuca (todas as unidades)", "Rede Cuca"])
-        expect(aba.linhas[5].celulas[6].formula).toBe("SUM(G4:G5)")
+        expect(aba.linhas[5].celulas[6]).toMatchObject({ formula: "SUM(G4:G5)", resultado: 170 })
     })
 
     it("nome do arquivo", () => {
