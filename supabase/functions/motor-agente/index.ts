@@ -1708,7 +1708,9 @@ export function filtrarItensPorContexto(itens: ItemProgramacao[], contexto: Reco
       const faixa = faixaEtariaDoDetalhe(it.detalhe);
       if (faixa && faixaAceitaIdade(faixa, idade) === false) return false;
     }
-    if (genero.startsWith("fem") || genero.startsWith("masc")) {
+    // Gênero só separa turma em Esportes (limitação física/psicossocial); curso e Dia a Dia não têm
+    // essa distinção. Misto e Público vazio continuam aparecendo (não foi determinado).
+    if ((genero.startsWith("fem") || genero.startsWith("masc")) && (!it.area || it.area === "ESPORTES")) {
       const publico = it.detalhe.match(/P[uú]blico:\s*(Feminino|Masculino|Misto)/i)?.[1]?.toLowerCase();
       if (publico && publico !== "misto" && !publico.startsWith(genero.slice(0, 3))) return false;
     }
@@ -1759,7 +1761,37 @@ export function consolidarInterpretacao(interp: InterpretacaoTurno, texto: strin
   const lido = lerMensagemAtual(texto);
   // O modelo às vezes devolve a atividade sem as variações de grafia — a busca usa a própria atividade.
   const termos = interp.termos_busca.length || !interp.atividade ? interp.termos_busca : palavrasChaveProgramacao(interp.atividade);
-  return { ...interp, termos_busca: termos, escopo: lido.escopo, contexto: { ...interp.contexto, ...lido.contexto } };
+  const base = { ...interp, termos_busca: termos, escopo: lido.escopo, contexto: { ...interp.contexto, ...lido.contexto } };
+  // "quais cursos tem?" no meio da conversa de natação: a palavra "curso" define a área — não existe
+  // curso de modalidade esportiva. Só quando a atividade NÃO está escrita na mensagem (veio da
+  // conversa) e não é ela mesma um curso; "tem curso de natação?" continua natação (Esportes).
+  if (areaPeloVocabulario(texto) === "CURSOS" && interp.atividade && interp.area !== "CURSOS" && !atividadeEscritaNaMensagem(interp.atividade, texto)) {
+    return { ...base, atividade: null, termos_busca: [], area: "CURSOS" };
+  }
+  return base;
+}
+
+/** A atividade (ou uma das palavras dela) aparece escrita na própria mensagem. */
+export function atividadeEscritaNaMensagem(atividade: string, texto: string): boolean {
+  const naMensagem = new Set(palavrasChaveProgramacao(texto));
+  return palavrasChaveProgramacao(atividade).some((p) => naMensagem.has(p));
+}
+
+const PALAVRAS_DE_UNIDADE = new Set(Object.keys(NOMES_UNIDADES_POR_PALAVRA).flatMap((k) => normalizarTexto(k).split(/[^a-z0-9]+/)).filter(Boolean));
+
+/**
+ * S-WM-72 (C1): com o menu de unidades na tela, a mensagem é uma pergunta NOVA (e não a escolha)
+ * quando traz atividade da programação diferente da pendente ("tem natação no Pici?" depois de
+ * perguntar de capoeira) ou outra área pelo vocabulário ("quais cursos tem no Pici?"). Número,
+ * nome de unidade, "toda a rede" e a mesma atividade com a unidade continuam sendo a escolha.
+ */
+export function respostaTrazPerguntaNova(texto: string, pendente: { atividade?: string | null; termos?: string[]; area?: AreaProgramacao | null }, itens: ItemProgramacao[]): boolean {
+  if (/^\s*\d{1,2}\s*$/.test(texto)) return false;
+  const area = areaPeloVocabulario(texto);
+  if (area && area !== pendente.area) return true;
+  const doPendente = new Set([...(pendente.termos ?? []).map(normalizarTexto), ...(pendente.atividade ? palavrasChaveProgramacao(pendente.atividade) : [])]);
+  const novas = palavrasChaveProgramacao(texto).filter((p) => !PALAVRAS_DE_UNIDADE.has(p) && !doPendente.has(p));
+  return novas.length > 0 && itensQueCasamComPalavras(itens, novas).length > 0;
 }
 
 export type InterpretacaoTurno = {
@@ -2746,6 +2778,9 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
             consultaProgramacao = { texto: pendente.texto, atividade: null, termos: [], area, contexto: pendente.contexto ?? contextoSessao, escopo: escopoSessao ?? ESCOLHA_REDE, perguntaOriginal: true };
             await gravarMetadata({ prog_pendente: null, conversa_engajada: true, aguardando_unidade: false });
           }
+        } else if (blocoAnteriorAgente.includes(ROTULO_REDE) && (palavrasChaveProgramacao(textoFinal).length > 0 || areaPeloVocabulario(textoFinal) !== null) && respostaTrazPerguntaNova(textoFinal, pendente, await carregarItensProgramacaoRede(supabase, usarCacheProgramacao))) {
+          // C1: o lead ignorou o menu e fez outra pergunta — a antiga sai, a nova segue como mensagem nova (B).
+          await gravarMetadata({ prog_pendente: null });
         } else if (blocoAnteriorAgente.includes(ROTULO_REDE)) {
           const escolha = resolverEscolhaDeEscopo(textoFinal, blocoAnteriorAgente, metadataAtual.unidade_selecionada as string | null);
           if (escolha) {
