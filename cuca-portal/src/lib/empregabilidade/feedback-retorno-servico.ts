@@ -55,8 +55,8 @@ async function candidatosAvaliaveis(admin: SupabaseClient, pedido: PedidoToken):
         .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
 }
 
-function linkInativo(pedido: PedidoToken): ResultadoPublico<never> | null {
-    const estado = estadoLink(pedido)
+function linkInativo(pedido: PedidoToken, agora: Date): ResultadoPublico<never> | null {
+    const estado = estadoLink(pedido, agora)
     return estado === "ativo" ? null : { ok: false, status: 410, erro: MENSAGEM_LINK_INATIVO[estado] }
 }
 
@@ -64,10 +64,11 @@ function linkInativo(pedido: PedidoToken): ResultadoPublico<never> | null {
 export async function carregarPedidoPublico(
     admin: SupabaseClient,
     token: string,
+    agora: Date = new Date(),
 ): Promise<ResultadoPublico<{ vaga: { titulo: string | null; empresa: string | null }; candidatos: { id: string; nome: string }[] }> | null> {
     const pedido = await pedidoDoToken(admin, token)
     if (!pedido) return null
-    const inativo = linkInativo(pedido)
+    const inativo = linkInativo(pedido, agora)
     if (inativo) return inativo
 
     const { data: vaga, error } = await admin
@@ -107,7 +108,7 @@ async function reservarPedido(admin: SupabaseClient, pedido: PedidoToken, campos
 export async function sinalizarEmAnalise(admin: SupabaseClient, token: string, agora: Date = new Date()): Promise<ResultadoPublico<{ situacao: "em_analise" }> | null> {
     const pedido = await pedidoDoToken(admin, token)
     if (!pedido) return null
-    const inativo = linkInativo(pedido)
+    const inativo = linkInativo(pedido, agora)
     if (inativo) return inativo
     const ok = await reservarPedido(admin, pedido, { situacao: "em_analise", situacao_em: agora.toISOString() }, agora)
     if (!ok) return { ok: false, status: 410, erro: MENSAGEM_LINK_INATIVO.respondido }
@@ -126,7 +127,7 @@ export async function responderPedido(
 ): Promise<ResultadoPublico<{ selecionados: number; rejeitados: number; falhas: number }> | null> {
     const pedido = await pedidoDoToken(admin, token)
     if (!pedido) return null
-    const inativo = linkInativo(pedido)
+    const inativo = linkInativo(pedido, agora)
     if (inativo) return inativo
 
     const candidatos = await candidatosAvaliaveis(admin, pedido)
