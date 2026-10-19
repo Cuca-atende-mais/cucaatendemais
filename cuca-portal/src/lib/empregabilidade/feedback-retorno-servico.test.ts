@@ -44,7 +44,7 @@ beforeEach(() => { aplicados.length = 0; falhaEm.clear() })
 describe("página pública com token do pedido (AC1, AC11)", () => {
     it("mostra só os candidatos do pedido que ainda aguardam, e só o nome", async () => {
         const { cliente } = cenario()
-        const r = await carregarPedidoPublico(cliente, "tok")
+        const r = await carregarPedidoPublico(cliente, "tok", agora)
         expect(r).toEqual({
             ok: true,
             dados: { vaga: { titulo: "Repositor", empresa: "Mercado X" }, candidatos: [{ id: "c1", nome: "Ana" }, { id: "c2", nome: "Bruno" }] },
@@ -63,7 +63,7 @@ describe("página pública com token do pedido (AC1, AC11)", () => {
         ["substituído", { situacao: "substituida" }],
     ])("link %s → 410", async (_nome, campos) => {
         const { cliente } = cenario(campos)
-        const r = await carregarPedidoPublico(cliente, "tok")
+        const r = await carregarPedidoPublico(cliente, "tok", agora)
         expect(r && !r.ok && r.status).toBe(410)
     })
 })
@@ -132,7 +132,7 @@ describe("\"Ainda em análise\" (AC7)", () => {
         expect(r).toEqual({ ok: true, dados: { situacao: "em_analise" } })
         expect(aplicados).toEqual([])
         expect(db.feedback_solicitacoes[0]).toMatchObject({ situacao: "em_analise", situacao_em: agora.toISOString(), respondido_em: null })
-        const depois = await carregarPedidoPublico(cliente, "tok")
+        const depois = await carregarPedidoPublico(cliente, "tok", agora)
         expect(depois && !depois.ok && depois.status).toBe(410)
     })
 })
