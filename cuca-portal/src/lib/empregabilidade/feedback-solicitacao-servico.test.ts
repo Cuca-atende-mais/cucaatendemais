@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js"
 import { describe, expect, it, vi } from "vitest"
 import { bancoFalso } from "./banco-falso.test-util"
 import { enviarPedidoFeedback, gerarToken, registrarNoAtendimento, type EntradaPedido, type EnviarTemplate } from "./feedback-solicitacao-servico"
@@ -24,6 +25,17 @@ const entrada: EntradaPedido = {
 }
 
 const agora = new Date("2026-10-14T12:00:00Z")
+
+/** Cliente em que o UPDATE de `conversas` falha (o resto do banco falso segue normal). */
+function comFalhaAoAtualizarConversa(cliente: SupabaseClient): SupabaseClient {
+    return {
+        from: (tabela: string) => {
+            const q = cliente.from(tabela)
+            if (tabela !== "conversas") return q
+            return { ...q, update: () => ({ eq: async () => ({ data: null, error: { message: "falha simulada" } }) }) }
+        },
+    } as unknown as SupabaseClient
+}
 
 describe("enviarPedidoFeedback", () => {
     it("cria 1 solicitação só com os marcados, envia o template com o link e grava wamid e mensagem", async () => {
@@ -55,6 +67,19 @@ describe("enviarPedidoFeedback", () => {
             conteudo: `Olá, equipe de RH da Mercado X. Vaga Repositor. Acesse: https://portal.cuca/feedback-empresa/${sol.token}`,
         })])
         expect(sol.conversa_id).toBe(db.conversas[0].id)
+        // Decisão de 19/10: IA pausada já no envio e selo valendo até o fim do link.
+        expect(db.conversas[0]).toMatchObject({ status: "awaiting_human", feedback_pedido_ate: "2026-10-16T12:00:00.000Z" })
+        expect(r.ok && r.avisoAtendimento).toBeFalsy()
+    })
+
+    it("enviado, mas a IA não foi pausada: segue como enviado e avisa para assumir a conversa", async () => {
+        const { db, cliente } = bancoFalso({ meta_templates: [template] })
+        const enviar: EnviarTemplate = async () => ({ ok: true, wamid: "wamid.3", wa_id: "558588887777", origem_id: "PNID_EMP" })
+        const r = await enviarPedidoFeedback(comFalhaAoAtualizarConversa(cliente), entrada, enviar, agora)
+        expect(r).toMatchObject({ ok: true, conversaId: db.conversas[0].id })
+        expect(r.ok && r.avisoAtendimento).toContain("Assumir Atendimento")
+        expect(db.feedback_solicitacoes[0]).toMatchObject({ status_envio: "enviado", conversa_id: db.conversas[0].id })
+        expect(db.mensagens).toHaveLength(1)
     })
 
     it("AC3: falha da Meta deixa a solicitação como falhou, com o motivo, e não grava no Atendimento", async () => {
@@ -93,22 +118,25 @@ describe("enviarPedidoFeedback", () => {
 })
 
 describe("registrarNoAtendimento (AC7)", () => {
-    const base = { origemId: "PNID_EMP", nome: "Ana", texto: "Olá", wamid: "wamid.9" }
+    const base = { origemId: "PNID_EMP", nome: "Ana", texto: "Olá", wamid: "wamid.9", linkValidoAte: "2026-10-16T12:00:00.000Z" }
 
-    it("reutiliza lead e conversa existentes sem mexer em opt_in nem no status da conversa", async () => {
+    it("reutiliza lead e conversa existentes sem mexer em opt_in; conversa já pausada continua pausada", async () => {
         const { db, cliente } = bancoFalso({
             leads: [{ id: "lead-1", telefone: "5585988887777", opt_in: true }],
             conversas: [{ id: "conv-1", lead_id: "lead-1", origem_id: "PNID_EMP", status: "awaiting_human" }],
         })
         const r = await registrarNoAtendimento(cliente, { ...base, waId: "5585988887777" })
-        expect(r).toEqual({ leadId: "lead-1", conversaId: "conv-1" })
+        expect(r).toEqual({ leadId: "lead-1", conversaId: "conv-1", iaPausada: true })
         expect(db.leads).toHaveLength(1)
         expect(db.leads[0].opt_in).toBe(true)
-        expect(db.conversas).toEqual([{ id: "conv-1", lead_id: "lead-1", origem_id: "PNID_EMP", status: "awaiting_human", updated_at: expect.any(String) }])
+        expect(db.conversas).toEqual([{
+            id: "conv-1", lead_id: "lead-1", origem_id: "PNID_EMP", status: "awaiting_human",
+            updated_at: expect.any(String), feedback_pedido_ate: "2026-10-16T12:00:00.000Z",
+        }])
         expect(db.mensagens[0]).toMatchObject({ conversa_id: "conv-1", lead_id: "lead-1", wamid: "wamid.9" })
     })
 
-    it("conversa antiga sobe na lista do Atendimento: updated_at passa a ser o momento do envio", async () => {
+    it("conversa antiga com a IA ativa sobe na lista e fica pausada: updated_at passa a ser o momento do envio", async () => {
         const { db, cliente } = bancoFalso({
             leads: [{ id: "lead-1", telefone: "558591733321", opt_in: false }],
             conversas: [{ id: "conv-1", lead_id: "lead-1", origem_id: "PNID_EMP", status: "ativa", updated_at: "2026-09-28T19:52:59Z" }],
@@ -117,7 +145,7 @@ describe("registrarNoAtendimento (AC7)", () => {
         await registrarNoAtendimento(cliente, { ...base, waId: "558591733321" })
         const atualizada = new Date(db.conversas[0].updated_at as string).getTime()
         expect(atualizada).toBeGreaterThanOrEqual(antes - 1000)
-        expect(db.conversas[0]).toMatchObject({ status: "ativa", lead_id: "lead-1", origem_id: "PNID_EMP" })
+        expect(db.conversas[0]).toMatchObject({ status: "awaiting_human", lead_id: "lead-1", origem_id: "PNID_EMP" })
     })
 
     it("wa_id de 12 dígitos casa com o lead gravado com o 9 (como o webhook de entrada grava)", async () => {
@@ -135,6 +163,8 @@ describe("registrarNoAtendimento (AC7)", () => {
         const r = await registrarNoAtendimento(cliente, { ...base, waId: "5585988887777" })
         expect(r.conversaId).not.toBe("conv-inst")
         expect(db.conversas).toHaveLength(2)
+        // Só a conversa de Empregabilidade é pausada; a do Institucional fica como estava.
+        expect(db.conversas.find(c => c.id === "conv-inst")).toEqual({ id: "conv-inst", lead_id: "lead-1", origem_id: "PNID_INST" })
     })
 
     it("corrida com o webhook de entrada: lead criado no meio reaproveitado", async () => {

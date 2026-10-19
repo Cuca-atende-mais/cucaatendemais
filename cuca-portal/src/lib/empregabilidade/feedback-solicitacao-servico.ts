@@ -70,8 +70,8 @@ async function carregarTemplate(admin: SupabaseClient): Promise<TemplateAprovado
  */
 export async function registrarNoAtendimento(
     admin: SupabaseClient,
-    p: { waId: string; origemId: string; nome: string | null; texto: string; wamid: string | null },
-): Promise<{ leadId: string; conversaId: string }> {
+    p: { waId: string; origemId: string; nome: string | null; texto: string; wamid: string | null; linkValidoAte: string },
+): Promise<{ leadId: string; conversaId: string; iaPausada: boolean }> {
     const telefone = normalizarWaId(p.waId)
 
     const buscarLead = async () => {
@@ -123,11 +123,17 @@ export async function registrarNoAtendimento(
     if (mErr) throw mErr
 
     // A lista do Atendimento ordena por conversas.updated_at e escuta mudanças em `conversas` (não em
-    // `mensagens`): sem isto, numa conversa antiga a mensagem fica gravada mas a conversa não sobe na
-    // lista. Só a data muda — status e estado da conversa ficam como estão. Falha aqui não desfaz o envio.
-    const { error: dErr } = await admin.from("conversas").update({ updated_at: new Date().toISOString() }).eq("id", conversa.id)
-    if (dErr) console.error("[feedback-solicitacao] Mensagem gravada, mas falhou ao atualizar a data da conversa:", dErr)
-    return { leadId: lead.id, conversaId: conversa.id }
+    // `mensagens`): sem a data, numa conversa antiga a mensagem fica gravada mas a conversa não sobe.
+    // Decisão de 19/10: a resposta da empresa é tratada pela atendente, então a IA já fica pausada no
+    // envio (`awaiting_human` — o worker descarta o que chegar antes de chamar a IA). Sem notificação por
+    // WhatsApp à atendente: o que a chama é a conversa no topo, em laranja, com o selo (feedback_pedido_ate).
+    // Volta para a IA só pelo botão "Retornar para IA". Falha aqui não desfaz o envio — vira aviso.
+    const { error: dErr } = await admin
+        .from("conversas")
+        .update({ updated_at: new Date().toISOString(), status: "awaiting_human", feedback_pedido_ate: p.linkValidoAte })
+        .eq("id", conversa.id)
+    if (dErr) console.error("[feedback-solicitacao] Mensagem gravada, mas falhou ao pausar a IA na conversa:", dErr)
+    return { leadId: lead.id, conversaId: conversa.id, iaPausada: !dErr }
 }
 
 export async function enviarPedidoFeedback(
@@ -195,14 +201,18 @@ export async function enviarPedidoFeedback(
         return { ok: true, solicitacaoId: sol.id, wamid: r.wamid, conversaId: null, avisoAtendimento: "Enviado, mas a Meta não devolveu o número para registrar no Atendimento." }
     }
     try {
-        const { conversaId } = await registrarNoAtendimento(admin, {
+        const { conversaId, iaPausada } = await registrarNoAtendimento(admin, {
             waId: r.wa_id,
             origemId,
             nome: entrada.contato.nome || entrada.nomeEmpresa,
             texto: renderizarCorpo(template.corpo_texto, template.variaveis, valores),
             wamid: r.wamid,
+            linkValidoAte: expira.toISOString(),
         })
         await admin.from("feedback_solicitacoes").update({ conversa_id: conversaId }).eq("id", sol.id)
+        if (!iaPausada) {
+            return { ok: true, solicitacaoId: sol.id, wamid: r.wamid, conversaId, avisoAtendimento: "Enviado, mas não foi possível pausar a IA nessa conversa. Abra a conversa no Atendimento e clique em \"Assumir Atendimento\"." }
+        }
         return { ok: true, solicitacaoId: sol.id, wamid: r.wamid, conversaId }
     } catch (e) {
         console.error("[feedback-solicitacao] Enviado, mas falhou ao registrar no Atendimento:", e)
