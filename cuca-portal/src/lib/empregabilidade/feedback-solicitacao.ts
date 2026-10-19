@@ -6,6 +6,16 @@ export const TEMPLATE_FEEDBACK_EMPRESA = "empregabilidade_feedback_empresa_v1"
 /** Validade do link: o corpo do template aprovado diz "O link permanecerá disponível por 48 horas". */
 export const VALIDADE_LINK_HORAS = 48
 
+/**
+ * Selo "Feedback" na lista do Atendimento: a conversa recebeu um pedido de feedback cujo link ainda
+ * vale. `conversas.feedback_pedido_ate` recebe a validade do link no envio, então o selo some sozinho.
+ */
+export function pedidoFeedbackAtivo(ate: string | null | undefined, agora: Date = new Date()): boolean {
+    if (!ate) return false
+    const fim = new Date(ate).getTime()
+    return Number.isFinite(fim) && fim > agora.getTime()
+}
+
 export interface VariavelTemplate {
     posicao: number
     descricao: string

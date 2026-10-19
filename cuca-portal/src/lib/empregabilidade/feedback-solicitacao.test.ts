@@ -3,6 +3,7 @@ import {
     limparParametro,
     montarComponentesTemplate,
     normalizarWaId,
+    pedidoFeedbackAtivo,
     renderizarCorpo,
     rotuloStatusEnvio,
     statusFeedback,
@@ -71,5 +72,20 @@ describe("acompanhamento (AC4)", () => {
         expect(statusFeedback({ ...base, expires_at: "2026-10-14T11:00:00Z" }, agora)).toBe("expirado")
         expect(statusFeedback({ ...base, status_envio: "falhou" }, agora)).toBe("nao_enviado")
         expect(statusFeedback({ ...base, respondido_em: "2026-10-14T10:00:00Z" }, agora)).toBe("respondido")
+    })
+})
+
+describe("selo Feedback no Atendimento", () => {
+    const agora = new Date("2026-10-14T12:00:00Z")
+    it("aparece enquanto o link vale e some quando vence", () => {
+        expect(pedidoFeedbackAtivo("2026-10-16T12:00:00.000Z", agora)).toBe(true)
+        expect(pedidoFeedbackAtivo("2026-10-14T12:00:00.000Z", agora)).toBe(false)
+        expect(pedidoFeedbackAtivo("2026-10-01T00:00:00Z", agora)).toBe(false)
+    })
+    it("sem pedido ou data inválida → sem selo", () => {
+        expect(pedidoFeedbackAtivo(null, agora)).toBe(false)
+        expect(pedidoFeedbackAtivo(undefined, agora)).toBe(false)
+        expect(pedidoFeedbackAtivo("", agora)).toBe(false)
+        expect(pedidoFeedbackAtivo("não é data", agora)).toBe(false)
     })
 })

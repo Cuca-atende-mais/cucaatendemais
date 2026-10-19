@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Search } from "lucide-react";
+import { pedidoFeedbackAtivo } from "@/lib/empregabilidade/feedback-solicitacao";
 
 const PAGE_SIZE = 50;
 
@@ -35,6 +36,8 @@ type SidebarConversation = {
     // S-WM-66: setado só pelo worker, na 1ª mensagem que o LEAD manda — nunca pelo
     // caminho de disparo/breadcrumb. Base da seção fixa abaixo.
     primeira_interacao_lead_em?: string | null;
+    // S-EMP-GES-02: validade do link do último pedido de feedback enviado nesta conversa (selo).
+    feedback_pedido_ate?: string | null;
     leads?: SidebarLead | null;
 };
 
@@ -234,6 +237,7 @@ export default function ChatSidebar({
     const renderConversationRow = (conv: SidebarConversation) => {
         const isHuman = conv.status === 'awaiting_human';
         const unreadCount: number = conv.nao_lidas ?? 0;
+        const comPedidoFeedback = pedidoFeedbackAtivo(conv.feedback_pedido_ate);
 
         return (
             <button
@@ -281,6 +285,15 @@ export default function ChatSidebar({
                         <p className="text-[11px] text-muted-foreground truncate flex-1 opacity-70">
                             {conv.leads?.telefone || conv.origem_id}
                         </p>
+                        {comPedidoFeedback && (
+                            <Badge
+                                variant="outline"
+                                title={`Pedido de feedback enviado à empresa. Link válido até ${new Date(conv.feedback_pedido_ate as string).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}.`}
+                                className="text-[8px] h-3.5 px-1 border-sky-500/40 text-sky-700 dark:text-sky-400 uppercase font-bold tracking-wider bg-sky-500/5 shrink-0"
+                            >
+                                Feedback
+                            </Badge>
+                        )}
                         {/* T5: badge de status */}
                         {isHuman ? (
                             <Badge variant="outline" className="text-[8px] h-3.5 px-1 border-amber-500/40 text-amber-600 uppercase font-bold tracking-wider bg-amber-500/5 shrink-0">
