@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, Plus, Save, Trash2, CalendarDays, Briefcase, MapPin } from "lucide-react"
 import toast from "react-hot-toast"
+import { dataMinimaSelecaoEvento, validarDatasSelecaoEvento } from "@/lib/empregabilidade/data-selecao-evento"
 
 interface SelecaoModalProps {
     open: boolean
@@ -110,6 +111,11 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
         if (cargosValidos.length === 0) { setErro("Informe ao menos um cargo."); return }
         const datasValidas = datasSelecao.filter(d => d.data)
         if (datasValidas.length === 0) { setErro("Informe ao menos uma data de seleção."); return }
+        // S-EMP-GES-05: hoje + 5 só na criação; a edição de seleção existente segue como antes.
+        if (!selecao) {
+            const validacaoDatas = validarDatasSelecaoEvento(datasValidas)
+            if (!validacaoDatas.ok) { setErro(validacaoDatas.erro); return }
+        }
 
         setLoading(true)
         try {
@@ -301,6 +307,7 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                                     <div key={i} className="flex items-center gap-2">
                                         <Input
                                             type="date"
+                                            min={selecao ? undefined : dataMinimaSelecaoEvento()}
                                             value={d.data}
                                             onChange={e => updateData(i, "data", e.target.value)}
                                             className="h-8 text-sm flex-1"

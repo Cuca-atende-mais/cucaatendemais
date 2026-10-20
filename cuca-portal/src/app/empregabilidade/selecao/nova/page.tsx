@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertTriangle, Building2, Calendar, CheckCircle2, Loader2, MapPin, Plus, Trash2 } from "lucide-react"
 import toast from "react-hot-toast"
 import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
+import { dataMinimaSelecaoEvento, validarDatasSelecaoEvento } from "@/lib/empregabilidade/data-selecao-evento"
 
 const FAIXAS_ETARIAS = [
     "A partir de 14 anos",
@@ -90,6 +91,9 @@ function SelecaoNovaContent() {
         if (cargosValidos.length === 0) { setErro("Informe ao menos um cargo."); return }
         const datasValidas = datasSelecao.filter(d => d.data)
         if (datasValidas.length === 0) { setErro("Informe ao menos uma data de seleção."); return }
+        // S-EMP-GES-05: mínimo hoje + 5 dias, mesma mensagem do servidor.
+        const validacaoDatas = validarDatasSelecaoEvento(datasValidas)
+        if (!validacaoDatas.ok) { setErro(validacaoDatas.erro); return }
         if (!empresaId) { setErro("empresa_id ausente na URL."); return }
 
         setLoading(true)
@@ -223,6 +227,7 @@ function SelecaoNovaContent() {
                                         <Label className="text-xs">Data</Label>
                                         <Input
                                             type="date"
+                                            min={dataMinimaSelecaoEvento()}
                                             value={d.data}
                                             onChange={e => {
                                                 updateData(i, "data", e.target.value)

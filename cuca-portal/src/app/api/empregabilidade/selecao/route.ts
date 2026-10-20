@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
+import { validarDatasSelecaoEvento } from "@/lib/empregabilidade/data-selecao-evento"
 
 export async function POST(request: NextRequest) {
     const supabaseAdmin = createClient(
@@ -57,6 +58,11 @@ export async function POST(request: NextRequest) {
         }
         if (!datas_selecao || !Array.isArray(datas_selecao) || datas_selecao.length === 0) {
             return NextResponse.json({ error: "É necessário informar ao menos uma data de seleção." }, { status: 400 })
+        }
+        // S-EMP-GES-05: toda data da seleção nova precisa ser no mínimo hoje + 5 dias (Fortaleza).
+        const validacaoDatas = validarDatasSelecaoEvento(datas_selecao)
+        if (!validacaoDatas.ok) {
+            return NextResponse.json({ error: validacaoDatas.erro }, { status: 400 })
         }
 
         const { data: empresa, error: empErr } = await supabaseAdmin
