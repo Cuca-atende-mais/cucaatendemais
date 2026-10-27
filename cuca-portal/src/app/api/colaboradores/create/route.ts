@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { autorizarOperacaoColaborador } from '@/lib/auth/colaboradores-acesso-server'
+import { gravarVinculoSetores, resolverVinculoSetores } from '@/lib/planejamento/vinculo-setores-server'
 import { Resend } from 'resend'
 import SetupPasswordEmail from '@/emails/SetupPasswordEmail'
 import crypto from 'crypto'
@@ -18,6 +19,10 @@ export async function POST(request: Request) {
 
         const acesso = await autorizarOperacaoColaborador({ operacao: 'create', emailAlvo: email, roleIdNovo: roleId })
         if (!acesso.ok) return acesso.resposta
+
+        // S-PLA-01: setores do Planejamento conferidos antes de criar qualquer coisa (um 400 não deixa nada pela metade).
+        const vinculo = await resolverVinculoSetores(body)
+        if (!vinculo.ok) return vinculo.resposta
 
         const adminAuth = createAdminClient().auth
         const adminDb = createAdminClient()
@@ -81,7 +86,7 @@ export async function POST(request: Request) {
         const setupToken = crypto.randomUUID()
         const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() // 48h
 
-        const { error: colabError } = await adminDb
+        const { data: colabCriado, error: colabError } = await adminDb
             .from('colaboradores')
             .insert({
                 user_id: userId,
@@ -92,11 +97,24 @@ export async function POST(request: Request) {
                 setup_token: setupToken,
                 setup_token_expires_at: expiresAt
             })
+            .select('id')
+            .single()
 
-        if (colabError) {
+        if (colabError || !colabCriado) {
             if (createdNewAuthUser) await adminAuth.admin.deleteUser(userId)
             console.error("Erro Tabela Colaboradores:", colabError)
-            return NextResponse.json({ error: colabError.message }, { status: 500 })
+            return NextResponse.json({ error: colabError?.message || 'Erro ao cadastrar colaborador' }, { status: 500 })
+        }
+
+        // Falha no vínculo não desfaz o colaborador: o aviso volta junto da resposta e o vínculo
+        // pode ser regravado editando o colaborador.
+        let avisoSetores: string | undefined
+        if (vinculo.setores !== null) {
+            const erroVinculo = await gravarVinculoSetores(colabCriado.id, vinculo.setores)
+            if (erroVinculo) {
+                console.error("Erro vínculo de setores do Planejamento:", erroVinculo)
+                avisoSetores = 'Colaborador criado, mas os setores do Planejamento não foram gravados. Edite o colaborador para tentar de novo.'
+            }
         }
 
         // 4. Disparar E-mail usando Resend
@@ -118,15 +136,15 @@ export async function POST(request: Request) {
             if (resendError) {
                 console.error("Erro Resend:", resendError)
                 // Não damos rollback pq o usuário foi criado, apenas o e-mail falhou. Pode-se reenviar dps.
-                return NextResponse.json({ message: 'Colaborador criado, mas houve erro no envio de e-mail', setupLink }, { status: 201 })
+                return NextResponse.json({ message: 'Colaborador criado, mas houve erro no envio de e-mail', setupLink, avisoSetores }, { status: 201 })
             }
 
         } catch (mailErr) {
             console.error("Erro Resend Exceção:", mailErr)
-            return NextResponse.json({ message: 'Colaborador criado, exceção no e-mail', setupLink }, { status: 201 })
+            return NextResponse.json({ message: 'Colaborador criado, exceção no e-mail', setupLink, avisoSetores }, { status: 201 })
         }
 
-        return NextResponse.json({ message: 'Colaborador criado e convite enviado com sucesso!' }, { status: 201 })
+        return NextResponse.json({ message: 'Colaborador criado e convite enviado com sucesso!', avisoSetores }, { status: 201 })
 
     } catch (error: any) {
         console.error("Erro fatal:", error)

@@ -33,9 +33,25 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Users, Plus, Shield, Building2, Mail, Phone, Search, Loader2, Send, Trash2 } from "lucide-react"
 import { toast } from "react-hot-toast"
 import { unidadesCuca } from "@/lib/constants"
+import { corpoSetoresPlanejamento } from "@/lib/planejamento/vinculo-setores"
+
+type SetorPlanejamento = { id: string; nome: string; cor: string; ordem: number }
+
+// S-PLA-01 (AC4): etiqueta pequena na cor do setor.
+function SetorTag({ setor }: { setor: SetorPlanejamento }) {
+    return (
+        <span
+            className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+            style={{ color: setor.cor, borderColor: `${setor.cor}66`, backgroundColor: `${setor.cor}1a` }}
+        >
+            {setor.nome}
+        </span>
+    )
+}
 
 // Badge de cargo com cor semântica por perfil — funciona em dark e light
 function RoleBadge({ name }: { name?: string }) {
@@ -75,12 +91,14 @@ export default function ColaboradoresPage() {
 
     const { data: colabData, isLoading: loading } = useQuery({
         queryKey: [...COLABORADORES_KEY, profile?.id],
-        enabled: !!profile,
+        // Developer é reconhecido pelo e-mail e pode não ter cadastro de colaborador (sem `profile`).
+        enabled: !!profile || isDeveloper,
         staleTime: 60_000,
         queryFn: async () => {
-            const [cRes, rRes] = await Promise.all([
-                supabase.from("colaboradores").select("*, sys_roles(name)").order("nome_completo"),
+            const [cRes, rRes, sRes] = await Promise.all([
+                supabase.from("colaboradores").select("*, sys_roles(name), planejamento_colaborador_setores(setor_id)").order("nome_completo"),
                 supabase.from("sys_roles").select("*").order("name"),
+                supabase.from("planejamento_setores").select("id, nome, cor, ordem").order("ordem"),
             ])
             let filteredColabs = cRes.data ?? []
             if (!isDeveloper) filteredColabs = filteredColabs.filter((c: any) => c.sys_roles?.name !== "Developer")
@@ -91,12 +109,17 @@ export default function ColaboradoresPage() {
             let disponiveis = rRes.data ?? []
             if (!isDeveloper) disponiveis = disponiveis.filter((r: any) => r.name !== "Developer")
             if (!canSeeAllUnits) disponiveis = disponiveis.filter((r: any) => r.name !== "Super Admin Cuca")
-            return { colaboradores: filteredColabs, roles: disponiveis }
+            return { colaboradores: filteredColabs, roles: disponiveis, setores: (sRes.data ?? []) as SetorPlanejamento[] }
         },
     })
 
     const colaboradores: any[] = colabData?.colaboradores ?? []
     const roles: any[] = colabData?.roles ?? []
+    const setoresPlanejamento: SetorPlanejamento[] = colabData?.setores ?? []
+    const setoresDoColaborador = (colab: { planejamento_colaborador_setores?: { setor_id: string }[] | null }): SetorPlanejamento[] => {
+        const ids = new Set((colab.planejamento_colaborador_setores ?? []).map(v => v.setor_id))
+        return setoresPlanejamento.filter(s => ids.has(s.id))
+    }
     const invalidateColabs = () => qc.invalidateQueries({ queryKey: COLABORADORES_KEY })
 
     const formDataInit = {
@@ -105,9 +128,18 @@ export default function ColaboradoresPage() {
         telefone: "",
         role_id: "",
         unidade_cuca: "Geral",
-        ativo: true
+        ativo: true,
+        setores_planejamento: [] as string[]
     }
     const [formData, setFormData] = useState(formDataInit)
+    // S-PLA-01 (AC2/AC3): o campo de setores aparece para quem já pode criar/editar colaborador. Sem a lista
+    // de setores carregada, ele não aparece nem vai no corpo, e a rota mantém o vínculo atual.
+    const mostraSetores = setoresPlanejamento.length > 0
+    const campoSetores = () => corpoSetoresPlanejamento(setoresPlanejamento.length, formData.setores_planejamento)
+    const alternarSetor = (id: string, marcado: boolean) => setFormData(f => ({
+        ...f,
+        setores_planejamento: marcado ? [...f.setores_planejamento, id] : f.setores_planejamento.filter(s => s !== id),
+    }))
 
 
     const handleSave = async () => {
@@ -123,7 +155,8 @@ export default function ColaboradoresPage() {
                         telefone: formData.telefone,
                         role_id: formData.role_id,
                         unidade_cuca: formData.unidade_cuca,
-                        ativo: formData.ativo
+                        ativo: formData.ativo,
+                        ...campoSetores()
                     })
                 })
                 const data = await res.json()
@@ -138,12 +171,14 @@ export default function ColaboradoresPage() {
                         email: formData.email,
                         nome: formData.nome_completo,
                         roleId: formData.role_id,
-                        unidadeCuca: formData.unidade_cuca
+                        unidadeCuca: formData.unidade_cuca,
+                        ...campoSetores()
                     })
                 })
                 const data = await res.json()
                 if (!res.ok) throw new Error(data.error || 'Erro ao criar colaborador')
                 toast.success("Colaborador cadastrado e convite enviado!")
+                if (data.avisoSetores) toast.error(data.avisoSetores)
             }
             setIsModalOpen(false)
             setEditingColaborador(null)
@@ -208,7 +243,8 @@ export default function ColaboradoresPage() {
             telefone: colab.telefone || "",
             role_id: colab.role_id || "",
             unidade_cuca: colab.unidade_cuca || "Geral",
-            ativo: colab.ativo
+            ativo: colab.ativo,
+            setores_planejamento: setoresDoColaborador(colab).map(s => s.id)
         })
         setIsModalOpen(true)
     }
@@ -298,6 +334,26 @@ export default function ColaboradoresPage() {
                                     </Select>
                                 </div>
                             </div>
+                            {/* S-PLA-01 (AC2): setores do Planejamento 2027 — nenhum, um ou vários */}
+                            {mostraSetores && (
+                                <div className="grid gap-2">
+                                    <Label>Setores do Planejamento (opcional)</Label>
+                                    <p className="text-xs text-muted-foreground">Sem setor marcado, a pessoa atua em todos os setores. Marcando um ou mais, fica só neles.</p>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {setoresPlanejamento.map(s => (
+                                            <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                                                <Checkbox
+                                                    checked={formData.setores_planejamento.includes(s.id)}
+                                                    onCheckedChange={v => alternarSetor(s.id, v === true)}
+                                                    disabled={isSaving}
+                                                />
+                                                <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: s.cor }} />
+                                                {s.nome}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             {/* Controle de Auditoria (Acesso) */}
                             {editingColaborador && canManageStatus && (
                                 <div className="flex items-center space-x-2 pt-2 border-t mt-2">
@@ -350,6 +406,7 @@ export default function ColaboradoresPage() {
                                 <TableHead>Contato</TableHead>
                                 <TableHead>Cargo</TableHead>
                                 <TableHead>Unidade</TableHead>
+                                <TableHead>Setores (Planejamento)</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead className="text-right">Ações</TableHead>
                             </TableRow>
@@ -357,13 +414,13 @@ export default function ColaboradoresPage() {
                         <TableBody>
                             {loading ? (
                                 <TableRow>
-                                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                                         Carregando equipe...
                                     </TableCell>
                                 </TableRow>
                             ) : filteredColabs.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                                         Nenhum colaborador encontrado.
                                     </TableCell>
                                 </TableRow>
@@ -399,6 +456,13 @@ export default function ColaboradoresPage() {
                                             <div className="flex items-center gap-1 text-sm">
                                                 <Building2 className="w-4 h-4 text-muted-foreground" />
                                                 {colab.unidade_cuca}
+                                            </div>
+                                        </TableCell>
+                                        <TableCell>
+                                            <div className="flex flex-wrap gap-1 max-w-[220px]">
+                                                {setoresDoColaborador(colab).length > 0
+                                                    ? setoresDoColaborador(colab).map(s => <SetorTag key={s.id} setor={s} />)
+                                                    : setoresPlanejamento.length > 0 && <span className="text-xs text-muted-foreground">Todos os setores</span>}
                                             </div>
                                         </TableCell>
                                         <TableCell>
