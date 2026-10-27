@@ -38,6 +38,10 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/empregabilidade/link-assinado", () => ({ verificarLinkParams: () => ({ valido: true }) }))
 
 import { POST } from "./route"
+import { dataMinimaSelecaoEvento, somarDiasISO } from "@/lib/empregabilidade/data-selecao-evento"
+
+// Data calculada a partir de hoje, para o teste não vencer com a regra de antecedência mínima.
+const DATA_VALIDA = somarDiasISO(dataMinimaSelecaoEvento(), 5)
 
 function requisicao(corpo: Record<string, unknown>) {
     return new NextRequest("http://localhost/api/empregabilidade/selecao", {
@@ -45,7 +49,7 @@ function requisicao(corpo: Record<string, unknown>) {
         body: JSON.stringify({
             empresa_id: "e1",
             cargos_lista: [{ titulo: "Repositor", quantidade: 2, faixa_etaria: "A partir de 14 anos" }],
-            datas_selecao: [{ data: "2026-10-30", hora: "08:00" }],
+            datas_selecao: [{ data: DATA_VALIDA, hora: "08:00" }],
             ...corpo,
         }),
     })

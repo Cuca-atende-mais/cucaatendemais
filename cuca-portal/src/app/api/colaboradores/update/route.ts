@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { autorizarOperacaoColaborador } from '@/lib/auth/colaboradores-acesso-server'
+import { gravarVinculoSetores, resolverVinculoSetores } from '@/lib/planejamento/vinculo-setores-server'
 
 export async function POST(request: Request) {
     try {
@@ -35,6 +36,10 @@ export async function POST(request: Request) {
         })
         if (!acesso.ok) return acesso.resposta
 
+        // S-PLA-01: setores do Planejamento conferidos antes de gravar qualquer coisa.
+        const vinculo = await resolverVinculoSetores(body)
+        if (!vinculo.ok) return vinculo.resposta
+
         const user_id = alvo.user_id
 
         // 1. Atualizar a tabela de colaboradores
@@ -68,6 +73,15 @@ export async function POST(request: Request) {
         if (authError) {
             console.error("Erro ao banir/desbanir no auth:", authError)
             return NextResponse.json({ error: authError.message }, { status: 500 })
+        }
+
+        // A edição é idempotente: se o vínculo falhar, salvar de novo regrava o conjunto inteiro.
+        if (vinculo.setores !== null) {
+            const erroVinculo = await gravarVinculoSetores(alvo.id, vinculo.setores)
+            if (erroVinculo) {
+                console.error("Erro vínculo de setores do Planejamento:", erroVinculo)
+                return NextResponse.json({ error: 'Colaborador atualizado, mas os setores do Planejamento não foram gravados. Tente salvar de novo.' }, { status: 500 })
+            }
         }
 
         return NextResponse.json({ message: 'Colaborador atualizado com sucesso!' }, { status: 200 })

@@ -32,6 +32,7 @@ import { ACOES_CRUD, GRUPOS_PROGRAMACAO_MENSAL, type CampoPermissao, type GrupoP
 import { GRUPOS_PROGRAMACAO_PONTUAL } from "@/lib/rbac/catalogo-programacao-pontual"
 import { GRUPOS_DIVULGACAO_RAG_GLOBAL, completarVerDivulgacao } from "@/lib/rbac/catalogo-divulgacao-rag-global"
 import { GRUPOS_EMPREGABILIDADE_GESTAO } from "@/lib/rbac/catalogo-empregabilidade-gestao"
+import { GRUPOS_PLANEJAMENTO } from "@/lib/rbac/catalogo-planejamento"
 import { limitarAcoes, linhaCompleta, marcarCampo, marcarLinha } from "@/lib/rbac/matriz-permissoes"
 import { Skeleton } from "@/components/ui/skeleton"
 
@@ -108,6 +109,8 @@ const MODULE_GROUPS: GrupoPermissao[] = [
             { id: 'ae_transbordo_config', label: 'Academia Enem: Configuração de Transbordo' },
         ]
     },
+    // S-PLA-01: Planejamento 2027, uma permissão por ação, nascendo desmarcadas.
+    ...GRUPOS_PLANEJAMENTO,
     {
         category: 'Administração & Sistema',
         modules: [
