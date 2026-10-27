@@ -1,11 +1,11 @@
 "use client"
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import Link from "next/link"
-import { AlertTriangle, CheckCircle2, Clock, ExternalLink, Loader2, Lock, MessageSquareReply, RotateCcw, Save, Send } from "lucide-react"
+import { AlertTriangle, ArrowLeft, CheckCircle2, Clock, ExternalLink, Loader2, Lock, MessageSquareReply, RotateCcw, Save, Send } from "lucide-react"
 import toast from "react-hot-toast"
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/lib/auth/user-provider"
@@ -33,12 +33,17 @@ import {
     textoConfirmacaoLote,
     vagaEntraNoSeletor,
 } from "@/lib/empregabilidade/feedback-tela"
-import { VALIDADE_LINK_HORAS, rotuloStatusEnvio, statusFeedback, type StatusFeedback } from "@/lib/empregabilidade/feedback-solicitacao"
+import { VALIDADE_LINK_HORAS, rotuloStatusEnvio } from "@/lib/empregabilidade/feedback-solicitacao"
 import { diasSemResposta, podeReenviar, taxaRetorno, textoSelo } from "@/lib/empregabilidade/feedback-retorno"
+import { COR_ENVIO, rotuloFeedback } from "@/lib/empregabilidade/feedback-rotulos"
+import { urlFeedback } from "@/lib/empregabilidade/feedback-lista"
+import { FeedbackListaTabela } from "@/components/empregabilidade/feedback-lista-tabela"
 
 // S-EMP-GES-01: tela Feedback — escolher empresa e vaga/seleção, ver os candidatos enviados (ou os
 // inscritos, na seleção), mudar status um a um ou em lote e manter o contato da vaga. Tudo na página,
 // sem janela por cima (D6). Leitura com o cliente do usuário (RLS); escrita só pelas rotas do servidor.
+// S-EMP-GES-08: dois modos pela URL — sem `?vaga` mostra a lista dos feedbacks enviados (filtrada por
+// `?empresa`); com `?vaga` mostra o detalhe acima, sem a lista e com "Voltar para a lista".
 
 const ROTULO_STATUS_VAGA: Record<string, string> = {
     aberta: "Aberta",
@@ -110,31 +115,6 @@ interface PedidoEmpresa {
     situacao: string | null
 }
 
-const COR_ENVIO: Record<string, string> = {
-    pendente: "bg-slate-100 text-slate-700 border-slate-300",
-    enviado: "bg-sky-100 text-sky-800 border-sky-300",
-    entregue: "bg-blue-100 text-blue-800 border-blue-300",
-    lido: "bg-emerald-100 text-emerald-800 border-emerald-300",
-    falhou: "bg-rose-100 text-rose-800 border-rose-300",
-    aviso: "bg-amber-100 text-amber-900 border-amber-300",
-    apagada: "bg-slate-100 text-slate-700 border-slate-300",
-}
-
-const ROTULO_FEEDBACK: Record<StatusFeedback, string> = {
-    aguardando: "Aguardando",
-    expirado: "Expirado",
-    respondido: "Respondido",
-    nao_enviado: "Não enviado",
-    em_analise: "Empresa sinalizou: em análise",
-    substituida: "Substituída",
-}
-
-function rotuloFeedback(s: Solicitacao): string {
-    const st = statusFeedback(s)
-    if (st === "respondido" && s.respondido_em) return `Respondido em ${format(new Date(s.respondido_em), "dd/MM", { locale: ptBR })}`
-    return ROTULO_FEEDBACK[st]
-}
-
 const PAGINA = 1000
 const INTERVALO_ACOMPANHAMENTO_MS = 15_000
 
@@ -176,8 +156,16 @@ function FeedbackConteudo() {
 
     const [vagas, setVagas] = useState<VagaOpcao[]>([])
     const [carregandoVagas, setCarregandoVagas] = useState(true)
-    const [empresaId, setEmpresaId] = useState<string>("")
-    const [vagaId, setVagaId] = useState<string>(searchParams.get("vaga") ?? "")
+    // GES-08 (AC8): vaga e filtro de empresa vêm sempre da URL, para voltar/avançar do navegador,
+    // "Voltar para a lista" e link externo trocarem de modo corretamente.
+    const vagaId = searchParams.get("vaga") ?? ""
+    const empresaFiltro = searchParams.get("empresa") ?? ""
+
+    // Vaga aberta agora. Resposta que chega de uma vaga que já não está aberta é descartada, para a
+    // tela da vaga Y nunca mostrar (nem salvar) contato, candidatos ou pedidos da vaga X (QA GES-08).
+    // Este efeito vem antes dos de carga, então o valor já está atualizado quando eles rodam.
+    const vagaAtualRef = useRef(vagaId)
+    useEffect(() => { vagaAtualRef.current = vagaId }, [vagaId])
 
     const [vaga, setVaga] = useState<VagaDetalhe | null>(null)
     const [candidatos, setCandidatos] = useState<CandidatoLinha[]>([])
@@ -261,6 +249,9 @@ function FeedbackConteudo() {
         return Array.from(mapa.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"))
     }, [vagas])
 
+    // No detalhe, a empresa do seletor vem sempre da vaga aberta (AC8); na lista, do filtro `?empresa`.
+    const empresaId = vagaId ? (vagas.find(v => v.id === vagaId)?.empresa_id ?? "") : empresaFiltro
+
     const vagasDaEmpresa = useMemo(() => vagas.filter(v => v.empresa_id === empresaId), [vagas, empresaId])
 
     // Taxa de retorno da empresa (GES-03, AC10). Leitura pela RLS de epm_feedback_ver.
@@ -282,13 +273,6 @@ function FeedbackConteudo() {
         return () => { cancelado = true }
     }, [empresaId, podeVer, supabase, solicitacoes.length])
 
-    // ?vaga=<id> abre já selecionado (AC2).
-    useEffect(() => {
-        if (!vagaId || empresaId) return
-        const v = vagas.find(x => x.id === vagaId)
-        if (v?.empresa_id) setEmpresaId(v.empresa_id)
-    }, [vagas, vagaId, empresaId])
-
     const carregarVaga = useCallback(async (id: string) => {
         setCarregandoLista(true)
         setMarcados(new Set())
@@ -309,6 +293,7 @@ function FeedbackConteudo() {
                     .eq("vaga_id", id)
                     .order("nome"),
             ])
+            if (vagaAtualRef.current !== id) return
             if (vErr) throw vErr
             if (cErr) throw cErr
             if (!v) {
@@ -325,14 +310,18 @@ function FeedbackConteudo() {
             })
             setCandidatos(((cands ?? []) as CandidatoLinha[]).filter(c => candidatoEntraNaLista(detalhe.tipo, c)))
         } catch (err) {
+            if (vagaAtualRef.current !== id) return
             console.error("[feedback] Erro ao carregar candidatos:", err)
             toast.error("Erro ao carregar os candidatos.")
         } finally {
-            setCarregandoLista(false)
+            if (vagaAtualRef.current === id) setCarregandoLista(false)
         }
     }, [supabase])
 
+    // Trocar de vaga (ou voltar para a lista) limpa o que era da vaga anterior antes de carregar a nova.
     useEffect(() => {
+        setVaga(null)
+        setCandidatos([])
         if (vagaId && podeVer) carregarVaga(vagaId)
     }, [vagaId, podeVer, carregarVaga])
 
@@ -342,6 +331,7 @@ function FeedbackConteudo() {
             const res = await fetch(`/api/empregabilidade/feedback/solicitacoes?vaga=${id}`)
             if (!res.ok) return
             const data = await res.json()
+            if (vagaAtualRef.current !== id) return
             setSolicitacoes((data.solicitacoes ?? []) as Solicitacao[])
         } catch (err) {
             console.error("[feedback] Erro ao carregar o acompanhamento:", err)
@@ -356,17 +346,22 @@ function FeedbackConteudo() {
         return () => clearInterval(t)
     }, [vagaId, podeVer, carregarSolicitacoes])
 
+    // GES-08: escolher a empresa volta para a lista filtrada por ela (AC5).
     const escolherEmpresa = (id: string) => {
-        setEmpresaId(id)
-        setVagaId("")
-        setVaga(null)
-        setCandidatos([])
-        router.replace("/empregabilidade/feedback")
+        router.push(urlFeedback({ empresa: id }))
     }
 
-    const escolherVaga = (id: string) => {
-        setVagaId(id)
-        router.replace(`/empregabilidade/feedback?vaga=${id}`)
+    // Abrir uma vaga (seletor ou linha da lista) guarda o filtro da lista, para o Voltar (AC6, AC7).
+    const abrirVaga = (id: string) => {
+        router.push(urlFeedback({ empresa: empresaFiltro, vaga: id }))
+    }
+
+    const voltarParaLista = () => {
+        router.push(urlFeedback({ empresa: empresaFiltro }))
+    }
+
+    const verTodas = () => {
+        router.push(urlFeedback())
     }
 
     const ehSelecao = vaga?.tipo === "selecao_evento"
@@ -524,14 +519,24 @@ function FeedbackConteudo() {
 
     return (
         <div className="space-y-6">
-            <div>
-                <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
-                    <MessageSquareReply className="h-7 w-7 text-cuca-blue" />
-                    Feedback das empresas
-                </h1>
-                <p className="text-muted-foreground mt-1">
-                    Escolha a empresa e a vaga ou seleção para ver os candidatos enviados e registrar o resultado.
-                </p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
+                        <MessageSquareReply className="h-7 w-7 text-cuca-blue" />
+                        Feedback das empresas
+                    </h1>
+                    <p className="text-muted-foreground mt-1">
+                        {vagaId
+                            ? "Candidatos enviados, status e pedidos de feedback desta vaga ou seleção."
+                            : "Acompanhe os feedbacks enviados ou escolha a empresa e a vaga ou seleção para registrar o resultado."}
+                    </p>
+                </div>
+                {vagaId && (
+                    <Button variant="outline" className="gap-2" onClick={voltarParaLista}>
+                        <ArrowLeft className="h-4 w-4" />
+                        Voltar para a lista
+                    </Button>
+                )}
             </div>
 
             <Card>
@@ -551,7 +556,7 @@ function FeedbackConteudo() {
                     </div>
                     <div className="grid gap-2 min-w-0">
                         <Label>Vaga ou seleção</Label>
-                        <Select value={vagaId} onValueChange={escolherVaga} disabled={!empresaId}>
+                        <Select value={vagaId} onValueChange={abrirVaga} disabled={!empresaId}>
                             <SelectTrigger>
                                 <SelectValue placeholder="Selecione a vaga ou seleção" />
                             </SelectTrigger>
@@ -564,12 +569,17 @@ function FeedbackConteudo() {
                             </SelectContent>
                         </Select>
                     </div>
-                    {empresaId && taxa && (
-                        <p className="text-sm text-muted-foreground md:col-span-2">
-                            {taxa.enviadas === 0
-                                ? "Nenhum pedido de feedback enviado a esta empresa ainda."
-                                : `Respondeu ${taxa.respondidas} de ${taxa.enviadas} ${taxa.enviadas === 1 ? "solicitação" : "solicitações"} (${taxa.percentual}%).`}
-                        </p>
+                    {((empresaId && taxa) || (!vagaId && empresaFiltro)) && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 md:col-span-2">
+                            <p className="text-sm text-muted-foreground">
+                                {empresaId && taxa && (taxa.enviadas === 0
+                                    ? "Nenhum pedido de feedback enviado a esta empresa ainda."
+                                    : `Respondeu ${taxa.respondidas} de ${taxa.enviadas} ${taxa.enviadas === 1 ? "solicitação" : "solicitações"} (${taxa.percentual}%).`)}
+                            </p>
+                            {!vagaId && empresaFiltro && (
+                                <Button variant="ghost" size="sm" onClick={verTodas}>Ver todas</Button>
+                            )}
+                        </div>
                     )}
                     {!carregandoVagas && empresas.length === 0 && (
                         <p className="text-sm text-muted-foreground md:col-span-2">
@@ -578,6 +588,8 @@ function FeedbackConteudo() {
                     )}
                 </CardContent>
             </Card>
+
+            {!vagaId && <FeedbackListaTabela empresaId={empresaFiltro} onAbrir={abrirVaga} />}
 
             {vagaId && vaga && (
                 <Card>
