@@ -85,6 +85,15 @@ export const menuItems = [
         ],
     },
     {
+        // S-PLA-02: o grupo só aparece com pelo menos um item visível.
+        title: "Planejamento 2027",
+        url: "/planejamento",
+        icon: "ClipboardList",
+        items: [
+            { title: "Projetos", url: "/planejamento", permission: { recurso: "pla_proj_ver", acao: "read" } },
+        ],
+    },
+    {
         title: "Divulgação",
         url: "/divulgacao",
         icon: "Radio",

@@ -16,6 +16,7 @@ import {
     Megaphone,
     Radio,
     GraduationCap,
+    ClipboardList,
     ChevronRight,
 } from "lucide-react"
 import {
@@ -53,6 +54,7 @@ const iconMap = {
     Megaphone,
     Radio,
     GraduationCap,
+    ClipboardList,
 }
 
 // Categorização dos módulos
