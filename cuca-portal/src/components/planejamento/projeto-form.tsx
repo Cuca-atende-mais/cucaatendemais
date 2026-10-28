@@ -25,7 +25,7 @@ import { PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
 import {
     ANO_PLANEJAMENTO, CATEGORIAS_ORCAMENTO, FREQUENCIAS, SECOES, SITUACOES_2026, TIPOS_PROJETO, ULTIMA_SECAO,
     bloco2026Visivel, camposDaSituacao, corStatus, errosDeValidacao, formDeLinha, formVazio, formatarReais, mensagemObrigatorios,
-    mostrarSalvarProjeto, obrigatoriosFaltando, percentualPreenchido, primeiraSecaoIncompleta, secoesVisiveis,
+    mostrarSalvarProjeto, nomePadraoResponsavel, obrigatoriosFaltando, percentualPreenchido, primeiraSecaoIncompleta, secoesVisiveis,
     rotuloStatus, sugerirDuracao, totalLinhaOrcamento, totalOrcamento,
     type EstadoFicha, type FormProjeto, type IdSecao, type ModoGravacao, type StatusProjeto, type TipoProjeto,
 } from "@/lib/planejamento/projeto"
@@ -109,7 +109,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                     const telefone = user ? await carregarTelefoneDoUsuario(supabase, user.id) : ""
                     if (cancelado) return
                     const inicial = formVazio({
-                        responsavel_nome: profile?.nome_completo ?? "",
+                        responsavel_nome: nomePadraoResponsavel(profile?.nome_completo, user?.email),
                         responsavel_contato: telefone,
                         setor_id: permitidos.length === 1 ? permitidos[0].id : "",
                     })

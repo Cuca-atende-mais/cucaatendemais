@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
     bloco2026Visivel, camposDaSituacao, dataNoAno, errosDeValidacao, fichaAposGravacao, formDeLinha, formVazio,
-    mensagemObrigatorios, mostrarSalvarProjeto, mostrarSeloFichaEmConstrucao, obrigatoriosFaltando, payloadDoForm,
+    mensagemObrigatorios, mostrarSalvarProjeto, nomePadraoResponsavel, mostrarSeloFichaEmConstrucao, obrigatoriosFaltando, payloadDoForm,
     percentualPreenchido, primeiraSecaoIncompleta, secoesVisiveis, statusAposGravacao, sugerirDuracao,
     textoBRParaNumero, totalLinhaOrcamento, totalOrcamento, STATUS_MANUAIS,
     type FormProjeto, type LinhaProjeto,
@@ -160,6 +160,21 @@ describe("datas e números", () => {
         expect(errosDeValidacao(formCompleto({ participantes_estimados: "" }))).toEqual([])
     })
 
+    it("números acima do que o banco aceita viram aviso claro antes de gravar", () => {
+        expect(errosDeValidacao(formCompleto({ participantes_estimados: "2147483647" }))).toEqual([])
+        expect(errosDeValidacao(formCompleto({ participantes_estimados: "2147483648" })).map(e => e.mensagem))
+            .toEqual(["Nº estimado de participantes: número alto demais. Confira o valor digitado."])
+        expect(errosDeValidacao(formCompleto({ resultados_2026_participantes: "99999999999" }))).toHaveLength(1)
+
+        const linha = (quantidade: string, valor_unitario: string) => formCompleto({ orcamento: [{ item: "x", categoria: "", quantidade, valor_unitario }] })
+        expect(errosDeValidacao(linha("1", "9.999.999.999,99"))).toEqual([])
+        expect(errosDeValidacao(linha("1", "10.000.000.000,00")).map(e => e.campo)).toEqual(["orcamento.0.valor_unitario"])
+        expect(errosDeValidacao(linha("10.000.000.000", "1")).map(e => e.campo)).toEqual(["orcamento.0.quantidade"])
+        expect(errosDeValidacao(linha("1.000.000", "1.000.000,00")).map(e => e.mensagem))
+            .toEqual(["Orçamento, linha 1: valor total alto demais. Confira quantidade e valor unitário."])
+        expect(errosDeValidacao(linha("1.000", "999.999.999,99"))).toEqual([])
+    })
+
     it("duração sugerida a partir das datas", () => {
         expect(sugerirDuracao("2027-03-01", "2027-03-01", false)).toBe("1 dia")
         expect(sugerirDuracao("2027-03-01", "2027-03-05", false)).toBe("5 dias")
@@ -168,6 +183,15 @@ describe("datas e números", () => {
         expect(sugerirDuracao("2027-01-01", "2027-12-31", false)).toBe("12 meses")
         expect(sugerirDuracao("", "", true)).toBe("Ano todo")
         expect(sugerirDuracao("2027-05-01", "2027-03-01", false)).toBe("")
+    })
+})
+
+describe("responsável padrão", () => {
+    it("nome do colaborador; sem cadastro (contas Developer), o e-mail de login", () => {
+        expect(nomePadraoResponsavel("Ana Souza", "ana@x.com")).toBe("Ana Souza")
+        expect(nomePadraoResponsavel(null, "dev.cucaatendemais@gmail.com")).toBe("dev.cucaatendemais@gmail.com")
+        expect(nomePadraoResponsavel("  ", "valmir@cucateste.com")).toBe("valmir@cucateste.com")
+        expect(nomePadraoResponsavel(undefined, undefined)).toBe("")
     })
 })
 

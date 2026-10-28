@@ -76,6 +76,9 @@ export function mensagemDeErro(mensagem: string): string {
     if (mensagem.includes("planejamento_projetos_datas_ano_ck")) return "As datas precisam ser de 2027."
     if (mensagem.includes("planejamento_projetos_datas_ordem_ck")) return "O fim não pode ser antes do início."
     if (mensagem.includes("planejamento_projetos_faixa_ck")) return "Faixa etária: o \"de\" não pode ser maior que o \"até\"."
+    if (mensagem.includes("out of range") || mensagem.includes("numeric field overflow")) {
+        return "Algum número está alto demais. Confira participantes, quantidades e valores."
+    }
     if (mensagem.includes("invalid input syntax")) return "Algum número ou data está em formato inválido."
     if (mensagem.includes("violates check constraint")) return "Algum valor está fora do permitido. Confira números e datas."
     if (mensagem.toLowerCase().includes("failed to fetch")) return "Sem conexão com o servidor. Nada foi perdido: tente salvar de novo."

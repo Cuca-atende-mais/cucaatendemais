@@ -383,6 +383,14 @@ export function primeiraSecaoIncompleta(form: FormProjeto): IdSecao | null {
 
 // ── Obrigatórios, validação e botão "Salvar projeto" (AC6, AC7) ───────────────────────────────
 
+// "Responsável pelo projeto" vem com o nome de quem cria. Sem cadastro de colaborador (as contas
+// Developer), usa o e-mail de login, o mesmo que o banco grava como autor (`pla_nome_usuario`).
+export function nomePadraoResponsavel(nomeColaborador: string | null | undefined, email: string | null | undefined): string {
+    const nome = (nomeColaborador ?? "").trim()
+    if (nome) return nome
+    return (email ?? "").trim()
+}
+
 export function obrigatoriosFaltando(form: FormProjeto): string[] {
     const faltam: string[] = []
     if (!cheio(form.nome)) faltam.push("nome do projeto")
@@ -412,6 +420,12 @@ export function dataNoAno(data: string, ano = ANO_PLANEJAMENTO): boolean {
 
 const RE_INTEIRO = /^\d+$/
 
+// Limites das colunas do banco (integer; numeric(12,2) nos valores; numeric(14,2) no total da linha).
+// Acima deles o banco recusaria com mensagem técnica; a tela avisa antes, em texto claro.
+export const LIMITE_INTEIRO = 2_147_483_647
+export const LIMITE_VALOR = 9_999_999_999.99
+export const LIMITE_TOTAL_LINHA = 999_999_999_999.99
+
 export type ErroCampo = { campo: string; mensagem: string }
 
 // Erros que impedem gravar (o banco recusaria). Campo vazio não é erro.
@@ -421,6 +435,8 @@ export function errosDeValidacao(form: FormProjeto, ano = ANO_PLANEJAMENTO): Err
         if (!cheio(valor)) return
         if (!RE_INTEIRO.test(valor.trim()) || (max !== undefined && Number(valor) > max)) {
             erros.push({ campo, mensagem: `${rotulo}: use um número inteiro${max !== undefined ? ` de 0 a ${max}` : " a partir de 0"}.` })
+        } else if (Number(valor) > LIMITE_INTEIRO) {
+            erros.push({ campo, mensagem: `${rotulo}: número alto demais. Confira o valor digitado.` })
         }
     }
     inteiro("faixa_etaria_min", form.faixa_etaria_min, "Faixa etária (de)", 120)
@@ -445,6 +461,13 @@ export function errosDeValidacao(form: FormProjeto, ano = ANO_PLANEJAMENTO): Err
         const v = textoBRParaNumero(l.valor_unitario)
         if (q !== null && (Number.isNaN(q) || q < 0)) erros.push({ campo: `orcamento.${i}.quantidade`, mensagem: `Orçamento, linha ${i + 1}: quantidade inválida.` })
         if (v !== null && (Number.isNaN(v) || v < 0)) erros.push({ campo: `orcamento.${i}.valor_unitario`, mensagem: `Orçamento, linha ${i + 1}: valor unitário inválido.` })
+        const qOk = q !== null && !Number.isNaN(q) && q >= 0
+        const vOk = v !== null && !Number.isNaN(v) && v >= 0
+        if (qOk && q > LIMITE_VALOR) erros.push({ campo: `orcamento.${i}.quantidade`, mensagem: `Orçamento, linha ${i + 1}: quantidade alta demais. Confira o valor digitado.` })
+        if (vOk && v > LIMITE_VALOR) erros.push({ campo: `orcamento.${i}.valor_unitario`, mensagem: `Orçamento, linha ${i + 1}: valor unitário alto demais. Confira o valor digitado.` })
+        if (qOk && vOk && q <= LIMITE_VALOR && v <= LIMITE_VALOR && q * v > LIMITE_TOTAL_LINHA) {
+            erros.push({ campo: `orcamento.${i}.valor_unitario`, mensagem: `Orçamento, linha ${i + 1}: valor total alto demais. Confira quantidade e valor unitário.` })
+        }
     })
     return erros
 }
