@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation"
 import toast from "react-hot-toast"
-import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, FileDown, Loader2, Lock, Maximize, Pencil, Play, X } from "lucide-react"
+import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, FileDown, Loader2, Lock, Maximize, Pencil, Play, SkipForward, X } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/lib/auth/user-provider"
 import { cn } from "@/lib/utils"
@@ -14,14 +14,22 @@ import { Aviso } from "@/components/planejamento/projeto-form"
 import { SlideTela } from "@/components/planejamento/slide-tela"
 import { exportarSlidesPdf } from "@/components/planejamento/exportar-pdf"
 import { PLA_APRES, PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
+import { ANO_PLANEJAMENTO } from "@/lib/planejamento/projeto"
 import {
     MENSAGEM_FICHA_PARCIAL, PARAMETRO_APRESENTAR, acaoDaTecla, montarSlides, navegar, type Apresentacao, type DadosSlides,
 } from "@/lib/planejamento/slides"
 import { carregarProjeto, carregarSetores, carregarUnidades } from "@/lib/planejamento/projeto-dados"
+import {
+    PARAMETRO_ENCERRADOS, PARAMETRO_PAUTA, mensagemProximoSemSlides, montarPauta, proximoNaPauta, urlApresentarDaPauta, urlPauta,
+    type BlocoPauta, type ItemPauta,
+} from "@/lib/planejamento/pauta"
+import { carregarPauta } from "@/lib/planejamento/pauta-dados"
 
 // S-PLA-05 (AC1, AC2, AC2a, AC6, AC7): página dos slides do projeto. Gerados na hora a partir da ficha
 // gravada (nada é guardado). Ficha parcial: nenhum slide, só o alerta, inclusive aberta direto pelo
 // endereço do modo apresentar. Os dados vêm da mesma leitura do projeto (RLS de setor da S-PLA-02).
+// S-PLA-06 (AC4): aberto a partir da pauta (`?pauta=1`), o último slide oferece o "Próximo projeto"
+// (atalho N) e o Esc volta para a pauta. Aberto sozinho, continua como na S-PLA-05.
 
 type Estado = { fase: "carregando" } | { fase: "nao_encontrado" } | { fase: "erro"; mensagem: string } | { fase: "pronto"; dados: DadosSlides }
 
@@ -40,8 +48,14 @@ export function ApresentacaoProjeto() {
     const podePdf = hasPermission(PLA_APRES.slidesPdf, "read")
     const podeEditar = hasPermission(PLA_PROJ.editar, "read")
 
-    const [estado, setEstado] = useState<Estado>({ fase: "carregando" })
-    const [atual, setAtual] = useState(0)
+    // Estado e slide atual valem para o projeto do endereço: ao passar para o próximo projeto da pauta,
+    // a página não mostra os slides do anterior nem começa no meio.
+    const [carga, setCarga] = useState<{ id: string; estado: Estado } | null>(null)
+    const estado = useMemo<Estado>(() => (carga?.id === id ? carga.estado : { fase: "carregando" }), [carga, id])
+    const setEstado = useCallback((e: Estado) => setCarga({ id, estado: e }), [id])
+    const [atualPorId, setAtualPorId] = useState<{ id: string; i: number }>({ id, i: 0 })
+    const atual = atualPorId.id === id ? atualPorId.i : 0
+    const setAtual = useCallback((i: number) => setAtualPorId({ id, i }), [id])
     const [exportando, setExportando] = useState(false)
     const topo = useRef<HTMLDivElement>(null)
 
@@ -60,7 +74,23 @@ export function ApresentacaoProjeto() {
             }
         })()
         return () => { cancelado = true }
-    }, [carregandoUsuario, podeVer, id, supabase])
+    }, [carregandoUsuario, podeVer, id, supabase, setEstado])
+
+    // Pauta (S-PLA-06): só quando o modo apresentar veio da página Apresentações.
+    const daPauta = searchParams.get(PARAMETRO_PAUTA) === "1"
+    const encerrados = searchParams.get(PARAMETRO_ENCERRADOS) === "1"
+    const [blocosPauta, setBlocosPauta] = useState<BlocoPauta[] | null>(null)
+    useEffect(() => {
+        if (carregandoUsuario || !podeVer || !daPauta) return
+        let cancelado = false
+        Promise.all([carregarSetores(supabase), carregarPauta(supabase, ANO_PLANEJAMENTO)])
+            .then(([setores, d]) => {
+                if (!cancelado) setBlocosPauta(montarPauta({ setores, projetos: d.projetos, posicoesSetores: d.posicoesSetores, posicoesProjetos: d.posicoesProjetos, mostrarEncerrados: encerrados }))
+            })
+            .catch(() => { if (!cancelado) setBlocosPauta([]) })
+        return () => { cancelado = true }
+    }, [carregandoUsuario, podeVer, daPauta, encerrados, supabase])
+    const proximo = daPauta && blocosPauta ? proximoNaPauta(blocosPauta, id) : null
 
     const resultado = useMemo(() => (estado.fase === "pronto" ? montarSlides(estado.dados, "tela") : null), [estado])
     const apresentacao = resultado?.tipo === "ok" ? resultado : null
@@ -73,8 +103,12 @@ export function ApresentacaoProjeto() {
 
     const sair = useCallback(() => {
         if (typeof document !== "undefined" && document.fullscreenElement) document.exitFullscreen().catch(() => undefined)
-        router.replace(pathname, { scroll: false })
-    }, [router, pathname])
+        // replace: a saída da tela cheia avisa de novo (fullscreenchange) e não deve empilhar a pauta
+        // duas vezes no histórico, nem o "voltar" reabrir a apresentação.
+        if (daPauta) router.replace(urlPauta(encerrados))
+        else router.replace(pathname, { scroll: false })
+    }, [router, pathname, daPauta, encerrados])
+    const abrirDaPauta = useCallback((projetoId: string) => router.push(urlApresentarDaPauta(projetoId, encerrados)), [router, encerrados])
 
     // O clique em "Apresentar" é o gesto que o navegador exige para a tela cheia.
     const apresentar = () => {
@@ -177,7 +211,16 @@ export function ApresentacaoProjeto() {
                 ))}
             </div>
 
-            {apresentando && <ModoApresentar apresentacao={apresentacao} inicial={indice} onSair={sair} onIndice={setAtual} />}
+            {apresentando && (
+                <ModoApresentar
+                    key={id}
+                    apresentacao={apresentacao}
+                    inicial={indice}
+                    onSair={sair}
+                    onIndice={setAtual}
+                    pauta={daPauta ? { proximo: proximo?.proximo ?? null, comSlides: proximo?.comSlides ?? null, carregando: blocosPauta === null, abrir: abrirDaPauta } : undefined}
+                />
+            )}
         </div>
     )
 }
@@ -186,8 +229,10 @@ export function ApresentacaoProjeto() {
 
 const CURSOR_SOME_EM_MS = 2500
 
-function ModoApresentar({ apresentacao, inicial, onSair, onIndice }: {
-    apresentacao: Apresentacao; inicial: number; onSair: () => void; onIndice: (i: number) => void
+type PautaNoModo = { proximo: ItemPauta | null; comSlides: ItemPauta | null; carregando: boolean; abrir: (projetoId: string) => void }
+
+function ModoApresentar({ apresentacao, inicial, onSair, onIndice, pauta }: {
+    apresentacao: Apresentacao; inicial: number; onSair: () => void; onIndice: (i: number) => void; pauta?: PautaNoModo
 }) {
     const total = apresentacao.slides.length
     const [i, setI] = useState(inicial)
@@ -200,8 +245,18 @@ function ModoApresentar({ apresentacao, inicial, onSair, onIndice }: {
 
     // Teclado: setas e espaço navegam, Esc sai (em tela cheia, o Esc do navegador sai da tela cheia
     // e o aviso de "fullscreenchange" abaixo fecha o modo).
+    // N (S-PLA-06): próximo projeto da pauta. Se ele não tem slides, o primeiro N leva ao último slide,
+    // onde aparece o aviso; o segundo pula para o seguinte que tem slides.
+    const avancarProjeto = useCallback(() => {
+        if (!pauta?.proximo) return
+        if (!pauta.proximo.semSlides) pauta.abrir(pauta.proximo.projeto.id)
+        else if (i !== total - 1) ir(total - 1)
+        else if (pauta.comSlides) pauta.abrir(pauta.comSlides.projeto.id)
+    }, [pauta, i, total, ir])
+
     useEffect(() => {
         const aoTeclar = (e: KeyboardEvent) => {
+            if (pauta && (e.key === "n" || e.key === "N")) { e.preventDefault(); avancarProjeto(); return }
             const acao = acaoDaTecla(e.key)
             if (!acao) return
             e.preventDefault()
@@ -210,7 +265,7 @@ function ModoApresentar({ apresentacao, inicial, onSair, onIndice }: {
         }
         window.addEventListener("keydown", aoTeclar)
         return () => window.removeEventListener("keydown", aoTeclar)
-    }, [i, total, ir, onSair])
+    }, [i, total, ir, onSair, pauta, avancarProjeto])
 
     useEffect(() => {
         const aoMudar = () => {
@@ -266,10 +321,42 @@ function ModoApresentar({ apresentacao, inicial, onSair, onIndice }: {
                 <Button size="sm" variant="secondary" onClick={onSair}><X className="mr-1 h-4 w-4" /> Sair (Esc)</Button>
             </div>
 
+            {pauta && i === total - 1 && <ProximoDaPauta pauta={pauta} />}
+
             <span className="absolute bottom-3 right-4 text-sm tabular-nums text-white/70">{i + 1} / {total}</span>
             <div className="absolute inset-x-0 bottom-0 h-1 bg-white/15">
                 <div className="h-full transition-all" style={{ width: `${((i + 1) / total) * 100}%`, background: apresentacao.cor }} />
             </div>
+        </div>
+    )
+}
+
+// Último slide aberto a partir da pauta (S-PLA-06, AC4).
+function ProximoDaPauta({ pauta }: { pauta: PautaNoModo }) {
+    const parar = (e: React.MouseEvent) => e.stopPropagation()
+    if (pauta.carregando) return null
+    return (
+        <div className="absolute bottom-8 left-1/2 flex max-w-[90vw] -translate-x-1/2 flex-wrap items-center justify-center gap-2" onClick={parar}>
+            {!pauta.proximo ? (
+                <span className="rounded-md bg-white/10 px-3 py-2 text-sm text-white/80">Fim da pauta · Esc volta para a pauta</span>
+            ) : !pauta.proximo.semSlides ? (
+                <Button size="lg" onClick={() => pauta.abrir(pauta.proximo!.projeto.id)}>
+                    <SkipForward className="mr-2 h-4 w-4" /> Próximo projeto: {pauta.proximo.projeto.nome}
+                    <kbd className="ml-2 rounded border border-white/40 px-1.5 text-xs">N</kbd>
+                </Button>
+            ) : (
+                <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <span>{mensagemProximoSemSlides(pauta.proximo.projeto.nome)}</span>
+                    {pauta.comSlides ? (
+                        <Button size="sm" onClick={() => pauta.abrir(pauta.comSlides!.projeto.id)}>
+                            <SkipForward className="mr-1 h-4 w-4" /> Pular para: {pauta.comSlides.projeto.nome}
+                        </Button>
+                    ) : (
+                        <span className="text-amber-800">Não há outro projeto com slides depois dele na pauta.</span>
+                    )}
+                </div>
+            )}
         </div>
     )
 }

@@ -91,6 +91,8 @@ export const menuItems = [
         icon: "ClipboardList",
         items: [
             { title: "Projetos", url: "/planejamento", permission: { recurso: "pla_proj_ver", acao: "read" } },
+            // S-PLA-06
+            { title: "Apresentações", url: "/planejamento/apresentacoes", permission: { recurso: "pla_apresent_ver", acao: "read" } },
         ],
     },
     {
