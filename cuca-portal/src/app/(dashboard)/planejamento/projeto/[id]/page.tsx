@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { AlertTriangle, ArrowLeft, Lock, Pencil } from "lucide-react"
+import { AlertTriangle, ArrowLeft, FileDown, Loader2, Lock, Pencil, Presentation } from "lucide-react"
+import Link from "next/link"
+import toast from "react-hot-toast"
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/lib/auth/user-provider"
 import { Badge } from "@/components/ui/badge"
@@ -13,7 +15,8 @@ import { Aviso } from "@/components/planejamento/projeto-form"
 import { ExcluirProjeto } from "@/components/planejamento/excluir-projeto"
 import { SeletorStatus } from "@/components/planejamento/seletor-status"
 import { FaixaCorrecoes, SecaoAcompanhamento, ValidacaoTopo } from "@/components/planejamento/acompanhamento"
-import { PLA_ACOMP, PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
+import { exportarFichaPdf } from "@/components/planejamento/exportar-pdf"
+import { PLA_ACOMP, PLA_APRES, PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
 import { carregarAcompanhamento, type Acompanhamento } from "@/lib/planejamento/acompanhamento-dados"
 import {
     SECOES, bloco2026Visivel, camposDaSituacao, formatarReais, mostrarSeloFichaEmConstrucao, rotuloCategoria,
@@ -30,6 +33,8 @@ import {
 // S-PLA-03: seletor de status no topo (AC11 a AC13) e botão Excluir (AC9).
 // S-PLA-04: com `pla_acomp_ver`, faixa de correções e validação no topo e a seção Acompanhamento
 // abaixo da ficha. Sem ela, a página fica como na S-PLA-02/03.
+// S-PLA-05: "Ver slides" (`pla_slides_ver`; com a ficha parcial a página dos slides mostra o alerta)
+// e "Exportar ficha (PDF)" (`pla_ficha_pdf`, sai com a ficha parcial ou final).
 
 type Estado = { fase: "carregando" } | { fase: "nao_encontrado" } | { fase: "erro"; mensagem: string } | { fase: "pronto"; projeto: ProjetoCarregado }
 
@@ -43,6 +48,9 @@ export default function ProjetoPage() {
     const podeEditar = hasPermission(PLA_PROJ.editar, "read")
     const podeExcluir = hasPermission(PLA_PROJ.excluir, "read")
     const podeAcompanhar = hasPermission(PLA_ACOMP.ver, "read")
+    const podeVerSlides = hasPermission(PLA_APRES.slidesVer, "read")
+    const podeFichaPdf = hasPermission(PLA_APRES.fichaPdf, "read")
+    const [exportandoFicha, setExportandoFicha] = useState(false)
 
     const [estado, setEstado] = useState<Estado>({ fase: "carregando" })
     const [setores, setSetores] = useState<Setor[]>([])
@@ -106,6 +114,17 @@ export default function ProjetoPage() {
         setVersaoHistorico(v => v + 1)
     }
     const setor = setores.find(s => s.id === p.setor_id)
+    const exportarFicha = async () => {
+        setExportandoFicha(true)
+        try {
+            const nome = await exportarFichaPdf({ projeto: p, filhas, setor: setor ? { id: setor.id, nome: setor.nome, cor: setor.cor } : null, unidades })
+            toast.success(`Arquivo ${nome} gerado`)
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Erro ao gerar o PDF.")
+        } finally {
+            setExportandoFicha(false)
+        }
+    }
     const situacao = p.situacao_2026 ?? ""
     const visiveis = secoesVisiveis(situacao)
     const sit = camposDaSituacao(situacao)
@@ -210,6 +229,14 @@ export default function ProjetoPage() {
                 <div className="flex flex-wrap items-start gap-3">
                     <h1 className="flex-1 text-2xl font-semibold tracking-tight">{p.nome}</h1>
                     <Button variant="outline" onClick={() => router.push("/planejamento")}><ArrowLeft className="mr-1 h-4 w-4" /> Voltar para Projetos</Button>
+                    {podeVerSlides && (
+                        <Button variant="outline" asChild><Link href={`/planejamento/projeto/${p.id}/apresentacao`}><Presentation className="mr-1 h-4 w-4" /> Ver slides</Link></Button>
+                    )}
+                    {podeFichaPdf && (
+                        <Button variant="outline" onClick={exportarFicha} disabled={exportandoFicha}>
+                            {exportandoFicha ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <FileDown className="mr-1 h-4 w-4" />} Exportar ficha (PDF)
+                        </Button>
+                    )}
                     {podeExcluir && <ExcluirProjeto supabase={supabase} projetoId={p.id} />}
                     {podeEditar && <Button onClick={() => router.push(`/planejamento/projeto/${p.id}/editar`)}><Pencil className="mr-1 h-4 w-4" /> Editar</Button>}
                 </div>

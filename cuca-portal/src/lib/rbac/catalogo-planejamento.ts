@@ -43,6 +43,15 @@ export const PLA_ACOMP = {
     pendFeito: "pla_pend_feito",
 } as const
 
+// S-PLA-05: slides e PDFs. Só telas e botões: os dados vêm da mesma leitura do projeto (RLS da S-PLA-02,
+// com setor e `pla_proj_ver`/`pla_proj_editar`); não há tabela nem função nova no banco.
+export const PLA_APRES = {
+    slidesVer: "pla_slides_ver",
+    slidesApresentar: "pla_slides_apresentar",
+    slidesPdf: "pla_slides_pdf",
+    fichaPdf: "pla_ficha_pdf",
+} as const
+
 export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
     {
         category: "Planejamento 2027 — Projetos",
@@ -79,6 +88,15 @@ export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
             { id: PLA_ACOMP.pendEditar, label: "Editar pendência (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
             { id: PLA_ACOMP.pendExcluir, label: "Excluir pendência (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
             { id: PLA_ACOMP.pendFeito, label: "Marcar e desmarcar pendência como feita (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+        ],
+    },
+    {
+        category: "Planejamento 2027 — Apresentação",
+        modules: [
+            { id: PLA_APRES.slidesVer, label: "Ver os slides do projeto (botão \"Ver slides\" e atalho na lista)", acoes: ACAO_UNICA },
+            { id: PLA_APRES.slidesApresentar, label: "Apresentar os slides em tela cheia (exige \"Ver os slides\")", acoes: ACAO_UNICA },
+            { id: PLA_APRES.slidesPdf, label: "Exportar os slides em PDF (exige \"Ver os slides\")", acoes: ACAO_UNICA },
+            { id: PLA_APRES.fichaPdf, label: "Exportar a ficha do projeto em PDF (A4, na página do projeto)", acoes: ACAO_UNICA },
         ],
     },
 ]

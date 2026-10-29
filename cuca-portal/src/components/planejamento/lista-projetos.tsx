@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import toast from "react-hot-toast"
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, BadgeCheck, Bell, Copy, LayoutGrid, List, Lock, Pencil, Plus, Search } from "lucide-react"
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, BadgeCheck, Bell, Copy, LayoutGrid, List, Lock, Pencil, Plus, Presentation, Search } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/lib/auth/user-provider"
 import { cn } from "@/lib/utils"
@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Aviso } from "@/components/planejamento/projeto-form"
 import { ICONE_STATUS, StatusBadge } from "@/components/planejamento/status-projeto"
-import { PLA_ACOMP, PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
+import { PLA_ACOMP, PLA_APRES, PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
 import {
     ANO_PLANEJAMENTO, SITUACOES_2026, STATUS_PROJETO, TIPOS_PROJETO, formatarReais, mostrarSeloFichaEmConstrucao,
     rotuloSituacao, rotuloTipo, type StatusProjeto,
@@ -69,6 +69,7 @@ export function ListaProjetos() {
     const podeEditar = hasPermission(PLA_PROJ.editar, "read")
     const podeDuplicar = hasPermission(PLA_PROJ.duplicar, "read")
     const podeAcompanhar = hasPermission(PLA_ACOMP.ver, "read")
+    const podeVerSlides = hasPermission(PLA_APRES.slidesVer, "read")
 
     const [projetos, setProjetos] = useState<ProjetoLista[] | null>(null)
     const [setores, setSetores] = useState<Setor[]>([])
@@ -156,7 +157,7 @@ export function ListaProjetos() {
     const contadores = projetos ? contarPorStatus(projetos, filtros) : null
     const filtroAtivo = temFiltroAtivo(filtros)
     const limpar = () => { setBusca(""); setBuscaEnviada(""); atualizarFiltros(FILTROS_VAZIOS) }
-    const acoes = { podeEditar, podeDuplicar, duplicando, duplicar }
+    const acoes = { podeEditar, podeDuplicar, podeVerSlides, duplicando, duplicar }
 
     return (
         <div className="space-y-4">
@@ -304,13 +305,19 @@ function SelosAcompanhamento({ p }: { p: ProjetoLista }) {
     )
 }
 
-type Acoes = { podeEditar: boolean; podeDuplicar: boolean; duplicando: string | null; duplicar: (id: string) => void }
+type Acoes = { podeEditar: boolean; podeDuplicar: boolean; podeVerSlides: boolean; duplicando: string | null; duplicar: (id: string) => void }
 
 // Atalhos (AC6) ficam acima do link que cobre o card/linha, para não abrirem o projeto.
-function Atalhos({ p, podeEditar, podeDuplicar, duplicando, duplicar }: { p: ProjetoLista } & Acoes) {
-    if (!podeEditar && !podeDuplicar) return null
+// S-PLA-05 (AC9): atalho "Slides". Com a ficha parcial, a página dos slides mostra o alerta (AC2a).
+function Atalhos({ p, podeEditar, podeDuplicar, podeVerSlides, duplicando, duplicar }: { p: ProjetoLista } & Acoes) {
+    if (!podeEditar && !podeDuplicar && !podeVerSlides) return null
     return (
         <div className="relative z-10 flex shrink-0 gap-1">
+            {podeVerSlides && (
+                <Button asChild variant="ghost" size="icon" title="Slides">
+                    <Link href={`${urlProjeto(p.id)}/apresentacao`} aria-label={`Slides de ${p.nome}`}><Presentation className="h-4 w-4" /></Link>
+                </Button>
+            )}
             {podeEditar && (
                 <Button asChild variant="ghost" size="icon" title="Editar">
                     <Link href={`${urlProjeto(p.id)}/editar`} aria-label={`Editar ${p.nome}`}><Pencil className="h-4 w-4" /></Link>
