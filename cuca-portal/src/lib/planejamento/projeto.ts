@@ -44,13 +44,14 @@ export const CATEGORIAS_ORCAMENTO = [
 export type CategoriaOrcamento = (typeof CATEGORIAS_ORCAMENTO)[number]["valor"]
 
 // Status do projeto (D2). Os dois primeiros acompanham os botões; os quatro manuais só mudam pelo
-// seletor da S-PLA-03. Rótulos e cores ficam aqui para a S-PLA-03 usar os mesmos.
+// seletor da S-PLA-03. Cores da S-PLA-03 (AC10): âmbar, cinza, verde, azul, roxo e vermelho, usadas
+// em todo o módulo. Os ícones ficam em `components/planejamento/status-projeto.tsx` (com React).
 export const STATUS_PROJETO = [
     { valor: "em_construcao", rotulo: "Em construção", cor: "bg-amber-100 text-amber-800 border-amber-300" },
-    { valor: "projeto_salvo", rotulo: "Projeto salvo", cor: "bg-sky-100 text-sky-800 border-sky-300" },
+    { valor: "projeto_salvo", rotulo: "Projeto salvo", cor: "bg-slate-100 text-slate-700 border-slate-300" },
     { valor: "aprovado", rotulo: "Aprovado", cor: "bg-emerald-100 text-emerald-800 border-emerald-300" },
-    { valor: "em_execucao", rotulo: "Em execução", cor: "bg-violet-100 text-violet-800 border-violet-300" },
-    { valor: "concluido", rotulo: "Concluído", cor: "bg-slate-200 text-slate-800 border-slate-400" },
+    { valor: "em_execucao", rotulo: "Em execução", cor: "bg-blue-100 text-blue-800 border-blue-300" },
+    { valor: "concluido", rotulo: "Concluído", cor: "bg-purple-100 text-purple-800 border-purple-300" },
     { valor: "reprovado", rotulo: "Reprovado", cor: "bg-rose-100 text-rose-800 border-rose-300" },
 ] as const
 export type StatusProjeto = (typeof STATUS_PROJETO)[number]["valor"]
