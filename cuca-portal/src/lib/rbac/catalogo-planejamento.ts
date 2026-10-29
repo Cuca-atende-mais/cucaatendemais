@@ -25,6 +25,24 @@ export const PLA_STATUS = {
     ficha: "pla_status_ficha",
 } as const
 
+// S-PLA-04: acompanhamento do projeto. Nomes escolhidos para nenhum ser prefixo de outro no LIKE
+// (por isso `pla_valid_dar`/`pla_valid_retirar`, e não `pla_validar`). Toda ação também exige
+// `pla_acomp_ver`: sem ela a seção Acompanhamento não aparece e o banco recusa a ação.
+export const PLA_ACOMP = {
+    ver: "pla_acomp_ver",
+    comentCriar: "pla_coment_criar",
+    comentEditar: "pla_coment_editar",
+    comentExcluir: "pla_coment_excluir",
+    correcaoPedir: "pla_correcao_pedir",
+    correcaoResolver: "pla_correcao_resolver",
+    validDar: "pla_valid_dar",
+    validRetirar: "pla_valid_retirar",
+    pendCriar: "pla_pend_criar",
+    pendEditar: "pla_pend_editar",
+    pendExcluir: "pla_pend_excluir",
+    pendFeito: "pla_pend_feito",
+} as const
+
 export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
     {
         category: "Planejamento 2027 — Projetos",
@@ -44,6 +62,23 @@ export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
             { id: PLA_STATUS.concluido, label: "Marcar projeto como Concluído", acoes: ACAO_UNICA },
             { id: PLA_STATUS.reprovado, label: "Marcar projeto como Reprovado", acoes: ACAO_UNICA },
             { id: PLA_STATUS.ficha, label: "Voltar o projeto ao status da ficha (Em construção ou Projeto salvo)", acoes: ACAO_UNICA },
+        ],
+    },
+    {
+        category: "Planejamento 2027 — Acompanhamento",
+        modules: [
+            { id: PLA_ACOMP.ver, label: "Ver o acompanhamento do projeto (correções, comentários, validação, pendências, histórico e selos da lista). Necessária para as ações abaixo", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.comentCriar, label: "Comentar no projeto (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.comentEditar, label: "Editar o próprio comentário (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.comentExcluir, label: "Excluir o próprio comentário (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.correcaoPedir, label: "Pedir correção no projeto (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.correcaoResolver, label: "Marcar correção como resolvida (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.validDar, label: "Validar projeto (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.validRetirar, label: "Retirar a validação do projeto (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.pendCriar, label: "Adicionar pendência (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.pendEditar, label: "Editar pendência (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.pendExcluir, label: "Excluir pendência (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
+            { id: PLA_ACOMP.pendFeito, label: "Marcar e desmarcar pendência como feita (exige \"Ver o acompanhamento\")", acoes: ACAO_UNICA },
         ],
     },
 ]

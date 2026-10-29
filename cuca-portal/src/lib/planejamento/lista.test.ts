@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
     FILTROS_VAZIOS, alternarOrdenacao, alternarStatus, aplicarFiltros, contarPorStatus, etiquetaSetores, filtrosDaUrl,
     filtrosParaUrl, lerVisualizacao, mesDentroDoPeriodo, mesesDoPeriodo, mostrarFiltroSetor, normalizarBusca, ordenar,
-    rotuloPeriodo, temFiltroAtivo, type Filtros, type ProjetoLista,
+    rotuloPeriodo, temFiltroAtivo, aplicarResumo, type Filtros, type ProjetoLista,
 } from "./lista"
 
 const periodo = (data_inicio: string | null, data_fim: string | null, periodo_ano_todo = false) => ({ periodo_ano_todo, data_inicio, data_fim })
@@ -11,7 +11,7 @@ function projeto(p: Partial<ProjetoLista> & { id: string }): ProjetoLista {
     return {
         nome: p.id, setor_id: "esportes", tipo: "projeto", status: "em_construcao", ficha: "parcial", situacao_2026: null,
         participantes_estimados: null, orcamento_total: 0, updated_at: "2026-10-28T10:00:00Z",
-        periodo_ano_todo: false, data_inicio: null, data_fim: null, ...p,
+        periodo_ano_todo: false, data_inicio: null, data_fim: null, correcoes_abertas: 0, validado: false, ...p,
     }
 }
 
@@ -59,8 +59,13 @@ describe("rótulo do período no card", () => {
 describe("filtros na URL", () => {
     const params = (q: string) => new URLSearchParams(q)
     it("ida e volta mantém os filtros", () => {
-        const f: Filtros = { busca: "olimpíadas", setor: "esportes", status: "aprovado", situacao: "novo", tipo: "projeto", mes: 6 }
+        const f: Filtros = {
+            busca: "olimpíadas", setor: "esportes", status: "aprovado", situacao: "novo", tipo: "projeto", mes: 6,
+            correcao: "", validacao: "",
+        }
         expect(filtrosDaUrl(params(filtrosParaUrl(f)), ["esportes", "cultura"])).toEqual(f)
+        const g: Filtros = { ...f, correcao: "abertas", validacao: "nao_validados" }
+        expect(filtrosDaUrl(params(filtrosParaUrl(g)), ["esportes", "cultura"], true)).toEqual(g)
         expect(filtrosDaUrl(params(filtrosParaUrl({ ...FILTROS_VAZIOS, mes: "ano_todo" })))).toEqual({ ...FILTROS_VAZIOS, mes: "ano_todo" })
     })
     it("sem filtro gera URL vazia; ordem dos parâmetros é fixa", () => {
@@ -72,6 +77,14 @@ describe("filtros na URL", () => {
     it("valor desconhecido vira \"sem filtro\"", () => {
         expect(filtrosDaUrl(params("status=xpto&tipo=1&situacao=&mes=13&setor=inexistente"), ["esportes"])).toEqual(FILTROS_VAZIOS)
         expect(filtrosDaUrl(params("mes=0")).mes).toBe("")
+    })
+    it("S-PLA-04: correção e validação só valem com acompanhamento; valor desconhecido é ignorado", () => {
+        const q = params("correcao=abertas&validacao=validados")
+        expect(filtrosDaUrl(q, [], false)).toEqual(FILTROS_VAZIOS)
+        expect(temFiltroAtivo(filtrosDaUrl(q, [], false))).toBe(false)
+        expect(filtrosDaUrl(q, [], true)).toEqual({ ...FILTROS_VAZIOS, correcao: "abertas", validacao: "validados" })
+        expect(filtrosDaUrl(params("correcao=sim&validacao=talvez"), [], true)).toEqual(FILTROS_VAZIOS)
+        expect(filtrosParaUrl({ ...FILTROS_VAZIOS, mes: 3, correcao: "abertas", validacao: "validados" })).toBe("mes=3&correcao=abertas&validacao=validados")
     })
     it("busca vem aparada e com no máximo 200 caracteres", () => {
         expect(filtrosDaUrl(params("busca=%20%20sarau%20")).busca).toBe("sarau")
@@ -153,5 +166,27 @@ describe("setores do cabeçalho, filtro de setor e visualização", () => {
         expect(lerVisualizacao("cards")).toBe("cards")
         expect(lerVisualizacao(null)).toBe("cards")
         expect(lerVisualizacao("lixo")).toBe("cards")
+    })
+})
+
+describe("S-PLA-04: selos e filtros do acompanhamento", () => {
+    const base = [projeto({ id: "a" }), projeto({ id: "b" }), projeto({ id: "c", status: "aprovado" })]
+    const resumo = { a: { correcoes: 2, validado: false }, c: { correcoes: 0, validado: true }, fora: { correcoes: 5, validado: true } }
+    const lista = aplicarResumo(base, resumo)
+
+    it("junta o resumo do banco; projeto fora dele fica sem selo", () => {
+        expect(lista.map(p => [p.id, p.correcoes_abertas, p.validado])).toEqual([["a", 2, false], ["b", 0, false], ["c", 0, true]])
+    })
+    it("filtra por correção em aberto e por validação", () => {
+        const ids = (f: Partial<Filtros>) => aplicarFiltros(lista, { ...FILTROS_VAZIOS, ...f }).map(p => p.id)
+        expect(ids({ correcao: "abertas" })).toEqual(["a"])
+        expect(ids({ validacao: "validados" })).toEqual(["c"])
+        expect(ids({ validacao: "nao_validados" })).toEqual(["a", "b"])
+        expect(ids({ correcao: "abertas", validacao: "validados" })).toEqual([])
+    })
+    it("os contadores respeitam os filtros novos", () => {
+        const c = contarPorStatus(lista, { ...FILTROS_VAZIOS, validacao: "validados" })
+        expect(c.total).toBe(1)
+        expect(c.aprovado).toBe(1)
     })
 })

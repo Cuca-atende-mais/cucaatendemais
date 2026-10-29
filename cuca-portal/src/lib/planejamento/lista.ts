@@ -75,6 +75,9 @@ export type ProjetoLista = PeriodoProjeto & {
     participantes_estimados: number | null
     orcamento_total: number
     updated_at: string
+    // S-PLA-04 (AC7): só preenchidos para quem tem `pla_acomp_ver`; sem ela ficam 0 / false.
+    correcoes_abertas: number
+    validado: boolean
 }
 
 // ── Filtros (ficam na URL) ───────────────────────────────────────────────────────────────────
@@ -86,17 +89,30 @@ export type Filtros = {
     situacao: Situacao2026 | ""
     tipo: TipoProjeto | ""
     mes: MesFiltro | ""
+    // S-PLA-04 (AC7): só valem para quem tem `pla_acomp_ver` (sem ela, a URL é ignorada).
+    correcao: "abertas" | ""
+    validacao: "validados" | "nao_validados" | ""
 }
 
 export const LIMITE_BUSCA = 200
 
-export const FILTROS_VAZIOS: Filtros = { busca: "", setor: "", status: "", situacao: "", tipo: "", mes: "" }
+export const FILTROS_VAZIOS: Filtros = { busca: "", setor: "", status: "", situacao: "", tipo: "", mes: "", correcao: "", validacao: "" }
+
+export const OPCOES_VALIDACAO = [
+    { valor: "validados", rotulo: "Validados" },
+    { valor: "nao_validados", rotulo: "Não validados" },
+] as const
 
 const valido = <T extends string>(lista: readonly { valor: T }[], v: string | null): T | "" =>
     v !== null && lista.some(o => o.valor === v) ? (v as T) : ""
 
 // Lê a URL. Valor desconhecido vira "sem filtro" (link antigo ou digitado à mão não quebra a página).
-export function filtrosDaUrl(params: { get(nome: string): string | null }, setoresValidos: readonly string[] = []): Filtros {
+// Sem `pla_acomp_ver` (acompanhamento = false), os filtros de correção e validação são ignorados.
+export function filtrosDaUrl(
+    params: { get(nome: string): string | null },
+    setoresValidos: readonly string[] = [],
+    acompanhamento = false,
+): Filtros {
     const setor = params.get("setor") ?? ""
     const mesTexto = params.get("mes")
     let mes: MesFiltro | "" = ""
@@ -109,6 +125,8 @@ export function filtrosDaUrl(params: { get(nome: string): string | null }, setor
         situacao: valido(SITUACOES_2026, params.get("situacao")),
         tipo: valido(TIPOS_PROJETO, params.get("tipo")),
         mes,
+        correcao: acompanhamento && params.get("correcao") === "abertas" ? "abertas" : "",
+        validacao: acompanhamento ? valido(OPCOES_VALIDACAO, params.get("validacao")) : "",
     }
 }
 
@@ -121,6 +139,8 @@ export function filtrosParaUrl(f: Filtros): string {
     if (f.situacao) p.set("situacao", f.situacao)
     if (f.tipo) p.set("tipo", f.tipo)
     if (f.mes !== "") p.set("mes", String(f.mes))
+    if (f.correcao) p.set("correcao", f.correcao)
+    if (f.validacao) p.set("validacao", f.validacao)
     return p.toString()
 }
 
@@ -142,7 +162,9 @@ export function aplicarFiltros(lista: ProjetoLista[], f: Filtros, ignorar: (keyo
         && (!usa("status") || f.status === "" || p.status === f.status)
         && (!usa("situacao") || f.situacao === "" || p.situacao_2026 === f.situacao)
         && (!usa("tipo") || f.tipo === "" || p.tipo === f.tipo)
-        && (!usa("mes") || f.mes === "" || mesDentroDoPeriodo(p, f.mes)))
+        && (!usa("mes") || f.mes === "" || mesDentroDoPeriodo(p, f.mes))
+        && (!usa("correcao") || f.correcao === "" || p.correcoes_abertas > 0)
+        && (!usa("validacao") || f.validacao === "" || p.validado === (f.validacao === "validados")))
 }
 
 // ── Contadores (AC2) ─────────────────────────────────────────────────────────────────────────
@@ -210,4 +232,17 @@ export type Visualizacao = "cards" | "tabela"
 export const CHAVE_VISUALIZACAO = "planejamento:lista:visualizacao"
 export function lerVisualizacao(valor: string | null | undefined): Visualizacao {
     return valor === "tabela" ? "tabela" : "cards"
+}
+
+// ── Selos do acompanhamento (S-PLA-04, AC7) ──────────────────────────────────────────────────
+
+export type ResumoAcompanhamento = Record<string, { correcoes: number; validado: boolean }>
+
+// Junta o resumo do banco (`pla_resumo_acompanhamento`) à lista. Projeto fora do resumo: 0 / false.
+export function aplicarResumo(lista: ProjetoLista[], resumo: ResumoAcompanhamento): ProjetoLista[] {
+    return lista.map(p => ({
+        ...p,
+        correcoes_abertas: Number(resumo[p.id]?.correcoes ?? 0),
+        validado: resumo[p.id]?.validado === true,
+    }))
 }

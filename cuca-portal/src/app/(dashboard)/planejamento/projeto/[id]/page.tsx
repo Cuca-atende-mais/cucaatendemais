@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { AlertTriangle, ArrowLeft, Lock, Pencil } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
@@ -12,7 +12,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Aviso } from "@/components/planejamento/projeto-form"
 import { ExcluirProjeto } from "@/components/planejamento/excluir-projeto"
 import { SeletorStatus } from "@/components/planejamento/seletor-status"
-import { PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
+import { FaixaCorrecoes, SecaoAcompanhamento, ValidacaoTopo } from "@/components/planejamento/acompanhamento"
+import { PLA_ACOMP, PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
+import { carregarAcompanhamento, type Acompanhamento } from "@/lib/planejamento/acompanhamento-dados"
 import {
     SECOES, bloco2026Visivel, camposDaSituacao, formatarReais, mostrarSeloFichaEmConstrucao, rotuloCategoria,
     rotuloFrequencia, rotuloSituacao, rotuloTipo, secoesVisiveis, totalOrcamento, numeroParaTextoBR,
@@ -26,6 +28,8 @@ import {
 // S-PLA-02 (AC12): página do projeto, só leitura. Fora do escopo do setor, inexistente ou excluído
 // (S-PLA-03): "Projeto não encontrado", sem revelar que existe (a RLS não devolve a linha).
 // S-PLA-03: seletor de status no topo (AC11 a AC13) e botão Excluir (AC9).
+// S-PLA-04: com `pla_acomp_ver`, faixa de correções e validação no topo e a seção Acompanhamento
+// abaixo da ficha. Sem ela, a página fica como na S-PLA-02/03.
 
 type Estado = { fase: "carregando" } | { fase: "nao_encontrado" } | { fase: "erro"; mensagem: string } | { fase: "pronto"; projeto: ProjetoCarregado }
 
@@ -38,10 +42,14 @@ export default function ProjetoPage() {
     const podeVer = hasPermission(PLA_PROJ.ver, "read")
     const podeEditar = hasPermission(PLA_PROJ.editar, "read")
     const podeExcluir = hasPermission(PLA_PROJ.excluir, "read")
+    const podeAcompanhar = hasPermission(PLA_ACOMP.ver, "read")
 
     const [estado, setEstado] = useState<Estado>({ fase: "carregando" })
     const [setores, setSetores] = useState<Setor[]>([])
     const [unidades, setUnidades] = useState<Unidade[]>([])
+    const [acomp, setAcomp] = useState<Acompanhamento | null>(null)
+    const [erroAcomp, setErroAcomp] = useState<string | null>(null)
+    const [versaoHistorico, setVersaoHistorico] = useState(0)
 
     useEffect(() => {
         if (carregandoUsuario || !podeVer) return
@@ -60,6 +68,26 @@ export default function ProjetoPage() {
         return () => { cancelado = true }
     }, [carregandoUsuario, podeVer, id, supabase])
 
+    // Acompanhamento (S-PLA-04): carregado à parte, depois que o projeto abriu, só com `pla_acomp_ver`.
+    const projetoPronto = estado.fase === "pronto"
+    const recarregarAcomp = useCallback(async () => {
+        try {
+            setAcomp(await carregarAcompanhamento(supabase, id))
+            setErroAcomp(null)
+        } catch (e) {
+            setErroAcomp(e instanceof Error ? e.message : String(e))
+        }
+        setVersaoHistorico(v => v + 1)
+    }, [supabase, id])
+    useEffect(() => {
+        if (!projetoPronto || !podeAcompanhar) return
+        let cancelado = false
+        carregarAcompanhamento(supabase, id)
+            .then(a => { if (!cancelado) { setAcomp(a); setErroAcomp(null) } })
+            .catch(e => { if (!cancelado) setErroAcomp(e instanceof Error ? e.message : String(e)) })
+        return () => { cancelado = true }
+    }, [projetoPronto, podeAcompanhar, supabase, id])
+
     const voltar = <Button variant="outline" onClick={() => router.push("/planejamento")}><ArrowLeft className="mr-1 h-4 w-4" /> Voltar para Projetos</Button>
 
     if (carregandoUsuario) return <Skeleton className="h-96 w-full" />
@@ -71,9 +99,12 @@ export default function ProjetoPage() {
     if (estado.fase === "erro") return <Aviso icone={<AlertTriangle className="h-8 w-8 text-rose-600" />} titulo="Não foi possível abrir o projeto." texto={estado.mensagem} acao={voltar} />
 
     const { linha: p, filhas } = estado.projeto
-    const aoAlterarStatus = (novo: StatusProjeto) => setEstado(e => e.fase === "pronto"
-        ? { fase: "pronto", projeto: { ...e.projeto, linha: { ...e.projeto.linha, status: novo } } }
-        : e)
+    const aoAlterarStatus = (novo: StatusProjeto) => {
+        setEstado(e => e.fase === "pronto"
+            ? { fase: "pronto", projeto: { ...e.projeto, linha: { ...e.projeto.linha, status: novo } } }
+            : e)
+        setVersaoHistorico(v => v + 1)
+    }
     const setor = setores.find(s => s.id === p.setor_id)
     const situacao = p.situacao_2026 ?? ""
     const visiveis = secoesVisiveis(situacao)
@@ -189,12 +220,18 @@ export default function ProjetoPage() {
                     {mostrarSeloFichaEmConstrucao(p.status, p.ficha) && (
                         <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Ficha em construção — slides indisponíveis</Badge>
                     )}
+                    {podeAcompanhar && acomp && (
+                        <ValidacaoTopo supabase={supabase} projetoId={p.id} validacao={acomp.validacao} fichaAtualizadaEm={p.updated_at} recarregar={recarregarAcomp} />
+                    )}
                 </div>
                 <p className="text-sm text-muted-foreground">
                     Criado por {p.criado_por_nome ?? "—"} em {dataHoraFortaleza(p.created_at)}
                     {" · "}Atualizado por {p.atualizado_por_nome ?? "—"} em {dataHoraFortaleza(p.updated_at)}
                 </p>
             </div>
+
+            {/* Correções em aberto (S-PLA-04, AC2): leva ao bloco do Acompanhamento */}
+            {podeAcompanhar && acomp && <FaixaCorrecoes correcoes={acomp.correcoes} />}
 
             {/* Status no topo, bem visível (S-PLA-03) */}
             <SeletorStatus supabase={supabase} projetoId={p.id} status={p.status} ficha={p.ficha} onAlterado={aoAlterarStatus} />
@@ -211,6 +248,15 @@ export default function ProjetoPage() {
                     </Card>
                 )
             })}
+
+            {/* Acompanhamento (S-PLA-04, AC1): na mesma página, abaixo da ficha */}
+            {podeAcompanhar && (erroAcomp && !acomp ? (
+                <Aviso icone={<AlertTriangle className="h-8 w-8 text-rose-600" />} titulo="Não foi possível carregar o acompanhamento." texto={erroAcomp} />
+            ) : acomp ? (
+                <SecaoAcompanhamento supabase={supabase} projetoId={p.id} dados={acomp} versaoHistorico={versaoHistorico} recarregar={recarregarAcomp} />
+            ) : (
+                <Skeleton className="h-48 w-full" />
+            ))}
         </div>
     )
 }

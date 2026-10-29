@@ -79,7 +79,7 @@ const TAMANHO_PAGINA = 1000
 
 // Projetos visíveis ao usuário (a RLS já tira os excluídos e os de fora do setor) + total do orçamento.
 export async function carregarLista(supabase: SupabaseClient, ano: number): Promise<ProjetoLista[]> {
-    const linhas: Omit<ProjetoLista, "orcamento_total">[] = []
+    const linhas: Omit<ProjetoLista, "orcamento_total" | "correcoes_abertas" | "validado">[] = []
     for (let de = 0; ; de += TAMANHO_PAGINA) {
         const { data, error } = await supabase.from("planejamento_projetos")
             .select("id, nome, setor_id, tipo, status, ficha, situacao_2026, participantes_estimados, periodo_ano_todo, data_inicio, data_fim, updated_at")
@@ -104,7 +104,7 @@ export async function carregarLista(supabase: SupabaseClient, ano: number): Prom
     for (const o of orc) {
         totais.set(o.projeto_id, (totais.get(o.projeto_id) ?? 0) + Number(o.valor_total ?? 0))
     }
-    return linhas.map(l => ({ ...l, orcamento_total: Math.round((totais.get(l.id) ?? 0) * 100) / 100 }))
+    return linhas.map(l => ({ ...l, orcamento_total: Math.round((totais.get(l.id) ?? 0) * 100) / 100, correcoes_abertas: 0, validado: false }))
 }
 
 export type ResultadoTrocaStatus = { status: StatusProjeto; status_anterior: StatusProjeto; alterado_em: string; alterado_por: string | null }
@@ -154,8 +154,11 @@ const FORMATO_DATA_HORA = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Fortaleza", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
 })
 const FORMATO_DATA = new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric" })
+const FORMATO_DATA_FORTALEZA = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Fortaleza", day: "2-digit", month: "2-digit", year: "numeric" })
 
 export const horaFortaleza = (d: Date | string) => FORMATO_HORA.format(typeof d === "string" ? new Date(d) : d)
 export const dataHoraFortaleza = (d: string) => FORMATO_DATA_HORA.format(new Date(d))
+// Só a data de um instante (timestamptz), no fuso de Fortaleza. Ex.: "Validado em 29/10/2026".
+export const dataFortaleza = (d: string) => FORMATO_DATA_FORTALEZA.format(new Date(d))
 // Data pura (yyyy-mm-dd) sem deslocamento de fuso.
 export const dataCurta = (d: string) => FORMATO_DATA.format(new Date(`${d}T12:00:00Z`))
