@@ -55,6 +55,11 @@ export const PLA_APRES = {
     pautaOrdem: "pla_apresent_ordem",
 } as const
 
+// S-PLA-07: calendário anual (só leitura; os dados seguem a RLS de setor da S-PLA-02).
+export const PLA_CALENDARIO = {
+    ver: "pla_calendario_ver",
+} as const
+
 export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
     {
         category: "Planejamento 2027 — Projetos",
@@ -102,6 +107,12 @@ export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
             { id: PLA_APRES.fichaPdf, label: "Exportar a ficha do projeto em PDF (A4, na página do projeto)", acoes: ACAO_UNICA },
             { id: PLA_APRES.pautaVer, label: "Ver o menu Apresentações (pauta da reunião por setor)", acoes: ACAO_UNICA },
             { id: PLA_APRES.pautaOrdem, label: "Mudar a ordem da pauta: setores e projetos (exige \"Ver o menu Apresentações\")", acoes: ACAO_UNICA },
+        ],
+    },
+    {
+        category: "Planejamento 2027 — Calendário",
+        modules: [
+            { id: PLA_CALENDARIO.ver, label: "Ver o menu Calendário 2027 (projetos dos seus setores no ano e no mês)", acoes: ACAO_UNICA },
         ],
     },
 ]
