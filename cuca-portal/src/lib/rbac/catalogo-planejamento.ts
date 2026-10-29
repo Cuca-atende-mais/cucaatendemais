@@ -50,6 +50,9 @@ export const PLA_APRES = {
     slidesApresentar: "pla_slides_apresentar",
     slidesPdf: "pla_slides_pdf",
     fichaPdf: "pla_ficha_pdf",
+    // S-PLA-06: pauta de apresentações. Apresentar segue `pla_slides_apresentar`.
+    pautaVer: "pla_apresent_ver",
+    pautaOrdem: "pla_apresent_ordem",
 } as const
 
 export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
@@ -97,6 +100,8 @@ export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
             { id: PLA_APRES.slidesApresentar, label: "Apresentar os slides em tela cheia (exige \"Ver os slides\")", acoes: ACAO_UNICA },
             { id: PLA_APRES.slidesPdf, label: "Exportar os slides em PDF (exige \"Ver os slides\")", acoes: ACAO_UNICA },
             { id: PLA_APRES.fichaPdf, label: "Exportar a ficha do projeto em PDF (A4, na página do projeto)", acoes: ACAO_UNICA },
+            { id: PLA_APRES.pautaVer, label: "Ver o menu Apresentações (pauta da reunião por setor)", acoes: ACAO_UNICA },
+            { id: PLA_APRES.pautaOrdem, label: "Mudar a ordem da pauta: setores e projetos (exige \"Ver o menu Apresentações\")", acoes: ACAO_UNICA },
         ],
     },
 ]
