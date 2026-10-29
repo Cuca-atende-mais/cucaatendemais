@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import toast from "react-hot-toast"
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Copy, LayoutGrid, List, Lock, Pencil, Plus, Search } from "lucide-react"
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, BadgeCheck, Bell, Copy, LayoutGrid, List, Lock, Pencil, Plus, Search } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/lib/auth/user-provider"
 import { cn } from "@/lib/utils"
@@ -17,21 +17,24 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Aviso } from "@/components/planejamento/projeto-form"
 import { ICONE_STATUS, StatusBadge } from "@/components/planejamento/status-projeto"
-import { PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
+import { PLA_ACOMP, PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
 import {
     ANO_PLANEJAMENTO, SITUACOES_2026, STATUS_PROJETO, TIPOS_PROJETO, formatarReais, mostrarSeloFichaEmConstrucao,
     rotuloSituacao, rotuloTipo, type StatusProjeto,
 } from "@/lib/planejamento/projeto"
 import {
-    CHAVE_VISUALIZACAO, FILTROS_VAZIOS, LIMITE_BUSCA, MESES, ORDENACAO_PADRAO, alternarOrdenacao, alternarStatus, aplicarFiltros,
+    CHAVE_VISUALIZACAO, FILTROS_VAZIOS, LIMITE_BUSCA, MESES, OPCOES_VALIDACAO, ORDENACAO_PADRAO, alternarOrdenacao, alternarStatus, aplicarFiltros, aplicarResumo,
     contarPorStatus, etiquetaSetores, filtrosDaUrl, filtrosParaUrl, lerVisualizacao, mostrarFiltroSetor, ordenar,
     rotuloPeriodo, temFiltroAtivo, type ColunaOrdenacao, type Filtros, type Ordenacao, type ProjetoLista, type Visualizacao,
 } from "@/lib/planejamento/lista"
 import { rotaDepoisDeDuplicar } from "@/lib/planejamento/status"
+import { textoSeloCorrecoes } from "@/lib/planejamento/acompanhamento"
+import { carregarResumoAcompanhamento } from "@/lib/planejamento/acompanhamento-dados"
 import { carregarLista, carregarSetores, carregarSetoresPermitidos, dataHoraFortaleza, duplicarProjeto, type Setor } from "@/lib/planejamento/projeto-dados"
 
 // S-PLA-03 (AC1 a AC8): lista de projetos do Planejamento 2027. Filtros na URL (link compartilhável e
 // "voltar" do navegador mantém a lista), contadores por status, cards ou tabela.
+// S-PLA-04 (AC7): com `pla_acomp_ver`, selos de correção em aberto e de validado, e dois filtros novos.
 
 const TODOS = "__todos__"
 const urlProjeto = (id: string) => `/planejamento/projeto/${id}`
@@ -65,6 +68,7 @@ export function ListaProjetos() {
     const podeCriar = hasPermission(PLA_PROJ.criar, "read")
     const podeEditar = hasPermission(PLA_PROJ.editar, "read")
     const podeDuplicar = hasPermission(PLA_PROJ.duplicar, "read")
+    const podeAcompanhar = hasPermission(PLA_ACOMP.ver, "read")
 
     const [projetos, setProjetos] = useState<ProjetoLista[] | null>(null)
     const [setores, setSetores] = useState<Setor[]>([])
@@ -78,24 +82,28 @@ export function ListaProjetos() {
         let cancelado = false
         ;(async () => {
             try {
-                const [s, lista] = await Promise.all([carregarSetores(supabase), carregarLista(supabase, ANO_PLANEJAMENTO)])
+                const [s, lista, resumo] = await Promise.all([
+                    carregarSetores(supabase),
+                    carregarLista(supabase, ANO_PLANEJAMENTO),
+                    podeAcompanhar ? carregarResumoAcompanhamento(supabase, ANO_PLANEJAMENTO) : Promise.resolve({}),
+                ])
                 const perm = await carregarSetoresPermitidos(supabase, s)
                 if (cancelado) return
                 setSetores(s)
                 setPermitidos(perm)
-                setProjetos(lista)
+                setProjetos(aplicarResumo(lista, resumo))
             } catch (e) {
                 if (!cancelado) setErro(e instanceof Error ? e.message : String(e))
             }
         })()
         return () => { cancelado = true }
-    }, [carregandoUsuario, podeVer, supabase])
+    }, [carregandoUsuario, podeVer, podeAcompanhar, supabase])
 
     const visualizacao = useSyncExternalStore(assinarVisualizacao, lerVisualizacaoGuardada, () => "cards" as Visualizacao)
     const trocarVisualizacao = guardarVisualizacao
 
     const idsSetores = useMemo(() => setores.map(s => s.id), [setores])
-    const filtros = useMemo(() => filtrosDaUrl(searchParams, idsSetores), [searchParams, idsSetores])
+    const filtros = useMemo(() => filtrosDaUrl(searchParams, idsSetores, podeAcompanhar), [searchParams, idsSetores, podeAcompanhar])
     const atualizarFiltros = useCallback((f: Filtros) => {
         const q = filtrosParaUrl(f)
         router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false })
@@ -210,6 +218,14 @@ export function ListaProjetos() {
                         <Filtro rotulo="Mês" valor={filtros.mes === "" ? "" : String(filtros.mes)}
                             onChange={v => atualizarFiltros({ ...filtros, mes: v === "" ? "" : v === "ano_todo" ? "ano_todo" : Number(v) })}
                             opcoes={[...MESES.map((m, i) => ({ valor: String(i + 1), rotulo: m })), { valor: "ano_todo", rotulo: "Ano todo" }]} />
+                        {podeAcompanhar && (
+                            <>
+                                <Filtro rotulo="Correções" valor={filtros.correcao} onChange={v => atualizarFiltros({ ...filtros, correcao: v as Filtros["correcao"] })}
+                                    opcoes={[{ valor: "abertas", rotulo: "Com correção em aberto" }]} />
+                                <Filtro rotulo="Validação" valor={filtros.validacao} onChange={v => atualizarFiltros({ ...filtros, validacao: v as Filtros["validacao"] })}
+                                    opcoes={OPCOES_VALIDACAO.map(o => ({ valor: o.valor, rotulo: o.rotulo }))} />
+                            </>
+                        )}
                         {filtroAtivo && <Button variant="ghost" onClick={limpar}>Limpar filtros</Button>}
                         <div className="ml-auto flex gap-1" role="group" aria-label="Visualização">
                             <Button variant={visualizacao === "cards" ? "secondary" : "ghost"} size="icon" title="Cards" aria-pressed={visualizacao === "cards"} onClick={() => trocarVisualizacao("cards")}>
@@ -273,6 +289,21 @@ function Filtro({ rotulo, valor, opcoes, onChange }: {
     )
 }
 
+// Selos do acompanhamento (S-PLA-04, AC7). Sem `pla_acomp_ver` os valores vêm 0 / false: nada aparece.
+function SelosAcompanhamento({ p }: { p: ProjetoLista }) {
+    const correcoes = textoSeloCorrecoes(p.correcoes_abertas)
+    return (
+        <>
+            {correcoes && (
+                <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900"><Bell aria-hidden /> {correcoes}</Badge>
+            )}
+            {p.validado && (
+                <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-800"><BadgeCheck aria-hidden /> Validado</Badge>
+            )}
+        </>
+    )
+}
+
 type Acoes = { podeEditar: boolean; podeDuplicar: boolean; duplicando: string | null; duplicar: (id: string) => void }
 
 // Atalhos (AC6) ficam acima do link que cobre o card/linha, para não abrirem o projeto.
@@ -317,6 +348,7 @@ function CardProjeto({ p, setor, ...acoes }: { p: ProjetoLista; setor?: Setor } 
                     {mostrarSeloFichaEmConstrucao(p.status, p.ficha) && (
                         <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Ficha em construção</Badge>
                     )}
+                    <SelosAcompanhamento p={p} />
                 </div>
                 <dl className="grid grid-cols-3 gap-2 text-sm">
                     <div><dt className="text-xs text-muted-foreground">Período</dt><dd>{periodo || "—"}</dd></div>
@@ -378,6 +410,7 @@ function TabelaProjetos({ linhas, setorPorId, ordenacao, onOrdenar, ...acoes }: 
                                         <div className="flex flex-wrap gap-1">
                                             <StatusBadge status={p.status} />
                                             {mostrarSeloFichaEmConstrucao(p.status, p.ficha) && <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Ficha em construção</Badge>}
+                                            <SelosAcompanhamento p={p} />
                                         </div>
                                     </TableCell>
                                     <TableCell>{rotuloSituacao(p.situacao_2026) || "—"}</TableCell>

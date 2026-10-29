@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import {
-    AlertTriangle, ArrowLeft, CalendarDays, FolderKanban, Loader2, Lock, LogOut, Plus, Repeat, Save, Trash2, CheckCircle2,
+    AlertTriangle, ArrowLeft, Bell, CalendarDays, FolderKanban, Loader2, Lock, LogOut, Plus, Repeat, Save, Trash2, CheckCircle2,
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { createClient } from "@/lib/supabase/client"
@@ -21,7 +21,7 @@ import {
     AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { StatusBadge } from "@/components/planejamento/status-projeto"
-import { PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
+import { PLA_ACOMP, PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
 import {
     ANO_PLANEJAMENTO, CATEGORIAS_ORCAMENTO, FREQUENCIAS, SECOES, SITUACOES_2026, TIPOS_PROJETO, ULTIMA_SECAO,
     bloco2026Visivel, camposDaSituacao, errosDeValidacao, formDeLinha, formVazio, formatarReais, mensagemObrigatorios,
@@ -33,6 +33,8 @@ import {
     carregarProjeto, carregarSetores, carregarSetoresPermitidos, carregarTelefoneDoUsuario, carregarUnidades,
     horaFortaleza, salvarProjeto, type Setor, type Unidade,
 } from "@/lib/planejamento/projeto-dados"
+import { correcoesNoFormulario, rotuloSecaoCorrecao, type Correcao } from "@/lib/planejamento/acompanhamento"
+import { carregarCorrecoesAbertas } from "@/lib/planejamento/acompanhamento-dados"
 import { useGuardaSaida } from "./use-guarda-saida"
 
 // S-PLA-02: formulário da ficha, o mesmo para criar (/planejamento/novo) e editar
@@ -81,10 +83,13 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
     const [chegouUltima, setChegouUltima] = useState(false)
     const [jaMostrouSalvarProjeto, setJaMostrouSalvarProjeto] = useState(false)
     const [caixa, setCaixa] = useState<CaixaSaida>({ aberta: false, destino: "", erro: null, salvando: false })
+    // S-PLA-04 (AC2): correções em aberto viram destaque na seção citada. Só informativo, nada trava.
+    const [correcoesAbertas, setCorrecoesAbertas] = useState<Correcao[]>([])
     const refsSecao = useRef<Partial<Record<IdSecao, HTMLElement | null>>>({})
 
     const podeCriar = hasPermission(PLA_PROJ.criar, "read")
     const podeEditar = hasPermission(PLA_PROJ.editar, "read")
+    const podeAcompanhar = hasPermission(PLA_ACOMP.ver, "read")
     const ehNovo = idInicial === null
 
     // ── Carga ──────────────────────────────────────────────────────────────────────────────
@@ -126,6 +131,12 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                     setFicha(carregado.linha.ficha)
                     setNomeOriginal(carregado.linha.nome)
                     setDuracaoManual(f.duracao !== "" && f.duracao !== sugerirDuracao(f.data_inicio, f.data_fim, f.periodo_ano_todo))
+                    // Falha aqui não impede editar: os destaques só somem.
+                    if (podeAcompanhar) {
+                        const lista = await carregarCorrecoesAbertas(supabase, idInicial).catch(() => [] as Correcao[])
+                        if (cancelado) return
+                        setCorrecoesAbertas(lista)
+                    }
                 }
                 setEstado({ fase: "pronto" })
             } catch (e) {
@@ -140,6 +151,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
     const semSetorPossivel = estado.fase === "pronto" && setores.length === 0
     const setorTravado = setores.length === 1
     const visiveis = secoesVisiveis(form.situacao_2026)
+    const destaques = correcoesNoFormulario(correcoesAbertas, visiveis)
     const faltam = obrigatoriosFaltando(form)
     const percentual = percentualPreenchido(form)
     const exibirSalvarProjeto = mostrarSalvarProjeto({
@@ -309,6 +321,10 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                 </div>
             )}
 
+            {destaques.gerais.length > 0 && (
+                <div className="mb-4"><DestaqueCorrecoes correcoes={destaques.gerais} geral /></div>
+            )}
+
             {/* Índice em tela estreita: barra no topo */}
             <nav className="sticky top-0 z-10 -mx-2 mb-4 flex gap-2 overflow-x-auto border-b bg-background px-2 py-2 lg:hidden">
                 {secoesDoIndice.map(s => (
@@ -336,7 +352,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
 
                 <div className="min-w-0 space-y-6 pb-4">
                     {/* 1. Identificação */}
-                    <Secao id={1} registrar={registrarSecao}>
+                    <Secao id={1} registrar={registrarSecao} correcoes={destaques.porSecao[1]}>
                         <Campo rotulo="Nome do projeto/atividade" obrigatorio>
                             <Input value={form.nome} onChange={e => mudar("nome", e.target.value)} maxLength={200} />
                         </Campo>
@@ -374,7 +390,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                     </Secao>
 
                     {/* 2. Relação com 2026 */}
-                    <Secao id={2} registrar={registrarSecao}>
+                    <Secao id={2} registrar={registrarSecao} correcoes={destaques.porSecao[2]}>
                         <Campo rotulo="Situação">
                             <div className="flex flex-wrap gap-2">
                                 {SITUACOES_2026.map(s => (
@@ -395,7 +411,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                     </Secao>
 
                     {visiveis.includes(3) && (
-                        <Secao id={3} registrar={registrarSecao}>
+                        <Secao id={3} registrar={registrarSecao} correcoes={destaques.porSecao[3]}>
                             <Campo rotulo="Objetivo geral">
                                 <Textarea value={form.objetivo_geral} onChange={e => mudar("objetivo_geral", e.target.value)} rows={3} />
                             </Campo>
@@ -430,7 +446,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                     )}
 
                     {visiveis.includes(4) && (
-                        <Secao id={4} registrar={registrarSecao}>
+                        <Secao id={4} registrar={registrarSecao} correcoes={destaques.porSecao[4]}>
                             <Campo rotulo="Período">
                                 <label className="mb-2 flex items-center gap-2 text-sm">
                                     <Checkbox checked={form.periodo_ano_todo} onCheckedChange={v => mudar("periodo_ano_todo", v === true)} /> Ano todo
@@ -485,7 +501,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                     )}
 
                     {visiveis.includes(5) && (
-                        <Secao id={5} registrar={registrarSecao}>
+                        <Secao id={5} registrar={registrarSecao} correcoes={destaques.porSecao[5]}>
                             <div className="overflow-x-auto">
                                 <table className="w-full min-w-[640px] text-sm">
                                     <thead>
@@ -535,7 +551,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                     )}
 
                     {visiveis.includes(6) && (
-                        <Secao id={6} registrar={registrarSecao}>
+                        <Secao id={6} registrar={registrarSecao} correcoes={destaques.porSecao[6]}>
                             <div className="overflow-x-auto">
                                 <table className="w-full min-w-[640px] text-sm">
                                     <thead>
@@ -577,7 +593,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                     )}
 
                     {/* 7. Resultados de 2026 e observações */}
-                    <Secao id={7} registrar={registrarSecao}>
+                    <Secao id={7} registrar={registrarSecao} correcoes={destaques.porSecao[7]}>
                         {bloco2026Visivel(form.situacao_2026) && (
                             <>
                                 <Campo rotulo="Participantes atendidos em 2026">
@@ -651,17 +667,43 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
 
 // ── Peças de layout ─────────────────────────────────────────────────────────────────────────
 
-function Secao({ id, registrar, children }: { id: IdSecao; registrar: (id: IdSecao, el: HTMLElement | null) => void; children: ReactNode }) {
+function Secao({ id, registrar, correcoes, children }: {
+    id: IdSecao; registrar: (id: IdSecao, el: HTMLElement | null) => void; correcoes?: Correcao[]; children: ReactNode
+}) {
     const titulo = SECOES.find(s => s.id === id)?.titulo
     return (
         <section ref={el => registrar(id, el)} data-secao={id} className="scroll-mt-20">
-            <Card>
+            <Card className={cn(correcoes && correcoes.length > 0 && "border-amber-300")}>
                 <CardContent className="space-y-4 pt-6">
                     <h2 className="text-lg font-semibold">{id}. {titulo}</h2>
+                    {correcoes && correcoes.length > 0 && <DestaqueCorrecoes correcoes={correcoes} />}
                     {children}
                 </CardContent>
             </Card>
         </section>
+    )
+}
+
+// S-PLA-04 (AC2): texto do pedido de correção em aberto. `geral`: sem seção, ou de seção escondida pela ficha.
+function DestaqueCorrecoes({ correcoes, geral }: { correcoes: Correcao[]; geral?: boolean }) {
+    return (
+        <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="flex items-center gap-1 font-medium">
+                <Bell className="h-4 w-4 shrink-0" aria-hidden />
+                {correcoes.length === 1 ? "Correção pedida" : "Correções pedidas"}{geral ? " no projeto" : " nesta seção"}
+            </p>
+            <ul className="space-y-1">
+                {correcoes.map(c => {
+                    const secao = geral ? rotuloSecaoCorrecao(c.secao) : null
+                    return (
+                        <li key={c.id} className="whitespace-pre-wrap">
+                            {secao && <span className="font-medium">{secao}: </span>}{c.texto}
+                            <span className="text-xs text-amber-800/80"> — {c.pedido_por_nome ?? "—"}</span>
+                        </li>
+                    )
+                })}
+            </ul>
+        </div>
     )
 }
 
