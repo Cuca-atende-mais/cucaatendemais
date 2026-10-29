@@ -10,19 +10,22 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Aviso } from "@/components/planejamento/projeto-form"
+import { ExcluirProjeto } from "@/components/planejamento/excluir-projeto"
+import { SeletorStatus } from "@/components/planejamento/seletor-status"
 import { PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
 import {
-    SECOES, bloco2026Visivel, camposDaSituacao, corStatus, formatarReais, mostrarSeloFichaEmConstrucao, rotuloCategoria,
-    rotuloFrequencia, rotuloSituacao, rotuloStatus, rotuloTipo, secoesVisiveis, totalOrcamento, numeroParaTextoBR,
-    type IdSecao, type LinhaOrcamento,
+    SECOES, bloco2026Visivel, camposDaSituacao, formatarReais, mostrarSeloFichaEmConstrucao, rotuloCategoria,
+    rotuloFrequencia, rotuloSituacao, rotuloTipo, secoesVisiveis, totalOrcamento, numeroParaTextoBR,
+    type IdSecao, type LinhaOrcamento, type StatusProjeto,
 } from "@/lib/planejamento/projeto"
 import {
     carregarProjeto, carregarSetores, carregarUnidades, dataCurta, dataHoraFortaleza,
     type ProjetoCarregado, type Setor, type Unidade,
 } from "@/lib/planejamento/projeto-dados"
 
-// S-PLA-02 (AC12): página do projeto, só leitura. Fora do escopo do setor (ou inexistente):
-// "Projeto não encontrado", sem revelar que existe (a RLS não devolve a linha).
+// S-PLA-02 (AC12): página do projeto, só leitura. Fora do escopo do setor, inexistente ou excluído
+// (S-PLA-03): "Projeto não encontrado", sem revelar que existe (a RLS não devolve a linha).
+// S-PLA-03: seletor de status no topo (AC11 a AC13) e botão Excluir (AC9).
 
 type Estado = { fase: "carregando" } | { fase: "nao_encontrado" } | { fase: "erro"; mensagem: string } | { fase: "pronto"; projeto: ProjetoCarregado }
 
@@ -34,6 +37,7 @@ export default function ProjetoPage() {
     const { loading: carregandoUsuario, hasPermission } = useUser()
     const podeVer = hasPermission(PLA_PROJ.ver, "read")
     const podeEditar = hasPermission(PLA_PROJ.editar, "read")
+    const podeExcluir = hasPermission(PLA_PROJ.excluir, "read")
 
     const [estado, setEstado] = useState<Estado>({ fase: "carregando" })
     const [setores, setSetores] = useState<Setor[]>([])
@@ -67,6 +71,9 @@ export default function ProjetoPage() {
     if (estado.fase === "erro") return <Aviso icone={<AlertTriangle className="h-8 w-8 text-rose-600" />} titulo="Não foi possível abrir o projeto." texto={estado.mensagem} acao={voltar} />
 
     const { linha: p, filhas } = estado.projeto
+    const aoAlterarStatus = (novo: StatusProjeto) => setEstado(e => e.fase === "pronto"
+        ? { fase: "pronto", projeto: { ...e.projeto, linha: { ...e.projeto.linha, status: novo } } }
+        : e)
     const setor = setores.find(s => s.id === p.setor_id)
     const situacao = p.situacao_2026 ?? ""
     const visiveis = secoesVisiveis(situacao)
@@ -172,12 +179,12 @@ export default function ProjetoPage() {
                 <div className="flex flex-wrap items-start gap-3">
                     <h1 className="flex-1 text-2xl font-semibold tracking-tight">{p.nome}</h1>
                     <Button variant="outline" onClick={() => router.push("/planejamento")}><ArrowLeft className="mr-1 h-4 w-4" /> Voltar para Projetos</Button>
+                    {podeExcluir && <ExcluirProjeto supabase={supabase} projetoId={p.id} />}
                     {podeEditar && <Button onClick={() => router.push(`/planejamento/projeto/${p.id}/editar`)}><Pencil className="mr-1 h-4 w-4" /> Editar</Button>}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                     {setor && <Badge className="text-white" style={{ backgroundColor: setor.cor }}>{setor.nome}</Badge>}
                     <Badge variant="outline">{rotuloTipo(p.tipo)}</Badge>
-                    <Badge variant="outline" className={corStatus(p.status)}>{rotuloStatus(p.status)}</Badge>
                     {p.situacao_2026 && <Badge variant="secondary">2026: {rotuloSituacao(p.situacao_2026)}</Badge>}
                     {mostrarSeloFichaEmConstrucao(p.status, p.ficha) && (
                         <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900">Ficha em construção — slides indisponíveis</Badge>
@@ -188,6 +195,9 @@ export default function ProjetoPage() {
                     {" · "}Atualizado por {p.atualizado_por_nome ?? "—"} em {dataHoraFortaleza(p.updated_at)}
                 </p>
             </div>
+
+            {/* Status no topo, bem visível (S-PLA-03) */}
+            <SeletorStatus supabase={supabase} projetoId={p.id} status={p.status} ficha={p.ficha} onAlterado={aoAlterarStatus} />
 
             {/* Corpo: a ficha nas seções que se aplicam */}
             {SECOES.filter(s => visiveis.includes(s.id)).map(s => {

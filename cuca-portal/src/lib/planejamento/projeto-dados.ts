@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { payloadDoForm, type EstadoFicha, type FilhasProjeto, type FormProjeto, type LinhaProjeto, type ModoGravacao, type StatusProjeto } from "./projeto"
+import type { ProjetoLista } from "./lista"
+import type { DestinoStatus, EventoStatus } from "./status"
 
 // S-PLA-02: leitura com o cliente do usuário (RLS de setor + permissão) e gravação só pela função
 // `pla_salvar_projeto`, que confere tudo no banco e grava a ficha e as listas numa transação só.
@@ -69,6 +71,68 @@ export async function salvarProjeto(supabase: SupabaseClient, id: string | null,
     const { data, error } = await supabase.rpc("pla_salvar_projeto", { p_id: id, p_modo: modo, p_dados: payloadDoForm(form) })
     if (error) throw new Error(mensagemDeErro(error.message))
     return data as ResultadoGravacao
+}
+
+// ── S-PLA-03: lista, status, duplicar e excluir ──────────────────────────────────────────────
+
+const TAMANHO_PAGINA = 1000
+
+// Projetos visíveis ao usuário (a RLS já tira os excluídos e os de fora do setor) + total do orçamento.
+export async function carregarLista(supabase: SupabaseClient, ano: number): Promise<ProjetoLista[]> {
+    const linhas: Omit<ProjetoLista, "orcamento_total">[] = []
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data, error } = await supabase.from("planejamento_projetos")
+            .select("id, nome, setor_id, tipo, status, ficha, situacao_2026, participantes_estimados, periodo_ano_todo, data_inicio, data_fim, updated_at")
+            .eq("ano", ano).is("excluido_em", null).order("id").range(de, de + TAMANHO_PAGINA - 1)
+        if (error) throw new Error(error.message)
+        linhas.push(...((data ?? []) as typeof linhas))
+        if (!data || data.length < TAMANHO_PAGINA) break
+    }
+    if (linhas.length === 0) return []
+    // Sem filtro por id (evita URL gigante com muitos projetos): a RLS das filhas já devolve só as
+    // linhas dos projetos visíveis; o que não for desta lista é ignorado no mapa. Em páginas de
+    // 1.000 (limite de linhas por consulta do Supabase), para nenhum total sair cortado.
+    const orc: { projeto_id: string; valor_total: number | string | null }[] = []
+    for (let de = 0; ; de += TAMANHO_PAGINA) {
+        const { data: pagina, error: erroOrc } = await supabase.from("planejamento_projeto_orcamento")
+            .select("projeto_id, valor_total").order("id").range(de, de + TAMANHO_PAGINA - 1)
+        if (erroOrc) throw new Error(erroOrc.message)
+        orc.push(...((pagina ?? []) as typeof orc))
+        if (!pagina || pagina.length < TAMANHO_PAGINA) break
+    }
+    const totais = new Map<string, number>()
+    for (const o of orc) {
+        totais.set(o.projeto_id, (totais.get(o.projeto_id) ?? 0) + Number(o.valor_total ?? 0))
+    }
+    return linhas.map(l => ({ ...l, orcamento_total: Math.round((totais.get(l.id) ?? 0) * 100) / 100 }))
+}
+
+export type ResultadoTrocaStatus = { status: StatusProjeto; status_anterior: StatusProjeto; alterado_em: string; alterado_por: string | null }
+
+export async function mudarStatus(supabase: SupabaseClient, id: string, destino: DestinoStatus, observacao: string): Promise<ResultadoTrocaStatus> {
+    const { data, error } = await supabase.rpc("pla_mudar_status", { p_id: id, p_destino: destino, p_observacao: observacao.trim() || null })
+    if (error) throw new Error(mensagemDeErro(error.message))
+    return data as ResultadoTrocaStatus
+}
+
+export async function duplicarProjeto(supabase: SupabaseClient, id: string): Promise<string> {
+    const { data, error } = await supabase.rpc("pla_duplicar_projeto", { p_id: id })
+    if (error) throw new Error(mensagemDeErro(error.message))
+    return (data as { id: string }).id
+}
+
+export async function excluirProjeto(supabase: SupabaseClient, id: string): Promise<void> {
+    const { error } = await supabase.rpc("pla_excluir_projeto", { p_id: id })
+    if (error) throw new Error(mensagemDeErro(error.message))
+}
+
+// Última troca manual de status (AC13), pela tabela única de eventos.
+export async function carregarUltimaTrocaStatus(supabase: SupabaseClient, id: string): Promise<EventoStatus | null> {
+    const { data, error } = await supabase.from("planejamento_projeto_eventos")
+        .select("autor_nome, created_at, detalhe").eq("projeto_id", id).eq("tipo", "status_alterado")
+        .order("created_at", { ascending: false }).limit(1).maybeSingle()
+    if (error) throw new Error(error.message)
+    return (data as EventoStatus | null) ?? null
 }
 
 // Restrições do banco viram texto que a pessoa entende (a tela valida antes; isto é a última linha).

@@ -9,7 +9,6 @@ import toast from "react-hot-toast"
 import { createClient } from "@/lib/supabase/client"
 import { useUser } from "@/lib/auth/user-provider"
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -21,12 +20,13 @@ import { Textarea } from "@/components/ui/textarea"
 import {
     AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { StatusBadge } from "@/components/planejamento/status-projeto"
 import { PLA_PROJ } from "@/lib/rbac/catalogo-planejamento"
 import {
     ANO_PLANEJAMENTO, CATEGORIAS_ORCAMENTO, FREQUENCIAS, SECOES, SITUACOES_2026, TIPOS_PROJETO, ULTIMA_SECAO,
-    bloco2026Visivel, camposDaSituacao, corStatus, errosDeValidacao, formDeLinha, formVazio, formatarReais, mensagemObrigatorios,
+    bloco2026Visivel, camposDaSituacao, errosDeValidacao, formDeLinha, formVazio, formatarReais, mensagemObrigatorios,
     mostrarSalvarProjeto, nomePadraoResponsavel, obrigatoriosFaltando, percentualPreenchido, primeiraSecaoIncompleta, secoesVisiveis,
-    rotuloStatus, sugerirDuracao, totalLinhaOrcamento, totalOrcamento,
+    sugerirDuracao, totalLinhaOrcamento, totalOrcamento,
     type EstadoFicha, type FormProjeto, type IdSecao, type ModoGravacao, type StatusProjeto, type TipoProjeto,
 } from "@/lib/planejamento/projeto"
 import {
@@ -286,7 +286,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                     <ArrowLeft className="mr-1 h-4 w-4" /> Voltar
                 </Button>
                 <h1 className="flex-1 text-2xl font-semibold tracking-tight">{titulo}</h1>
-                {status && <Badge variant="outline" className={corStatus(status)}>{rotuloStatus(status)}</Badge>}
+                {status && <StatusBadge status={status} />}
                 <button
                     type="button"
                     onClick={() => { const s = primeiraSecaoIncompleta(form); if (s) irParaSecao(s) }}
