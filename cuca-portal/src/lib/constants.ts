@@ -93,6 +93,8 @@ export const menuItems = [
             { title: "Projetos", url: "/planejamento", permission: { recurso: "pla_proj_ver", acao: "read" } },
             // S-PLA-06
             { title: "Apresentações", url: "/planejamento/apresentacoes", permission: { recurso: "pla_apresent_ver", acao: "read" } },
+            // S-PLA-07
+            { title: "Calendário 2027", url: "/planejamento/calendario", permission: { recurso: "pla_calendario_ver", acao: "read" } },
         ],
     },
     {
