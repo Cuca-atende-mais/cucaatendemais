@@ -60,6 +60,12 @@ export const PLA_CALENDARIO = {
     ver: "pla_calendario_ver",
 } as const
 
+// S-PLA-08: painel de indicadores (só leitura). A exclusividade vem do perfil: só quem a Rede Cuca marcar.
+export const PLA_INDIC = {
+    ver: "pla_indic_ver",
+    exportar: "pla_indic_exportar",
+} as const
+
 export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
     {
         category: "Planejamento 2027 — Projetos",
@@ -113,6 +119,13 @@ export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
         category: "Planejamento 2027 — Calendário",
         modules: [
             { id: PLA_CALENDARIO.ver, label: "Ver o menu Calendário 2027 (projetos dos seus setores no ano e no mês)", acoes: ACAO_UNICA },
+        ],
+    },
+    {
+        category: "Planejamento 2027 — Indicadores",
+        modules: [
+            { id: PLA_INDIC.ver, label: "Ver o menu Indicadores (números do planejamento dos seus setores: status, orçamento, acompanhamento e meses)", acoes: ACAO_UNICA },
+            { id: PLA_INDIC.exportar, label: "Exportar a planilha dos indicadores (.xlsx, com a lista de projetos; exige \"Ver o menu Indicadores\")", acoes: ACAO_UNICA },
         ],
     },
 ]
