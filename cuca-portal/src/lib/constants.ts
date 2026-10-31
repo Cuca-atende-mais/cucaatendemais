@@ -95,6 +95,8 @@ export const menuItems = [
             { title: "Apresentações", url: "/planejamento/apresentacoes", permission: { recurso: "pla_apresent_ver", acao: "read" } },
             // S-PLA-07
             { title: "Calendário 2027", url: "/planejamento/calendario", permission: { recurso: "pla_calendario_ver", acao: "read" } },
+            // S-PLA-08
+            { title: "Indicadores", url: "/planejamento/indicadores", permission: { recurso: "pla_indic_ver", acao: "read" } },
         ],
     },
     {
