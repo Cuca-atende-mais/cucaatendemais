@@ -483,6 +483,49 @@ def _montar_parametros_named(variaveis: list[dict] | None, valores: list[str]) -
     ]
 
 
+_PLACEHOLDER_TEMPLATE = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+
+
+def montar_texto_enviado(corpo: str | None, components: list | None) -> str | None:
+    """S-INST-QUAL-11: texto final que a pessoa recebeu num disparo, para o backup.
+
+    Preenche as variáveis do corpo do template com os parâmetros do `components`
+    que foi de fato enviado à Meta. Cada parâmetro do body casa pelo nome
+    (`{{nome}}`) e também pela posição (`{{1}}`), porque há template NAMED cujo
+    corpo usa `{{1}}`. Variável sem parâmetro fica como está. Sem corpo, None.
+    Função pura: não lê banco nem rede.
+    """
+    if not corpo:
+        return None
+    parametros: list = []
+    for comp in components or []:
+        if isinstance(comp, dict) and comp.get("type") == "body":
+            parametros = comp.get("parameters") or []
+            break
+    valores: dict[str, str] = {}
+    for i, p in enumerate(parametros):
+        if not isinstance(p, dict) or p.get("text") is None:
+            continue
+        valor = str(p["text"])
+        valores[str(i + 1)] = valor
+        if p.get("parameter_name"):
+            valores[str(p["parameter_name"])] = valor
+    return _PLACEHOLDER_TEMPLATE.sub(lambda m: valores.get(m.group(1), m.group(0)), corpo)
+
+
+def _texto_enviado_seguro(tpl_row: dict | None, components: list | None) -> str | None:
+    """Monta o texto final sem nunca levantar erro: qualquer falha vira None, e o
+    envio, o registro em logs_disparo e a contagem seguem iguais (S-INST-QUAL-11).
+    Usa o corpo aprovado pela Meta e, sem ele, o corpo cadastrado."""
+    try:
+        tpl_row = tpl_row or {}
+        corpo = tpl_row.get("corpo_texto_aprovado") or tpl_row.get("corpo_texto")
+        return montar_texto_enviado(corpo, components)
+    except Exception as exc:
+        logger.warning(f"[Ledger] Não deu para montar o texto enviado: {type(exc).__name__}: {exc}")
+        return None
+
+
 async def _enviar_template_meta_detalhado(
     phone_number_id: str,
     to: str,
@@ -759,7 +802,7 @@ async def _enviar_para_leads_pendentes(
     daily_limit = await asyncio.to_thread(_resolver_limite_restante_hoje_sync, phone_number_id, daily_limit)
 
     automacao_filtro = '{' + ','.join(f'"{tag}"' for tag in automacao_tags) + '}'
-    _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto, variaveis") \
+    _tpl_res = supabase.table("meta_templates").select("nome, corpo_texto, corpo_texto_aprovado, variaveis") \
         .eq("automacoes", automacao_filtro) \
         .contains("phone_number_ids", [phone_number_id]) \
         .eq("ativo", True).eq("status", "aprovado") \
@@ -857,6 +900,9 @@ async def _enviar_para_leads_pendentes(
         # nunca deixa uma falha de gravação virar erro contado nem parar o loop.
         lead_id_ledger = lead.get("id")
         if lead_id_ledger:
+            # S-INST-QUAL-11: texto final para o backup; montado fora do try do ledger,
+            # e qualquer falha vira None (o registro continua sendo gravado).
+            texto_enviado = _texto_enviado_seguro(_tpl_row, components)
             try:
                 await asyncio.to_thread(
                     lambda: supabase.table("logs_disparo").insert({
@@ -865,6 +911,8 @@ async def _enviar_para_leads_pendentes(
                         "telefone": numero,
                         "wamid": wamid,
                         "status": "enviado" if ok else "falhou",
+                        "template_nome": template_name,
+                        "texto_enviado": texto_enviado,
                     }).execute()
                 )
             except Exception as ledger_err:
@@ -1605,7 +1653,7 @@ async def _enviar_divulgacao_para_leads_pendentes(
     daily_limit = await asyncio.to_thread(_resolver_limite_restante_hoje_sync, phone_number_id, daily_limit)
 
     _tpl_div = await asyncio.to_thread(
-        lambda: supabase.table("meta_templates").select("nome, corpo_texto, variaveis, header_tipo, header_media_id")
+        lambda: supabase.table("meta_templates").select("nome, corpo_texto, corpo_texto_aprovado, variaveis, header_tipo, header_media_id")
         .eq("automacoes", '{"Institucional"}')
         .contains("phone_number_ids", [phone_number_id])
         .eq("ativo", True).eq("status", "aprovado")
@@ -1685,6 +1733,8 @@ async def _enviar_divulgacao_para_leads_pendentes(
         # eventos_pontuais/ouvidoria, sempre em try/except próprio.
         lead_id_ledger = lead.get("id")
         if lead_id_ledger:
+            # S-INST-QUAL-11: mesmo padrão do lado pontual — texto final fora do try do ledger.
+            texto_enviado = _texto_enviado_seguro(_tpl_div_row, components)
             try:
                 await asyncio.to_thread(
                     lambda: supabase.table("logs_disparo").insert({
@@ -1693,6 +1743,8 @@ async def _enviar_divulgacao_para_leads_pendentes(
                         "telefone": telefone,
                         "wamid": wamid,
                         "status": "enviado" if ok else "falhou",
+                        "template_nome": template_divulgacao,
+                        "texto_enviado": texto_enviado,
                     }).execute()
                 )
             except Exception as ledger_err:
