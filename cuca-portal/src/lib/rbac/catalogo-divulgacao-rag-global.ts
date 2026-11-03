@@ -15,8 +15,12 @@ export const PGR = {
     ativar: "pgr_ativar",
     excluir: "pgr_excluir",
     reindexar: "pgr_reindexar",
-    gerarResumo: "pgr_gerar_resumo",
 } as const
+
+// S-INST-QUAL-01 (A5): `pgr_gerar_resumo` saiu do catálogo junto com o botão "Atualizar resumo de rede" —
+// o motor-agente não lê o `resumo_rede` desde 09/10. As linhas antigas em `sys_permissions` não dão acesso
+// a nada e somem na próxima gravação do perfil.
+export const PGR_REMOVIDAS = ["pgr_gerar_resumo"] as const
 
 export const GRUPOS_DIVULGACAO_RAG_GLOBAL: GrupoPermissao[] = [
     {
@@ -35,7 +39,6 @@ export const GRUPOS_DIVULGACAO_RAG_GLOBAL: GrupoPermissao[] = [
             { id: PGR.ativar, label: "Ativar/desativar documento", acoes: ACAO_UNICA },
             { id: PGR.excluir, label: "Excluir documento", acoes: ACAO_UNICA },
             { id: PGR.reindexar, label: "Reindexar documento", acoes: ACAO_UNICA },
-            { id: PGR.gerarResumo, label: "Gerar resumo da rede", acoes: ACAO_UNICA },
         ],
     },
 ]
@@ -61,7 +64,6 @@ export const ORIGEM_ESPELHAMENTO_RAG_GLOBAL: Record<string, keyof Flags> = {
     [PGR.editar]: "can_update",
     [PGR.ativar]: "can_update",
     [PGR.reindexar]: "can_update",
-    [PGR.gerarResumo]: "can_update",
     [PGR.excluir]: "can_delete",
 }
 
