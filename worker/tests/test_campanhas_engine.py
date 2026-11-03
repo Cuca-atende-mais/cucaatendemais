@@ -1389,3 +1389,162 @@ async def test_retomar_disparo_pausado_sob_concorrencia_so_1_dispara(monkeypatch
     assert len(fake_sb.envios_disparados) == 1, "só 1 das 2 chamadas concorrentes pode disparar envio"
     status_resultados = sorted(r["status"] for r in resultados)
     assert status_resultados == ["concluida", "erro"], f"esperado 1 sucesso + 1 erro, veio {resultados}"
+
+
+# ---------------------------------------------------------------------------
+# S-INST-QUAL-11: texto final de cada disparo gravado em logs_disparo para o backup
+# permanente (mensagens_arquivo). A montagem é pura e nunca pode afetar o envio.
+# ---------------------------------------------------------------------------
+
+
+def test_montar_texto_enviado_preenche_variaveis_nomeadas():
+    components = [{
+        "type": "body",
+        "parameters": camp._montar_parametros_named(
+            [{"posicao": 1, "descricao": "nome"}, {"posicao": 2, "descricao": "mes"}],
+            ["Ana", "Novembro"],
+        ),
+    }]
+    texto = camp.montar_texto_enviado("Olá, {{nome}}! A programação de {{ mes }} saiu.", components)
+    assert texto == "Olá, Ana! A programação de Novembro saiu."
+
+
+def test_montar_texto_enviado_preenche_por_posicao_e_ignora_header():
+    """Template NAMED cujo corpo usa {{1}}/{{2}} (ex.: institucional_programacao_mensal_v1)."""
+    components = [
+        {"type": "header", "parameters": [{"type": "image", "image": {"id": "m1"}}]},
+        {"type": "body", "parameters": [
+            {"type": "text", "parameter_name": "nome", "text": "Bia"},
+            {"type": "text", "parameter_name": "mes", "text": "Dezembro"},
+        ]},
+    ]
+    assert camp.montar_texto_enviado("Olá, {{1}}! Programação de {{2}}.", components) == (
+        "Olá, Bia! Programação de Dezembro."
+    )
+
+
+def test_montar_texto_enviado_sem_corpo_ou_sem_parametro():
+    assert camp.montar_texto_enviado(None, []) is None
+    assert camp.montar_texto_enviado("", []) is None
+    # variável sem parâmetro fica como está; texto sem variável volta igual
+    assert camp.montar_texto_enviado("Oi {{nome}}, link {{link}}", [
+        {"type": "body", "parameters": [{"type": "text", "parameter_name": "nome", "text": "Caio"}]},
+    ]) == "Oi Caio, link {{link}}"
+    assert camp.montar_texto_enviado("Texto fixo", None) == "Texto fixo"
+
+
+def test_texto_enviado_seguro_prefere_corpo_aprovado_e_nunca_levanta(monkeypatch):
+    comps = [{"type": "body", "parameters": [{"type": "text", "parameter_name": "nome", "text": "Ana"}]}]
+    assert camp._texto_enviado_seguro(
+        {"corpo_texto": "rascunho {{nome}}", "corpo_texto_aprovado": "aprovado {{nome}}"}, comps
+    ) == "aprovado Ana"
+    assert camp._texto_enviado_seguro({"corpo_texto": "rascunho {{nome}}", "corpo_texto_aprovado": None}, comps) == (
+        "rascunho Ana"
+    )
+    assert camp._texto_enviado_seguro(None, comps) is None
+
+    def _explode(*_a, **_k):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(camp, "montar_texto_enviado", _explode)
+    assert camp._texto_enviado_seguro({"corpo_texto": "x"}, comps) is None
+
+
+@pytest.mark.asyncio
+async def test_disparo_pontual_grava_texto_enviado_e_template_nome(monkeypatch):
+    mock_sb, tabelas = _mock_supabase_disparo_pontual([{
+        "nome": "tpl_pontual",
+        "corpo_texto": "rascunho",
+        "corpo_texto_aprovado": "Olá, {{nome}}! {{titulo_evento}} em {{local_evento}}.",
+        "variaveis": [
+            {"posicao": 1, "descricao": "nome"}, {"posicao": 2, "descricao": "titulo_evento"},
+            {"posicao": 3, "descricao": "descricao_evento"}, {"posicao": 4, "descricao": "data_evento"},
+            {"posicao": 5, "descricao": "horario_evento"}, {"posicao": 6, "descricao": "local_evento"},
+        ],
+    }])
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-pontual-1", "token-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_sync",
+        lambda unidade, categorias_alvo: MagicMock(
+            data=[{"id": "lead-pontual-1", "telefone": "5585999999999", "nome": "Fulano"}]
+        ),
+    )
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.XYZ")))
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+
+    item = {"id": "evento-1", "titulo": "Show", "descricao": "desc", "local": "Cuca Barra"}
+    await camp._processar_item_disparo_interno(item, "eventos_pontuais", 0, 0, 10, 100)
+
+    payload = tabelas["logs_disparo"].insert.call_args.args[0]
+    assert payload["template_nome"] == "tpl_pontual"
+    assert payload["texto_enviado"] == "Olá, Fulano! Show em Cuca Barra."
+
+
+@pytest.mark.asyncio
+async def test_disparo_pontual_falha_na_montagem_nao_afeta_envio_nem_contagem(monkeypatch):
+    mock_sb, tabelas = _mock_supabase_disparo_pontual(
+        [{"nome": "tpl_pontual", "corpo_texto": "Oi {{nome}}", "variaveis": []}]
+    )
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-pontual-1", "token-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_sync",
+        lambda unidade, categorias_alvo: MagicMock(
+            data=[{"id": "lead-pontual-1", "telefone": "5585999999999", "nome": "Fulano"}]
+        ),
+    )
+    enviar = AsyncMock(return_value=(True, "wamid.XYZ"))
+    monkeypatch.setattr(camp, "_enviar_template_meta", enviar)
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+
+    def _explode(*_a, **_k):
+        raise RuntimeError("montagem quebrou")
+
+    monkeypatch.setattr(camp, "montar_texto_enviado", _explode)
+
+    item = {"id": "evento-1", "titulo": "Evento Teste", "descricao": "desc"}
+    await camp._processar_item_disparo_interno(item, "eventos_pontuais", 0, 0, 10, 100)
+
+    assert enviar.await_count == 1
+    payload = tabelas["logs_disparo"].insert.call_args.args[0]
+    assert payload["texto_enviado"] is None
+    assert payload["status"] == "enviado"
+    assert payload["wamid"] == "wamid.XYZ"
+    final = tabelas["disparos"].update.call_args_list[-1].args[0]
+    assert final["status"] == "concluida"
+    assert final["total_enviados"] == 1
+    assert final["total_erros"] == 0
+
+
+@pytest.mark.asyncio
+async def test_disparo_divulgacao_grava_texto_enviado_e_template_nome(monkeypatch):
+    mock_sb = MagicMock()
+    (mock_sb.table.return_value.select.return_value.eq.return_value.contains.return_value
+        .eq.return_value.eq.return_value.limit.return_value.execute.return_value.data) = [{
+            "nome": "tpl_divulgacao", "corpo_texto": "Oi {{nome}}, programação de {{mes}}: {{link_programacao}}",
+            "corpo_texto_aprovado": None,
+            "variaveis": [
+                {"posicao": 1, "descricao": "nome"}, {"posicao": 2, "descricao": "mes"},
+                {"posicao": 3, "descricao": "link_programacao"},
+            ],
+            "header_tipo": None, "header_media_id": None,
+        }]
+    monkeypatch.setattr(camp, "supabase", mock_sb)
+    monkeypatch.setattr(camp, "_get_phone_by_canal_tipo_sync", lambda canal_tipo: ("phone-div-1", "token-div-1"))
+    monkeypatch.setattr(
+        camp, "_query_leads_divulgacao_sync",
+        lambda: MagicMock(data=[{"id": "lead-div-1", "telefone": "5585999999999", "nome": "Fulano"}]),
+    )
+    monkeypatch.setattr(camp, "_enviar_template_meta", AsyncMock(return_value=(True, "wamid.DIV1")))
+    monkeypatch.setattr(camp, "_gravar_breadcrumb_disparo", MagicMock())
+    monkeypatch.setattr(camp, "_update_metricas_sync", MagicMock())
+
+    await camp._processar_disparo_divulgacao_interno(
+        disparo_id="disparo-div-1", mes_nome="Novembro",
+        delay_min=0, delay_max=0, daily_limit=10, error_threshold=100,
+    )
+
+    payload = mock_sb.table.return_value.insert.call_args.args[0]
+    assert payload["template_nome"] == "tpl_divulgacao"
+    assert payload["texto_enviado"] == f"Oi Fulano, programação de Novembro: {camp.LINK_PROGRAMACAO_MENSAL}"
