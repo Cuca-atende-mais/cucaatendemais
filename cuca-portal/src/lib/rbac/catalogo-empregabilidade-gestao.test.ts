@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { ACAO_UNICA } from "./catalogo-programacao-mensal"
-import { EPM_FEEDBACK, GRUPOS_EMPREGABILIDADE_GESTAO, MODULOS_EMPREGABILIDADE_GESTAO } from "./catalogo-empregabilidade-gestao"
+import { EPM_FEEDBACK, EPM_RELATORIO, GRUPOS_EMPREGABILIDADE_GESTAO, MODULOS_EMPREGABILIDADE_GESTAO } from "./catalogo-empregabilidade-gestao"
 
 // has_permission casa `sys_permissions.module LIKE recurso || '%'`: um id novo que comece com um recurso
 // já checado concederia esse recurso por engano. Varre o código e as migrations atrás dos recursos checados.
@@ -28,8 +28,8 @@ function recursosChecados(): Set<string> {
 }
 
 describe("catálogo Emprega+ (EMP-GES)", () => {
-    it("GES-01 a GES-03: permissões de ação única, num grupo próprio", () => {
-        expect(MODULOS_EMPREGABILIDADE_GESTAO).toEqual(Object.values(EPM_FEEDBACK))
+    it("GES-01 a GES-04: permissões de ação única, em grupos próprios", () => {
+        expect(MODULOS_EMPREGABILIDADE_GESTAO).toEqual([...Object.values(EPM_FEEDBACK), ...Object.values(EPM_RELATORIO)])
         for (const grupo of GRUPOS_EMPREGABILIDADE_GESTAO) {
             for (const m of grupo.modules) expect(m.acoes).toEqual(ACAO_UNICA)
         }

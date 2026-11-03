@@ -529,7 +529,9 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                         <SelectTrigger><SelectValue /></SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="pre_cadastro">Pré-Cadastro (Rascunho)</SelectItem>
-                                            <SelectItem value="aberta">Pública / Aberta</SelectItem>
+                                            {/* S-EMP-GES-04: nenhuma vaga nasce publicada — passa pela análise do setor e é
+                                                liberada depois (o banco também recusa criar vaga já aberta). */}
+                                            {vaga && <SelectItem value="aberta">Pública / Aberta</SelectItem>}
                                             <SelectItem value="preenchida">Preenchida</SelectItem>
                                             <SelectItem value="cancelada">Cancelada</SelectItem>
                                         </SelectContent>

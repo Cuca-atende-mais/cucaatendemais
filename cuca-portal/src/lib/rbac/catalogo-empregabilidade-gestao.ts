@@ -14,6 +14,13 @@ export const EPM_FEEDBACK = {
     reenviar: "epm_feedback_reenviar",
 } as const
 
+// S-EMP-GES-04 (AC13): relatório Emprega+.
+export const EPM_RELATORIO = {
+    ver: "epm_relatorio_ver",
+    exportar: "epm_relatorio_exportar",
+    rede: "epm_relatorio_rede",
+} as const
+
 export const GRUPOS_EMPREGABILIDADE_GESTAO: GrupoPermissao[] = [
     {
         category: "Empregabilidade — Feedback das empresas",
@@ -24,6 +31,14 @@ export const GRUPOS_EMPREGABILIDADE_GESTAO: GrupoPermissao[] = [
             { id: EPM_FEEDBACK.contatoEditar, label: "Editar o contato da vaga (nome, telefone, e-mail)", acoes: ACAO_UNICA },
             { id: EPM_FEEDBACK.solicitar, label: "Solicitar feedback à empresa", acoes: ACAO_UNICA },
             { id: EPM_FEEDBACK.reenviar, label: "Reenviar solicitação de feedback", acoes: ACAO_UNICA },
+        ],
+    },
+    {
+        category: "Empregabilidade — Relatório Emprega+",
+        modules: [
+            { id: EPM_RELATORIO.ver, label: "Ver o relatório (menu Relatórios e prévia na tela)", acoes: ACAO_UNICA },
+            { id: EPM_RELATORIO.exportar, label: "Baixar o relatório em Excel", acoes: ACAO_UNICA },
+            { id: EPM_RELATORIO.rede, label: "Ver todas as unidades e o consolidado da rede (sem ela, só a própria unidade)", acoes: ACAO_UNICA },
         ],
     },
 ]
