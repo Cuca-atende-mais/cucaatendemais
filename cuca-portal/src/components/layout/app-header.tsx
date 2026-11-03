@@ -1,6 +1,6 @@
 "use client"
 
-import { Menu, Bell, Search, Moon, Sun } from "lucide-react"
+import { Menu, Search, Moon, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useSidebar } from "@/components/ui/sidebar"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -8,6 +8,7 @@ import { useTheme } from "next-themes"
 import { useState, useEffect } from "react"
 import { CommandPalette } from "@/components/dashboard/command-palette"
 import { useUser } from "@/lib/auth/user-provider"
+import { CentralAlertas } from "@/components/alertas/central-alertas"
 
 export function AppHeader() {
     const { toggleSidebar } = useSidebar()
@@ -77,16 +78,8 @@ export function AppHeader() {
                             </Button>
                         )}
 
-                        {/* Notifications */}
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 relative"
-                            aria-label="Notificações"
-                        >
-                            <Bell className="h-4 w-4" />
-                            <span className="absolute top-1.5 right-1.5 h-2 w-2 bg-rose-500 rounded-full ring-2 ring-background" />
-                        </Button>
+                        {/* Alertas do sistema (S-INST-QUAL-12): só para as contas Developer */}
+                        <CentralAlertas />
 
                         <div className="h-5 w-px bg-border mx-1" />
 

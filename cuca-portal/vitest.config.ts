@@ -9,7 +9,9 @@ export default defineConfig({
     environment: "node",
     // tests/ estava de fora: os 4 arquivos ali existiam, estavam versionados e nunca
     // rodavam por ninguém — cobertura só no papel. Incluídos em 2026-09-21.
-    include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
+    // .test.tsx (2026-11-03, S-INST-QUAL-12): teste de componente renderizando para HTML estático
+    // com react-dom/server, ainda em ambiente node, sem jsdom.
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "tests/**/*.test.ts"],
   },
   resolve: {
     alias: {
