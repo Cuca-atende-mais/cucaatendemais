@@ -83,6 +83,8 @@ async function rodar(c: Cenario, agora = AGORA_FIXO): Promise<{ chat: unknown[];
     const u = String(url instanceof Request ? url.url : url);
     if (u.includes("/v1/embeddings")) return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [0, 0, 0] }] }), { status: 200 }));
     if (u.includes("/v1/chat/completions")) {
+      // S-INST-QUAL-01: o classificador de emprego roda em toda mensagem do Institucional; aqui ele responde "outro".
+      if (String(init?.body ?? "").includes("CLASSIFICADOR DE EMPREGO")) return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: '{"fala_de_emprego":false,"vaga_sem_tipo":false,"outra_pergunta":null}' } }] }), { status: 200 }));
       const corpo = JSON.parse(String(init?.body ?? "{}"));
       chat.push(corpo);
       const ehAvaliacao = corpo?.temperature === 0;

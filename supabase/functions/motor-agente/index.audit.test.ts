@@ -144,12 +144,14 @@ function respostasBaseHandler(metadataConversa: Record<string, unknown>): Record
  * emitindo a tag [[ENCAMINHAR:canal]]. */
 function comFetchMockado<T>(fn: () => Promise<T>, respostaChatCompletions = "Resposta de teste"): Promise<T> {
   const fetchOriginal = globalThis.fetch;
-  globalThis.fetch = ((url: string | URL | Request) => {
+  globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
     const urlStr = String(url instanceof Request ? url.url : url);
     if (urlStr.includes("api.openai.com/v1/embeddings")) {
       return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [0, 0, 0] }] }), { status: 200 }));
     }
     if (urlStr.includes("api.openai.com/v1/chat/completions")) {
+      // S-INST-QUAL-01: o classificador de emprego roda em toda mensagem do Institucional; aqui ele responde "outro".
+      if (String(init?.body ?? "").includes("CLASSIFICADOR DE EMPREGO")) return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: '{"fala_de_emprego":false,"vaga_sem_tipo":false,"outra_pergunta":null}' } }] }), { status: 200 }));
       return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: respostaChatCompletions } }] }), { status: 200 }));
     }
     throw new Error("fetch não-mockado nesse teste: " + urlStr);
@@ -1293,11 +1295,17 @@ Deno.test("montarMensagemEncaminhamento: academia_enem com número — texto exa
 });
 
 Deno.test("montarMensagemEncaminhamento: número null (os 3 canais pendentes hoje) mantém a explicação do canal, sem wa.me nem link quebrado", () => {
-  for (const canal of ["empregabilidade", "acesso_cuca", "ouvidoria", "academia_enem"] as const) {
+  // S-INST-QUAL-01 (A10): acesso_cuca saiu desta lista — sem número, ele manda falar com a unidade
+  // (testado em index.inst-qual-01.test.ts) em vez de prometer um contato que não existe.
+  for (const canal of ["empregabilidade", "ouvidoria", "academia_enem"] as const) {
     const msg = montarMensagemEncaminhamento(canal, null);
     assertEquals(msg.includes("wa.me"), false, "canal=" + canal + ": sem número confirmado, a mensagem NÃO pode conter 'wa.me' (viraria um link quebrado tipo wa.me/None)");
     assertStringIncludes(msg, "em breve te passo o contato certinho aqui — já estamos organizando esse canal!");
   }
+  const acesso = montarMensagemEncaminhamento("acesso_cuca", null);
+  assertEquals(acesso.includes("wa.me"), false);
+  assertEquals(acesso.includes("em breve te passo o contato"), false);
+  assertStringIncludes(acesso, "falar direto com a unidade");
 });
 
 Deno.test("montarMensagemEncaminhamento: sanitiza número com símbolos (espaço/traço/parênteses/+) antes de montar o link wa.me", () => {
@@ -1387,6 +1395,8 @@ function comFetchMockadoCapturandoBody(
       return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [0, 0, 0] }] }), { status: 200 }));
     }
     if (urlStr.includes("api.openai.com/v1/chat/completions")) {
+      // S-INST-QUAL-01: o classificador de emprego roda em toda mensagem do Institucional; aqui ele responde "outro".
+      if (String(init?.body ?? "").includes("CLASSIFICADOR DE EMPREGO")) return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: '{"fala_de_emprego":false,"vaga_sem_tipo":false,"outra_pergunta":null}' } }] }), { status: 200 }));
       if (init?.body) bodiesEnviados.push(String(init.body));
       return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: respostaChatCompletions } }] }), { status: 200 }));
     }
@@ -3129,6 +3139,8 @@ function comFetchS72(fn: () => Promise<Response>, interpretacao: Record<string, 
     const urlStr = String(url instanceof Request ? url.url : url);
     if (urlStr.includes("/v1/embeddings")) return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [0, 0, 0] }] }), { status: 200 }));
     if (urlStr.includes("/v1/chat/completions")) {
+      // S-INST-QUAL-01: o classificador de emprego roda em toda mensagem do Institucional; aqui ele responde "outro".
+      if (String(init?.body ?? "").includes("CLASSIFICADOR DE EMPREGO")) return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: '{"fala_de_emprego":false,"vaga_sem_tipo":false,"outra_pergunta":null}' } }] }), { status: 200 }));
       const corpo = String(init?.body ?? "");
       bodies.push(corpo);
       chamadasChat++;

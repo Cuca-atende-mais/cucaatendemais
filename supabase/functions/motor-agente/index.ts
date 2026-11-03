@@ -127,6 +127,13 @@ function normalizarTextoIntencao(texto: string): string {
     .trim();
 }
 
+// S-INST-QUAL-01 (A4): quem a pessoa pede para chamar. "alguem" cobre "alguem da equipe" e
+// "alguem do setor de matricula". Texto ja normalizado (sem acento, minusculo).
+const ARTIGO_PESSOA = "(o |a |os |as |um |uma |algum |alguma |ao )?";
+const ALVO_PESSOA = "(gerente|gerencia|coordenador|coordenadora|coordenacao|diretor|diretora|diretoria|direcao|responsavel|funcionario|funcionaria|alguem|setor|equipe)";
+// So cargos (sem "alguem", "setor" e "equipe"), para os verbos "chamar" e "ligar para".
+const CARGO_PESSOA = "(gerente|gerencia|coordenador|coordenadora|coordenacao|diretor|diretora|diretoria|direcao|responsavel|funcionario|funcionaria|atendente)";
+
 const PADROES_HANDOVER_INSTITUCIONAL = [
   /\bfalar com (um |uma |o |a )?(atendente|humano|pessoa)\b/,
   /\bquero (um |uma |o |a )?(atendente|humano)\b/,
@@ -154,12 +161,31 @@ const PADROES_HANDOVER_INSTITUCIONAL = [
   /\b(perdi|esqueci)\b.{0,25}\b(acesso|senha|conta|login|usuario|e-?mail)\b/,
   /\brecuperar\b.{0,25}\b(acesso|senha|conta|cadastro|login)\b/,
   /\b(conta|acesso|cadastro|login)\b.{0,25}\b(bloquead[oa]|travad[oa]|suspens[oa]|nao funciona|nao esta funcionando)\b/,
+  // S-INST-QUAL-01 (A9): as duas frases reais de outubro ("nao consigo... diz que preciso
+  // atualizar meu cadastro") nao casavam com os padroes acima: "atualizar cadastro" nao era
+  // reconhecido. A base nao orienta esse caso, entao vai para o atendente. A ordem invertida
+  // ("me matricular ... mas nao consigo") ficou de fora de proposito: pegaria "quero me matricular
+  // no judo mas nao consigo de manha, tem a noite?", que e pergunta de horario.
+  /\batualiza(r|cao)?\b.{0,20}\b(cadastro|acesso|conta|dados)\b/,
+  // S-INST-QUAL-01 (A4): pedido de falar com gerente, coordenacao, direcao, responsavel,
+  // funcionario, alguem da equipe ou de um setor. Exige verbo de contato: uma pergunta SOBRE um
+  // setor ("o setor de esportes tem natacao?") nao e pedido de pessoa. O artigo e restrito de
+  // proposito: "falar com meu responsavel" (pai/mae de menor) nao casa.
+  new RegExp("\\b(falar|conversar)\\s+com\\s+" + ARTIGO_PESSOA + ALVO_PESSOA + "\\b"),
+  new RegExp("\\b(passa|passe|passar|transfere|transferir|transfira|encaminha|encaminhar|encaminhe)\\s+(para|pra|pro)\\s+" + ARTIGO_PESSOA + ALVO_PESSOA + "\\b"),
+  // "chamar" e "ligar para" so com cargo: "posso chamar alguem pra fazer o curso comigo?" e
+  // "posso chamar uma equipe pra jogar na quadra?" nao sao pedido de atendimento.
+  new RegExp("\\bchamar\\s+" + ARTIGO_PESSOA + CARGO_PESSOA + "\\b"),
+  new RegExp("\\bligar\\s+(para|pra|pro)\\s+" + ARTIGO_PESSOA + CARGO_PESSOA + "\\b"),
 ];
 
 const PADROES_NEGACAO_HANDOVER_INSTITUCIONAL = [
   /\bnao (quero|preciso|pode|deve)\b.{0,40}\b(atendente|humano|pessoa|atendimento humano)\b/,
   /\bsem (atendente|humano|atendimento humano)\b/,
   /\bnao me passa(r)? (para|pra|pro)\b.{0,30}\b(atendente|humano|pessoa)\b/,
+  // S-INST-QUAL-01 (A4): a mesma negacao para gerente, coordenacao, setor etc.
+  new RegExp("\\bnao (quero|preciso|precisa|pode|deve)\\b.{0,40}\\b" + ALVO_PESSOA + "\\b"),
+  new RegExp("\\bnao me (passa|passe|passar|transfere|transfira|encaminha|encaminhe)\\b.{0,30}\\b" + ALVO_PESSOA + "\\b"),
 ];
 
 export function deveAcionarHandoverInstitucional(texto: string, agenteTipo: string): boolean {
@@ -168,6 +194,273 @@ export function deveAcionarHandoverInstitucional(texto: string, agenteTipo: stri
   if (!normalizado) return false;
   if (PADROES_NEGACAO_HANDOVER_INSTITUCIONAL.some((padrao) => padrao.test(normalizado))) return false;
   return PADROES_HANDOVER_INSTITUCIONAL.some((padrao) => padrao.test(normalizado));
+}
+
+// ── S-INST-QUAL-01 (A8): Emprega+ ──────────────────────────────────────────────────────────
+// O Institucional nao trata de emprego: quem pergunta por emprego, trabalho, estagio ou
+// curriculo recebe o contato do Emprega+, montado pelo codigo (nunca pelo modelo). Roda logo
+// depois da deteccao de transbordo, antes do menu e das frases prontas — em outubro 32 perguntas
+// de emprego receberam frase pronta e nunca chegaram ao modelo.
+
+// Camada 1 — termos claros. "trabalho/trabalhar" so conta com intencao ("quero trabalhar",
+// "vaga de trabalho") ou sozinho: "eu trabalho de dia, tem curso a noite?" e pergunta de curso.
+const PADROES_EMPREGO = [
+  /\bempregos?\b/,
+  /\bemprega ?(\+|mais)/,
+  /\bdesempregad[oa]s?\b/,
+  /\bcurriculos?\b/,
+  /\b(jovem|menor) aprendiz\b/,
+  /\bestagi\w*\b/,
+  /\b(vagas?|oportunidades?|ofertas?) (de )?(trabalho|emprego|estagio)\b/,
+  /\b(quero|queria|gostaria de|preciso( de)?|precisando( de)?|procuro|procurando|busco|buscando|arrumar|arranjar|conseguir)( um| uma| algum)? (trabalho|trabalhar|servico)\b/,
+  /^((oi|ola)[\s,!.]+)?(trabalho|trabalhar)[\s?!.]*$/,
+];
+
+const PADROES_NEGACAO_EMPREGO = [
+  /\bnao (quero|queria|procuro|preciso|busco|estou procurando|to procurando|estou buscando)\b.{0,25}\b(emprego|trabalho|trabalhar|estagio|vagas?)\b/,
+];
+
+// Trechos que citam curriculo sem ser pedido de emprego (conferido em mensagens reais de set-nov/2026):
+// "Curriculo na Pratica" e nome de oficina, e "botar no curriculo" e sobre curso que vale no curriculo.
+const TRECHOS_NAO_EMPREGO = [
+  /\bcurriculo na pratica\b/g,
+  /\b(colocar|botar|por|incluir)( isso)? (no|na|em|pro|para o) (meu |seu |dele |dela )?curriculo\b/g,
+];
+
+function normalizarParaEmprego(texto: string): string {
+  let t = normalizarTextoIntencao(texto);
+  for (const r of TRECHOS_NAO_EMPREGO) t = t.replace(r, " ");
+  return t;
+}
+
+// Trechos de emprego e palavras que, sozinhas, nao formam outra pergunta. O que sobrar depois de
+// tirar os dois e "outra pergunta" (caso misto, A8) ou "vagas" com atividade no texto (camada 2).
+const TRECHOS_EMPREGO = [
+  /\b(vagas?|oportunidades?|ofertas?) (de )?(trabalho|emprego|estagio)\b/g,
+  /\bprimeiro emprego\b/g, /\b(jovem|menor) aprendiz\b/g, /\bemprega ?(\+|mais)/g,
+  /\bempregos?\b/g, /\bdesempregad[oa]s?\b/g, /\bcurriculos?\b/g, /\bestagi\w*\b/g, /\btrabalh\w*\b/g,
+];
+const PALAVRAS_SEM_PERGUNTA = new Set([
+  "oi", "ola", "bom", "boa", "dia", "tarde", "noite", "tudo", "bem", "por", "favor", "obrigado", "obrigada",
+  "quero", "queria", "gostaria", "preciso", "precisando", "procuro", "procurando", "busco", "buscando",
+  "arrumar", "arranjar", "conseguir", "saber", "sobre", "informacao", "informacoes", "info", "tem", "tenho",
+  "ter", "voces", "vcs", "voce", "pra", "para", "pro", "como", "onde", "qual", "quais", "faco", "fazer",
+  "posso", "pode", "cadastrar", "cadastro", "enviar", "mandar", "deixar", "entregar", "meu", "minha", "meus",
+  "minhas", "uma", "uns", "umas", "com", "que", "vaga", "vagas", "oportunidade", "oportunidades", "alguma",
+  "algum", "aqui", "ajuda", "ajudar", "servico", "alguem", "ainda", "hoje", "agora", "isso", "esse", "essa",
+  "tambem", "tbm", "aberta", "abertas", "aberto", "abertos", "disponivel", "disponiveis", "nao", "sim",
+]);
+
+// S-INST-QUAL-01 (achado 1 do @qa): numa pergunta de EMPREGO, onde a pessoa quer trabalhar nao e
+// outra pergunta. Sem isto, "tem vagas de emprego no cuca Pici?" ia para o fluxo normal, trocava a
+// conversa para o Pici e mandava o resumo da programacao de la antes do Emprega+. So vale para a
+// camada 1: na camada 2 ("tem vaga no Jangurussu?") a unidade citada e sinal de vaga de curso.
+const PALAVRAS_LOCAL_EMPREGO = new Set([
+  "cuca", "cucas", "rede", "unidade", "unidades", "perto", "barra", "pici", "mondubim", "jangurussu",
+  "jose", "walter", "esta", "estao", "tendo", "teria", "tera", "vai",
+]);
+
+/** Palavras que sobram da mensagem depois de tirar os trechos de emprego e as palavras que, sozinhas,
+ * nao formam outra pergunta. Vazio = a mensagem e so sobre emprego (ou so "tem vagas?").
+ * `ignorarLocal` (camada 1) tambem tira onde a pessoa quer trabalhar (unidade, "cuca", "rede"). */
+export function restoDaMensagemSemEmprego(texto: string, ignorarLocal = true): string[] {
+  let t = normalizarParaEmprego(texto);
+  for (const r of TRECHOS_EMPREGO) t = t.replace(r, " ");
+  return t.replace(/[^a-z0-9 ]/g, " ").split(" ")
+    .filter((p) => p.length >= 3 && !PALAVRAS_SEM_PERGUNTA.has(p) && !(ignorarLocal && PALAVRAS_LOCAL_EMPREGO.has(p)));
+}
+
+export type ClassificacaoEmprego = "emprego" | "emprego_misto" | "vagas_ambiguo" | null;
+
+/**
+ * Camada 1: termo claro de emprego → "emprego" (so isso) ou "emprego_misto" (tambem pede outra
+ * coisa: o fluxo normal responde essa parte e o Emprega+ vai num balao a mais).
+ * Camada 2: "vaga(s)" sozinho, sem atividade no texto e sem conversa de programacao em andamento →
+ * "vagas_ambiguo" (o bot pergunta se e emprego ou curso). Com conversa de programacao → null.
+ * So Institucional/maria: a Empregabilidade tem motor proprio e nao passa por aqui.
+ */
+export function classificarPerguntaEmprego(texto: string, agenteTipo: string, conversaEmProgramacao: boolean): ClassificacaoEmprego {
+  if (agenteTipo !== "Institucional" && agenteTipo !== "maria") return null;
+  const normalizado = normalizarParaEmprego(texto);
+  if (!normalizado.trim()) return null;
+  if (PADROES_NEGACAO_EMPREGO.some((p) => p.test(normalizado))) return null;
+  if (PADROES_EMPREGO.some((p) => p.test(normalizado))) return restoDaMensagemSemEmprego(texto).length > 0 ? "emprego_misto" : "emprego";
+  if (/\bvagas?\b/.test(normalizado) && restoDaMensagemSemEmprego(texto, false).length === 0 && !conversaEmProgramacao) return "vagas_ambiguo";
+  return null;
+}
+
+/** Camada 2: a conversa recente trata de atividade ou programacao (unidade escolhida, consulta de
+ * programacao em andamento, menu de area aberto, disparo recebido nas ultimas 24h, ou a ultima
+ * resposta do bot foi de programacao). Ai "tem vagas?" e vaga de curso e segue o fluxo normal. O
+ * disparo conta a parte porque ele nao fica em `mensagens`: quem responde "tem vaga?" ao aviso da
+ * programacao do mes nao tem resposta anterior do bot no historico. */
+export function conversaEmContextoDeProgramacao(metadata: Record<string, unknown>, ultimoBlocoAgente: string): boolean {
+  const contexto = metadata.prog_contexto as Record<string, unknown> | null | undefined;
+  if (metadata.unidade_selecionada || metadata.prog_escopo || metadata.prog_pendente || metadata.menu_categoria_ativo) return true;
+  if (deveReconhecerDisparoRecente(metadata.ultimo_disparo as { enviado_em?: string } | null | undefined, false)) return true;
+  if (contexto && typeof contexto === "object" && Object.keys(contexto).length > 0) return true;
+  const ultimo = normalizarTextoIntencao(ultimoBlocoAgente);
+  return /\b(seg|ter|qua|qui|sex|sab|dom|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b|\bhorario|\bturmas?\b|\bprofessor|\bprogramacao\b|\bmodalidades?\b|\bcursos?\b|\boficinas?\b|\batividades?\b|\binscri|\bmatricul/.test(ultimo);
+}
+
+export const PERGUNTA_VAGA_AMBIGUA = "Você quer saber de vaga de emprego ou de vaga em curso ou atividade da Rede CUCA? 😊";
+
+// S-INST-QUAL-01 (A8, decisão do Junior de 03/11): quem decide se a mensagem é de EMPREGO é o
+// modelo, não a lista de palavras — a lista não pega gíria ("trampo", "bico", "tão contratando?")
+// nem separa "curso de planilhas para o mercado de trabalho" de pedido de emprego. A lista acima
+// (`classificarPerguntaEmprego`) fica só como reserva, quando a chamada ao modelo falha.
+
+export type ResultadoEmprego = { classificacao: ClassificacaoEmprego; outraPergunta: string | null; fonte: "modelo" | "lista" | "sem_chamada" };
+
+/** Marcador do prompt do classificador (os testes usam para separar esta chamada da resposta). */
+export const MARCADOR_CLASSIFICADOR_EMPREGO = "CLASSIFICADOR DE EMPREGO";
+const CLASSIFICADOR_EMPREGO_TIMEOUT_MS = 6000;
+const OUTRA_PERGUNTA_MAX = 400;
+
+/** Valida o JSON do modelo. Qualquer coisa fora do formato → null (o chamador usa a lista).
+ * O modelo responde 3 perguntas simples sobre a MENSAGEM ATUAL; quem junta as respostas é o
+ * código. A conversa de programação em andamento (que inclui o disparo das últimas 24h, fora do
+ * histórico) também é conferida aqui, não pelo modelo: com ela, "vaga" sem tipo é vaga de curso.
+ * Primeira versão (um campo só, com o modelo decidindo tudo) errou no replay de 03/11: "Vagas de
+ * emprego" virou vaga ambígua e "ok"/"só isso" depois de conversa de emprego viraram emprego. */
+/** Trava do caso misto: a "outra pergunta" que ainda e de emprego (tem termo claro de emprego, ou
+ * e praticamente a mensagem inteira) nao e outra pergunta — no replay de 03/11 o modelo devolveu,
+ * por exemplo, "o que e o cuca emprega+?" como outra pergunta da propria mensagem. */
+export function outraPerguntaAindaEEmprego(outra: string, texto: string): boolean {
+  if (classificarPerguntaEmprego(outra, "Institucional", false) !== null && classificarPerguntaEmprego(outra, "Institucional", false) !== "vagas_ambiguo") return true;
+  if (/\bempregabilidade\b|\bvagas?\b|\boportunidades?\b|\bcandidat|\bprocesso seletivo\b|\bcontrat/.test(normalizarTextoIntencao(outra))) return true;
+  const palavras = (t: string) => new Set(normalizarTextoIntencao(t).replace(/[^a-z0-9 ]/g, " ").split(" ").filter((p) => p.length >= 3));
+  const daOutra = palavras(outra);
+  const doTexto = palavras(texto);
+  if (daOutra.size === 0) return true;
+  const comuns = [...daOutra].filter((p) => doTexto.has(p)).length;
+  return comuns === daOutra.size && daOutra.size >= doTexto.size * 0.8;
+}
+
+export function validarClassificacaoEmpregoModelo(data: unknown, conversaEmProgramacao: boolean, texto = ""): Omit<ResultadoEmprego, "fonte"> | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (typeof d.fala_de_emprego !== "boolean" || typeof d.vaga_sem_tipo !== "boolean") return null;
+  const outra = typeof d.outra_pergunta === "string" ? d.outra_pergunta.trim().slice(0, OUTRA_PERGUNTA_MAX) : "";
+  if (d.fala_de_emprego) {
+    return outra && !outraPerguntaAindaEEmprego(outra, texto)
+      ? { classificacao: "emprego_misto", outraPergunta: outra }
+      : { classificacao: "emprego", outraPergunta: null };
+  }
+  // "emprego ou curso?" so quando a mensagem fala mesmo de vaga ("tem" sozinho nao e pergunta de vaga).
+  if (d.vaga_sem_tipo && !conversaEmProgramacao && /\bvagas?\b/.test(normalizarTextoIntencao(texto))) return { classificacao: "vagas_ambiguo", outraPergunta: null };
+  return { classificacao: null, outraPergunta: null };
+}
+
+export function montarPromptClassificadorEmprego(texto: string, historico: { role: string; content: string }[]): string {
+  return [
+    MARCADOR_CLASSIFICADOR_EMPREGO + ".",
+    "Você analisa mensagens recebidas pelo WhatsApp institucional da Rede CUCA (centros de juventude da Prefeitura de Fortaleza: cursos, esportes, cultura, eventos e serviços).",
+    "Assunto de EMPREGO não é atendido aqui: vai para o Emprega+, o canal de emprego da Rede CUCA.",
+    "Analise SÓ a MENSAGEM ATUAL do lead. A conversa anterior serve apenas para entender o que a mensagem atual quer dizer.",
+    "",
+    "1) \"fala_de_emprego\": true se a MENSAGEM ATUAL pede ou fala de emprego, com qualquer jeito de falar:",
+    "   emprego, trabalho remunerado, trampo, bico, freela, renda extra, estágio, jovem aprendiz, primeiro emprego, SINE; o próprio currículo ou cv (mandar, cadastrar, deixar, \"esse é meu currículo\", \"vocês têm meu currículo?\", banco de talentos); vaga de emprego ou de trabalho; vaga de um cargo (atendente, porteiro, motoboy, assistente social…); CLT, carteira assinada, processo seletivo para trabalhar; \"estão contratando?\", \"vocês contratam?\"; estar desempregado; o próprio Emprega+ ou \"empregabilidade\"; trabalhar na própria Rede CUCA (ser contratado, ser funcionário, dar aula como profissional); empresa que quer divulgar vaga ou se cadastrar como empregadora.",
+    "   Também true quando a mensagem atual só completa uma conversa de emprego com conteúdo novo (ex.: depois de falar de emprego, \"para porteiro e vigilante\").",
+    "   false para:",
+    "   - mensagem sem conteúdo próprio: \"ok\", \"sim\", \"só isso\", \"obrigada\", \"por favor\", \"como faço?\", \"pode me ajudar?\", [Imagem enviada], [Documento enviado] — mesmo que a conversa antes fosse sobre emprego;",
+    "   - curso, oficina ou atividade, mesmo com nome ligado a trabalho (\"Planilhas eletrônicas para o mercado de trabalho\", \"Currículo na Prática\", qualificação profissional);",
+    "   - vaga em curso, esporte, modalidade, oficina ou turma, inclusive quando a vaga vem junto do nome da atividade ou de inscrição/matrícula (\"tem vaga na natação?\", \"vagas para CrossCuca\", \"as vagas dos cursos abrem quando?\", \"não encontro vaga para me inscrever\");",
+    "   - quem cita o próprio trabalho só para explicar horário, rotina ou saúde (\"eu trabalho de dia, tem curso à noite?\", \"por causa do meu trabalho não consigo ir\", \"não estou podendo trabalhar\");",
+    "   - pedido para falar com atendente ou humano;",
+    "   - \"serviço\" no sentido de atendimento da Rede (psicossocial, Defensoria, saúde);",
+    "   - o Programa Jovens Monitores, inclusive seleção ou edital de monitores (programa da própria Rede CUCA, respondido aqui);",
+    "   - artista ou grupo que quer se apresentar ou propor atração, e proposta de parceria institucional.",
+    "",
+    "2) \"vaga_sem_tipo\": true só se a palavra vaga(s) está na MENSAGEM ATUAL sem dizer se é de emprego/trabalho e sem citar curso, atividade, modalidade, turma, idade, inscrição ou matrícula (ex.: \"tem vagas?\", \"vagas\", \"sobre vagas disponíveis\"). false se a conversa anterior fala de alguma atividade, curso, modalidade (natação, vôlei, judô…) ou inscrição, porque aí a vaga é dessa atividade. Se fala_de_emprego = true, vaga_sem_tipo = false.",
+    "",
+    "3) \"outra_pergunta\": só quando fala_de_emprego = true E a MENSAGEM ATUAL também pergunta outra coisa que NÃO é emprego (curso, atividade, endereço…): copie essa outra pergunta, com as palavras do lead, tirada da MENSAGEM ATUAL (nunca da conversa anterior). A outra pergunta NUNCA pode falar de emprego, vagas, oportunidades, currículo, estágio, Emprega+, processo seletivo ou como se candidatar — isso tudo é a parte de emprego. Cumprimento, agradecimento e pedido de contato não contam. Nos outros casos, null.",
+    "",
+    "Retorne SOMENTE JSON: {\"fala_de_emprego\": true|false, \"vaga_sem_tipo\": true|false, \"outra_pergunta\": string|null}",
+    "",
+    "Exemplos:",
+    "- \"Vagas de emprego\", \"Tem emprego?\", \"tô procurando um trampo\", \"tão contratando?\", \"quero mandar meu cv\", \"como trabalho na Rede Cuca?\", \"quero cadastrar uma vaga da minha empresa\", \"como funciona o Emprega+?\" => fala_de_emprego=true, outra_pergunta=null.",
+    "- \"Gostaria de saber sobre os cursos e vaga de emprego no cuca do Pici\" => fala_de_emprego=true, outra_pergunta=\"quais cursos tem no cuca do Pici?\".",
+    "- \"tem curso de fotografia? se tem vaga?\", \"tem aula de muay thai? e se tem vaga\", \"criança de 7 anos tem vaga?\" => fala_de_emprego=false, vaga_sem_tipo=false.",
+    "- \"tem vagas?\" sem conversa anterior => fala_de_emprego=false, vaga_sem_tipo=true.",
+    "- conversa sobre emprego e agora \"obrigada\" ou \"só isso\" => fala_de_emprego=false, vaga_sem_tipo=false.",
+    "- \"o que é o emprega+?\", \"como funciona essa parte de empregabilidade?\", \"quero deixar meu currículo e saber das vagas\" => fala_de_emprego=true, outra_pergunta=null.",
+    "- conversa sobre natação e agora \"ainda tem vaga?\" ou \"tem\" => fala_de_emprego=false, vaga_sem_tipo=false.",
+    "",
+    montarContextoSessaoParaInterpretacao(historico, texto),
+    "",
+    "MENSAGEM ATUAL do lead: " + texto,
+  ].join("\n");
+}
+
+/** Chama o modelo. Nunca lança: erro, tempo esgotado ou JSON fora do formato → null. Sem a
+ * espera longa do 429 (até 10 s) de propósito: este passo roda em toda mensagem e tem reserva. */
+export async function classificarEmpregoComModelo(
+  texto: string,
+  openaiKey: string,
+  historico: { role: string; content: string }[],
+  conversaEmProgramacao: boolean,
+  aoConsumir?: (corpo: RespostaOpenAIUso, latenciaMs: number) => void,
+): Promise<Omit<ResultadoEmprego, "fonte"> | null> {
+  const inicio = Date.now();
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + openaiKey, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(CLASSIFICADOR_EMPREGO_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: GPT_MODEL,
+        temperature: 0,
+        max_tokens: 120,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: montarPromptClassificadorEmprego(texto, historico) }],
+      }),
+    });
+    if (!resp.ok) {
+      console.error("[motor-agente v18] Classificador de emprego: HTTP " + resp.status + ", usando a lista de palavras");
+      return null;
+    }
+    const corpo = await resp.json();
+    if (aoConsumir && corpo?.usage) {
+      try { aoConsumir(corpo, Date.now() - inicio); } catch (e) { console.error("[motor-agente v18] Falha ao preparar registro de consumo do classificador:", e); }
+    }
+    const resultado = validarClassificacaoEmpregoModelo(JSON.parse(corpo.choices[0].message.content), conversaEmProgramacao, texto);
+    if (!resultado) console.error("[motor-agente v18] Classificador de emprego: resposta fora do formato, usando a lista de palavras");
+    return resultado;
+  } catch (exc) {
+    console.error("[motor-agente v18] Classificador de emprego falhou, usando a lista de palavras:", exc);
+    return null;
+  }
+}
+
+/** Decide se a mensagem é de emprego: o modelo primeiro; a lista de palavras só se ele falhar.
+ * Só Institucional/maria. Mensagem sem nenhuma letra (dígito de menu, emoji) não chama o modelo. */
+export async function decidirEmprego(
+  texto: string,
+  agenteTipo: string,
+  conversaEmProgramacao: boolean,
+  classificar: () => Promise<Omit<ResultadoEmprego, "fonte"> | null>,
+): Promise<ResultadoEmprego> {
+  if (agenteTipo !== "Institucional" && agenteTipo !== "maria") return { classificacao: null, outraPergunta: null, fonte: "sem_chamada" };
+  if (!/\p{L}/u.test(texto)) return { classificacao: null, outraPergunta: null, fonte: "sem_chamada" };
+  const doModelo = await classificar();
+  if (doModelo) return { ...doModelo, fonte: "modelo" };
+  return { classificacao: classificarPerguntaEmprego(texto, agenteTipo, conversaEmProgramacao), outraPergunta: null, fonte: "lista" };
+}
+
+/** Caso misto: a última mensagem do lead no histórico (gravada pelo worker antes desta chamada)
+ * vira só a outra pergunta, para o modelo e os classificadores não verem a parte de emprego. */
+export function trocarUltimaMensagemDoLead(
+  historico: { role: string; content: string }[],
+  original: string,
+  novoTexto: string,
+): { role: string; content: string }[] {
+  for (let i = historico.length - 1; i >= 0; i--) {
+    if (historico[i].role !== "user") continue;
+    if (historico[i].content.trim() !== original.trim()) return historico;
+    return historico.map((m, j) => (j === i ? { ...m, content: novoTexto } : m));
+  }
+  return historico;
 }
 
 /**
@@ -204,8 +497,12 @@ const MENSAGENS_CANAL: Record<CanalEncaminhamento, { comNumero: (numero: string)
   acesso_cuca: {
     comNumero: (numero) =>
       "Entendi! Pra reservar espaços do CUCA (salas, quadras, auditório etc.), quem cuida disso é o time de Acesso CUCA — fala com eles pelo wa.me/" + numero + " 😉 Eles vão te passar a disponibilidade certinho!",
+    // S-INST-QUAL-01 (A10): o canal Acesso CUCA nao tem numero, e o texto antigo prometia um
+    // contato que nao existe. Resposta da gestao (02/11): falar com a unidade, por telefone ou
+    // pessoalmente. Os telefones entram pelo `montarMensagemEncaminhamento` (vindos de
+    // `unidades_cuca`); este texto e o de reserva, quando a leitura dos telefones falha.
     semNumero:
-      "Entendi! Pra reservar espaços do CUCA (salas, quadras, auditório etc.), quem cuida disso é o time de Acesso CUCA — em breve te passo o contato certinho aqui — já estamos organizando esse canal!",
+      "Entendi! Pra reservar espaços do CUCA (salas, quadras, auditório etc.), é só falar direto com a unidade, por telefone ou pessoalmente 😉 Eles vão te passar a disponibilidade certinho!",
   },
   ouvidoria: {
     comNumero: (numero) =>
@@ -230,11 +527,58 @@ const MENSAGENS_CANAL: Record<CanalEncaminhamento, { comNumero: (numero: string)
  * variação quebrada; se sobrar vazio depois de sanitizar (config malformada), cai no texto
  * `semNumero` da mesma forma que `numero === null`.
  */
-export function montarMensagemEncaminhamento(canal: CanalEncaminhamento, numero: string | null): string {
+export function montarMensagemEncaminhamento(
+  canal: CanalEncaminhamento,
+  numero: string | null,
+  telefonesUnidades: TelefoneUnidade[] = [],
+): string {
   const mensagens = MENSAGENS_CANAL[canal];
   const numeroLimpo = numero ? numero.replace(/\D/g, "") : "";
-  if (!numeroLimpo) return mensagens.semNumero;
-  return mensagens.comNumero(numeroLimpo);
+  if (numeroLimpo) return mensagens.comNumero(numeroLimpo);
+  if (canal === "acesso_cuca") return montarMensagemAcessoCucaPelaUnidade(telefonesUnidades);
+  return mensagens.semNumero;
+}
+
+/** S-INST-QUAL-01 (A10): telefone de uma unidade, lido de `unidades_cuca`. */
+export type TelefoneUnidade = { nome: string; telefone: string | null };
+
+/** Nome da unidade como o bot escreve ("CUCA Barra" no cadastro vira "Cuca Barra"). */
+function nomeUnidadeParaTexto(nome: string): string {
+  return nome.trim().replace(/^cuca\b/i, "Cuca");
+}
+
+/**
+ * S-INST-QUAL-01 (A10): Acesso CUCA sem numero → falar com a unidade, com os telefones das unidades
+ * montados pelo codigo (nunca pelo modelo). Ordem fixa de `UNIDADES_VALIDAS`; unidade sem telefone
+ * fica de fora. Sem nenhum telefone (leitura falhou), usa o texto de reserva, que tambem manda
+ * falar com a unidade.
+ */
+export function montarMensagemAcessoCucaPelaUnidade(telefonesUnidades: TelefoneUnidade[]): string {
+  const porNome = new Map(telefonesUnidades.map((u) => [normalizarTextoIntencao(nomeUnidadeParaTexto(u.nome)), u]));
+  const linhas: string[] = [];
+  for (const unidade of UNIDADES_VALIDAS) {
+    const registro = porNome.get(normalizarTextoIntencao(unidade));
+    const telefone = (registro?.telefone ?? "").trim();
+    if (telefone) linhas.push("📞 " + unidade + ": " + telefone);
+  }
+  if (linhas.length === 0) return MENSAGENS_CANAL.acesso_cuca.semNumero;
+  return "Entendi! Pra reservar espaços do CUCA (salas, quadras, auditório etc.), é só falar direto com a unidade, por telefone ou pessoalmente 😉\n\n" +
+    linhas.join("\n") + "\n\nEles vão te passar a disponibilidade certinho!";
+}
+
+/** S-INST-QUAL-01 (A10): telefones das unidades ativas. Nunca propaga erro: qualquer falha vira
+ * lista vazia, e o texto de reserva continua mandando falar com a unidade. */
+async function buscarTelefonesUnidades(supabase: ReturnType<typeof createClient<Database>>): Promise<TelefoneUnidade[]> {
+  try {
+    const { data, error } = await supabase.from("unidades_cuca").select("nome,telefone").eq("ativo", true);
+    if (error || !Array.isArray(data)) return [];
+    return (data as { nome?: unknown; telefone?: unknown }[])
+      .filter((u) => typeof u.nome === "string")
+      .map((u) => ({ nome: u.nome as string, telefone: typeof u.telefone === "string" ? u.telefone : null }));
+  } catch (exc) {
+    console.error("[motor-agente v18] buscarTelefonesUnidades erro, segue sem telefones:", exc);
+    return [];
+  }
 }
 
 /** Busca os 4 números de encaminhamento em `configuracoes` (chave='numeros_canais_cuca').
@@ -835,7 +1179,16 @@ export function formatarLinhaAtividadeDeterministica(titulo: string, metadata: R
 export const INSTRUCAO_SEGURANCA = [
   "REGRAS OBRIGATORIAS (nao negocie estas regras):",
   "",
-  "1. USE APENAS dados do bloco '--- PROGRAMACAO MENSAL ATUAL ---' ou '--- CONTEXTO ---'.",
+  // S-INST-QUAL-01 (A3): a regra antiga citava so 2 blocos e deixava de fora o texto
+  // institucional e os blocos de programacao mais novos — o bot podia achar proibido usar o
+  // telefone ou o endereco que estavam no contexto.
+  "1. FONTES: atividades, cursos, modalidades, turmas, dias, horarios e professores so vem dos",
+  "   blocos de programacao desta resposta (programacao mensal atual, programacao vigente,",
+  "   programacao vigente da rede, atividade especifica com dado exato, eventos e faq, e os",
+  "   trechos de contexto da programacao).",
+  "   Assuntos institucionais (endereco, telefone, matricula, documentos, funcionamento, servicos)",
+  "   vem do bloco de servicos da rede e do contexto de faq: use esses dados normalmente, eles",
+  "   fazem parte da base.",
   "   NUNCA invente atividades, horarios, nomes de professores ou modalidades.",
   "   Exemplo do que NAO fazer: se o contexto nao trouxer o nome do professor de uma",
   "   modalidade, NUNCA gere um nome plausivel (ex.: 'Joao Silva') so para parecer",
@@ -848,7 +1201,7 @@ export const INSTRUCAO_SEGURANCA = [
   "   Isso vale tambem para REGRAS ADMINISTRATIVAS: quantas modalidades ou turmas uma pessoa",
   "   pode cursar ao mesmo tempo, requisitos de matricula, prazos, documentos exigidos, valores.",
   "   Se o contexto nao trouxer a regra explicitamente, NAO responda com base no que costuma ser",
-  "   comum em outras instituicoes — siga a regra 2 e sugira confirmar com a unidade.",
+  "   comum em outras instituicoes — siga a regra 2.",
   // S-WM-AUD-003 / Plano 010 (Ari C., conversa a5ffd5c8, Mondubim): perguntada sobre "natacao
   // infantil", a resposta apresentou a programacao de "Carimba" como se fosse natacao infantil.
   // Os FATOS eram reais (dias, faixa 7-10 anos, professora) — mas de Carimba. As 29 turmas de
@@ -862,9 +1215,13 @@ export const INSTRUCAO_SEGURANCA = [
   "   a regra 2 e diga que nao encontrou ESSA modalidade especifica. NUNCA substitua pelo nome de",
   "   outra atividade, mesmo oferecendo os dados reais dela.",
   "",
-  "2. Se a informacao nao estiver no contexto, diga com suas proprias palavras e no seu",
-  "   tom que nao encontrou essa informacao na programacao atual e sugira falar com a",
-  "   unidade. Nunca invente um dado que nao esteja no contexto.",
+  // S-INST-QUAL-01 (A9): "atividade que nao existe no mes" e resposta; "fato institucional que
+  // falta" segue a regra do agente (no Institucional, chama o atendente).
+  "2. Se a ATIVIDADE ou modalidade perguntada nao estiver na programacao carregada, diga com suas",
+  "   proprias palavras e no seu tom que nao encontrou essa atividade na programacao deste mes —",
+  "   isso ja e uma resposta. Para outra informacao que nao esteja no contexto, nunca invente nem",
+  "   complete com suposicao: siga a regra 'SEM RESPOSTA NA BASE', quando ela vier abaixo; sem ela,",
+  "   diga que nao encontrou essa informacao e sugira falar com a unidade.",
   "",
   "3. NUNCA peca desculpas por informacoes corretas. Se o usuario disser que uma",
   "   informacao esta errada, verifique o contexto antes de concordar. Se o contexto",
@@ -873,9 +1230,14 @@ export const INSTRUCAO_SEGURANCA = [
   "",
   "4. Use a DATA ATUAL para referencias temporais.",
   "",
-  "5. NUNCA use [[HANDOVER]] quando o usuario mencionar o nome de uma unidade CUCA",
-  "   (Barra, Jangurussu, Mondubim, Pici, Jose Walter). Isso e sempre uma consulta",
-  "   de programacao, nunca um pedido de atendimento humano.",
+  // S-INST-QUAL-01 (A4): a regra antiga ("NUNCA HANDOVER quando citar uma unidade") brigava com
+  // a regra de handover do prompt do agente, que manda gerente e coordenador para humano.
+  "5. O nome de uma unidade CUCA SOZINHO (Barra, Jangurussu, Mondubim, Pici, Jose Walter) nunca",
+  "   e pedido de atendimento humano: e consulta de programacao, NAO use [[HANDOVER]] por isso.",
+  "   Ja o pedido de FALAR COM UMA PESSOA — atendente, gerente, coordenador(a), diretor(a),",
+  "   responsavel, funcionario(a), alguem da equipe ou de um setor — e pedido de atendimento",
+  "   humano mesmo citando a unidade: use [[HANDOVER]]. Uma pergunta SOBRE um setor (ex.: 'o",
+  "   setor de esportes tem natacao?') nao e pedido de pessoa.",
   "",
   "6. FORMATO DE LISTAGEM — REGRA CRITICA:",
   "   Quando apresentar TODAS as modalidades/cursos/atividades de uma area, liste",
@@ -897,7 +1259,8 @@ export const INSTRUCAO_SEGURANCA = [
   "   natacao?'). Mesmo que apareca um numero no contexto, NAO repita esse numero. Responda",
   "   que a atividade existe, de os detalhes dela (dias, horario, publico) e diga que a",
   "   quantidade de vagas muda com frequencia, orientando a pessoa a procurar a unidade CUCA",
-  "   para verificar a disponibilidade. A regra 6 ja proibia vagas na listagem geral; esta",
+  "   (com o telefone dela, quando estiver no contexto) para verificar a disponibilidade.",
+  "   NUNCA afirme que ha vaga. A regra 6 ja proibia vagas na listagem geral; esta",
   "   regra fecha tambem o caso da pergunta sobre uma atividade especifica.",
   // Achado 2026-10-09 (conversa 1657d9b0): com a programacao da Barra carregada e o historico
   // falando de Libras no Mondubim, o GPT inventou "Seg e Qua 18:00 as 20:00" — horario que nao
@@ -918,6 +1281,39 @@ export const INSTRUCAO_SEGURANCA = [
   "   programacao deste mes dessa unidade — nunca complete com dia ou horario de cabeca.",
   "   Ao oferecer unidades como opcoes numeradas, escreva SEMPRE o nome da unidade em cada linha",
   "   (ex.: '1️⃣ Cuca Mondubim').",
+].join("\n");
+
+/**
+ * S-INST-QUAL-01 (A6, A7, A9): regras so do Institucional/maria — vai no prompt logo depois de
+ * `INSTRUCAO_SEGURANCA`. Sofia e ana (que tambem passam por este motor) nao recebem.
+ * - A9 (Junior, 02/11): sem a informacao na base, chama o atendente; nunca inventa. Substitui o
+ *   "transbordo depois de 3 tentativas" do prompt do agente.
+ * - A6/A7 (Mariana, 19/10): telefone da unidade sempre que mandar procurar a unidade, e "ligar
+ *   antes" para quem vai se inscrever presencialmente (natacao e hidroginastica lotam no 1o dia).
+ *   O telefone vem do bloco de servicos da rede, nunca de cabeca.
+ */
+export const INSTRUCAO_INSTITUCIONAL = [
+  "REGRAS DO ATENDIMENTO INSTITUCIONAL (obrigatorias):",
+  "",
+  "A. SEM RESPOSTA NA BASE: se, depois de consultar todos os blocos desta resposta (programacao,",
+  "   servicos da rede, contexto de faq e o historico), a informacao pedida NAO estiver la, nao",
+  "   suponha nem complete: diga com suas palavras",
+  "   que vai chamar um atendente para ajudar e inclua [[HANDOVER]] no final da resposta.",
+  "   NAO e falta de informacao: (1) quando a base da uma orientacao, inclusive 'ligar ou ir a",
+  "   unidade' — ai responda com essa orientacao (regra B); (2) quando a programacao mostra que a",
+  "   atividade nao existe naquele mes ou naquela unidade — 'nao tem natacao no Pici em novembro'",
+  "   ja e a resposta (regra 2); (3) quando outra regra deste prompt ja diz como responder (ex.:",
+  "   unidade mais perto, quantidade de vagas, menores de 15 anos) — siga essa regra.",
+  "",
+  "B. TELEFONE DA UNIDADE: sempre que a resposta mandar a pessoa procurar, ligar ou ir a uma",
+  "   unidade, inclua o telefone dessa unidade, copiado do bloco de servicos da rede (lista",
+  "   'Telefones das unidades'). Se a unidade nao estiver definida, pergunte de qual unidade a",
+  "   pessoa quer o contato. NUNCA invente um telefone.",
+  "",
+  "C. INSCRICAO PRESENCIAL: se a pessoa disser que vai a unidade se inscrever ou se matricular",
+  "   pessoalmente (ex.: 'posso ir amanha me inscrever?'), passe o telefone da unidade e recomende",
+  "   ligar antes para confirmar se ainda ha vaga, porque algumas atividades lotam logo no primeiro",
+  "   dia. NUNCA afirme que ha vaga.",
 ].join("\n");
 
 const UNIDADES_VALIDAS = ['Cuca Barra', 'Cuca Jangurussu', 'Cuca Mondubim', 'Cuca Pici', 'Cuca José Walter'];
@@ -2543,7 +2939,36 @@ if (import.meta.main) {
 // prova que a resolução de unidade por nome/dígito, na wiring real do call-site, gera o
 // precisaVisaoGeral correto). Comportamento em produção idêntico: Deno.serve(handler) nunca
 // passa esse 2º argumento, então o client real é sempre criado normalmente.
+/** S-INST-QUAL-01 (A8): mensagem que vai num balao a mais no fim da resposta, qualquer que seja o
+ * caminho que respondeu o resto (modelo, frase pronta, menu). Hoje so o Emprega+ do caso misto. */
+type ExtrasResposta = { balaoFinal: { mensagem: string; salvar: () => Promise<void> } | null };
+
 export async function handler(req: Request, supabaseOverride?: ReturnType<typeof createClient<Database>>): Promise<Response> {
+  const extras: ExtrasResposta = { balaoFinal: null };
+  const resp = await processarMensagem(req, supabaseOverride, extras);
+  return extras.balaoFinal ? await acrescentarBalaoFinal(resp, extras.balaoFinal) : resp;
+}
+
+/** Acrescenta o balao no fim de `mensagens` (e de `resposta`, que e a juncao) e o grava no
+ * historico, depois das mensagens que o fluxo ja gravou. Nunca quebra a resposta: qualquer falha
+ * devolve a resposta original, sem o balao. */
+async function acrescentarBalaoFinal(resp: Response, balao: NonNullable<ExtrasResposta["balaoFinal"]>): Promise<Response> {
+  try {
+    if (resp.status !== 200) return resp;
+    const corpo = await resp.clone().json();
+    if (corpo?.success !== true || typeof corpo.resposta !== "string" || !corpo.resposta) return resp;
+    const base: string[] = Array.isArray(corpo.mensagens) && corpo.mensagens.length > 0 ? corpo.mensagens : [corpo.resposta];
+    if (base.includes(balao.mensagem)) return resp;
+    await balao.salvar();
+    const mensagens = [...base, balao.mensagem];
+    return new Response(JSON.stringify({ ...corpo, resposta: mensagens.join("\n\n"), mensagens }), { status: 200, headers: resp.headers });
+  } catch (exc) {
+    console.error("[motor-agente v18] Falha ao acrescentar o balao final, segue sem ele:", exc);
+    return resp;
+  }
+}
+
+async function processarMensagem(req: Request, supabaseOverride: ReturnType<typeof createClient<Database>> | undefined, extras: ExtrasResposta): Promise<Response> {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   console.log("[motor-agente v18] Recebendo requisicao...");
 
@@ -2565,7 +2990,10 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     ]);
     if (!openaiKey) throw new Error("OPENAI_API_KEY nao encontrada");
 
-    const textoFinal = mensagem || "";
+    // S-INST-QUAL-01 (A8): `mensagemLead` e o texto como o lead mandou (vai para os registros).
+    // `textoFinal` e o que o fluxo responde: no caso misto do Emprega+ vira so a outra pergunta.
+    const mensagemLead: string = mensagem || "";
+    let textoFinal = mensagemLead;
     if (!textoFinal) return new Response(JSON.stringify({ error: "Nenhuma mensagem" }), { status: 400 });
 
     // 1. Lead
@@ -2646,7 +3074,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     const ehAgenteDeProgramacao = agente_tipo === 'Institucional' || agente_tipo === 'maria';
     const recorteSessao = ehAgenteDeProgramacao ? recortarSessao(histAsc) : { mensagens: histAsc, sessaoNova: false };
     const sessaoNova = recorteSessao.sessaoNova;
-    const historico = recorteSessao.mensagens.map((m) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
+    let historico = recorteSessao.mensagens.map((m) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
     if (!prompt) throw new Error("Prompt nao encontrado para: " + agente_tipo);
 
     // S-WM-AUD-007 (@qa FAIL-1 + LOW da Revisao 2): os turnos que retornam ANTES do Passo 6 nao
@@ -2669,7 +3097,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         camada,
         atividade_resolvida: null,
         chunks_retornados: null,
-        mensagem_lead: textoFinal,
+        mensagem_lead: mensagemLead,
       }));
 
     // S-WM-71 (Item 1): sessão nova (mais de 2h desde a mensagem anterior) zera o estado de "onde
@@ -2692,6 +3120,62 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       }
       logarTurnoSemBusca("handover");
       return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover: true, encerrado: false, resposta, mensagens: [resposta] }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // S-INST-QUAL-01 (A8): Emprega+, antes do menu e das frases prontas. So emprego → contato do
+    // Emprega+ e fim. "Vagas" sem contexto → pergunta se e emprego ou curso (sem estado novo: a
+    // resposta "emprego" cai aqui de novo; "curso"/"atividade" segue o fluxo normal). Emprego
+    // junto com outra pergunta → o fluxo normal responde a outra parte e o Emprega+ vai num balao a
+    // mais no fim (`extras.balaoFinal`), qualquer que seja o caminho que responder.
+    // Decisao do Junior (03/11): quem decide se e emprego e o modelo (`classificarEmpregoComModelo`);
+    // a lista de palavras so entra se a chamada falhar. No caso misto, o modelo devolve a outra
+    // pergunta separada, e o resto do fluxo (classificadores, busca e resposta) recebe so ela.
+    const conversaEmProgramacaoEmprego = conversaEmContextoDeProgramacao(metadataInicialDaSessao, textoUltimoBlocoAgente(historico));
+    const conversaIdClassificador = conversa?.id ?? null;
+    const registrarConsumoClassificador = (corpo: RespostaOpenAIUso, latenciaMs: number) => {
+      manterVivoAposResposta((async () => {
+        const u = corpo.usage ?? {};
+        const modelo = corpo.model ?? GPT_MODEL;
+        await registrarUsoLLM(supabase, {
+          agente_tipo,
+          feature: "classificador_emprego",
+          modelo,
+          tokens_prompt: u.prompt_tokens ?? 0,
+          tokens_completion: u.completion_tokens ?? 0,
+          tokens_prompt_cached: u.prompt_tokens_details?.cached_tokens ?? 0,
+          custo_usd: calcularCustoUsd(modelo, u.prompt_tokens ?? 0, u.prompt_tokens_details?.cached_tokens ?? 0, u.completion_tokens ?? 0, await carregarPrecosOpenAI(supabase)),
+          conversa_id: conversaIdClassificador,
+          latencia_ms: latenciaMs,
+          openai_request_id: corpo.id ?? null,
+        });
+      })());
+    };
+    const decisaoEmprego = await decidirEmprego(
+      textoFinal,
+      agente_tipo,
+      conversaEmProgramacaoEmprego,
+      () => classificarEmpregoComModelo(textoFinal, openaiKey, historico, conversaEmProgramacaoEmprego, registrarConsumoClassificador),
+    );
+    const classificacaoEmprego = decisaoEmprego.classificacao;
+    if (decisaoEmprego.fonte === "lista") console.log("[motor-agente v18] Emprego decidido pela lista de reserva: " + classificacaoEmprego);
+    if (classificacaoEmprego === "emprego" || classificacaoEmprego === "vagas_ambiguo") {
+      const resposta = classificacaoEmprego === "emprego"
+        ? montarMensagemEncaminhamento("empregabilidade", await buscarNumeroCanal(supabase, "empregabilidade"))
+        : PERGUNTA_VAGA_AMBIGUA;
+      await salvarMensagemAgente(supabase, conversa!.id, lead.id, resposta);
+      logarTurnoSemBusca(classificacaoEmprego === "emprego" ? "emprega_mais" : "vagas_ambiguo");
+      return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover: false, encerrado: false, resposta, mensagens: [resposta] }), { headers: { "Content-Type": "application/json" } });
+    }
+    const empregaMisto = classificacaoEmprego === "emprego_misto";
+    if (empregaMisto) {
+      const mensagemEmprega = montarMensagemEncaminhamento("empregabilidade", await buscarNumeroCanal(supabase, "empregabilidade"));
+      const conversaIdEmprega = conversa!.id;
+      const leadIdEmprega = lead.id;
+      extras.balaoFinal = { mensagem: mensagemEmprega, salvar: () => salvarMensagemAgente(supabase, conversaIdEmprega, leadIdEmprega, mensagemEmprega) };
+      if (decisaoEmprego.outraPergunta) {
+        historico = trocarUltimaMensagemDoLead(historico, mensagemLead, decisaoEmprego.outraPergunta);
+        textoFinal = decisaoEmprego.outraPergunta;
+      }
     }
 
 
@@ -3393,7 +3877,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       camada: logRAG.camada,
       atividade_resolvida: logRAG.atividadeResolvida ?? null,
       chunks_retornados: logRAG.chunksRetornados ?? null,
-      mensagem_lead: textoFinal,
+      mensagem_lead: mensagemLead,
     }));
 
     // 7. Data/hora
@@ -3421,6 +3905,8 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     // Mesmo conteúdo, só a posição mudou.
     const partesPrompt: [string, string][] = [
       ["prompt_sistema", prompt.prompt_sistema], ["instrucao_seguranca", INSTRUCAO_SEGURANCA],
+      // S-INST-QUAL-01: so Institucional/maria. Texto fixo, entao fica no prefixo (cache).
+      ["instrucao_institucional", isAgenteProgramacao ? INSTRUCAO_INSTITUCIONAL : ""],
       ["prompt_contexto", prompt.prompt_contexto || ""], ["contexto_rag", contextRAG],
       ["data_atual", DATA_ATUAL], ["contexto_disparo", CONTEXTO_DISPARO],
       ["unidade", "UNIDADE: " + (unidadeEfetiva || "Nao informada")],
@@ -3443,7 +3929,7 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
         ? "INSTRUCAO: O cidadao acabou de trocar para esta unidade E ja fez um pedido especifico na mesma mensagem. Inicie com uma mensagem de transicao amigavel curta (ex: 'Claro! Vou verificar isso no [unidade] 😊') e responda DIRETAMENTE ao pedido especifico usando os dados disponiveis acima — programacao mensal e/ou o bloco '--- SERVICOS DA REDE (comuns + excecoes por unidade) ---' (se presente) — NAO apresente um resumo geral da programacao."
         : ""],
       ["instrucao_atividade", contextRAG.includes("ATIVIDADE ESPECIFICA") || contextRAG.includes("atividade especifica")
-        ? "INSTRUCAO CRITICA: existe um bloco de atividade especifica com dado exato no contexto. Use esse bloco como fonte principal e liste TODAS as turmas/linhas compatíveis presentes nele. Nao resuma, nao escolha só algumas e nao omita opcoes. Preserve quando existir: categoria, titulo/modalidade, turma, professor/responsavel, dias, horario, vagas, sexo, faixa etaria/idade e local."
+        ? "INSTRUCAO CRITICA: existe um bloco de atividade especifica com dado exato no contexto. Use esse bloco como fonte principal e liste TODAS as turmas/linhas compatíveis presentes nele. Nao resuma, nao escolha só algumas e nao omita opcoes. Preserve quando existir: categoria, titulo/modalidade, turma, professor/responsavel, dias, horario, sexo, faixa etaria/idade e local."
         : ""],
       // VAL-07: para Institucional/maria, só dizer "primeira mensagem" quando for de fato
       // conversaGenuinamenteNova (não reabertura) — evita mandar essa instrução pro GPT numa
@@ -3474,6 +3960,8 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
       // S-WM-72 (R3/R4): pergunta original (no turno da escolha o lead mandou só "3") + instrução da consulta.
       ["pergunta_original", consultaProgramacao?.perguntaOriginal ? "PERGUNTA DO LEAD QUE VOCE ESTA RESPONDENDO AGORA (ele acabou de escolher onde quer saber): " + consultaProgramacao.texto : ""],
       ["instrucao_programacao_contexto", instrucaoConsultaProgramacao],
+      // S-INST-QUAL-01 (A8): caso misto — o Emprega+ ja vai num balao separado, montado pelo codigo.
+      ["instrucao_emprega_mista", empregaMisto ? "INSTRUCAO: a parte desta mensagem sobre emprego, trabalho, estagio ou curriculo ja foi respondida pelo sistema com o contato do Emprega+, que vai numa mensagem separada logo depois da sua. Responda SO a outra parte da pergunta e NAO use [[ENCAMINHAR:empregabilidade]]." : ""],
       ["instrucao_pergunta_geral", perguntaGeralAtiva ? "INSTRUCAO CRITICA: esta pergunta e sobre a rede CUCA inteira, sem unidade especifica. Para qualquer informacao de programacao (quais atividades existem, em quais unidades, dias, horarios, turmas), use EXCLUSIVAMENTE o bloco '--- PROGRAMACAO VIGENTE DA REDE ---' (se presente acima); o '--- CONTEXTO (FAQ) ---' serve so para assuntos que nao sao programacao. Se esse bloco NAO estiver presente ou nao trouxer a atividade perguntada, NUNCA componha ou invente uma lista de atividades, unidades, dias ou horarios: se a pessoa citou uma atividade, diga com suas proprias palavras que nao encontrou essa atividade na programacao deste mes; se a pergunta for geral (ex.: 'quais cursos tem?'), nao liste nada de cabeca. Nos dois casos, pergunte de qual unidade a pessoa quer saber para mostrar a programacao dela." : ""],
     ];
     const promptFinal = partesPrompt.map(([, texto]) => texto).filter(Boolean).join("\n\n");
@@ -3537,9 +4025,15 @@ export async function handler(req: Request, supabaseOverride?: ReturnType<typeof
     const avaliacaoEncaminhar = extrairTagComArgumento(resposta, "encaminhar");
     if (avaliacaoEncaminhar.encontrada) {
       const canal = validarCanalEncaminhamento(avaliacaoEncaminhar.argumento);
-      if (canal) {
+      if (canal === "empregabilidade" && empregaMisto && extras.balaoFinal) {
+        // S-INST-QUAL-01 (A8): o Emprega+ ja vai no balao final; mantem so o texto do modelo. Se o
+        // modelo respondeu so com a tag, o Emprega+ vira a resposta e o balao sai (sem duplicar).
+        resposta = avaliacaoEncaminhar.texto;
+        if (!resposta) { resposta = extras.balaoFinal.mensagem; extras.balaoFinal = null; }
+      } else if (canal) {
         const numeroCanal = await buscarNumeroCanal(supabase, canal);
-        resposta = montarMensagemEncaminhamento(canal, numeroCanal);
+        const telefonesUnidades = canal === "acesso_cuca" && !numeroCanal ? await buscarTelefonesUnidades(supabase) : [];
+        resposta = montarMensagemEncaminhamento(canal, numeroCanal, telefonesUnidades);
       } else {
         // Canal fora da lista fechada (GPT alucinou um valor) — remove só a tag mal-formada,
         // mantém o texto do GPT como resposta normal em vez de inventar um encaminhamento.

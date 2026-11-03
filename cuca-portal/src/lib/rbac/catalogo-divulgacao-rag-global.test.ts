@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 import { ACAO_UNICA, MODULOS_PROGRAMACAO_MENSAL, PGM_DIVULGACAO } from "./catalogo-programacao-mensal"
 import { MODULOS_PROGRAMACAO_PONTUAL } from "./catalogo-programacao-pontual"
 import {
-    GRUPOS_DIVULGACAO_RAG_GLOBAL, MODULOS_RAG_GLOBAL, ORIGEM_ESPELHAMENTO_RAG_GLOBAL, PGM_DIVULGACAO_VER, PGR,
+    GRUPOS_DIVULGACAO_RAG_GLOBAL, MODULOS_RAG_GLOBAL, ORIGEM_ESPELHAMENTO_RAG_GLOBAL, PGM_DIVULGACAO_VER, PGR, PGR_REMOVIDAS,
     completarVerDivulgacao, espelharRagGlobal, espelharVerDivulgacao,
 } from "./catalogo-divulgacao-rag-global"
 
@@ -47,11 +47,11 @@ describe("espelhamento (item 4)", () => {
         expect(espelharVerDivulgacao(false, false, false)).toBe(false)
     })
 
-    it("base global: update libera editar, ativar, reindexar e gerar resumo; delete libera excluir", () => {
+    it("base global: update libera editar, ativar e reindexar; delete libera excluir", () => {
         const soUpdate = new Map(espelharRagGlobal({ ...nada, can_read: true, can_update: true }).map(l => [l.module, l.can_read]))
         expect(soUpdate.get(PGR.ver)).toBe(true)
         expect(soUpdate.get(PGR.cadastrar)).toBe(false)
-        for (const id of [PGR.editar, PGR.ativar, PGR.reindexar, PGR.gerarResumo]) expect(soUpdate.get(id)).toBe(true)
+        for (const id of [PGR.editar, PGR.ativar, PGR.reindexar]) expect(soUpdate.get(id)).toBe(true)
         expect(soUpdate.get(PGR.excluir)).toBe(false)
         expect(espelharRagGlobal({ ...nada, can_delete: true }).find(l => l.module === PGR.excluir)?.can_read).toBe(true)
     })
@@ -61,7 +61,9 @@ describe("espelhamento (item 4)", () => {
         const arquivo = readdirSync(dir).find(f => f.endsWith("s_prog_16_expand_divulgacao_rag_global.sql"))
         expect(arquivo).toBeDefined()
         const sql = readFileSync(join(dir, arquivo!), "utf8")
-        const pares = Object.fromEntries([...sql.matchAll(/\('(pgr_[a-z_]+)', '([a-z]+)'\)/g)].map(m => [m[1], m[2]]))
+        // S-INST-QUAL-01 (A5): opções removidas do catálogo depois da S-PROG-16 continuam na migration antiga.
+        const removidas: readonly string[] = PGR_REMOVIDAS
+        const pares = Object.fromEntries([...sql.matchAll(/\('(pgr_[a-z_]+)', '([a-z]+)'\)/g)].filter(m => !removidas.includes(m[1])).map(m => [m[1], m[2]]))
         const traduzido: Record<string, string> = { can_read: "read", can_create: "create", can_update: "update", can_delete: "delete" }
         expect(pares).toEqual(Object.fromEntries(Object.entries(ORIGEM_ESPELHAMENTO_RAG_GLOBAL).map(([id, o]) => [id, traduzido[o]])))
         expect(sql).toContain("'pgm_divulgacao_ver'")

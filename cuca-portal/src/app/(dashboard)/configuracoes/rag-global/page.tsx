@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/table"
 import {
     Globe, Plus, Zap, FileText, CheckCircle2,
-    Clock, AlertCircle, Pencil, Trash2, ShieldAlert, Upload, FileUp, RefreshCw,
+    Clock, AlertCircle, Pencil, Trash2, ShieldAlert, Upload, FileUp,
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { format } from "date-fns"
@@ -61,11 +61,10 @@ export default function RagGlobalPage() {
     const [loading, setLoading] = useState(true)
     const [semPermissao, setSemPermissao] = useState(false)
     // S-PROG-16: opções de quem está logado, devolvidas pela rota da lista.
-    const [opcoes, setOpcoes] = useState<Record<"ver" | "cadastrar" | "editar" | "ativar" | "excluir" | "reindexar" | "gerarResumo", boolean>>({
-        ver: false, cadastrar: false, editar: false, ativar: false, excluir: false, reindexar: false, gerarResumo: false,
+    const [opcoes, setOpcoes] = useState<Record<"ver" | "cadastrar" | "editar" | "ativar" | "excluir" | "reindexar", boolean>>({
+        ver: false, cadastrar: false, editar: false, ativar: false, excluir: false, reindexar: false,
     })
     const [indexando, setIndexando] = useState<string | null>(null)
-    const [gerandoResumoRede, setGerandoResumoRede] = useState(false)
     const [dialogOpen, setDialogOpen] = useState(false)
     const [editing, setEditing] = useState<Documento | null>(null)
     const [form, setForm] = useState(EMPTY_FORM)
@@ -159,37 +158,6 @@ export default function RagGlobalPage() {
         }
     }
 
-    // S-WM-32: gera/substitui o resumo_rede (índice "atividade → unidades") a partir do
-    // monthly_program ativo das 5 unidades — gatilho manual de propósito (ver Escopo item 4 da
-    // story: upload de planilha é assíncrono por unidade, gatilho automático regeneraria com
-    // dado parcial). O endpoint checa has_permission server-side (AC7); este botão só some da
-    // UI pra quem não tem a permissão, não é a única proteção.
-    const handleGerarResumoRede = async () => {
-        if (!confirm("Atualizar o resumo de rede com base na programação mensal atual das 5 unidades?")) return
-        setGerandoResumoRede(true)
-        try {
-            const { data: { session } } = await supabase.auth.getSession()
-            const res = await fetch(
-                `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/gerar-resumo-rede`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: `Bearer ${session?.access_token}`,
-                    },
-                }
-            )
-            const result = await res.json()
-            if (!res.ok) throw new Error(result.error ?? "Erro ao gerar resumo de rede")
-            toast.success(`Resumo de rede atualizado! (${result.unidades} unidades consideradas)`)
-            fetchDocs()
-        } catch (err: any) {
-            toast.error(err.message ?? "Erro ao gerar resumo de rede")
-        } finally {
-            setGerandoResumoRede(false)
-        }
-    }
-
     const handleDelete = async (doc: Documento) => {
         if (!confirm("Remover este documento da base de conhecimento global?")) return
         try {
@@ -263,18 +231,6 @@ export default function RagGlobalPage() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    {opcoes.gerarResumo && (
-                        <Button
-                            variant="outline"
-                            onClick={handleGerarResumoRede}
-                            disabled={gerandoResumoRede}
-                        >
-                            {gerandoResumoRede
-                                ? <Clock className="mr-2 h-4 w-4 animate-spin" />
-                                : <RefreshCw className="mr-2 h-4 w-4" />}
-                            Atualizar resumo de rede
-                        </Button>
-                    )}
                     {opcoes.cadastrar && (
                     <Button
                         className="bg-blue-600 hover:bg-blue-700"

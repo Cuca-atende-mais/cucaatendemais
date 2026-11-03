@@ -46,10 +46,12 @@ async function turnoComFaq(opcoes: { precos?: unknown; erroInsercao?: unknown })
   const insercoes: Insercao[] = [];
   redefinirCachePrecos();
   const fetchOriginal = globalThis.fetch;
-  globalThis.fetch = ((url: string | URL | Request) => {
+  globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
     const u = String(url instanceof Request ? url.url : url);
     if (u.includes("/v1/embeddings")) return Promise.resolve(new Response(JSON.stringify({ data: [{ embedding: [0, 0, 0] }] }), { status: 200 }));
     if (u.includes("/v1/chat/completions")) {
+      // S-INST-QUAL-01: o classificador de emprego roda em toda mensagem do Institucional; aqui ele responde "outro".
+      if (String(init?.body ?? "").includes("CLASSIFICADOR DE EMPREGO")) return Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content: '{"fala_de_emprego":false,"vaga_sem_tipo":false,"outra_pergunta":null}' } }] }), { status: 200 }));
       return Promise.resolve(new Response(JSON.stringify({
         id: "chatcmpl-abc", model: "gpt-4o-mini-2024-07-18", choices: [{ message: { content: "Abrimos às 8h!" } }],
         usage: { prompt_tokens: 9000, completion_tokens: 200, total_tokens: 9200, prompt_tokens_details: { cached_tokens: 1000 } },

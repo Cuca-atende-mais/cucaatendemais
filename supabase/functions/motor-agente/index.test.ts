@@ -1149,10 +1149,10 @@ Deno.test("Plano 004/010: regras anteriores da INSTRUCAO_SEGURANCA intactas (nao
   for (const marcador of [
     "REGRAS OBRIGATORIAS",
     "'Joao Silva'",                       // exemplo negativo original da regra 1
-    "2. Se a informacao nao estiver no contexto",
+    "2. Se a ATIVIDADE ou modalidade perguntada", // S-INST-QUAL-01 (A9): regra 2 dividida de proposito
     "3. NUNCA peca desculpas por informacoes corretas",
     "4. Use a DATA ATUAL",
-    "5. NUNCA use [[HANDOVER]]",
+    "5. O nome de uma unidade CUCA SOZINHO",      // S-INST-QUAL-01 (A4): regra 5 reescrita de proposito
     "6. FORMATO DE LISTAGEM",
     "7. NUNCA invente proximidade geografica",
     "8. NUNCA informe a QUANTIDADE de vagas",
