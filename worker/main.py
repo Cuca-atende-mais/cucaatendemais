@@ -200,6 +200,10 @@ async def startup_event():
         asyncio.create_task(empregabilidade_notify_loop())
         logger.info("Agendando loop de OCR pendente...")
         asyncio.create_task(ocr_pending_loop())
+        # Hotfix 05/11/2026: conversa do Institucional sem resposta da equipe em 30 min volta ao bot.
+        from retorno_atendente import retorno_bot_loop
+        logger.info("Agendando loop de retorno ao bot (atendente sem resposta)...")
+        asyncio.create_task(retorno_bot_loop())
 
 # ─── Exception Handlers Globais ──────────────────────────────────────────────
 # Garante que TODOS os erros retornem CORS headers (sem isso, exceções não tratadas
