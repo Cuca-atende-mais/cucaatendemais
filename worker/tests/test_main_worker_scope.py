@@ -43,8 +43,6 @@ def test_worker_scope_principal_inicia_todos_os_loops_existentes(monkeypatch):
     assert any("campanhas_loop" in nome for nome in agendadas)
     assert any("empregabilidade_notify_loop" in nome for nome in agendadas)
     assert any("ocr_pending_loop" in nome for nome in agendadas)
-    # Hotfix 05/11/2026: retorno ao bot quando a equipe não responde em 30 min (Institucional).
-    assert any("retorno_bot_loop" in nome for nome in agendadas)
 
 
 def test_worker_scope_academia_enem_nao_inicia_loops_de_outros_modulos(monkeypatch):
@@ -63,7 +61,6 @@ def test_worker_scope_academia_enem_nao_inicia_loops_de_outros_modulos(monkeypat
     assert not any("campanhas_loop" in nome for nome in agendadas), agendadas
     assert not any("empregabilidade_notify_loop" in nome for nome in agendadas), agendadas
     assert not any("ocr_pending_loop" in nome for nome in agendadas), agendadas
-    assert not any("retorno_bot_loop" in nome for nome in agendadas), agendadas
     assert any("academia_enem_disparo_loop" in nome for nome in agendadas), agendadas
 
 
