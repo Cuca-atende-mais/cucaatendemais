@@ -37,6 +37,38 @@ export function ehSelecaoMenu(texto: string): boolean {
 }
 
 /**
+ * Hotfix 05/11/2026: o lead responde o menu tocando no emoji ("6️⃣", ou "6⃣" sem o seletor de
+ * variação). Sem isto, nenhum teste de dígito do roteamento reconhecia a escolha e a pergunta
+ * original se perdia. Vira o dígito puro antes de qualquer roteamento.
+ */
+export function normalizarDigitosEmoji(texto: string): string {
+  return texto.replace(/([0-9#*])\uFE0F?\u20E3/g, "$1");
+}
+
+const PALAVRAS_CORTESIA = new Set([
+  "oi", "oie", "oii", "oiii", "ola", "opa", "eae", "eai", "ei", "hey", "salve", "bom", "boa", "dia",
+  "tarde", "noite", "bomdia", "boatarde", "boanoite", "tudo", "td", "bem", "joia", "beleza", "blz",
+  "ok", "okay", "okk", "certo", "ta", "to", "tah", "entendi", "entendido", "valeu", "vlw", "obrigado",
+  "obrigada", "obg", "brigado", "brigada", "grato", "grata", "show", "perfeito", "otimo", "top",
+  "massa", "legal", "hum", "humm", "ah", "aham", "uhum", "kk", "kkk", "kkkk", "rs", "e", "voce", "vc",
+  "como", "vai", "esta", "tranquilo", "de", "nada", "muito", "mt", "mto", "tudo", "pra", "voces",
+]);
+
+/**
+ * Hotfix 05/11/2026: a resposta pronta "Em que mais posso te ajudar? 😊" só vale para cumprimento
+ * puro ("oi", "bom dia", "ok", "valeu", só emoji). Antes ela valia para qualquer mensagem que o
+ * classificador não marcasse como pergunta geral — e engoliu ~95 mensagens reais em 3 dias
+ * ("7 anos", "link de inscrição", "Curso de fotografgia"). "sim" e "não" ficam de fora de
+ * propósito: quase sempre respondem a uma pergunta do bot e precisam do modelo.
+ */
+export function ehCortesiaPura(texto: string): boolean {
+  const palavras = normalizarTexto(texto).replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  if (palavras.length === 0) return true;
+  if (palavras.length > 5) return false;
+  return palavras.every((p) => PALAVRAS_CORTESIA.has(p));
+}
+
+/**
  * Extrai o texto da opção escolhida (ex.: "3" -> "Natação") num menu numerado de CATEGORIA de
  * programação enviado pelo agente. AUD-09: quando `ultimaMsgAgente` é o menu de UNIDADES
  * (MENU_UNIDADES), o dígito nunca é resposta a uma seleção de categoria — é resposta à
@@ -662,7 +694,8 @@ export function pareceIntencaoTrocaUnidade(texto: string): boolean {
  */
 export function pedeOutrasUnidades(texto: string): boolean {
   const lower = normalizarTexto(texto);
-  return /\b(outr[ao]s?|demais)\s+(unidades?|cucas?)\b/.test(lower) || /\b(em|nas|de)\s+quais\s+(unidades|cucas)\b/.test(lower);
+  // Hotfix 05/11/2026: "em outra rede cuca?" / "em outra rede?" (caso real da Glória) também conta.
+  return /\b(outr[ao]s?|demais)\s+(redes?\s+)?(unidades?|cucas?|redes?)\b/.test(lower) || /\b(em|nas|de)\s+quais\s+(unidades|cucas)\b/.test(lower);
 }
 
 /** Detecta se a mensagem menciona uma unidade diferente da atual */
@@ -1279,6 +1312,10 @@ export const INSTRUCAO_SEGURANCA = [
   "   A programacao carregada e da UNIDADE informada no fim deste prompt. Se a pessoa perguntar de",
   "   uma atividade que nao esta nessa programacao, diga que nao encontrou essa atividade na",
   "   programacao deste mes dessa unidade — nunca complete com dia ou horario de cabeca.",
+  "   NUNCA diga que OUTRAS unidades ou a rede nao tem uma atividade se nao houver, NESTA resposta,",
+  "   um bloco com a programacao da rede ('PROGRAMACAO VIGENTE DA REDE' ou 'PROGRAMACAO VIGENTE'",
+  "   com varias unidades) ou uma instrucao desta resposta dizendo que a busca foi feita em todas as",
+  "   unidades. Sem isso, fale so da unidade carregada e ofereca procurar nas outras.",
   "   Ao oferecer unidades como opcoes numeradas, escreva SEMPRE o nome da unidade em cada linha",
   "   (ex.: '1️⃣ Cuca Mondubim').",
 ].join("\n");
@@ -1622,6 +1659,9 @@ export function decidirAguardandoUnidade(
     // menu indefinidamente): decisão revista nesta story após as duas funções decidirem de
     // forma inconsistente quando pedir a unidade. Tom de CONTINUAÇÃO (item 6 do Escopo) — nunca
     // SAUDACOES_ABERTURA aqui, a conversa já está em andamento.
+    // Hotfix 05/11/2026: só cumprimento puro recebe a resposta pronta; o resto segue pro fluxo
+    // normal (mesmo caminho de pergunta_geral), que responde de verdade.
+    if (!ehCortesiaPura(textoOriginal)) return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
     return {
       unidadeSelecionada: null,
       aguardandoUnidade: false,
@@ -1700,6 +1740,8 @@ export function decidirConversaEngajada(
     // (resumo_rede + FAQ carregados no prompt) à toa. Mesmo padrão/mesmo texto que
     // decidirAguardandoUnidade já usa pra esse caso (linha 658-663) — tom de continuação, nunca
     // SAUDACOES_ABERTURA aqui (a conversa já está engajada).
+    // Hotfix 05/11/2026: só cumprimento puro recebe a resposta pronta (ver ehCortesiaPura).
+    if (!ehCortesiaPura(textoOriginal)) return { unidadeSelecionada: null, aguardandoUnidade: false, perguntaGeralAtiva: true, resposta: null };
     return {
       unidadeSelecionada: null,
       aguardandoUnidade: false,
@@ -1843,6 +1885,10 @@ const PALAVRAS_NAO_ATIVIDADE = new Set([
   "teu", "tua", "ali", "isso", "rua", "tchau", "aula", "via", "voc", "qto", "qnd", "pfv", "blz",
   "sao", "faco", "estao",
   // S-WM-71: verbos e pronomes de "procure em outras unidades"
+  // Hotfix 05/11/2026 (revisão do @qa): com a raiz do singular, "horas" virava "hora" e casava com
+  // "HORA PINTADA"; "adultos"/"iniciantes" puxavam "JAZZ DANCE ADULTO - INICIANTE" para perguntas de
+  // natação e informática. Mesma escolha da lista da busca determinística (PALAVRAS_GENERICAS).
+  "hora", "horas", "adulto", "adultos", "iniciante", "iniciantes",
   "procure", "procura", "procurar", "procurem", "verifique", "verificar", "veja", "olhe", "outra",
   "outras", "outro", "outros", "demais", "nelas", "neles", "tambem",
   // S-WM-72: cortesia e verbos comuns que não identificam atividade (o filtro barato não pode
@@ -1860,8 +1906,29 @@ export function palavrasChaveProgramacao(mensagem: string): string[] {
   const palavras = normalizarTexto(mensagem).replace(/([a-z0-9])-([a-z0-9])/g, "$1$2").split(/[^a-z0-9]+/).filter((p) => p.length >= 3 && !PALAVRAS_NAO_ATIVIDADE.has(p));
   // S-WM-72: variações de grafia que aparecem nos títulos reais ("Balé" e "Ballet" no mesmo mês,
   // "Viollão"), para o casamento por título não depender de como a pessoa escreveu.
-  const comVariantes = palavras.flatMap((p) => [p, ...(VARIANTES_GRAFIA_ATIVIDADE[p] ?? [])]);
+  // Hotfix 05/11/2026: a palavra entra pela raiz do singular ("tecnicas vocais" → "tecnica voca"),
+  // porque o título é casado pelo começo da palavra e o plural é maior que o singular do título.
+  const comVariantes = palavras.flatMap((p) => {
+    const raiz = raizSingular(p);
+    if (PALAVRAS_NAO_ATIVIDADE.has(raiz)) return [];
+    return [raiz, ...(VARIANTES_GRAFIA_ATIVIDADE[p] ?? []), ...(VARIANTES_GRAFIA_ATIVIDADE[raiz] ?? [])];
+  });
   return [...new Set(comVariantes)];
+}
+
+/**
+ * Hotfix 05/11/2026: raiz do singular de uma palavra no plural, sempre um PREFIXO da palavra
+ * original — então casa com o título no singular e no plural ("dancas" → "danca" pega "Dança" e
+ * "Danças"; "vocais" → "voca" pega "vocal"; "cancoes" → "canc"). Raiz com menos de 4 letras não
+ * vale (fica a palavra original).
+ */
+export function raizSingular(p: string): string {
+  let raiz = p;
+  if (p.endsWith("oes")) raiz = p.slice(0, -3);
+  else if (/[aeou]is$/.test(p)) raiz = p.slice(0, -2);
+  else if (/[rzs]es$/.test(p)) raiz = p.slice(0, -2);
+  else if (p.endsWith("s")) raiz = p.slice(0, -1);
+  return raiz.length >= 4 ? raiz : p;
 }
 
 const VARIANTES_GRAFIA_ATIVIDADE: Record<string, string[]> = {
@@ -2355,6 +2422,9 @@ export function decidirPrimeiraMensagem(
     // reportado em produção. aguardandoUnidade=false: a próxima mensagem volta a cair neste
     // mesmo branch (não trava esperando dígito de menu) e é reavaliada do zero — pode virar
     // pedido unit-dependente, pergunta_geral ou unidade direta a qualquer momento.
+    // Hotfix 05/11/2026: mensagem que não é cumprimento puro ("não consigo acessar o portal") segue
+    // pro fluxo normal em vez de receber só a saudação.
+    if (!ehCortesiaPura(textoOriginal)) return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
     return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: saudacao + "\n\nEm que posso te ajudar? 😊" };
   }
   // Backlog 4b / Item 1: pedido que depende de unidade (ex.: "quais cursos vocês têm"), sem
@@ -2993,7 +3063,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     // S-INST-QUAL-01 (A8): `mensagemLead` e o texto como o lead mandou (vai para os registros).
     // `textoFinal` e o que o fluxo responde: no caso misto do Emprega+ vira so a outra pergunta.
     const mensagemLead: string = mensagem || "";
-    let textoFinal = mensagemLead;
+    let textoFinal = normalizarDigitosEmoji(mensagemLead);
     if (!textoFinal) return new Response(JSON.stringify({ error: "Nenhuma mensagem" }), { status: 400 });
 
     // 1. Lead
@@ -3658,7 +3728,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         na_unidade: "Responda usando o bloco '--- PROGRAMACAO VIGENTE ---' (programacao do " + nomeEscopo + ").",
         rede: "Responda usando o bloco '--- PROGRAMACAO VIGENTE ---', dizendo em quais unidades da rede tem.",
         outras_unidades: "No " + nomeEscopo + " nao ha essa atividade" + (contextoTxt ? " para esse contexto (" + contextoTxt + "); se o bloco mostrar que ela existe la para outro publico, diga isso tambem" : "") + ". Diga isso e informe, usando so o bloco '--- PROGRAMACAO VIGENTE ---', em quais unidades tem; pergunte se a pessoa quer saber de alguma delas, " + opcoesNumeradas + ".",
-        nenhuma: "Nao foi encontrado(a) " + sobre + (contextoTxt ? " para esse contexto (" + contextoTxt + ")" : "") + " em nenhuma unidade na programacao deste mes. Diga isso com suas palavras e pergunte se e onde a pessoa quer saber de outras opcoes de " + (r.area ? ROTULO_AREA[r.area] : "programacao") + (contextoTxt ? " para esse contexto" : "") + " — no " + (c.escopo === ESCOLHA_REDE ? "uma unidade especifica" : nomeEscopo + ", em outra unidade") + " ou em toda a Rede CUCA. NUNCA responda so 'nao tem'.",
+        nenhuma: "Nao foi encontrado(a) " + sobre + (contextoTxt ? " para esse contexto (" + contextoTxt + ")" : "") + " em nenhuma unidade na programacao deste mes (a busca foi feita em todas as unidades). Diga isso com suas palavras e pergunte se e onde a pessoa quer saber de outras opcoes de " + (r.area ? ROTULO_AREA[r.area] : "programacao") + (contextoTxt ? " para esse contexto" : "") + " — no " + (c.escopo === ESCOLHA_REDE ? "uma unidade especifica" : nomeEscopo + ", em outra unidade") + " ou em toda a Rede CUCA. NUNCA responda so 'nao tem'.",
         area: "Liste so os nomes das atividades do bloco '--- PROGRAMACAO VIGENTE ---' (area " + (r.area ? ROTULO_AREA[r.area] : "") + ", " + nomeEscopo + "), de forma compacta, e pergunte qual interessa para mostrar dias e horarios. Nao liste atividades de outras areas.",
         sem_atividade: "Responda a pergunta usando o FAQ e os servicos da rede, se cobrirem; para programacao, pergunte qual atividade ou area a pessoa procura. Nao invente atividades.",
       };

@@ -6,6 +6,10 @@
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   contemPalavra,
+  ehCortesiaPura,
+  itensQueCasamComPalavras,
+  normalizarDigitosEmoji,
+  raizSingular,
   decidirAguardandoUnidade,
   decidirConversaEngajada,
   extrairTextoMenu,
@@ -2729,7 +2733,7 @@ Deno.test("Achado 2026-10-09: textoUltimoBlocoAgente junta as partes do agente a
 });
 
 Deno.test("Achado 2026-10-09: palavrasChaveProgramacao e montarBlocoProgramacaoRede", () => {
-  assertEquals(palavrasChaveProgramacao("Bom dia 🌹 Gostaria de informações sobre curso de libras posso me inscrever?"), ["libras"]);
+  assertEquals(palavrasChaveProgramacao("Bom dia 🌹 Gostaria de informações sobre curso de libras posso me inscrever?"), ["libra"]); // hotfix 05/11: raiz do singular, casa com "Libras"
   assertEquals(palavrasChaveProgramacao("posso me inscrever? tem vaga?"), []);
   const itens = [
     ...extrairItensProgramacao("Cuca Mondubim", PROGRAMACAO_MONDUBIM_TESTE),
@@ -3471,4 +3475,121 @@ Deno.test("S-WM-72 AC11: 'curso' define a área — conversa de natação + 'qua
   assertEquals(libras.atividade, "libras", "falando de um curso, 'o curso' é ele mesmo");
   assertEquals(atividadeEscritaNaMensagem("natação", "tem curso de natação?"), true);
   assertEquals(atividadeEscritaNaMensagem("natação", "quais cursos tem?"), false);
+});
+
+
+// ── Hotfix 05/11/2026: atendimentos reais do Institucional que ficaram sem resposta ──────────
+const AVAL_PADRAO = { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false };
+
+Deno.test("Hotfix 05/11: dígito em emoji vira dígito puro (julianovembro_ respondeu '6️⃣' e '6⃣')", () => {
+  assertEquals(normalizarDigitosEmoji("6️⃣"), "6");
+  assertEquals(normalizarDigitosEmoji("6⃣"), "6");
+  assertEquals(normalizarDigitosEmoji("1️⃣ e 5️⃣"), "1 e 5");
+  assertEquals(normalizarDigitosEmoji("tenho 15 anos"), "tenho 15 anos", "dígito comum não muda");
+  assertEquals(resolverEscolhaDeEscopo(normalizarDigitosEmoji("6️⃣"), MENU_ESCOPO_S72), ESCOLHA_REDE);
+  assertEquals(resolverEscolhaDeEscopo(normalizarDigitosEmoji("3️⃣"), MENU_ESCOPO_S72), "Cuca Mondubim");
+});
+
+Deno.test("Hotfix 05/11: '6️⃣' no menu de unidades responde pela rede inteira (handler)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const meta = { conversa_engajada: true, prog_pendente: { texto: "tem capoeira?", atividade: "capoeira", termos: ["capoeira"], area: "ESPORTES", contexto: {} } };
+  const mock = criarSupabaseMock(respostasS72(meta, [
+    { conteudo: "6️⃣", remetente: "lead", msAtras: 0 },
+    { conteudo: MENU_ESCOPO_S72, remetente: "agente", msAtras: 20000 },
+  ]), chamadas);
+  const { bodies } = await comFetchS72(() => handler(requestFake("6️⃣"), mock), interpS72({}));
+  const prompt = promptFinalS72(bodies);
+  assertStringIncludes(prompt, "CAPOEIRA - Turma T1");
+  assertStringIncludes(prompt, "Capoeira - Turma T2");
+  assertStringIncludes(prompt, "UNIDADE: " + ROTULO_REDE);
+});
+
+Deno.test("Hotfix 05/11: só cumprimento puro é cortesia", () => {
+  for (const f of ["oi", "Bom dia", "Boa tarde !", "ok", "valeu", "obrigada", "tudo bem?", "🙏🏻", "?", "Opa"]) assertEquals(ehCortesiaPura(f), true, f);
+  // mensagens reais que receberam só "Em que mais posso te ajudar? 😊" entre 03 e 05/11
+  for (const f of ["7 anos", "70 anos de idade", "Quer aprender natação", "link de inscrição", "Curso de fotografgia", "queria fazer a inscrição", "E tenho interesse em técnicas vocais", "Tô tentando acessar minha conta no portal e aparece erro", "sim", "1 e 2", "Informações"]) {
+    assertEquals(ehCortesiaPura(f), false, f);
+  }
+});
+
+Deno.test("Hotfix 05/11: resposta pronta só para cortesia nos 3 ramos; o resto segue pro fluxo normal", () => {
+  assertEquals(decidirConversaEngajada(undefined, AVAL_PADRAO, "bom dia").resposta, "Em que mais posso te ajudar? 😊");
+  const real = decidirConversaEngajada(undefined, AVAL_PADRAO, "70 anos de idade");
+  assertEquals(real.resposta, null);
+  assertEquals(real.perguntaGeralAtiva, true);
+  assertEquals(decidirAguardandoUnidade(undefined, AVAL_PADRAO, "ok").resposta, "Em que mais posso te ajudar? 😊");
+  assertEquals(decidirAguardandoUnidade(undefined, AVAL_PADRAO, "link de inscrição").resposta, null);
+  assertEquals(decidirAguardandoUnidade(undefined, AVAL_PADRAO, "link de inscrição").aguardandoUnidade, false);
+  assertStringIncludes(decidirPrimeiraMensagem(undefined, AVAL_PADRAO, "oi").resposta ?? "", "Em que posso te ajudar?");
+  assertEquals(decidirPrimeiraMensagem(undefined, AVAL_PADRAO, "Não tô conseguindo acessar o portal da juventude").resposta, null);
+});
+
+Deno.test("Hotfix 05/11: plural casa com o título no singular (João Paulo, 'técnicas vocais')", () => {
+  assertEquals(raizSingular("tecnicas"), "tecnica");
+  assertEquals(raizSingular("vocais"), "voca");
+  assertEquals(raizSingular("cancoes"), "canc");
+  assertEquals(raizSingular("professores"), "professor");
+  assertEquals(raizSingular("pilates"), "pilate");
+  assertEquals(raizSingular("judo"), "judo");
+  assertEquals(raizSingular("mais"), "mais", "raiz curta demais fica a palavra");
+  const itens = [
+    { unidade: "Cuca Pici", titulo: "A voz como extenção do corpo - Técnica vocal(canto)", detalhe: "", area: "CURSOS" as const },
+    { unidade: "Cuca Barra", titulo: "Danças Urbanas: Coreografias - Turma 01", detalhe: "", area: "CURSOS" as const },
+    { unidade: "Cuca Barra", titulo: "Dança Contemporânea e Criação para a cena", detalhe: "", area: "CURSOS" as const },
+  ];
+  assertEquals(itensQueCasamComPalavras(itens, palavrasChaveProgramacao("E tenho interesse em técnicas vocais")).map((i) => i.unidade), ["Cuca Pici"]);
+  assertEquals(itensQueCasamComPalavras(itens, palavrasChaveProgramacao("aulas de danças")).length, 2, "plural pega as duas danças, sem favorecer uma");
+  assertEquals(palavrasChaveProgramacao("posso me inscrever? tem vaga?"), [], "palavras de serviço continuam fora");
+  assertEquals(palavrasChaveProgramacao("quais cursos e oficinas tem?"), [], "plural de palavra de serviço também fica fora");
+});
+
+Deno.test("Hotfix 05/11: 'em outra rede cuca?' é pedido de outras unidades (Glória)", () => {
+  for (const f of ["Em outra rede cuca?", "tem em outra unidade?", "e em outro cuca?", "nas outras unidades tem?", "em outra rede?"]) assertEquals(pedeOutrasUnidades(f), true, f);
+  for (const f of ["tem em outro horário?", "outra turma", "a rede cuca é da prefeitura?"]) assertEquals(pedeOutrasUnidades(f), false, f);
+});
+
+Deno.test("Hotfix 05/11: 'Em outra rede cuca?' depois de perguntar de libras → busca na rede (handler)", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const respostas = respostasS71ComUnidade();
+  respostas["mensagens"] = mensagensS71([
+    { conteudo: "Em outra rede cuca?", remetente: "lead", msAtras: 0 },
+    { conteudo: "Tem libras adulto?", remetente: "lead", msAtras: 6 * 1000 },
+    { conteudo: "No Cuca Barra não encontrei Libras.", remetente: "agente", msAtras: 30 * 1000 },
+  ]);
+  const supabaseMock = criarSupabaseMock(respostas, chamadas);
+  const { resp, bodiesEnviados } = await comFetchMockadoCapturandoBody(
+    () => handler(requestFake("Em outra rede cuca?"), supabaseMock),
+    JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: true, pergunta_geral: false }),
+  );
+  assertEquals(resp.status, 200);
+  const promptFinal = bodiesEnviados.find((b) => b.includes("a pessoa pediu para procurar em outras unidades")) ?? "";
+  assertStringIncludes(promptFinal, "Curso de Libras Básico II", "acha a atividade da sessão nas outras unidades");
+  assertStringIncludes(promptFinal, "NUNCA diga que OUTRAS unidades ou a rede nao tem uma atividade");
+});
+
+Deno.test("Hotfix 05/11 (revisão): atividade que não existe em nenhuma unidade — a instrução diz que a rede toda foi vista, sem brigar com a regra 9", async () => {
+  const chamadas: ChamadaRegistrada[] = [];
+  const mock = criarSupabaseMock(respostasS72({ unidade_selecionada: "Cuca Barra", conversa_engajada: true }, [{ conteudo: "tem xadrez?", remetente: "lead", msAtras: 0 }]), chamadas);
+  const { bodies } = await comFetchS72(() => handler(requestFake("tem xadrez?"), mock), interpS72({ atividade: "xadrez", termos_busca: ["xadrez"], area: null }));
+  const prompt = promptFinalS72(bodies);
+  assertStringIncludes(prompt, "em nenhuma unidade na programacao deste mes (a busca foi feita em todas as unidades)");
+  assertStringIncludes(prompt, "ou uma instrucao desta resposta dizendo que a busca foi feita em todas as");
+});
+
+Deno.test("Hotfix 05/11 (revisão do @qa): 'horas', 'adultos' e 'iniciantes' não puxam título errado", () => {
+  const itens = [
+    { unidade: "Cuca Barra", titulo: "HORA PINTADA", detalhe: "", area: "DIA A DIA" as const },
+    { unidade: "Cuca José Walter", titulo: "JAZZ DANCE ADULTO - INICIANTE", detalhe: "", area: "CURSOS" as const },
+    { unidade: "Cuca Barra", titulo: "Natação - Turma 1", detalhe: "", area: "ESPORTES" as const },
+    { unidade: "Cuca Mondubim", titulo: "Informática Básica: Descobrindo a Tecnologia", detalhe: "", area: "CURSOS" as const },
+  ];
+  const casa = (m: string) => itensQueCasamComPalavras(itens, palavrasChaveProgramacao(m)).map((i) => i.titulo);
+  // frases reais de 03-05/11
+  assertEquals(casa("Que horas abre o atendimento?"), []);
+  assertEquals(casa("Amanhã começa que horas as inscrições?"), []);
+  assertEquals(casa("Natação nao tem para adultos?"), ["Natação - Turma 1"]);
+  assertEquals(casa("Seria informática para iniciantes"), ["Informática Básica: Descobrindo a Tecnologia"]);
+  // continua achando quando a pessoa pede de fato
+  assertEquals(casa("quero saber da hora pintada"), ["HORA PINTADA"]);
+  assertEquals(casa("tem jazz?"), ["JAZZ DANCE ADULTO - INICIANTE"]);
 });

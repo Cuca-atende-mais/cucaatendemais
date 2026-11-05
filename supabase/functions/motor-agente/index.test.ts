@@ -1166,7 +1166,9 @@ Deno.test("Plano 004/010: o guardrail continua cabendo com folga no prompt", () 
   // Teto generoso de proposito — o teste existe pra pegar crescimento descontrolado, nao pra
   // brigar por algumas centenas de caracteres.
   assertEquals(
-    INSTRUCAO_SEGURANCA.length < 6000,
+    // Hotfix 05/11/2026: +~350 chars da regra "nunca diga que outras unidades nao tem sem a
+    // programacao da rede carregada" (caso real: Glória, ballet clássico).
+    INSTRUCAO_SEGURANCA.length < 6500,
     true,
     `INSTRUCAO_SEGURANCA com ${INSTRUCAO_SEGURANCA.length} chars — crescimento a revisar`,
   );

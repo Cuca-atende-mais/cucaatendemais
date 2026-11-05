@@ -466,9 +466,12 @@ Deno.test("AC10 (handler): [[ENCAMINHAR:acesso_cuca]] devolve o texto novo com o
 
 Deno.test("A6/A7/A9 (handler): as regras do Institucional vão no prompt só de Institucional/maria", async () => {
   const inst = await rodar("qual o endereço?", dadosBase({ unidade_selecionada: "Cuca Barra", conversa_engajada: true }));
-  assert(inst.prompts.some((p) => p.includes("SEM RESPOSTA NA BASE")), "Institucional recebe as regras");
+  // Hotfix 05/11/2026: o marcador é o título da regra A — o texto comum de segurança (que a sofia
+  // também recebe) só cita a regra pelo nome. Antes a sofia nunca chegava ao prompt principal nesse
+  // cenário (recebia a resposta pronta), por isso o marcador antigo bastava.
+  assert(inst.prompts.some((p) => p.includes("A. SEM RESPOSTA NA BASE")), "Institucional recebe as regras");
   const sofia = await rodar("quero fazer uma reclamação", dadosBase({ conversa_engajada: true }), "Resposta.", "sofia");
   assert(sofia.prompts.length > 0);
   assertEquals(sofia.classificacoes.length, 0, "sofia não passa pelo classificador de emprego");
-  assertEquals(sofia.prompts.some((p) => p.includes("SEM RESPOSTA NA BASE")), false, "sofia não recebe");
+  assertEquals(sofia.prompts.some((p) => p.includes("A. SEM RESPOSTA NA BASE")), false, "sofia não recebe");
 });
