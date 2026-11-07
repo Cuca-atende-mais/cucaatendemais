@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
@@ -64,10 +65,19 @@ const SISTEMA_URLS = ["/configuracoes", "/developer"]
 export function AppSidebar() {
     const pathname = usePathname()
     const router = useRouter()
-    const { state } = useSidebar()
+    const { state, isMobile, setOpenMobile } = useSidebar()
     const { profile, hasPermission, isDeveloper } = useUser()
     const supabase = createClient()
-    const isCollapsed = state === "collapsed"
+    // No celular o menu abre inteiro (gaveta), mesmo que no computador esteja recolhido.
+    const isCollapsed = state === "collapsed" && !isMobile
+    // Celular (S-RESP-01): submenus abertos/fechados pelo toque. Fica aqui, e não no MenuItem,
+    // porque o MenuItem é recriado a cada render e perderia o estado.
+    const [submenusCelular, setSubmenusCelular] = useState<Record<string, boolean>>({})
+
+    // Celular (S-RESP-01): escolher uma tela fecha o menu. No computador não faz nada.
+    const fecharMenuNoCelular = () => {
+        if (isMobile) setOpenMobile(false)
+    }
 
     const handleLogout = async () => {
         await supabase.auth.signOut()
@@ -121,6 +131,29 @@ export function AppSidebar() {
             sub => pathname === sub.url || pathname.startsWith(sub.url + "/")
         )
         const effectiveActive = isActive || hasActiveChild
+        // Computador: o submenu aparece quando o módulo está ativo (como sempre foi).
+        // Celular: começa assim, mas o toque no item abre ou fecha o submenu.
+        const submenuAberto = isMobile
+            ? (submenusCelular[item.url] ?? effectiveActive)
+            : effectiveActive
+
+        const conteudoItem = (
+            <>
+                {IconComponent && (
+                    <IconComponent className={cn(
+                        "h-[18px] w-[18px] shrink-0",
+                        effectiveActive ? "text-primary" : "text-sidebar-foreground/60"
+                    )} />
+                )}
+                <span className="truncate">{item.title}</span>
+                {hasSubItems && !isCollapsed && (
+                    <ChevronRight className={cn(
+                        "ml-auto h-3.5 w-3.5 shrink-0 text-sidebar-foreground/40 transition-transform",
+                        submenuAberto && "rotate-90"
+                    )} />
+                )}
+            </>
+        )
 
         return (
             <SidebarMenuItem>
@@ -135,25 +168,25 @@ export function AppSidebar() {
                             : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/60 border-l-2 border-transparent"
                     )}
                 >
-                    <Link href={item.url} className="flex items-center gap-3 w-full">
-                        {IconComponent && (
-                            <IconComponent className={cn(
-                                "h-[18px] w-[18px] shrink-0",
-                                effectiveActive ? "text-primary" : "text-sidebar-foreground/60"
-                            )} />
-                        )}
-                        <span className="truncate">{item.title}</span>
-                        {hasSubItems && !isCollapsed && (
-                            <ChevronRight className={cn(
-                                "ml-auto h-3.5 w-3.5 shrink-0 text-sidebar-foreground/40 transition-transform",
-                                effectiveActive && "rotate-90"
-                            )} />
-                        )}
-                    </Link>
+                    {isMobile && hasSubItems ? (
+                        // Celular: item com submenu só abre ou fecha o submenu (não navega).
+                        <button
+                            type="button"
+                            aria-expanded={submenuAberto}
+                            onClick={() => setSubmenusCelular(prev => ({ ...prev, [item.url]: !submenuAberto }))}
+                            className="flex items-center gap-3 w-full"
+                        >
+                            {conteudoItem}
+                        </button>
+                    ) : (
+                        <Link href={item.url} onClick={fecharMenuNoCelular} className="flex items-center gap-3 w-full">
+                            {conteudoItem}
+                        </Link>
+                    )}
                 </SidebarMenuButton>
 
-                {/* Sub-items — visíveis quando pai está ativo e sidebar expandida */}
-                {hasSubItems && effectiveActive && !isCollapsed && (
+                {/* Sub-items — visíveis quando o submenu está aberto e a sidebar expandida */}
+                {hasSubItems && submenuAberto && !isCollapsed && (
                     <div className="ml-4 mt-1 space-y-0.5 border-l border-sidebar-border/60 pl-3">
                         {item.items!.map((sub) => {
                             const subActive = pathname === sub.url || pathname.startsWith(sub.url + "/")
@@ -161,6 +194,7 @@ export function AppSidebar() {
                                 <Link
                                     key={sub.title}
                                     href={sub.url}
+                                    onClick={fecharMenuNoCelular}
                                     className={cn(
                                         "block text-xs px-2 py-1.5 rounded-md transition-colors",
                                         subActive

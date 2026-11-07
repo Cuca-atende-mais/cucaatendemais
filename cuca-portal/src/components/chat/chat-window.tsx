@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useUser } from "@/lib/auth/user-provider";
 import AnexoMensagem from "./anexo-mensagem";
+import { TextoMensagem } from "./texto-mensagem";
 
 interface ChatWindowProps {
     conversationId: string | null;
@@ -347,7 +348,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                                             ? "bg-muted border border-border/50 rounded-bl-none text-foreground"
                                             : "bg-[#f2eee6] border border-stone-300/70 text-slate-950 rounded-br-none"
                                     )}>
-                                        <p className="leading-relaxed whitespace-pre-wrap break-words">{msg.conteudo}</p>
+                                        <TextoMensagem conteudo={msg.conteudo} />
                                         {msg.midia_url && (msg.tipo === "image" || msg.tipo === "document") && (
                                             <AnexoMensagem path={msg.midia_url} tipo={msg.tipo} />
                                         )}

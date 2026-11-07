@@ -1,7 +1,14 @@
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
+import { AreaConteudo } from "@/components/layout/area-conteudo"
 import { SidebarProvider } from "@/components/ui/sidebar"
 
+/**
+ * Moldura do painel (S-RESP-01): ocupa exatamente a altura da tela e só a área de conteúdo
+ * rola — cabeçalho e menu ficam parados. A altura do cabeçalho fica em `--altura-cabecalho`
+ * para nenhuma tela precisar adivinhar. Na impressão a moldura volta à altura livre, para sair
+ * o conteúdo inteiro e não só a parte visível.
+ */
 export default function DashboardLayout({
     children,
 }: {
@@ -9,13 +16,11 @@ export default function DashboardLayout({
 }) {
     return (
         <SidebarProvider defaultOpen>
-            <div className="flex min-h-screen w-full">
+            <div className="flex h-svh w-full overflow-hidden [--altura-cabecalho:3.5rem] print:h-auto print:overflow-visible">
                 <AppSidebar />
-                <div className="flex flex-col flex-1">
+                <div className="flex min-w-0 flex-1 flex-col">
                     <AppHeader />
-                    <main className="flex-1 p-6 bg-background">
-                        {children}
-                    </main>
+                    <AreaConteudo>{children}</AreaConteudo>
                 </div>
             </div>
         </SidebarProvider>

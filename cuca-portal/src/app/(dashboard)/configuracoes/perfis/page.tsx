@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import {
-    Table,
     TableBody,
     TableCell,
     TableHead,
@@ -341,9 +340,10 @@ export default function GestaoPerfisPage() {
                 </Button>}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
-                {/* Painel Esquerdo — Lista de Perfis */}
-                <div className="lg:col-span-1 bg-card rounded-2xl border border-border overflow-hidden flex flex-col" style={{ maxHeight: "calc(100vh - 220px)" }}>
+            <div className="grid grid-cols-1 lg:grid-cols-4 lg:items-start gap-5">
+                {/* Painel Esquerdo — Lista de Perfis. No computador fica fixa ao lado enquanto a
+                    matriz rola; a altura vem da área de conteúdo, sem conta presa à janela (S-RESP-01). */}
+                <div className="lg:col-span-1 bg-card rounded-2xl border border-border overflow-hidden flex flex-col max-h-72 lg:sticky lg:top-0 lg:max-h-[calc(100svh-var(--altura-cabecalho)-3rem)]">
                     <div className="px-4 py-3 border-b border-border shrink-0 flex items-center justify-between">
                         <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Perfis Cadastrados</span>
                         <Badge variant="outline" className="text-xs">{roles.length}</Badge>
@@ -368,7 +368,7 @@ export default function GestaoPerfisPage() {
                 </div>
 
                 {/* Painel Direito */}
-                <div className="lg:col-span-3">
+                <div className="lg:col-span-3 min-w-0">
                     {((isCreating && podeCriarPerfil) || (isEditingRoleInfo && podeEditarPerfil)) ? (
                         <div className="bg-card rounded-2xl border border-border overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                             <div className="px-6 pt-6 pb-4 border-b border-border">
@@ -461,24 +461,27 @@ export default function GestaoPerfisPage() {
                                     )}
                                 </div>
 
-                                <div className="overflow-x-auto">
-                                    <Table className="min-w-[700px]">
-                                        <TableHeader>
+                                {/* S-RESP-01: a caixa da tabela tem altura máxima própria e rola por dentro, para
+                                    o cabeçalho das colunas ficar fixo e a barra lateral ficar à vista. Tabela com
+                                    colunas de caixinhas estreitas: as quatro cabem a partir de 1024px de largura. */}
+                                <div className="overflow-auto max-h-[70svh]">
+                                    <table data-slot="table" className="w-full table-fixed caption-bottom text-sm">
+                                        <TableHeader className="sticky top-0 z-10">
                                             <TableRow className="border-b border-border hover:bg-transparent">
-                                                <TableHead className="w-[260px] bg-card text-muted-foreground text-xs font-bold uppercase tracking-wider">
+                                                <TableHead className="bg-card pl-5 text-muted-foreground text-xs font-bold uppercase tracking-wider shadow-[inset_0_-1px_0_var(--border)]">
                                                     Módulo
                                                 </TableHead>
                                                 {COLS.map(col => {
                                                     const comCampo = permissions.filter(p => p.acoes.includes(col.field))
                                                     const allChecked = comCampo.length > 0 && comCampo.every(p => p[col.field])
                                                     return (
-                                                        <TableHead key={col.field} className="text-center bg-card min-w-[100px] border-l border-border">
+                                                        <TableHead key={col.field} className="w-[4.5rem] text-center bg-card border-l border-border whitespace-normal shadow-[inset_0_-1px_0_var(--border)]">
                                                             <div className="flex flex-col items-center gap-1.5 py-1">
-                                                                <span className="text-xs font-bold text-foreground">{col.label}</span>
+                                                                <span className="text-xs font-bold leading-tight text-foreground">{col.label}</span>
                                                                 <Button
                                                                     variant="outline"
                                                                     size="sm"
-                                                                    className="h-5 text-[10px] px-2 rounded-full w-full max-w-[72px] border-border"
+                                                                    className="h-5 text-[10px] px-1.5 rounded-full w-full max-w-[3.5rem] border-border"
                                                                     onClick={() => handleColumnSelectAll(col.field, !allChecked)}
                                                                     disabled={!podeGravarMatriz}
                                                                 >
@@ -488,7 +491,7 @@ export default function GestaoPerfisPage() {
                                                         </TableHead>
                                                     )
                                                 })}
-                                                <TableHead className="w-[60px] bg-card border-l border-border" />
+                                                <TableHead className="w-12 bg-card border-l border-border shadow-[inset_0_-1px_0_var(--border)]" />
                                             </TableRow>
                                         </TableHeader>
 
@@ -507,9 +510,9 @@ export default function GestaoPerfisPage() {
                                                         const isRowFull = perm ? linhaCompleta(perm, acoesModulo) : false
                                                         return (
                                                             <TableRow key={mod.id} className="hover:bg-muted/20 transition-colors group/row border-b border-border/40">
-                                                                <TableCell className="py-3 pl-5 bg-card group-hover/row:bg-muted/20">
-                                                                    <div className="text-sm font-medium text-foreground">{mod.label}</div>
-                                                                    <div className="font-mono text-[9px] text-muted-foreground/50 mt-0.5">{mod.id}</div>
+                                                                <TableCell className="py-3 pl-5 bg-card whitespace-normal group-hover/row:bg-muted/20">
+                                                                    <div className="text-sm font-medium text-foreground break-words">{mod.label}</div>
+                                                                    <div className="font-mono text-[9px] text-muted-foreground/50 mt-0.5 break-all">{mod.id}</div>
                                                                 </TableCell>
                                                                 {COLS.map(col => (
                                                                     <TableCell key={col.field} className="text-center border-l border-border/40 bg-card group-hover/row:bg-muted/20">
@@ -520,7 +523,9 @@ export default function GestaoPerfisPage() {
                                                                                     onCheckedChange={c => handleCheckboxChange(mod.id, col.field, !!c)}
                                                                                     disabled={!podeGravarMatriz}
                                                                                     aria-label={acaoUnica ? `Liberar ${mod.label}` : `${col.label} — ${mod.label}`}
-                                                                                    className={`w-5 h-5 rounded border-border ${col.checkClass}`}
+                                                                                    // Borda muted-foreground (S-RESP-01): a border-border ficava quase da cor do
+                                                                                    // fundo (1,3:1). Contraste contra o card: 8,0:1 no escuro e 4,8:1 no claro.
+                                                                                    className={`w-5 h-5 rounded border-muted-foreground ${col.checkClass}`}
                                                                                 />
                                                                                 {acaoUnica && <span className="text-[9px] text-muted-foreground">Liberar</span>}
                                                                             </div>
@@ -546,7 +551,7 @@ export default function GestaoPerfisPage() {
                                                 </div>
                                             ))}
                                         </TableBody>
-                                    </Table>
+                                    </table>
                                 </div>
 
                                 <div className="px-5 py-4 border-t border-border flex flex-col md:flex-row justify-between items-center gap-3">

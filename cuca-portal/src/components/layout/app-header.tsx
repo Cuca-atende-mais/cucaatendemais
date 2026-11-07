@@ -29,8 +29,9 @@ export function AppHeader() {
     return (
         <>
             <CommandPalette />
-            <header className="sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-md">
-                <div className="flex items-center justify-between px-4 py-3">
+            {/* Altura fixa (S-RESP-01): vem de --altura-cabecalho, definida na moldura do painel */}
+            <header className="z-40 h-[var(--altura-cabecalho)] shrink-0 border-b border-border/50 bg-background/80 backdrop-blur-md">
+                <div className="flex h-full items-center justify-between px-4">
 
                     {/* Left: toggle + search trigger */}
                     <div className="flex items-center gap-3">

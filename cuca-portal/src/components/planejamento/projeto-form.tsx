@@ -325,8 +325,10 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
                 <div className="mb-4"><DestaqueCorrecoes correcoes={destaques.gerais} geral /></div>
             )}
 
-            {/* Índice em tela estreita: barra no topo */}
-            <nav className="sticky top-0 z-10 -mx-2 mb-4 flex gap-2 overflow-x-auto border-b bg-background px-2 py-2 lg:hidden">
+            {/* Índice em tela estreita: barra no topo. As barras fixas desta tela compensam o p-6 da
+                área de conteúdo (S-RESP-01): o navegador fixa sticky dentro do espaçamento interno da
+                área que rola, então top-0/bottom-0 deixariam uma faixa de 24px com o conteúdo passando. */}
+            <nav className="sticky -top-6 z-10 -mx-2 mb-4 flex gap-2 overflow-x-auto border-b bg-background px-2 py-2 lg:hidden">
                 {secoesDoIndice.map(s => (
                     <button key={s.id} type="button" onClick={() => irParaSecao(s.id)}
                         className={cn("whitespace-nowrap rounded-full px-3 py-1 text-xs", secaoAtiva === s.id ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
@@ -337,7 +339,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
 
             <div className="lg:grid lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-6">
                 {/* Índice fixo à esquerda */}
-                <nav className="sticky top-4 hidden self-start lg:block">
+                <nav className="sticky -top-2 hidden self-start lg:block">
                     <ol className="space-y-1 text-sm">
                         {secoesDoIndice.map(s => (
                             <li key={s.id}>
@@ -618,7 +620,7 @@ export function ProjetoForm({ projetoId: idInicial }: { projetoId: string | null
             </div>
 
             {/* Barra fixa do rodapé */}
-            <div className="sticky bottom-0 z-20 -mx-6 mt-2 flex flex-wrap items-center gap-3 border-t bg-background/95 px-6 py-3 backdrop-blur">
+            <div className="sticky -bottom-6 z-20 -mx-6 mt-2 flex flex-wrap items-center gap-3 border-t bg-background/95 px-6 py-3 backdrop-blur">
                 <div className="flex-1 text-sm">
                     {erro ? (
                         <span className="flex items-center gap-1 text-rose-700"><AlertTriangle className="h-4 w-4" /> {erro}</span>
@@ -672,7 +674,7 @@ function Secao({ id, registrar, correcoes, children }: {
 }) {
     const titulo = SECOES.find(s => s.id === id)?.titulo
     return (
-        <section ref={el => registrar(id, el)} data-secao={id} className="scroll-mt-20">
+        <section ref={el => registrar(id, el)} data-secao={id} className="scroll-mt-14 lg:scroll-mt-4">
             <Card className={cn(correcoes && correcoes.length > 0 && "border-amber-300")}>
                 <CardContent className="space-y-4 pt-6">
                     <h2 className="text-lg font-semibold">{id}. {titulo}</h2>

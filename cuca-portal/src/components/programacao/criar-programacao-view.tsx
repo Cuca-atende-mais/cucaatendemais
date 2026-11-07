@@ -773,8 +773,9 @@ export function CriarProgramacaoView({ unidadeInicial = "", campanhaId, onCancel
             />
 
             {/* ── Footer de navegação: fixo no rodapé da tela — não exige rolar a página inteira
-                pra achar o botão, mesmo com 126 linhas na grade ── */}
-            <div className="sticky bottom-0 -mx-6 px-6 py-4 border-t border-border bg-background/95 backdrop-blur-sm flex justify-between gap-2">
+                pra achar o botão, mesmo com 126 linhas na grade. -bottom-6 compensa o p-6 da área de
+                conteúdo, senão sobra uma faixa de 24px abaixo da barra (S-RESP-01) ── */}
+            <div className="sticky -bottom-6 -mx-6 px-6 py-4 border-t border-border bg-background/95 backdrop-blur-sm flex justify-between gap-2">
                 <Button variant="ghost" size="lg" onClick={step === primeiroStep ? handleTentarSair : () => setStep(s => s - 1)} className="gap-1.5">
                     {step === primeiroStep ? "Cancelar" : <><ChevronLeft className="h-4 w-4" /> Voltar</>}
                 </Button>
