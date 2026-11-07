@@ -23,7 +23,7 @@ interface ChatMasterDetailProps {
  */
 export function ChatMasterDetail({ activeConversationId, sidebar, chat }: ChatMasterDetailProps) {
     return (
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
             <div
                 className={cn(
                     "w-full md:w-80 lg:w-96 h-full flex-shrink-0 border-r border-[#E5E7EB]",
@@ -34,7 +34,9 @@ export function ChatMasterDetail({ activeConversationId, sidebar, chat }: ChatMa
             </div>
             <div
                 className={cn(
-                    "flex-1 h-full relative",
+                    // min-w-0 (S-RESP-01): sem ele, uma resposta com link longo estica a coluna e
+                    // o lado direito da conversa (onde ficam as respostas) é cortado.
+                    "flex-1 min-w-0 h-full relative",
                     activeConversationId ? "flex" : "hidden md:flex"
                 )}
             >

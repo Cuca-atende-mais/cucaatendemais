@@ -14,7 +14,7 @@ export default function ProgramacaoMensagensPage() {
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
 
     return (
-        <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-background">
+        <div className="flex flex-col h-full overflow-hidden bg-background">
             <div className="px-4 sm:px-6 py-4 border-b bg-card">
                 <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex flex-wrap items-center gap-2 sm:gap-3">
                     <MessageSquare className="h-6 w-6 text-cuca-blue" />

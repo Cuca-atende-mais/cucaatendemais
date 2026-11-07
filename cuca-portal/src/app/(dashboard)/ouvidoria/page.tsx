@@ -102,6 +102,9 @@ export default function OuvidoriaPage() {
     const [detalhamento, setDetalhamento] = useState<OuvidoriaRegistro | null>(null)
     const [analysing, setAnalysing] = useState(false)
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+    // Aba controlada (S-RESP-01): na aba de conversas a página ocupa a altura da área de conteúdo,
+    // para o bloco de conversa usar o espaço que sobra sem conta manual de altura.
+    const [abaAtiva, setAbaAtiva] = useState("overview")
     const [insights, setInsights] = useState<InsightsData | null>(null)
     const [loadingInsights, setLoadingInsights] = useState(false)
     const [insightsMeta, setInsightsMeta] = useState<{ gerado_em: string } | null>(null)
@@ -119,6 +122,8 @@ export default function OuvidoriaPage() {
             return (data ?? []) as OuvidoriaRegistro[]
         },
     })
+
+    const abaConversas = abaAtiva === "conversas" && !loading
 
     const invalidateOuvidoria = () => qc.invalidateQueries({ queryKey: OUVIDORIA_KEY })
 
@@ -279,7 +284,7 @@ export default function OuvidoriaPage() {
     }
 
     return (
-        <div className="flex flex-col gap-6 p-2 md:p-6">
+        <div className={cn("flex flex-col gap-6 p-2 md:p-6", abaConversas && "h-full")}>
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -293,7 +298,7 @@ export default function OuvidoriaPage() {
             {loading ? (
                 <div className="flex justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
             ) : (
-                <Tabs defaultValue="overview">
+                <Tabs value={abaAtiva} onValueChange={setAbaAtiva} className={cn(abaConversas && "min-h-0 flex-1")}>
                     <TabsList className="mb-4">
                         <TabsTrigger value="overview" className="gap-2">
                             <Activity className="h-4 w-4" /> Visão Geral
@@ -678,8 +683,8 @@ export default function OuvidoriaPage() {
                     {/* NOTA: Quando a instância "ouvidoriaredecuca" for criada no banco,
                         substituir filterAgenteTipo por: filterCanalTipo="Ouvidoria"
                         Constante estável declarada fora do componente para não recriar canal Realtime */}
-                    <TabsContent value="conversas" className="mt-0">
-                        <div className="flex h-[calc(100vh-14rem)] overflow-hidden border rounded-xl bg-background">
+                    <TabsContent value="conversas" className="mt-0 min-h-0">
+                        <div className="flex h-full min-h-[18rem] overflow-hidden border rounded-xl bg-background">
                             <div className="w-80 flex-shrink-0 h-full border-r">
                                 <ChatSidebar
                                     activeConversationId={activeConversationId}
@@ -688,7 +693,7 @@ export default function OuvidoriaPage() {
                                     title="Ouvidoria — Sofia"
                                 />
                             </div>
-                            <div className="flex-1 h-full relative">
+                            <div className="flex-1 min-w-0 h-full relative">
                                 <ChatWindow conversationId={activeConversationId} />
                             </div>
                         </div>
