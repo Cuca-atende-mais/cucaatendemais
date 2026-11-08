@@ -212,7 +212,7 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
-                    <Button variant="ghost" size="sm" onClick={fetchStats} className="gap-1.5 h-8 text-muted-foreground">
+                    <Button variant="ghost" size="sm" onClick={fetchStats} className="gap-1.5 h-11 md:h-8 text-muted-foreground">
                         <RefreshCw className="h-3.5 w-3.5" />
                         <span className="text-xs">
                             {lastRefresh.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
@@ -237,7 +237,7 @@ export default function DashboardPage() {
 
             {/* ── SEÇÃO A: Estatísticas Gerais ─────────────────── */}
             <section>
-                <h2 className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-4">
+                <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">
                     Estatísticas Gerais
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -287,7 +287,7 @@ export default function DashboardPage() {
             {/* ── SEÇÃO B: Estatísticas por Período ─────────────── */}
             <section>
                 <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                    <h2 className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
                         Estatísticas por Período
                     </h2>
                     <PeriodSelector value={period} onChange={setPeriod} />
@@ -309,7 +309,7 @@ export default function DashboardPage() {
             {/* ── SEÇÃO C: Últimas Notificações ─────────────────── */}
             <section>
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
                         Últimas Notificações
                     </h2>
                     <span className="text-xs text-muted-foreground">dados ilustrativos</span>
@@ -318,7 +318,7 @@ export default function DashboardPage() {
                 <ActivityTable loading={loading} />
 
                 <div className="flex justify-center mt-5">
-                    <Button variant="outline" size="sm" className="rounded-full px-6 gap-2">
+                    <Button variant="outline" size="sm" className="rounded-full px-6 gap-2 h-11 md:h-8">
                         Ver todas as atividades
                         <ChevronRight className="h-3.5 w-3.5" />
                     </Button>

@@ -15,18 +15,14 @@ import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import {
-    DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-    DropdownMenuSeparator, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
     Dialog, DialogContent, DialogDescription, DialogFooter,
     DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
-    Search, UserPlus, Phone, MoreHorizontal, BellOff, Bell,
-    ShieldBan, ShieldCheck, Eraser, Plus, Trash2, Save, ChevronLeft, ChevronRight,
+    Search, UserPlus, Phone,
+    ShieldBan, Plus, Trash2, Save, ChevronLeft, ChevronRight,
     LockKeyhole, Unlock,
 } from "lucide-react"
 import { unidadesCuca } from "@/lib/constants"
@@ -34,6 +30,8 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 import { mascaraTelefone, limparTelefone, cn } from "@/lib/utils"
+import { AcoesLead } from "@/components/leads/acoes-lead"
+import { CartaoLead } from "@/components/leads/cartao-lead"
 
 const PAGE_SIZE = 50
 
@@ -508,22 +506,59 @@ export default function LeadsPage() {
         return nomeAtividade
     }
 
+    // Perfil (até 2 atividades + 2 equipamentos), igual na tabela e no cartão. null quando vazio.
+    const renderPerfil = (lead: Lead) => {
+        const atividades = (lead.atividades_principais ?? []).slice(0, 2)
+        const equipamentos = (lead.equipamentos_principais ?? []).slice(0, 2)
+        if (atividades.length === 0 && equipamentos.length === 0) return null
+        return (
+            <div className="flex flex-wrap gap-1">
+                {atividades.map((a, i) => (
+                    <span
+                        key={a}
+                        title={`Original: ${a}`}
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium cursor-help ${BADGE_COLORS[i % BADGE_COLORS.length]}`}
+                    >
+                        {formatarAtividade(a)}
+                    </span>
+                ))}
+                {equipamentos.map(eq => (
+                    <Badge key={eq} variant="outline" className="text-xs">{eq}</Badge>
+                ))}
+            </div>
+        )
+    }
+
+    const renderAcoes = (lead: Lead, classeBotao?: string) => (
+        <AcoesLead
+            lead={lead}
+            classeBotao={classeBotao}
+            onVer={abrirSheet}
+            onAlternarOptIn={toggleOptIn}
+            onDesbloquear={desbloquearLead}
+            onBloquear={l => { setModalBloquear(l); setMotivoBloqueio("") }}
+            onLimparTags={limparTags}
+            onExcluir={setModalExcluir}
+        />
+    )
+
     return (
-        <div className="flex flex-col gap-6 p-6">
+        // Sem espaçamento próprio abaixo de md: a moldura (area-conteudo) já dá p-6
+        <div className="flex flex-col gap-6 md:p-6">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-2xl font-bold">Leads</h1>
                     <p className="text-muted-foreground text-sm">
                         {totalLeads.toLocaleString("pt-BR")} leads cadastrados
                     </p>
                 </div>
-                <div className="flex gap-2">
-                    <Button variant="destructive" onClick={() => setModalBloquearTodos(true)}>
+                <div className="flex flex-wrap gap-2">
+                    <Button variant="destructive" className="h-11 md:h-9" onClick={() => setModalBloquearTodos(true)}>
                         <LockKeyhole className="mr-2 h-4 w-4" />
                         Bloquear Todos
                     </Button>
-                    <Button onClick={() => setModalNovoLead(true)}>
+                    <Button className="h-11 md:h-9" onClick={() => setModalNovoLead(true)}>
                         <UserPlus className="mr-2 h-4 w-4" />
                         Novo Lead
                     </Button>
@@ -533,8 +568,8 @@ export default function LeadsPage() {
             {/* Filtros */}
             <Card>
                 <CardContent className="pt-4">
-                    <div className="flex flex-wrap gap-3">
-                        <div className="relative flex-1 min-w-[200px]">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                        <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[200px]">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input
                                 className="pl-9"
@@ -544,7 +579,7 @@ export default function LeadsPage() {
                             />
                         </div>
                         <Select value={filtroUnidade} onValueChange={setFiltroUnidade}>
-                            <SelectTrigger className="w-[180px]">
+                            <SelectTrigger className="w-full sm:w-[180px]">
                                 <SelectValue placeholder="Unidade" />
                             </SelectTrigger>
                             <SelectContent>
@@ -555,7 +590,7 @@ export default function LeadsPage() {
                             </SelectContent>
                         </Select>
                         <Select value={filtroStatus} onValueChange={setFiltroStatus}>
-                            <SelectTrigger className="w-[150px]">
+                            <SelectTrigger className="w-full sm:w-[150px]">
                                 <SelectValue placeholder="Status" />
                             </SelectTrigger>
                             <SelectContent>
@@ -571,16 +606,17 @@ export default function LeadsPage() {
 
             {/* Barra de ação quando há selecionados */}
             {selecionados.size > 0 && (
-                <div className="flex items-center justify-between rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
                     <span className="text-sm font-medium">
                         {selecionados.size} lead(s) selecionado(s)
                     </span>
-                    <div className="flex gap-2">
-                        <Button variant="outline" size="sm" onClick={() => setSelecionados(new Set())}>
+                    <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" size="sm" className="h-11 md:h-8" onClick={() => setSelecionados(new Set())}>
                             Limpar seleção
                         </Button>
                         <Button
                             size="sm"
+                            className="h-11 md:h-8"
                             onClick={desbloquearSelecionados}
                             disabled={desbloqueandoSelecionados}
                         >
@@ -592,6 +628,7 @@ export default function LeadsPage() {
                         <Button
                             variant="destructive"
                             size="sm"
+                            className="h-11 md:h-8"
                             onClick={() => setModalExcluirSelecionados(true)}
                         >
                             <Trash2 className="mr-2 h-4 w-4" />
@@ -601,10 +638,41 @@ export default function LeadsPage() {
                 </div>
             )}
 
-            {/* Tabela */}
-            <Card>
+            {/* Lista de leads: tabela a partir de lg (1024px); abaixo disso, cartões.
+                Em 1024 a tabela mostra nome, telefone, unidade, status e ações sem rolar para o
+                lado; Perfil e Cadastro aparecem a partir de xl (1280px). */}
+            <div className="space-y-2 lg:hidden">
+                {loading ? (
+                    <p className="rounded-lg border bg-card py-10 text-center text-muted-foreground">Carregando...</p>
+                ) : leads.length === 0 ? (
+                    <p className="rounded-lg border bg-card py-10 text-center text-muted-foreground">Nenhum lead encontrado</p>
+                ) : (
+                    <>
+                        <label className="flex items-center gap-3 px-3 py-2 text-sm text-muted-foreground">
+                            <Checkbox
+                                checked={leads.every(l => selecionados.has(l.id))}
+                                onCheckedChange={toggleSelecionarPagina}
+                            />
+                            Selecionar todos desta página
+                        </label>
+                        {leads.map(lead => (
+                            <CartaoLead
+                                key={lead.id}
+                                lead={lead}
+                                selecionado={selecionados.has(lead.id)}
+                                onAlternarSelecao={() => toggleSelecionado(lead.id)}
+                                dataCadastro={formatarData(lead.created_at)}
+                                perfil={renderPerfil(lead)}
+                                acoes={renderAcoes(lead, "h-11 w-11 shrink-0 -mr-2 -mt-2")}
+                            />
+                        ))}
+                    </>
+                )}
+            </div>
+
+            <Card className="hidden lg:flex">
                 <CardContent className="p-0">
-                    <Table>
+                    <Table cabecalhoFixo>
                         <TableHeader>
                             <TableRow>
                                 <TableHead className="w-10">
@@ -616,22 +684,22 @@ export default function LeadsPage() {
                                 <TableHead>Nome</TableHead>
                                 <TableHead>Telefone</TableHead>
                                 <TableHead>Unidade</TableHead>
-                                <TableHead>Perfil</TableHead>
+                                <TableHead className="hidden xl:table-cell">Perfil</TableHead>
                                 <TableHead>Status</TableHead>
-                                <TableHead>Cadastro</TableHead>
+                                <TableHead className="hidden xl:table-cell">Cadastro</TableHead>
                                 <TableHead className="w-10"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {loading ? (
                                 <TableRow>
-                                    <TableCell colSpan={7} className="text-center py-10 text-muted-foreground">
+                                    <TableCell colSpan={8} className="text-center py-10 text-muted-foreground">
                                         Carregando...
                                     </TableCell>
                                 </TableRow>
                             ) : leads.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={7} className="text-center py-10 text-muted-foreground">
+                                    <TableCell colSpan={8} className="text-center py-10 text-muted-foreground">
                                         Nenhum lead encontrado
                                     </TableCell>
                                 </TableRow>
@@ -646,7 +714,8 @@ export default function LeadsPage() {
                                             onCheckedChange={() => toggleSelecionado(lead.id)}
                                         />
                                     </TableCell>
-                                    <TableCell className="font-medium">
+                                    {/* Nome quebra linha: um nome longo não pode empurrar as ações para fora */}
+                                    <TableCell className="font-medium whitespace-normal break-words min-w-[10rem]">
                                         {lead.nome ?? <span className="text-muted-foreground italic">Sem nome</span>}
                                     </TableCell>
                                     <TableCell>
@@ -656,24 +725,8 @@ export default function LeadsPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell>{lead.unidade_cuca ?? "—"}</TableCell>
-                                    <TableCell>
-                                        <div className="flex flex-wrap gap-1">
-                                            {(lead.atividades_principais ?? []).slice(0, 2).map((a, i) => {
-                                                const cleanName = formatarAtividade(a)
-                                                return (
-                                                    <span
-                                                        key={a}
-                                                        title={`Original: ${a}`}
-                                                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium cursor-help ${BADGE_COLORS[i % BADGE_COLORS.length]}`}
-                                                    >
-                                                        {cleanName}
-                                                    </span>
-                                                )
-                                            })}
-                                            {(lead.equipamentos_principais ?? []).slice(0, 2).map(eq => (
-                                                <Badge key={eq} variant="outline" className="text-xs">{eq}</Badge>
-                                            ))}
-                                        </div>
+                                    <TableCell className="hidden xl:table-cell">
+                                        {renderPerfil(lead)}
                                     </TableCell>
                                     <TableCell>
                                         <div className="flex flex-wrap gap-1">
@@ -684,53 +737,11 @@ export default function LeadsPage() {
                                             )}
                                         </div>
                                     </TableCell>
-                                    <TableCell className="text-sm text-muted-foreground">
+                                    <TableCell className="hidden xl:table-cell text-sm text-muted-foreground">
                                         {formatarData(lead.created_at)}
                                     </TableCell>
                                     <TableCell>
-                                        <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                                    <MoreHorizontal className="h-4 w-4" />
-                                                </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end">
-                                                <DropdownMenuItem onClick={() => abrirSheet(lead)}>
-                                                    Ver Lead
-                                                </DropdownMenuItem>
-                                                <DropdownMenuSeparator />
-                                                <DropdownMenuItem onClick={() => toggleOptIn(lead)}>
-                                                    {lead.opt_in ? (
-                                                        <><BellOff className="mr-2 h-4 w-4" />Remover Opt-in</>
-                                                    ) : (
-                                                        <><Bell className="mr-2 h-4 w-4" />Ativar Opt-in</>
-                                                    )}
-                                                </DropdownMenuItem>
-                                                {lead.bloqueado ? (
-                                                    <DropdownMenuItem onClick={() => desbloquearLead(lead)}>
-                                                        <ShieldCheck className="mr-2 h-4 w-4" />Desbloquear
-                                                    </DropdownMenuItem>
-                                                ) : (
-                                                    <DropdownMenuItem
-                                                        className="text-destructive"
-                                                        onClick={() => { setModalBloquear(lead); setMotivoBloqueio("") }}
-                                                    >
-                                                        <ShieldBan className="mr-2 h-4 w-4" />Bloquear
-                                                    </DropdownMenuItem>
-                                                )}
-                                                <DropdownMenuSeparator />
-                                                <DropdownMenuItem onClick={() => limparTags(lead)}>
-                                                    <Eraser className="mr-2 h-4 w-4" />Limpar Tags
-                                                </DropdownMenuItem>
-                                                <DropdownMenuSeparator />
-                                                <DropdownMenuItem
-                                                    className="text-destructive"
-                                                    onClick={() => setModalExcluir(lead)}
-                                                >
-                                                    <Trash2 className="mr-2 h-4 w-4" />Excluir
-                                                </DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                        </DropdownMenu>
+                                        {renderAcoes(lead)}
                                     </TableCell>
                                 </TableRow>
                             ))}
@@ -741,7 +752,7 @@ export default function LeadsPage() {
 
             {/* Paginação */}
             {totalPaginas > 1 && (
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3">
                     <p className="text-sm text-muted-foreground">
                         Página {page + 1} de {totalPaginas} · {totalLeads.toLocaleString("pt-BR")} leads
                     </p>
@@ -749,6 +760,8 @@ export default function LeadsPage() {
                         <Button
                             variant="outline"
                             size="sm"
+                            className="h-11 w-11 md:h-8 md:w-auto"
+                            aria-label="Página anterior"
                             onClick={() => setPage(p => Math.max(0, p - 1))}
                             disabled={page === 0}
                         >
@@ -757,6 +770,8 @@ export default function LeadsPage() {
                         <Button
                             variant="outline"
                             size="sm"
+                            className="h-11 w-11 md:h-8 md:w-auto"
+                            aria-label="Próxima página"
                             onClick={() => setPage(p => Math.min(totalPaginas - 1, p + 1))}
                             disabled={page >= totalPaginas - 1}
                         >
@@ -776,7 +791,7 @@ export default function LeadsPage() {
                     {leadSelecionado && (
                         <>
                             {/* ── Header fixo ── */}
-                            <div className="flex items-start gap-4 px-6 py-5 border-b border-border shrink-0 pr-14">
+                            <div className="flex flex-wrap items-start gap-4 px-4 sm:px-6 py-5 border-b border-border shrink-0 pr-14 sm:pr-14">
                                 <div className="h-14 w-14 rounded-2xl bg-primary/15 flex items-center justify-center text-primary font-black text-2xl shrink-0">
                                     {(leadSelecionado.nome ?? "?").charAt(0).toUpperCase()}
                                 </div>
@@ -787,13 +802,14 @@ export default function LeadsPage() {
                                         <Badge variant="outline" className="mt-2 text-xs">{leadSelecionado.unidade_cuca}</Badge>
                                     )}
                                 </div>
-                                <div className="shrink-0">
+                                {/* No celular os botões descem para uma linha própria, senão espremem o nome */}
+                                <div className="basis-full sm:basis-auto shrink-0">
                                     {!editando ? (
-                                        <Button variant="outline" size="sm" onClick={() => setEditando(true)}>Editar</Button>
+                                        <Button variant="outline" size="sm" className="h-11 md:h-8" onClick={() => setEditando(true)}>Editar</Button>
                                     ) : (
                                         <div className="flex gap-2">
-                                            <Button variant="ghost" size="sm" onClick={() => setEditando(false)}>Cancelar</Button>
-                                            <Button size="sm" onClick={salvarDados} disabled={salvandoDados}>
+                                            <Button variant="ghost" size="sm" className="h-11 md:h-8" onClick={() => setEditando(false)}>Cancelar</Button>
+                                            <Button size="sm" className="h-11 md:h-8" onClick={salvarDados} disabled={salvandoDados}>
                                                 <Save className="mr-1 h-3 w-3" />
                                                 {salvandoDados ? "Salvando..." : "Salvar"}
                                             </Button>
@@ -808,8 +824,8 @@ export default function LeadsPage() {
 
                                     {/* Seção: Dados */}
                                     <div>
-                                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Informações Pessoais</p>
-                                        <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+                                        <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">Informações Pessoais</p>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
                                             <div>
                                                 <p className="text-xs text-muted-foreground mb-1.5">Nome</p>
                                                 {editando ? (
@@ -842,7 +858,7 @@ export default function LeadsPage() {
                                                     <p className="text-sm font-medium">{leadSelecionado.email ?? "—"}</p>
                                                 )}
                                             </div>
-                                            <div className="col-span-2">
+                                            <div className="sm:col-span-2">
                                                 <p className="text-xs text-muted-foreground mb-1.5">Unidade CUCA</p>
                                                 {editando ? (
                                                     <Select value={formDados.unidade_cuca} onValueChange={v => setFormDados(f => ({ ...f, unidade_cuca: v }))}>
@@ -860,7 +876,7 @@ export default function LeadsPage() {
 
                                     {/* Seção: Perfil Automático */}
                                     <div className="pt-5 border-t border-border">
-                                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Perfil Automático</p>
+                                        <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">Perfil Automático</p>
                                         <div className="space-y-3">
                                             <div>
                                                 <p className="text-xs text-muted-foreground mb-2">Atividades principais</p>
@@ -894,13 +910,13 @@ export default function LeadsPage() {
                                     {/* Seção: Interesses — pills interativas */}
                                     {categoriasInteresse.length > 0 && (
                                         <div className="pt-5 border-t border-border">
-                                            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Interesses</p>
+                                            <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">Interesses</p>
                                             <div className="space-y-4">
                                                 {categoriasInteresse.filter(c => !c.pai_id).map(pai => {
                                                     const subs = categoriasInteresse.filter(c => c.pai_id === pai.id)
                                                     return (
                                                         <div key={pai.id}>
-                                                            <p className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider mb-2">{pai.nome}</p>
+                                                            <p className="text-xs font-semibold text-muted-foreground/60 uppercase tracking-wider mb-2">{pai.nome}</p>
                                                             <div className="flex flex-wrap gap-2">
                                                                 {subs.map(sub => (
                                                                     <button
@@ -928,7 +944,7 @@ export default function LeadsPage() {
 
                                     {/* Seção: Histórico de Atividades */}
                                     <div className="pt-5 border-t border-border pb-2">
-                                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Histórico de Atividades</p>
+                                        <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">Histórico de Atividades</p>
 
                                         {loadingAtividades ? (
                                             <p className="text-sm text-muted-foreground">Carregando...</p>
@@ -951,7 +967,7 @@ export default function LeadsPage() {
                                                                     <TableCell className="text-xs py-2">{a.atividade}</TableCell>
                                                                     <TableCell className="text-xs py-2 text-center">{a.contagem}</TableCell>
                                                                     <TableCell className="py-2">
-                                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => excluirAtividade(a.id)}>
+                                                                        <Button variant="ghost" size="icon" className="h-11 w-11 md:h-6 md:w-6 text-destructive hover:text-destructive" aria-label="Remover atividade" onClick={() => excluirAtividade(a.id)}>
                                                                             <Trash2 className="h-3 w-3" />
                                                                         </Button>
                                                                     </TableCell>
@@ -963,7 +979,7 @@ export default function LeadsPage() {
 
                                                 <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3 mt-4">
                                                     <p className="text-xs font-semibold text-foreground">Adicionar atividade / interesse</p>
-                                                    <div className="grid grid-cols-2 gap-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                         <div>
                                                             <Label className="text-xs">Equipamento (CUCA)</Label>
                                                             <Select value={novaAtividade.equipamento} onValueChange={v => setNovaAtividade(n => ({ ...n, equipamento: v }))}>
@@ -975,12 +991,12 @@ export default function LeadsPage() {
                                                         </div>
                                                         <div>
                                                             <Label className="text-xs">Qtd (Opcional)</Label>
-                                                            <Input type="number" min={1} value={novaAtividade.contagem} onChange={e => setNovaAtividade(n => ({ ...n, contagem: parseInt(e.target.value) || 1 }))} className="mt-1 h-8 text-xs" />
+                                                            <Input type="number" min={1} value={novaAtividade.contagem} onChange={e => setNovaAtividade(n => ({ ...n, contagem: parseInt(e.target.value) || 1 }))} className="mt-1 h-8 text-base md:text-xs" />
                                                         </div>
                                                     </div>
 
                                                     {/* S19-03: Dropdown Cascata Pai/Filho */}
-                                                    <div className="grid grid-cols-2 gap-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                         <div>
                                                             <Label className="text-xs">Eixo (Opcional Filtro)</Label>
                                                             <Select
@@ -1016,7 +1032,7 @@ export default function LeadsPage() {
                                                         </div>
                                                     </div>
 
-                                                    <Button size="sm" className="w-full mt-2" onClick={adicionarAtividade} disabled={adicionandoAtividade}>
+                                                    <Button size="sm" className="w-full mt-2 h-11 md:h-8" onClick={adicionarAtividade} disabled={adicionandoAtividade}>
                                                         <Plus className="mr-1 h-3 w-3" />
                                                         {adicionandoAtividade ? "Adicionando..." : "Adicionar à Grade"}
                                                     </Button>
@@ -1041,8 +1057,8 @@ export default function LeadsPage() {
                         <DialogTitle>Novo Lead</DialogTitle>
                         <DialogDescription>Cadastrar um novo contato</DialogDescription>
                     </DialogHeader>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="col-span-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="sm:col-span-2">
                             <Label>Nome</Label>
                             <Input
                                 className="mt-1"
@@ -1069,7 +1085,7 @@ export default function LeadsPage() {
                                 onChange={e => setNovoLead(l => ({ ...l, data_nascimento: e.target.value }))}
                             />
                         </div>
-                        <div className="col-span-2">
+                        <div className="sm:col-span-2">
                             <Label>E-mail</Label>
                             <Input
                                 className="mt-1"
@@ -1079,7 +1095,7 @@ export default function LeadsPage() {
                                 onChange={e => setNovoLead(l => ({ ...l, email: e.target.value }))}
                             />
                         </div>
-                        <div className="col-span-2">
+                        <div className="sm:col-span-2">
                             <Label>Unidade CUCA</Label>
                             <Select
                                 value={novoLead.unidade_cuca}
@@ -1096,7 +1112,7 @@ export default function LeadsPage() {
                             </Select>
                         </div>
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setModalNovoLead(false)}>
                             Cancelar
                         </Button>
@@ -1120,7 +1136,7 @@ export default function LeadsPage() {
                             Use os checkboxes para selecionar e desbloquear apenas os que desejar.
                         </DialogDescription>
                     </DialogHeader>
-                    <DialogFooter>
+                    <DialogFooter className="max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setModalBloquearTodos(false)}>
                             Cancelar
                         </Button>
@@ -1153,7 +1169,7 @@ export default function LeadsPage() {
                             rows={3}
                         />
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setModalBloquear(null)}>Cancelar</Button>
                         <Button variant="destructive" onClick={bloquearLead}>
                             <ShieldBan className="mr-2 h-4 w-4" />Bloquear
@@ -1175,7 +1191,7 @@ export default function LeadsPage() {
                             — esta ação não apaga dados relacionados, apenas remove o lead da lista.
                         </DialogDescription>
                     </DialogHeader>
-                    <DialogFooter>
+                    <DialogFooter className="max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setModalExcluir(null)}>Cancelar</Button>
                         <Button variant="destructive" onClick={excluirLead} disabled={excluindoLead}>
                             <Trash2 className="mr-2 h-4 w-4" />Excluir
@@ -1197,7 +1213,7 @@ export default function LeadsPage() {
                             definitivamente do banco de dados — não é possível desfazer nem recuperar.
                         </DialogDescription>
                     </DialogHeader>
-                    <DialogFooter>
+                    <DialogFooter className="max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setModalExcluirSelecionados(false)}>
                             Cancelar
                         </Button>

@@ -329,7 +329,7 @@ export default function ChatSidebar({
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
                         placeholder="Buscar..."
-                        className="pl-9 bg-background/50 border-primary/10 transition-colors focus:border-primary/30 h-9 text-sm"
+                        className="pl-9 bg-background/50 border-primary/10 transition-colors focus:border-primary/30 h-9"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
