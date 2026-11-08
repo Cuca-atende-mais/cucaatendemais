@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
-    Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
@@ -23,6 +23,7 @@ import toast from "react-hot-toast"
 import { useUser } from "@/lib/auth/user-provider"
 import ChatSidebar from "@/components/chat/chat-sidebar"
 import ChatWindow from "@/components/chat/chat-window"
+import { ChatMasterDetail } from "@/components/chat/chat-master-detail"
 import {
     PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
     BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -60,7 +61,7 @@ const TOOLTIP_STYLE = {
     backgroundColor: "hsl(var(--card))",
     border: "1px solid hsl(var(--border))",
     borderRadius: "8px",
-    fontSize: "12px",
+    fontSize: "13px",
     color: "hsl(var(--foreground))",
 }
 
@@ -242,18 +243,18 @@ export default function OuvidoriaPage() {
                 <div className="flex justify-between items-start mb-2 pl-2">
                     <div className="flex items-center gap-2">
                         {r.anonimo ? (
-                            <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-500">
+                            <Badge variant="outline" className="text-xs bg-slate-50 text-slate-500">
                                 <UserX className="h-3 w-3 mr-1" /> Anônimo
                             </Badge>
                         ) : (
-                            <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-600 border-blue-200">
+                            <Badge variant="outline" className="text-xs bg-blue-50 text-blue-600 border-blue-200">
                                 <User className="h-3 w-3 mr-1" /> Identificado
                             </Badge>
                         )}
                         {r.protocolo && <span className="text-xs font-mono font-bold text-primary">{r.protocolo}</span>}
                     </div>
                     {sent && (
-                        <Badge className={cn("text-[10px] border shadow-none", sent.color)}>
+                        <Badge className={cn("text-xs border shadow-none", sent.color)}>
                             {SentIcon && <SentIcon className="h-3 w-3 mr-1" />}
                             {sent.label}
                         </Badge>
@@ -284,7 +285,7 @@ export default function OuvidoriaPage() {
     }
 
     return (
-        <div className={cn("flex flex-col gap-6 p-2 md:p-6", abaConversas && "h-full")}>
+        <div className={cn("flex flex-col gap-6 md:p-6", abaConversas && "h-full")}>
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -299,7 +300,8 @@ export default function OuvidoriaPage() {
                 <div className="flex justify-center py-20"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
             ) : (
                 <Tabs value={abaAtiva} onValueChange={setAbaAtiva} className={cn(abaConversas && "min-h-0 flex-1")}>
-                    <TabsList className="mb-4">
+                    {/* No celular as 5 abas quebram linha em vez de estourar a largura da tela */}
+                    <TabsList className="mb-4 max-w-full flex-wrap justify-start group-data-[orientation=horizontal]/tabs:h-auto">
                         <TabsTrigger value="overview" className="gap-2">
                             <Activity className="h-4 w-4" /> Visão Geral
                         </TabsTrigger>
@@ -346,14 +348,14 @@ export default function OuvidoriaPage() {
                                 </p>
                                 <p className="text-3xl font-bold">{analisados.length}</p>
                                 {pendentesAnalise > 0 && (
-                                    <p className="text-[10px] text-muted-foreground mt-1">{pendentesAnalise} pendentes</p>
+                                    <p className="text-xs text-muted-foreground mt-1">{pendentesAnalise} pendentes</p>
                                 )}
                             </div>
                         </div>
 
                         {/* Botão análise em lote */}
                         {pendentesAnalise > 0 && hasPermission("ouvidoria_painel", "update") && (
-                            <div className="border rounded-xl p-4 bg-indigo-500/5 border-indigo-500/20 flex items-center justify-between gap-4">
+                            <div className="border rounded-xl p-4 bg-indigo-500/5 border-indigo-500/20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                 <div>
                                     <p className="text-sm font-medium">{pendentesAnalise} manifestaç{pendentesAnalise === 1 ? "ão" : "ões"} aguardando análise de IA</p>
                                     <p className="text-xs text-muted-foreground">Classifique sentimento e extraia temas de todas de uma vez</p>
@@ -362,7 +364,7 @@ export default function OuvidoriaPage() {
                                     onClick={handleAnalisarTodos}
                                     disabled={analysingBatch}
                                     size="sm"
-                                    className="bg-indigo-600 hover:bg-indigo-700 shrink-0"
+                                    className="bg-indigo-600 hover:bg-indigo-700 shrink-0 h-11 md:h-8"
                                 >
                                     {analysingBatch ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Analisando...</> : <><Sparkles className="h-4 w-4 mr-2" /> Analisar todas</>}
                                 </Button>
@@ -384,7 +386,7 @@ export default function OuvidoriaPage() {
                                             <Brain className="h-5 w-5 text-indigo-500" />
                                             <p className="text-sm font-semibold">Inteligência de Gestão — Análise IA</p>
                                             {insightsMeta && (
-                                                <span className="text-[10px] text-muted-foreground">
+                                                <span className="text-xs text-muted-foreground">
                                                     atualizado {new Date(insightsMeta.gerado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                                 </span>
                                             )}
@@ -394,7 +396,7 @@ export default function OuvidoriaPage() {
                                             variant="outline"
                                             onClick={handleGerarInsights}
                                             disabled={loadingInsights}
-                                            className="shrink-0 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
+                                            className="shrink-0 h-11 md:h-8 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
                                         >
                                             {loadingInsights
                                                 ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Analisando...</>
@@ -475,7 +477,7 @@ export default function OuvidoriaPage() {
                                                                     <Icon className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
                                                                     <div>
                                                                         <p className="text-sm font-medium text-red-300">{alerta.descricao}</p>
-                                                                        {alerta.unidade && <p className="text-[10px] text-muted-foreground mt-0.5">{alerta.unidade}</p>}
+                                                                        {alerta.unidade && <p className="text-xs text-muted-foreground mt-0.5">{alerta.unidade}</p>}
                                                                     </div>
                                                                 </div>
                                                             )
@@ -494,13 +496,13 @@ export default function OuvidoriaPage() {
                                                         <div key={i} className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5 space-y-1">
                                                             <div className="flex items-center justify-between">
                                                                 <span className="text-sm font-semibold capitalize">{item.tema}</span>
-                                                                <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-bold">{item.frequencia}x</span>
+                                                                <span className="text-xs bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded font-bold">{item.frequencia}x</span>
                                                             </div>
                                                             <p className="text-xs text-muted-foreground line-clamp-2 italic">&ldquo;{item.trecho}&rdquo;</p>
                                                             {item.unidades?.length > 0 && (
                                                                 <div className="flex gap-1 flex-wrap">
                                                                     {item.unidades.map(u => (
-                                                                        <span key={u} className="text-[9px] bg-muted/60 text-muted-foreground px-1.5 py-0.5 rounded">{u}</span>
+                                                                        <span key={u} className="text-xs bg-muted/60 text-muted-foreground px-1.5 py-0.5 rounded">{u}</span>
                                                                     ))}
                                                                 </div>
                                                             )}
@@ -516,7 +518,7 @@ export default function OuvidoriaPage() {
                                                         <div key={i} className="p-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 space-y-1">
                                                             <div className="flex items-center justify-between">
                                                                 <span className="text-sm font-semibold capitalize">{item.tema}</span>
-                                                                <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-bold">{item.frequencia}x</span>
+                                                                <span className="text-xs bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-bold">{item.frequencia}x</span>
                                                             </div>
                                                             <p className="text-xs text-muted-foreground line-clamp-2 italic">&ldquo;{item.trecho}&rdquo;</p>
                                                         </div>
@@ -539,12 +541,12 @@ export default function OuvidoriaPage() {
                                                                         <Lightbulb className="h-8 w-8 text-indigo-400" />
                                                                     </div>
                                                                     <div className="flex items-center gap-2">
-                                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${imp.cor}`}>{imp.label}</span>
+                                                                        <span className={`text-xs px-1.5 py-0.5 rounded border font-bold ${imp.cor}`}>{imp.label}</span>
                                                                     </div>
                                                                     <p className="text-sm font-semibold text-foreground/90 leading-snug">{ideia.ideia}</p>
                                                                     <p className="text-xs text-muted-foreground line-clamp-2 italic">&ldquo;{ideia.trecho}&rdquo;</p>
                                                                     {ideia.unidade && (
-                                                                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                                                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                                                             <Building2 className="h-3 w-3" /> {ideia.unidade}
                                                                         </div>
                                                                     )}
@@ -586,13 +588,13 @@ export default function OuvidoriaPage() {
                                                             ))}
                                                         </Pie>
                                                         <Tooltip contentStyle={TOOLTIP_STYLE} />
-                                                        <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: "11px" }} />
+                                                        <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: "13px" }} />
                                                     </PieChart>
                                                 </ResponsiveContainer>
                                                 <div className="absolute top-0 left-0 right-0 flex items-center justify-center pointer-events-none" style={{ height: "77%" }}>
                                                     <div className="text-center">
                                                         <div className="text-2xl font-bold">{analisados.length}</div>
-                                                        <div className="text-[10px] text-muted-foreground">analisados</div>
+                                                        <div className="text-xs text-muted-foreground">analisados</div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -610,10 +612,10 @@ export default function OuvidoriaPage() {
                                             <ResponsiveContainer width="100%" height={200}>
                                                 <BarChart data={dadosPorUnidade} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                                                     <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.06} />
-                                                    <XAxis dataKey="name" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                                                    <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                                                    <XAxis dataKey="name" tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
+                                                    <YAxis tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
                                                     <Tooltip contentStyle={TOOLTIP_STYLE} />
-                                                    <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }} />
+                                                    <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: "13px", paddingTop: "8px" }} />
                                                     <Bar dataKey="criticas" name="Críticas" fill="#f59e0b" radius={[4, 4, 0, 0]} />
                                                     <Bar dataKey="sugestoes" name="Sugestões" fill="#10b981" radius={[4, 4, 0, 0]} />
                                                 </BarChart>
@@ -633,7 +635,7 @@ export default function OuvidoriaPage() {
                                                 const pct = Math.round((total / analisados.length) * 100)
                                                 return (
                                                     <div key={tema} className="flex items-center gap-3">
-                                                        <span className="text-sm w-40 truncate text-muted-foreground capitalize">{tema}</span>
+                                                        <span className="text-sm w-24 sm:w-40 shrink-0 truncate text-muted-foreground capitalize">{tema}</span>
                                                         <div className="flex-1 bg-muted rounded-full h-2 overflow-hidden">
                                                             <div
                                                                 className="h-full bg-indigo-500 rounded-full transition-all"
@@ -684,18 +686,25 @@ export default function OuvidoriaPage() {
                         substituir filterAgenteTipo por: filterCanalTipo="Ouvidoria"
                         Constante estável declarada fora do componente para não recriar canal Realtime */}
                     <TabsContent value="conversas" className="mt-0 min-h-0">
+                        {/* Mesmo layout do Atendimento: no celular mostra a lista ou a conversa, uma de cada vez */}
                         <div className="flex h-full min-h-[18rem] overflow-hidden border rounded-xl bg-background">
-                            <div className="w-80 flex-shrink-0 h-full border-r">
-                                <ChatSidebar
-                                    activeConversationId={activeConversationId}
-                                    onSelectConversation={setActiveConversationId}
-                                    filterAgenteTipo={SOFIA_AGENTE_TIPOS}
-                                    title="Ouvidoria — Sofia"
-                                />
-                            </div>
-                            <div className="flex-1 min-w-0 h-full relative">
-                                <ChatWindow conversationId={activeConversationId} />
-                            </div>
+                            <ChatMasterDetail
+                                activeConversationId={activeConversationId}
+                                sidebar={
+                                    <ChatSidebar
+                                        activeConversationId={activeConversationId}
+                                        onSelectConversation={setActiveConversationId}
+                                        filterAgenteTipo={SOFIA_AGENTE_TIPOS}
+                                        title="Ouvidoria — Sofia"
+                                    />
+                                }
+                                chat={
+                                    <ChatWindow
+                                        conversationId={activeConversationId}
+                                        onBack={() => setActiveConversationId(null)}
+                                    />
+                                }
+                            />
                         </div>
                     </TabsContent>
 
@@ -785,7 +794,7 @@ export default function OuvidoriaPage() {
                                                 <p className="text-xs font-semibold text-indigo-900 mb-1.5">Temas Identificados</p>
                                                 <div className="flex flex-wrap gap-1.5">
                                                     {detalhamento.temas_identificados.map(t => (
-                                                        <Badge key={t} variant="secondary" className="bg-white/60 text-indigo-900 border-indigo-200 text-[10px]">{t}</Badge>
+                                                        <Badge key={t} variant="secondary" className="bg-white/60 text-indigo-900 border-indigo-200 text-xs">{t}</Badge>
                                                     ))}
                                                 </div>
                                             </div>
@@ -794,18 +803,20 @@ export default function OuvidoriaPage() {
                                 </div>
                             )}
 
-                            {!detalhamento.resumo_ia && hasPermission("ouvidoria_painel", "update") && (
-                                <div className="mt-4 flex justify-center">
-                                    <Button
-                                        onClick={() => handleAnalyseSentiment(detalhamento)}
-                                        disabled={analysing}
-                                        className="w-full bg-indigo-600 hover:bg-indigo-700"
-                                    >
-                                        {analysing ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Analisando...</> : <><Sparkles className="h-4 w-4 mr-2" /> Analisar com IA Sofia</>}
-                                    </Button>
-                                </div>
-                            )}
                         </div>
+                    )}
+
+                    {/* Rodapé fixo: o botão continua visível quando o detalhe é comprido e rola */}
+                    {detalhamento && !detalhamento.resumo_ia && hasPermission("ouvidoria_painel", "update") && (
+                        <DialogFooter>
+                            <Button
+                                onClick={() => handleAnalyseSentiment(detalhamento)}
+                                disabled={analysing}
+                                className="w-full h-11 md:h-9 bg-indigo-600 hover:bg-indigo-700"
+                            >
+                                {analysing ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Analisando...</> : <><Sparkles className="h-4 w-4 mr-2" /> Analisar com IA Sofia</>}
+                            </Button>
+                        </DialogFooter>
                     )}
                 </DialogContent>
             </Dialog>

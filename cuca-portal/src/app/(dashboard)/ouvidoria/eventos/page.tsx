@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
-    Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue
@@ -130,8 +130,8 @@ export default function EventosOuvidoriaPage() {
     }
 
     return (
-        <div className="flex flex-col gap-6 p-2 md:p-6">
-            <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-6 md:p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
                         <Megaphone className="h-6 w-6 text-primary" />
@@ -139,7 +139,7 @@ export default function EventosOuvidoriaPage() {
                     </h1>
                     <p className="text-sm text-muted-foreground mt-1">Crie campanhas e eventos de ouvidoria para coleta de sugestões e críticas da Sofia.</p>
                 </div>
-                <Button onClick={() => openModal()} className="gap-2">
+                <Button onClick={() => openModal()} className="gap-2 self-start sm:self-auto shrink-0 h-11 md:h-9">
                     <Plus className="h-4 w-4" /> Novo Evento
                 </Button>
             </div>
@@ -154,12 +154,12 @@ export default function EventosOuvidoriaPage() {
                         return (
                             <div key={ev.id} className={cn("border rounded-xl p-5 bg-card flex flex-col h-full", isAtivo && "border-primary/50 shadow-sm")}>
                                 <div className="flex justify-between items-start mb-3">
-                                    <Badge className={cn("text-[10px] border", cfg.color)}>{cfg.label}</Badge>
+                                    <Badge className={cn("text-xs border", cfg.color)}>{cfg.label}</Badge>
                                     <div className="flex gap-1">
-                                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openModal(ev)}>
+                                        <Button size="icon" variant="ghost" className="h-11 w-11 md:h-7 md:w-7" aria-label="Editar evento" onClick={() => openModal(ev)}>
                                             <Pencil className="h-3.5 w-3.5" />
                                         </Button>
-                                        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteEvento(ev.id, ev.titulo)}>
+                                        <Button size="icon" variant="ghost" className="h-11 w-11 md:h-7 md:w-7 text-destructive hover:text-destructive" aria-label="Remover evento" onClick={() => deleteEvento(ev.id, ev.titulo)}>
                                             <Trash2 className="h-3.5 w-3.5" />
                                         </Button>
                                     </div>
@@ -173,7 +173,7 @@ export default function EventosOuvidoriaPage() {
                                         <CalendarDays className="h-3.5 w-3.5" />
                                         {format(new Date(ev.data_inicio + "T12:00:00"), "dd/MM/yyyy")} até {format(new Date(ev.data_fim + "T12:00:00"), "dd/MM/yyyy")}
                                     </div>
-                                    <Badge variant="outline" className="text-[10px] font-normal">
+                                    <Badge variant="outline" className="text-xs font-normal">
                                         Filtro: {ev.unidade_cuca ? `CUCA ${ev.unidade_cuca}` : "Rede (Geral)"}
                                     </Badge>
                                 </div>
@@ -210,10 +210,10 @@ export default function EventosOuvidoriaPage() {
                                 placeholder="Descreva sobre o que é o evento. A Sofia usará este texto para basear suas respostas."
                                 rows={4}
                             />
-                            <p className="text-[10px] text-muted-foreground">A Sofia limitará suas respostas e perguntas ao contexto descrito acima.</p>
+                            <p className="text-xs text-muted-foreground">A Sofia limitará suas respostas e perguntas ao contexto descrito acima.</p>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="grid gap-2">
                                 <Label>Data Inicial *</Label>
                                 <Input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} />
@@ -224,7 +224,7 @@ export default function EventosOuvidoriaPage() {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="grid gap-2">
                                 <Label>Foco (Unidade Cuca)</Label>
                                 <Select value={unidade} onValueChange={setUnidade}>
@@ -286,13 +286,14 @@ export default function EventosOuvidoriaPage() {
                         )}
                     </div>
 
-                    <div className="flex justify-end gap-2 pt-2 border-t mt-2">
+                    {/* Rodapé fixo: Salvar continua visível quando o formulário rola */}
+                    <DialogFooter className="border-t pt-4 max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setModalOpen(false)}>Cancelar</Button>
                         <Button onClick={saveEvento} disabled={saving || !titulo || !descricao || !dataInicio || !dataFim}>
                             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
                             {editing ? "Salvar" : "Criar Evento"}
                         </Button>
-                    </div>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>

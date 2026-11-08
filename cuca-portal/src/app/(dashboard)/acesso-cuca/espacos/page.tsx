@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
-    Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue
@@ -186,9 +186,9 @@ export default function EspacosPage() {
     const porUnidade = unidadesCuca.map(u => ({ unidade: u, items: espacos.filter(e => e.unidade_cuca === u) })).filter(g => g.items.length > 0)
 
     return (
-        <div className="flex flex-col gap-6 p-2 md:p-6">
+        <div className="flex flex-col gap-6 md:p-6">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
                         <Building2 className="h-6 w-6 text-primary" />
@@ -197,7 +197,7 @@ export default function EspacosPage() {
                     <p className="text-sm text-muted-foreground mt-1">Gerencie os espaços e equipamentos disponíveis para reserva nos CUCAs.</p>
                 </div>
                 {hasPermission("acesso_espacos", "create") && (
-                    <Button onClick={() => openEspacoModal()} className="gap-2">
+                    <Button onClick={() => openEspacoModal()} className="gap-2 self-start sm:self-auto shrink-0 h-11 md:h-9">
                         <Plus className="h-4 w-4" /> Novo Espaço
                     </Button>
                 )}
@@ -228,26 +228,26 @@ export default function EspacosPage() {
 
                                     return (
                                         <div key={espaco.id} className="border rounded-xl overflow-hidden bg-card">
-                                            {/* Row do Espaço */}
-                                            <div className="flex items-center gap-3 p-4">
-                                                <button onClick={() => toggleExpand(espaco.id)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                                            {/* Row do Espaço: no celular, status e botões descem para a 2ª linha */}
+                                            <div className="flex flex-wrap items-center gap-3 p-4">
+                                                <button onClick={() => toggleExpand(espaco.id)} className="flex items-center gap-2 basis-full sm:basis-0 flex-1 min-w-0 text-left">
                                                     {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
                                                     <div className="min-w-0">
                                                         <p className="font-medium truncate">{espaco.nome}</p>
                                                         <p className="text-xs text-muted-foreground truncate">{espaco.descricao} · {espaco.capacidade} pessoas</p>
                                                     </div>
                                                 </button>
-                                                <Badge className={cn("text-[10px] border shrink-0", cfg.color)}>
+                                                <Badge className={cn("text-xs border shrink-0", cfg.color)}>
                                                     <Icon className="h-3 w-3 mr-1" /> {cfg.label}
                                                 </Badge>
-                                                <div className="flex gap-1 shrink-0">
+                                                <div className="flex gap-1 shrink-0 ml-auto sm:ml-0">
                                                     {hasPermission("acesso_espacos", "update") && (
-                                                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEspacoModal(espaco)}>
+                                                        <Button size="icon" variant="ghost" className="h-11 w-11 md:h-7 md:w-7" aria-label="Editar espaço" onClick={() => openEspacoModal(espaco)}>
                                                             <Pencil className="h-3.5 w-3.5" />
                                                         </Button>
                                                     )}
                                                     {hasPermission("acesso_espacos", "delete") && (
-                                                        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteEspaco(espaco.id)}>
+                                                        <Button size="icon" variant="ghost" className="h-11 w-11 md:h-7 md:w-7 text-destructive hover:text-destructive" aria-label="Remover espaço" onClick={() => deleteEspaco(espaco.id)}>
                                                             <Trash2 className="h-3.5 w-3.5" />
                                                         </Button>
                                                     )}
@@ -260,7 +260,7 @@ export default function EspacosPage() {
                                                     <div className="flex items-center justify-between">
                                                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Equipamentos</p>
                                                         {hasPermission("acesso_espacos", "create") && (
-                                                            <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => openEquipModal(espaco.id)}>
+                                                            <Button size="sm" variant="outline" className="h-11 md:h-7 text-xs gap-1" onClick={() => openEquipModal(espaco.id)}>
                                                                 <Plus className="h-3 w-3" /> Adicionar
                                                             </Button>
                                                         )}
@@ -272,23 +272,24 @@ export default function EspacosPage() {
                                                             {equips.map(eq => {
                                                                 const eqCfg = STATUS_CONFIG[eq.status]
                                                                 const EqIcon = eqCfg.icon
+                                                                // No celular o nome ocupa a 1ª linha; etiqueta e botões descem (como a linha do espaço)
                                                                 return (
-                                                                    <div key={eq.id} className="flex items-center gap-2 p-2 rounded-lg bg-background border">
-                                                                        <div className="flex-1 min-w-0">
+                                                                    <div key={eq.id} className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-background border">
+                                                                        <div className="basis-full sm:basis-0 flex-1 min-w-0">
                                                                             <p className="text-sm font-medium truncate">{eq.nome}</p>
                                                                             {eq.descricao && <p className="text-xs text-muted-foreground truncate">{eq.descricao}</p>}
                                                                         </div>
-                                                                        <Badge className={cn("text-[10px] border", eqCfg.color)}>
+                                                                        <Badge className={cn("text-xs border shrink-0", eqCfg.color)}>
                                                                             <EqIcon className="h-3 w-3 mr-1" /> {eqCfg.label}
                                                                         </Badge>
-                                                                        <div className="flex gap-1">
+                                                                        <div className="flex gap-1 shrink-0 ml-auto sm:ml-0">
                                                                             {hasPermission("acesso_espacos", "update") && (
-                                                                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => openEquipModal(espaco.id, eq)}>
+                                                                                <Button size="icon" variant="ghost" className="h-11 w-11 md:h-6 md:w-6" aria-label="Editar equipamento" onClick={() => openEquipModal(espaco.id, eq)}>
                                                                                     <Pencil className="h-3 w-3" />
                                                                                 </Button>
                                                                             )}
                                                                             {hasPermission("acesso_espacos", "delete") && (
-                                                                                <Button size="icon" variant="ghost" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => deleteEquip(eq)}>
+                                                                                <Button size="icon" variant="ghost" className="h-11 w-11 md:h-6 md:w-6 text-destructive hover:text-destructive" aria-label="Remover equipamento" onClick={() => deleteEquip(eq)}>
                                                                                     <Trash2 className="h-3 w-3" />
                                                                                 </Button>
                                                                             )}
@@ -332,7 +333,7 @@ export default function EspacosPage() {
                             <Label>Descrição</Label>
                             <Textarea value={eDescricao} onChange={e => setEDescricao(e.target.value)} placeholder="Descreva o espaço..." className="resize-none" rows={2} />
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="grid gap-1.5">
                                 <Label>Capacidade</Label>
                                 <Input type="number" value={eCapacidade} onChange={e => setECapacidade(e.target.value)} placeholder="Pessoas" />
@@ -362,13 +363,13 @@ export default function EspacosPage() {
                             </Select>
                         </div>
                     </div>
-                    <div className="flex justify-end gap-2 pt-2">
+                    <DialogFooter className="pt-2 max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setModalEspaco(false)}>Cancelar</Button>
                         <Button onClick={saveEspaco} disabled={savingEspaco || !eNome || !eUnidade}>
                             {savingEspaco ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                             {editingEspaco ? "Salvar" : "Criar"}
                         </Button>
-                    </div>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 
@@ -400,13 +401,13 @@ export default function EspacosPage() {
                             </Select>
                         </div>
                     </div>
-                    <div className="flex justify-end gap-2 pt-2">
+                    <DialogFooter className="pt-2 max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setModalEquip(false)}>Cancelar</Button>
                         <Button onClick={saveEquip} disabled={savingEquip || !qNome}>
                             {savingEquip ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                             {editingEquip ? "Salvar" : "Adicionar"}
                         </Button>
-                    </div>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>

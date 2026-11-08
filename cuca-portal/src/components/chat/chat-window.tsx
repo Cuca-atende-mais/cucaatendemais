@@ -272,7 +272,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                     <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 -ml-1 shrink-0 md:hidden"
+                        className="h-11 w-11 -ml-2 shrink-0 md:hidden"
                         onClick={onBack}
                         aria-label="Voltar pra lista de conversas"
                     >
@@ -301,7 +301,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
             {/* Mensagens */}
             <div
                 ref={scrollRef}
-                className="flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-4 relative z-10 scrollbar-thin scrollbar-thumb-primary/10"
+                className="flex-1 overflow-y-auto overflow-x-hidden p-3 md:p-6 space-y-4 relative z-10 scrollbar-thin scrollbar-thumb-primary/10"
             >
                 {loading ? (
                     <div className="flex flex-col items-center justify-center h-full space-y-4 opacity-50">
@@ -392,7 +392,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                         onClick={handleSendMessage}
                         disabled={!newMessage.trim() || conversation?.status === 'ativa' || sending || !hasPermission(moduloAtendimento, "create")}
                         className={cn(
-                            "rounded-xl shadow-lg transition-all active:scale-90 shrink-0",
+                            "rounded-xl shadow-lg transition-all active:scale-90 shrink-0 size-11 md:size-9",
                             conversation?.status === 'ativa' || !hasPermission(moduloAtendimento, "create") ? "bg-muted" : "bg-primary hover:bg-primary/90"
                         )}
                     >
@@ -403,7 +403,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 </div>
 
                 <div className={cn(
-                    "rounded-xl p-3 text-center transition-all border flex items-center justify-between gap-3",
+                    "rounded-xl p-3 text-center transition-all border flex flex-wrap items-center justify-between gap-3",
                     conversation?.status === 'ativa' ? "bg-primary/5 border-primary/10" : "bg-amber-500/5 border-amber-500/10"
                 )}>
                     <div className="flex items-center gap-2">
@@ -420,7 +420,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                         <Button
                             variant="outline"
                             size="sm"
-                            className="h-7 text-xs gap-1 border-primary/20 text-primary hover:bg-primary/10 shrink-0"
+                            className="h-11 md:h-7 text-xs gap-1 border-primary/20 text-primary hover:bg-primary/10 shrink-0"
                             onClick={handleAssumirAtendimento}
                             disabled={assumindo}
                         >
@@ -432,7 +432,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                         <Button
                             variant="outline"
                             size="sm"
-                            className="h-7 text-xs gap-1 border-amber-500/30 text-amber-600 hover:bg-amber-500/10 shrink-0"
+                            className="h-11 md:h-7 text-xs gap-1 border-amber-500/30 text-amber-600 hover:bg-amber-500/10 shrink-0"
                             onClick={handleRetornarIA}
                         >
                             <Zap className="h-3 w-3" />

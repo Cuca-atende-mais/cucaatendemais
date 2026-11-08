@@ -48,7 +48,10 @@ export function ActivityTable({ loading }: ActivityTableProps) {
     }
 
     return (
-        <div className="rounded-xl border border-border overflow-hidden">
+        // Colunas fixas somam ~540px: em tela estreita a caixa rola para o lado por dentro, em vez
+        // de cortar as colunas da direita (S-RESP-03)
+        <div className="rounded-xl border border-border overflow-x-auto">
+          <div className="min-w-[36rem]">
             {/* Table header */}
             <div className="grid grid-cols-[100px_1fr_80px_100px_90px_60px] gap-x-4 px-4 py-2.5 bg-muted/50 border-b border-border">
                 {["Prioridade", "Descrição", "ID", "Tipo", "Data", "Hora"].map(h => (
@@ -86,6 +89,7 @@ export function ActivityTable({ loading }: ActivityTableProps) {
                     </div>
                 )
             })}
+          </div>
         </div>
     )
 }

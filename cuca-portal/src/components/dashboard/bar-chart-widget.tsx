@@ -32,24 +32,24 @@ export function BarChartWidget({ data, loading }: BarChartWidgetProps) {
                             <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.06} />
                             <XAxis
                                 dataKey="name"
-                                tick={{ fontSize: 10 }}
+                                tick={{ fontSize: 13 }}
                                 tickLine={false}
                                 axisLine={false}
                             />
-                            <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                            <YAxis tick={{ fontSize: 13 }} tickLine={false} axisLine={false} />
                             <Tooltip
                                 contentStyle={{
                                     backgroundColor: "hsl(var(--card))",
                                     border: "1px solid hsl(var(--border))",
                                     borderRadius: "8px",
-                                    fontSize: "12px",
+                                    fontSize: "13px",
                                     color: "hsl(var(--foreground))",
                                 }}
                             />
                             <Legend
                                 iconType="circle"
                                 iconSize={7}
-                                wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }}
+                                wrapperStyle={{ fontSize: "13px", paddingTop: "8px" }}
                             />
                             <Bar dataKey="leads" name="Leads" fill="#6366f1" radius={[4, 4, 0, 0]} />
                             <Bar dataKey="atendimentos" name="Atendimentos" fill="#06b6d4" radius={[4, 4, 0, 0]} />

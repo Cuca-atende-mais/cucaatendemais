@@ -49,7 +49,7 @@ export function DonutChartWidget({ data, total, loading }: DonutChartWidgetProps
                                             backgroundColor: "hsl(var(--card))",
                                             border: "1px solid hsl(var(--border))",
                                             borderRadius: "8px",
-                                            fontSize: "12px",
+                                            fontSize: "13px",
                                             color: "hsl(var(--foreground))",
                                         }}
                                     />
@@ -58,7 +58,7 @@ export function DonutChartWidget({ data, total, loading }: DonutChartWidgetProps
                                     <Legend
                                         iconType="circle"
                                         iconSize={7}
-                                        wrapperStyle={{ fontSize: "11px" }}
+                                        wrapperStyle={{ fontSize: "13px" }}
                                     />
                                 )}
                             </PieChart>

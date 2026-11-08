@@ -141,9 +141,9 @@ export default function AcessoCucaPortalPage() {
             >
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
                             <span className="font-mono font-bold text-primary text-sm">{s.protocolo}</span>
-                            <Badge className={cn("text-[10px] border", cfg.color)}>
+                            <Badge className={cn("text-xs border", cfg.color)}>
                                 <Icon className="h-3 w-3 mr-1" /> {cfg.label}
                             </Badge>
                         </div>
@@ -162,9 +162,9 @@ export default function AcessoCucaPortalPage() {
     }
 
     return (
-        <div className="flex flex-col gap-6 p-2 md:p-6">
+        <div className="flex flex-col gap-6 md:p-6">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
                         <ClipboardList className="h-6 w-6 text-primary" />
@@ -183,7 +183,8 @@ export default function AcessoCucaPortalPage() {
                 <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
             ) : (
                 <Tabs defaultValue="pendentes">
-                    <TabsList>
+                    {/* No celular as abas quebram linha em vez de estourar a largura da tela */}
+                    <TabsList className="max-w-full flex-wrap justify-start group-data-[orientation=horizontal]/tabs:h-auto">
                         <TabsTrigger value="pendentes">Pendentes ({pendentes.length})</TabsTrigger>
                         <TabsTrigger value="aprovados">Aprovados ({filtrarPorStatus("aprovado").length})</TabsTrigger>
                         <TabsTrigger value="reprovados">Reprovados ({filtrarPorStatus("reprovado").length})</TabsTrigger>
@@ -232,7 +233,7 @@ export default function AcessoCucaPortalPage() {
                         <DialogTitle className="flex items-center gap-2">
                             <span className="font-mono text-primary">{detalhando?.protocolo}</span>
                             {detalhando && STATUS_CONFIG[detalhando.status] && (
-                                <Badge className={cn("text-[10px] border", STATUS_CONFIG[detalhando.status].color)}>
+                                <Badge className={cn("text-xs border", STATUS_CONFIG[detalhando.status].color)}>
                                     {STATUS_CONFIG[detalhando.status].label}
                                 </Badge>
                             )}
@@ -272,7 +273,7 @@ export default function AcessoCucaPortalPage() {
                             {/* Ações de aprovação */}
                             {((hasPermission("acesso_solicitacoes_n1", "update") && detalhando.status === "aguardando_n1") ||
                                 (hasPermission("acesso_solicitacoes_n2", "update") && detalhando.status === "aguardando_n2")) && !reviewMode && (
-                                    <div className="flex gap-2 pt-2 border-t">
+                                    <div className="flex gap-2 pt-2 border-t max-md:[&_button]:h-11">
                                         <Button
                                             className="flex-1 bg-emerald-600 hover:bg-emerald-700 gap-2"
                                             onClick={() => setReviewMode("aprovar")}
@@ -300,7 +301,7 @@ export default function AcessoCucaPortalPage() {
                                         className="resize-none"
                                         rows={3}
                                     />
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-2 max-md:[&_button]:h-11">
                                         <Button variant="outline" onClick={() => setReviewMode(null)} className="flex-1">Cancelar</Button>
                                         <Button
                                             className="flex-1 bg-emerald-600 hover:bg-emerald-700"
@@ -327,7 +328,7 @@ export default function AcessoCucaPortalPage() {
                                     <p className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 p-2 rounded-lg">
                                         ⚠️ O motivo é interno. O Agente Ana responderá ao solicitante sem compartilhá-lo.
                                     </p>
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-2 max-md:[&_button]:h-11">
                                         <Button variant="outline" onClick={() => setReviewMode(null)} className="flex-1">Cancelar</Button>
                                         <Button
                                             variant="destructive"
