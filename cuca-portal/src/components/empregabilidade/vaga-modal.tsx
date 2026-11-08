@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Vaga, Empresa } from "@/lib/types/database"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -608,8 +608,8 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                             </div>
                         )}
 
-                        {/* Ações */}
-                        <div className="flex justify-end gap-2 mt-2">
+                        {/* Ações: DialogFooter gruda embaixo quando o modal rola (S-RESP-02) */}
+                        <DialogFooter className="mt-2">
                             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
                                 {canEdit ? "Cancelar" : "Fechar"}
                             </Button>
@@ -623,7 +623,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                     {camposEmpresaReadOnly ? "Salvar Alterações" : "Salvar Vaga"}
                                 </Button>
                             )}
-                        </div>
+                        </DialogFooter>
                     </div>
                 )}
             </DialogContent>

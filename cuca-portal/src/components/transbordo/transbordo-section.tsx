@@ -200,7 +200,7 @@ export function TransbordoSection({
                                     <p className="text-xs text-muted-foreground">
                                         <span className="font-mono">{t.telefone}</span>
                                         {" · "}
-                                        <Badge variant="outline" className={`text-[10px] ${MODULO_BADGE_CLASS[t.modulo] || ""}`}>{t.modulo}</Badge>
+                                        <Badge variant="outline" className={`text-xs ${MODULO_BADGE_CLASS[t.modulo] || ""}`}>{t.modulo}</Badge>
                                         {t.unidade_cuca && <span className="ml-1 opacity-60">· {t.unidade_cuca}</span>}
                                     </p>
                                 </div>

@@ -221,7 +221,7 @@ export function CanalWhatsappTab({ modulo }: Props) {
                             <Card key={inst.id} className={`border shadow-sm ${inst.ativa ? `${colorClass} border` : "border-destructive/20 opacity-75"}`}>
                                 <CardHeader className="pb-2">
                                     <div className="flex items-center justify-between">
-                                        <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
+                                        <Badge variant="outline" className="text-xs uppercase tracking-wider">
                                             {inst.canal_tipo} — Global
                                         </Badge>
                                         {inst.ativa
@@ -230,24 +230,24 @@ export function CanalWhatsappTab({ modulo }: Props) {
                                         }
                                     </div>
                                     <CardTitle className="text-sm mt-2">{inst.nome}</CardTitle>
-                                    <CardDescription className="text-[11px]">
+                                    <CardDescription className="text-xs">
                                         Telefone: <span className="font-mono">{inst.telefone || "—"}</span>
                                         {" · "}Token: {inst.token ? "✓ Ok" : "⚠ Pendente"}
                                     </CardDescription>
                                 </CardHeader>
 
                                 <CardFooter className="flex flex-col gap-1.5 pt-2 border-t bg-secondary/10">
-                                    <Button variant="outline" size="sm" className="w-full h-7 text-[10px]" onClick={() => openEdit(inst)}>
+                                    <Button variant="outline" size="sm" className="w-full h-7 text-xs" onClick={() => openEdit(inst)}>
                                         <Pencil className="mr-1 h-3 w-3" /> Editar
                                     </Button>
                                     {inst.ativa ? (
                                         <Button variant="ghost" size="sm"
-                                            className="w-full h-7 text-[10px] text-amber-600 hover:bg-amber-500/10"
+                                            className="w-full h-7 text-xs text-amber-600 hover:bg-amber-500/10"
                                             onClick={() => desativar(inst)}>
                                             <RefreshCw className="mr-1 h-3 w-3" /> Recuperar Ban / Trocar Chip
                                         </Button>
                                     ) : (
-                                        <Button size="sm" className="w-full h-7 text-[10px]" onClick={() => conectar(inst)}>
+                                        <Button size="sm" className="w-full h-7 text-xs" onClick={() => conectar(inst)}>
                                             <QrCode className="mr-1 h-3 w-3" /> Conectar WhatsApp (QR)
                                         </Button>
                                     )}
@@ -343,7 +343,7 @@ export function CanalWhatsappTab({ modulo }: Props) {
                                 value={iNome}
                                 onChange={(e) => setINome(e.target.value)}
                             />
-                            <p className="text-[10px] text-muted-foreground">
+                            <p className="text-xs text-muted-foreground">
                                 Tipo: <strong>{modulo}</strong> · Unidade: <strong>Global</strong>
                             </p>
                         </div>

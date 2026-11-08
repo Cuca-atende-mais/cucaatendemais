@@ -52,7 +52,7 @@ export function ActivityTable({ loading }: ActivityTableProps) {
             {/* Table header */}
             <div className="grid grid-cols-[100px_1fr_80px_100px_90px_60px] gap-x-4 px-4 py-2.5 bg-muted/50 border-b border-border">
                 {["Prioridade", "Descrição", "ID", "Tipo", "Data", "Hora"].map(h => (
-                    <span key={h} className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <span key={h} className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
                         {h}
                     </span>
                 ))}
@@ -73,7 +73,7 @@ export function ActivityTable({ loading }: ActivityTableProps) {
                         <div>
                             <Badge
                                 variant="outline"
-                                className={cn("text-[10px] font-semibold px-2 py-0.5 border", prio.className)}
+                                className={cn("text-xs font-semibold px-2 py-0.5 border", prio.className)}
                             >
                                 {prio.label}
                             </Badge>

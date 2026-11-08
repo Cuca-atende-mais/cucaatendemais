@@ -263,7 +263,7 @@ export default function ChatSidebar({
                     </Avatar>
                     {/* T5: badge de não lidas */}
                     {unreadCount > 0 && (
-                        <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-primary text-primary-foreground text-[9px] font-bold rounded-full flex items-center justify-center px-1 shadow">
+                        <span className="absolute -top-1 -right-1 min-w-5 h-5 bg-primary text-primary-foreground text-xs leading-none font-bold rounded-full flex items-center justify-center px-1 shadow">
                             {unreadCount > 99 ? "99+" : unreadCount}
                         </span>
                     )}
@@ -277,30 +277,30 @@ export default function ChatSidebar({
                         )}>
                             {conv.leads?.nome || "Cidadão"}
                         </span>
-                        <span className="text-[10px] text-muted-foreground/80 whitespace-nowrap shrink-0">
+                        <span className="text-xs text-muted-foreground/80 whitespace-nowrap shrink-0">
                             {conv.updated_at && formatDistanceToNow(new Date(conv.updated_at), { addSuffix: false, locale: ptBR })}
                         </span>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
-                        <p className="text-[11px] text-muted-foreground truncate flex-1 opacity-70">
+                        <p className="text-xs text-muted-foreground truncate flex-1 opacity-70">
                             {conv.leads?.telefone || conv.origem_id}
                         </p>
                         {comPedidoFeedback && (
                             <Badge
                                 variant="outline"
                                 title={`Pedido de feedback enviado à empresa. Link válido até ${new Date(conv.feedback_pedido_ate as string).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}.`}
-                                className="text-[8px] h-3.5 px-1 border-sky-500/40 text-sky-700 dark:text-sky-400 uppercase font-bold tracking-wider bg-sky-500/5 shrink-0"
+                                className="text-xs h-5 px-1.5 border-sky-500/40 text-sky-700 dark:text-sky-400 uppercase font-bold tracking-wider bg-sky-500/5 shrink-0"
                             >
                                 Feedback
                             </Badge>
                         )}
                         {/* T5: badge de status */}
                         {isHuman ? (
-                            <Badge variant="outline" className="text-[8px] h-3.5 px-1 border-amber-500/40 text-amber-600 uppercase font-bold tracking-wider bg-amber-500/5 shrink-0">
+                            <Badge variant="outline" className="text-xs h-5 px-1.5 border-amber-500/40 text-amber-600 uppercase font-bold tracking-wider bg-amber-500/5 shrink-0">
                                 Humano
                             </Badge>
                         ) : conv.status === 'ativa' ? (
-                            <Badge variant="outline" className="text-[8px] h-3.5 px-1 border-primary/30 text-primary uppercase font-bold tracking-wider bg-primary/5 shrink-0">
+                            <Badge variant="outline" className="text-xs h-5 px-1.5 border-primary/30 text-primary uppercase font-bold tracking-wider bg-primary/5 shrink-0">
                                 IA
                             </Badge>
                         ) : null}
@@ -320,7 +320,7 @@ export default function ChatSidebar({
                         entra na seção fixa (decisão #3 da story), mas ainda precisa disparar este
                         alerta quando um lead pede atendente humano. */}
                     {[...fixedConversations, ...normalConversations].some(c => c.status === 'awaiting_human') && (
-                        <Badge variant="destructive" className="text-[9px] h-4 px-1.5 animate-pulse">
+                        <Badge variant="destructive" className="text-xs h-5 px-1.5 animate-pulse">
                             Aguardando
                         </Badge>
                     )}
@@ -358,10 +358,10 @@ export default function ChatSidebar({
                     {sortedFixed.length > 0 && (
                         <div className="flex flex-col shrink-0 border-b border-border/50" style={{ maxHeight: "45%" }}>
                             <div className="px-4 pt-3 pb-1.5 flex items-center gap-2 shrink-0">
-                                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                                     Conversas ativas
                                 </span>
-                                <Badge variant="secondary" className="text-[9px] h-4 px-1.5">
+                                <Badge variant="secondary" className="text-xs h-5 px-1.5">
                                     {sortedFixed.length}
                                 </Badge>
                             </div>
@@ -373,7 +373,7 @@ export default function ChatSidebar({
 
                     <div className="flex flex-col flex-1 overflow-hidden">
                         <div className="px-4 pt-3 pb-1.5 shrink-0">
-                            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                                 Aguardando primeiro contato
                             </span>
                         </div>

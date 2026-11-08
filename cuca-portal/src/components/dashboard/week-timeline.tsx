@@ -70,8 +70,8 @@ export function WeekTimeline({ loading }: { loading?: boolean }) {
                             >
                                 <p className="text-xs font-medium leading-tight">{event.title}</p>
                                 <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="text-[10px] text-muted-foreground">{event.date}</span>
-                                    <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+                                    <span className="text-xs text-muted-foreground">{event.date}</span>
+                                    <span className="text-xs text-muted-foreground flex items-center gap-0.5">
                                         <MapPin className="h-2.5 w-2.5" />
                                         {event.local}
                                     </span>

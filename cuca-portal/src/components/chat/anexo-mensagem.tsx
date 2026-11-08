@@ -43,7 +43,7 @@ export default function AnexoMensagem({ path, tipo }: AnexoMensagemProps) {
 
     if (status === "loading") {
         return (
-            <div className="mt-1.5 flex items-center gap-1.5 text-[11px] opacity-60">
+            <div className="mt-1.5 flex items-center gap-1.5 text-xs opacity-60">
                 <Loader2 className="h-3 w-3 animate-spin" /> Carregando anexo...
             </div>
         );
@@ -51,7 +51,7 @@ export default function AnexoMensagem({ path, tipo }: AnexoMensagemProps) {
 
     if (status === "erro" || !url) {
         return (
-            <div className="mt-1.5 flex items-center gap-1.5 text-[11px] opacity-50 italic">
+            <div className="mt-1.5 flex items-center gap-1.5 text-xs opacity-50 italic">
                 <ImageOff className="h-3 w-3 shrink-0" /> Anexo indisponível (pode ter expirado)
             </div>
         );
@@ -76,7 +76,7 @@ export default function AnexoMensagem({ path, tipo }: AnexoMensagemProps) {
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-1.5 flex items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-2.5 py-1.5 text-[11px] font-medium hover:bg-background/70 transition-colors w-fit"
+            className="mt-1.5 flex items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-2.5 py-1.5 text-xs font-medium hover:bg-background/70 transition-colors w-fit"
         >
             <FileText className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">Documento (PDF)</span>

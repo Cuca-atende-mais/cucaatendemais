@@ -286,10 +286,10 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                 </Avatar>
                 <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate">{conversation?.leads?.nome || "Cidadão"}</p>
-                    <p className="text-[11px] text-muted-foreground truncate">{conversation?.leads?.telefone || "—"}</p>
+                    <p className="text-xs text-muted-foreground truncate">{conversation?.leads?.telefone || "—"}</p>
                 </div>
                 <div className={cn(
-                    "text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider",
+                    "text-xs font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider",
                     conversation?.status === 'ativa'
                         ? "bg-primary/10 border-primary/20 text-primary"
                         : "bg-amber-500/10 border-amber-500/20 text-amber-600"
@@ -336,7 +336,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                                         !isLastOfUser && "opacity-0"
                                     )}>
                                         <AvatarFallback className={cn(
-                                            "text-[10px] font-bold",
+                                            "text-xs font-bold",
                                             msg.remetente === 'lead' ? "bg-muted" : "bg-primary/10 text-primary"
                                         )}>
                                             {msg.remetente === 'lead' ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
@@ -353,7 +353,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                                             <AnexoMensagem path={msg.midia_url} tipo={msg.tipo} />
                                         )}
                                         <div className={cn(
-                                            "text-[9px] mt-1.5 flex items-center gap-1 opacity-60",
+                                            "text-xs mt-1.5 flex items-center gap-1 opacity-60",
                                             msg.remetente === 'lead' ? "text-muted-foreground" : "text-slate-700"
                                         )}>
                                             {format(new Date(msg.created_at), "HH:mm")}
@@ -410,7 +410,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                         {conversation?.status === 'ativa'
                             ? <Zap className="h-3 w-3 text-primary" />
                             : <PauseCircle className="h-3 w-3 text-amber-500" />}
-                        <p className="text-[10px] font-bold uppercase tracking-tight opacity-70">
+                        <p className="text-xs font-bold uppercase tracking-tight opacity-70">
                             {conversation?.status === 'ativa'
                                 ? "Monitoramento Manual Pausado (IA Ativa)"
                                 : "Modo de Intervenção Humana (IA Pausada)"}
@@ -420,7 +420,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                         <Button
                             variant="outline"
                             size="sm"
-                            className="h-7 text-[10px] gap-1 border-primary/20 text-primary hover:bg-primary/10 shrink-0"
+                            className="h-7 text-xs gap-1 border-primary/20 text-primary hover:bg-primary/10 shrink-0"
                             onClick={handleAssumirAtendimento}
                             disabled={assumindo}
                         >
@@ -432,7 +432,7 @@ export default function ChatWindow({ conversationId, moduloAtendimento = 'atendi
                         <Button
                             variant="outline"
                             size="sm"
-                            className="h-7 text-[10px] gap-1 border-amber-500/30 text-amber-600 hover:bg-amber-500/10 shrink-0"
+                            className="h-7 text-xs gap-1 border-amber-500/30 text-amber-600 hover:bg-amber-500/10 shrink-0"
                             onClick={handleRetornarIA}
                         >
                             <Zap className="h-3 w-3" />

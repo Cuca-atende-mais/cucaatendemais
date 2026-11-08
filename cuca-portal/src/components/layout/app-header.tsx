@@ -53,7 +53,7 @@ export function AppHeader() {
                         >
                             <Search className="h-3.5 w-3.5 shrink-0" />
                             <span className="flex-1 text-left">Buscar...</span>
-                            <kbd className="hidden md:flex items-center gap-0.5 text-[10px] border border-border/70 rounded px-1 py-0.5 bg-background/50">
+                            <kbd className="hidden md:flex items-center gap-0.5 text-xs border border-border/70 rounded px-1 py-0.5 bg-background/50">
                                 <span>Ctrl</span>
                                 <span>K</span>
                             </kbd>
@@ -90,7 +90,7 @@ export function AppHeader() {
                                 <p className="text-xs font-semibold leading-tight">
                                     {profile?.nome_completo || "Usuário"}
                                 </p>
-                                <p className="text-[10px] text-muted-foreground">
+                                <p className="text-xs text-muted-foreground">
                                     {profile?.unidade_cuca || "Super Admin"}
                                 </p>
                             </div>

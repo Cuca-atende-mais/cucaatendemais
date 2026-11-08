@@ -11,6 +11,7 @@
 !.github/PULL_REQUEST_TEMPLATE.md
 !worker/CLAUDE.md
 !cuca-portal/CLAUDE.md
+!cuca-portal/docs/padrao-responsivo.md
 *.xlsx
 
 # SQS-51 (A7): MCP config contém token Supabase — nunca versionar

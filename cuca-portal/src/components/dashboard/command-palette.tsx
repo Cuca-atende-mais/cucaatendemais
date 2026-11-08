@@ -84,7 +84,7 @@ export function CommandPalette() {
                         placeholder="Buscar módulos, páginas..."
                         className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                     />
-                    <kbd className="hidden sm:flex h-5 select-none items-center rounded border bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
+                    <kbd className="hidden sm:flex h-5 select-none items-center rounded border bg-muted px-1.5 text-xs font-medium text-muted-foreground">
                         ESC
                     </kbd>
                 </div>
@@ -117,7 +117,7 @@ export function CommandPalette() {
                     })}
                 </div>
 
-                <div className="border-t px-4 py-2 flex items-center gap-3 text-[10px] text-muted-foreground">
+                <div className="border-t px-4 py-2 flex items-center gap-3 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1"><kbd className="border rounded px-1">↑↓</kbd> navegar</span>
                     <span className="flex items-center gap-1"><kbd className="border rounded px-1">↵</kbd> abrir</span>
                     <span className="flex items-center gap-1"><kbd className="border rounded px-1">Esc</kbd> fechar</span>
