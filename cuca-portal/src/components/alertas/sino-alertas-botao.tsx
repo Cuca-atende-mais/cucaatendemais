@@ -19,7 +19,7 @@ export function SinoAlertasBotao({ naoLidos, onClick }: { naoLidos: number; onCl
             {contador && (
                 <span
                     data-testid="contador-alertas"
-                    className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[10px] font-semibold leading-4 text-center ring-2 ring-background"
+                    className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-rose-500 text-white text-xs font-semibold leading-5 text-center ring-2 ring-background"
                 >
                     {contador}
                 </span>

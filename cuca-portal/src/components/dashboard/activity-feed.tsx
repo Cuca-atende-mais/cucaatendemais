@@ -78,7 +78,7 @@ export function ActivityFeed({ loading }: { loading?: boolean }) {
                                         <p className="text-xs font-medium leading-tight">{activity.message}</p>
                                         <p className="text-xs text-muted-foreground truncate">{activity.detail}</p>
                                     </div>
-                                    <span className="text-[10px] text-muted-foreground shrink-0 mt-0.5 whitespace-nowrap">
+                                    <span className="text-xs text-muted-foreground shrink-0 mt-0.5 whitespace-nowrap">
                                         {activity.time}
                                     </span>
                                 </div>

@@ -68,7 +68,7 @@ export function DonutChartWidget({ data, total, loading }: DonutChartWidgetProps
                         <div className="absolute top-0 left-0 right-0 flex items-center justify-center pointer-events-none" style={{ height: "77%" }}>
                             <div className="text-center">
                                 <div className="text-2xl font-bold tabular-nums">{total.toLocaleString("pt-BR")}</div>
-                                <div className="text-[10px] text-muted-foreground">total</div>
+                                <div className="text-xs text-muted-foreground">total</div>
                             </div>
                         </div>
                     </div>

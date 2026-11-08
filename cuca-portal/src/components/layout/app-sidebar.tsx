@@ -223,7 +223,7 @@ export function AppSidebar() {
         return (
             <SidebarGroup className="px-0">
                 {label && !isCollapsed && (
-                    <SidebarGroupLabel className="text-[10px] font-bold uppercase tracking-widest text-sidebar-foreground/35 px-4 mb-1">
+                    <SidebarGroupLabel className="text-xs font-bold uppercase tracking-widest text-sidebar-foreground/35 px-4 mb-1">
                         {label}
                     </SidebarGroupLabel>
                 )}
@@ -257,7 +257,7 @@ export function AppSidebar() {
                                 <span className="font-extrabold text-base tracking-tight text-sidebar-foreground uppercase">
                                     REDE CUCA
                                 </span>
-                                <span className="text-[9px] w-fit px-1.5 py-0.5 rounded-sm bg-cuca-yellow text-slate-900 font-black uppercase tracking-widest mt-0.5">
+                                <span className="text-xs w-fit px-1.5 py-0.5 rounded-sm bg-cuca-yellow text-slate-900 font-black uppercase tracking-widest mt-0.5">
                                     ATENDE+
                                 </span>
                             </div>
@@ -292,7 +292,7 @@ export function AppSidebar() {
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <Avatar className="h-7 w-7 shrink-0 ring-2 ring-primary/20">
-                                    <AvatarFallback className="bg-primary/80 text-primary-foreground text-[11px] font-bold">
+                                    <AvatarFallback className="bg-primary/80 text-primary-foreground text-xs font-bold">
                                         {initials}
                                     </AvatarFallback>
                                 </Avatar>
@@ -311,7 +311,7 @@ export function AppSidebar() {
                                     <span className="text-xs font-semibold truncate text-sidebar-foreground">
                                         {profile?.nome_completo || "Usuário"}
                                     </span>
-                                    <span className="text-[10px] text-sidebar-foreground/50 truncate">
+                                    <span className="text-xs text-sidebar-foreground/50 truncate">
                                         {profile?.unidade_cuca || "Super Admin"}
                                     </span>
                                 </div>

@@ -24,6 +24,7 @@
   --color-chart-1: var(--chart-1);
   --color-ring: var(--ring);
   --color-input: var(--input);
+  --color-input-border: var(--input-border);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
@@ -45,6 +46,17 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Tamanho do texto (S-RESP-02): o portal usa quase só text-xs e text-sm, e a equipe reclamou
+     várias vezes que a letra estava pequena. Os dois tamanhos sobem aqui, num lugar só, sem mexer
+     no espaçamento. Padrão Tailwind: xs 12px/16px e sm 14px/20px. Para ajustar de novo, basta
+     mudar estas 4 linhas. Não mudar o font-size da raiz: isso aumentaria também espaçamentos e
+     alturas. Nada de texto legível abaixo de text-xs (sem text-[8px] a text-[12px]).
+     Regra completa: cuca-portal/docs/padrao-responsivo.md. */
+  --text-xs: 0.8125rem;              /* 13px */
+  --text-xs--line-height: 1.125rem;  /* 18px */
+  --text-sm: 0.9375rem;              /* 15px */
+  --text-sm--line-height: 1.375rem;  /* 22px */
 
   /* Fontes Customizadas */
   --font-heading: var(--font-jakarta, var(--font-poppins));
@@ -79,6 +91,7 @@
   --destructive: oklch(0.58 0.25 27.3);
   --border: oklch(0.90 0 0);
   --input: oklch(0.90 0 0);
+  --input-border: oklch(0.62 0 0);              /* borda de campo: 3,3:1 sobre o fundo (WCAG 1.4.11) */
   --ring: var(--cuca-blue);
 
   /* Chart colors */
@@ -140,6 +153,7 @@
   --destructive: oklch(0.65 0.22 27);
   --border: oklch(0.30 0.022 255);              /* borda VISÍVEL mas harmoniosa */
   --input: oklch(0.250 0.020 255);              /* inputs: fundo distinguível do card */
+  --input-border: oklch(0.60 0.020 255);        /* borda de campo: 3:1+ sobre fundo, card e modal */
   --ring: oklch(0.605 0.185 232);
 
   /* Charts — harmoniosos no fundo escuro-azulado */
@@ -167,7 +181,8 @@
   }
 
   body {
-    @apply bg-background text-foreground tracking-tight;
+    /* Sem tracking-tight (S-RESP-02): letras apertadas pioram a leitura em 13-15px */
+    @apply bg-background text-foreground;
   }
 
   h1,
