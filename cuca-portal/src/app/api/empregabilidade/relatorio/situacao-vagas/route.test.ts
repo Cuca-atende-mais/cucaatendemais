@@ -11,6 +11,7 @@ const TALENTO = "292363eb-2b32-4b8a-a14e-f1aaf6199db5"
 let autenticado = true
 let permitido = true
 let temRede = true
+let temExportar = false
 let unidadeColaborador: string | null = "CUCA Jangurussu"
 const selects: Record<string, string[]> = {}
 const metodosChamados = new Set<string>()
@@ -52,7 +53,7 @@ vi.mock("@/lib/rbac/exigir-permissao-servidor", () => ({
         return {
             ok: true,
             user: { id: "u1" },
-            supabase: { rpc: async (_fn: string, args: { p_recurso: string }) => ({ data: args.p_recurso === "epm_vagas_abertas_rede" ? temRede : false, error: null }) },
+            supabase: { rpc: async (_fn: string, args: { p_recurso: string }) => ({ data: args.p_recurso === "epm_vagas_abertas_rede" ? temRede : args.p_recurso === "epm_vagas_abertas_exportar" ? temExportar : false, error: null }) },
         }
     },
 }))
@@ -63,7 +64,7 @@ vi.mock("@/lib/supabase/admin", () => ({
             if (tabela === "unidades_cuca") return consulta(tabela, () => [{ id: JANGURUSSU, nome: "CUCA Jangurussu" }, { id: PICI, nome: "CUCA Pici" }])
             if (tabela === "colaboradores") {
                 return consulta(tabela, f => {
-                    if (f.eq.some(([c]) => c === "user_id")) return unidadeColaborador === undefined ? [] : [{ unidade_cuca: unidadeColaborador }]
+                    if (f.eq.some(([c]) => c === "user_id")) return [{ nome_completo: "Maria Silva", unidade_cuca: unidadeColaborador }]
                     return [{ id: "c1", email: "cucajangurussu.empregabilidade@gmail.com" }]
                 })
             }
@@ -90,9 +91,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 import { GET } from "./route"
 
-function chamar(unidade?: string) {
+function chamar(unidade?: string, exportar = false) {
     const url = new URL("http://localhost/api/empregabilidade/relatorio/situacao-vagas")
     if (unidade) url.searchParams.set("unidade", unidade)
+    if (exportar) url.searchParams.set("exportar", "1")
     return GET(new NextRequest(url))
 }
 
@@ -101,6 +103,7 @@ describe("GET /api/empregabilidade/relatorio/situacao-vagas", () => {
         autenticado = true
         permitido = true
         temRede = true
+        temExportar = false
         unidadeColaborador = "CUCA Jangurussu"
         for (const k of Object.keys(selects)) delete selects[k]
         metodosChamados.clear()
@@ -172,6 +175,21 @@ describe("GET /api/empregabilidade/relatorio/situacao-vagas", () => {
         } finally {
             UNIDADE_DA_VAGA[1].unidade = original
         }
+    })
+
+    it("baixar Excel (exportar=1) exige a permissão de baixar; a resposta diz se a pessoa pode baixar", async () => {
+        const semBaixar = await chamar(undefined, true)
+        expect(semBaixar.status).toBe(403)
+        expect((await semBaixar.json()).error).toBe("Sem permissão para baixar o relatório.")
+
+        const corpoTela = await (await chamar()).json()
+        expect(corpoTela.permissoes).toEqual({ exportar: false, rede: true })
+        expect(corpoTela.geradoPor).toBe("Maria Silva")
+
+        temExportar = true
+        const comBaixar = await chamar(undefined, true)
+        expect(comBaixar.status).toBe(200)
+        expect((await comBaixar.json()).permissoes).toEqual({ exportar: true, rede: true })
     })
 
     it("sem a rede e sem unidade no cadastro (ex.: Geral): 403 com a mensagem do Relatório mensal", async () => {

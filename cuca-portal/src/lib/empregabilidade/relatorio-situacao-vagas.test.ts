@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 import {
+    CABECALHO_PLANILHA,
     classificarOrigem,
+    descreverFiltros,
+    montarExportacaoSituacao,
+    montarPlanilhaSituacao,
+    nomeArquivoSituacao,
     contarEnviadosPorVaga,
     diaFortaleza,
     diasEmAberto,
@@ -199,5 +204,71 @@ describe("paginação (AC6)", () => {
 
     it("zero linhas: página 0 de 1, sem intervalo", () => {
         expect(paginar([], 3)).toEqual({ itens: [], pagina: 0, totalPaginas: 1, de: 0, ate: 0 })
+    })
+})
+
+describe("planilha Excel", () => {
+    const vagaLinha = montarLinha({ vaga: vaga(), unidadeNome: "CUCA Jangurussu", enviados: { total: 35, banco_talentos: 30, automacao: 5 }, agora: AGORA })
+    const outraVaga = montarLinha({ vaga: vaga({ id: "v2", liberada_em: null, liberada_por_email: null }), unidadeNome: "CUCA Barra", enviados: { total: 3, banco_talentos: 1, automacao: 1 }, agora: AGORA })
+    const selecao = montarLinha({
+        vaga: vaga({ id: "s1", tipo: "selecao_evento", data_selecao_prevista: null, datas_selecao: [{ data: "2026-11-11", hora: "09:00" }] }),
+        unidadeNome: "CUCA Pici", enviados: undefined, agora: AGORA,
+    })
+
+    it("uma aba com título, subtítulo, as 12 colunas por extenso e uma linha por vaga/seleção", () => {
+        const [aba] = montarPlanilhaSituacao({ linhas: [vagaLinha, selecao], geradoEm: AGORA, geradoPor: "Maria", filtros: "Unidade: Todas · Tipo: Todas." })
+        expect(aba.nome).toBe("Situação de vagas")
+        expect(aba.larguras).toHaveLength(12)
+        expect(aba.linhas[1].celulas[0].valor).toBe("Gerado em 09/11/2026 12:00 por Maria. Unidade: Todas · Tipo: Todas.")
+        expect(aba.linhas[2].celulas.map(c => c.valor)).toEqual(CABECALHO_PLANILHA)
+        expect(CABECALHO_PLANILHA.join(" ")).not.toMatch(/\bCV\b/)
+        const dados = aba.linhas.filter(l => l.tipo === "dado")
+        expect(dados).toHaveLength(2)
+        expect(dados[0].celulas.map(c => c.valor)).toEqual([
+            "Vaga", "AUXILIAR DE LIMPEZA", "IEP - INSTITUTO DE EDUCACAO PORTAL", "CUCA Jangurussu", "29/10/2026", "29/10/2026",
+            11, 35, 30, 5, "06/11/2026", "cucajangurussu.empregabilidade@gmail.com",
+        ])
+        // Seleção: colunas de currículos com traço, não zero.
+        expect(dados[1].celulas.slice(7, 10).map(c => c.valor)).toEqual(["—", "—", "—"])
+    })
+
+    it("linha de total soma as colunas de currículos com fórmula e valor já calculado", () => {
+        const [aba] = montarPlanilhaSituacao({ linhas: [vagaLinha, outraVaga, selecao], geradoEm: AGORA, geradoPor: "Maria", filtros: "" })
+        const total = aba.linhas.find(l => l.tipo === "total")!
+        expect(total.celulas[7]).toMatchObject({ formula: "SUM(H4:H6)", resultado: 38 })
+        expect(total.celulas[8]).toMatchObject({ formula: "SUM(I4:I6)", resultado: 31 })
+        expect(total.celulas[9]).toMatchObject({ formula: "SUM(J4:J6)", resultado: 6 })
+    })
+
+    it("termina com a contagem de vagas e seleções; sem linhas, sem total", () => {
+        const [cheia] = montarPlanilhaSituacao({ linhas: [vagaLinha, selecao], geradoEm: AGORA, geradoPor: "x", filtros: "" })
+        expect(cheia.linhas.some(l => l.celulas[0]?.valor === "Vagas = 1 · Seleções = 1 · Total = 2")).toBe(true)
+        const [vazia] = montarPlanilhaSituacao({ linhas: [], geradoEm: AGORA, geradoPor: "x", filtros: "" })
+        expect(vazia.linhas.some(l => l.tipo === "total")).toBe(false)
+        expect(vazia.linhas.some(l => l.celulas[0]?.valor === "Vagas = 0 · Seleções = 0 · Total = 0")).toBe(true)
+    })
+
+    it("descreve os filtros aplicados", () => {
+        expect(descreverFiltros({ unidade: "todas", tipo: "todas", busca: "", unidades: UNIDADES })).toBe("Unidade: Todas · Tipo: Todas.")
+        expect(descreverFiltros({ unidade: JANGURUSSU, tipo: "vagas", busca: " limpeza ", unidades: UNIDADES })).toBe('Unidade: CUCA Jangurussu · Tipo: Vagas · Busca: "limpeza".')
+        expect(descreverFiltros({ unidade: "rede", tipo: "selecoes", busca: "", unidades: UNIDADES })).toBe("Unidade: Sem unidade definida (Rede Cuca) · Tipo: Seleções.")
+    })
+
+    it("exportação usa a unidade aplicada pelo servidor, não a do seletor da tela", () => {
+        // Quem não vê a rede: seletor fica em "todas", mas o servidor devolve escopo.selecionada = própria unidade.
+        const { abas, nomeArquivo } = montarExportacaoSituacao({
+            linhas: [vagaLinha, selecao], unidades: UNIDADES, unidadeEfetiva: JANGURUSSU,
+            tipo: "vagas", busca: "", geradoPor: "Maria", agora: AGORA,
+        })
+        expect(abas[0].linhas[1].celulas[0].valor).toBe("Gerado em 09/11/2026 12:00 por Maria. Unidade: CUCA Jangurussu · Tipo: Vagas.")
+        expect(nomeArquivo).toBe("situacao-de-vagas_2026-11-09_jangurussu.xlsx")
+        // Aplica os filtros da tela: só a vaga, sem a seleção.
+        expect(abas[0].linhas.filter(l => l.tipo === "dado")).toHaveLength(1)
+    })
+
+    it("nome do arquivo com a data de Fortaleza e a unidade", () => {
+        expect(nomeArquivoSituacao({ unidade: "todas", unidades: UNIDADES, agora: AGORA })).toBe("situacao-de-vagas_2026-11-09_todas.xlsx")
+        expect(nomeArquivoSituacao({ unidade: JANGURUSSU, unidades: UNIDADES, agora: AGORA })).toBe("situacao-de-vagas_2026-11-09_jangurussu.xlsx")
+        expect(nomeArquivoSituacao({ unidade: "rede", unidades: UNIDADES, agora: new Date("2026-11-10T02:30:00Z") })).toBe("situacao-de-vagas_2026-11-09_sem-unidade.xlsx")
     })
 })
