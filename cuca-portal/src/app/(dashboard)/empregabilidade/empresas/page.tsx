@@ -315,6 +315,33 @@ export default function EmpresasPage() {
         e.target.value = ""
     }
 
+    const badgeAtiva = (ativa: boolean) => ativa
+        ? <Badge variant="default" className="bg-green-600 shrink-0">Ativa</Badge>
+        : <Badge variant="secondary" className="shrink-0">Inativa</Badge>
+
+    // Botões de ação, iguais na tabela e nos cartões. Na tabela o rótulo só aparece a partir de 2xl.
+    const acoesEmpresa = (emp: Empresa, comRotulo: boolean) => {
+        const rotulo = comRotulo ? "" : "hidden 2xl:inline"
+        return (
+            <>
+                <Button variant="outline" size="sm" className="gap-2" aria-label={`Editar ${emp.nome}`} onClick={() => handleEdit(emp)}>
+                    <Pencil className="h-4 w-4 text-cuca-blue" />
+                    <span className={rotulo}>Editar</span>
+                </Button>
+                {canAuthorizeWhatsapp && (
+                    <Button variant="outline" size="sm" className="gap-2" aria-label={`WhatsApps autorizados de ${emp.nome}`} onClick={() => handleOpenWhatsappDialog(emp)}>
+                        <ShieldCheck className="h-4 w-4 text-green-700" />
+                        <span className={rotulo}>WhatsApp</span>
+                    </Button>
+                )}
+                <Button variant="outline" size="sm" className="gap-2 text-destructive hover:text-destructive" aria-label={`Excluir ${emp.nome}`} onClick={() => setDeletingEmpresa(emp)}>
+                    <Trash2 className="h-4 w-4" />
+                    <span className={rotulo}>Excluir</span>
+                </Button>
+            </>
+        )
+    }
+
     const filteredEmpresas = empresas.filter((emp) =>
         emp.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
         emp.cnpj?.includes(searchTerm) ||
@@ -332,13 +359,13 @@ export default function EmpresasPage() {
                     </p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                    <Button variant="outline" size="sm" onClick={exportarCSV} disabled={empresas.length === 0}>
+                    <Button variant="outline" size="sm" className="h-11 md:h-8" onClick={exportarCSV} disabled={empresas.length === 0}>
                         <Download className="mr-2 h-4 w-4" />
                         Exportar CSV
                     </Button>
                     <label>
                         <input type="file" accept=".csv" className="hidden" onChange={importarCSV} />
-                        <Button variant="outline" size="sm" asChild>
+                        <Button variant="outline" size="sm" className="h-11 md:h-8" asChild>
                             <span className="cursor-pointer">
                                 <Upload className="mr-2 h-4 w-4" />
                                 Importar CSV
@@ -347,12 +374,12 @@ export default function EmpresasPage() {
                     </label>
                     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                     <DialogTrigger asChild>
-                        <Button className="bg-cuca-blue hover:bg-sky-800" onClick={() => setEditingEmpresa(null)}>
+                        <Button className="bg-cuca-blue hover:bg-sky-800 h-11 md:h-9" onClick={() => setEditingEmpresa(null)}>
                             <Plus className="mr-2 h-4 w-4" />
                             Nova Empresa
                         </Button>
                     </DialogTrigger>
-                    <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogContent>
                         <form onSubmit={handleSubmit}>
                             <DialogHeader>
                                 <DialogTitle>
@@ -451,7 +478,7 @@ export default function EmpresasPage() {
                                     />
                                 </div>
                             </div>
-                            <DialogFooter>
+                            <DialogFooter className="max-md:[&_button]:h-11">
                                 <Button type="button" variant="outline" onClick={handleCloseDialog}>
                                     Cancelar
                                 </Button>
@@ -530,7 +557,7 @@ export default function EmpresasPage() {
                         </div>
                     </div>
                 </CardHeader>
-                <CardContent className="px-0 sm:px-6">
+                <CardContent>
                     {loading ? (
                         <div className="text-center py-8 text-muted-foreground">
                             Carregando empresas...
@@ -540,25 +567,54 @@ export default function EmpresasPage() {
                             Nenhuma empresa encontrada.
                         </div>
                     ) : (
-                        <Table className="table-fixed w-full">
+                        <>
+                        {/* Abaixo de lg (celular e tablet): cada empresa vira um cartão */}
+                        <div className="space-y-3 lg:hidden">
+                            {filteredEmpresas.map((emp) => (
+                                <div key={emp.id} className="rounded-lg border p-3 space-y-2">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <p className="font-medium break-words min-w-0">{emp.nome}</p>
+                                        {badgeAtiva(emp.ativa)}
+                                    </div>
+                                    <div className="text-sm text-muted-foreground space-y-0.5">
+                                        {emp.cnpj && <p>CNPJ {emp.cnpj}</p>}
+                                        {emp.setor && <p className="break-words">{emp.setor}</p>}
+                                        {(emp.contato_responsavel || emp.email || emp.telefone) && (
+                                            <p className="break-words">
+                                                {emp.contato_responsavel || "-"}
+                                                {(emp.email || emp.telefone) && <span className="text-xs"> · {emp.email || emp.telefone}</span>}
+                                            </p>
+                                        )}
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 pt-1 max-md:[&_button]:h-11">
+                                        {acoesEmpresa(emp, true)}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* A partir de lg: tabela. Em 1024 ficam Nome, Contato RH, Status e Ações; CNPJ e
+                            Setor aparecem a partir de xl (1280px). Botões só com ícone até 2xl (1536px). */}
+                        <div className="hidden lg:block">
+                        <Table className="table-fixed w-full" cabecalhoFixo>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead className="w-[22%]">Nome</TableHead>
-                                    <TableHead className="w-[14%]">CNPJ</TableHead>
-                                    <TableHead className="w-[14%]">Setor</TableHead>
-                                    <TableHead className="w-[20%]">Contato RH</TableHead>
-                                    <TableHead className="w-[10%]">Status</TableHead>
-                                    <TableHead className="w-[20%] text-right">Ações</TableHead>
+                                    <TableHead className="w-[32%] xl:w-[22%]">Nome</TableHead>
+                                    <TableHead className="hidden xl:table-cell w-[17%]">CNPJ</TableHead>
+                                    <TableHead className="hidden xl:table-cell w-[13%]">Setor</TableHead>
+                                    <TableHead className="w-[30%] xl:w-[22%]">Contato RH</TableHead>
+                                    <TableHead className="w-[14%] xl:w-[10%]">Status</TableHead>
+                                    <TableHead className="w-[24%] xl:w-[16%] text-right">Ações</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {filteredEmpresas.map((emp) => (
                                     <TableRow key={emp.id}>
                                         <TableCell className="font-medium max-w-0"><span className="block truncate">{emp.nome}</span></TableCell>
-                                        <TableCell className="text-muted-foreground">
-                                            {emp.cnpj || "-"}
+                                        <TableCell className="hidden xl:table-cell text-muted-foreground max-w-0">
+                                            <span className="block truncate" title={emp.cnpj || undefined}>{emp.cnpj || "-"}</span>
                                         </TableCell>
-                                        <TableCell className="text-muted-foreground max-w-0"><span className="block truncate">{emp.setor || "-"}</span></TableCell>
+                                        <TableCell className="hidden xl:table-cell text-muted-foreground max-w-0"><span className="block truncate">{emp.setor || "-"}</span></TableCell>
                                         <TableCell className="max-w-0">
                                             <div className="text-sm min-w-0">
                                                 <div className="truncate">{emp.contato_responsavel || "-"}</div>
@@ -566,51 +622,19 @@ export default function EmpresasPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            {emp.ativa ? (
-                                                <Badge variant="default" className="bg-green-600">
-                                                    Ativa
-                                                </Badge>
-                                            ) : (
-                                                <Badge variant="secondary">Inativa</Badge>
-                                            )}
+                                            {badgeAtiva(emp.ativa)}
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex items-center justify-end gap-2 flex-wrap">
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-2"
-                                                    onClick={() => handleEdit(emp)}
-                                                >
-                                                    <Pencil className="h-4 w-4 text-cuca-blue" />
-                                                    <span className="hidden sm:inline">Editar</span>
-                                                </Button>
-                                                {canAuthorizeWhatsapp && (
-                                                    <Button
-                                                        variant="outline"
-                                                        size="sm"
-                                                        className="gap-2"
-                                                        onClick={() => handleOpenWhatsappDialog(emp)}
-                                                    >
-                                                        <ShieldCheck className="h-4 w-4 text-green-700" />
-                                                        <span className="hidden sm:inline">WhatsApp</span>
-                                                    </Button>
-                                                )}
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="gap-2 text-destructive hover:text-destructive"
-                                                    onClick={() => setDeletingEmpresa(emp)}
-                                                >
-                                                    <Trash2 className="h-4 w-4" />
-                                                    <span className="hidden sm:inline">Excluir</span>
-                                                </Button>
+                                                {acoesEmpresa(emp, false)}
                                             </div>
                                         </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
                         </Table>
+                        </div>
+                        </>
                     )}
                 </CardContent>
             </Card>
@@ -643,7 +667,7 @@ export default function EmpresasPage() {
         </AlertDialog>
 
         <Dialog open={whatsappEmpresa !== null} onOpenChange={(isOpen) => { if (!isOpen) setWhatsappEmpresa(null) }}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent>
                 <DialogHeader>
                     <DialogTitle>WhatsApps autorizados</DialogTitle>
                     <DialogDescription>
@@ -665,7 +689,7 @@ export default function EmpresasPage() {
                         </div>
                         <Button
                             type="submit"
-                            className="mt-0 bg-cuca-blue hover:bg-sky-800 sm:mt-8"
+                            className="mt-0 bg-cuca-blue hover:bg-sky-800 sm:mt-8 h-11 md:h-9"
                             disabled={whatsappSubmitting || !novoWhatsapp.trim()}
                         >
                             <ShieldCheck className="mr-2 h-4 w-4" />

@@ -6,7 +6,7 @@
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { Vaga } from "@/lib/types/database"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -166,7 +166,7 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent>
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <CalendarDays className="h-5 w-5 text-cuca-blue" />
@@ -210,7 +210,7 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                         </div>
 
                         {/* Unidade e Status */}
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="space-y-1">
                                 <Label>Unidade CUCA</Label>
                                 <Select value={unidadeCuca} onValueChange={setUnidadeCuca}>
@@ -245,20 +245,20 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                                 <Label className="flex items-center gap-1">
                                     <Briefcase className="h-3.5 w-3.5" /> Cargos <span className="text-destructive">*</span>
                                 </Label>
-                                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={addCargo}>
+                                <Button type="button" variant="outline" size="sm" className="h-11 md:h-7 text-xs" onClick={addCargo}>
                                     <Plus className="h-3 w-3 mr-1" /> Adicionar cargo
                                 </Button>
                             </div>
                             <div className="space-y-2">
                                 {cargos.map((c, i) => (
                                     <div key={i} className="flex items-start gap-2 p-2 border rounded-md bg-muted/20">
-                                        <div className="flex-1 grid grid-cols-3 gap-2">
-                                            <div className="col-span-1">
+                                        <div className="flex-1 min-w-0 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                            <div className="col-span-2 sm:col-span-1">
                                                 <Input
                                                     placeholder="Cargo (ex: Repositor)"
                                                     value={c.titulo}
                                                     onChange={e => updateCargo(i, "titulo", e.target.value)}
-                                                    className="h-8 text-sm"
+                                                    className="h-11 md:h-8 text-base md:text-sm"
                                                 />
                                             </div>
                                             <div>
@@ -268,12 +268,12 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                                                     min="1"
                                                     value={c.quantidade}
                                                     onChange={e => updateCargo(i, "quantidade", e.target.value)}
-                                                    className="h-8 text-sm"
+                                                    className="h-11 md:h-8 text-base md:text-sm"
                                                 />
                                             </div>
                                             <div>
                                                 <Select value={c.faixa_etaria} onValueChange={v => updateCargo(i, "faixa_etaria", v)}>
-                                                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                                                    <SelectTrigger className="max-md:data-[size=default]:h-11 text-sm"><SelectValue /></SelectTrigger>
                                                     <SelectContent>
                                                         {FAIXAS_ETARIAS.map(f => (
                                                             <SelectItem key={f} value={f}>{f}</SelectItem>
@@ -283,7 +283,7 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                                             </div>
                                         </div>
                                         {cargos.length > 1 && (
-                                            <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10" onClick={() => removeCargo(i)}>
+                                            <Button type="button" variant="ghost" size="sm" className="h-11 w-11 md:h-8 md:w-8 p-0 text-destructive hover:bg-destructive/10" aria-label="Remover cargo" onClick={() => removeCargo(i)}>
                                                 <Trash2 className="h-3.5 w-3.5" />
                                             </Button>
                                         )}
@@ -298,28 +298,28 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                                 <Label className="flex items-center gap-1">
                                     <CalendarDays className="h-3.5 w-3.5" /> Datas de Seleção <span className="text-destructive">*</span>
                                 </Label>
-                                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={addData}>
+                                <Button type="button" variant="outline" size="sm" className="h-11 md:h-7 text-xs" onClick={addData}>
                                     <Plus className="h-3 w-3 mr-1" /> Adicionar data
                                 </Button>
                             </div>
                             <div className="space-y-2">
                                 {datasSelecao.map((d, i) => (
-                                    <div key={i} className="flex items-center gap-2">
+                                    <div key={i} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                                         <Input
                                             type="date"
                                             min={selecao ? undefined : dataMinimaSelecaoEvento()}
                                             value={d.data}
                                             onChange={e => updateData(i, "data", e.target.value)}
-                                            className="h-8 text-sm flex-1"
+                                            className="h-11 md:h-8 text-base md:text-sm basis-full sm:basis-0 flex-1"
                                         />
                                         <Input
                                             type="time"
                                             value={d.hora}
                                             onChange={e => updateData(i, "hora", e.target.value)}
-                                            className="h-8 text-sm w-28"
+                                            className="h-11 md:h-8 text-base md:text-sm flex-1 sm:flex-none sm:w-28"
                                         />
                                         {datasSelecao.length > 1 && (
-                                            <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10" onClick={() => removeData(i)}>
+                                            <Button type="button" variant="ghost" size="sm" className="h-11 w-11 md:h-8 md:w-8 p-0 text-destructive hover:bg-destructive/10" aria-label="Remover data" onClick={() => removeData(i)}>
                                                 <Trash2 className="h-3.5 w-3.5" />
                                             </Button>
                                         )}
@@ -353,7 +353,7 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
 
                         {erro && <p className="text-sm text-destructive">{erro}</p>}
 
-                        <div className="flex justify-end gap-2 pt-2 border-t">
+                        <DialogFooter className="pt-2 border-t max-md:[&_button]:h-11">
                             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
                                 Cancelar
                             </Button>
@@ -361,7 +361,7 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                                 {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
                                 {isEdit ? "Salvar alterações" : "Criar processo seletivo"}
                             </Button>
-                        </div>
+                        </DialogFooter>
                     </div>
                 )}
             </DialogContent>

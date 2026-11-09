@@ -205,17 +205,27 @@ export default function SelecaoDetalhePage() {
     const contratados = candidatos.filter(c => c.status === "contratado").length
     const statusCfg = STATUS_VAGA[vaga.status]
 
+    // Selo de presença, igual na tabela e nos cartões
+    const presencaBadge = (presenca: string | null | undefined) =>
+        presenca === "confirmado" ? (
+            <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/30 text-xs">Confirmada</Badge>
+        ) : presenca === "recusado" ? (
+            <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/30 text-xs">Recusada</Badge>
+        ) : (
+            <Badge variant="outline" className="text-muted-foreground text-xs">—</Badge>
+        )
+
     return (
         <div className="space-y-6 pb-10">
 
             {/* ── Navegação ── */}
             <div className="flex items-center gap-3">
-                <Button variant="outline" size="icon" onClick={() => router.push("/empregabilidade/selecoes")}>
+                <Button variant="outline" size="icon" className="h-11 w-11 md:h-9 md:w-9 shrink-0" aria-label="Voltar para seleções" onClick={() => router.push("/empregabilidade/selecoes")}>
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
                 <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">Empregabilidade / Seleções</p>
-                    <h1 className="text-xl font-bold leading-tight truncate">{vaga.titulo}</h1>
+                    <h1 className="text-xl font-bold leading-tight break-words">{vaga.titulo}</h1>
                 </div>
             </div>
 
@@ -275,7 +285,7 @@ export default function SelecaoDetalhePage() {
 
                     {/* Ações — inclui o CRUD de status que faltava */}
                     {podeEditar && (
-                        <div className="flex flex-wrap gap-2 pt-3 border-t">
+                        <div className="flex flex-wrap gap-2 pt-3 border-t max-md:[&_button]:h-11">
                             <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
                                 <PenLine className="h-3.5 w-3.5 mr-1.5" /> Editar seleção
                             </Button>
@@ -356,7 +366,7 @@ export default function SelecaoDetalhePage() {
                                         </div>
                                         <div className="text-right flex-shrink-0">
                                             <p className="text-sm font-semibold tabular-nums">{inscritos}/{c.quantidade}</p>
-                                            <p className="text-[10px] text-muted-foreground">inscritos</p>
+                                            <p className="text-xs text-muted-foreground">inscritos</p>
                                         </div>
                                     </div>
                                 )
@@ -375,7 +385,7 @@ export default function SelecaoDetalhePage() {
                             <Badge variant="secondary" className="ml-1 text-xs">{candidatos.length}</Badge>
                         </CardTitle>
                         {podeEditar && (
-                            <Button variant="outline" size="sm" onClick={() => setManualOpen(o => !o)}>
+                            <Button variant="outline" size="sm" className="h-11 md:h-8" onClick={() => setManualOpen(o => !o)}>
                                 <Plus className="h-3.5 w-3.5 mr-1.5" /> Incluir manualmente
                             </Button>
                         )}
@@ -410,7 +420,7 @@ export default function SelecaoDetalhePage() {
                                     </Select>
                                 </div>
                             </div>
-                            <div className="flex justify-end gap-2">
+                            <div className="flex justify-end gap-2 max-md:[&_button]:h-11">
                                 <Button variant="ghost" size="sm" onClick={() => setManualOpen(false)}>Cancelar</Button>
                                 <Button size="sm" onClick={adicionarManual} disabled={manualSaving}>
                                     {manualSaving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Plus className="h-3.5 w-3.5 mr-1.5" />}
@@ -420,15 +430,60 @@ export default function SelecaoDetalhePage() {
                         </div>
                     )}
 
-                    <div className="border rounded-lg overflow-hidden">
-                        <Table className="table-fixed w-full">
+                    {/* Abaixo de lg (celular e tablet): cada candidato vira um cartão */}
+                    <div className="space-y-2 lg:hidden">
+                        {candidatos.length === 0 ? (
+                            <p className="text-center py-10 text-muted-foreground text-sm border rounded-lg">Nenhum candidato confirmado ainda.</p>
+                        ) : candidatos.map(c => (
+                            <div key={c.id} className="border rounded-lg p-3 space-y-2">
+                                <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                        <p className="font-medium break-words">{c.nome}</p>
+                                        {c.observacoes?.includes("manualmente") && (
+                                            <p className="text-xs text-muted-foreground">incluído manualmente</p>
+                                        )}
+                                    </div>
+                                    {podeEditar && (
+                                        <Button variant="ghost" size="icon" className="h-11 w-11 md:h-8 md:w-8 -mr-2 -mt-2 md:mr-0 md:mt-0 shrink-0 text-destructive"
+                                            aria-label={`Remover ${c.nome} da lista`}
+                                            onClick={() => setRemovendo(c)}>
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                                    <span className="inline-flex items-center gap-1.5">
+                                        <Phone className="h-3 w-3 flex-shrink-0" />
+                                        {c.telefone_contato || c.telefone || "—"}
+                                    </span>
+                                    {c.cargo_escolhido && <span className="break-words">{c.cargo_escolhido}</span>}
+                                    {presencaBadge(c.confirmacao_presenca)}
+                                </div>
+                                <Select
+                                    value={c.status}
+                                    onValueChange={v => alterarStatusCandidato(c.id, v)}
+                                    disabled={!podeEditar || savingStatusId === c.id}
+                                >
+                                    <SelectTrigger className="max-md:data-[size=default]:h-11 w-full text-xs" aria-label={`Status de ${c.nome}`}><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        {STATUS_CANDIDATO.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* A partir de lg: tabela. Em 1024 ficam Nome, Telefone, Presença, Status e a
+                        remoção; Cargo aparece a partir de xl (1280px). */}
+                    <div className="hidden lg:block border rounded-lg overflow-hidden">
+                        <Table className="table-fixed w-full" cabecalhoFixo>
                             <TableHeader className="bg-muted/30">
                                 <TableRow>
-                                    <TableHead className="w-[28%]">Nome</TableHead>
-                                    <TableHead className="w-[18%]">Telefone</TableHead>
-                                    <TableHead className="w-[22%]">Cargo</TableHead>
-                                    <TableHead className="w-[14%]">Presença</TableHead>
-                                    <TableHead className="w-[15%]">Status</TableHead>
+                                    <TableHead className="w-[30%] xl:w-[28%]">Nome</TableHead>
+                                    <TableHead className="w-[20%] xl:w-[18%]">Telefone</TableHead>
+                                    <TableHead className="hidden xl:table-cell w-[22%]">Cargo</TableHead>
+                                    <TableHead className="w-[18%] xl:w-[14%]">Presença</TableHead>
+                                    <TableHead className="w-[22%] xl:w-[15%]">Status</TableHead>
                                     <TableHead className="w-12"></TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -442,7 +497,7 @@ export default function SelecaoDetalhePage() {
                                         <TableCell className="max-w-0">
                                             <span className="font-medium truncate block">{c.nome}</span>
                                             {c.observacoes?.includes("manualmente") && (
-                                                <span className="text-[10px] text-muted-foreground">incluído manualmente</span>
+                                                <span className="text-xs text-muted-foreground">incluído manualmente</span>
                                             )}
                                         </TableCell>
                                         <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
@@ -451,17 +506,11 @@ export default function SelecaoDetalhePage() {
                                                 {c.telefone_contato || c.telefone || "—"}
                                             </span>
                                         </TableCell>
-                                        <TableCell className="max-w-0">
+                                        <TableCell className="hidden xl:table-cell max-w-0">
                                             <span className="text-sm truncate block">{c.cargo_escolhido || "—"}</span>
                                         </TableCell>
                                         <TableCell>
-                                            {c.confirmacao_presenca === "confirmado" ? (
-                                                <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/30 text-xs">Confirmada</Badge>
-                                            ) : c.confirmacao_presenca === "recusado" ? (
-                                                <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/30 text-xs">Recusada</Badge>
-                                            ) : (
-                                                <Badge variant="outline" className="text-muted-foreground text-xs">—</Badge>
-                                            )}
+                                            {presencaBadge(c.confirmacao_presenca)}
                                         </TableCell>
                                         <TableCell>
                                             <Select
@@ -478,6 +527,7 @@ export default function SelecaoDetalhePage() {
                                         <TableCell className="text-right">
                                             {podeEditar && (
                                                 <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive"
+                                                    aria-label={`Remover ${c.nome} da lista`}
                                                     onClick={() => setRemovendo(c)}>
                                                     <Trash2 className="h-3.5 w-3.5" />
                                                 </Button>

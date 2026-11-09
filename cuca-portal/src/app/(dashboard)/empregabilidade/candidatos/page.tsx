@@ -84,6 +84,13 @@ export default function CandidatosGlobaisPage() {
         setIsMatchModalOpen(true)
     }
 
+    const badgeStatus = (status: string) => (
+        <Badge variant={status === 'pendente' ? 'outline' : status === 'selecionado' ? 'default' : status === 'contratado' ? 'secondary' : 'destructive'}
+            className={status === 'pendente' ? 'border-amber-300 text-amber-700 bg-amber-50' : ''}>
+            {status.toUpperCase()}
+        </Badge>
+    )
+
     const filteredCandidatos = candidatos.filter((c) => {
         const term = searchTerm.toLowerCase()
         return (c.nome && c.nome.toLowerCase().includes(term)) ||
@@ -177,12 +184,49 @@ export default function CandidatosGlobaisPage() {
                             Nenhum candidato encontrado.
                         </div>
                     ) : (
-                        <Table>
+                        <>
+                        {/* Abaixo de lg (celular e tablet): cada candidatura vira um cartão */}
+                        <div className="space-y-3 lg:hidden">
+                            {filteredCandidatos.map((c) => {
+                                const ocr = c.dados_ocr_json || {}
+                                return (
+                                    <div key={c.id} className="rounded-lg border p-3 space-y-2">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                                <p className="font-medium break-words">{c.nome}</p>
+                                                <p className="text-xs text-muted-foreground">{calcularIdade(c.data_nascimento)} • {c.telefone}</p>
+                                            </div>
+                                            {badgeStatus(c.status)}
+                                        </div>
+                                        <div className="text-sm">
+                                            <p className="font-medium break-words">{c.vagas?.titulo || "Vaga Arquivada/Deletada"}</p>
+                                            <p className="text-xs text-muted-foreground">{c.vagas?.unidade_cuca || "Geral"}</p>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground break-words">{ocr.escolaridade || "Analisando OCR..."}</p>
+                                        <div className="flex flex-wrap gap-2 pt-1">
+                                            {c.vagas?.id && (
+                                                <Button variant="outline" size="sm" className="h-11 md:h-8 flex-1" onClick={() => router.push(`/empregabilidade/vagas/${c.vagas?.id}`)}>
+                                                    <ExternalLink className="h-4 w-4 mr-1" /> Vaga
+                                                </Button>
+                                            )}
+                                            <Button variant="ghost" size="sm" className="h-11 md:h-8 flex-1 text-cuca-blue hover:text-sky-800 hover:bg-sky-50 font-semibold" onClick={() => openMatchModal(c)}>
+                                                <Eye className="h-4 w-4 mr-1" /> Análise IA
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+
+                        {/* A partir de lg: tabela. Em 1024 ficam Candidato, Vaga, Status e Ações (só ícones);
+                            Escolaridade e os rótulos dos botões aparecem a partir de xl (1280px). */}
+                        <div className="hidden lg:block">
+                        <Table cabecalhoFixo>
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>Candidato</TableHead>
                                     <TableHead>Vaga / Oportunidade</TableHead>
-                                    <TableHead>Escolaridade / Resumo</TableHead>
+                                    <TableHead className="hidden xl:table-cell">Escolaridade / Resumo</TableHead>
                                     <TableHead>Status</TableHead>
                                     <TableHead className="text-right">Ações</TableHead>
                                 </TableRow>
@@ -192,19 +236,19 @@ export default function CandidatosGlobaisPage() {
                                     const ocr = c.dados_ocr_json || {}
                                     return (
                                         <TableRow key={c.id}>
-                                            <TableCell className="font-medium">
+                                            <TableCell className="font-medium whitespace-normal break-words min-w-[9rem]">
                                                 <div>{c.nome}</div>
                                                 <div className="text-xs text-muted-foreground">{calcularIdade(c.data_nascimento)} • {c.telefone}</div>
                                             </TableCell>
                                             <TableCell>
-                                                <div className="font-medium text-sm max-w-[200px] truncate" title={c.vagas?.titulo || "Vaga Deletada"}>
+                                                <div className="font-medium text-sm max-w-[160px] xl:max-w-[200px] truncate" title={c.vagas?.titulo || "Vaga Deletada"}>
                                                     {c.vagas?.titulo || "Vaga Arquivada/Deletada"}
                                                 </div>
                                                 <div className="text-xs text-muted-foreground">
                                                     {c.vagas?.unidade_cuca || "Geral"}
                                                 </div>
                                             </TableCell>
-                                            <TableCell>
+                                            <TableCell className="hidden xl:table-cell">
                                                 <div className="text-sm max-w-[200px] truncate text-muted-foreground" title={ocr.escolaridade || "Sem dados de escolaridade"}>
                                                     {ocr.escolaridade || "Analisando OCR..."}
                                                 </div>
@@ -213,10 +257,7 @@ export default function CandidatosGlobaisPage() {
                                                 </div>
                                             </TableCell>
                                             <TableCell>
-                                                <Badge variant={c.status === 'pendente' ? 'outline' : c.status === 'selecionado' ? 'default' : c.status === 'contratado' ? 'secondary' : 'destructive'}
-                                                    className={c.status === 'pendente' ? 'border-amber-300 text-amber-700 bg-amber-50' : ''}>
-                                                    {c.status.toUpperCase()}
-                                                </Badge>
+                                                {badgeStatus(c.status)}
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex items-center justify-end gap-2">
@@ -225,20 +266,22 @@ export default function CandidatosGlobaisPage() {
                                                             variant="outline"
                                                             size="sm"
                                                             title="Ver detalhes dentro do painel da vaga"
+                                                            aria-label="Ver vaga"
                                                             onClick={() => router.push(`/empregabilidade/vagas/${c.vagas?.id}`)}
                                                             className="h-8"
                                                         >
-                                                            <ExternalLink className="h-4 w-4 mr-1" /> Vaga
+                                                            <ExternalLink className="h-4 w-4 xl:mr-1" /> <span className="hidden xl:inline">Vaga</span>
                                                         </Button>
                                                     )}
                                                     <Button
                                                         variant="ghost"
                                                         size="sm"
                                                         title="Ver Análise da IA (Match)"
+                                                        aria-label="Ver análise da IA"
                                                         className="text-cuca-blue hover:text-sky-800 hover:bg-sky-50 h-8 font-semibold"
                                                         onClick={() => openMatchModal(c)}
                                                     >
-                                                        <Eye className="h-4 w-4 mr-1" /> Análise IA
+                                                        <Eye className="h-4 w-4 xl:mr-1" /> <span className="hidden xl:inline">Análise IA</span>
                                                     </Button>
                                                 </div>
                                             </TableCell>
@@ -247,6 +290,8 @@ export default function CandidatosGlobaisPage() {
                                 })}
                             </TableBody>
                         </Table>
+                        </div>
+                        </>
                     )}
                 </CardContent>
             </Card>

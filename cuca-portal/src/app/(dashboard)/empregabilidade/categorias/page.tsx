@@ -158,7 +158,7 @@ export default function CategoriasInteressePage() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Áreas de Interesse</h1>
                     <p className="text-muted-foreground text-sm mt-1">
@@ -167,7 +167,7 @@ export default function CategoriasInteressePage() {
                 </div>
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                     <DialogTrigger asChild>
-                        <Button className="bg-cuca-blue hover:bg-sky-800" onClick={() => openCreate()}>
+                        <Button className="bg-cuca-blue hover:bg-sky-800 self-start sm:self-auto shrink-0 h-11 md:h-9" onClick={() => openCreate()}>
                             <Plus className="mr-2 h-4 w-4" /> Novo Eixo
                         </Button>
                     </DialogTrigger>
@@ -231,7 +231,7 @@ export default function CategoriasInteressePage() {
                                     />
                                 </div>
                             </div>
-                            <DialogFooter>
+                            <DialogFooter className="max-md:[&_button]:h-11">
                                 <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
                                     Cancelar
                                 </Button>
@@ -295,27 +295,27 @@ export default function CategoriasInteressePage() {
                             <div key={eixo.id} className="border rounded-lg overflow-hidden">
                                 {/* Linha do eixo */}
                                 <div
-                                    className="flex items-center gap-3 px-4 py-3 bg-muted/40 cursor-pointer hover:bg-muted/60 transition-colors"
+                                    className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 bg-muted/40 cursor-pointer hover:bg-muted/60 transition-colors"
                                     onClick={() => toggleExpand(eixo.id)}
                                 >
-                                    <button type="button" className="text-muted-foreground">
+                                    <button type="button" className="text-muted-foreground" aria-label={expanded.has(eixo.id) ? "Recolher eixo" : "Expandir eixo"}>
                                         {expanded.has(eixo.id)
                                             ? <ChevronDown className="h-4 w-4" />
                                             : <ChevronRight className="h-4 w-4" />}
                                     </button>
                                     <span className="text-lg">{eixo.icone ?? "📁"}</span>
-                                    <span className="font-semibold flex-1">{eixo.nome}</span>
+                                    <span className="font-semibold flex-1 basis-40 min-w-0 break-words">{eixo.nome}</span>
                                     <Badge variant={eixo.ativo ? "default" : "secondary"} className={eixo.ativo ? "bg-green-600" : ""}>
                                         {eixo.ativo ? "Ativo" : "Inativo"}
                                     </Badge>
-                                    <span className="text-xs text-muted-foreground w-20 text-right">
+                                    <span className="text-xs text-muted-foreground sm:w-20 sm:text-right">
                                         {eixo.modalidades.length} modalidade(s)
                                     </span>
-                                    <div className="flex gap-1 ml-2" onClick={e => e.stopPropagation()}>
-                                        <Button variant="ghost" size="sm" onClick={() => openCreate(eixo.id)} title="Adicionar modalidade">
+                                    <div className="flex gap-1 ml-auto sm:ml-2 max-md:[&_button]:h-11 max-md:[&_button]:w-11" onClick={e => e.stopPropagation()}>
+                                        <Button variant="ghost" size="sm" onClick={() => openCreate(eixo.id)} title="Adicionar modalidade" aria-label="Adicionar modalidade">
                                             <Plus className="h-3.5 w-3.5" />
                                         </Button>
-                                        <Button variant="ghost" size="sm" onClick={() => openEdit(eixo)} title="Editar eixo">
+                                        <Button variant="ghost" size="sm" onClick={() => openEdit(eixo)} title="Editar eixo" aria-label="Editar eixo">
                                             <Pencil className="h-3.5 w-3.5" />
                                         </Button>
                                         <Button
@@ -323,6 +323,7 @@ export default function CategoriasInteressePage() {
                                             className="text-destructive hover:text-destructive"
                                             onClick={() => setDeleteTarget(eixo)}
                                             title="Excluir eixo"
+                                            aria-label="Excluir eixo"
                                         >
                                             <Trash2 className="h-3.5 w-3.5" />
                                         </Button>
@@ -333,26 +334,27 @@ export default function CategoriasInteressePage() {
                                 {expanded.has(eixo.id) && (
                                     <div className="divide-y">
                                         {eixo.modalidades.length === 0 ? (
-                                            <p className="px-12 py-3 text-sm text-muted-foreground">
+                                            <p className="px-4 sm:px-12 py-3 text-sm text-muted-foreground">
                                                 Nenhuma modalidade. Clique em <Plus className="inline h-3 w-3" /> para adicionar.
                                             </p>
                                         ) : (
                                             eixo.modalidades.map(mod => (
-                                                <div key={mod.id} className="flex items-center gap-3 px-12 py-2.5 hover:bg-muted/20 transition-colors">
-                                                    <span className="text-sm flex-1 flex items-center gap-2">
+                                                <div key={mod.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 sm:px-12 py-2.5 hover:bg-muted/20 transition-colors">
+                                                    <span className="text-sm flex-1 basis-32 min-w-0 break-words flex items-center gap-2">
                                                         {mod.icone && <span>{mod.icone}</span>}
                                                         {mod.nome}
                                                     </span>
                                                     <Badge variant={mod.ativo ? "outline" : "secondary"} className="text-xs">
                                                         {mod.ativo ? "Ativa" : "Inativa"}
                                                     </Badge>
-                                                    <div className="flex gap-1">
-                                                        <Button variant="ghost" size="sm" onClick={() => openEdit(mod)}>
+                                                    <div className="flex gap-1 ml-auto sm:ml-0 max-md:[&_button]:h-11 max-md:[&_button]:w-11">
+                                                        <Button variant="ghost" size="sm" aria-label="Editar modalidade" onClick={() => openEdit(mod)}>
                                                             <Pencil className="h-3.5 w-3.5" />
                                                         </Button>
                                                         <Button
                                                             variant="ghost" size="sm"
                                                             className="text-destructive hover:text-destructive"
+                                                            aria-label="Excluir modalidade"
                                                             onClick={() => setDeleteTarget(mod)}
                                                         >
                                                             <Trash2 className="h-3.5 w-3.5" />

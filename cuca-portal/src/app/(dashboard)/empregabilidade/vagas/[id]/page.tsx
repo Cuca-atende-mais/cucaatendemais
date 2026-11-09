@@ -40,9 +40,9 @@ function ScoreCircle({ score }: { score: number | null | undefined }) {
         : s >= 50 ? "text-amber-400 border-amber-500/40 bg-amber-500/10"
             : "text-red-400 border-red-500/40 bg-red-500/10"
     return (
-        <div className={`w-12 h-12 rounded-full border-2 flex flex-col items-center justify-center flex-shrink-0 ${color}`}>
+        <div className={`w-14 h-14 rounded-full border-2 flex flex-col items-center justify-center flex-shrink-0 ${color}`}>
             <span className="text-sm font-bold leading-none">{s}</span>
-            <span className="text-[9px] leading-none mt-0.5 opacity-70">match</span>
+            <span className="text-xs leading-none mt-0.5 opacity-70">match</span>
         </div>
     )
 }
@@ -483,12 +483,12 @@ export default function VagaDetalhesPage() {
 
             {/* ── Navegação ── */}
             <div className="flex items-center gap-3">
-                <Button variant="outline" size="icon" onClick={() => router.push("/empregabilidade/vagas")}>
+                <Button variant="outline" size="icon" className="h-11 w-11 md:h-9 md:w-9 shrink-0" aria-label="Voltar para vagas" onClick={() => router.push("/empregabilidade/vagas")}>
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
-                <div>
+                <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">Empregabilidade / Vagas</p>
-                    <h1 className="text-xl font-bold leading-tight">{vaga?.titulo}</h1>
+                    <h1 className="text-xl font-bold leading-tight break-words">{vaga?.titulo}</h1>
                 </div>
             </div>
 
@@ -511,7 +511,7 @@ export default function VagaDetalhesPage() {
                                 <Button 
                                     size="sm" 
                                     variant="outline" 
-                                    className="ml-2 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 h-7 text-[10px]"
+                                    className="ml-2 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 h-11 md:h-7 text-xs"
                                     onClick={solicitarFeedbackEmpresa}
                                 >
                                     <MessageSquare className="h-3 w-3 mr-1" />
@@ -653,18 +653,18 @@ export default function VagaDetalhesPage() {
                         <h2 className="text-lg font-semibold">Candidatos Inscritos</h2>
                         <Badge variant="outline">{candidatos.length}</Badge>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         {aprovadosOuSelecionadosTotal > 0 && (
                             <Button
                                 size="sm"
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 h-11 md:h-8"
                                 onClick={abrirSummonLote}
                             >
                                 <Send className="h-3.5 w-3.5" />
                                 Convocar em Lote ({aprovadosOuSelecionadosTotal})
                             </Button>
                         )}
-                        <Button size="sm" variant="outline" onClick={() => setModalInscricao(true)}>
+                        <Button size="sm" variant="outline" className="h-11 md:h-8" onClick={() => setModalInscricao(true)}>
                             <Plus className="mr-1.5 h-4 w-4" />
                             Inscrever Manualmente
                         </Button>
@@ -672,18 +672,20 @@ export default function VagaDetalhesPage() {
                             <Button
                                 variant={viewMode === "grid" ? "secondary" : "ghost"}
                                 size="sm"
-                                className="h-7 w-7 p-0"
+                                className="h-11 w-11 md:h-7 md:w-7 p-0"
                                 onClick={() => setViewMode("grid")}
                                 title="Grade"
+                                aria-label="Ver em grade"
                             >
                                 <LayoutGrid className="h-3.5 w-3.5" />
                             </Button>
                             <Button
                                 variant={viewMode === "kanban" ? "secondary" : "ghost"}
                                 size="sm"
-                                className="h-7 w-7 p-0"
+                                className="h-11 w-11 md:h-7 md:w-7 p-0"
                                 onClick={() => setViewMode("kanban")}
                                 title="Kanban"
+                                aria-label="Ver em kanban"
                             >
                                 <Columns className="h-3.5 w-3.5" />
                             </Button>
@@ -698,13 +700,13 @@ export default function VagaDetalhesPage() {
                     <div className="flex items-center gap-1 bg-muted p-1 rounded-lg w-fit">
                         <button
                             onClick={() => setAbaCandidatos("a_enviar")}
-                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${abaCandidatos === "a_enviar" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                            className={`px-3 py-1.5 max-md:min-h-11 rounded-md text-xs font-medium transition-colors ${abaCandidatos === "a_enviar" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                         >
                             A Enviar ({contagemAEnviar})
                         </button>
                         <button
                             onClick={() => setAbaCandidatos("enviados")}
-                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${abaCandidatos === "enviados" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                            className={`px-3 py-1.5 max-md:min-h-11 rounded-md text-xs font-medium transition-colors ${abaCandidatos === "enviados" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                         >
                             Currículos Enviados ({contagemEnviados})
                         </button>
@@ -718,7 +720,7 @@ export default function VagaDetalhesPage() {
                         <button
                             key={s}
                             onClick={() => setFiltroStatus(s)}
-                            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${filtroStatus === s
+                            className={`px-3 py-1 max-md:min-h-11 rounded-full text-xs font-medium border transition-colors ${filtroStatus === s
                                 ? "bg-cuca-blue text-white border-cuca-blue"
                                 : "border-border text-muted-foreground hover:border-cuca-blue/50"}`}
                         >
@@ -789,25 +791,25 @@ export default function VagaDetalhesPage() {
                                                 <div className="flex items-center justify-between gap-1">
                                                     <span className="text-xs font-medium truncate">{c.nome}</span>
                                                     {score !== null && (
-                                                        <span className={`text-[10px] font-bold rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 ${score >= 70 ? "bg-green-500/20 text-green-400" : score >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>
+                                                        <span className={`text-xs font-bold rounded-full min-w-7 h-7 px-1 flex items-center justify-center flex-shrink-0 ${score >= 70 ? "bg-green-500/20 text-green-400" : score >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>
                                                             {score}
                                                         </span>
                                                     )}
                                                 </div>
                                                 <div className="flex items-center justify-between gap-1">
-                                                    <span className="text-[10px] text-muted-foreground">{idade ? `${idade} anos` : "—"}</span>
+                                                    <span className="text-xs text-muted-foreground">{idade ? `${idade} anos` : "—"}</span>
                                                     <div className="flex items-center gap-1">
                                                         {(c.status === 'aprovado_empresa' || c.status === 'selecionado') && (
                                                             <button
                                                                 onClick={e => { e.stopPropagation(); abrirSummon(c) }}
-                                                                className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-500 text-[9px] text-white hover:bg-indigo-600 transition-colors"
+                                                                className="flex items-center gap-1 px-1.5 py-0.5 max-md:min-h-11 max-md:px-3 rounded bg-indigo-500 text-xs text-white hover:bg-indigo-600 transition-colors"
                                                                 title="Convocar"
                                                             >
-                                                                <Send className="h-2 w-2" />
+                                                                <Send className="h-3 w-3" />
                                                                 Convocar
                                                             </button>
                                                         )}
-                                                        <span className="text-[10px] text-muted-foreground">{format(new Date(c.created_at || Date.now()), "dd/MM/yy", { locale: ptBR })}</span>
+                                                        <span className="text-xs text-muted-foreground">{format(new Date(c.created_at || Date.now()), "dd/MM/yy", { locale: ptBR })}</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -871,8 +873,9 @@ export default function VagaDetalhesPage() {
                         <Button
                             size="sm"
                             variant="ghost"
-                            className="text-muted-foreground hover:text-red-400"
+                            className="h-11 w-11 md:h-8 md:w-8 p-0 text-muted-foreground hover:text-red-400"
                             title="Limpar resultados e recomeçar"
+                            aria-label="Limpar resultados e recomeçar"
                             onClick={() => {
                                 try { localStorage.removeItem(storageKey) } catch {}
                                 setTalentResultsRaw([])
@@ -885,7 +888,7 @@ export default function VagaDetalhesPage() {
                     <Button
                         size="sm"
                         variant="outline"
-                        className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
+                        className="h-11 md:h-8 border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
                         onClick={abrirDialogTalent}
                         disabled={loadingTalent}
                     >
@@ -900,7 +903,7 @@ export default function VagaDetalhesPage() {
                 {/* S37B-04: Filtros demográficos para triagem */}
                 <div className="flex flex-wrap gap-2 items-center py-2">
                     <Select value={filtroTriagemEscolaridade || "todos"} onValueChange={(v) => setFiltroTriagemEscolaridade(v === "todos" ? "" : v)}>
-                        <SelectTrigger className="h-8 w-auto min-w-[160px] text-xs border-purple-500/20">
+                        <SelectTrigger className="max-md:data-[size=default]:h-11 w-full sm:w-auto sm:min-w-[160px] text-xs border-purple-500/20">
                             <GraduationCap className="h-3.5 w-3.5 mr-1.5 text-purple-400" />
                             <SelectValue placeholder="Escolaridade mínima" />
                         </SelectTrigger>
@@ -913,7 +916,7 @@ export default function VagaDetalhesPage() {
                     </Select>
 
                     <Select value={filtroTriagemGenero || "todos"} onValueChange={(v) => setFiltroTriagemGenero(v === "todos" ? "" : v)}>
-                        <SelectTrigger className="h-8 w-auto min-w-[120px] text-xs border-purple-500/20">
+                        <SelectTrigger className="max-md:data-[size=default]:h-11 w-full sm:w-auto sm:min-w-[120px] text-xs border-purple-500/20">
                             <SelectValue placeholder="Gênero" />
                         </SelectTrigger>
                         <SelectContent>
@@ -925,7 +928,7 @@ export default function VagaDetalhesPage() {
                     </Select>
 
                     <Select value={filtroTriagemPCD || "todos"} onValueChange={(v) => setFiltroTriagemPCD(v === "todos" ? "" : v as "true" | "false")}>
-                        <SelectTrigger className="h-8 w-auto min-w-[100px] text-xs border-purple-500/20">
+                        <SelectTrigger className="max-md:data-[size=default]:h-11 w-full sm:w-auto sm:min-w-[100px] text-xs border-purple-500/20">
                             <SelectValue placeholder="PCD" />
                         </SelectTrigger>
                         <SelectContent>
@@ -936,7 +939,7 @@ export default function VagaDetalhesPage() {
                     </Select>
 
                     <Select value={filtroTriagemPrimeiroEmprego || "todos"} onValueChange={(v) => setFiltroTriagemPrimeiroEmprego(v === "todos" ? "" : v as "true" | "false")}>
-                        <SelectTrigger className="h-8 w-auto min-w-[150px] text-xs border-purple-500/20">
+                        <SelectTrigger className="max-md:data-[size=default]:h-11 w-full sm:w-auto sm:min-w-[150px] text-xs border-purple-500/20">
                             <SelectValue placeholder="Primeiro Emprego" />
                         </SelectTrigger>
                         <SelectContent>
@@ -976,7 +979,7 @@ export default function VagaDetalhesPage() {
 
             {/* ── Dialog: Quantos currículos analisar ── */}
             <Dialog open={dialogTalent} onOpenChange={setDialogTalent}>
-                <DialogContent className="max-w-sm">
+                <DialogContent>
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Sparkles className="h-5 w-5 text-purple-400" />
@@ -1014,7 +1017,7 @@ export default function VagaDetalhesPage() {
                             )}
                         </div>
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setDialogTalent(false)}>Cancelar</Button>
                         <Button
                             className="bg-purple-600 hover:bg-purple-700 text-white font-bold"
@@ -1071,7 +1074,7 @@ export default function VagaDetalhesPage() {
                                 <div>
                                     <Label className="text-xs">Tipo</Label>
                                     <Select value={novoFollowup.tipo} onValueChange={v => setNovoFollowup(n => ({ ...n, tipo: v as any }))}>
-                                        <SelectTrigger className="mt-1 h-8 text-sm"><SelectValue /></SelectTrigger>
+                                        <SelectTrigger className="mt-1 max-md:data-[size=default]:h-11 text-sm"><SelectValue /></SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="interno">Interno (CUCA)</SelectItem>
                                             <SelectItem value="empresa">Empresa</SelectItem>
@@ -1081,12 +1084,12 @@ export default function VagaDetalhesPage() {
                                 </div>
                                 <div>
                                     <Label className="text-xs">Mensagem / Observação</Label>
-                                    <Textarea className="mt-1 text-sm" rows={3}
+                                    <Textarea className="mt-1 text-base md:text-sm" rows={3}
                                         placeholder="Ex: Empresa confirmou entrevista para quinta-feira às 14h..."
                                         value={novoFollowup.mensagem}
                                         onChange={e => setNovoFollowup(n => ({ ...n, mensagem: e.target.value }))} />
                                 </div>
-                                <Button className="w-full" size="sm" onClick={adicionarFollowup} disabled={enviandoFollowup}>
+                                <Button className="w-full h-11 md:h-8" size="sm" onClick={adicionarFollowup} disabled={enviandoFollowup}>
                                     <Send className="mr-1.5 h-3.5 w-3.5" />
                                     {enviandoFollowup ? "Salvando..." : "Adicionar"}
                                 </Button>
@@ -1124,7 +1127,7 @@ export default function VagaDetalhesPage() {
                                 onChange={e => setInscricaoForm(f => ({ ...f, data_nascimento: e.target.value }))} />
                         </div>
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setModalInscricao(false)}>Cancelar</Button>
                         <Button onClick={criarInscricaoManual} disabled={criandoInscricao}>
                             {criandoInscricao ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
@@ -1150,7 +1153,7 @@ export default function VagaDetalhesPage() {
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="space-y-1.5">
                                 <Label>Data da Entrevista</Label>
                                 <Input type="date" value={summonForm.data} onChange={e => setSummonForm(f => ({ ...f, data: e.target.value }))} />
@@ -1180,7 +1183,7 @@ export default function VagaDetalhesPage() {
                             />
                         </div>
                     </div>
-                    <DialogFooter>
+                    <DialogFooter className="max-md:[&_button]:h-11">
                         <Button variant="outline" onClick={() => setSummonModalOpen(false)}>Cancelar</Button>
                         <Button className="bg-indigo-600 hover:bg-indigo-700 text-white" onClick={handleSummon} disabled={summoning}>
                             {summoning ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
@@ -1291,7 +1294,7 @@ function CandidatoCard({
             )}
 
             {/* Rodapé: telefone + data + ações */}
-            <div className="flex items-center justify-between pt-2.5 border-t border-border">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-border">
                 <div className="space-y-0.5">
                     {candidato.telefone && (
                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -1304,13 +1307,13 @@ function CandidatoCard({
                         <span>{format(new Date(candidato.created_at), "dd/MM/yy", { locale: ptBR })}</span>
                     </div>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex flex-wrap items-center justify-end gap-1 ml-auto">
                     {(candidato.status === 'aprovado_empresa' || candidato.status === 'selecionado') && (
                         <Button
                             size="sm"
                             variant="default"
                             onClick={e => { e.stopPropagation(); onConvocar() }}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs gap-1.5"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white h-11 md:h-8 text-xs gap-1.5"
                         >
                             <Send className="h-3.5 w-3.5" />
                             Convocar
@@ -1327,8 +1330,8 @@ function CandidatoCard({
                             onClick={e => { e.stopPropagation(); onEnviarCv() }}
                             disabled={enviandoCv || podeEnviarCv === false}
                             className={candidato.email_enviado_em
-                                ? "h-8 text-xs gap-1.5"
-                                : "bg-cuca-blue hover:bg-sky-800 text-white h-8 text-xs gap-1.5"}
+                                ? "h-11 md:h-8 text-xs gap-1.5"
+                                : "bg-cuca-blue hover:bg-sky-800 text-white h-11 md:h-8 text-xs gap-1.5"}
                             title={podeEnviarCv === false
                                 ? "Esta seleção não coleta currículo — envio desativado"
                                 : candidato.email_enviado_em ? "Reenviar currículo para a empresa" : "Enviar currículo para a empresa"}
@@ -1339,8 +1342,9 @@ function CandidatoCard({
                     )}
                     <button
                         onClick={e => { e.stopPropagation(); onAbrirFollowup() }}
-                        className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-cuca-blue"
+                        className="flex h-11 w-11 md:h-auto md:w-auto items-center justify-center md:p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-cuca-blue"
                         title="Follow-up"
+                        aria-label="Follow-up"
                     >
                         <MessageSquare className="h-3.5 w-3.5" />
                     </button>

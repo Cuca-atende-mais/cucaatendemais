@@ -178,7 +178,7 @@ export default function RelatoriosPage() {
                     </p>
                 </div>
                 {dados?.permissoes.exportar && (
-                    <Button onClick={baixar} disabled={exportando || carregando || !!erro} className="gap-2">
+                    <Button onClick={baixar} disabled={exportando || carregando || !!erro} className="gap-2 h-11 md:h-9">
                         {exportando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                         Baixar Excel
                     </Button>
@@ -212,7 +212,7 @@ export default function RelatoriosPage() {
                     </div>
                     <div className="flex flex-wrap gap-2 md:col-span-3">
                         {ATALHOS.map(a => (
-                            <Button key={a.id} variant="outline" size="sm" onClick={() => aplicarAtalho(a.id)}>{a.rotulo}</Button>
+                            <Button key={a.id} variant="outline" size="sm" className="h-11 md:h-8" onClick={() => aplicarAtalho(a.id)}>{a.rotulo}</Button>
                         ))}
                     </div>
                 </CardContent>
@@ -260,11 +260,13 @@ export default function RelatoriosPage() {
                                 {carregando && " Atualizando..."}
                             </CardDescription>
                         </CardHeader>
-                        <CardContent className="overflow-x-auto">
-                            <Table>
+                        {/* Um mês por coluna: em tela estreita a tabela rola para o lado por dentro, com a
+                            coluna Indicador parada à esquerda */}
+                        <CardContent>
+                            <Table primeiraColunaFixa>
                                 <TableHeader>
                                     <TableRow>
-                                        <TableHead className="min-w-[180px]">Indicador</TableHead>
+                                        <TableHead className="min-w-[9rem] sm:min-w-[180px]">Indicador</TableHead>
                                         {dados.periodo.meses.map(m => <TableHead key={m} className="text-right">{rotuloMes(m)}</TableHead>)}
                                         <TableHead className="text-right">Total</TableHead>
                                     </TableRow>
@@ -272,7 +274,7 @@ export default function RelatoriosPage() {
                                 <TableBody>
                                     {previa.map(l => (
                                         <TableRow key={l.rotulo}>
-                                            <TableCell className={l.sub ? "pl-8 text-muted-foreground" : "font-medium"}>{l.rotulo}</TableCell>
+                                            <TableCell className={l.sub ? "pl-8 text-muted-foreground whitespace-normal" : "font-medium whitespace-normal"}>{l.rotulo}</TableCell>
                                             {l.valores.map((v, i) => <TableCell key={i} className="text-right tabular-nums">{v.toLocaleString("pt-BR")}</TableCell>)}
                                             <TableCell className="text-right font-semibold tabular-nums">{l.total.toLocaleString("pt-BR")}</TableCell>
                                         </TableRow>
