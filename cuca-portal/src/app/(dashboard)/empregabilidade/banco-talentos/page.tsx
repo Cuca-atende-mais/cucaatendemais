@@ -405,7 +405,7 @@ export default function BancoTalentosPage() {
     return (
         <div className="space-y-6">
             {/* Cabeçalho */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Banco de Talentos</h1>
                     <p className="text-muted-foreground">
@@ -413,7 +413,7 @@ export default function BancoTalentosPage() {
                     </p>
                 </div>
                 <Button
-                    className="bg-cuca-yellow hover:bg-yellow-500 font-bold"
+                    className="bg-cuca-yellow hover:bg-yellow-500 font-bold self-start sm:self-auto shrink-0 h-11 md:h-9"
                     onClick={() => setCadastroOpen(true)}
                 >
                     <Plus className="mr-2 h-4 w-4" /> Cadastrar Manualmente
@@ -528,7 +528,7 @@ export default function BancoTalentosPage() {
                                     />
                                 </div>
                                 <Select value={filtroStatus} onValueChange={setFiltroStatus}>
-                                    <SelectTrigger className="w-[150px]">
+                                    <SelectTrigger className="w-full sm:w-[150px]">
                                         <SelectValue placeholder="Status" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -546,7 +546,7 @@ export default function BancoTalentosPage() {
                             <Filter className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
 
                             <Select value={filtroEscolaridade || "todos"} onValueChange={(v) => setFiltroEscolaridade(v === "todos" ? "" : v)}>
-                                <SelectTrigger className="h-8 w-auto min-w-[160px] text-xs">
+                                <SelectTrigger className="max-md:data-[size=default]:h-11 w-full sm:w-auto sm:min-w-[160px] text-xs">
                                     <GraduationCap className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                                     <SelectValue placeholder="Escolaridade" />
                                 </SelectTrigger>
@@ -559,7 +559,7 @@ export default function BancoTalentosPage() {
                             </Select>
 
                             <Select value={filtroGenero || "todos"} onValueChange={(v) => setFiltroGenero(v === "todos" ? "" : v)}>
-                                <SelectTrigger className="h-8 w-auto min-w-[120px] text-xs">
+                                <SelectTrigger className="max-md:data-[size=default]:h-11 w-full sm:w-auto sm:min-w-[120px] text-xs">
                                     <SelectValue placeholder="Gênero" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -572,7 +572,7 @@ export default function BancoTalentosPage() {
                             </Select>
 
                             <Select value={filtroPCD || "todos"} onValueChange={(v) => setFiltroPCD(v === "todos" ? "" : v as "true" | "false")}>
-                                <SelectTrigger className="h-8 w-auto min-w-[100px] text-xs">
+                                <SelectTrigger className="max-md:data-[size=default]:h-11 w-full sm:w-auto sm:min-w-[100px] text-xs">
                                     <SelectValue placeholder="PCD" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -583,7 +583,7 @@ export default function BancoTalentosPage() {
                             </Select>
 
                             <Select value={filtroPrimeiroEmprego || "todos"} onValueChange={(v) => setFiltroPrimeiroEmprego(v === "todos" ? "" : v as "true" | "false")}>
-                                <SelectTrigger className="h-8 w-auto min-w-[150px] text-xs">
+                                <SelectTrigger className="max-md:data-[size=default]:h-11 w-full sm:w-auto sm:min-w-[150px] text-xs">
                                     <SelectValue placeholder="Primeiro Emprego" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -593,10 +593,10 @@ export default function BancoTalentosPage() {
                                 </SelectContent>
                             </Select>
 
-                            <div className="relative">
+                            <div className="relative w-full sm:w-auto">
                                 <Input
                                     placeholder="Bairro..."
-                                    className="h-8 w-32 text-xs"
+                                    className="h-11 md:h-8 w-full sm:w-32 text-base md:text-xs"
                                     value={filtroBairro}
                                     onChange={(e) => setFiltroBairro(e.target.value)}
                                 />
@@ -606,7 +606,7 @@ export default function BancoTalentosPage() {
                                 <Button
                                     variant="ghost"
                                     size="sm"
-                                    className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                                    className="h-11 md:h-8 text-xs text-muted-foreground hover:text-destructive"
                                     onClick={() => {
                                         setFiltroEscolaridade("")
                                         setFiltroGenero("")
@@ -639,7 +639,7 @@ export default function BancoTalentosPage() {
                                 return (
                                     <div
                                         key={t.id}
-                                        className="flex items-center gap-4 py-3 px-2 rounded-lg cursor-pointer hover:bg-muted/40 transition-colors group"
+                                        className="flex flex-wrap md:flex-nowrap items-center gap-x-4 gap-y-1 py-3 px-2 rounded-lg cursor-pointer hover:bg-muted/40 transition-colors group"
                                         onClick={() => setSelectedTalento(t)}
                                     >
                                         {/* Avatar inicial */}
@@ -651,7 +651,7 @@ export default function BancoTalentosPage() {
                                         <div className="flex-1 min-w-0">
                                             <p className="font-medium truncate group-hover:text-foreground">{t.nome}</p>
                                             <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                                                <span className={["inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-medium", area.bgClass, area.textClass, area.borderClass].join(" ")}>
+                                                <span className={["inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-xs font-medium", area.bgClass, area.textClass, area.borderClass].join(" ")}>
                                                     {area.label}
                                                 </span>
                                                 {idade !== null && <span>· {idade} anos</span>}
@@ -680,15 +680,15 @@ export default function BancoTalentosPage() {
                                         </div>
 
                                         {/* Ações rápidas */}
-                                        <div className="flex-shrink-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                                        <div className="basis-full md:basis-auto flex-shrink-0 flex justify-end gap-1 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity max-md:[&_button]:h-11 max-md:[&_button]:w-11" onClick={e => e.stopPropagation()}>
                                             {t.arquivo_cv_url && (
-                                                <Button variant="ghost" size="icon" title="Ver PDF" onClick={() => window.open(t.arquivo_cv_url!, "_blank")}>
+                                                <Button variant="ghost" size="icon" title="Ver PDF" aria-label="Ver PDF" onClick={() => window.open(t.arquivo_cv_url!, "_blank")}>
                                                     <FileText className="h-4 w-4 text-muted-foreground" />
                                                 </Button>
                                             )}
                                             {!t.arquivo_cv_url && t.curriculo_estruturado && Object.keys(t.curriculo_estruturado).length > 0 && (
                                                 <Button
-                                                    variant="ghost" size="icon" title="Gerar PDF do currículo"
+                                                    variant="ghost" size="icon" title="Gerar PDF do currículo" aria-label="Gerar PDF do currículo"
                                                     disabled={gerandoPdfId === t.id}
                                                     onClick={() => handleGerarPdf(t.id, t.nome)}
                                                 >
@@ -698,14 +698,14 @@ export default function BancoTalentosPage() {
                                                 </Button>
                                             )}
                                             {t.telefone && (
-                                                <Button variant="ghost" size="icon" title="WhatsApp"
+                                                <Button variant="ghost" size="icon" title="WhatsApp" aria-label="WhatsApp"
                                                     onClick={() => window.open(`https://wa.me/55${t.telefone!.replace(/\D/g, "")}`, "_blank")}>
                                                     <Phone className="h-4 w-4 text-green-500" />
                                                 </Button>
                                             )}
                                             {podeExcluir && (
                                                 <Button
-                                                    variant="ghost" size="icon" title="Excluir candidato e PDF"
+                                                    variant="ghost" size="icon" title="Excluir candidato e PDF" aria-label="Excluir candidato e PDF"
                                                     disabled={deletandoId === t.id}
                                                     onClick={() => handleDelete(t.id, t.nome)}
                                                 >
@@ -729,6 +729,8 @@ export default function BancoTalentosPage() {
                                 <Button
                                     variant="outline"
                                     size="sm"
+                                    className="h-11 w-11 md:h-8 md:w-auto"
+                                    aria-label="Página anterior"
                                     disabled={page === 0}
                                     onClick={() => setPage(p => p - 1)}
                                 >
@@ -740,6 +742,8 @@ export default function BancoTalentosPage() {
                                 <Button
                                     variant="outline"
                                     size="sm"
+                                    className="h-11 w-11 md:h-8 md:w-auto"
+                                    aria-label="Próxima página"
                                     disabled={page >= totalPages - 1}
                                     onClick={() => setPage(p => p + 1)}
                                 >
@@ -753,7 +757,7 @@ export default function BancoTalentosPage() {
 
             {/* ── Modal currículo completo ───────────────────────────────────── */}
             <Dialog open={!!selectedTalento} onOpenChange={(o) => !o && setSelectedTalento(null)}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogContent>
                     {selectedTalento && <CurriculoModal talento={selectedTalento} />}
                 </DialogContent>
             </Dialog>
@@ -761,10 +765,11 @@ export default function BancoTalentosPage() {
             {/* ── Modal cadastro manual ──────────────────────────────────────── */}
             {cadastroOpen && (
                 <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-                    <div className="bg-popover rounded-xl shadow-xl w-full max-w-md">
+                    {/* Altura máxima com rolagem própria: em tela baixa o fim do formulário ficava fora */}
+                    <div className="bg-popover rounded-xl shadow-xl w-full max-w-md max-h-[calc(100svh-2rem)] overflow-y-auto">
                         <div className="flex items-center justify-between p-5 border-b">
                             <h2 className="text-lg font-bold">Cadastrar Candidato Presencial</h2>
-                            <button onClick={() => setCadastroOpen(false)} className="text-muted-foreground hover:text-foreground">
+                            <button onClick={() => setCadastroOpen(false)} aria-label="Fechar" className="flex h-11 w-11 -mr-3 items-center justify-center text-muted-foreground hover:text-foreground">
                                 <X className="h-5 w-5" />
                             </button>
                         </div>
@@ -805,7 +810,7 @@ export default function BancoTalentosPage() {
                                 />
                                 <p className="text-xs text-muted-foreground">A análise de IA será disparada após o salvamento.</p>
                             </div>
-                            <div className="flex justify-end gap-3 pt-2">
+                            <div className="flex justify-end gap-3 pt-2 max-md:[&_button]:h-11">
                                 <Button type="button" variant="outline" onClick={() => setCadastroOpen(false)}>Cancelar</Button>
                                 <Button type="submit" className="bg-cuca-yellow hover:bg-yellow-500 font-bold" disabled={savingCadastro}>
                                     {savingCadastro ? "Salvando..." : "Adicionar ao Banco"}
@@ -883,7 +888,7 @@ function CurriculoModal({ talento }: { talento: TalentBank }) {
 
             <div className="space-y-5 pt-2">
                 {/* Dados pessoais */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {talento.telefone && (
                         <div className="flex items-center gap-2 text-sm">
                             <Phone className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -909,7 +914,7 @@ function CurriculoModal({ talento }: { talento: TalentBank }) {
                         </div>
                     )}
                     {ocr.experiencia_meses != null && (
-                        <div className="flex items-center gap-2 text-sm col-span-2">
+                        <div className="flex items-center gap-2 text-sm sm:col-span-2">
                             <BrainCircuit className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                             <span>
                                 {ocr.experiencia_meses} meses de experiência ({(ocr.experiencia_meses / 12).toFixed(1)} anos)
@@ -1006,7 +1011,7 @@ function CurriculoModal({ talento }: { talento: TalentBank }) {
                 )}
 
                 {/* Ações */}
-                <div className="flex flex-wrap gap-2 pt-2 border-t">
+                <div className="flex flex-wrap gap-2 pt-2 border-t max-md:[&_button]:h-11">
                     {talento.arquivo_cv_url && (
                         <Button variant="outline" size="sm" onClick={() => window.open(talento.arquivo_cv_url!, "_blank")}>
                             <FileText className="h-4 w-4 mr-1.5" /> Ver Currículo Original

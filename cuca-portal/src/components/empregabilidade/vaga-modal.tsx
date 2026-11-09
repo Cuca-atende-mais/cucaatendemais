@@ -315,7 +315,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogContent>
                 <DialogHeader>
                     <DialogTitle>{vaga ? `Vaga: ${titulo || "—"}` : "Cadastrar Nova Vaga"}</DialogTitle>
                     <DialogDescription>
@@ -339,7 +339,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                         )}
 
                         {/* Empresa + Unidade */}
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label>Empresa Parceira {!camposEmpresaReadOnly && "*"}</Label>
                                 {camposEmpresaReadOnly ? (
@@ -378,7 +378,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                 <Label>Requisitos e Perfil Desejado</Label>
                                 <Textarea value={requisitos} onChange={e => setRequisitos(e.target.value)} placeholder="Conhecimento em informática, boa comunicação..." readOnly={camposEmpresaReadOnly} />
                             </div>
-                            <div className="grid grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                 <div className="space-y-2">
                                     <Label>Tipo de Contrato</Label>
                                     {camposEmpresaReadOnly ? (
@@ -416,7 +416,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                     </SelectContent>
                                 </Select>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <Label>Carga Horária</Label>
                                     {camposEmpresaReadOnly ? (
@@ -426,21 +426,21 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                             <div className="flex gap-2">
                                                 {(["horario_comercial", "escala", "jornada_corrida"] as const).map(t => (
                                                     <button key={t} type="button" onClick={() => setCargaTipo(t)}
-                                                        className={`text-xs px-2 py-1.5 rounded-lg border transition-colors ${cargaTipo === t ? "bg-cuca-blue text-white border-cuca-blue" : "border-border text-muted-foreground hover:border-cuca-blue/50"}`}>
+                                                        className={`text-xs px-2 py-1.5 max-md:min-h-11 rounded-lg border transition-colors ${cargaTipo === t ? "bg-cuca-blue text-white border-cuca-blue" : "border-border text-muted-foreground hover:border-cuca-blue/50"}`}>
                                                         {t === "horario_comercial" ? "Comercial" : t === "escala" ? "Escala" : "Corrida"}
                                                     </button>
                                                 ))}
                                             </div>
                                             {cargaTipo === "escala" && (
                                                 <div className="flex items-center gap-2">
-                                                    <Input className="w-16 text-center text-sm" value={cargaEscalaT} onChange={e => setCargaEscalaT(e.target.value)} placeholder="6" />
+                                                    <Input className="w-16 text-center text-base md:text-sm" value={cargaEscalaT} onChange={e => setCargaEscalaT(e.target.value)} placeholder="6" />
                                                     <span className="text-muted-foreground">x</span>
-                                                    <Input className="w-16 text-center text-sm" value={cargaEscalaF} onChange={e => setCargaEscalaF(e.target.value)} placeholder="2" />
+                                                    <Input className="w-16 text-center text-base md:text-sm" value={cargaEscalaF} onChange={e => setCargaEscalaF(e.target.value)} placeholder="2" />
                                                 </div>
                                             )}
                                             {(cargaTipo === "horario_comercial" || cargaTipo === "jornada_corrida") && (
                                                 <div className="flex items-center gap-2">
-                                                    <Input className="w-16 text-center text-sm" value={cargaHoras} onChange={e => setCargaHoras(e.target.value)} placeholder="8" />
+                                                    <Input className="w-16 text-center text-base md:text-sm" value={cargaHoras} onChange={e => setCargaHoras(e.target.value)} placeholder="8" />
                                                     <span className="text-xs text-muted-foreground">h/dia</span>
                                                 </div>
                                             )}
@@ -522,7 +522,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                         : "Candidatos serão encaminhados diretamente para esta unidade."}
                                 </p>
                             </div>
-                            <div className="grid grid-cols-2 gap-4 items-center">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
                                 <div className="space-y-2">
                                     <Label>Status da Vaga</Label>
                                     <Select value={status} onValueChange={setStatus}>
@@ -537,7 +537,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                         </SelectContent>
                                     </Select>
                                 </div>
-                                <div className="flex flex-row items-start space-x-3 space-y-0 mt-6">
+                                <div className="flex flex-row items-start space-x-3 space-y-0 sm:mt-6">
                                     <Checkbox id="expansiva" checked={expansiva} onCheckedChange={c => setExpansiva(c as boolean)} />
                                     <div className="space-y-1 leading-none">
                                         <Label htmlFor="expansiva">Vaga Expansiva</Label>
@@ -558,7 +558,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                             )}
 
                             {/* Contato da empresa — editável pelo CUCA para correções */}
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <Label>E-mail para envio de CVs</Label>
                                     <Input
@@ -589,7 +589,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                 </div>
                                 {pcdVaga && (
                                     <div className="pl-7 space-y-2">
-                                        <Input value={pcdTipo} onChange={e => setPcdTipo(e.target.value)} placeholder="Tipo de deficiência (opcional)" className="text-sm" />
+                                        <Input value={pcdTipo} onChange={e => setPcdTipo(e.target.value)} placeholder="Tipo de deficiência (opcional)" className="text-base md:text-sm" />
                                         <div className="flex items-center gap-2">
                                             <Checkbox id="pcdHomologado" checked={pcdHomologado} onCheckedChange={c => setPcdHomologado(c as boolean)} />
                                             <Label htmlFor="pcdHomologado" className="text-sm cursor-pointer">Homologado para PCD</Label>
@@ -609,7 +609,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                         )}
 
                         {/* Ações: DialogFooter gruda embaixo quando o modal rola (S-RESP-02) */}
-                        <DialogFooter className="mt-2">
+                        <DialogFooter className="mt-2 max-md:[&_button]:h-11">
                             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
                                 {canEdit ? "Cancelar" : "Fechar"}
                             </Button>

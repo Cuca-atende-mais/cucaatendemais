@@ -20,9 +20,9 @@ export function MatchModal({ isOpen, onClose, candidato, vaga }: MatchModalProps
 
     return (
         <Dialog open={isOpen} onOpenChange={onClose}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto pointer-events-auto">
+            <DialogContent className="pointer-events-auto">
                 <DialogHeader>
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pr-8">
                         <DialogTitle className="text-2xl font-bold flex items-center gap-2">
                             <Sparkles className="text-cuca-yellow w-6 h-6" />
                             Análise de Aderência (IA)

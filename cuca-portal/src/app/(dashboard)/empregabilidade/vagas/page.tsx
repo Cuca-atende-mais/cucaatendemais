@@ -171,7 +171,7 @@ export default function VagasPage() {
                 </div>
                 {hasPermission("empreg_vagas", "create") && (
                     <div className="flex items-center gap-2">
-                        <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold" onClick={openNewModal}>
+                        <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold h-11 md:h-9" onClick={openNewModal}>
                             <Plus className="mr-2 h-4 w-4" /> Cadastrar Vaga
                         </Button>
                     </div>
@@ -187,10 +187,10 @@ export default function VagasPage() {
 
             <div className="flex items-center justify-between gap-4 flex-wrap mt-6">
                 <div className="flex items-center gap-1 bg-muted p-1 rounded-lg w-fit">
-                    <Button variant={abaFiltro === "minhas" ? "secondary" : "ghost"} size="sm" className="h-8 text-xs px-3" onClick={() => setAbaFiltro("minhas")}>
+                    <Button variant={abaFiltro === "minhas" ? "secondary" : "ghost"} size="sm" className="h-11 md:h-8 text-xs px-3" onClick={() => setAbaFiltro("minhas")}>
                         Minha Unidade
                     </Button>
-                    <Button variant={abaFiltro === "todas" ? "secondary" : "ghost"} size="sm" className="h-8 text-xs px-3 gap-1" onClick={() => setAbaFiltro("todas")}>
+                    <Button variant={abaFiltro === "todas" ? "secondary" : "ghost"} size="sm" className="h-11 md:h-8 text-xs px-3 gap-1" onClick={() => setAbaFiltro("todas")}>
                         <Globe className="h-3.5 w-3.5" /> Todas as Unidades
                     </Button>
                 </div>
@@ -210,7 +210,7 @@ export default function VagasPage() {
                     </div>
                     <div className="flex items-center gap-1 bg-muted p-1 rounded-lg">
                         {["all", "aberta", "pre_cadastro"].map(s => (
-                            <Button key={s} variant={statusFilter === s ? "secondary" : "ghost"} size="sm" onClick={() => setStatusFilter(s)} className="h-8 text-xs px-3">
+                            <Button key={s} variant={statusFilter === s ? "secondary" : "ghost"} size="sm" onClick={() => setStatusFilter(s)} className="h-11 md:h-8 text-xs px-3">
                                 {s === "all" ? "Todas" : s === "aberta" ? "Abertas" : "Rascunhos"}
                             </Button>
                         ))}
@@ -218,23 +218,24 @@ export default function VagasPage() {
                 </div>
             </div>
 
-            {/* Desktop/tablet: tabela (md+). table-fixed + larguras em % (padrão da página de
+            {/* Tabela a partir de lg (1024px). table-fixed + larguras em % (padrão da página de
                 Seleções): sem isso, nome de empresa/cargo longo empurra a tabela pra fora da
-                tela em vez de truncar dentro da coluna. Abaixo de md, 9 colunas não cabem de
-                jeito nenhum (nem truncadas) — vira a lista de cards logo abaixo. */}
-            <Card className="hidden md:block border-none shadow-sm overflow-hidden mt-4">
+                tela em vez de truncar dentro da coluna. Em 1024 (~710px úteis com o menu lateral)
+                ficam Cargo, Empresa, Status, Candidaturas e as ações; #, Data do Cadastro e
+                Unidade Base aparecem a partir de xl (1280px). Abaixo de lg, a lista de cards. */}
+            <Card className="hidden lg:block border-none shadow-sm overflow-hidden mt-4">
                 <CardContent className="p-0">
-                    <Table className="table-fixed w-full">
+                    <Table className="table-fixed w-full" cabecalhoFixo>
                         <TableHeader className="bg-muted/30">
                             <TableRow>
-                                <TableHead className="w-[6%] text-center">#</TableHead>
-                                <TableHead className="w-[22%]">Cargo</TableHead>
-                                <TableHead className="w-[16%]">Empresa Parceira</TableHead>
-                                <TableHead className="w-[10%]">Data do Cadastro</TableHead>
-                                <TableHead className="w-[14%]">Unidade Base</TableHead>
-                                <TableHead className="w-[12%]">Status</TableHead>
-                                <TableHead className="w-[10%] text-center">Candidaturas</TableHead>
-                                <TableHead className="w-[10%] text-center">Editar Status</TableHead>
+                                <TableHead className="hidden xl:table-cell w-[5%] text-center">#</TableHead>
+                                <TableHead className="w-[28%] xl:w-[20%]">Cargo</TableHead>
+                                <TableHead className="w-[20%] xl:w-[15%]">Empresa Parceira</TableHead>
+                                <TableHead className="hidden xl:table-cell w-[10%]">Data do Cadastro</TableHead>
+                                <TableHead className="hidden xl:table-cell w-[12%]">Unidade Base</TableHead>
+                                <TableHead className="w-[22%] xl:w-[16%]">Status</TableHead>
+                                <TableHead className="w-[12%] xl:w-[10%] text-center">Candidaturas</TableHead>
+                                <TableHead className="w-[14%] xl:w-[12%] text-center">Editar Status</TableHead>
                                 <TableHead className="w-10"></TableHead>
                             </TableRow>
                         </TableHeader>
@@ -245,7 +246,7 @@ export default function VagasPage() {
                                 <TableRow><TableCell colSpan={9} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
                             ) : vagas.map(v => (
                                 <TableRow key={v.id} className="hover:bg-muted/30">
-                                    <TableCell className="text-center">
+                                    <TableCell className="hidden xl:table-cell text-center">
                                         {v.numero_vaga
                                             ? <span className="text-xs font-mono font-semibold text-muted-foreground">#{v.numero_vaga}</span>
                                             : <span className="text-xs text-muted-foreground/40">—</span>}
@@ -254,7 +255,7 @@ export default function VagasPage() {
                                         <div className="flex flex-col min-w-0">
                                             <span className="font-semibold truncate flex items-center gap-2">
                                                 <span className="truncate">{v.titulo}</span>
-                                                {v.expansiva && <Badge className="bg-cuca-yellow text-[10px] h-4 px-1 flex-shrink-0">Global</Badge>}
+                                                {v.expansiva && <Badge className="bg-cuca-yellow text-xs px-1.5 flex-shrink-0">Global</Badge>}
                                             </span>
                                             <span className="text-xs text-muted-foreground flex items-center gap-1">
                                                 <Users className="h-3 w-3 flex-shrink-0" /> {v.total_vagas} vaga(s) | {v.faixa_etaria}
@@ -264,10 +265,10 @@ export default function VagasPage() {
                                     <TableCell className="max-w-0">
                                         <span className="font-medium text-sm truncate block">{empresasMap[v.empresa_id]?.nome || "Desconhecida"}</span>
                                     </TableCell>
-                                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                                    <TableCell className="hidden xl:table-cell text-sm text-muted-foreground whitespace-nowrap">
                                         {format(new Date(v.created_at), "dd/MM/yyyy", { locale: ptBR })}
                                     </TableCell>
-                                    <TableCell className="max-w-0">
+                                    <TableCell className="hidden xl:table-cell max-w-0">
                                         {v.unidade_destino === "global" ? (
                                             <Badge className="bg-cuca-blue/10 text-cuca-blue border-cuca-blue/30 gap-1"><Globe className="h-3 w-3 flex-shrink-0" /> <span className="truncate">Toda a Rede</span></Badge>
                                         ) : v.unidade_destino && unidadesMap[v.unidade_destino] ? (
@@ -324,8 +325,8 @@ export default function VagasPage() {
                 </CardContent>
             </Card>
 
-            {/* Mobile (< md): cada vaga vira um card, sem colunas disputando espaço horizontal. */}
-            <div className="md:hidden space-y-3 mt-4">
+            {/* Abaixo de lg (celular e tablet): cada vaga vira um card, sem colunas disputando espaço horizontal. */}
+            <div className="lg:hidden space-y-3 mt-4">
                 {isLoading ? (
                     <p className="text-center py-10 text-muted-foreground text-sm">Carregando...</p>
                 ) : vagas.length === 0 ? (
@@ -340,7 +341,7 @@ export default function VagasPage() {
                                             <span className="text-xs font-mono font-semibold text-muted-foreground">#{v.numero_vaga}</span>
                                         )}
                                         <span className="font-semibold text-sm break-words">{v.titulo}</span>
-                                        {v.expansiva && <Badge className="bg-cuca-yellow text-[10px] h-4 px-1 shrink-0">Global</Badge>}
+                                        {v.expansiva && <Badge className="bg-cuca-yellow text-xs px-1.5 shrink-0">Global</Badge>}
                                     </div>
                                     <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                                         <Users className="h-3 w-3 shrink-0" /> {v.total_vagas} vaga(s) | {v.faixa_etaria}
@@ -349,8 +350,9 @@ export default function VagasPage() {
                                 {abaFiltro === "minhas" && hasPermission("empreg_vagas", "delete") && (
                                     <Button
                                         variant="ghost" size="sm"
-                                        className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 shrink-0"
+                                        className="h-11 w-11 md:h-8 md:w-8 p-0 -mr-2 -mt-2 md:mr-0 md:mt-0 text-destructive hover:bg-destructive/10 shrink-0"
                                         title="Excluir vaga e candidatos"
+                                        aria-label={`Excluir vaga ${v.titulo}`}
                                         onClick={() => setDeletingVaga(v)}
                                     >
                                         <Trash2 className="h-4 w-4" />
@@ -380,7 +382,7 @@ export default function VagasPage() {
                             <div className="flex items-center gap-2 pt-1">
                                 <Button
                                     size="sm"
-                                    className="h-8 text-xs gap-1 px-2.5 bg-green-600 hover:bg-green-700 text-white border-none flex-1"
+                                    className="h-11 md:h-8 text-xs gap-1 px-2.5 bg-green-600 hover:bg-green-700 text-white border-none flex-1"
                                     onClick={() => router.push(`/empregabilidade/vagas/${v.id}`)}
                                 >
                                     <Users className="h-3.5 w-3.5" />
@@ -389,7 +391,7 @@ export default function VagasPage() {
                                 {abaFiltro === "minhas" && (
                                     <Button
                                         variant="outline" size="sm"
-                                        className="h-8 text-xs gap-1 px-2.5"
+                                        className="h-11 md:h-8 text-xs gap-1 px-2.5"
                                         onClick={() => openEditModal(v)}
                                     >
                                         <Pencil className="h-3.5 w-3.5" /> Editar

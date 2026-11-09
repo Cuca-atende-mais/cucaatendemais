@@ -493,7 +493,7 @@ export default function CriarCurriculoEditorPage() {
             {/* ── Barra superior ────────────────────────────────────────────── */}
             <div className="flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-3">
-                    <Button variant="ghost" size="icon" onClick={() => router.back()}>
+                    <Button variant="ghost" size="icon" className="h-11 w-11 md:h-9 md:w-9 shrink-0" aria-label="Voltar" onClick={() => router.back()}>
                         <ArrowLeft className="h-5 w-5" />
                     </Button>
                     <div>
@@ -502,11 +502,11 @@ export default function CriarCurriculoEditorPage() {
                     </div>
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                    <Button variant="outline" onClick={openVagasDialog}>
+                    <Button variant="outline" className="h-11 md:h-9" onClick={openVagasDialog}>
                         <Link2 className="h-4 w-4 mr-2 text-cuca-blue" /> Verificar Vagas em Aberto
                     </Button>
                     <Button
-                        className="bg-cuca-blue hover:bg-sky-800 text-white"
+                        className="bg-cuca-blue hover:bg-sky-800 text-white h-11 md:h-9"
                         onClick={handleSalvar}
                         disabled={saving}
                     >
@@ -587,6 +587,7 @@ export default function CriarCurriculoEditorPage() {
                         <Button
                             type="button"
                             variant="outline"
+                            className="h-11 md:h-9"
                             disabled={gerandoApresentacao}
                             onClick={gerarApresentacaoComIA}
                         >
@@ -618,10 +619,10 @@ export default function CriarCurriculoEditorPage() {
                         const atual = watch(`experiencias.${i}.atual`)
                         const permanencia = calcPermanencia(inicio, fim, atual)
                         return (
-                            <div key={field.id} className="border rounded-lg p-4 space-y-3 relative">
+                            <div key={field.id} className="border rounded-lg p-4 pt-14 md:pt-4 space-y-3 relative">
                                 <Button
                                     type="button" variant="ghost" size="icon"
-                                    className="absolute top-2 right-2 text-destructive"
+                                    className="absolute top-1 right-1 md:top-2 md:right-2 h-11 w-11 md:h-9 md:w-9 text-destructive" aria-label="Remover"
                                     onClick={() => expFields.remove(i)}
                                 >
                                     <Trash2 className="h-4 w-4" />
@@ -693,7 +694,7 @@ export default function CriarCurriculoEditorPage() {
                                                             placeholder={`Atividade ${j + 1}`}
                                                         />
                                                         <Button
-                                                            type="button" variant="ghost" size="icon"
+                                                            type="button" variant="ghost" size="icon" className="h-11 w-11 md:h-9 md:w-9 shrink-0" aria-label="Remover atividade"
                                                             onClick={() => f.onChange(f.value.filter((_: Atividade, k: number) => k !== j))}
                                                         >
                                                             <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -701,7 +702,7 @@ export default function CriarCurriculoEditorPage() {
                                                     </div>
                                                 ))}
                                                 <Button
-                                                    type="button" variant="outline" size="sm"
+                                                    type="button" variant="outline" size="sm" className="h-11 md:h-8"
                                                     onClick={() => f.onChange([...(f.value || []), { descricao: "" }])}
                                                 >
                                                     <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar atividade
@@ -714,7 +715,7 @@ export default function CriarCurriculoEditorPage() {
                         )
                     })}
                     <Button
-                        type="button" variant="outline"
+                        type="button" variant="outline" className="h-11 md:h-9"
                         onClick={() => expFields.append({ empresa: "", cargo: "", data_inicio: "", data_fim: "", atual: false, atividades: [] })}
                     >
                         <Plus className="h-4 w-4 mr-2" /> Adicionar Experiência
@@ -724,10 +725,10 @@ export default function CriarCurriculoEditorPage() {
                 {/* ── Formação ──────────────────────────────────────────────── */}
                 <Section icon={<GraduationCap className="h-4 w-4" />} title="Formação Acadêmica">
                     {formFields.fields.map((field, i) => (
-                        <div key={field.id} className="border rounded-lg p-4 space-y-3 relative">
+                        <div key={field.id} className="border rounded-lg p-4 pt-14 md:pt-4 space-y-3 relative">
                             <Button
                                 type="button" variant="ghost" size="icon"
-                                className="absolute top-2 right-2 text-destructive"
+                                className="absolute top-1 right-1 md:top-2 md:right-2 h-11 w-11 md:h-9 md:w-9 text-destructive" aria-label="Remover"
                                 onClick={() => formFields.remove(i)}
                             >
                                 <Trash2 className="h-4 w-4" />
@@ -784,7 +785,7 @@ export default function CriarCurriculoEditorPage() {
                         </div>
                     ))}
                     <Button
-                        type="button" variant="outline"
+                        type="button" variant="outline" className="h-11 md:h-9"
                         onClick={() => formFields.append({ escolaridade: "", instituicao: "", curso: "", status: "concluido", ano: "" })}
                     >
                         <Plus className="h-4 w-4 mr-2" /> Adicionar Formação
@@ -794,10 +795,10 @@ export default function CriarCurriculoEditorPage() {
                 {/* ── Cursos ────────────────────────────────────────────────── */}
                 <Section icon={<BookOpen className="h-4 w-4" />} title="Cursos e Certificações" defaultOpen={false}>
                     {cursoFields.fields.map((field, i) => (
-                        <div key={field.id} className="border rounded-lg p-4 space-y-3 relative">
+                        <div key={field.id} className="border rounded-lg p-4 pt-14 md:pt-4 space-y-3 relative">
                             <Button
                                 type="button" variant="ghost" size="icon"
-                                className="absolute top-2 right-2 text-destructive"
+                                className="absolute top-1 right-1 md:top-2 md:right-2 h-11 w-11 md:h-9 md:w-9 text-destructive" aria-label="Remover"
                                 onClick={() => cursoFields.remove(i)}
                             >
                                 <Trash2 className="h-4 w-4" />
@@ -823,7 +824,7 @@ export default function CriarCurriculoEditorPage() {
                         </div>
                     ))}
                     <Button
-                        type="button" variant="outline"
+                        type="button" variant="outline" className="h-11 md:h-9"
                         onClick={() => cursoFields.append({ titulo: "", instituicao: "", ano: "", descricao: "" })}
                     >
                         <Plus className="h-4 w-4 mr-2" /> Adicionar Curso
@@ -833,16 +834,16 @@ export default function CriarCurriculoEditorPage() {
                 {/* ── Habilidades ───────────────────────────────────────────── */}
                 <Section icon={<Wrench className="h-4 w-4" />} title="Habilidades Técnicas" defaultOpen={false}>
                     {habFields.fields.map((field, i) => (
-                        <div key={field.id} className="flex gap-2 items-start">
-                            <Input {...register(`habilidades.${i}.titulo`)} placeholder="Ex: Excel" className="w-40 flex-shrink-0" />
-                            <Input {...register(`habilidades.${i}.descricao`)} placeholder="Nível ou detalhe (opcional)" className="flex-1" />
-                            <Button type="button" variant="ghost" size="icon" onClick={() => habFields.remove(i)}>
+                        <div key={field.id} className="flex flex-wrap sm:flex-nowrap gap-2 items-start">
+                            <Input {...register(`habilidades.${i}.titulo`)} placeholder="Ex: Excel" className="w-full sm:w-40 flex-shrink-0" />
+                            <Input {...register(`habilidades.${i}.descricao`)} placeholder="Nível ou detalhe (opcional)" className="flex-1 min-w-0" />
+                            <Button type="button" variant="ghost" size="icon" className="h-11 w-11 md:h-9 md:w-9 shrink-0" aria-label="Remover habilidade" onClick={() => habFields.remove(i)}>
                                 <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
                         </div>
                     ))}
                     <Button
-                        type="button" variant="outline"
+                        type="button" variant="outline" className="h-11 md:h-9"
                         onClick={() => habFields.append({ titulo: "", descricao: "" })}
                     >
                         <Plus className="h-4 w-4 mr-2" /> Adicionar Habilidade
@@ -854,7 +855,7 @@ export default function CriarCurriculoEditorPage() {
                 <div className="flex justify-end">
                     <Button
                         type="submit"
-                        className="bg-cuca-blue hover:bg-sky-800 text-white"
+                        className="bg-cuca-blue hover:bg-sky-800 text-white h-11 md:h-9"
                         disabled={saving}
                     >
                         {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
@@ -866,7 +867,7 @@ export default function CriarCurriculoEditorPage() {
 
             {/* ── Dialog: Verificar Vagas em Aberto (RN2) ─────────────────── */}
             <Dialog open={vagasOpen} onOpenChange={o => { if (!o) setVagasOpen(false) }}>
-                <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+                <DialogContent className="flex flex-col">
                     <DialogHeader>
                         <DialogTitle>Vagas em Aberto</DialogTitle>
                         <DialogDescription>
@@ -882,7 +883,7 @@ export default function CriarCurriculoEditorPage() {
                             onChange={e => setVagaSearch(e.target.value)}
                         />
                     </div>
-                    <div className="overflow-y-auto flex-1 divide-y divide-border border rounded-lg">
+                    <div className="overflow-y-auto flex-1 min-h-0 divide-y divide-border border rounded-lg">
                         {vagaLoading ? (
                             <div className="flex items-center justify-center py-8">
                                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -901,6 +902,7 @@ export default function CriarCurriculoEditorPage() {
                                 </div>
                                 <Button
                                     size="sm"
+                                    className="h-11 md:h-8 shrink-0"
                                     disabled={vinculando === v.id}
                                     onClick={() => handleVincular(v)}
                                 >

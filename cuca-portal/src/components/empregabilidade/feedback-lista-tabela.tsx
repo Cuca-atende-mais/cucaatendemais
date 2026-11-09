@@ -130,18 +130,46 @@ export function FeedbackListaTabela({ empresaId, onAbrir }: Props) {
                     <p className="py-8 text-center text-sm text-muted-foreground">Nenhum feedback encontrado com esses filtros.</p>
                 ) : (
                     <>
-                        <div className="overflow-x-auto">
-                            <Table>
+                        {/* Abaixo de lg (celular e tablet): cada vaga vira um cartão clicável */}
+                        <div className="space-y-2 lg:hidden">
+                            {visiveis.map(l => (
+                                <button
+                                    key={l.vaga_id}
+                                    type="button"
+                                    aria-label={`Abrir o feedback de ${rotuloVaga(l)} — ${l.empresa_nome}`}
+                                    className="w-full rounded-lg border p-3 text-left space-y-1.5 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cuca-blue"
+                                    onClick={() => onAbrir(l.vaga_id)}
+                                >
+                                    <p className="font-medium break-words">{rotuloVaga(l)}</p>
+                                    <p className="text-sm text-muted-foreground break-words">{l.empresa_nome}</p>
+                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+                                        <span>{dataHora(l.ultimo.created_at)}</span>
+                                        <Badge variant="outline" className={COR_ENVIO[l.ultimo.status_envio] ?? ""}>
+                                            {rotuloStatusEnvio(l.ultimo.status_envio, l.ultimo.erro_envio)}
+                                        </Badge>
+                                        <span>{rotuloFeedback(l.ultimo)}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                        {l.ultimo.candidatos} candidato(s) · {l.pedidos} pedido(s){l.ultimo.enviado_por ? ` · por ${l.ultimo.enviado_por}` : ""}
+                                    </p>
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* A partir de lg: tabela. Em 1024 ficam Último envio, Empresa, Vaga, Mensagem e
+                            Feedback; Candidatos, Pedidos e Enviado por aparecem a partir de xl (1280px). */}
+                        <div className="hidden lg:block">
+                            <Table cabecalhoFixo>
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead>Último envio</TableHead>
                                         <TableHead>Empresa</TableHead>
                                         <TableHead>Vaga</TableHead>
-                                        <TableHead>Candidatos</TableHead>
-                                        <TableHead>Pedidos</TableHead>
+                                        <TableHead className="hidden xl:table-cell">Candidatos</TableHead>
+                                        <TableHead className="hidden xl:table-cell">Pedidos</TableHead>
                                         <TableHead>Mensagem</TableHead>
                                         <TableHead>Feedback</TableHead>
-                                        <TableHead>Enviado por</TableHead>
+                                        <TableHead className="hidden xl:table-cell">Enviado por</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -156,17 +184,17 @@ export function FeedbackListaTabela({ empresaId, onAbrir }: Props) {
                                             onKeyDown={e => { if (e.key === "Enter") onAbrir(l.vaga_id) }}
                                         >
                                             <TableCell className="whitespace-nowrap">{dataHora(l.ultimo.created_at)}</TableCell>
-                                            <TableCell className="max-w-[14rem] truncate font-medium">{l.empresa_nome}</TableCell>
-                                            <TableCell className="max-w-[18rem] truncate">{rotuloVaga(l)}</TableCell>
-                                            <TableCell>{l.ultimo.candidatos}</TableCell>
-                                            <TableCell>{l.pedidos}</TableCell>
+                                            <TableCell className="max-w-[10rem] xl:max-w-[14rem] truncate font-medium">{l.empresa_nome}</TableCell>
+                                            <TableCell className="max-w-[12rem] xl:max-w-[18rem] truncate">{rotuloVaga(l)}</TableCell>
+                                            <TableCell className="hidden xl:table-cell">{l.ultimo.candidatos}</TableCell>
+                                            <TableCell className="hidden xl:table-cell">{l.pedidos}</TableCell>
                                             <TableCell>
                                                 <Badge variant="outline" className={COR_ENVIO[l.ultimo.status_envio] ?? ""}>
                                                     {rotuloStatusEnvio(l.ultimo.status_envio, l.ultimo.erro_envio)}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className="whitespace-nowrap">{rotuloFeedback(l.ultimo)}</TableCell>
-                                            <TableCell className="max-w-[12rem] truncate">{l.ultimo.enviado_por || "—"}</TableCell>
+                                            <TableCell className="hidden xl:table-cell max-w-[12rem] truncate">{l.ultimo.enviado_por || "—"}</TableCell>
                                         </TableRow>
                                     ))}
                                 </TableBody>
@@ -179,11 +207,11 @@ export function FeedbackListaTabela({ empresaId, onAbrir }: Props) {
                                     {paginaAtual * POR_PAGINA + 1}–{Math.min((paginaAtual + 1) * POR_PAGINA, filtradas.length)} de {filtradas.length}
                                 </span>
                                 <div className="flex items-center gap-2">
-                                    <Button variant="outline" size="sm" disabled={paginaAtual === 0} onClick={() => setPagina(paginaAtual - 1)} aria-label="Página anterior">
+                                    <Button variant="outline" size="sm" className="h-11 w-11 md:h-8 md:w-auto" disabled={paginaAtual === 0} onClick={() => setPagina(paginaAtual - 1)} aria-label="Página anterior">
                                         <ChevronLeft className="h-4 w-4" />
                                     </Button>
                                     <span className="text-xs tabular-nums">{paginaAtual + 1} / {totalPaginas}</span>
-                                    <Button variant="outline" size="sm" disabled={paginaAtual >= totalPaginas - 1} onClick={() => setPagina(paginaAtual + 1)} aria-label="Próxima página">
+                                    <Button variant="outline" size="sm" className="h-11 w-11 md:h-8 md:w-auto" disabled={paginaAtual >= totalPaginas - 1} onClick={() => setPagina(paginaAtual + 1)} aria-label="Próxima página">
                                         <ChevronRight className="h-4 w-4" />
                                     </Button>
                                 </div>

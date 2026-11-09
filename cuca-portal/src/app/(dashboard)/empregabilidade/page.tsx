@@ -57,7 +57,7 @@ export default function EmpregabilidadeDashboard() {
 
     if (loading) {
         return (
-            <div className="p-6 space-y-4 animate-pulse">
+            <div className="md:p-6 space-y-4 animate-pulse">
                 <div className="h-8 w-64 bg-muted rounded" />
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {[...Array(4)].map((_, i) => <div key={i} className="h-28 bg-muted rounded-xl" />)}
@@ -66,7 +66,7 @@ export default function EmpregabilidadeDashboard() {
         )
     }
 
-    if (!data) return <div className="p-6 text-muted-foreground">Erro ao carregar analytics.</div>
+    if (!data) return <div className="md:p-6 text-muted-foreground">Erro ao carregar analytics.</div>
 
     const tb = data.talent_bank
     const vagas = data.vagas
@@ -91,7 +91,7 @@ export default function EmpregabilidadeDashboard() {
         : 0
 
     return (
-        <div className="p-6 space-y-6 max-w-7xl mx-auto">
+        <div className="md:p-6 space-y-6 max-w-7xl mx-auto">
             <div>
                 <h1 className="text-2xl font-bold">Painel de Empregabilidade</h1>
                 <p className="text-muted-foreground text-sm mt-1">Visão geral do banco de talentos, vagas e candidaturas.</p>
@@ -171,8 +171,8 @@ export default function EmpregabilidadeDashboard() {
                     <CardContent>
                         <ResponsiveContainer width="100%" height={260}>
                             <BarChart data={data.areas} layout="vertical" margin={{ left: 0, right: 16 }}>
-                                <XAxis type="number" tick={{ fontSize: 11 }} />
-                                <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+                                <XAxis type="number" tick={{ fontSize: 13 }} />
+                                <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 13 }} />
                                 <Tooltip />
                                 <Bar dataKey="value" name="Candidatos" radius={[0, 4, 4, 0]}>
                                     {data.areas.map((_: any, i: number) => (
@@ -227,8 +227,8 @@ export default function EmpregabilidadeDashboard() {
                     <CardContent>
                         <ResponsiveContainer width="100%" height={220}>
                             <BarChart data={data.escolaridade} layout="vertical" margin={{ left: 0, right: 16 }}>
-                                <XAxis type="number" tick={{ fontSize: 11 }} />
-                                <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 10 }} />
+                                <XAxis type="number" tick={{ fontSize: 13 }} />
+                                <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 13 }} />
                                 <Tooltip />
                                 <Bar dataKey="value" name="Candidatos" fill="#22c55e" radius={[0, 4, 4, 0]} />
                             </BarChart>

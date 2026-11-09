@@ -53,9 +53,9 @@ function ScoreCircle({ score }: { score: number | null | undefined }) {
         : s >= 50 ? "text-amber-400 border-amber-500/40 bg-amber-500/10"
             : "text-red-400 border-red-500/40 bg-red-500/10"
     return (
-        <div className={`w-16 h-16 rounded-full border-2 flex flex-col items-center justify-center ${color}`}>
+        <div className={`w-16 h-16 rounded-full border-2 flex flex-col items-center justify-center shrink-0 ${color}`}>
             <span className="text-xl font-bold leading-none">{s}</span>
-            <span className="text-[10px] leading-none mt-0.5 opacity-70">match</span>
+            <span className="text-xs leading-none mt-0.5 opacity-70">match</span>
         </div>
     )
 }
@@ -452,12 +452,12 @@ export default function CandidatoDetalhesPage() {
         <div className="space-y-6 pb-10">
             {/* Navegação */}
             <div className="flex items-center gap-3">
-                <Button variant="outline" size="icon" onClick={() => router.push(`/empregabilidade/vagas/${vagaId}`)}>
+                <Button variant="outline" size="icon" className="h-11 w-11 md:h-9 md:w-9 shrink-0" aria-label="Voltar para a vaga" onClick={() => router.push(`/empregabilidade/vagas/${vagaId}`)}>
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
-                <div>
-                    <p className="text-xs text-muted-foreground">Vagas / {vaga?.titulo}</p>
-                    <h1 className="text-xl font-bold leading-tight">{candidatura.nome}</h1>
+                <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground break-words">Vagas / {vaga?.titulo}</p>
+                    <h1 className="text-xl font-bold leading-tight break-words">{candidatura.nome}</h1>
                 </div>
             </div>
 
@@ -471,12 +471,12 @@ export default function CandidatoDetalhesPage() {
                         <CardContent className="p-5">
                             <div className="flex items-start gap-4">
                                 <ScoreCircle score={score} />
-                                <div className="flex-1 space-y-2">
+                                <div className="flex-1 min-w-0 space-y-2">
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <h2 className="text-lg font-bold">{candidatura.nome}</h2>
                                         <StatusBadge status={candidatura.status} />
                                     </div>
-                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1.5">
                                         {idade !== null && (
                                             <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
                                                 <User className="h-3.5 w-3.5" />
@@ -624,8 +624,8 @@ export default function CandidatoDetalhesPage() {
                     )}
                 </div>
 
-                {/* ── Coluna Direita: ações ── */}
-                <div className="space-y-4">
+                {/* ── Coluna Direita: ações ── (botões com 44px no celular) */}
+                <div className="space-y-4 max-md:[&_button]:h-11">
 
                     {/* Status atual + alterar */}
                     <Card className="border-none shadow-sm">

@@ -290,10 +290,45 @@ function CriarCurriculoListContent() {
 
     const totalPages = Math.ceil(total / PAGE_SIZE)
 
+    const badgeDados = (temDados: boolean) => (
+        <Badge variant="outline" className={temDados
+            ? "bg-green-500/10 text-green-400 border-green-500/30 shrink-0"
+            : "bg-zinc-500/10 text-zinc-400 border-zinc-500/30 shrink-0"
+        }>
+            {temDados ? "Preenchido" : "Em branco"}
+        </Badge>
+    )
+
+    // Botões do currículo, iguais na tabela e nos cartões
+    const acoesCurriculo = (c: (typeof curriculos)[number]) => (
+        <>
+            <Button variant="ghost" size="icon" title="Editar currículo" aria-label="Editar currículo"
+                onClick={() => router.push(`/empregabilidade/criar-curriculo/${c.talent_id}`)}>
+                <PenLine className="h-4 w-4" />
+            </Button>
+            <Button
+                variant={c.id === destaque ? "outline" : "ghost"}
+                size="icon"
+                className={c.id === destaque ? "border-cuca-yellow text-cuca-blue animate-pulse" : ""}
+                title="Imprimir / Salvar PDF"
+                aria-label="Imprimir ou salvar PDF"
+                onClick={() => router.push(`/empregabilidade/print/${c.id}`)}
+            >
+                <Printer className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" title="Encaminhar para vaga" aria-label="Encaminhar para vaga" onClick={() => openVincularModal(c)}>
+                <Link2 className="h-4 w-4 text-cuca-blue" />
+            </Button>
+            <Button variant="ghost" size="icon" title="Arquivar currículo" aria-label="Arquivar currículo" onClick={() => handleDelete(c)}>
+                <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+        </>
+    )
+
     return (
         <div className="space-y-6">
             {/* Cabeçalho */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Criar Currículo</h1>
                     <p className="text-muted-foreground">
@@ -301,7 +336,7 @@ function CriarCurriculoListContent() {
                     </p>
                 </div>
                 <Button
-                    className="bg-cuca-yellow hover:bg-yellow-500 font-bold"
+                    className="bg-cuca-yellow hover:bg-yellow-500 font-bold self-start sm:self-auto shrink-0 h-11 md:h-9"
                     onClick={() => setNovoOpen(true)}
                 >
                     <UserPlus className="mr-2 h-4 w-4" /> Novo Currículo
@@ -342,13 +377,43 @@ function CriarCurriculoListContent() {
                             </Button>
                         </div>
                     ) : (
-                        <div className="overflow-x-auto">
-                            <Table>
+                        <>
+                        {/* Abaixo de lg (celular e tablet): cada currículo vira um cartão */}
+                        <div className="divide-y lg:hidden">
+                            {curriculos.map(c => {
+                                const nome = c.talent_bank?.nome ?? "—"
+                                const dados = c.dados || {}
+                                const temDados = Object.keys(dados).length > 1
+                                const objetivoTexto = typeof dados.objetivo === "string" ? dados.objetivo : ""
+                                return (
+                                    <div key={c.id} className={`px-4 py-3 space-y-2 ${c.id === destaque ? "bg-cuca-yellow/10" : ""}`}>
+                                        <div className="flex items-start gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-cuca-blue/15 text-cuca-blue flex items-center justify-center text-xs font-bold flex-shrink-0">
+                                                {nome.charAt(0).toUpperCase()}
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="font-medium text-sm break-words">{nome}</p>
+                                                <p className="text-xs text-muted-foreground">{c.talent_bank?.telefone || "—"} · {format(new Date(c.updated_at), "dd/MM/yyyy", { locale: ptBR })}</p>
+                                            </div>
+                                            {badgeDados(temDados)}
+                                        </div>
+                                        {objetivoTexto && <p className="text-sm text-muted-foreground line-clamp-2">{objetivoTexto}</p>}
+                                        <div className="flex justify-end gap-1 max-md:[&_button]:h-11 max-md:[&_button]:w-11">
+                                            {acoesCurriculo(c)}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+
+                        {/* A partir de lg: tabela; Atualizado em aparece a partir de xl (1280px) */}
+                        <div className="hidden lg:block">
+                            <Table cabecalhoFixo>
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead>Candidato</TableHead>
-                                        <TableHead className="hidden md:table-cell">Objetivo / Área</TableHead>
-                                        <TableHead className="hidden lg:table-cell">Atualizado em</TableHead>
+                                        <TableHead>Objetivo / Área</TableHead>
+                                        <TableHead className="hidden xl:table-cell">Atualizado em</TableHead>
                                         <TableHead>Status</TableHead>
                                         <TableHead className="text-right">Ações</TableHead>
                                     </TableRow>
@@ -379,52 +444,18 @@ function CriarCurriculoListContent() {
                                                         </div>
                                                     </div>
                                                 </TableCell>
-                                                <TableCell className="hidden md:table-cell text-sm text-muted-foreground max-w-[200px] truncate">
+                                                <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                                                     {objetivo}
                                                 </TableCell>
-                                                <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
+                                                <TableCell className="hidden xl:table-cell text-sm text-muted-foreground">
                                                     {atualizado}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <Badge variant="outline" className={temDados
-                                                        ? "bg-green-500/10 text-green-400 border-green-500/30"
-                                                        : "bg-zinc-500/10 text-zinc-400 border-zinc-500/30"
-                                                    }>
-                                                        {temDados ? "Preenchido" : "Em branco"}
-                                                    </Badge>
+                                                    {badgeDados(temDados)}
                                                 </TableCell>
                                                 <TableCell className="text-right">
                                                     <div className="flex items-center justify-end gap-1">
-                                                        <Button
-                                                            variant="ghost" size="icon"
-                                                            title="Editar currículo"
-                                                            onClick={() => router.push(`/empregabilidade/criar-curriculo/${c.talent_id}`)}
-                                                        >
-                                                            <PenLine className="h-4 w-4" />
-                                                        </Button>
-                                                        <Button
-                                                            variant={c.id === destaque ? "outline" : "ghost"}
-                                                            size="icon"
-                                                            className={c.id === destaque ? "border-cuca-yellow text-cuca-blue animate-pulse" : ""}
-                                                            title="Imprimir / Salvar PDF"
-                                                            onClick={() => router.push(`/empregabilidade/print/${c.id}`)}
-                                                        >
-                                                            <Printer className="h-4 w-4" />
-                                                        </Button>
-                                                        <Button
-                                                            variant="ghost" size="icon"
-                                                            title="Encaminhar para vaga"
-                                                            onClick={() => openVincularModal(c)}
-                                                        >
-                                                            <Link2 className="h-4 w-4 text-cuca-blue" />
-                                                        </Button>
-                                                        <Button
-                                                            variant="ghost" size="icon"
-                                                            title="Arquivar currículo"
-                                                            onClick={() => handleDelete(c)}
-                                                        >
-                                                            <Trash2 className="h-4 w-4 text-destructive" />
-                                                        </Button>
+                                                        {acoesCurriculo(c)}
                                                     </div>
                                                 </TableCell>
                                             </TableRow>
@@ -433,20 +464,21 @@ function CriarCurriculoListContent() {
                                 </TableBody>
                             </Table>
                         </div>
+                        </>
                     )}
 
                     {/* Paginação */}
                     {totalPages > 1 && (
-                        <div className="flex items-center justify-between px-6 py-4 border-t">
+                        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 border-t">
                             <span className="text-xs text-muted-foreground">
                                 {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} de {total}
                             </span>
                             <div className="flex items-center gap-2">
-                                <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
+                                <Button variant="outline" size="sm" className="h-11 w-11 md:h-8 md:w-auto" aria-label="Página anterior" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
                                     <ChevronLeft className="h-4 w-4" />
                                 </Button>
                                 <span className="text-xs tabular-nums">{page + 1} / {totalPages}</span>
-                                <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
+                                <Button variant="outline" size="sm" className="h-11 w-11 md:h-8 md:w-auto" aria-label="Próxima página" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
                                     <ChevronRight className="h-4 w-4" />
                                 </Button>
                             </div>
@@ -457,7 +489,7 @@ function CriarCurriculoListContent() {
 
             {/* ── Dialog: Novo Candidato ──────────────────────────────────────── */}
             <Dialog open={novoOpen} onOpenChange={o => { if (!o) setNovoOpen(false) }}>
-                <DialogContent className="max-w-md">
+                <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Novo Currículo</DialogTitle>
                         <DialogDescription>
@@ -508,7 +540,7 @@ function CriarCurriculoListContent() {
                                 </SelectContent>
                             </Select>
                         </div>
-                        <div className="flex justify-end gap-3 pt-2">
+                        <div className="flex justify-end gap-3 pt-2 max-md:[&_button]:h-11">
                             <Button type="button" variant="outline" onClick={() => setNovoOpen(false)}>Cancelar</Button>
                             <Button
                                 type="submit"
@@ -525,7 +557,7 @@ function CriarCurriculoListContent() {
 
             {/* ── Dialog: Vincular a Vaga ─────────────────────────────────────── */}
             <Dialog open={!!vincularCurriculo} onOpenChange={o => { if (!o) setVincularCurriculo(null) }}>
-                <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+                <DialogContent className="flex flex-col">
                     <DialogHeader>
                         <DialogTitle>Encaminhar para Vaga</DialogTitle>
                         <DialogDescription>
@@ -541,7 +573,7 @@ function CriarCurriculoListContent() {
                             onChange={e => setVagaSearch(e.target.value)}
                         />
                     </div>
-                    <div className="overflow-y-auto flex-1 divide-y divide-border border rounded-lg">
+                    <div className="overflow-y-auto flex-1 min-h-0 divide-y divide-border border rounded-lg">
                         {vagaLoading ? (
                             <div className="flex items-center justify-center py-8">
                                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -558,6 +590,7 @@ function CriarCurriculoListContent() {
                                 </div>
                                 <Button
                                     size="sm"
+                                    className="h-11 md:h-8 shrink-0"
                                     disabled={vinculando === v.id}
                                     onClick={() => handleVincular(v)}
                                 >

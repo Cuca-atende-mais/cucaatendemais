@@ -63,7 +63,7 @@ export function useDiasSemResposta(vagaIds: string[]): Map<string, number> {
 export function SeloSemResposta({ dias }: { dias: number | undefined }) {
     if (dias === undefined) return null
     return (
-        <Badge variant="outline" className="gap-1 border-amber-300 bg-amber-50 text-amber-900 whitespace-nowrap">
+        <Badge variant="outline" className="gap-1 border-amber-300 bg-amber-50 text-amber-900 whitespace-normal text-left">
             <Clock className="h-3 w-3" /> {textoSelo(dias)}
         </Badge>
     )

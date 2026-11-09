@@ -517,6 +517,44 @@ function FeedbackConteudo() {
         )
     }
 
+    // Status do candidato: seletor quando dá para editar, selo quando não. Igual na tabela e nos cartões.
+    const statusCandidato = (c: (typeof candidatos)[number], editavel: boolean, classeSeletor: string) =>
+        editavel && podeIndividual ? (
+            <Select
+                value={c.status}
+                disabled={linhaSalvando === c.id}
+                onValueChange={v => { if (v !== c.status) mudarIndividual(c.id, v as StatusEditavel) }}
+            >
+                <SelectTrigger className={classeSeletor} aria-label={`Status de ${c.nome ?? "candidato"}`}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                    {STATUS_EDITAVEIS.map(s => <SelectItem key={s} value={s}>{rotuloStatusCandidatura(s)}</SelectItem>)}
+                </SelectContent>
+            </Select>
+        ) : (
+            <Badge variant="outline" className={COR_STATUS[c.status] ?? ""}>
+                {rotuloStatusCandidatura(c.status)}
+            </Badge>
+        )
+
+    // Reenviar e abrir no Atendimento, iguais na tabela e nos cartões
+    const acoesPedido = (s: (typeof solicitacoes)[number], classe: string) => (
+        <div className={classe}>
+            {podeReenviarPedido && podeReenviar(s) && (
+                <Button variant="outline" size="sm" className="h-7 gap-1" disabled={reenviando !== null}
+                    onClick={() => reenviar(s.id)}>
+                    {reenviando === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                    Reenviar
+                </Button>
+            )}
+            {s.conversa_id && (
+                <Link href={`/empregabilidade/mensagens?conversa=${s.conversa_id}`}
+                    className="inline-flex items-center gap-1 text-sm text-cuca-blue hover:underline whitespace-nowrap max-md:min-h-11">
+                    Abrir no Atendimento <ExternalLink className="h-3.5 w-3.5" />
+                </Link>
+            )}
+        </div>
+    )
+
     return (
         <div className="space-y-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -532,7 +570,7 @@ function FeedbackConteudo() {
                     </p>
                 </div>
                 {vagaId && (
-                    <Button variant="outline" className="gap-2" onClick={voltarParaLista}>
+                    <Button variant="outline" className="gap-2 h-11 md:h-9" onClick={voltarParaLista}>
                         <ArrowLeft className="h-4 w-4" />
                         Voltar para a lista
                     </Button>
@@ -577,7 +615,7 @@ function FeedbackConteudo() {
                                     : `Respondeu ${taxa.respondidas} de ${taxa.enviadas} ${taxa.enviadas === 1 ? "solicitação" : "solicitações"} (${taxa.percentual}%).`)}
                             </p>
                             {!vagaId && empresaFiltro && (
-                                <Button variant="ghost" size="sm" onClick={verTodas}>Ver todas</Button>
+                                <Button variant="ghost" size="sm" className="h-11 md:h-8" onClick={verTodas}>Ver todas</Button>
                             )}
                         </div>
                     )}
@@ -617,7 +655,7 @@ function FeedbackConteudo() {
                         </div>
                         {podeEditarContato && (
                             <div className="md:col-span-3 flex justify-end">
-                                <Button onClick={salvarContato} disabled={salvandoContato} className="gap-2">
+                                <Button onClick={salvarContato} disabled={salvandoContato} className="gap-2 h-11 md:h-9">
                                     {salvandoContato ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                                     Salvar contato
                                 </Button>
@@ -645,7 +683,7 @@ function FeedbackConteudo() {
                             {ehSelecao ? (
                                 <Button
                                     variant="outline"
-                                    className="gap-2"
+                                    className="gap-2 h-11 md:h-9"
                                     disabled={marcados.size === 0}
                                     title="Disponível em breve"
                                     onClick={() => toast("O pedido de feedback da seleção chega na próxima etapa.")}
@@ -656,7 +694,7 @@ function FeedbackConteudo() {
                             ) : podeSolicitar && (
                                 <Button
                                     variant="outline"
-                                    className="gap-2"
+                                    className="gap-2 h-11 md:h-9"
                                     disabled={marcados.size === 0 || enviandoPedido}
                                     onClick={() => { setConfirmandoPedido(true); setErroPedido(null) }}
                                 >
@@ -666,14 +704,14 @@ function FeedbackConteudo() {
                             )}
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 max-md:[&_button]:h-11">
                             <Button variant="outline" size="sm" onClick={alternarTodos} disabled={marcaveis.length === 0}>
                                 {todosMarcados ? "Desmarcar todos" : "Marcar todos"}
                             </Button>
                             {podeLote && (<>
                                 <span className="text-sm text-muted-foreground">Mudar status dos marcados para</span>
                                 <Select value={statusLote} onValueChange={v => { setStatusLote(v as StatusEditavel); setConfirmandoLote(false) }}>
-                                    <SelectTrigger className="w-44"><SelectValue placeholder="Escolha o status" /></SelectTrigger>
+                                    <SelectTrigger className="w-full sm:w-44 max-md:data-[size=default]:h-11"><SelectValue placeholder="Escolha o status" /></SelectTrigger>
                                     <SelectContent>
                                         {STATUS_EDITAVEIS.map(s => <SelectItem key={s} value={s}>{rotuloStatusCandidatura(s)}</SelectItem>)}
                                     </SelectContent>
@@ -692,7 +730,7 @@ function FeedbackConteudo() {
                                         ? `Enviar à empresa, pelo WhatsApp ${telefonePedido}, o link para avaliar ${marcados.size} ${marcados.size === 1 ? "candidato" : "candidatos"}? O link vale ${VALIDADE_LINK_HORAS}h.`
                                         : "A vaga não tem telefone de contato salvo. Salve o contato antes de enviar."}
                                 </span>
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 max-md:[&_button]:h-11">
                                     <Button variant="outline" size="sm" onClick={() => setConfirmandoPedido(false)} disabled={enviandoPedido}>Cancelar</Button>
                                     <Button size="sm" onClick={solicitarFeedback} disabled={enviandoPedido || !telefonePedido} className="gap-2">
                                         {enviandoPedido && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -718,7 +756,7 @@ function FeedbackConteudo() {
                                     {textoConfirmacaoLote(marcados.size, statusLote)}
                                     {statusLote === "rejeitado" && " Quem não estiver em outro processo volta ao Banco de Talentos."}
                                 </span>
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 max-md:[&_button]:h-11">
                                     <Button variant="outline" size="sm" onClick={() => setConfirmandoLote(false)} disabled={aplicando}>Cancelar</Button>
                                     <Button size="sm" onClick={aplicarLote} disabled={aplicando} className="gap-2">
                                         {aplicando && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -751,15 +789,47 @@ function FeedbackConteudo() {
                         ) : candidatos.length === 0 ? (
                             <p className="py-8 text-center text-sm text-muted-foreground">Nenhum candidato para mostrar.</p>
                         ) : (
-                            <div className="overflow-x-auto">
-                                <Table>
+                            <>
+                            {/* Abaixo de lg (celular e tablet): cada candidato vira um cartão */}
+                            <div className="space-y-2 lg:hidden">
+                                {candidatos.map(c => {
+                                    const editavel = ehStatusEditavel(c.status)
+                                    return (
+                                        <div key={c.id} className="rounded-lg border p-3 space-y-2">
+                                            <div className="flex items-start gap-3">
+                                                <Checkbox
+                                                    className="mt-1"
+                                                    checked={marcados.has(c.id)}
+                                                    disabled={!editavel}
+                                                    onCheckedChange={() => alternar(c.id)}
+                                                    aria-label={`Marcar ${c.nome ?? "candidato"}`}
+                                                />
+                                                <div className="min-w-0 flex-1 space-y-1">
+                                                    <p className="font-medium break-words">{c.nome || "Sem nome"}</p>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        Candidatura {dataCurta(c.created_at)} · {ehSelecao ? `Presença: ${rotuloPresenca(c.confirmacao_presenca)}` : `Enviado em ${dataCurta(c.email_enviado_em)}`}
+                                                    </p>
+                                                    <Badge variant="outline">
+                                                        {origemCandidatura(c.observacoes) === "banco_talentos" ? "Banco de Talentos" : "Candidatura direta"}
+                                                    </Badge>
+                                                </div>
+                                            </div>
+                                            {statusCandidato(c, editavel, "max-md:data-[size=default]:h-11 w-full")}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+
+                            {/* A partir de lg: tabela; Origem aparece a partir de xl (1280px) */}
+                            <div className="hidden lg:block">
+                                <Table cabecalhoFixo>
                                     <TableHeader>
                                         <TableRow>
                                             <TableHead className="w-10" />
                                             <TableHead>Nome</TableHead>
                                             <TableHead>Candidatura</TableHead>
                                             <TableHead>{ehSelecao ? "Presença" : "Enviado em"}</TableHead>
-                                            <TableHead>Origem</TableHead>
+                                            <TableHead className="hidden xl:table-cell">Origem</TableHead>
                                             <TableHead className="w-48">Status</TableHead>
                                         </TableRow>
                                     </TableHeader>
@@ -779,28 +849,13 @@ function FeedbackConteudo() {
                                                     <TableCell className="font-medium max-w-[16rem] truncate">{c.nome || "Sem nome"}</TableCell>
                                                     <TableCell>{dataCurta(c.created_at)}</TableCell>
                                                     <TableCell>{ehSelecao ? rotuloPresenca(c.confirmacao_presenca) : dataCurta(c.email_enviado_em)}</TableCell>
-                                                    <TableCell>
+                                                    <TableCell className="hidden xl:table-cell">
                                                         <Badge variant="outline">
                                                             {origemCandidatura(c.observacoes) === "banco_talentos" ? "Banco de Talentos" : "Candidatura direta"}
                                                         </Badge>
                                                     </TableCell>
                                                     <TableCell>
-                                                        {editavel && podeIndividual ? (
-                                                            <Select
-                                                                value={c.status}
-                                                                disabled={linhaSalvando === c.id}
-                                                                onValueChange={v => { if (v !== c.status) mudarIndividual(c.id, v as StatusEditavel) }}
-                                                            >
-                                                                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                                                                <SelectContent>
-                                                                    {STATUS_EDITAVEIS.map(s => <SelectItem key={s} value={s}>{rotuloStatusCandidatura(s)}</SelectItem>)}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        ) : (
-                                                            <Badge variant="outline" className={COR_STATUS[c.status] ?? ""}>
-                                                                {rotuloStatusCandidatura(c.status)}
-                                                            </Badge>
-                                                        )}
+                                                        {statusCandidato(c, editavel, "h-8")}
                                                     </TableCell>
                                                 </TableRow>
                                             )
@@ -808,6 +863,7 @@ function FeedbackConteudo() {
                                     </TableBody>
                                 </Table>
                             </div>
+                            </>
                         )}
                     </CardContent>
                 </Card>
@@ -824,12 +880,30 @@ function FeedbackConteudo() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="overflow-x-auto">
+                        {/* Abaixo de lg (celular e tablet): cada pedido vira um cartão */}
+                        <div className="space-y-2 lg:hidden">
+                            {solicitacoes.map(s => (
+                                <div key={s.id} className="rounded-lg border p-3 space-y-2">
+                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+                                        <span className="font-medium">{dataHora(s.created_at)}</span>
+                                        <Badge variant="outline" className={COR_ENVIO[s.status_envio] ?? ""}>
+                                            {rotuloStatusEnvio(s.status_envio, s.erro_envio)}
+                                        </Badge>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground break-words">
+                                        {s.candidatos} candidato(s) · {rotuloFeedback(s)}{s.enviado_por ? ` · por ${s.enviado_por}` : ""}
+                                    </p>
+                                    {acoesPedido(s, "flex flex-wrap items-center gap-3 max-md:[&_button]:h-11")}
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="hidden lg:block">
                             <Table>
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead>Enviado em</TableHead>
-                                        <TableHead>Por</TableHead>
+                                        <TableHead className="hidden xl:table-cell">Por</TableHead>
                                         <TableHead>Candidatos</TableHead>
                                         <TableHead>Mensagem</TableHead>
                                         <TableHead>Feedback</TableHead>
@@ -840,7 +914,7 @@ function FeedbackConteudo() {
                                     {solicitacoes.map(s => (
                                         <TableRow key={s.id}>
                                             <TableCell className="whitespace-nowrap">{dataHora(s.created_at)}</TableCell>
-                                            <TableCell className="max-w-[12rem] truncate">{s.enviado_por || "—"}</TableCell>
+                                            <TableCell className="hidden xl:table-cell max-w-[12rem] truncate">{s.enviado_por || "—"}</TableCell>
                                             <TableCell>{s.candidatos}</TableCell>
                                             <TableCell>
                                                 <Badge variant="outline" className={COR_ENVIO[s.status_envio] ?? ""}>
@@ -849,21 +923,7 @@ function FeedbackConteudo() {
                                             </TableCell>
                                             <TableCell>{rotuloFeedback(s)}</TableCell>
                                             <TableCell className="text-right">
-                                                <div className="flex items-center justify-end gap-3">
-                                                {podeReenviarPedido && podeReenviar(s) && (
-                                                    <Button variant="outline" size="sm" className="h-7 gap-1" disabled={reenviando !== null}
-                                                        onClick={() => reenviar(s.id)}>
-                                                        {reenviando === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                                                        Reenviar
-                                                    </Button>
-                                                )}
-                                                {s.conversa_id && (
-                                                    <Link href={`/empregabilidade/mensagens?conversa=${s.conversa_id}`}
-                                                        className="inline-flex items-center gap-1 text-sm text-cuca-blue hover:underline whitespace-nowrap">
-                                                        Abrir no Atendimento <ExternalLink className="h-3.5 w-3.5" />
-                                                    </Link>
-                                                )}
-                                                </div>
+                                                {acoesPedido(s, "flex flex-wrap items-center justify-end gap-x-3 gap-y-1")}
                                             </TableCell>
                                         </TableRow>
                                     ))}

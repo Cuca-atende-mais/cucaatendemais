@@ -127,7 +127,7 @@ export default function SelecoesPage() {
                     <p className="text-muted-foreground">Processos seletivos por evento — presenciais e com data marcada.</p>
                 </div>
                 {hasPermission("empreg_selecao", "create") && (
-                    <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold" onClick={() => setIsModalOpen(true)}>
+                    <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold h-11 md:h-9" onClick={() => setIsModalOpen(true)}>
                         <Plus className="mr-2 h-4 w-4" /> Nova Seleção
                     </Button>
                 )}
@@ -145,37 +145,97 @@ export default function SelecoesPage() {
                             key={valor}
                             variant={filtroStatus === valor ? "secondary" : "ghost"}
                             size="sm"
-                            className="h-8 text-xs px-3"
+                            className="h-11 md:h-8 text-xs px-3"
                             onClick={() => setFiltroStatus(valor)}
                         >
                             {rotulo}
                         </Button>
                     ))}
                 </div>
-                <div className="relative">
+                <div className="relative w-full sm:w-auto">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                         placeholder="Buscar por empresa ou cargo..."
-                        className="pl-10 w-72 h-9"
+                        className="pl-10 w-full sm:w-72 h-9"
                         value={busca}
                         onChange={e => setBusca(e.target.value)}
                     />
                 </div>
             </div>
 
-            <Card className="border-none shadow-sm overflow-hidden">
+            {/* Abaixo de lg (celular e tablet): cada seleção vira um cartão */}
+            <div className="space-y-3 lg:hidden">
+                {isLoading ? (
+                    <p className="text-center py-12 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin inline-block" /></p>
+                ) : selecoes.length === 0 ? (
+                    <p className="text-center py-12 text-muted-foreground">
+                        {todas.length === 0 ? "Nenhuma seleção cadastrada." : "Nenhuma seleção encontrada com os filtros aplicados."}
+                    </p>
+                ) : selecoes.map(v => {
+                    const datas = v.datas_selecao || []
+                    const cargos = (v.cargos_lista || []).map(c => c.titulo).filter(Boolean)
+                    return (
+                        <Card key={v.id} className="border shadow-sm cursor-pointer" onClick={() => router.push(`/empregabilidade/selecoes/${v.id}`)}>
+                            <CardContent className="p-4 space-y-2">
+                                <div className="flex items-start gap-1.5">
+                                    <Building2 className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+                                    <span className="font-semibold break-words">{nomeEmpresa(v)}</span>
+                                </div>
+                                {(v.numero_vaga || v.unidade_destino === "global") && (
+                                    <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                                        {v.numero_vaga && <span className="font-mono">#{v.numero_vaga}</span>}
+                                        {v.unidade_destino === "global" && (
+                                            <span className="inline-flex items-center gap-1 text-cuca-blue"><Globe className="h-3 w-3" /> Rede</span>
+                                        )}
+                                    </p>
+                                )}
+                                {cargos.length > 0 && <p className="text-sm text-muted-foreground break-words">{cargos.join(" · ")}</p>}
+                                <div className="flex flex-wrap items-center gap-2 text-xs">
+                                    {datas[0] && (
+                                        <span className="text-muted-foreground">
+                                            {formatarData(datas[0].data)}{datas[0].hora ? ` · ${datas[0].hora}` : ""}
+                                            {datas.length > 1 && <span className="opacity-70"> +{datas.length - 1}</span>}
+                                        </span>
+                                    )}
+                                    <StatusBadge status={v.status} />
+                                    <SeloSemResposta dias={diasSemResposta.get(v.id)} />
+                                </div>
+                                <div className="flex gap-2 pt-1">
+                                    <Button
+                                        size="sm"
+                                        className="h-11 md:h-8 text-xs gap-1 px-2.5 bg-green-600 hover:bg-green-700 text-white border-none flex-1"
+                                        onClick={(e) => { e.stopPropagation(); router.push(`/empregabilidade/selecoes/${v.id}`) }}
+                                    >
+                                        <Users className="h-3.5 w-3.5" /> {confirmadosCount[v.id] ?? 0} candidatura(s)
+                                    </Button>
+                                    <Button
+                                        variant="outline" size="sm"
+                                        className="h-11 md:h-8 text-xs gap-1 px-2.5"
+                                        onClick={(e) => { e.stopPropagation(); router.push(`/empregabilidade/selecoes/${v.id}`) }}
+                                    >
+                                        Ver Vaga <ArrowRight className="h-3 w-3" />
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )
+                })}
+            </div>
+
+            <Card className="hidden lg:block border-none shadow-sm overflow-hidden">
                 <CardContent className="p-0">
                     {/* `table-fixed` + larguras explícitas: sem isso a coluna de
                         cargos (que pode ter 10+ títulos) empurra a tabela para
-                        fora da tela e esconde as colunas seguintes. */}
-                    <Table className="table-fixed w-full">
+                        fora da tela e esconde as colunas seguintes. Em 1024 a Data
+                        some (aparece a partir de xl) para Status caber com o selo. */}
+                    <Table className="table-fixed w-full" cabecalhoFixo>
                         <TableHeader className="bg-muted/30">
                             <TableRow>
-                                <TableHead className="w-[26%]">Empresa</TableHead>
-                                <TableHead className="w-[37%]">Cargos</TableHead>
-                                <TableHead className="w-[17%]">Data</TableHead>
-                                <TableHead className="w-[10%]">Status</TableHead>
-                                <TableHead className="w-[10%] text-center">Candidatura</TableHead>
+                                <TableHead className="w-[30%] xl:w-[24%]">Empresa</TableHead>
+                                <TableHead className="w-[32%]">Cargos</TableHead>
+                                <TableHead className="hidden xl:table-cell w-[16%]">Data</TableHead>
+                                <TableHead className="w-[24%] xl:w-[16%]">Status</TableHead>
+                                <TableHead className="w-[14%] xl:w-[12%] text-center">Candidatura</TableHead>
                                 <TableHead className="w-28"></TableHead>
                             </TableRow>
                         </TableHeader>
@@ -229,7 +289,7 @@ export default function SelecoesPage() {
                                                             <div className="flex items-center gap-1.5 min-w-0">
                                                                 <span className="text-sm text-muted-foreground truncate">{cargosVisiveis}</span>
                                                                 {restantes > 0 && (
-                                                                    <Badge variant="secondary" className="text-[10px] h-5 px-1.5 flex-shrink-0">
+                                                                    <Badge variant="secondary" className="text-xs px-1.5 flex-shrink-0">
                                                                         +{restantes}
                                                                     </Badge>
                                                                 )}
@@ -242,7 +302,7 @@ export default function SelecoesPage() {
                                                 </TooltipProvider>
                                             )}
                                         </TableCell>
-                                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                                        <TableCell className="hidden xl:table-cell text-sm text-muted-foreground whitespace-nowrap">
                                             {datas[0] ? (
                                                 <span>
                                                     {formatarData(datas[0].data)}
