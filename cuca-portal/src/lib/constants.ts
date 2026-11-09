@@ -45,7 +45,7 @@ export const menuItems = [
             { title: "Candidatos", url: "/empregabilidade/candidatos", permission: { recurso: "empreg_candidatos", acao: "read" } },
             { title: "Banco de Talentos", url: "/empregabilidade/banco-talentos", permission: { recurso: "empreg_banco_cv", acao: "read" } },
             { title: "Feedback", url: "/empregabilidade/feedback", permission: { recurso: "epm_feedback_ver", acao: "read" } },
-            { title: "Relatórios", url: "/empregabilidade/relatorios", permission: { recurso: "epm_relatorio_ver", acao: "read" } },
+            { title: "Relatórios", url: "/empregabilidade/relatorios", permissions: [{ recurso: "epm_relatorio_ver", acao: "read" }, { recurso: "epm_vagas_abertas_ver", acao: "read" }] },
             { title: "Criar Currículo", url: "/empregabilidade/criar-curriculo", permission: { recurso: "empreg_curriculos", acao: "read" } },
         ],
     },
