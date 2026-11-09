@@ -122,7 +122,7 @@ function desenharLinha(ws: ExcelJS.Worksheet, aba: AbaPlanilha, linha: LinhaPlan
     }
 }
 
-export async function gerarXlsxRelatorio(abas: AbaPlanilha[], autor: string): Promise<ArrayBuffer> {
+export async function gerarXlsxRelatorio(abas: AbaPlanilha[], autor: string, rodape = "Relatório Emprega+ — Rede Cuca"): Promise<ArrayBuffer> {
     const wb = new ExcelJS.Workbook()
     wb.creator = autor || "Cuca Atende+"
     wb.created = new Date()
@@ -141,7 +141,7 @@ export async function gerarXlsxRelatorio(abas: AbaPlanilha[], autor: string): Pr
                 margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.6, header: 0.3, footer: 0.3 },
                 printTitlesRow: `1:${aba.congelarLinhas}`,
             },
-            headerFooter: { oddFooter: "&LRelatório Emprega+ — Rede Cuca&RPágina &P de &N" },
+            headerFooter: { oddFooter: `&L${rodape}&RPágina &P de &N` },
         })
         ws.columns = aba.larguras.map(w => ({ width: w }))
 

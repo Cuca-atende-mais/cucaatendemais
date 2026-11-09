@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { ChevronLeft, ChevronRight, ClipboardList, Lock, Search } from "lucide-react"
+import { ChevronLeft, ChevronRight, ClipboardList, Download, Loader2, Lock, Search } from "lucide-react"
+import toast from "react-hot-toast"
 import { useUser } from "@/lib/auth/user-provider"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,6 +15,7 @@ import { EPM_SITUACAO_VAGAS } from "@/lib/rbac/catalogo-empregabilidade-gestao"
 import { CHAVE_REDE, nomeCurto, type Unidade } from "@/lib/empregabilidade/relatorio"
 import {
     filtrarLinhas,
+    montarExportacaoSituacao,
     paginar,
     ROTULO_REDE,
     textoRodape,
@@ -28,6 +30,8 @@ interface RespostaSituacao {
     escopo: { rede: boolean; selecionada: string }
     unidades: Unidade[]
     linhas: LinhaSituacao[]
+    permissoes: { exportar: boolean; rede: boolean }
+    geradoPor: string
 }
 
 const VAZIO = "—"
@@ -81,6 +85,7 @@ export default function SituacaoVagasPage() {
     const [tipo, setTipo] = useState<FiltroTipo>("todas")
     const [busca, setBusca] = useState("")
     const [pagina, setPagina] = useState(0)
+    const [exportando, setExportando] = useState(false)
     // Resultado da última consulta, marcado com a unidade pedida: enquanto a unidade da tela não bate com a
     // do resultado, está carregando (sem setState síncrono dentro do efeito).
     const [resultado, setResultado] = useState<{ unidade: string; dados: RespostaSituacao | null; erro: string | null } | null>(null)
@@ -106,6 +111,46 @@ export default function SituacaoVagasPage() {
     // Rodapé conta todas as linhas filtradas; a tabela mostra 100 por página (AC6).
     const paginaAtual = paginar(linhas, pagina)
 
+    // Mesmo fluxo do Relatório mensal: pede de novo à API com exportar=1 (o servidor confere a permissão de
+    // baixar), aplica os mesmos filtros da tela e monta o Excel no navegador (gerador carregado sob demanda).
+    const baixar = async () => {
+        setExportando(true)
+        try {
+            const res = await fetch(`/api/empregabilidade/relatorio/situacao-vagas?${new URLSearchParams({ unidade, exportar: "1" }).toString()}`)
+            const corpo = await res.json().catch(() => ({}))
+            if (!res.ok) {
+                toast.error(corpo.error || "Não foi possível gerar a planilha.")
+                return
+            }
+            const d = corpo as RespostaSituacao
+            // Unidade que o servidor aplicou, não a do seletor (quem não vê a rede fica com o seletor em "todas").
+            const { abas, nomeArquivo } = montarExportacaoSituacao({
+                linhas: d.linhas,
+                unidades: d.unidades,
+                unidadeEfetiva: d.escopo.selecionada,
+                tipo,
+                busca,
+                geradoPor: d.geradoPor,
+                agora: new Date(),
+            })
+            const { gerarXlsxRelatorio } = await import("@/lib/empregabilidade/gerar-xlsx-relatorio")
+            const buffer = await gerarXlsxRelatorio(abas, d.geradoPor, "Situação de vagas — Rede Cuca")
+            const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+            const url = URL.createObjectURL(blob)
+            const link = document.createElement("a")
+            link.href = url
+            link.download = nomeArquivo
+            link.click()
+            URL.revokeObjectURL(url)
+            toast.success("Planilha gerada.")
+        } catch (e) {
+            console.error("[situacao-vagas] Erro ao gerar a planilha:", e)
+            toast.error("Não foi possível gerar a planilha.")
+        } finally {
+            setExportando(false)
+        }
+    }
+
     if (carregandoUsuario) return <Skeleton className="h-64 w-full" />
 
     if (!podeVer) {
@@ -124,14 +169,22 @@ export default function SituacaoVagasPage() {
 
     return (
         <div className="space-y-6">
-            <div className="min-w-0">
-                <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
-                    <ClipboardList className="h-7 w-7 text-cuca-blue" />
-                    Situação de vagas
-                </h1>
-                <p className="text-muted-foreground mt-1">
-                    Vagas e seleções abertas agora: datas, dias em aberto, currículos enviados à empresa e quem liberou.
-                </p>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
+                        <ClipboardList className="h-7 w-7 text-cuca-blue" />
+                        Situação de vagas
+                    </h1>
+                    <p className="text-muted-foreground mt-1">
+                        Vagas e seleções abertas agora: datas, dias em aberto, currículos enviados à empresa e quem liberou.
+                    </p>
+                </div>
+                {dados?.permissoes?.exportar && (
+                    <Button onClick={baixar} disabled={exportando || carregando || !!erro} className="gap-2 h-11 md:h-9">
+                        {exportando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                        Baixar Excel
+                    </Button>
+                )}
             </div>
 
             <Card>

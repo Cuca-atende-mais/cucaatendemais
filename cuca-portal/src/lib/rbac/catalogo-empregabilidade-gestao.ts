@@ -24,6 +24,7 @@ export const EPM_RELATORIO = {
 // S-EMP-GES-09 (AC9): relatório "Situação de vagas" (vagas e seleções abertas).
 export const EPM_SITUACAO_VAGAS = {
     ver: "epm_vagas_abertas_ver",
+    exportar: "epm_vagas_abertas_exportar",
     rede: "epm_vagas_abertas_rede",
 } as const
 
@@ -51,6 +52,7 @@ export const GRUPOS_EMPREGABILIDADE_GESTAO: GrupoPermissao[] = [
         category: "Empregabilidade — Relatório de vagas e seleções abertas",
         modules: [
             { id: EPM_SITUACAO_VAGAS.ver, label: "Ver o relatório Situação de vagas (menu Relatórios)", acoes: ACAO_UNICA },
+            { id: EPM_SITUACAO_VAGAS.exportar, label: "Baixar o relatório Situação de vagas em Excel", acoes: ACAO_UNICA },
             { id: EPM_SITUACAO_VAGAS.rede, label: "Ver as vagas e seleções de todas as unidades (sem ela, só a própria unidade)", acoes: ACAO_UNICA },
         ],
     },

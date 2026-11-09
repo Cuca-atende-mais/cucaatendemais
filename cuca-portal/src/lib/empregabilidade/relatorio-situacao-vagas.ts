@@ -4,7 +4,7 @@
  * currículos enviados à empresa por origem, data da entrevista/seleção e totais do rodapé.
  */
 
-import { CHAVE_REDE, FUSO_RELATORIO, type Unidade } from "./relatorio"
+import { CHAVE_REDE, FUSO_RELATORIO, formatarDataHora, type AbaPlanilha, type Celula, type LinhaPlanilha, type Unidade } from "./relatorio"
 
 // ── Origem do currículo (AC3) ───────────────────────────────────────────────────────────────────
 
@@ -224,4 +224,126 @@ export function paginar<T>(linhas: T[], pagina: number, tamanho: number = TAMANH
     const inicio = atual * tamanho
     const itens = linhas.slice(inicio, inicio + tamanho)
     return { itens, pagina: atual, totalPaginas, de: itens.length ? inicio + 1 : 0, ate: inicio + itens.length }
+}
+
+// ── Planilha Excel (mesmo gerador do Relatório mensal) ──────────────────────────────────────────
+
+export const CABECALHO_PLANILHA = [
+    "Tipo", "Vaga / Seleção", "Empresa", "Unidade CUCA", "Cadastrada em", "Liberada em", "Dias em aberto",
+    "Currículos enviados à empresa", "Currículos enviados do Banco de Talentos", "Currículos enviados da automação",
+    "Data da entrevista / seleção", "Liberada por",
+]
+
+const COR_PLANILHA = "1F4E79"
+const LINHA_PRIMEIRO_DADO = 4 // título, subtítulo, cabeçalho
+
+const TRACO = "—"
+
+function numeroOuTraco(n: number | null | undefined): Celula {
+    return n === null || n === undefined ? { valor: TRACO } : { valor: n, formato: "inteiro" }
+}
+
+/**
+ * Uma aba "Situação de vagas" com as linhas que estão na tela (todas as páginas, já filtradas): título,
+ * subtítulo com data, autor e filtros, cabeçalho com as 12 colunas, uma linha por vaga/seleção, linha de
+ * total (soma das colunas de currículos) e a contagem de vagas e seleções.
+ */
+export function montarPlanilhaSituacao(p: {
+    linhas: LinhaSituacao[]
+    geradoEm: Date
+    geradoPor: string
+    filtros: string
+}): AbaPlanilha[] {
+    const linhas: LinhaPlanilha[] = [
+        { tipo: "titulo", mesclar: true, celulas: [{ valor: "SITUAÇÃO DE VAGAS — VAGAS E SELEÇÕES ABERTAS" }] },
+        { tipo: "subtitulo", mesclar: true, celulas: [{ valor: `Gerado em ${formatarDataHora(p.geradoEm)} por ${p.geradoPor || "—"}. ${p.filtros}` }] },
+        { tipo: "cabecalho", celulas: CABECALHO_PLANILHA.map(c => ({ valor: c })) },
+    ]
+    for (const l of p.linhas) {
+        linhas.push({
+            tipo: "dado",
+            celulas: [
+                { valor: l.rotuloTipo },
+                { valor: l.titulo },
+                { valor: l.empresa ?? TRACO },
+                { valor: l.unidade },
+                { valor: l.cadastradaEmTexto ?? TRACO },
+                { valor: l.liberadaEmTexto ?? TRACO },
+                numeroOuTraco(l.diasEmAberto),
+                numeroOuTraco(l.enviados?.total),
+                numeroOuTraco(l.enviados?.banco_talentos),
+                numeroOuTraco(l.enviados?.automacao),
+                { valor: l.dataEntrevistaSelecao ?? TRACO },
+                { valor: l.liberadaPor ?? TRACO },
+            ],
+        })
+    }
+    if (p.linhas.length > 0) {
+        const r1 = LINHA_PRIMEIRO_DADO
+        const r2 = LINHA_PRIMEIRO_DADO + p.linhas.length - 1
+        const soma = (col: string, campo: keyof ContagemEnviados): Celula => ({
+            formula: `SUM(${col}${r1}:${col}${r2})`,
+            resultado: p.linhas.reduce((s, l) => s + (l.enviados?.[campo] ?? 0), 0),
+            formato: "inteiro",
+        })
+        linhas.push({
+            tipo: "total",
+            celulas: [
+                { valor: "Total" }, { valor: "" }, { valor: "" }, { valor: "" }, { valor: "" }, { valor: "" }, { valor: "" },
+                soma("H", "total"), soma("I", "banco_talentos"), soma("J", "automacao"),
+                { valor: "" }, { valor: "" },
+            ],
+        })
+    }
+    linhas.push({ tipo: "vazia", celulas: [] })
+    linhas.push({ tipo: "secao", mesclar: true, celulas: [{ valor: textoRodape(p.linhas) }] })
+    linhas.push({ tipo: "nota", mesclar: true, celulas: [{ valor: "Seleção não pede currículo e não envia para a empresa, por isso as colunas de currículos ficam com — nas seleções. Liberação anterior a 15/10/2026 não tem data nem autor registrados." }] })
+    return [{
+        nome: "Situação de vagas",
+        cor: COR_PLANILHA,
+        larguras: [10, 40, 34, 22, 13, 13, 10, 14, 16, 14, 24, 34],
+        linhas,
+        congelarLinhas: 3,
+        congelarColunas: 0,
+    }]
+}
+
+/** Texto dos filtros aplicados, para o subtítulo da planilha. */
+export function descreverFiltros(p: { unidade: string; tipo: FiltroTipo; busca: string; unidades: Unidade[] }): string {
+    const unidade = p.unidade === "todas" ? "Todas" : p.unidade === CHAVE_REDE ? ROTULO_REDE : (p.unidades.find(u => u.id === p.unidade)?.nome ?? p.unidade)
+    const tipo = p.tipo === "vagas" ? "Vagas" : p.tipo === "selecoes" ? "Seleções" : "Todas"
+    const busca = p.busca.trim() ? ` · Busca: "${p.busca.trim()}"` : ""
+    return `Unidade: ${unidade} · Tipo: ${tipo}${busca}.`
+}
+
+/** `situacao-de-vagas_{AAAA-MM-DD}_{unidade}.xlsx`, com a data de Fortaleza. */
+export function nomeArquivoSituacao(p: { unidade: string; unidades: Unidade[]; agora?: Date }): string {
+    const rotulo = p.unidade === "todas" ? "todas" : p.unidade === CHAVE_REDE ? "sem-unidade" : (p.unidades.find(u => u.id === p.unidade)?.nome.replace(/^cuca\s+/i, "") ?? p.unidade)
+    const slug = rotulo.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+    return `situacao-de-vagas_${diaFortaleza(p.agora ?? new Date())}_${slug}.xlsx`
+}
+
+/**
+ * Planilha e nome do arquivo do botão Baixar Excel. `unidadeEfetiva` é a unidade que o servidor aplicou
+ * (`escopo.selecionada`), não a do seletor da tela: quem não vê a rede tem o seletor em "todas", mas recebe
+ * só a própria unidade — o subtítulo e o nome do arquivo precisam dizer isso.
+ */
+export function montarExportacaoSituacao(p: {
+    linhas: LinhaSituacao[]
+    unidades: Unidade[]
+    unidadeEfetiva: string
+    tipo: FiltroTipo
+    busca: string
+    geradoPor: string
+    agora: Date
+}): { abas: AbaPlanilha[]; nomeArquivo: string } {
+    return {
+        abas: montarPlanilhaSituacao({
+            linhas: filtrarLinhas(p.linhas, { tipo: p.tipo, busca: p.busca }),
+            geradoEm: p.agora,
+            geradoPor: p.geradoPor,
+            filtros: descreverFiltros({ unidade: p.unidadeEfetiva, tipo: p.tipo, busca: p.busca, unidades: p.unidades }),
+        }),
+        nomeArquivo: nomeArquivoSituacao({ unidade: p.unidadeEfetiva, unidades: p.unidades, agora: p.agora }),
+    }
 }

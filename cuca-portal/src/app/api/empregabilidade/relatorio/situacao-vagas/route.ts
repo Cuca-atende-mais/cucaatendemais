@@ -13,10 +13,11 @@ import {
     type VagaAberta,
 } from "@/lib/empregabilidade/relatorio-situacao-vagas"
 
-// S-EMP-GES-09 (AC7, AC8): GET /api/empregabilidade/relatorio/situacao-vagas?unidade=
+// S-EMP-GES-09 (AC7, AC8): GET /api/empregabilidade/relatorio/situacao-vagas?unidade=&exportar=1
 // - exige sessão e epm_vagas_abertas_ver; o escopo de unidade sai de epm_vagas_abertas_rede e do cadastro do
 //   colaborador, pela mesma regra do Relatório mensal — o parâmetro `unidade` nunca amplia o escopo;
-// - só lê; devolve contagens, nunca nome, telefone ou outro dado de candidato.
+// - só lê; devolve contagens, nunca nome, telefone ou outro dado de candidato;
+// - `exportar=1` (botão Baixar Excel) exige epm_vagas_abertas_exportar, como no Relatório mensal.
 
 const PAGINA = 1000
 
@@ -60,13 +61,20 @@ export async function GET(request: NextRequest) {
     const permissao = await exigirPermissao(EPM_SITUACAO_VAGAS.ver)
     if (!permissao.ok) return permissao.resposta
 
-    const temRede = await tem(permissao.supabase, EPM_SITUACAO_VAGAS.rede)
+    const exportar = request.nextUrl.searchParams.get("exportar") === "1"
+    const [temRede, temExportar] = await Promise.all([
+        tem(permissao.supabase, EPM_SITUACAO_VAGAS.rede),
+        tem(permissao.supabase, EPM_SITUACAO_VAGAS.exportar),
+    ])
+    if (exportar && !temExportar) {
+        return NextResponse.json({ error: "Sem permissão para baixar o relatório." }, { status: 403 })
+    }
     const admin = createAdminClient()
 
     try {
         const [{ data: unidadesRaw, error: uErr }, { data: colab, error: cErr }] = await Promise.all([
             admin.from("unidades_cuca").select("id, nome").eq("ativo", true).order("nome"),
-            admin.from("colaboradores").select("unidade_cuca").eq("user_id", permissao.user.id).maybeSingle(),
+            admin.from("colaboradores").select("nome_completo, unidade_cuca").eq("user_id", permissao.user.id).maybeSingle(),
         ])
         if (uErr) throw uErr
         if (cErr) throw cErr
@@ -144,6 +152,8 @@ export async function GET(request: NextRequest) {
             escopo: { rede: escopo.rede, selecionada: escopo.selecionada },
             unidades: escopo.rede ? unidades : unidades.filter(u => escopo.chaves.includes(u.id)),
             linhas,
+            permissoes: { exportar: temExportar, rede: temRede },
+            geradoPor: colab?.nome_completo || permissao.user.email || "",
         })
     } catch (e) {
         console.error("[empregabilidade/relatorio/situacao-vagas] Erro:", e)
