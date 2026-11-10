@@ -45,26 +45,25 @@ describe("chaveTelefone (espelha emp_chave_telefone do banco)", () => {
     })
 })
 
-describe("decidirAcaoTalento", () => {
-    const base = { cadastrosExistentes: 1, processoAtivoEmOutraVaga: false, temCurriculo: true }
+describe("decidirAcaoTalento (S-EMP-GES-10: só contratado trava)", () => {
+    const base = { statusAnterior: "pendente", cadastrosExistentes: 1, contratadoEmOutraVaga: false, temCurriculo: true }
 
-    it("D2: selecionado e contratado travam o talento existente", () => {
-        expect(decidirAcaoTalento({ ...base, novoStatus: "selecionado" })).toEqual({ tipo: "travar", status: "selecionado" })
-        expect(decidirAcaoTalento({ ...base, novoStatus: "contratado" })).toEqual({ tipo: "travar", status: "contratado" })
-    })
-
-    it("selecionado sem cadastro não cria nada", () => {
-        expect(decidirAcaoTalento({ ...base, cadastrosExistentes: 0, novoStatus: "selecionado" }))
+    it("contratado trava o talento existente; sem cadastro não faz nada", () => {
+        expect(decidirAcaoTalento({ ...base, novoStatus: "contratado" })).toEqual({ tipo: "travar" })
+        expect(decidirAcaoTalento({ ...base, cadastrosExistentes: 0, novoStatus: "contratado" }))
             .toEqual({ tipo: "nenhuma", motivo: "sem_cadastro" })
     })
 
-    it("rejeitado libera o cadastro existente (inclusive duplicados), sem criar outro", () => {
-        expect(decidirAcaoTalento({ ...base, cadastrosExistentes: 3, novoStatus: "rejeitado" })).toEqual({ tipo: "liberar" })
+    it("selecionado pela empresa não trava mais", () => {
+        expect(decidirAcaoTalento({ ...base, novoStatus: "selecionado" })).toEqual({ tipo: "nenhuma", motivo: "status_sem_reflexo" })
     })
 
-    it("D4: rejeitado com processo ativo em outra vaga não libera", () => {
-        expect(decidirAcaoTalento({ ...base, processoAtivoEmOutraVaga: true, novoStatus: "rejeitado" }))
-            .toEqual({ tipo: "nenhuma", motivo: "processo_ativo" })
+    it("pendente não mexe no Banco de Talentos", () => {
+        expect(decidirAcaoTalento({ ...base, novoStatus: "pendente" })).toEqual({ tipo: "nenhuma", motivo: "status_sem_reflexo" })
+    })
+
+    it("rejeitado com cadastro só preenche campos vazios, sem mudar o status", () => {
+        expect(decidirAcaoTalento({ ...base, cadastrosExistentes: 3, novoStatus: "rejeitado" })).toEqual({ tipo: "preencher" })
     })
 
     it("rejeitado sem cadastro cria só se tiver currículo (D5)", () => {
@@ -73,8 +72,31 @@ describe("decidirAcaoTalento", () => {
             .toEqual({ tipo: "nenhuma", motivo: "sem_curriculo" })
     })
 
-    it("pendente não mexe no Banco de Talentos", () => {
-        expect(decidirAcaoTalento({ ...base, novoStatus: "pendente" })).toEqual({ tipo: "nenhuma", motivo: "status_sem_reflexo" })
+    describe("saída de contratado (avaliada antes do status de destino)", () => {
+        const saindo = { ...base, statusAnterior: "contratado" }
+
+        it("para rejeitado: volta a disponível e preenche campos vazios", () => {
+            expect(decidirAcaoTalento({ ...saindo, novoStatus: "rejeitado" })).toEqual({ tipo: "liberar", preencher: true })
+        })
+
+        it("para selecionado ou pendente: volta a disponível, sem preencher", () => {
+            expect(decidirAcaoTalento({ ...saindo, novoStatus: "selecionado" })).toEqual({ tipo: "liberar", preencher: false })
+            expect(decidirAcaoTalento({ ...saindo, novoStatus: "pendente" })).toEqual({ tipo: "liberar", preencher: false })
+        })
+
+        it("contratado em outra vaga continua travado (rejeitado ainda preenche campos vazios)", () => {
+            const outra = { ...saindo, contratadoEmOutraVaga: true }
+            expect(decidirAcaoTalento({ ...outra, novoStatus: "pendente" })).toEqual({ tipo: "nenhuma", motivo: "contratado_em_outra_vaga" })
+            expect(decidirAcaoTalento({ ...outra, novoStatus: "rejeitado" })).toEqual({ tipo: "preencher" })
+        })
+
+        it("sem cadastro: segue a regra do destino (rejeitado com currículo cria)", () => {
+            expect(decidirAcaoTalento({ ...saindo, cadastrosExistentes: 0, novoStatus: "rejeitado" })).toEqual({ tipo: "criar" })
+        })
+
+        it("contratado para contratado continua travando", () => {
+            expect(decidirAcaoTalento({ ...saindo, novoStatus: "contratado" })).toEqual({ tipo: "travar" })
+        })
     })
 })
 
@@ -140,10 +162,11 @@ describe("auxiliares", () => {
 })
 
 describe("mensagemRejeicao (observação 1 do QA)", () => {
-    it("só diz que voltou ao Banco de Talentos quando a regra devolveu", () => {
-        expect(mensagemRejeicao("liberar")).toBe("Candidato rejeitado e devolvido ao Banco de Talentos.")
-        expect(mensagemRejeicao("criar")).toBe("Candidato rejeitado e devolvido ao Banco de Talentos.")
-        expect(mensagemRejeicao("nenhuma", "processo_ativo")).toContain("está em processo em outra vaga")
+    it("S-EMP-GES-10: só fala do Banco de Talentos quando cria o cadastro", () => {
+        expect(mensagemRejeicao("criar")).toBe("Candidato rejeitado e incluído no Banco de Talentos.")
+        expect(mensagemRejeicao("preencher")).toBe("Candidato rejeitado.")
+        expect(mensagemRejeicao("liberar")).toBe("Candidato rejeitado.")
+        expect(mensagemRejeicao("nenhuma", "contratado_em_outra_vaga")).toBe("Candidato rejeitado.")
         expect(mensagemRejeicao("nenhuma", "sem_curriculo")).toContain("Sem currículo")
         expect(mensagemRejeicao(undefined)).toBe("Candidato rejeitado.")
     })

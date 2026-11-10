@@ -31,6 +31,13 @@ import { ptBR } from "date-fns/locale"
 import toast from "react-hot-toast"
 import { NIVEIS_ESCOLARIDADE } from "@/constants/empregabilidade"
 import { useRouter } from "next/navigation"
+import {
+    rotuloStatusTalento,
+    TITULO_ATIVAS,
+    TITULO_PARTICIPOU,
+    type ContadoresSelecoes,
+} from "@/lib/empregabilidade/contadores-selecoes"
+import { useContadoresSelecoes } from "@/lib/empregabilidade/use-contadores-selecoes"
 
 // ─── Configuração de áreas ────────────────────────────────────────────────────
 
@@ -183,6 +190,8 @@ export default function BancoTalentosPage() {
 
     const [contagemPorArea, setContagemPorArea] = useState<Map<string | null, number>>(new Map())
     const [selectedTalento, setSelectedTalento] = useState<TalentBank | null>(null)
+    // S-EMP-GES-10 (AC11): contadores só dos talentos da página exibida.
+    const contadores = useContadoresSelecoes(talentos.map(t => t.id))
     const [cadastroOpen, setCadastroOpen] = useState(false)
     const [formNome, setFormNome] = useState("")
     const [formTelefone, setFormTelefone] = useState("")
@@ -534,7 +543,6 @@ export default function BancoTalentosPage() {
                                     <SelectContent>
                                         <SelectItem value="todos">Todos</SelectItem>
                                         <SelectItem value="disponivel">Disponíveis</SelectItem>
-                                        <SelectItem value="arquivado">Arquivados</SelectItem>
                                         <SelectItem value="contratado">Contratados</SelectItem>
                                     </SelectContent>
                                 </Select>
@@ -663,6 +671,9 @@ export default function BancoTalentosPage() {
                                             {ocr.escolaridade || "—"}
                                         </div>
 
+                                        {/* S-EMP-GES-10: contadores de seleções */}
+                                        <ContadoresLinha contadores={contadores[t.id]} />
+
                                         {/* Status */}
                                         <div className="flex-shrink-0">
                                             <Badge
@@ -675,12 +686,12 @@ export default function BancoTalentosPage() {
                                                             : "border-zinc-500/40 text-zinc-400 bg-zinc-500/10"
                                                 }
                                             >
-                                                {t.status}
+                                                {rotuloStatusTalento(t.status)}
                                             </Badge>
                                         </div>
 
                                         {/* Ações rápidas */}
-                                        <div className="basis-full md:basis-auto flex-shrink-0 flex justify-end gap-1 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity max-md:[&_button]:h-11 max-md:[&_button]:w-11" onClick={e => e.stopPropagation()}>
+                                        <div className="basis-full md:basis-auto flex-shrink-0 flex justify-end gap-1 max-md:order-2 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity max-md:[&_button]:h-11 max-md:[&_button]:w-11" onClick={e => e.stopPropagation()}>
                                             {t.arquivo_cv_url && (
                                                 <Button variant="ghost" size="icon" title="Ver PDF" aria-label="Ver PDF" onClick={() => window.open(t.arquivo_cv_url!, "_blank")}>
                                                     <FileText className="h-4 w-4 text-muted-foreground" />
@@ -758,7 +769,7 @@ export default function BancoTalentosPage() {
             {/* ── Modal currículo completo ───────────────────────────────────── */}
             <Dialog open={!!selectedTalento} onOpenChange={(o) => !o && setSelectedTalento(null)}>
                 <DialogContent>
-                    {selectedTalento && <CurriculoModal talento={selectedTalento} />}
+                    {selectedTalento && <CurriculoModal talento={selectedTalento} contadores={contadores[selectedTalento.id]} />}
                 </DialogContent>
             </Dialog>
 
@@ -826,7 +837,21 @@ export default function BancoTalentosPage() {
 
 // ─── Modal de currículo completo ──────────────────────────────────────────────
 
-function CurriculoModal({ talento }: { talento: TalentBank }) {
+/**
+ * S-EMP-GES-10 (AC11): os dois contadores na linha da lista, com os nomes por extenso.
+ * No celular (`max-md:order-1`) eles descem para a segunda linha, depois do nome e do selo de
+ * status, e as ações rápidas (`max-md:order-2`) vêm por último. No computador a ordem é a do código.
+ */
+function ContadoresLinha({ contadores }: { contadores?: ContadoresSelecoes }) {
+    return (
+        <div className="basis-full md:basis-auto md:w-56 flex-shrink-0 text-xs text-muted-foreground space-y-0.5 pl-14 md:pl-0 max-md:order-1">
+            <p>{TITULO_ATIVAS}: <span className="font-medium text-foreground">{contadores ? contadores.ativas : "—"}</span></p>
+            <p>{TITULO_PARTICIPOU}: <span className="font-medium text-foreground">{contadores ? contadores.participou : "—"}</span></p>
+        </div>
+    )
+}
+
+function CurriculoModal({ talento, contadores }: { talento: TalentBank; contadores?: ContadoresSelecoes }) {
     const router = useRouter()
     const ocr = talento.skills_jsonb || {}
     const area = getAreaConfig(talento.area_interesse as string[] | null)
@@ -876,10 +901,18 @@ function CurriculoModal({ talento }: { talento: TalentBank }) {
                                 <Badge variant="outline" className={
                                     talento.status === "disponivel"
                                         ? "border-green-500/40 text-green-400 bg-green-500/10"
-                                        : "border-zinc-500/40 text-zinc-400 bg-zinc-500/10"
+                                        : talento.status === "contratado"
+                                            ? "border-blue-500/40 text-blue-400 bg-blue-500/10"
+                                            : "border-zinc-500/40 text-zinc-400 bg-zinc-500/10"
                                 }>
-                                    {talento.status}
+                                    {rotuloStatusTalento(talento.status)}
                                 </Badge>
+                                {/* S-EMP-GES-10 (AC11): contadores no detalhe do talento */}
+                                <span className="text-xs text-muted-foreground">
+                                    {TITULO_ATIVAS}: <strong className="text-foreground">{contadores ? contadores.ativas : "—"}</strong>
+                                    {" · "}
+                                    {TITULO_PARTICIPOU}: <strong className="text-foreground">{contadores ? contadores.participou : "—"}</strong>
+                                </span>
                             </div>
                         </DialogDescription>
                     </div>

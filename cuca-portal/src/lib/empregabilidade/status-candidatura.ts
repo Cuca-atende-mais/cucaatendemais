@@ -1,10 +1,11 @@
 // S-EMP-GES-01: regra única de mudança de status de candidatura e do reflexo no Banco de Talentos.
 // Usada pela tela Feedback (individual e lote), pela tela do candidato e pela rota `rejeitar`.
 // Decisões do Junior (2026-10-08):
-//   D2 — selecionado/contratado trava o talento; só "rejeitado" devolve ao Banco de Talentos.
-//   D4 — quem tem processo ativo em outra vaga continua travado mesmo sendo rejeitado aqui.
 //   D5 — sem currículo, não se cria cadastro novo no Banco de Talentos.
 // S-EMP-GES-07 (2026-10-13): seleção por evento não tem Banco de Talentos — só o status muda.
+// S-EMP-GES-10 (2026-11-10): a mesma pessoa pode estar em várias seleções ao mesmo tempo.
+//   Só "contratado" trava o talento (substitui a D2 e a D4 do GES-01). Sair de "contratado"
+//   devolve o talento a "disponivel", se a pessoa não estiver contratada em outra vaga.
 // Este módulo é puro (sem banco); a execução fica em aplicar-status-candidatura.ts.
 
 export const STATUS_EDITAVEIS = ["pendente", "selecionado", "contratado", "rejeitado"] as const
@@ -58,25 +59,48 @@ export function temCurriculo(candidatura: { arquivo_cv_url?: string | null; dado
     return !!candidatura.arquivo_cv_url || ocrPreenchido(candidatura.dados_ocr_json)
 }
 
-export type AcaoTalento =
-    | { tipo: "travar"; status: "selecionado" | "contratado" }
-    | { tipo: "liberar" }
-    | { tipo: "criar" }
-    | { tipo: "nenhuma"; motivo: "status_sem_reflexo" | "sem_cadastro" | "processo_ativo" | "sem_curriculo" | "selecao" }
+export type MotivoSemAcao =
+    | "status_sem_reflexo"
+    | "sem_cadastro"
+    | "sem_curriculo"
+    | "selecao"
+    | "contratado_em_outra_vaga"
 
+export type AcaoTalento =
+    /** Todos os cadastros da pessoa passam a "contratado". */
+    | { tipo: "travar" }
+    /** Saiu de "contratado": cadastros voltam a "disponivel" (no rejeitado, preenchendo campos vazios). */
+    | { tipo: "liberar"; preencher: boolean }
+    /** Rejeitado com cadastro: só preenche campos vazios, sem mudar o status. */
+    | { tipo: "preencher" }
+    | { tipo: "criar" }
+    | { tipo: "nenhuma"; motivo: MotivoSemAcao }
+
+/**
+ * Regra do AC4 da S-EMP-GES-10. A saída de "contratado" é avaliada primeiro; depois, a regra do
+ * status de destino.
+ */
 export function decidirAcaoTalento(entrada: {
+    statusAnterior: string | null | undefined
     novoStatus: StatusEditavel
     cadastrosExistentes: number
-    processoAtivoEmOutraVaga: boolean
+    contratadoEmOutraVaga: boolean
     temCurriculo: boolean
 }): AcaoTalento {
-    const { novoStatus, cadastrosExistentes, processoAtivoEmOutraVaga } = entrada
-    if (novoStatus === "selecionado" || novoStatus === "contratado") {
-        return cadastrosExistentes > 0 ? { tipo: "travar", status: novoStatus } : { tipo: "nenhuma", motivo: "sem_cadastro" }
+    const { statusAnterior, novoStatus, cadastrosExistentes, contratadoEmOutraVaga } = entrada
+    const temCadastro = cadastrosExistentes > 0
+
+    if (novoStatus === "contratado") {
+        return temCadastro ? { tipo: "travar" } : { tipo: "nenhuma", motivo: "sem_cadastro" }
     }
+
+    if (statusAnterior === "contratado" && temCadastro) {
+        if (!contratadoEmOutraVaga) return { tipo: "liberar", preencher: novoStatus === "rejeitado" }
+        if (novoStatus !== "rejeitado") return { tipo: "nenhuma", motivo: "contratado_em_outra_vaga" }
+    }
+
     if (novoStatus === "rejeitado") {
-        if (processoAtivoEmOutraVaga) return { tipo: "nenhuma", motivo: "processo_ativo" }
-        if (cadastrosExistentes > 0) return { tipo: "liberar" }
+        if (temCadastro) return { tipo: "preencher" }
         return entrada.temCurriculo ? { tipo: "criar" } : { tipo: "nenhuma", motivo: "sem_curriculo" }
     }
     return { tipo: "nenhuma", motivo: "status_sem_reflexo" }
@@ -84,6 +108,7 @@ export function decidirAcaoTalento(entrada: {
 
 export interface CandidaturaParaTalento {
     id: string
+    status?: string | null
     vaga_id: string | null
     nome: string | null
     telefone: string | null
@@ -139,7 +164,7 @@ function vazio(valor: unknown): boolean {
 }
 
 /**
- * Ao devolver um talento existente ao banco, só preenche o que está vazio — nunca apaga nem
+ * Ao rejeitar quem já tem cadastro, só preenche o que está vazio — nunca apaga nem
  * sobrescreve currículo, habilidades extraídas ou outros dados que o cadastro já tem.
  */
 export function preencherCamposVazios(talento: Record<string, unknown>, c: CandidaturaParaTalento): Record<string, unknown> {
@@ -166,8 +191,7 @@ export function avisoSelecionadoAtivo(valor: string | undefined = process.env.EM
 
 /** Mensagem da tela do candidato depois de rejeitar, conforme o que a regra fez no Banco de Talentos. */
 export function mensagemRejeicao(talento?: AcaoTalento["tipo"], motivo?: string): string {
-    if (talento === "liberar" || talento === "criar") return "Candidato rejeitado e devolvido ao Banco de Talentos."
-    if (motivo === "processo_ativo") return "Candidato rejeitado. Ele continua fora do Banco de Talentos porque está em processo em outra vaga."
+    if (talento === "criar") return "Candidato rejeitado e incluído no Banco de Talentos."
     if (motivo === "sem_curriculo") return "Candidato rejeitado. Sem currículo, ele não entra no Banco de Talentos."
     return "Candidato rejeitado."
 }
