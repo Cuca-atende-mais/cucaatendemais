@@ -247,14 +247,15 @@ def _criar_ou_recuperar_talent_bank(nome: str, telefone: str) -> str:
     payload = {
         "nome": nome,
         "telefone": tel_norm,
-        "status": "disponivel",
     }
     if rows:
+        # S-EMP-GES-10 (AC6): no cadastro existente, mantém o status. Um talento "contratado" não
+        # volta a "disponivel" só por preencher o currículo público.
         talent_id = rows[0]["id"]
         supabase.table("talent_bank").update(payload).eq("id", talent_id).execute()
         return talent_id
 
-    created = supabase.table("talent_bank").insert(payload).execute()
+    created = supabase.table("talent_bank").insert({**payload, "status": "disponivel"}).execute()
     created_rows = created.data or []
     if not created_rows:
         raise RuntimeError("não foi possível criar candidato no banco de talentos")

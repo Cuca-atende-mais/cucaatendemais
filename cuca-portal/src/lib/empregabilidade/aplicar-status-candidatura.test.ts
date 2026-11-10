@@ -8,7 +8,7 @@ type Operacao = { tabela: string; tipo: "update" | "insert"; dados: Record<strin
 function adminFalso(opts: {
     candidatura: Record<string, unknown> | null
     talentos?: Record<string, unknown>[]
-    processoAtivo?: boolean
+    contratadoEmOutra?: boolean
 }) {
     const ops: Operacao[] = []
     const rpcs: string[] = []
@@ -28,7 +28,7 @@ function adminFalso(opts: {
         async rpc(nome: string) {
             rpcs.push(nome)
             if (nome === "emp_talent_bank_por_chave") return { data: opts.talentos ?? [], error: null }
-            if (nome === "emp_pessoa_tem_processo_ativo") return { data: opts.processoAtivo ?? false, error: null }
+            if (nome === "emp_pessoa_contratada_em_outra_vaga") return { data: opts.contratadoEmOutra ?? false, error: null }
             return { data: null, error: null }
         },
     }
@@ -36,36 +36,39 @@ function adminFalso(opts: {
 }
 
 const candidatura = {
-    id: "c1", vaga_id: "v1", nome: "Fulana", telefone: "5585987654321", data_nascimento: null,
+    id: "c1", status: "pendente", vaga_id: "v1", nome: "Fulana", telefone: "5585987654321", data_nascimento: null,
     arquivo_cv_url: "https://x/cv.pdf", dados_ocr_json: {}, area_interesse: null, created_at: "2026-09-01T00:00:00Z",
     pcd_candidato: false, pcd_tipo_candidato: null,
 }
 
 describe("aplicarStatusCandidatura", () => {
-    it("rejeitar com cadastro duplicado: libera todos, não cria outro e não apaga habilidades", async () => {
-        const { cliente, ops } = adminFalso({
+    it("rejeitar com cadastro duplicado: só preenche campos vazios, sem mudar status nem criar outro", async () => {
+        const { cliente, ops, rpcs } = adminFalso({
             candidatura,
             talentos: [
-                { id: "t1", nome: "Fulana", skills_jsonb: { excel: true }, arquivo_cv_url: "https://x/antigo.pdf" },
+                { id: "t1", nome: "Fulana", skills_jsonb: { excel: true }, arquivo_cv_url: "https://x/antigo.pdf", status: "contratado" },
                 { id: "t2", nome: "Fulana", skills_jsonb: null, arquivo_cv_url: null },
             ],
         })
         const r = await aplicarStatusCandidatura(cliente, "c1", "rejeitado")
-        expect(r).toEqual({ candidaturaId: "c1", ok: true, talento: "liberar" })
+        expect(r).toEqual({ candidaturaId: "c1", ok: true, talento: "preencher" })
         expect(ops[0]).toMatchObject({ tabela: "candidaturas", tipo: "update", dados: { status: "rejeitado" }, filtro: ["id", "c1"] })
         const tb = ops.filter(o => o.tabela === "talent_bank")
-        expect(tb.map(o => o.filtro)).toEqual([["id", "t1"], ["id", "t2"]])
-        expect(tb.every(o => o.tipo === "update" && o.dados.status === "disponivel")).toBe(true)
-        expect(tb[0].dados).not.toHaveProperty("skills_jsonb")
-        expect(tb[0].dados).not.toHaveProperty("arquivo_cv_url")
-        expect(tb[1].dados.arquivo_cv_url).toBe("https://x/cv.pdf")
+        expect(tb.every(o => !("status" in o.dados))).toBe(true)
+        // t1 já tem tudo preenchido que a candidatura traria, menos data_curriculo
+        expect(tb.find(o => o.filtro?.[1] === "t2")?.dados.arquivo_cv_url).toBe("https://x/cv.pdf")
+        expect(tb.find(o => o.filtro?.[1] === "t1")?.dados).not.toHaveProperty("skills_jsonb")
+        expect(rpcs).not.toContain("emp_pessoa_tem_processo_ativo")
+        expect(rpcs).not.toContain("emp_pessoa_contratada_em_outra_vaga")
     })
 
-    it("D4: rejeitar quem está em processo em outra vaga não mexe no Banco de Talentos", async () => {
-        const { cliente, ops } = adminFalso({ candidatura, talentos: [{ id: "t1" }], processoAtivo: true })
-        const r = await aplicarStatusCandidatura(cliente, "c1", "rejeitado")
-        expect(r.talento).toBe("nenhuma")
-        expect(r.motivo).toBe("processo_ativo")
+    it("rejeitar sem nada a preencher não grava no Banco de Talentos", async () => {
+        const completo = {
+            id: "t1", nome: "Fulana", data_nascimento: "2000-01-01", arquivo_cv_url: "https://x/a.pdf", skills_jsonb: { a: 1 },
+            area_interesse: ["x"], data_curriculo: "2026-01-01", pcd_tipo_candidato: "x",
+        }
+        const { cliente, ops } = adminFalso({ candidatura, talentos: [completo] })
+        await aplicarStatusCandidatura(cliente, "c1", "rejeitado")
         expect(ops.filter(o => o.tabela === "talent_bank")).toEqual([])
     })
 
@@ -83,11 +86,45 @@ describe("aplicarStatusCandidatura", () => {
         expect(ins[0]).toMatchObject({ tipo: "insert", dados: { status: "disponivel", candidatura_origem_id: "c1" } })
     })
 
-    it("D2: selecionado trava todos os cadastros da pessoa e não consulta processo ativo", async () => {
+    it("selecionado pela empresa não trava nem consulta nada além dos cadastros", async () => {
         const { cliente, ops, rpcs } = adminFalso({ candidatura, talentos: [{ id: "t1" }, { id: "t2" }] })
-        await aplicarStatusCandidatura(cliente, "c1", "selecionado")
-        expect(ops[1]).toMatchObject({ tabela: "talent_bank", dados: { status: "selecionado" }, filtro: ["id", ["t1", "t2"]] })
-        expect(rpcs).not.toContain("emp_pessoa_tem_processo_ativo")
+        const r = await aplicarStatusCandidatura(cliente, "c1", "selecionado")
+        expect(r.talento).toBe("nenhuma")
+        expect(ops.filter(o => o.tabela === "talent_bank")).toEqual([])
+        expect(rpcs).toEqual(["emp_talent_bank_por_chave"])
+    })
+
+    it("contratado trava todos os cadastros da pessoa", async () => {
+        const { cliente, ops } = adminFalso({ candidatura, talentos: [{ id: "t1" }, { id: "t2" }] })
+        await aplicarStatusCandidatura(cliente, "c1", "contratado")
+        expect(ops[1]).toMatchObject({ tabela: "talent_bank", dados: { status: "contratado" }, filtro: ["id", ["t1", "t2"]] })
+    })
+
+    it("sair de contratado devolve os cadastros a disponível", async () => {
+        const { cliente, ops, rpcs } = adminFalso({ candidatura: { ...candidatura, status: "contratado" }, talentos: [{ id: "t1", status: "contratado" }] })
+        const r = await aplicarStatusCandidatura(cliente, "c1", "pendente")
+        expect(r.talento).toBe("liberar")
+        expect(rpcs).toContain("emp_pessoa_contratada_em_outra_vaga")
+        const tb = ops.filter(o => o.tabela === "talent_bank")
+        expect(tb).toHaveLength(1)
+        expect(tb[0].dados.status).toBe("disponivel")
+        expect(tb[0].dados).not.toHaveProperty("arquivo_cv_url")
+    })
+
+    it("sair de contratado para rejeitado: disponível e preenche campos vazios", async () => {
+        const { cliente, ops } = adminFalso({ candidatura: { ...candidatura, status: "contratado" }, talentos: [{ id: "t1", status: "contratado" }] })
+        await aplicarStatusCandidatura(cliente, "c1", "rejeitado")
+        const tb = ops.filter(o => o.tabela === "talent_bank")
+        expect(tb[0].dados).toMatchObject({ status: "disponivel", arquivo_cv_url: "https://x/cv.pdf" })
+    })
+
+    it("sair de contratado com outra contratação: continua travado", async () => {
+        const { cliente, ops } = adminFalso({
+            candidatura: { ...candidatura, status: "contratado" }, talentos: [{ id: "t1", status: "contratado" }], contratadoEmOutra: true,
+        })
+        const r = await aplicarStatusCandidatura(cliente, "c1", "selecionado")
+        expect(r).toMatchObject({ talento: "nenhuma", motivo: "contratado_em_outra_vaga" })
+        expect(ops.filter(o => o.tabela === "talent_bank")).toEqual([])
     })
 
     it("candidatura inexistente devolve falha sem gravar nada", async () => {
@@ -112,7 +149,7 @@ describe("aplicarStatusCandidatura", () => {
 
         it("vaga normal continua com a regra do Banco de Talentos", async () => {
             const { cliente, ops } = adminFalso({ candidatura: { ...candidatura, vagas: { tipo: "vaga_normal" } }, talentos: [{ id: "t1" }] })
-            const r = await aplicarStatusCandidatura(cliente, "c1", "selecionado")
+            const r = await aplicarStatusCandidatura(cliente, "c1", "contratado")
             expect(r.talento).toBe("travar")
             expect(ops.filter(o => o.tabela === "talent_bank")).toHaveLength(1)
         })

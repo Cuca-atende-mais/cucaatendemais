@@ -24,6 +24,8 @@ import { differenceInYears, format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { mascaraTelefone, limparTelefone } from "@/lib/utils"
 import { NIVEIS_ESCOLARIDADE } from "@/constants/empregabilidade"
+import { talentosAprovadosNaVaga, textoContadores, type ContadoresSelecoes } from "@/lib/empregabilidade/contadores-selecoes"
+import { useContadoresSelecoes } from "@/lib/empregabilidade/use-contadores-selecoes"
 
 function formatarExperiencia(meses: number | null | undefined): string {
     if (!meses || meses === 0) return "Sem experiência informada"
@@ -152,6 +154,10 @@ export default function VagaDetalhesPage() {
             return true
         })
     }, [talentResults, candidatos])
+
+    // S-EMP-GES-10 (AC3, AC11): selo "Aprovado" sai da candidatura desta vaga; contadores dos cards visíveis.
+    const aprovadosNaVaga = useMemo(() => talentosAprovadosNaVaga(candidatos), [candidatos])
+    const contadoresTalentos = useContadoresSelecoes(talentVisiveis.map(tb => tb.id))
 
     // Follow-up Sheet
     const [followupSheet, setFollowupSheet] = useState<Candidatura | null>(null)
@@ -970,6 +976,8 @@ export default function VagaDetalhesPage() {
                             <TalentBankCard
                                 key={tb.id}
                                 candidato={tb}
+                                aprovado={aprovadosNaVaga.has(tb.id)}
+                                contadores={contadoresTalentos[tb.id]}
                                 onClick={() => router.push(`/empregabilidade/vagas/${id}/banco-talentos/${tb.id}`)}
                             />
                         ))}
@@ -1356,7 +1364,12 @@ function CandidatoCard({
 }
 
 // ── Componente: Card de candidato do banco de talentos ──
-function TalentBankCard({ candidato, onClick }: { candidato: TalentBankCandidate; onClick: () => void }) {
+function TalentBankCard({ candidato, aprovado, contadores, onClick }: {
+    candidato: TalentBankCandidate
+    aprovado: boolean
+    contadores?: ContadoresSelecoes
+    onClick: () => void
+}) {
     const skills = candidato.skills_jsonb || {}
     const idade = candidato.data_nascimento ? differenceInYears(new Date(), new Date(candidato.data_nascimento)) : null
 
@@ -1379,12 +1392,13 @@ function TalentBankCard({ candidato, onClick }: { candidato: TalentBankCandidate
                                 1º Emprego
                             </span>
                         )}
-                        {(candidato as any).tb_status === "selecionado" && (
+                        {aprovado && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border bg-green-500/10 text-green-400 border-green-500/30">
                                 ✓ Aprovado
                             </span>
                         )}
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">{textoContadores(contadores)}</p>
                 </div>
             </div>
 

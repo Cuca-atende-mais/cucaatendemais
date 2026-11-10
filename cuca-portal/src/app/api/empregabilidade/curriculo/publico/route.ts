@@ -151,7 +151,8 @@ export async function POST(request: NextRequest) {
                 nome: values.nome,
                 telefone: values.telefone,
                 curriculo_estruturado: values,
-                status: "disponivel",
+                // S-EMP-GES-10 (AC6): não mexe no status — o cadastro já existe (criado pelo worker)
+                // e um talento "contratado" não pode voltar a "disponivel" só por salvar o currículo.
                 updated_at: now,
             })
             .eq("id", talentId)

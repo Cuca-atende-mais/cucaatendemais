@@ -137,22 +137,8 @@ export default function BancoTalentosDetalhesPage() {
                 }).catch(() => null)
             }
 
-            // Marcar candidato no banco de talentos como selecionado (permanece visível)
-            await supabase
-                .from("talent_bank")
-                .update({ status: "selecionado", updated_at: new Date().toISOString() })
-                .eq("id", talentId)
-
-            // Atualizar status no localStorage para manter o card visível com badge "Aprovado"
-            try {
-                const stored = localStorage.getItem(`talent_triagem_${vagaId}`)
-                if (stored) {
-                    const lista = JSON.parse(stored)
-                    localStorage.setItem(`talent_triagem_${vagaId}`, JSON.stringify(
-                        lista.map((c: any) => c.id === talentId ? { ...c, tb_status: "selecionado" } : c)
-                    ))
-                }
-            } catch {}
+            // S-EMP-GES-10: aprovar não mexe mais no status do talento — ele continua disponível
+            // para outras vagas. O selo "Aprovado" da triagem sai da própria candidatura criada acima.
 
             // Notificar candidato via WhatsApp se tiver telefone
             if (talent.telefone && vaga?.titulo && vaga?.unidade_cuca) {

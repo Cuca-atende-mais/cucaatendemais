@@ -93,11 +93,8 @@ export async function POST(request: NextRequest) {
 
         if (insErr) throw insErr
 
-        // 5. Atualizar status do talent para arquivado
-        await supabase
-            .from("talent_bank")
-            .update({ status: "arquivado", updated_at: new Date().toISOString() })
-            .eq("id", talent_id)
+        // 5. S-EMP-GES-10: convocar não muda mais o status do talento — ele continua disponível
+        //    para outras vagas. A trava é só por vaga (checagem de duplicada acima).
 
         // 6. Disparar análise de IA em background se houver CV
         if (talent.arquivo_cv_url && nova.id) {

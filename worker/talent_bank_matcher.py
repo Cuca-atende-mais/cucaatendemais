@@ -193,6 +193,43 @@ def _norm_fone(f: str) -> str:
     return re.sub(r'\D', '', f or '')
 
 
+# S-EMP-GES-10 (AC7): o Supabase corta cada consulta em 1.000 linhas. Lê todos os talentos
+# disponíveis em páginas, com a mesma ordem de antes (data_curriculo desc, nulos primeiro, que é o
+# padrão do Postgres para desc) e `id` como desempate, para nenhuma linha pular ou repetir entre páginas.
+PAGINA_TALENTOS = 1000
+
+_CAMPOS_TALENTO = (
+    "id, nome, data_nascimento, telefone, arquivo_cv_url, skills_jsonb, area_interesse, data_curriculo, primeiro_emprego"
+)
+
+
+def _consulta_talentos_disponiveis(filtros: dict):
+    """Monta a consulta de talentos disponíveis com os filtros da tela. Uma consulta nova por página
+    (o `.range()` do cliente acumula parâmetros, então a mesma consulta não pode ser reaproveitada)."""
+    q = supabase.table("talent_bank").select(_CAMPOS_TALENTO).eq("status", "disponivel")
+    if filtros.get("escolaridade"):
+        q = q.eq("escolaridade_normalizada", filtros["escolaridade"])
+    if filtros.get("genero"):
+        q = q.eq("genero", filtros["genero"])
+    if filtros.get("pcd") is not None:
+        q = q.eq("pcd", bool(filtros["pcd"]))
+    if filtros.get("primeiro_emprego") is not None:
+        q = q.eq("primeiro_emprego", bool(filtros["primeiro_emprego"]))
+    return q.order("data_curriculo", desc=True, nullsfirst=True).order("id")
+
+
+def _ler_talentos_disponiveis(filtros: dict) -> list[dict]:
+    todos: list[dict] = []
+    inicio = 0
+    while True:
+        res = _consulta_talentos_disponiveis(filtros).range(inicio, inicio + PAGINA_TALENTOS - 1).execute()
+        lote = res.data or []
+        todos.extend(lote)
+        if len(lote) < PAGINA_TALENTOS:
+            return todos
+        inicio += PAGINA_TALENTOS
+
+
 async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: list[str] | None = None, excluir_ids: list[str] | None = None, telefones_inscritos: list[str] | None = None, filtros: dict | None = None) -> list[dict]:
     """Triagem com varredura completa da área + pré-filtragem semântica + batching.
 
@@ -231,27 +268,13 @@ async def triar_banco_talentos(vaga_id: str, quantidade: int = 5, setor_vaga: li
 
     # S37B-06: Aplicar filtros demográficos diretamente na query do Supabase
     filtros = filtros or {}
-    tb_query = supabase.table("talent_bank").select(
-        "id, nome, data_nascimento, telefone, arquivo_cv_url, skills_jsonb, area_interesse, data_curriculo, primeiro_emprego"
-    ).eq("status", "disponivel")
-
-    if filtros.get("escolaridade"):
-        tb_query = tb_query.eq("escolaridade_normalizada", filtros["escolaridade"])
-    if filtros.get("genero"):
-        tb_query = tb_query.eq("genero", filtros["genero"])
-    if filtros.get("pcd") is not None:
-        tb_query = tb_query.eq("pcd", bool(filtros["pcd"]))
-    if filtros.get("primeiro_emprego") is not None:
-        tb_query = tb_query.eq("primeiro_emprego", bool(filtros["primeiro_emprego"]))
-
     filtros_ativos = [k for k, v in filtros.items() if v is not None and v != ""]
     if filtros_ativos:
         logger.info(f"[triar_banco_talentos] Filtros demográficos aplicados: {filtros_ativos}")
 
-    # 2. Buscar candidatos disponíveis com filtros demográficos já aplicados no banco
-    tb_res = tb_query.order("data_curriculo", desc=True).execute()
-
-    todos = tb_res.data or []
+    # 2. Buscar candidatos disponíveis com filtros demográficos já aplicados no banco.
+    # S-EMP-GES-10 (AC7): em páginas, porque o Supabase devolve no máximo 1.000 linhas por consulta.
+    todos = _ler_talentos_disponiveis(filtros)
 
     # Excluir candidatos já mostrados ou já inscritos nesta vaga
     ids_excluir = set(excluir_ids or [])
