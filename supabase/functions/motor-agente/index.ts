@@ -864,19 +864,30 @@ const PALAVRAS_NAO_DISCRIMINANTES = new Set([
   "onde", "quando", "como", "qual", "quais", "para", "pela", "pelo", "sobre", "tem",
 ]);
 
-function detectarPorPalavraUnicaSemAmbiguidade(msgNorm: string, modalidades: string[], normalizadas: string[]): string | null {
+function detectarPorPalavraUnicaSemAmbiguidade(msgNorm: string, modalidades: string[], normalizadas: string[]): DeteccaoAtividade {
   const candidatos = new Set<string>();
   for (let i = 0; i < modalidades.length; i++) {
     const palavra = primeiraPalavraSignificativa(normalizadas[i]);
     if (!palavra) continue;
     if (new RegExp("\\b" + escaparRegex(palavra) + "\\b").test(msgNorm)) candidatos.add(modalidades[i]);
   }
-  return candidatos.size === 1 ? [...candidatos][0] : null;
+  if (candidatos.size === 1) return { atividade: [...candidatos][0], ambigua: false };
+  return { atividade: null, ambigua: candidatos.size > 1 };
 }
 
+/** S-INST-QUAL-03: além da atividade, diz se o `null` foi por ambiguidade (2+ títulos casaram). */
+export type DeteccaoAtividade = { atividade: string | null; ambigua: boolean };
+
 export function detectarAtividadeMencionada(mensagem: string, modalidades: string[]): string | null {
+  return detectarAtividadeComDiagnostico(mensagem, modalidades).atividade;
+}
+
+/** S-INST-QUAL-03: mesma lógica de `detectarAtividadeMencionada` (que só repassa `atividade`),
+ * dizendo também se o `null` foi "não achei" ou "ambíguo". Só registro; quem trata a
+ * ambiguidade é a S-INST-QUAL-06. */
+export function detectarAtividadeComDiagnostico(mensagem: string, modalidades: string[]): DeteccaoAtividade {
   const msgNorm = normalizarParaMatchDeAtividade(mensagem);
-  if (!msgNorm) return null;
+  if (!msgNorm) return { atividade: null, ambigua: false };
   const msgCompacta = compactarParaMatchDeAtividade(mensagem);
   const normalizadas = modalidades.map((m) => normalizarParaMatchDeAtividade(m));
   const compactas = modalidades.map((m) => compactarParaMatchDeAtividade(m));
@@ -888,7 +899,7 @@ export function detectarAtividadeMencionada(mensagem: string, modalidades: strin
     if (!compactas[i]) continue;
     if (!msgCompacta.includes(compactas[i])) continue;
     if (ehBaseDeVarianteMaisEspecifica(normalizadas[i], normalizadas)) continue; // Plano 009
-    return modalidades[i];
+    return { atividade: modalidades[i], ambigua: false };
   }
 
   // Fase 2 — a mensagem inteira é um TRECHO de um título (achado 2026-08-09: curso tem nome
@@ -903,8 +914,8 @@ export function detectarAtividadeMencionada(mensagem: string, modalidades: strin
   // Correção: só resolve quando UM ÚNICO título contém o trecho; 2+ é ambiguidade real → null.
   if (msgCompacta.length >= 4) {
     const contendoOTrecho = [...new Set(modalidades.filter((_, i) => compactas[i].includes(msgCompacta)))];
-    if (contendoOTrecho.length === 1) return contendoOTrecho[0];
-    if (contendoOTrecho.length > 1) return null;
+    if (contendoOTrecho.length === 1) return { atividade: contendoOTrecho[0], ambigua: false };
+    if (contendoOTrecho.length > 1) return { atividade: null, ambigua: true };
   }
 
   // Fase 3 — Plano 005, último recurso por palavra significativa única.
@@ -1115,18 +1126,30 @@ export function resolverAtividadeMencionadaComHistorico(
   atividadesConhecidas: string[],
   historico: { role: string; content: string }[] = [],
 ): { atividade: string | null; origem: "mensagem_atual" | "historico" | null } {
+  const { atividade, origem } = resolverAtividadeComDiagnostico(mensagemAtual, atividadesConhecidas, historico);
+  return { atividade, origem };
+}
+
+/** S-INST-QUAL-03: mesma lógica de `resolverAtividadeMencionadaComHistorico` (que só repassa
+ * `atividade` e `origem`), dizendo também se o `null` veio de ambiguidade — 2+ títulos na
+ * mensagem atual, ou 2+ atividades distintas no histórico recente. Só registro. */
+export function resolverAtividadeComDiagnostico(
+  mensagemAtual: string,
+  atividadesConhecidas: string[],
+  historico: { role: string; content: string }[] = [],
+): { atividade: string | null; origem: "mensagem_atual" | "historico" | null; ambigua: boolean } {
   // S-WM-AUD-010 (CONCERN-4): ANTES de tentar casar a mensagem atual contra o catálogo. Um
   // qualificador sozinho ("infantil") casaria com qualquer título que o contenha — foi assim que
   // "natação" seguido de "infantil" devolvia "Ballet Infantil" em Jangurussu.
   const qualificador = ehQualificadorSozinho(mensagemAtual);
   if (qualificador) {
     const combinada = resolverQualificadorContraHistorico(qualificador, atividadesConhecidas, historico, mensagemAtual);
-    return combinada ? { atividade: combinada, origem: "historico" } : { atividade: null, origem: null };
+    return combinada ? { atividade: combinada, origem: "historico", ambigua: false } : { atividade: null, origem: null, ambigua: false };
   }
 
-  const atividadeAtual = detectarAtividadeMencionada(mensagemAtual, atividadesConhecidas);
-  if (atividadeAtual) return { atividade: atividadeAtual, origem: "mensagem_atual" };
-  if (!mensagemPareceContinuacaoDeAtividade(mensagemAtual)) return { atividade: null, origem: null };
+  const deteccaoAtual = detectarAtividadeComDiagnostico(mensagemAtual, atividadesConhecidas);
+  if (deteccaoAtual.atividade) return { atividade: deteccaoAtual.atividade, origem: "mensagem_atual", ambigua: false };
+  if (!mensagemPareceContinuacaoDeAtividade(mensagemAtual)) return { atividade: null, origem: null, ambigua: deteccaoAtual.ambigua };
 
   const encontradas = new Map<string, string>();
   const mensagensUsuarioRecentes = [...historico]
@@ -1139,8 +1162,8 @@ export function resolverAtividadeMencionadaComHistorico(
     if (atividade) encontradas.set(normalizarTexto(atividade), atividade);
   }
 
-  if (encontradas.size === 1) return { atividade: [...encontradas.values()][0], origem: "historico" };
-  return { atividade: null, origem: null };
+  if (encontradas.size === 1) return { atividade: [...encontradas.values()][0], origem: "historico", ambigua: false };
+  return { atividade: null, origem: null, ambigua: deteccaoAtual.ambigua || encontradas.size > 1 };
 }
 
 /**
@@ -1432,7 +1455,9 @@ export function montarContextoSessaoParaInterpretacao(historico: { role: string;
   return linhas.length ? "Conversa desta sessão (mais antiga primeiro):\n" + linhas.join("\n") : "Conversa desta sessão: nenhuma mensagem anterior.";
 }
 
-export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, historico: { role: string; content: string }[] = [], tentativa = 0): Promise<AvaliacaoSelecaoUnidade> {
+/** S-INST-QUAL-03: `aoConsumir` (opcional) registra o consumo (`feature = 'classificacao_rota'`). */
+export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, historico: { role: string; content: string }[] = [], aoConsumir?: (corpo: RespostaOpenAIUso, latenciaMs: number) => void, tentativa = 0): Promise<AvaliacaoSelecaoUnidade> {
+  const inicio = Date.now();
   try {
     const contextoHistorico = montarContextoHistoricoSelecaoUnidade(historico, texto);
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -1476,11 +1501,12 @@ export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, hi
       const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
       console.log("[motor-agente v18] Rate limit OpenAI em avaliarSelecaoUnidade (tentativa " + (tentativa + 1) + "/" + GPT_MAX_TENTATIVAS + "), aguardando " + esperaSegundos + "s antes de tentar de novo");
       await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
-      return avaliarSelecaoUnidade(texto, openaiKey, historico, tentativa + 1);
+      return avaliarSelecaoUnidade(texto, openaiKey, historico, aoConsumir, tentativa + 1);
     }
 
     if (!resp.ok) return AVALIACAO_SELECAO_UNIDADE_DEFAULT;
     const body = await resp.json();
+    notificarConsumo(aoConsumir, body, inicio);
     const parsed = JSON.parse(body.choices[0].message.content);
     return validarAvaliacaoSelecaoUnidade(parsed);
   } catch (exc) {
@@ -1497,7 +1523,9 @@ export async function avaliarSelecaoUnidade(texto: string, openaiKey: string, hi
  * quando o filtro barato (`temSinalDeProgramacao`) vê cara de programação. Qualquer falha cai em
  * `INTERPRETACAO_PADRAO` (nao_programacao) — o fluxo de hoje segue, nunca um palpite.
  */
-export async function interpretarTurnoProgramacao(texto: string, openaiKey: string, historico: { role: string; content: string }[] = [], tentativa = 0): Promise<InterpretacaoTurno> {
+export async function interpretarTurnoProgramacao(texto: string, openaiKey: string, historico: { role: string; content: string }[] = [], aoConsumir?: (corpo: RespostaOpenAIUso, latenciaMs: number) => void, tentativa = 0): Promise<InterpretacaoTurno> {
+  // S-INST-QUAL-03: `aoConsumir` (opcional) registra o consumo (`feature = 'interpretacao_programacao'`).
+  const inicio = Date.now();
   try {
     const contextoHistorico = montarContextoSessaoParaInterpretacao(historico, texto);
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -1550,10 +1578,11 @@ export async function interpretarTurnoProgramacao(texto: string, openaiKey: stri
       const corpoErro = await resp.text();
       const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
       await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
-      return interpretarTurnoProgramacao(texto, openaiKey, historico, tentativa + 1);
+      return interpretarTurnoProgramacao(texto, openaiKey, historico, aoConsumir, tentativa + 1);
     }
     if (!resp.ok) return INTERPRETACAO_PADRAO;
     const body = await resp.json();
+    notificarConsumo(aoConsumir, body, inicio);
     return validarInterpretacaoTurno(JSON.parse(body.choices[0].message.content));
   } catch (exc) {
     console.error("[motor-agente v18] interpretarTurnoProgramacao erro, fallback seguro:", exc);
@@ -2439,7 +2468,10 @@ async function getOpenAIKey(supabase: ReturnType<typeof createClient<Database>>)
   return data || Deno.env.get("OPENAI_API_KEY") || "";
 }
 
-export async function gerarEmbedding(texto: string, apiKey: string, tentativa = 0): Promise<number[]> {
+/** S-INST-QUAL-03: `aoConsumir` (opcional) recebe o corpo da resposta para o registro de consumo
+ * (`feature = 'embedding'`). A resposta de embeddings só traz `usage.prompt_tokens`. */
+export async function gerarEmbedding(texto: string, apiKey: string, aoConsumir?: (corpo: RespostaOpenAIUso, latenciaMs: number) => void, tentativa = 0): Promise<number[]> {
+  const inicio = Date.now();
   const resp = await fetch("https://api.openai.com/v1/embeddings", {
     method: "POST", headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ model: EMBEDDING_MODEL, input: texto.slice(0, 8000) }),
@@ -2450,11 +2482,20 @@ export async function gerarEmbedding(texto: string, apiKey: string, tentativa = 
     const esperaSegundos = Math.min(parseRetryAfterSegundos(resp.headers.get("retry-after"), corpoErro), GPT_ESPERA_MAX_SEGUNDOS);
     console.log("[motor-agente v18] Rate limit OpenAI/embeddings (tentativa " + (tentativa + 1) + "/" + GPT_MAX_TENTATIVAS + "), aguardando " + esperaSegundos + "s antes de tentar de novo");
     await new Promise((resolve) => setTimeout(resolve, esperaSegundos * 1000));
-    return gerarEmbedding(texto, apiKey, tentativa + 1);
+    return gerarEmbedding(texto, apiKey, aoConsumir, tentativa + 1);
   }
 
   if (!resp.ok) throw new Error("Embedding error: " + await resp.text());
-  return (await resp.json()).data[0].embedding;
+  const corpo = await resp.json();
+  notificarConsumo(aoConsumir, corpo, inicio);
+  return corpo.data[0].embedding;
+}
+
+/** S-INST-QUAL-03: entrega o corpo ao callback de consumo, só quando há `usage` (429/5xx não
+ * cobra token). Erro ao preparar o registro nunca chega ao cidadão. */
+function notificarConsumo(aoConsumir: ((corpo: RespostaOpenAIUso, latenciaMs: number) => void) | undefined, corpo: RespostaOpenAIUso | null | undefined, inicio: number): void {
+  if (!aoConsumir || !corpo?.usage) return;
+  try { aoConsumir(corpo, Date.now() - inicio); } catch (e) { console.error("[motor-agente v18] Falha ao preparar registro de consumo:", e); }
 }
 
 const GPT_MAX_TENTATIVAS = 2; // tentativas extras além da 1ª, só para 429/rate_limit_exceeded
@@ -2604,6 +2645,11 @@ async function registrarBuscaRAG(
     atividade_resolvida?: string | null;
     chunks_retornados?: unknown;
     mensagem_lead: string;
+    // S-INST-QUAL-03
+    resolucao_atividade?: ResolucaoAtividade | null;
+    resultado_busca?: ResultadoBusca;
+    p_limite?: number | null;
+    erro?: string | null;
   },
 ): Promise<void> {
   try {
@@ -2613,7 +2659,10 @@ async function registrarBuscaRAG(
     // limpo e esta registrado como pendencia; nao foi feito aqui pra nao misturar um diff de
     // 3700 linhas geradas com a mudanca desta story.
     // deno-lint-ignore no-explicit-any
-    await (supabase as any).from("rag_retrieval_logs").insert(params);
+    const { error } = await (supabase as any).from("rag_retrieval_logs").insert(params) ?? {};
+    // S-INST-QUAL-03: o erro do insert vinha sendo descartado — uma coluna faltando no banco
+    // apagava o registro de todos os turnos sem ninguém saber.
+    if (error) console.error("[motor-agente v18] registrarBuscaRAG: insert recusado (nao afeta a resposta):", error.message ?? error);
   } catch (exc) {
     console.error("[motor-agente v18] registrarBuscaRAG erro (nao afeta a resposta):", exc);
   }
@@ -2846,6 +2895,39 @@ async function calcularDiretivaVigenciaMes(supabase: ReturnType<typeof createCli
   return montarDiretivaVigenciaMes(mes, ano, mesAtual, anoAtual);
 }
 
+// ── S-INST-QUAL-03: resultado das buscas, para `rag_retrieval_logs` ───────────────────────
+/** Por que a busca determinística de atividade devolveu (ou não) conteúdo. */
+export type ResolucaoAtividade = "encontrada" | "nao_encontrada" | "ambigua" | "sem_documento";
+export type BuscaAtividade = { conteudo: string | null; resolucao: ResolucaoAtividade };
+
+/** Turno com as duas camadas determinísticas (metadata e texto): vale a que achou; se nenhuma
+ * achou, vale o motivo mais informativo — ambígua > não encontrada > sem documento. */
+export function combinarResolucaoAtividade(...resolucoes: (ResolucaoAtividade | null | undefined)[]): ResolucaoAtividade | null {
+  const vistas = resolucoes.filter((r): r is ResolucaoAtividade => !!r);
+  for (const r of ["encontrada", "ambigua", "nao_encontrada", "sem_documento"] as const) {
+    if (vistas.includes(r)) return r;
+  }
+  return null;
+}
+
+/** Resultado da chamada a `buscar_chunks_similares`. Antes o `error` era ignorado e uma busca
+ * que falhou ficava igual a uma vazia (`sem_match_rag`). */
+export type ResultadoBusca = "sucesso_com_resultado" | "sucesso_vazio" | "erro" | "nao_aplicavel";
+export type RegistroBusca = { resultado_busca: ResultadoBusca; p_limite: number | null; erro: string | null };
+export const BUSCA_NAO_APLICAVEL: RegistroBusca = { resultado_busca: "nao_aplicavel", p_limite: null, erro: null };
+
+/** Classifica a resposta da RPC sem mudar o que o motor faz com ela: o fluxo segue tratando erro
+ * como "sem chunks", como antes — esta story só registra. */
+export function classificarResultadoBusca(data: unknown, error: unknown, pLimite: number): RegistroBusca {
+  if (error) {
+    const msg = typeof error === "object" && error !== null && "message" in error ? String((error as { message: unknown }).message) : String(error);
+    console.error("[motor-agente v18] buscar_chunks_similares devolveu erro (p_limite=" + pLimite + "): " + msg);
+    return { resultado_busca: "erro", p_limite: pLimite, erro: msg.slice(0, 500) };
+  }
+  const temResultado = Array.isArray(data) && data.length > 0;
+  return { resultado_busca: temResultado ? "sucesso_com_resultado" : "sucesso_vazio", p_limite: pLimite, erro: null };
+}
+
 /**
  * S-WM-34 (VAL-09): busca determinística por nome de atividade no `monthly_program` ativo da
  * unidade — evita o limite de `p_limite: 5` chunks da busca vetorial (`buscar_chunks_similares`)
@@ -2861,22 +2943,22 @@ async function calcularDiretivaVigenciaMes(supabase: ReturnType<typeof createCli
  * ativo — o caller cai de volta pra busca vetorial (rede de segurança, comportamento hoje
  * existente preservado).
  */
-async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClient<Database>>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
+async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClient<Database>>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<BuscaAtividade> {
   const { data } = await supabase.from("documentos_rag").select("id").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   const doc = data as { id: string } | null;
-  if (!doc) return null;
+  if (!doc) return { conteudo: null, resolucao: "sem_documento" };
   const { data: chunks } = await supabase.from("chunks_documentos").select("conteudo").eq("documento_id", doc.id).order("chunk_index", { ascending: true });
-  if (!chunks || chunks.length === 0) return null;
+  if (!chunks || chunks.length === 0) return { conteudo: null, resolucao: "sem_documento" };
 
   const conteudos = chunks.map((c: { conteudo: string }) => c.conteudo);
   const modalidades = extrairModalidades(conteudos);
-  const resolucao = resolverAtividadeMencionadaComHistorico(mensagem, modalidades, historico);
+  const resolucao = resolverAtividadeComDiagnostico(mensagem, modalidades, historico);
   const atividade = resolucao.atividade;
-  if (!atividade) return null;
+  if (!atividade) return { conteudo: null, resolucao: resolucao.ambigua ? "ambigua" : "nao_encontrada" };
 
   const atividadeNorm = normalizarTexto(atividade);
   const relevantes = conteudos.filter((c) => normalizarTexto(c).includes(atividadeNorm));
-  if (relevantes.length === 0) return null;
+  if (relevantes.length === 0) return { conteudo: null, resolucao: "nao_encontrada" };
 
   console.log("[motor-agente v18] Busca deterministica de atividade: \"" + atividade + "\" (" + relevantes.length + " chunks, unidade=" + unidade + ", origem=" + resolucao.origem + ")");
   // S-PROG-03 (item 2.2, achado do @qa): esta e a 2a camada de fallback (S-WM-34) — entra
@@ -2885,7 +2967,7 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
   // vazava o numero de volta pelo texto cru do chunk. Filtra por atividadeNorm ANTES de
   // sanitizar (linha acima) — remover "Vagas: N" não deveria nunca afetar o match do nome da
   // modalidade, mas por segurança o filtro roda sobre o texto original, não o sanitizado.
-  return relevantes.map(removerVagasDoTexto).join("\n");
+  return { conteudo: relevantes.map(removerVagasDoTexto).join("\n"), resolucao: "encontrada" };
 }
 
 /**
@@ -2911,26 +2993,26 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
  * nenhuma linha ESPORTES pra essa campanha, ou a modalidade não é reconhecida — em todos os
  * casos o caller cai pra próxima camada (rede de segurança preservada, mesmo padrão do S-WM-34).
  */
-async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createClient<Database>>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<string | null> {
+async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createClient<Database>>, unidade: string, mensagem: string, historico: { role: string; content: string }[] = []): Promise<BuscaAtividade> {
   const { data } = await supabase.from("documentos_rag").select("id, metadados").eq("tipo", "monthly_program").eq("unidade_cuca", unidade).eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
   const doc = data as { id: string; metadados: Record<string, unknown> | null } | null;
-  if (!doc) return null;
+  if (!doc) return { conteudo: null, resolucao: "sem_documento" };
 
   const campanhaId = doc.metadados && typeof doc.metadados === "object" ? doc.metadados["campanha_id"] : null;
-  if (typeof campanhaId !== "string" || !campanhaId) return null;
+  if (typeof campanhaId !== "string" || !campanhaId) return { conteudo: null, resolucao: "sem_documento" };
 
   const { data: atividades } = await supabase.from("atividades_mensais").select("titulo, categoria, metadata").eq("campanha_id", campanhaId);
   const linhas = atividades as { titulo: string; categoria?: string | null; metadata: Record<string, unknown> | null }[] | null;
-  if (!linhas || linhas.length === 0) return null;
+  if (!linhas || linhas.length === 0) return { conteudo: null, resolucao: "sem_documento" };
 
   const titulosDistintos = [...new Set(linhas.map((l) => l.titulo).filter((t): t is string => typeof t === "string" && t.trim() !== ""))];
-  const resolucao = resolverAtividadeMencionadaComHistorico(mensagem, titulosDistintos, historico);
+  const resolucao = resolverAtividadeComDiagnostico(mensagem, titulosDistintos, historico);
   const atividade = resolucao.atividade;
-  if (!atividade) return null;
+  if (!atividade) return { conteudo: null, resolucao: resolucao.ambigua ? "ambigua" : "nao_encontrada" };
 
   const atividadeNorm = normalizarTexto(atividade);
   const linhasRelevantes = linhas.filter((l) => typeof l.titulo === "string" && normalizarTexto(l.titulo) === atividadeNorm);
-  if (linhasRelevantes.length === 0) return null;
+  if (linhasRelevantes.length === 0) return { conteudo: null, resolucao: "nao_encontrada" };
 
   // S-WM-AUD-010 (CONCERN-5): "meu filho tem 15 anos" depois de perguntar de futsal deve devolver
   // só as turmas compatíveis, em vez de despejar todas. O dado existe em metadata.faixa_etaria e
@@ -2940,7 +3022,7 @@ async function buscarAtividadeDeterministica(supabase: ReturnType<typeof createC
   const linhasFiltradas = filtrarLinhasPorIdade(linhasRelevantes, idade);
 
   console.log("[motor-agente v18] Busca deterministica (metadata) de atividade: \"" + atividade + "\" (" + linhasFiltradas.length + "/" + linhasRelevantes.length + " turmas, unidade=" + unidade + ", origem=" + resolucao.origem + (idade !== null ? ", idade=" + idade : "") + ")");
-  return linhasFiltradas.map((l) => formatarLinhaAtividadeDeterministica(l.titulo, l.metadata, l.categoria || "nao informado")).join("\n");
+  return { conteudo: linhasFiltradas.map((l) => formatarLinhaAtividadeDeterministica(l.titulo, l.metadata, l.categoria || "nao informado")).join("\n"), resolucao: "encontrada" };
 }
 
 /**
@@ -3168,6 +3250,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         atividade_resolvida: null,
         chunks_retornados: null,
         mensagem_lead: mensagemLead,
+        ...BUSCA_NAO_APLICAVEL,
       }));
 
     // S-WM-71 (Item 1): sessão nova (mais de 2h desde a mensagem anterior) zera o estado de "onde
@@ -3202,13 +3285,16 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     // pergunta separada, e o resto do fluxo (classificadores, busca e resposta) recebe so ela.
     const conversaEmProgramacaoEmprego = conversaEmContextoDeProgramacao(metadataInicialDaSessao, textoUltimoBlocoAgente(historico));
     const conversaIdClassificador = conversa?.id ?? null;
-    const registrarConsumoClassificador = (corpo: RespostaOpenAIUso, latenciaMs: number) => {
+    // S-INST-QUAL-03: o mesmo registro do classificador de emprego, agora para toda chamada de IA
+    // do turno (classificador de rota, interpretador da S-WM-72, embeddings). Em segundo plano
+    // (`manterVivoAposResposta`), sem atrasar a resposta; falha no registro nunca chega ao cidadão.
+    const criarRegistroConsumo = (feature: string, modeloPadrao: string) => (corpo: RespostaOpenAIUso, latenciaMs: number) => {
       manterVivoAposResposta((async () => {
         const u = corpo.usage ?? {};
-        const modelo = corpo.model ?? GPT_MODEL;
+        const modelo = corpo.model ?? modeloPadrao;
         await registrarUsoLLM(supabase, {
           agente_tipo,
-          feature: "classificador_emprego",
+          feature,
           modelo,
           tokens_prompt: u.prompt_tokens ?? 0,
           tokens_completion: u.completion_tokens ?? 0,
@@ -3220,6 +3306,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         });
       })());
     };
+    const registrarConsumoClassificador = criarRegistroConsumo("classificador_emprego", GPT_MODEL);
+    const registrarConsumoRota = criarRegistroConsumo("classificacao_rota", "gpt-4o-mini");
+    const registrarConsumoInterpretacao = criarRegistroConsumo("interpretacao_programacao", "gpt-4o-mini");
+    const registrarConsumoEmbedding = criarRegistroConsumo("embedding", EMBEDDING_MODEL);
     const decisaoEmprego = await decidirEmprego(
       textoFinal,
       agente_tipo,
@@ -3365,7 +3455,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         const podeTerSinal = palavrasChaveProgramacao(textoFinal).length > 0 || areaPeloVocabulario(textoFinal) !== null || ehPerguntaGeralDeProgramacao(textoFinal);
         const itensRede = podeTerSinal ? await carregarItensProgramacaoRede(supabase, usarCacheProgramacao) : [];
         if ((podeTerSinal && temSinalDeProgramacao(textoFinal, itensRede)) || escopoSessao === ESCOLHA_REDE) {
-          const interp = consolidarInterpretacao(await interpretarTurnoProgramacao(textoFinal, openaiKey, historico), textoFinal);
+          const interp = consolidarInterpretacao(await interpretarTurnoProgramacao(textoFinal, openaiKey, historico, registrarConsumoInterpretacao), textoFinal);
           const contexto = { ...contextoSessao, ...interp.contexto };
           console.log("[motor-agente v18] Interpretacao S-WM-72: tipo=" + interp.tipo + " atividade=" + interp.atividade + " area=" + interp.area + " escopo=" + interp.escopo + " contexto=" + descreverContexto(contexto));
           if (interp.tipo === "pergunta_programacao" || interp.tipo === "continuacao") {
@@ -3412,7 +3502,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
           // AQUI vale a chamada semântica (avaliarSelecaoUnidade), pra não pagar uma chamada
           // extra de LLM em toda mensagem de acompanhamento comum de uma conversa já em
           // andamento (a maioria delas não menciona nada sobre trocar de unidade).
-          const avaliacaoTroca = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico);
+          const avaliacaoTroca = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico, registrarConsumoRota);
           if (avaliacaoTroca.unidade && avaliacaoTroca.unidade !== unidadeSalva) {
             metadataAtual = { ...metadataAtual, unidade_selecionada: avaliacaoTroca.unidade, aguardando_unidade: false };
             await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
@@ -3453,7 +3543,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         let avaliacaoSemantica: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDireta) {
-          avaliacaoSemantica = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico);
+          avaliacaoSemantica = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico, registrarConsumoRota);
         }
 
         const decisao = decidirAguardandoUnidade(unidadeDetectadaDireta, avaliacaoSemantica, textoFinal);
@@ -3517,7 +3607,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         let avaliacaoSemanticaEngajada: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDiretaEngajada) {
-          avaliacaoSemanticaEngajada = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico);
+          avaliacaoSemanticaEngajada = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico, registrarConsumoRota);
         }
 
         const decisaoEngajada = decidirConversaEngajada(unidadeDetectadaDiretaEngajada, avaliacaoSemanticaEngajada, textoFinal);
@@ -3568,7 +3658,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         let avaliacaoSemantica1a: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDireta1a) {
-          avaliacaoSemantica1a = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico);
+          avaliacaoSemantica1a = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico, registrarConsumoRota);
         }
 
         const decisaoPrimeira = decidirPrimeiraMensagem(unidadeDetectadaDireta1a, avaliacaoSemantica1a, textoFinal);
@@ -3648,6 +3738,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       atividadeResolvida?: string | null;
       chunksRetornados?: { documento_id: string; fonte_tipo: string; similaridade: number | null }[];
     } = { camada: "nao_aplicavel" };
+    // S-INST-QUAL-03: resultado da chamada a `buscar_chunks_similares` do turno (cada ramo faz no
+    // maximo uma) e o motivo das buscas deterministicas de atividade. Vao no mesmo insert unico.
+    let buscaRAG: RegistroBusca = BUSCA_NAO_APLICAVEL;
+    let resolucaoAtividade: ResolucaoAtividade | null = null;
     // @qa (LOW): `similaridade` ausente vira `null`, nao `-1`. Sentinela numerica entra em media
     // sem ninguem perceber; `null` e o valor honesto pra "nao veio" e a coluna e jsonb.
     const mapearChunks = (cs: { documento_id: string; fonte_tipo?: string; similaridade?: number }[]) =>
@@ -3716,12 +3810,13 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       const sobre = c.atividade ?? (r.area ? ROTULO_AREA[r.area] : "o que a pessoa perguntou");
       if (r.bloco) adicionarBloco("programacao_contexto", "\n\n--- PROGRAMACAO VIGENTE (programacao mensal ativa, filtrada pela pergunta" + (contextoTxt ? " e pelo contexto: " + contextoTxt : "") + ") ---\n" + r.bloco);
       // Parte que não é programação (matrícula, documentos, inscrição): FAQ, pela pergunta original.
-      const embeddingConsulta = await gerarEmbedding(c.texto, openaiKey);
-      const { data: chunksFaqConsulta } = await supabase.rpc("buscar_chunks_similares", {
+      const embeddingConsulta = await gerarEmbedding(c.texto, openaiKey, registrarConsumoEmbedding);
+      const { data: chunksFaqConsulta, error: erroFaqConsulta } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embeddingConsulta.join(",") + "]",
         p_tipos: ["FAQ"], // FAQ é geral (sem unidade); p_unidade_cuca omitido = NULL no banco
         p_limite: 3,
       });
+      buscaRAG = classificarResultadoBusca(chunksFaqConsulta, erroFaqConsulta, 3);
       if (chunksFaqConsulta && chunksFaqConsulta.length > 0) adicionarBloco("faq", "\n\n--- CONTEXTO (FAQ) ---\n" + formatarChunks(chunksFaqConsulta));
       const opcoesNumeradas = "com as opcoes numeradas e o nome da unidade em cada linha (ex.: '1️⃣ Cuca Mondubim')";
       const porSituacao: Record<string, string> = {
@@ -3749,7 +3844,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // no mesmo trecho) para um ganho marginal, já que ela só dispara numa fração dos turnos.
       const [conteudoPrograma, embedding] = await Promise.all([
         carregarProgramacaoMensal(supabase, unidadeEfetiva),
-        gerarEmbedding(textoFinal, openaiKey),
+        gerarEmbedding(textoFinal, openaiKey, registrarConsumoEmbedding),
       ]);
 
       let instrucaoArea = "";
@@ -3785,7 +3880,9 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // este bloco so garante que o dado exato da atividade pedida esta disponivel com certeza,
       // em vez de depender so do que sobrar nos ~40+ chunks do resumo geral.
       if (trocaComPedidoEspecifico || trocouUnidade) {
-        const conteudoAtividadeEspecifica = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
+        const buscaEspecifica = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
+        const conteudoAtividadeEspecifica = buscaEspecifica.conteudo;
+        resolucaoAtividade = buscaEspecifica.resolucao;
         if (conteudoAtividadeEspecifica) {
           adicionarBloco("atividade_especifica", "\n\n--- ATIVIDADE ESPECIFICA (dado exato) ---\n" + conteudoAtividadeEspecifica);
           // Sobrescreve `programacao_completa` de proposito: quando a camada deterministica
@@ -3795,12 +3892,13 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       }
 
       // Complementa com eventos pontuais via busca vetorial (embedding já resolvido acima, no Promise.all do Par 3)
-      const { data: chunksEventos } = await supabase.rpc("buscar_chunks_similares", {
+      const { data: chunksEventos, error: erroEventos } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embedding.join(",") + "]",
         p_tipos: ["eventos_pontuais", "FAQ"],
         p_unidade_cuca: unidadeEfetiva,
         p_limite: 3,
       });
+      buscaRAG = classificarResultadoBusca(chunksEventos, erroEventos, 3);
       if (chunksEventos && chunksEventos.length > 0) {
         adicionarBloco("eventos_faq", "\n\n--- EVENTOS E FAQ ---\n" + formatarChunks(chunksEventos));
         // So marca vetorial se a camada deterministica nao tiver respondido antes — o que manda
@@ -3838,9 +3936,13 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // S-WM-AUD-007: o `??` foi aberto em duas linhas SO pra saber qual camada respondeu.
       // Semantica identica — `buscarAtividadeEspecifica` continua so sendo chamada quando a
       // primeira devolve null (short-circuit do `??` preservado pelo `?? await`).
-      const conteudoAtividadeMetadata = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
-      const conteudoAtividade = conteudoAtividadeMetadata
-        ?? await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal, historico);
+      // S-INST-QUAL-03: as duas funcoes devolvem tambem o motivo do null; o `??` continua
+      // garantindo que a segunda so roda quando a primeira nao achou.
+      const buscaMetadata = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
+      const conteudoAtividadeMetadata = buscaMetadata.conteudo;
+      const buscaTexto = conteudoAtividadeMetadata ? null : await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal, historico);
+      const conteudoAtividade = conteudoAtividadeMetadata ?? buscaTexto?.conteudo ?? null;
+      resolucaoAtividade = combinarResolucaoAtividade(buscaMetadata.resolucao, buscaTexto?.resolucao);
       if (conteudoAtividadeMetadata) logRAG = { camada: "deterministica_metadata" };
       else if (conteudoAtividade) logRAG = { camada: "deterministica_texto" };
       // S-WM-51: mesma inicialização com contextServicos que o branch anterior — ver comentário
@@ -3849,13 +3951,14 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       if (conteudoAtividade) {
         adicionarBloco("atividade_contexto", "\n\n--- CONTEXTO (atividade especifica) ---\n" + conteudoAtividade);
       } else {
-        const embedding = await gerarEmbedding(textoFinal, openaiKey);
-        const { data: chunksPrograma } = await supabase.rpc("buscar_chunks_similares", {
+        const embedding = await gerarEmbedding(textoFinal, openaiKey, registrarConsumoEmbedding);
+        const { data: chunksPrograma, error: erroPrograma } = await supabase.rpc("buscar_chunks_similares", {
           query_embedding: "[" + embedding.join(",") + "]",
           p_tipos: ["monthly_program", "eventos_pontuais", "FAQ"],
           p_unidade_cuca: unidadeEfetiva,
           p_limite: 5,
         });
+        buscaRAG = classificarResultadoBusca(chunksPrograma, erroPrograma, 5);
         // VAL-02/VAL-04: quantos chunks a busca de acompanhamento realmente trouxe - sem isso,
         // "o GPT respondeu errado" e "a busca nao trouxe o chunk certo" eram indistinguiveis no log.
         console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
@@ -3880,15 +3983,16 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       const palavrasProgramacao = palavrasChaveProgramacao(textoFinal);
       const [itensRede, embedding] = await Promise.all([
         palavrasProgramacao.length > 0 ? carregarItensProgramacaoRede(supabase) : Promise.resolve([] as ItemProgramacao[]),
-        gerarEmbedding(textoFinal, openaiKey),
+        gerarEmbedding(textoFinal, openaiKey, registrarConsumoEmbedding),
       ]);
       const blocoProgramacaoRede = montarBlocoProgramacaoRede(itensRede, palavrasProgramacao);
-      const { data: chunksFaq } = await supabase.rpc("buscar_chunks_similares", {
+      const { data: chunksFaq, error: erroFaq } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embedding.join(",") + "]",
         p_tipos: ["FAQ"],
         p_unidade_cuca: null,
         p_limite: 5,
       });
+      buscaRAG = classificarResultadoBusca(chunksFaq, erroFaq, 5);
       console.log("[motor-agente v18] perguntaGeralAtiva: programacao_rede " + (blocoProgramacaoRede ? "encontrada" : "sem match") + " (palavras=" + palavrasProgramacao.join(",") + "), " + (chunksFaq?.length ?? 0) + " chunks FAQ");
       const blocosRede: { nome: string; texto: string }[] = [];
       if (blocoProgramacaoRede) blocosRede.push({ nome: "programacao_rede", texto: "--- PROGRAMACAO VIGENTE DA REDE (programacao mensal ativa de cada unidade, filtrada pela pergunta) ---\n" + blocoProgramacaoRede });
@@ -3908,13 +4012,14 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       for (const b of blocosRede) adicionarBloco(b.nome, "\n\n" + b.texto);
     } else {
       const fontes = RAG_FONTES_POR_AGENTE[agente_tipo] || ["FAQ"];
-      const embedding = await gerarEmbedding(textoFinal, openaiKey);
-      const { data: chunks } = await supabase.rpc("buscar_chunks_similares", {
+      const embedding = await gerarEmbedding(textoFinal, openaiKey, registrarConsumoEmbedding);
+      const { data: chunks, error: erroChunks } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embedding.join(",") + "]",
         p_tipos: fontes,
         p_unidade_cuca: temUnidadeDefinida ? unidadeEfetiva : null,
         p_limite: 5,
       });
+      buscaRAG = classificarResultadoBusca(chunks, erroChunks, 5);
       reiniciarBlocos(false);
       if (chunks && chunks.length > 0) {
         adicionarBloco("contexto_vetorial", "\n\n--- CONTEXTO ---\n" + formatarChunks(chunks));
@@ -3948,6 +4053,8 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       atividade_resolvida: logRAG.atividadeResolvida ?? null,
       chunks_retornados: logRAG.chunksRetornados ?? null,
       mensagem_lead: mensagemLead,
+      resolucao_atividade: resolucaoAtividade,
+      ...buscaRAG,
     }));
 
     // 7. Data/hora
