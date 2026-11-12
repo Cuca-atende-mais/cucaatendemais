@@ -4,40 +4,22 @@ import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { DollarSign, TrendingUp, BarChart2, Loader2, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
-
-type UsageRow = {
-    feature: string
-    modelo: string
-    agente_tipo: string
-    tokens_total: number
-    // PLANO-023: custo real (modelo + cache). `custo_estimado_usd` é coluna gerada com preço fixo
-    // (US$ 5/15 por milhão) e superestima o gpt-4o-mini em ~30x — não é mais usada aqui.
-    custo_usd: number | string | null
-    created_at: string
-}
+import {
+    formatarCustoFeature,
+    inicioDoMesUtc,
+    type LinhaConsumo,
+    resumirPorFeature,
+    resumirTokensPorAgente,
+    rotuloFeature,
+    totais,
+} from "@/lib/consumo/consumo-openai"
 
 // PostgREST corta cada resposta em 1.000 linhas: o mês é lido em páginas até acabar.
 const PAGINA = 1000
 
-const FEATURE_LABEL: Record<string, string> = {
-    chat: "Chat / Resposta IA",
-    transcription: " Transcrição (Whisper)",
-    embedding: "Embedding (RAG)",
-    sentiment: "Análise de Sentimento",
-    ocr: "OCR / Documento",
-    matching: "Triagem de currículos",
-    intencao: "Detecção de intenção",
-    categorias: "Categorias da programação",
-    ouvidoria: "Ouvidoria (manifestação)",
-    empregabilidade_cargos: "Empregabilidade (cargos)",
-    empregabilidade_rota: "Empregabilidade (troca de rota)",
-    classificacao_rota: "Institucional (escolha da unidade)",
-    interpretacao_programacao: "Institucional (leitura da pergunta de programação)",
-}
-
 export default function DevConsumoPage() {
     const supabase = createClient()
-    const [rows, setRows] = useState<UsageRow[]>([])
+    const [rows, setRows] = useState<LinhaConsumo[]>([])
     const [budget, setBudget] = useState<number>(50)
     const [loading, setLoading] = useState(true)
 
@@ -46,17 +28,18 @@ export default function DevConsumoPage() {
     }, [])
 
     const fetchUsage = async () => {
-        const inicioMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
-        const todas: UsageRow[] = []
+        // Corte em UTC, como a fatura da OpenAI (antes era o fuso do navegador: 01/11 às 03h UTC).
+        const inicioMes = inicioDoMesUtc()
+        const todas: LinhaConsumo[] = []
         for (let de = 0; ; de += PAGINA) {
             const { data, error } = await supabase
                 .from("ai_usage_logs")
-                .select("feature, modelo, agente_tipo, tokens_total, custo_usd, created_at")
+                .select("feature, modelo, agente_tipo, tokens_total, tokens_prompt_cached, custo_usd, created_at")
                 .gte("created_at", inicioMes)
                 .order("created_at", { ascending: false })
                 .range(de, de + PAGINA - 1)
             if (error || !data) break
-            todas.push(...(data as UsageRow[]))
+            todas.push(...(data as LinhaConsumo[]))
             if (data.length < PAGINA) break
         }
         setRows(todas)
@@ -67,22 +50,10 @@ export default function DevConsumoPage() {
         if (data) setBudget(parseFloat(data.valor))
     }
 
-    const custoDe = (r: UsageRow) => Number(r.custo_usd) || 0
-    const totalCusto = rows.reduce((acc, r) => acc + custoDe(r), 0)
-    const totalTokens = rows.reduce((acc, r) => acc + (r.tokens_total || 0), 0)
+    const { custo: totalCusto, tokens: totalTokens, tokensEmCache } = totais(rows)
     const pctBudget = Math.min((totalCusto / budget) * 100, 100)
-
-    const byFeature = rows.reduce((acc, r) => {
-        const k = r.feature || "chat"
-        acc[k] = (acc[k] || 0) + custoDe(r)
-        return acc
-    }, {} as Record<string, number>)
-
-    const byAgente = rows.reduce((acc, r) => {
-        const k = r.agente_tipo || "desconhecido"
-        acc[k] = (acc[k] || 0) + (r.tokens_total || 0)
-        return acc
-    }, {} as Record<string, number>)
+    const porFeature = resumirPorFeature(rows)
+    const porAgente = resumirTokensPorAgente(rows)
 
     if (loading) return <div className="flex justify-center py-40"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
 
@@ -90,7 +61,7 @@ export default function DevConsumoPage() {
         <div className="space-y-6 p-4 md:p-6">
             <div>
                 <h1 className="text-2xl font-bold flex items-center gap-2"><DollarSign className="h-6 w-6 text-primary" /> Consumo OpenAI</h1>
-                <p className="text-sm text-muted-foreground mt-1">Tokens e custo real no mês atual. Entram: respostas do Institucional e as chamadas de IA do worker (currículo, triagem, intenção, Empregabilidade, ouvidoria, sentimento, categorias; áudio só em volume, sem custo). Ainda não entram: embeddings, escolha de unidade, resumo da rede, Academia Enem e as rotas de IA do portal — por isso o total fica abaixo da fatura da OpenAI.</p>
+                <p className="text-sm text-muted-foreground mt-1">Tokens e custo real no mês atual (corte em UTC, como a fatura da OpenAI). Entram: todas as chamadas de IA do Institucional (resposta, classificador de emprego e, desde 12/11, escolha da unidade, leitura da pergunta de programação e embeddings) e as do worker (currículo, triagem, intenção, Empregabilidade, ouvidoria, sentimento, categorias; áudio só em volume, sem preço). Não entram: indexação de documentos, resumo da rede, Academia Enem, as rotas de IA do portal e testes rodados fora do sistema — por isso o total fica abaixo da fatura da OpenAI.</p>
             </div>
 
             {/* Cards Totais */}
@@ -103,7 +74,7 @@ export default function DevConsumoPage() {
                 <div className="border rounded-xl p-5 bg-card">
                     <p className="text-sm text-muted-foreground mb-1">Tokens Consumidos</p>
                     <p className="text-3xl font-bold">{totalTokens.toLocaleString("pt-BR")}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{rows.length} chamadas este mês</p>
+                    <p className="text-xs text-muted-foreground mt-1">{rows.length} chamadas este mês · {tokensEmCache.toLocaleString("pt-BR")} em cache (entrada repetida, cobrada pela metade)</p>
                 </div>
                 <div className={cn("border rounded-xl p-5 bg-card", pctBudget >= 80 && "border-amber-400", pctBudget >= 100 && "border-destructive")}>
                     <p className="text-sm text-muted-foreground mb-1 flex items-center gap-2">
@@ -126,16 +97,16 @@ export default function DevConsumoPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="border rounded-xl p-5 bg-card">
                     <p className="font-semibold mb-4 flex items-center gap-2"><BarChart2 className="h-5 w-5 text-primary" /> Custo por Feature</p>
-                    {Object.keys(byFeature).length === 0 && <p className="text-muted-foreground text-sm">Sem dados ainda neste mês.</p>}
+                    {porFeature.length === 0 && <p className="text-muted-foreground text-sm">Sem dados ainda neste mês.</p>}
                     <div className="space-y-3">
-                        {Object.entries(byFeature).sort((a, b) => b[1] - a[1]).map(([feature, custo]) => (
-                            <div key={feature}>
+                        {porFeature.map((f) => (
+                            <div key={f.feature}>
                                 <div className="flex justify-between text-sm mb-1">
-                                    <span>{FEATURE_LABEL[feature] || feature}</span>
-                                    <span className="font-mono">${custo.toFixed(4)}</span>
+                                    <span>{rotuloFeature(f.feature)}</span>
+                                    <span className={cn("font-mono", f.chamadasComPreco === 0 && "text-muted-foreground")} title={f.chamadasComPreco === 0 ? f.chamadas + " chamadas sem preço cadastrado" : undefined}>{formatarCustoFeature(f)}</span>
                                 </div>
                                 <div className="w-full bg-muted rounded-full h-1.5">
-                                    <div className="h-1.5 rounded-full bg-primary" style={{ width: `${totalCusto > 0 ? (custo / totalCusto) * 100 : 0}%` }} />
+                                    <div className="h-1.5 rounded-full bg-primary" style={{ width: `${totalCusto > 0 ? (f.custo / totalCusto) * 100 : 0}%` }} />
                                 </div>
                             </div>
                         ))}
@@ -144,12 +115,12 @@ export default function DevConsumoPage() {
 
                 <div className="border rounded-xl p-5 bg-card">
                     <p className="font-semibold mb-4 flex items-center gap-2"><TrendingUp className="h-5 w-5 text-primary" /> Tokens por Agente</p>
-                    {Object.keys(byAgente).length === 0 && <p className="text-muted-foreground text-sm">Sem dados ainda neste mês.</p>}
+                    {porAgente.length === 0 && <p className="text-muted-foreground text-sm">Sem dados ainda neste mês.</p>}
                     <div className="space-y-3">
-                        {Object.entries(byAgente).sort((a, b) => b[1] - a[1]).map(([agente, tokens]) => (
+                        {porAgente.map(({ agente, tokens }) => (
                             <div key={agente}>
                                 <div className="flex justify-between text-sm mb-1">
-                                    <span className="capitalize">{agente}</span>
+                                    <span>{agente}</span>
                                     <span className="font-mono">{tokens.toLocaleString("pt-BR")} tok</span>
                                 </div>
                                 <div className="w-full bg-muted rounded-full h-1.5">
