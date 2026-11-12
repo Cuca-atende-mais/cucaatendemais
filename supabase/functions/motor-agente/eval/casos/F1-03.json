@@ -1,0 +1,43 @@
+{
+ "id": "F1-03",
+ "categoria": "F1",
+ "descricao": "Rajada: natação para adulto + 'Começando do zero'",
+ "origem": "Análise 30/09",
+ "previa": 3,
+ "conversa_curta": "650e3e27",
+ "data_simulada": "2026-09-17T19:51:35.603Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Olá",
+   "minutos_antes": 0.31
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Boa tarde",
+   "minutos_antes": 0.29
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Como funciona a natação para adulto?",
+   "minutos_antes": 0.14
+  }
+ ],
+ "mensagem": "Começando do zero",
+ "esperado": {
+  "deve_conter": [
+   "natacao"
+  ],
+  "nao_deve_conter": [
+   "em que mais posso te ajudar"
+  ]
+ },
+ "extrair": {
+  "alvo": "comecando do zero",
+  "extraido_em": "2026-11-12"
+ }
+}

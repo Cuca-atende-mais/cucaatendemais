@@ -1,0 +1,23 @@
+{
+ "id": "SE-14",
+ "categoria": "seguranca_encaminhamento",
+ "descricao": "'tem vagas?' sem contexto → pergunta emprego ou curso",
+ "origem": "Revisão 28/10",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "tem vagas?",
+ "esperado": {
+  "rota": [
+   "vagas_ambiguo"
+  ],
+  "deve_conter": [
+   "emprego",
+   "curso|atividade"
+  ]
+ }
+}

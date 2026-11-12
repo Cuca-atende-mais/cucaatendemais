@@ -1,0 +1,20 @@
+{
+ "id": "CF-01",
+ "categoria": "conteudo_fixo",
+ "descricao": "Telefone do Jangurussu",
+ "origem": "Novo (plano)",
+ "previa": 25,
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Qual o telefone do Cuca Jangurussu?",
+ "esperado": {
+  "deve_conter": [
+   "99796-?0190"
+  ]
+ }
+}

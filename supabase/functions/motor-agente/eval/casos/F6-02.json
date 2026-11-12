@@ -1,0 +1,50 @@
+{
+ "id": "F6-02",
+ "categoria": "F6",
+ "descricao": "Mondubim + 'As datas'",
+ "origem": "Análise 30/09",
+ "previa": 21,
+ "conversa_curta": "acc4f57e",
+ "data_simulada": "2026-09-30T15:00:14.677Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Olá boa tarde",
+   "minutos_antes": 1.32
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "quando tem a matrícula da natação?",
+   "minutos_antes": 1.22
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Olá, Fulano Fulano! 🌟 A matrícula para a natação pode ser feita pelo Portal da Juventude ou diretamente na unidade CUCA mais próxima. Para informações sobre as datas específicas de matrícula, recomendo que você entre em contato com a unidade onde deseja se inscrever. Posso ajudar com mais alguma coisa? 😊",
+   "minutos_antes": 0.87
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "unidade do Mondubim",
+   "minutos_antes": 0.08
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "por favor",
+   "minutos_antes": 0.06
+  }
+ ],
+ "mensagem": "as datas",
+ "esperado": {
+  "nao_deve_conter": [
+   "em que mais posso te ajudar"
+  ]
+ },
+ "extrair": {
+  "alvo": "as datas",
+  "extraido_em": "2026-11-12"
+ }
+}

@@ -1,0 +1,59 @@
+{
+ "id": "F4-03",
+ "categoria": "F4",
+ "descricao": "Mulher de 33 anos e criança de 7 anos na Barra",
+ "origem": "Análise 30/09",
+ "previa": 11,
+ "conversa_curta": "c5ba55cd",
+ "data_simulada": "2026-09-22T00:10:28.286Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Barra",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Boa noite 🙌🏻",
+   "minutos_antes": 0.62
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Oi! Bem-vindo(a)! Vamos descobrir o CUCA juntos? 😊\n\nEm que posso te ajudar? 😊",
+   "minutos_antes": 0.42
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Está tendo algum projeto na rede cuca barra do ceará?",
+   "minutos_antes": 0.37
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Claro! Vou verificar isso no CUCA Barra 😊\n\nAtualmente, temos várias atividades e cursos acontecendo no CUCA Barra. Aqui estão algumas opções:",
+   "minutos_antes": 0.12
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "1. **Montagem e Configuração de Computadores** - Ter à Sex\n2. **Dança: Integração** - Qua e Sex\n3. **Oficina de Informática Básica na Prática** - Ter à Sex\n4. **Teatro - histórias em quadrinho e a cena** - Qua e Sex\n5. **Hip Hop Dance freestyle** - Qua e Sex",
+   "minutos_antes": 0.12
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Quer saber mais detalhes sobre algum desses? 😊",
+   "minutos_antes": 0.11
+  }
+ ],
+ "mensagem": "Para mulheres com 33 anos e natação para criança de 7 anos?",
+ "esperado": {
+  "deve_conter": [
+   "29",
+   "7 (e|a|-) ?8|infantil"
+  ]
+ },
+ "extrair": {
+  "alvo": "33 anos",
+  "extraido_em": "2026-11-12"
+ }
+}

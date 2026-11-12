@@ -1,0 +1,49 @@
+{
+ "id": "BU-02",
+ "categoria": "busca_unidade",
+ "descricao": "Idade da natação no Pici",
+ "origem": "Análise 30/09",
+ "previa": 24,
+ "conversa_curta": "2134f977",
+ "data_simulada": "2026-09-19T10:27:22.906Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Pici",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Olá bom dia",
+   "minutos_antes": 1.35
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Oi, oi! Bora conhecer tudo que o CUCA tem pra você? 🎉\n\nEm que posso te ajudar? 😊",
+   "minutos_antes": 1.13
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "O cuca do pici tem aulas de natação ?",
+   "minutos_antes": 0.67
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Claro! Vou verificar isso no Cuca Pici 😊\n\nSim, o Cuca Pici oferece aulas de natação! Aqui estão as opções disponíveis:\n\n- Natação — Ter/Qui\n- Natação — Qua/Sex\n- Natação Infantil — Qua/Sex\n- Natação Paralímpica — Qua/Sex\n\nQuer saber os horários e detalhes de alguma turma específica? 🏊‍♂️",
+   "minutos_antes": 0.44
+  }
+ ],
+ "mensagem": "Qual a idade para se escrever ?",
+ "esperado": {
+  "deve_conter": [
+   "infantil",
+   "15"
+  ]
+ },
+ "extrair": {
+  "alvo": "idade para se escrever",
+  "extraido_em": "2026-11-12"
+ }
+}

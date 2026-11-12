@@ -1,0 +1,23 @@
+{
+ "id": "AT-03",
+ "categoria": "atendente",
+ "descricao": "'tem Integração no Pici?' → lista as turmas da programação",
+ "origem": "Revisão 28/10",
+ "conversa_curta": null,
+ "data_simulada": "2026-09-20T15:00:00-03:00",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Pici",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [],
+ "mensagem": "Tem Integração no Pici?",
+ "esperado": {
+  "deve_conter": [
+   "futsal"
+  ]
+ },
+ "observacao": "Catálogo de setembro: Pici tem FUTSAL (INTEGRAÇÃO). Em novembro não há turma de Integração."
+}

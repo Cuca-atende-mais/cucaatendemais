@@ -1,0 +1,43 @@
+{
+ "id": "F1-02",
+ "categoria": "F1",
+ "descricao": "Rajada: link de inscrição + 'No curso'",
+ "origem": "Análise 30/09",
+ "previa": 2,
+ "conversa_curta": "c0c586a2",
+ "data_simulada": "2026-09-16T21:52:51.481Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Oi",
+   "minutos_antes": 0.57
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Oi! Que bom te ver por aqui! 😊\n\nEm que posso te ajudar? 😊",
+   "minutos_antes": 0.34
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Queria o link pra escrever",
+   "minutos_antes": 0.06
+  }
+ ],
+ "mensagem": "No curso",
+ "esperado": {
+  "deve_conter": [
+   "portal ?da ?juventude|portaldajuventude"
+  ],
+  "nao_deve_conter": [
+   "em que mais posso te ajudar"
+  ]
+ },
+ "extrair": {
+  "alvo": "no curso",
+  "extraido_em": "2026-11-12"
+ }
+}

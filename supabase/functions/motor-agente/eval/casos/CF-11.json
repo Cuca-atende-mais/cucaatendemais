@@ -1,0 +1,22 @@
+{
+ "id": "CF-11",
+ "categoria": "conteudo_fixo",
+ "descricao": "Atestado médico na matrícula esportiva",
+ "origem": "Banco (out/2026)",
+ "previa": 33,
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Só consigo fazer a matrícula se tiver o atestado?",
+ "esperado": {
+  "deve_conter": [
+   "atestado",
+   "obrigat|precisa|necessari"
+  ]
+ },
+ "depois_da_07": true
+}

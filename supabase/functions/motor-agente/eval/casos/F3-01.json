@@ -1,0 +1,92 @@
+{
+ "id": "F3-01",
+ "categoria": "F3",
+ "descricao": "'Menu' 18h depois; a conversa anterior era sobre o José Walter",
+ "origem": "Análise 30/09",
+ "previa": 6,
+ "conversa_curta": "48e6a32f",
+ "data_simulada": "2026-09-22T11:52:22.926Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Pici",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "qual portal da juventude",
+   "minutos_antes": 9987.66
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "O Portal da Juventude é a plataforma onde você pode se inscrever nas atividades do CUCA e encontrar várias informações sobre cursos, eventos e oportunidades. Você pode acessá-lo através do link: [https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/](https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/).\n\nSe precisar de mais alguma coisa, é só me avisar! 😊",
+   "minutos_antes": 9987.36
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "oi",
+   "minutos_antes": 1086.96
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Olá! Seja bem-vindo ao CUCA Pici! 🎉 Sou a Maria, sua assistente aqui na unidade. Temos muita coisa boa por aqui! Dá uma olhada:\n\n1️⃣ Esportes\n2️⃣ Cursos e Oficinas\n3️⃣ Atividades Culturais\n4️⃣ Tecnologia\n\nQual área te interessa mais? 😊",
+   "minutos_antes": 1086.67
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "1",
+   "minutos_antes": 1086.51
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Ótimo! Aqui estão as modalidades esportivas disponíveis no CUCA Pici:",
+   "minutos_antes": 1086.25
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "- Basquete - Seg/Qua\n- Boxe - Seg/Sex\n- Capoeira - Ter/Qui\n- Cross Cuca - Qua/Sex\n- Futsal - Seg/Qua/Sex\n- Jiu-Jitsu - Ter/Qui\n- Judô - Qua/Sex\n- Kickboxing - Seg/Qua\n- Muay Thai - Ter/Qui\n- Natação - Seg/Qua/Sex\n- Treinamento Funcional - Ter/Qui\n- Voleibol - Seg/Qua/Sex\n- Xadrez - Ter/Qui",
+   "minutos_antes": 1086.25
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Quer saber horários e detalhes de alguma modalidade específica? 😊",
+   "minutos_antes": 1086.25
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "natação",
+   "minutos_antes": 1086.07
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "cuca josé walter",
+   "minutos_antes": 1085.96
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "para criança 12 anos",
+   "minutos_antes": 1085.8
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Infelizmente, não encontrei informações específicas sobre a natação para crianças de 12 anos no CUCA José Walter no contexto atual. Recomendo entrar em contato diretamente com a unidade para verificar a disponibilidade e detalhes dessa modalidade. Se precisar de mais alguma coisa, estou por aqui! 😊",
+   "minutos_antes": 1085.57
+  }
+ ],
+ "mensagem": "Menu",
+ "esperado": {
+  "deve_conter": [
+   "jose walter"
+  ],
+  "nao_deve_conter": [
+   "bem-vind[oa] ao cuca pici"
+  ]
+ },
+ "extrair": {
+  "alvo": "menu",
+  "dia": "2026-09-22",
+  "extraido_em": "2026-11-12"
+ }
+}

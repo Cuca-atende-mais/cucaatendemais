@@ -1,0 +1,23 @@
+{
+ "id": "SE-02",
+ "categoria": "seguranca_encaminhamento",
+ "descricao": "Vaga de emprego de cozinheira → Emprega+",
+ "origem": "Novo (plano)",
+ "previa": 30,
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Vaga de emprego de cozinheira",
+ "esperado": {
+  "rota": [
+   "emprega_mais"
+  ],
+  "deve_conter": [
+   "empreg"
+  ]
+ }
+}

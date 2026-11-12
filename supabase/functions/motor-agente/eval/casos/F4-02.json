@@ -1,0 +1,93 @@
+{
+ "id": "F4-02",
+ "categoria": "F4",
+ "descricao": "'Natação 16 anos' na Barra",
+ "origem": "Análise 30/09",
+ "previa": 10,
+ "conversa_curta": "df7af7ec",
+ "data_simulada": "2026-09-17T23:23:02.107Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Barra",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "agente",
+   "conteudo": "- Basquete - Seg/Qua/Sex\n- Capoeira - Ter/Qui\n- Futsal - Ter/Qui/Sáb\n- Jiu-Jitsu - Seg/Qua/Sex\n- Natação - Seg/Qua/Sex\n- Voleibol - Ter/Qui/Sáb",
+   "minutos_antes": 6.01
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Quer saber horários e detalhes de alguma modalidade específica? 😊",
+   "minutos_antes": 6.01
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Natação",
+   "minutos_antes": 5.69
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Claro, Fulano! A natação no CUCA Barra é oferecida para a faixa etária de 8 a 14 anos e acontece nas segundas, quartas e sextas-feiras. Os horários variam, então é melhor verificar diretamente na unidade para confirmar a disponibilidade de vagas e os horários exatos.\n\nSe precisar de mais alguma informação, estou por aqui! 🏊‍♂️",
+   "minutos_antes": 5.44
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Só tem isso?",
+   "minutos_antes": 5
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Sim, atualmente essas são as informações disponíveis sobre a natação no CUCA Barra. A quantidade de vagas pode mudar com frequência, por isso recomendo que você entre em contato diretamente com a unidade para mais detalhes sobre inscrições e disponibilidade. Se houver mais alguma coisa que você queira saber, é só me avisar! 😊",
+   "minutos_antes": 4.77
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Todos os esportes",
+   "minutos_antes": 4.54
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Claro, Fulano! Aqui estão todas as modalidades esportivas disponíveis no CUCA Barra:",
+   "minutos_antes": 4.32
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "- Basquete - Seg/Qua/Sex\n- Capoeira - Ter/Qui\n- Futsal - Ter/Qui/Sáb\n- Jiu-Jitsu - Seg/Qua/Sex\n- Natação - Seg/Qua/Sex\n- Voleibol - Ter/Qui/Sáb",
+   "minutos_antes": 4.32
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Quer saber mais detalhes sobre alguma modalidade específica? 😊",
+   "minutos_antes": 4.32
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Muay thai",
+   "minutos_antes": 3.98
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "No CUCA Barra, a modalidade de Muay Thai está disponível na Turma 4, com o professor Frota. As aulas são mistas e atendem tanto jovens de 15 a 29 anos quanto pessoas acima de 29 anos. As aulas acontecem de terça a sexta-feira, das 11:00 às 12:00. \n\nA quantidade de vagas pode mudar com frequência, então é bom verificar a disponibilidade diretamente na unidade. Se precisar de mais alguma informação, estou aqui para ajudar! 🥊",
+   "minutos_antes": 3.76
+  }
+ ],
+ "mensagem": "Natação 16 anos",
+ "esperado": {
+  "deve_conter": [
+   "natacao",
+   "15"
+  ],
+  "nao_deve_conter": [
+   "nao encontrei"
+  ]
+ },
+ "extrair": {
+  "alvo": "natacao 16 anos",
+  "dia": "2026-09-17",
+  "extraido_em": "2026-11-12"
+ }
+}

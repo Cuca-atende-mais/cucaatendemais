@@ -1,0 +1,19 @@
+{
+ "id": "CF-10",
+ "categoria": "conteudo_fixo",
+ "descricao": "Acesso CUCA → telefones das unidades",
+ "origem": "Revisão 28/10",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Quero agendar o auditório do Cuca para um evento da minha escola",
+ "esperado": {
+  "deve_conter": [
+   "99796"
+  ]
+ }
+}

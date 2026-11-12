@@ -1,0 +1,34 @@
+{
+ "id": "SE-15",
+ "categoria": "seguranca_encaminhamento",
+ "descricao": "'tem vagas?' depois de uma resposta sobre natação → fluxo de atividade",
+ "origem": "Revisão 28/10",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Pici",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "tem natação no pici?",
+   "minutos_antes": 3
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Sim! No Cuca Pici tem natação. NATAÇÃO INFANTIL (06 a 08 anos) - terça e quinta, 8h às 9h.",
+   "minutos_antes": 2.5
+  }
+ ],
+ "mensagem": "tem vagas?",
+ "esperado": {
+  "nao_deve_conter": [
+   "emprego ou (de )?curso",
+   "emprega\\+"
+  ]
+ }
+}

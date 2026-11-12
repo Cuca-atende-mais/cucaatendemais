@@ -1,0 +1,23 @@
+{
+ "id": "BU-04",
+ "categoria": "busca_unidade",
+ "descricao": "Horário de Muay Thai e de violão",
+ "origem": "Mariana (set/2026)",
+ "previa": 38,
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Jangurussu",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [],
+ "mensagem": "Qual o horário do muay thai e do violão?",
+ "esperado": {
+  "deve_conter": [
+   "\\d{1,2} ?(h|:)"
+  ]
+ }
+}

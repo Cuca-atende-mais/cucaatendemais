@@ -1,0 +1,92 @@
+{
+ "id": "F3-02",
+ "categoria": "F3",
+ "descricao": "'Tem karatê no cuca?' 24h depois (unidade salva: Barra)",
+ "origem": "Análise 30/09",
+ "previa": 7,
+ "conversa_curta": "df7af7ec",
+ "data_simulada": "2026-09-23T17:34:47.735Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Barra",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Muay thai",
+   "minutos_antes": 8295.74
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "No CUCA Barra, a modalidade de Muay Thai está disponível na Turma 4, com o professor Frota. As aulas são mistas e atendem tanto jovens de 15 a 29 anos quanto pessoas acima de 29 anos. As aulas acontecem de terça a sexta-feira, das 11:00 às 12:00. \n\nA quantidade de vagas pode mudar com frequência, então é bom verificar a disponibilidade diretamente na unidade. Se precisar de mais alguma informação, estou aqui para ajudar! 🥊",
+   "minutos_antes": 8295.52
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Natação 16 anos",
+   "minutos_antes": 8291.76
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Para a faixa etária de 16 anos, não encontrei informações específicas sobre a modalidade de natação no CUCA Barra. Recomendo entrar em contato diretamente com a unidade para verificar se há disponibilidade para essa idade específica ou se eles podem oferecer uma alternativa adequada.\n\nSe precisar de mais alguma coisa, estou à disposição! 😊",
+   "minutos_antes": 8291.54
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Contato da unidade",
+   "minutos_antes": 8291.28
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Claro, Fulano! O contato do CUCA Barra é ([telefone]. Você pode ligar para obter mais informações sobre a disponibilidade de vagas e outros detalhes. Se precisar de mais alguma coisa, é só me avisar! 😊",
+   "minutos_antes": 8291.04
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Boa tarde",
+   "minutos_antes": 1440.51
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Boa tarde, Fulano! Como posso te ajudar hoje? 😊",
+   "minutos_antes": 1440.27
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Horário das aulas de jiu-jitsu e karatê 16 anos",
+   "minutos_antes": 1439.88
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Para a modalidade de Jiu-Jitsu no CUCA Barra, existem duas turmas disponíveis:\n\n1. **Turma 1**: \n   - Professor: Tiago\n   - Dias: Quarta e Sexta\n   - Horário: 14:30 às 16:00\n\n2. **Turma 2**: \n   - Professor: Tiago\n   - Dias: Quarta e Sexta\n   - Horário: 16:00 às 17:30\n\nAmbas as turmas são para jovens de 15 a 29 anos. A quantidade de vagas muda com frequência, então é bom verificar diretamente na unidade.\n\nInfelizmente, não encontrei informações sobre a modalidade de Karatê para a idade de 16 anos no contexto atual. Recomendo verificar diretamente com a unidade para detalhes específicos sobre Karatê.\n\nSe precisar de mais alguma coisa, estou aqui! 😊",
+   "minutos_antes": 1439.64
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "A noite?",
+   "minutos_antes": 1439.11
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Atualmente, não tenho informações sobre turmas de Jiu-Jitsu ou Karatê no período da noite no CUCA Barra. Recomendo entrar em contato diretamente com a unidade para verificar se há alguma programação noturna disponível para essas modalidades. Se precisar de mais alguma coisa, estou aqui para ajudar! 😊",
+   "minutos_antes": 1438.9
+  }
+ ],
+ "mensagem": "Tem karatê no cuca?",
+ "esperado": {
+  "deve_conter": [
+   "(qual|de qual|em qual|que) unidade|toda a rede|jose walter|mondubim|pici"
+  ],
+  "nao_deve_conter": [
+   "nao encontrei karate no cuca barra"
+  ]
+ },
+ "extrair": {
+  "alvo": "tem karate",
+  "dia": "2026-09-23",
+  "extraido_em": "2026-11-12"
+ }
+}

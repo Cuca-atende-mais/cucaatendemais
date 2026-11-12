@@ -1,0 +1,25 @@
+{
+ "id": "CF-06",
+ "categoria": "conteudo_fixo",
+ "descricao": "Ir presencialmente no Pici: ligar antes, com o telefone",
+ "origem": "Mariana (print)",
+ "previa": 32,
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Pici",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [],
+ "mensagem": "Posso ir amanhã presencialmente no Cuca do Pici?",
+ "esperado": {
+  "deve_conter": [
+   "99796-?0354",
+   "lig"
+  ]
+ },
+ "observacao": "Prévia previa 'a partir de 1 dia após o início das matrículas'; substituído pela D10/story 10. Hoje vale a regra da 01 (A6/A7): telefone + ligar antes."
+}

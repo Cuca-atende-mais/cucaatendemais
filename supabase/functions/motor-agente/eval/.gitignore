@@ -1,0 +1,4 @@
+# Gerados localmente, fora do git (S-INST-QUAL-04): catálogo com embeddings (~20 MB),
+# cache de embeddings das perguntas e relatórios das rodadas.
+dados/
+resultados/
