@@ -1,0 +1,89 @@
+{
+ "id": "BU-01",
+ "categoria": "busca_unidade",
+ "descricao": "Hidroginástica no José Walter: qual a idade",
+ "origem": "Análise 30/09",
+ "previa": 23,
+ "conversa_curta": "56ef2e30",
+ "data_simulada": "2026-09-21T21:14:38.476Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca José Walter",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Saber sobre cursos",
+   "minutos_antes": 10.05
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Claro, Fulano! Aqui na Rede CUCA, temos uma variedade de cursos disponíveis. Vou te mostrar as categorias que temos:\n\n1️⃣ Tecnologia\n2️⃣ Cultura\n3️⃣ Música\n4️⃣ Esportes\n5️⃣ Formação Profissional\n\nQual dessas áreas te interessa mais? 😊",
+   "minutos_antes": 9.76
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "4",
+   "minutos_antes": 9.38
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Ótimo, Fulano! Aqui estão as modalidades esportivas disponíveis no Cuca Pici:",
+   "minutos_antes": 9.07
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "- Mobilidade - Qua/Sex\n- Natação - Ter/Qui\n- Hidroginástica - Ter/Qui\n- Futsal (SESC) - Ter/Qui\n- Treinamento Funcional - Qua/Sex\n- Judô - Qua/Sex\n- Voleibol - Qua/Sex\n- Karatê - Qua/Sex\n- Jiu-Jitsu - Qua/Sex\n- Capoeira - Ter/Qui\n- Pilates Funcional - Qua/Sex\n- Handebol - Qua/Sex",
+   "minutos_antes": 9.07
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Quer saber os horários ou detalhes de alguma modalidade específica? 😊",
+   "minutos_antes": 9.07
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Gostaria ver as modalidades no Cuca do José Walter",
+   "minutos_antes": 7.24
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Claro, Fulano! Vou te mostrar as modalidades esportivas disponíveis no Cuca José Walter:",
+   "minutos_antes": 6.9
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "- Ginástica Rítmica - Ter/Qui\n- Voleibol Seleção - Qua/Sex\n- Vôlei de Praia - Ter/Qui\n- Basquete - Ter/Qui\n- Natação Infantil - Qua/Sex\n- Hidroginástica - Ter/Qui\n- Muay Thai - Qua/Sex\n- Jiu Jitsu Infantil - Ter/Qui\n- Judô Infantil - Ter/Qui\n- Karatê Infantil - Ter/Qui\n- Capoeira - Ter/Qui\n- Taekwondo - Ter/Qui\n- Voleibol Infantil - Qua/Sex\n- Esportes Coletivos - Ter/Qui\n- Mobilidade Funcional - Ter/Qui\n- Treinamento Funcional - Ter/Qui\n- Cross Cuca - Qua/Sex\n- Judô Seleção - Ter/Qui",
+   "minutos_antes": 6.9
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Se quiser saber os horários ou detalhes de alguma modalidade específica, é só me avisar! 😊",
+   "minutos_antes": 6.9
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Natação vai até que idade",
+   "minutos_antes": 5.44
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "A natação no Cuca José Walter é para o público misto, com idades de 15 a 29+ anos. Se precisar de mais detalhes sobre os horários ou turmas, é só me avisar! 😊",
+   "minutos_antes": 5.21
+  }
+ ],
+ "mensagem": "E a hidroginasticatal a idade",
+ "esperado": {
+  "deve_conter": [
+   "15",
+   "29"
+  ]
+ },
+ "extrair": {
+  "alvo": "hidroginasticatal a idade",
+  "extraido_em": "2026-11-12"
+ }
+}

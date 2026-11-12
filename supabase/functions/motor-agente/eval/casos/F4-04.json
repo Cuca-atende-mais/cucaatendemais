@@ -1,0 +1,91 @@
+{
+ "id": "F4-04",
+ "categoria": "F4",
+ "descricao": "Natação para 15/16 anos no Pici",
+ "origem": "Análise 30/09",
+ "previa": 12,
+ "conversa_curta": "9912c2d6",
+ "data_simulada": "2026-09-28T23:11:13.036Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Pici",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "agente",
+   "conteudo": "1️⃣ **Futsal** - Ter e Qui\n2️⃣ **Handebol** - Seg e Qua\n3️⃣ **Natação** - Seg e Sex\n4️⃣ **Teatro** - Qua e Sex\n5️⃣ **Dança** - Ter e Qui",
+   "minutos_antes": 8.47
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Quer saber horários e detalhes de alguma modalidade específica? 😊",
+   "minutos_antes": 8.47
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Oq e essa mobilidade?",
+   "minutos_antes": 6.44
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "A Mobilidade é uma modalidade que visa melhorar a flexibilidade, força e resistência do corpo, com exercícios que ajudam na mobilidade geral. No Cuca Pici, temos duas turmas disponíveis:\n\n✅ **Mobilidade - Turma 1**\n- Professor: Sócrates\n- Dias: Qua e Sex\n- Horário: 07:00h às 08:00h\n- Público: Misto (29+ anos)\n\n✅ **Mobilidade - Turma 2**\n- Professor: Sócrates\n- Dias: Qua e Sex\n- Horário: 13:00h às 14:00h\n- Público: Misto (29+ anos)\n\nA quantidade de vagas muda com frequência, então é bom verificar a disponibilidade diretamente na unidade. Se precisar de mais informações ou quiser se inscrever, é só avisar! 😊",
+   "minutos_antes": 6.22
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "A natação do cuca Pici e Aparti de qual idade?",
+   "minutos_antes": 2.97
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "A Natação no Cuca Pici é voltada para jovens de 8 a 14 anos. Se você ou alguém que você conhece se encaixa nessa faixa etária e está interessado, é só procurar a unidade para mais informações sobre a matrícula e horários! 😊",
+   "minutos_antes": 2.75
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "A mobilidade tem para jovem?",
+   "minutos_antes": 2.28
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "A modalidade de Mobilidade no Cuca Pici é voltada para o público misto, a partir de 29 anos. Para jovens, é melhor conferir diretamente com a unidade, pois podem existir outras atividades que atendam essa faixa etária. 😊 Se precisar de mais informações, estou aqui para ajudar!",
+   "minutos_antes": 2.08
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Qual atividade e voltada para o público de 14/15 anos?",
+   "minutos_antes": 0.87
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "No Cuca Pici, algumas atividades voltadas para jovens de 14 e 15 anos incluem:",
+   "minutos_antes": 0.64
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "✅ **Futsal** - Ter e Qui\n✅ **Handebol** - Seg e Qua\n✅ **Teatro** - Qua e Sex\n✅ **Dança** - Ter e Qui",
+   "minutos_antes": 0.63
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Essas atividades são ótimas para essa faixa etária! Se você quiser saber mais detalhes sobre alguma delas, é só avisar! 😊",
+   "minutos_antes": 0.63
+  }
+ ],
+ "mensagem": "A natação não pode gente de 15/16 anos?",
+ "esperado": {
+  "deve_conter": [
+   "15"
+  ],
+  "nao_deve_conter": [
+   "(somente|apenas|so) (de )?8 a 14"
+  ]
+ },
+ "extrair": {
+  "alvo": "15/16 anos",
+  "extraido_em": "2026-11-12"
+ }
+}

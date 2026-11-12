@@ -1,0 +1,51 @@
+{
+ "id": "F1-01",
+ "categoria": "F1",
+ "descricao": "Rajada: filho de 13 anos + 'Algum esporte'",
+ "origem": "Análise 30/09",
+ "previa": 1,
+ "conversa_curta": "cca08cd0",
+ "data_simulada": "2026-09-17T18:13:39.105Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca José Walter",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Oi",
+   "minutos_antes": 3.96
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Boa tarde",
+   "minutos_antes": 3.91
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Oi, oi! Bora conhecer tudo que o CUCA tem pra você? 🎉\n\nEm que posso te ajudar? 😊",
+   "minutos_antes": 3.72
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Gostaria de algum curso para o meu filho ele tem 13 anos",
+   "minutos_antes": 0.07
+  }
+ ],
+ "mensagem": "Algum esporte",
+ "esperado": {
+  "deve_conter": [
+   "natacao|judo|karate|volei|jiu|futsal"
+  ],
+  "nao_deve_conter": [
+   "em que mais posso te ajudar"
+  ]
+ },
+ "extrair": {
+  "alvo": "algum esporte",
+  "extraido_em": "2026-11-12"
+ }
+}

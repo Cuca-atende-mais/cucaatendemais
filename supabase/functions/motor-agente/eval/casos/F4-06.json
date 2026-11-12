@@ -1,0 +1,89 @@
+{
+ "id": "F4-06",
+ "categoria": "F4",
+ "descricao": "Natação para criança de 8 anos no Mondubim",
+ "origem": "Análise 30/09",
+ "previa": 14,
+ "conversa_curta": "44d3dc36",
+ "data_simulada": "2026-09-22T13:37:18.435Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Mondubim",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Gostaria de saber se posso matrícular meus filhos na natação",
+   "minutos_antes": 21.24
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Claro, Fulano Fulano! A Rede Cuca oferece natação infantil nas seguintes unidades:\n\n- Cuca José Walter\n- Cuca Pici\n\nAs atividades da Rede Cuca são voltadas prioritariamente para jovens de 15 a 29 anos, mas algumas unidades têm programação específica para crianças. Recomendo entrar em contato diretamente com a unidade de sua preferência para verificar disponibilidade e regras específicas para a matrícula das crianças.\n\nSe precisar de mais informações ou ajuda, estou por aqui! 😊",
+   "minutos_antes": 20.95
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Cuca José Walter",
+   "minutos_antes": 20.67
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Ótimo, Fulano Fulano! No Cuca José Walter, temos várias turmas de natação infantil disponíveis. Aqui estão algumas opções:",
+   "minutos_antes": 20.42
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "- Natação Infantil (2 a 4 anos) - Qua/Sex\n- Natação Infantil (5 a 6 anos) - Qua/Sex\n- Natação Infantil (7 a 10 anos) - Qua/Sex\n- Natação Infantil (11 a 14 anos) - Qua/Sex",
+   "minutos_antes": 20.42
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "As aulas são realizadas às quartas e sextas, em horários variados. Recomendo que você entre em contato diretamente com a unidade para confirmar a disponibilidade de vagas e realizar a matrícula. Se precisar de mais alguma coisa, estou aqui para ajudar! 😊",
+   "minutos_antes": 20.42
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Lá tem whatsapp?",
+   "minutos_antes": 19.82
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Não tenho essa informação aqui, mas você pode confirmar diretamente na unidade ou pelo Portal da Juventude (https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/). Se precisar de mais alguma coisa, estou à disposição! 😊",
+   "minutos_antes": 19.58
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "No cuca Mondubim tem natação?",
+   "minutos_antes": 0.94
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Sim, no Cuca Mondubim temos várias turmas de natação disponíveis! Aqui estão todas as opções de turmas de natação que temos:",
+   "minutos_antes": 0.49
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "- Natação - Turma 1: Ter/Qui, 8h às 9h\n- Natação - Turma 2: Ter/Qui, 9h às 10h\n- Natação - Turma 3: Ter/Qui, 9h às 10h\n- Natação - Turma 4: Ter a Sex, 10h às 11h\n- Natação - Turma 5: Ter/Qui, 14h às 15h\n- Natação - Turma 6: Ter/Qui, 15h às 16h\n- Natação - Turma 7: Ter/Qui, 16h às 17h\n- Natação - Turma 8: Ter/Qui, 17h às 18h\n- Natação - Turma 9: Ter/Qui, 18h às 19h\n- Natação - Turma 10: Ter/Qui, 19h às 20h\n- Natação - Turma 11: Qua/Sex, 8h às 9h\n- Natação - Turma 12: Qua/Sex, 9h às 10h\n- Natação - Turma 13: Qua/Sex, 9h às 10h\n- Natação - Turma 14: Qua/Sex, 14h às 15h\n- Natação - Turma 15: Qua/Sex, 15h às 16h\n- Natação - Turma 16: Qua/Sex, 16h às 17h\n- Natação - Turma 17: Qua/Sex, 17h às 18h\n- Natação - Turma 18: Qua/Sex, 18h às 19h\n- Natação - Turma 19: Qua/Sex, 19h às 20h\n- Natação - Turma 20: Ter/Qui, 11h às 12h\n- Natação - Turma 21: Qua/Sex, 11h às 12h\n- Natação - Turma 22: Qua/Sex, 14h às 15h\n- Natação - Turma 23: Ter/Qui, 14h às 15h\n- Natação - Turma 25: Ter/Qui, 15h às 16h\n- Natação - Turma 26: Ter/Qui, 20h às 21h\n- Natação - Turma 29: Qua/Sex, 15h às 16h",
+   "minutos_antes": 0.49
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "As turmas são mistas e atendem jovens de 15 a 29 anos. A quantidade de vagas pode mudar com frequência, então recomendo entrar em contato diretamente com a unidade para verificar a disponibilidade. Se precisar de mais alguma informação, estou por aqui! 😊",
+   "minutos_antes": 0.49
+  }
+ ],
+ "mensagem": "Pra criança de 8 anos tem?",
+ "esperado": {
+  "deve_conter": [
+   "barra|jose walter|pici"
+  ]
+ },
+ "observacao": "Mondubim só tem natação a partir de 15; indicar as unidades com natação infantil.",
+ "extrair": {
+  "alvo": "8 anos tem",
+  "extraido_em": "2026-11-12"
+ }
+}

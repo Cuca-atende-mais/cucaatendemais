@@ -1,0 +1,21 @@
+{
+ "id": "F5-01",
+ "categoria": "F5",
+ "descricao": "Lista de cursos da rede (mês vigente, nunca a lista de julho)",
+ "origem": "Análise 30/09",
+ "previa": 15,
+ "conversa_curta": null,
+ "data_simulada": "2026-09-20T15:00:00-03:00",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Quais cursos vocês têm?",
+ "esperado": {
+  "nao_deve_conter": [
+   "em que mais posso te ajudar"
+  ]
+ },
+ "observacao": "Esperado: perguntar a unidade/área ou listar só cursos da programação vigente. Conferir na leitura do relatório."
+}

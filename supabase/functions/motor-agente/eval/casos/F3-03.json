@@ -1,0 +1,90 @@
+{
+ "id": "F3-03",
+ "categoria": "F3",
+ "descricao": "'Do curso de informática?' 27h depois",
+ "origem": "Análise 30/09",
+ "previa": 8,
+ "conversa_curta": "6dd2b7cb",
+ "data_simulada": "2026-09-28T19:21:56.041Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca José Walter",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "agente",
+   "conteudo": "Na área de Tecnologia do Cuca Jangurussu, temos os seguintes cursos disponíveis:\n\n- Internet e E-mail para a Vida Profissional - Ter a Sex\n- Oficina - Edição Criativa com CapCut - Ter a Sex\n\nSe você quiser saber mais detalhes sobre algum desses cursos, como horários ou requisitos, é só me avisar! 😊",
+   "minutos_antes": 1630.08
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Jose Walter?",
+   "minutos_antes": 1629.61
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Claro! Vou verificar isso no Cuca José Walter. 😊\n\nNa área de tecnologia do Cuca José Walter, temos o seguinte curso disponível:\n\n- Informática Básica: Módulo 2 - Terças e Quintas\n\nSe você quiser mais detalhes sobre horários ou requisitos, é só me avisar!",
+   "minutos_antes": 1629.38
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Sim",
+   "minutos_antes": 1629.14
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Ótimo, Kauã! Aqui estão os detalhes do curso de Informática Básica: Módulo 2 no Cuca José Walter:\n\n- **Dias:** Terças e Quintas\n- **Faixa etária:** Jovens de 15 a 29 anos\n\nA quantidade de vagas pode mudar, então é uma boa ideia verificar diretamente com a unidade para garantir a disponibilidade. Se precisar de mais alguma informação, estou por aqui! 😊",
+   "minutos_antes": 1628.92
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Como me escrevo?",
+   "minutos_antes": 1628.05
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Para se inscrever nos cursos do Cuca, você pode fazer a matrícula pelo Portal da Juventude: [https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/](https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/).\n\nSe tiver alguma dúvida sobre o processo ou precisar de mais informações, estou aqui para ajudar! 😊",
+   "minutos_antes": 1627.83
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Você pode realizar sua matrícula a partir do dia 01/10",
+   "minutos_antes": 414.42
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Pelo portal da juventude",
+   "minutos_antes": 413.89
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Ou presencialmente no Equipamento do Cuca José Walter.",
+   "minutos_antes": 413.53
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Horário de funcionamento: 08:00 ás 18:00 hs",
+   "minutos_antes": 413.42
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Atendimento por ordem de chegada",
+   "minutos_antes": 413.26
+  }
+ ],
+ "mensagem": "Do curso de informática?",
+ "esperado": {
+  "deve_conter": [
+   "unidade"
+  ]
+ },
+ "observacao": "Esperado: confirmar a unidade antes de responder.",
+ "extrair": {
+  "alvo": "curso de informatica",
+  "dia": "2026-09-28",
+  "extraido_em": "2026-11-12"
+ }
+}

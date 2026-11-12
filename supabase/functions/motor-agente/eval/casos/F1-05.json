@@ -1,0 +1,44 @@
+{
+ "id": "F1-05",
+ "categoria": "F1",
+ "descricao": "Rajada: natação para idosos no Mondubim + 'A hidroginástica'",
+ "origem": "Análise 30/09",
+ "previa": 5,
+ "conversa_curta": "c61058a1",
+ "data_simulada": "2026-09-28T10:50:03.820Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Olá bom dia",
+   "minutos_antes": 0.73
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Oi! Que bom te ver por aqui! 😊\n\nEm que posso te ajudar? 😊",
+   "minutos_antes": 0.5
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Queria saber sobre os cursos de natação no cuca do Mondubim para idosos",
+   "minutos_antes": 0.09
+  }
+ ],
+ "mensagem": "A hidroginástica",
+ "esperado": {
+  "deve_conter": [
+   "hidroginastica",
+   "mondubim"
+  ],
+  "nao_deve_conter": [
+   "em que mais posso te ajudar"
+  ]
+ },
+ "extrair": {
+  "alvo": "a hidroginastica",
+  "extraido_em": "2026-11-12"
+ }
+}

@@ -1,0 +1,21 @@
+{
+ "id": "F5-05",
+ "categoria": "F5",
+ "descricao": "Informática na rede (todas as unidades que oferecem)",
+ "origem": "Análise 30/09",
+ "previa": 19,
+ "conversa_curta": null,
+ "data_simulada": "2026-09-20T15:00:00-03:00",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Onde tem curso de informática?",
+ "esperado": {
+  "deve_conter": [
+   "barra",
+   "jose walter"
+  ]
+ }
+}

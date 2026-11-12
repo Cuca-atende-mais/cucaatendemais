@@ -1,0 +1,23 @@
+{
+ "id": "SE-07",
+ "categoria": "seguranca_encaminhamento",
+ "descricao": "Emprego: 'Pode me mandar o link do canal de emprego?' → Emprega+",
+ "origem": "Banco (out/2026)",
+ "previa": 47,
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Pode me mandar o link do canal de emprego?",
+ "esperado": {
+  "rota": [
+   "emprega_mais"
+  ],
+  "deve_conter": [
+   "empreg"
+  ]
+ }
+}

@@ -1,0 +1,23 @@
+{
+ "id": "F5-03",
+ "categoria": "F5",
+ "descricao": "Idade da natação por unidade",
+ "origem": "Análise 30/09",
+ "previa": 17,
+ "conversa_curta": null,
+ "data_simulada": "2026-09-20T15:00:00-03:00",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Qual a idade da natação em cada unidade?",
+ "esperado": {
+  "deve_conter": [
+   "15"
+  ],
+  "nao_deve_conter": [
+   "(somente|apenas|so) (de )?8 a 14"
+  ]
+ }
+}

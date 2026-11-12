@@ -1,0 +1,23 @@
+{
+ "id": "AT-06",
+ "categoria": "atendente",
+ "descricao": "Atividade que não existe no mês → responde, sem transbordo",
+ "origem": "Revisão 28/10",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Mondubim",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [],
+ "mensagem": "Tem aula de xadrez no Cuca Mondubim?",
+ "esperado": {
+  "handover": false,
+  "deve_conter": [
+   "nao (tem|ha|encontrei|oferece|possui)"
+  ]
+ }
+}

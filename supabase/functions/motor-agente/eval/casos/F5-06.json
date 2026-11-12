@@ -1,0 +1,24 @@
+{
+ "id": "F5-06",
+ "categoria": "F5",
+ "descricao": "Natação infantil e carimba no Mondubim",
+ "origem": "Mariana (set/2026)",
+ "previa": 36,
+ "conversa_curta": null,
+ "data_simulada": "2026-09-20T15:00:00-03:00",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Tem natação infantil e carimba no Cuca Mondubim?",
+ "esperado": {
+  "deve_conter": [
+   "15"
+  ],
+  "nao_deve_conter": [
+   "mondubim tem natacao infantil"
+  ]
+ },
+ "observacao": "Na prévia: 'não tem carimba'. Em setembro a programação do Mondubim TEM Carimba (7 a 10 anos); o esperado foi ajustado para não exigir 'não tem carimba'."
+}

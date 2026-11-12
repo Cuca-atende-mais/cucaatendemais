@@ -1,0 +1,23 @@
+{
+ "id": "CF-05",
+ "categoria": "conteudo_fixo",
+ "descricao": "Vagas na Oficina de Informática (José Walter): procurar a unidade com o telefone",
+ "origem": "Mariana (print)",
+ "previa": 31,
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca José Walter",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [],
+ "mensagem": "Ainda tem vaga na oficina de informática básica?",
+ "esperado": {
+  "deve_conter": [
+   "99796-?0198"
+  ]
+ }
+}

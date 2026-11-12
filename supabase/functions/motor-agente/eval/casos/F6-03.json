@@ -1,0 +1,59 @@
+{
+ "id": "F6-03",
+ "categoria": "F6",
+ "descricao": "Barra + pedido sem '?'",
+ "origem": "Análise 30/09",
+ "previa": 22,
+ "conversa_curta": "94761dfd",
+ "data_simulada": "2026-09-21T17:26:58.055Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Olá",
+   "minutos_antes": 3.73
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "boa tarde",
+   "minutos_antes": 3.7
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "E aí! Fico super feliz com seu interesse no CUCA! 😊\n\nEm que posso te ajudar? 😊",
+   "minutos_antes": 3.49
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "gostaria de saber quando tem inscrição para natação infantil",
+   "minutos_antes": 3.11
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "?",
+   "minutos_antes": 2.99
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "A natação infantil está disponível nas unidades do CUCA José Walter e CUCA Pici. As inscrições para atividades do CUCA geralmente são feitas pelo Portal da Juventude (https://portaldajuventude.fortaleza.ce.gov.br/portal-web/#/).\n\nA quantidade de vagas e períodos de inscrição podem variar, então é sempre bom conferir diretamente com a unidade ou no Portal da Juventude para informações atualizadas. Se precisar de mais detalhes, posso ajudar com informações específicas de uma das unidades!",
+   "minutos_antes": 2.75
+  }
+ ],
+ "mensagem": "barra do Ceará",
+ "esperado": {
+  "deve_conter": [
+   "natacao"
+  ],
+  "nao_deve_conter": [
+   "em que mais posso te ajudar"
+  ]
+ },
+ "extrair": {
+  "alvo": "barra",
+  "dia": "2026-09-21",
+  "extraido_em": "2026-11-12"
+ }
+}

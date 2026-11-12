@@ -1,0 +1,28 @@
+{
+  "descricao": "Como cada documento do catálogo congelado foi escolhido (S-INST-QUAL-04, item 5). O script eval/scripts/exportar_catalogo.ts lê estes ids no banco (só leitura).",
+  "criterio_programacao": "Um documento monthly_program por unidade e por mês, o da campanha aprovada daquele mês (metadados.mes/ano). Setembro e outubro estão inativos em produção (foram substituídos pelo mês seguinte); no gabarito, o mês do caso conta como o ativo, e os outros meses ficam fora da busca. Conferido em 12/11/2026: os 15 documentos têm campanha_id e todos os trechos têm embedding.",
+  "criterio_comum": "servicos_rede, FAQs, eventos_pontuais, o prompt do Institucional, unidades_cuca (telefones), configuracoes.numeros_canais_cuca e a tabela de preços: os ATIVOS em produção no momento da exportação. A linha de base mede a main atual com o conteúdo atual; só a programação é congelada no mês de cada caso.",
+  "programacao_por_mes": {
+    "2026-09": [
+      "28ac998d-54a8-4cac-9884-b4e36838f805",
+      "b6daa2ff-03f9-4af5-b9b7-56e42d56eed7",
+      "cf9a6281-3908-4e71-8a84-950428eb1265",
+      "53ffa350-7cbc-4188-80de-e284ba9c0a8d",
+      "76985fe3-1ed3-4087-b5f9-3b35be85890e"
+    ],
+    "2026-10": [
+      "c23b407b-6a14-4ba1-a774-c3cdb6db21cd",
+      "25aa6179-13c2-4126-8f2b-532937c6fedd",
+      "4742f6e7-128c-45d7-af7a-5b8207ba89e0",
+      "656d8bf6-a071-42a5-8436-0bca2a82f33e",
+      "d9704d11-8c60-49e9-a0de-b6c612f03e9f"
+    ],
+    "2026-11": [
+      "2e15cb4d-3c45-4e63-86ab-0fa9185aaf78",
+      "2003eb85-6c7e-46df-9033-1fa059be2c91",
+      "947c8f45-4739-45a2-ae6c-40731dc19994",
+      "9ff98087-c637-4988-8d49-eccfcbead797",
+      "d8d8a5fc-4551-4975-9f41-646e4e4e11ab"
+    ]
+  }
+}

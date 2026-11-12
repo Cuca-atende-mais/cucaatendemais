@@ -1,0 +1,48 @@
+{
+ "id": "F6-01",
+ "categoria": "F6",
+ "descricao": "José Walter + documentos necessários (sem '?')",
+ "origem": "Análise 30/09",
+ "previa": 20,
+ "conversa_curta": "5a73baf5",
+ "data_simulada": "2026-09-21T10:06:45.125Z",
+ "mes_catalogo": "2026-09",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Bom dia",
+   "minutos_antes": 1.17
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "Ainda tem vaga pra natação infantil?",
+   "minutos_antes": 1.02
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "A Natação Infantil está disponível nas unidades CUCA José Walter e CUCA Pici. A quantidade de vagas pode mudar com frequência, então é melhor verificar diretamente na unidade desejada para saber a disponibilidade atual. 😊 Se precisar de mais alguma informação ou ajuda, é só me chamar!",
+   "minutos_antes": 0.74
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "no cuca do José Walter tem né",
+   "minutos_antes": 0.12
+  }
+ ],
+ "mensagem": "quais os documentos necessários",
+ "esperado": {
+  "deve_conter": [
+   "document|rg|cpf|comprovante"
+  ],
+  "nao_deve_conter": [
+   "em que mais posso te ajudar"
+  ]
+ },
+ "extrair": {
+  "alvo": "documentos necessarios",
+  "extraido_em": "2026-11-12"
+ }
+}
