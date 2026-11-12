@@ -31,6 +31,8 @@ const FEATURE_LABEL: Record<string, string> = {
     ouvidoria: "Ouvidoria (manifestação)",
     empregabilidade_cargos: "Empregabilidade (cargos)",
     empregabilidade_rota: "Empregabilidade (troca de rota)",
+    classificacao_rota: "Institucional (escolha da unidade)",
+    interpretacao_programacao: "Institucional (leitura da pergunta de programação)",
 }
 
 export default function DevConsumoPage() {
