@@ -1,0 +1,25 @@
+{
+ "id": "F1-09",
+ "categoria": "F1",
+ "descricao": "Rajada real de 05/11: 'Quais os cursos tem' + 'Boa tarde' → sem frase pronta",
+ "origem": "S-INST-QUAL-05",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Quais os cursos tem",
+   "minutos_antes": 0.1
+  }
+ ],
+ "mensagem": "Boa tarde",
+ "esperado": {
+  "nao_deve_conter": [
+   "em que (mais )?posso te ajudar"
+  ]
+ }
+}

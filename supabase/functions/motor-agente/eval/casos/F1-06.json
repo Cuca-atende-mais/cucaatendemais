@@ -1,0 +1,29 @@
+{
+ "id": "F1-06",
+ "categoria": "F1",
+ "descricao": "Rajada: 'Queria natação na Barra' + 'Oi boa tarde' → Barra com o pedido de natação (AC1)",
+ "origem": "S-INST-QUAL-05",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Queria natação na Barra",
+   "minutos_antes": 0.1
+  }
+ ],
+ "mensagem": "Oi boa tarde",
+ "esperado": {
+  "deve_conter": [
+   "natacao",
+   "barra"
+  ],
+  "nao_deve_conter": [
+   "em que (mais )?posso te ajudar"
+  ]
+ }
+}

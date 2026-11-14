@@ -1,0 +1,28 @@
+{
+ "id": "F1-08",
+ "categoria": "F1",
+ "descricao": "Rajada: 'vagas de emprego' + 'oi' → Emprega+ (AC2, ordem invertida)",
+ "origem": "S-INST-QUAL-05",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "vagas de emprego",
+   "minutos_antes": 0.1
+  }
+ ],
+ "mensagem": "oi",
+ "esperado": {
+  "rota": [
+   "emprega_mais"
+  ],
+  "nao_deve_conter": [
+   "em que (mais )?posso te ajudar"
+  ]
+ }
+}
