@@ -63,9 +63,136 @@ const PALAVRAS_CORTESIA = new Set([
  */
 export function ehCortesiaPura(texto: string): boolean {
   const palavras = normalizarTexto(texto).replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
-  if (palavras.length === 0) return true;
+  if (palavras.length === 0) {
+    // S-INST-QUAL-05: só pontuação ("?", "??", "…", ".") não é cortesia. Na releitura das
+    // ocorrências de 05 a 13/11, o "?" sozinho veio sempre depois de uma pergunta sem resposta
+    // ("Quando aconteceram" + "?") e recebia "Em que mais posso te ajudar?". Só emoji
+    // ("👍", "🙏🏻") continua cortesia.
+    if (rotaUsaRajada() && /[?!.,;:…*+\-]/.test(texto) && /^[\s?!.,;:…*+\-]+$/.test(texto)) return false;
+    return true;
+  }
   if (palavras.length > 5) return false;
-  return palavras.every((p) => PALAVRAS_CORTESIA.has(p));
+  // S-INST-QUAL-05 (releitura de 05 a 13/11): "tudo bem com você?". Atrás da chave, como o "?".
+  const comRajada = rotaUsaRajada();
+  return palavras.every((p) => PALAVRAS_CORTESIA.has(p) || (comRajada && PALAVRAS_CORTESIA_RAJADA.has(p)));
+}
+
+/** S-INST-QUAL-05: palavras de cortesia que só valem com a chave ROTA_USA_RAJADA ligada. */
+const PALAVRAS_CORTESIA_RAJADA = new Set(["com"]);
+
+// ── S-INST-QUAL-05: rajada inteira ──────────────────────────────────────────────────────────
+// O worker espera 10 s e manda ao motor só a ÚLTIMA mensagem; as anteriores da mesma rajada já
+// estão gravadas em `mensagens`. As decisões de rota (transbordo, Emprega+, unidade, frase pronta,
+// busca) passam a olhar a rajada inteira: as mensagens do cidadão depois da última resposta do bot.
+// O caminho da S-WM-72 (programação) não muda: ele já lê a sessão inteira.
+
+/** Chave de reversão (`supabase secrets set ROTA_USA_RAJADA=false`). Lida a cada requisição;
+ * ligada por padrão. Desligada, a rota volta a olhar só a última mensagem, como antes. */
+export function rotaUsaRajada(): boolean {
+  return (Deno.env.get("ROTA_USA_RAJADA") ?? "").trim().toLowerCase() !== "false";
+}
+
+/** Mensagem da rajada mais antiga que isso (em relação à última) fica de fora: sem resposta do bot
+ * no meio, só por demora (atendente que devolveu a conversa sem responder, erro), não é rajada. */
+export const JANELA_RAJADA_MS = 10 * 60 * 1000;
+
+type MensagemRajada = { role: string; content: string; created_at?: string | null };
+
+/** Marcadores que o worker grava no histórico para mídia sem texto (`_texto_historico_para_midia_vazia`).
+ * Não são texto do cidadão: ficam fora da rajada ("Boa tarde" + imagem sem legenda continua cortesia). */
+const MARCADOR_MIDIA_SEM_TEXTO = /^\[(Imagem enviada sem legenda|Documento enviado|Áudio enviado|Mídia enviada)\]$/;
+
+/** Mensagens do cidadão depois da última resposta do bot (inclui a atual, que o worker já gravou),
+ * da mais antiga para a mais nova, dentro de `JANELA_RAJADA_MS` da última. */
+export function mensagensDaRajada(historico: MensagemRajada[], janelaMs = JANELA_RAJADA_MS): string[] {
+  let inicio = historico.length;
+  while (inicio > 0 && historico[inicio - 1].role === "user") inicio--;
+  let rajada = historico.slice(inicio);
+  const ultima = rajada.length ? Date.parse(rajada[rajada.length - 1].created_at ?? "") : NaN;
+  if (!Number.isNaN(ultima)) {
+    rajada = rajada.filter((m) => {
+      const t = Date.parse(m.created_at ?? "");
+      return Number.isNaN(t) || ultima - t <= janelaMs;
+    });
+  }
+  return rajada.map((m) => m.content.trim()).filter((t) => t && !MARCADOR_MIDIA_SEM_TEXTO.test(t));
+}
+
+/** Separa a mensagem atual das anteriores da rajada. A atual sai do histórico pelo texto cru
+ * (`mensagemLead`, como o worker gravou) ou já normalizado (`textoFinal`, ex.: "6️⃣" → "6"). */
+export function anterioresDaRajada(historico: MensagemRajada[], textoFinal: string, mensagemLead = textoFinal): string[] {
+  const msgs = mensagensDaRajada(historico);
+  const ultima = msgs[msgs.length - 1];
+  if (ultima !== undefined && (ultima === mensagemLead.trim() || normalizarDigitosEmoji(ultima).trim() === textoFinal.trim())) msgs.pop();
+  return msgs;
+}
+
+/** Texto da rajada: as mensagens anteriores da rajada, uma por linha, terminando em `textoFinal`.
+ * Sem mensagem anterior, é o próprio `textoFinal`. */
+export function textoRajada(historico: MensagemRajada[], textoFinal: string, mensagemLead = textoFinal): string {
+  return [...anterioresDaRajada(historico, textoFinal, mensagemLead), textoFinal.trim()].join("\n");
+}
+
+/** Histórico até a última resposta do bot (sem o bloco de mensagens do cidadão depois dela). Os
+ * classificadores recebem a rajada como texto atual e o histórico ANTES dela — assim a rajada não
+ * aparece duas vezes no prompt. */
+export function historicoAntesDaRajada<T extends { role: string }>(historico: T[]): T[] {
+  let fim = historico.length;
+  while (fim > 0 && historico[fim - 1].role === "user") fim--;
+  return historico.slice(0, fim);
+}
+
+/** No caso misto do Emprega+, a rajada inteira vira só a outra pergunta (uma mensagem do lead). */
+export function trocarRajadaNoHistorico<T extends { role: string; content: string }>(historico: T[], novoTexto: string): { role: string; content: string }[] {
+  return [...historicoAntesDaRajada(historico), { role: "user", content: novoTexto }];
+}
+
+/** A rajada é cortesia pura quando TODA mensagem dela é cortesia ("Olá bom dia" + "tudo bem com
+ * você?" continua cortesia, mesmo passando de 5 palavras juntas). */
+export function rajadaEhCortesiaPura(mensagens: string[]): boolean {
+  return mensagens.length > 0 && mensagens.every((m) => ehCortesiaPura(m));
+}
+
+/** Transbordo pela rajada. A negação é avaliada mensagem por mensagem e, em qualquer uma, cancela
+ * ("quero um atendente" + "não, não preciso de atendente"); juntar a rajada para a negação faria
+ * "não consigo" de uma mensagem anular o pedido de outra. */
+export function deveAcionarHandoverNaRajada(mensagens: string[], agenteTipo: string): boolean {
+  if (agenteTipo !== "Institucional" && agenteTipo !== "maria") return false;
+  const normalizadas = mensagens.map(normalizarTextoIntencao).filter(Boolean);
+  if (normalizadas.some((m) => PADROES_NEGACAO_HANDOVER_INSTITUCIONAL.some((p) => p.test(m)))) return false;
+  // O pedido vale numa mensagem só ou na rajada junta ("não consigo" + "acessar minha conta").
+  return [...normalizadas, normalizadas.join(" ")].some((m) => PADROES_HANDOVER_INSTITUCIONAL.some((p) => p.test(m)));
+}
+
+/** Unidades citadas pelo nome (match exato, sem tolerância a erro de digitação), sem repetir. */
+export function unidadesCitadas(texto: string): string[] {
+  const lower = texto.toLowerCase();
+  const achadas: string[] = [];
+  for (const [chave, unidade] of Object.entries(NOMES_UNIDADES_POR_PALAVRA)) {
+    if (contemPalavra(lower, chave) && !achadas.includes(unidade)) achadas.push(unidade);
+  }
+  return achadas;
+}
+
+/** Alguma mensagem ANTERIOR da rajada traz um pedido: tirando os nomes de unidade, sobra algo que
+ * não é cumprimento ("Queria natação na Barra" sim; "Barra", "oi" não). Usado quando a rajada
+ * resolve a unidade: o pedido escrito antes da saudação não pode virar "resumo geral". */
+export function rajadaTemPedido(anteriores: string[]): boolean {
+  return anteriores.some((m) => {
+    let semUnidade = m.toLowerCase();
+    for (const chave of Object.keys(NOMES_UNIDADES_POR_PALAVRA)) semUnidade = semUnidade.replace(new RegExp("\\b" + escaparRegex(chave) + "\\b", "g"), " ");
+    semUnidade = semUnidade.replace(/\b(cuca|unidade|no|na|do|da|de|em)\b/g, " ");
+    return !ehCortesiaPura(semUnidade);
+  });
+}
+
+/** A última resposta do bot já foi a frase pronta ("Em que mais posso te ajudar?" ou a saudação
+ * com "Em que posso te ajudar?") — não repete; segue pelo caminho de pergunta geral. */
+export function ultimaRespostaFoiFrasePronta(historico: { role: string; content: string }[]): boolean {
+  const ultima = [...historico].reverse().find((m) => m.role === "assistant");
+  if (!ultima) return false;
+  const t = ultima.content.trim();
+  return t.endsWith("Em que mais posso te ajudar? 😊") || t.endsWith("Em que posso te ajudar? 😊");
 }
 
 /**
@@ -1661,6 +1788,7 @@ export function decidirAguardandoUnidade(
   unidadeDetectadaDireta: string | undefined,
   avaliacaoSemantica: AvaliacaoSelecaoUnidade,
   textoOriginal = "",
+  cortesia?: boolean,
 ): DecisaoAguardandoUnidade {
   const unidadeDetectada = unidadeDetectadaDireta ?? avaliacaoSemantica.unidade ?? undefined;
 
@@ -1690,7 +1818,9 @@ export function decidirAguardandoUnidade(
     // SAUDACOES_ABERTURA aqui, a conversa já está em andamento.
     // Hotfix 05/11/2026: só cumprimento puro recebe a resposta pronta; o resto segue pro fluxo
     // normal (mesmo caminho de pergunta_geral), que responde de verdade.
-    if (!ehCortesiaPura(textoOriginal)) return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
+    // S-INST-QUAL-05: `cortesia` vem do handler (rajada inteira avaliada mensagem por mensagem, e
+    // false quando a última resposta do bot já foi a frase pronta). Sem ele, vale só `textoOriginal`.
+    if (!(cortesia ?? ehCortesiaPura(textoOriginal))) return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
     return {
       unidadeSelecionada: null,
       aguardandoUnidade: false,
@@ -1732,6 +1862,7 @@ export function decidirConversaEngajada(
   unidadeDetectadaDireta: string | undefined,
   avaliacaoSemantica: AvaliacaoSelecaoUnidade,
   textoOriginal = "",
+  cortesia?: boolean,
 ): DecisaoConversaEngajada {
   const unidadeDetectada = unidadeDetectadaDireta ?? avaliacaoSemantica.unidade ?? undefined;
 
@@ -1770,7 +1901,9 @@ export function decidirConversaEngajada(
     // decidirAguardandoUnidade já usa pra esse caso (linha 658-663) — tom de continuação, nunca
     // SAUDACOES_ABERTURA aqui (a conversa já está engajada).
     // Hotfix 05/11/2026: só cumprimento puro recebe a resposta pronta (ver ehCortesiaPura).
-    if (!ehCortesiaPura(textoOriginal)) return { unidadeSelecionada: null, aguardandoUnidade: false, perguntaGeralAtiva: true, resposta: null };
+    // S-INST-QUAL-05: `cortesia` vem do handler (rajada inteira avaliada mensagem por mensagem, e
+    // false quando a última resposta do bot já foi a frase pronta). Sem ele, vale só `textoOriginal`.
+    if (!(cortesia ?? ehCortesiaPura(textoOriginal))) return { unidadeSelecionada: null, aguardandoUnidade: false, perguntaGeralAtiva: true, resposta: null };
     return {
       unidadeSelecionada: null,
       aguardandoUnidade: false,
@@ -2430,6 +2563,7 @@ export function decidirPrimeiraMensagem(
   unidadeDetectadaDireta: string | undefined,
   avaliacaoSemantica: AvaliacaoSelecaoUnidade,
   textoOriginal = "",
+  cortesia?: boolean,
 ): DecisaoPrimeiraMensagem {
   if (unidadeDetectadaDireta) {
     return { unidadeSelecionada: unidadeDetectadaDireta, aguardandoUnidade: false, resposta: null, pedidoEspecifico: mensagemTemPedidoEspecifico(textoOriginal) };
@@ -2453,7 +2587,9 @@ export function decidirPrimeiraMensagem(
     // pedido unit-dependente, pergunta_geral ou unidade direta a qualquer momento.
     // Hotfix 05/11/2026: mensagem que não é cumprimento puro ("não consigo acessar o portal") segue
     // pro fluxo normal em vez de receber só a saudação.
-    if (!ehCortesiaPura(textoOriginal)) return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
+    // S-INST-QUAL-05: `cortesia` vem do handler (rajada inteira avaliada mensagem por mensagem, e
+    // false quando a última resposta do bot já foi a frase pronta). Sem ele, vale só `textoOriginal`.
+    if (!(cortesia ?? ehCortesiaPura(textoOriginal))) return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: null };
     return { unidadeSelecionada: null, aguardandoUnidade: false, resposta: saudacao + "\n\nEm que posso te ajudar? 😊" };
   }
   // Backlog 4b / Item 1: pedido que depende de unidade (ex.: "quais cursos vocês têm"), sem
@@ -3229,6 +3365,17 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     let historico = recorteSessao.mensagens.map((m) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "" }));
     if (!prompt) throw new Error("Prompt nao encontrado para: " + agente_tipo);
 
+    // S-INST-QUAL-05: rajada inteira (mensagens do cidadão depois da última resposta do bot). Só
+    // Institucional/maria e só com a chave ROTA_USA_RAJADA ligada; sem mensagem anterior na rajada,
+    // tudo abaixo fica idêntico ao de antes (textoRota = textoFinal, historicoRota = historico).
+    const usaRajada = ehAgenteDeProgramacao && rotaUsaRajada();
+    const historicoComData = recorteSessao.mensagens.map((m) => ({ role: m.remetente === "lead" ? "user" : "assistant", content: m.conteudo || "", created_at: m.created_at }));
+    let rajadaAnteriores = usaRajada ? anterioresDaRajada(historicoComData, textoFinal, mensagemLead) : [];
+    let mensagensRajada = [...rajadaAnteriores, textoFinal.trim()];
+    let textoRota = rajadaAnteriores.length ? mensagensRajada.join("\n") : textoFinal;
+    let historicoRota = rajadaAnteriores.length ? historicoAntesDaRajada(historico) : historico;
+    if (rajadaAnteriores.length) console.log("[motor-agente v18] Rajada: " + mensagensRajada.length + " mensagens decidem a rota");
+
     // S-WM-AUD-007 (@qa FAIL-1 + LOW da Revisao 2): os turnos que retornam ANTES do Passo 6 nao
     // chegavam ao insert, e o comentario do Passo 6 afirmava o contrario. Cada saida registra a
     // sua PROPRIA camada — dado melhor que um `nao_aplicavel` generico: permite separar "nao
@@ -3264,7 +3411,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       console.log("[motor-agente v18] Sessao nova (intervalo > " + (LIMITE_SESSAO_MS / 3600000) + "h): estado da conversa zerado");
     }
 
-    if (deveAcionarHandoverInstitucional(textoFinal, agente_tipo)) {
+    const pedeTransbordo = rajadaAnteriores.length
+      ? deveAcionarHandoverNaRajada(mensagensRajada, agente_tipo)
+      : deveAcionarHandoverInstitucional(textoFinal, agente_tipo);
+    if (pedeTransbordo) {
       const resposta = "Vou te encaminhar para um atendente humano, só um momento!";
       await salvarMensagemAgente(supabase, conversa.id, lead.id, resposta);
       const { error: handoverError } = await supabase.from("conversas").update({ status: "awaiting_human", updated_at: new Date().toISOString() }).eq("id", conversa.id);
@@ -3311,10 +3461,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     const registrarConsumoInterpretacao = criarRegistroConsumo("interpretacao_programacao", "gpt-4o-mini");
     const registrarConsumoEmbedding = criarRegistroConsumo("embedding", EMBEDDING_MODEL);
     const decisaoEmprego = await decidirEmprego(
-      textoFinal,
+      textoRota,
       agente_tipo,
       conversaEmProgramacaoEmprego,
-      () => classificarEmpregoComModelo(textoFinal, openaiKey, historico, conversaEmProgramacaoEmprego, registrarConsumoClassificador),
+      () => classificarEmpregoComModelo(textoRota, openaiKey, historicoRota, conversaEmProgramacaoEmprego, registrarConsumoClassificador),
     );
     const classificacaoEmprego = decisaoEmprego.classificacao;
     if (decisaoEmprego.fonte === "lista") console.log("[motor-agente v18] Emprego decidido pela lista de reserva: " + classificacaoEmprego);
@@ -3333,8 +3483,16 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       const leadIdEmprega = lead.id;
       extras.balaoFinal = { mensagem: mensagemEmprega, salvar: () => salvarMensagemAgente(supabase, conversaIdEmprega, leadIdEmprega, mensagemEmprega) };
       if (decisaoEmprego.outraPergunta) {
-        historico = trocarUltimaMensagemDoLead(historico, mensagemLead, decisaoEmprego.outraPergunta);
+        // S-INST-QUAL-05: com rajada, a rajada inteira vira só a outra pergunta (o modelo separou a
+        // outra pergunta da rajada toda); a rajada não é recalculada depois disso.
+        historico = rajadaAnteriores.length
+          ? trocarRajadaNoHistorico(historico, decisaoEmprego.outraPergunta)
+          : trocarUltimaMensagemDoLead(historico, mensagemLead, decisaoEmprego.outraPergunta);
         textoFinal = decisaoEmprego.outraPergunta;
+        textoRota = textoFinal;
+        mensagensRajada = [textoFinal];
+        rajadaAnteriores = [];
+        historicoRota = historico;
       }
     }
 
@@ -3482,10 +3640,28 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     if (unidade_cuca === 'Geral' && !consultaProgramacao) {
       const unidadeSalva = metadataAtual.unidade_selecionada as string | undefined;
       const aguardando = metadataAtual.aguardando_unidade as boolean | undefined;
+      // S-INST-QUAL-05: dígito solto continua resolvido pela lista mostrada (só a mensagem atual);
+      // o resto da detecção de unidade olha a rajada inteira.
+      const textoUnidade = ehSelecaoMenu(textoFinal) ? textoFinal : textoRota;
+      // `undefined` sem a chave: as decisões usam ehCortesiaPura(texto), como antes.
+      const cortesiaRota = usaRajada ? rajadaEhCortesiaPura(mensagensRajada) && !ultimaRespostaFoiFrasePronta(historico) : undefined;
+
+      // S-INST-QUAL-05: duas unidades diferentes em mensagens da mesma rajada ("Barra" + "Pici")
+      // → menu de unidades, sem escolher uma. Só com mais de uma mensagem na rajada: "tem na Barra
+      // ou no Pici?" numa mensagem só segue como antes.
+      const unidadesDaRajada = rajadaAnteriores.length ? unidadesCitadas(textoRota) : [];
+      if (unidadesDaRajada.length >= 2) {
+        const respostaDuas = evitarRepeticaoLiteral("Vi que você citou mais de uma unidade (" + unidadesDaRajada.join(" e ") + ").\n\n" + MENU_UNIDADES, historico);
+        metadataAtual = { ...metadataAtual, ...pendenteSeMenuDeUnidades(respostaDuas, textoRota), aguardando_unidade: true };
+        await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: metadataAtual as unknown as Database["public"]["Functions"]["merge_conversa_metadata"]["Args"]["p_patch"] });
+        await salvarMensagemAgente(supabase, conversa!.id, lead.id, respostaDuas);
+        logarTurnoSemBusca("ambiguidade_unidade");
+        return new Response(JSON.stringify({ success: true, resposta: respostaDuas, handover: false }), { headers: { "Content-Type": "application/json" } });
+      }
 
       if (unidadeSalva) {
         const unidadePorDigito = ehSelecaoMenu(textoFinal) ? resolverDigitoPelaListaDoAgente(textoFinal, blocoAnteriorAgente) : undefined;
-        const novaUnidade = detectarTrocaUnidade(textoFinal, unidadeSalva) ?? (unidadePorDigito && unidadePorDigito !== unidadeSalva ? unidadePorDigito : null);
+        const novaUnidade = detectarTrocaUnidade(textoRota, unidadeSalva) ?? (unidadePorDigito && unidadePorDigito !== unidadeSalva ? unidadePorDigito : null);
         if (novaUnidade) {
           metadataAtual = { ...metadataAtual, unidade_selecionada: novaUnidade, aguardando_unidade: false };
           await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
@@ -3494,15 +3670,15 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
           // S-WM-34 (VAL-23, Task 3): este é o caminho reproduzido ao vivo — detectarTrocaUnidade
           // é match direto de nome, sem avaliação semântica (nunca chama avaliarSelecaoUnidade),
           // por isso usa o sinal equivalente (heurística "?", ver mensagemTemPedidoEspecifico).
-          trocaComPedidoEspecifico = mensagemTemPedidoEspecifico(textoFinal);
+          trocaComPedidoEspecifico = mensagemTemPedidoEspecifico(textoRota);
           console.log("[motor-agente v18] Troca de unidade: " + unidadeSalva + " -> " + novaUnidade);
-        } else if (pareceIntencaoTrocaUnidade(textoFinal)) {
+        } else if (pareceIntencaoTrocaUnidade(textoRota)) {
           // Item 4 (S-WM-21, VAL-06): detectarTrocaUnidade (match exato/typo) não achou nada,
           // mas a mensagem sugere intenção de trocar ("unidade", "trocar", "mudar" etc.) — só
           // AQUI vale a chamada semântica (avaliarSelecaoUnidade), pra não pagar uma chamada
           // extra de LLM em toda mensagem de acompanhamento comum de uma conversa já em
           // andamento (a maioria delas não menciona nada sobre trocar de unidade).
-          const avaliacaoTroca = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico, registrarConsumoRota);
+          const avaliacaoTroca = await avaliarSelecaoUnidade(textoRota, openaiKey, historicoRota, registrarConsumoRota);
           if (avaliacaoTroca.unidade && avaliacaoTroca.unidade !== unidadeSalva) {
             metadataAtual = { ...metadataAtual, unidade_selecionada: avaliacaoTroca.unidade, aguardando_unidade: false };
             await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
@@ -3539,14 +3715,14 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       } else if (aguardando) {
         // aguardando_unidade só é gravado junto com o MENU_UNIDADES do código, então aqui (e só
         // aqui) o mapa fixo 1-5 continua valendo como fallback.
-        const unidadeDetectadaDireta = detectarUnidadeDireta(textoFinal, blocoAnteriorAgente) ?? detectarUnidadeDireta(textoFinal);
+        const unidadeDetectadaDireta = detectarUnidadeDireta(textoUnidade, blocoAnteriorAgente) ?? detectarUnidadeDireta(textoUnidade);
         let avaliacaoSemantica: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDireta) {
-          avaliacaoSemantica = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico, registrarConsumoRota);
+          avaliacaoSemantica = await avaliarSelecaoUnidade(textoRota, openaiKey, historicoRota, registrarConsumoRota);
         }
 
-        const decisao = decidirAguardandoUnidade(unidadeDetectadaDireta, avaliacaoSemantica, textoFinal);
+        const decisao = decidirAguardandoUnidade(unidadeDetectadaDireta, avaliacaoSemantica, textoRota, cortesiaRota);
 
         if (decisao.unidadeSelecionada) {
           metadataAtual = { ...metadataAtual, unidade_selecionada: decisao.unidadeSelecionada, aguardando_unidade: decisao.aguardandoUnidade };
@@ -3582,7 +3758,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
           // no branch de 1ª mensagem de novo — não precisa da flag.
           metadataAtual = {
             ...metadataAtual,
-            ...pendenteSeMenuDeUnidades(respostaFinal, textoFinal),
+            ...pendenteSeMenuDeUnidades(respostaFinal, textoRota),
             aguardando_unidade: decisao.aguardandoUnidade,
             ...(decisao.aguardandoUnidade ? {} : { conversa_engajada: true }),
           };
@@ -3603,14 +3779,14 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         // S-WM-31 (item 6 do Escopo): 3º branch — conversa já engajada (passou por cortesia ou
         // pergunta_geral antes), sem unidade_selecionada nem aguardando_unidade pendentes.
         // Reavalia com a MESMA detecção usada nos outros branches, sem repetir saudação.
-        const unidadeDetectadaDiretaEngajada = detectarUnidadeDireta(textoFinal, blocoAnteriorAgente);
+        const unidadeDetectadaDiretaEngajada = detectarUnidadeDireta(textoUnidade, blocoAnteriorAgente);
         let avaliacaoSemanticaEngajada: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDiretaEngajada) {
-          avaliacaoSemanticaEngajada = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico, registrarConsumoRota);
+          avaliacaoSemanticaEngajada = await avaliarSelecaoUnidade(textoRota, openaiKey, historicoRota, registrarConsumoRota);
         }
 
-        const decisaoEngajada = decidirConversaEngajada(unidadeDetectadaDiretaEngajada, avaliacaoSemanticaEngajada, textoFinal);
+        const decisaoEngajada = decidirConversaEngajada(unidadeDetectadaDiretaEngajada, avaliacaoSemanticaEngajada, textoRota, cortesiaRota);
 
         if (decisaoEngajada.unidadeSelecionada) {
           metadataAtual = { ...metadataAtual, unidade_selecionada: decisaoEngajada.unidadeSelecionada, aguardando_unidade: false };
@@ -3632,7 +3808,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
           console.log("[motor-agente v18] Disparo recente não reconhecido (conversa engajada) — ignora resposta canned, segue pro GPT");
         } else if (decisaoEngajada.resposta !== null) {
           const respostaFinal = evitarRepeticaoLiteral(decisaoEngajada.resposta, historico);
-          metadataAtual = { ...metadataAtual, ...pendenteSeMenuDeUnidades(respostaFinal, textoFinal), aguardando_unidade: decisaoEngajada.aguardandoUnidade };
+          metadataAtual = { ...metadataAtual, ...pendenteSeMenuDeUnidades(respostaFinal, textoRota), aguardando_unidade: decisaoEngajada.aguardandoUnidade };
           await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa.id, p_patch: metadataAtual });
           await salvarMensagemAgente(supabase, conversa.id, lead.id, respostaFinal);
           // S-WM-70: este early-return não passava pelo trecho que processa a tag [[ENCERRAR]]
@@ -3654,14 +3830,14 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
           console.log("[motor-agente v18] Pergunta geral identificada (conversa engajada): segue pro RAG geral (FAQ isolado)");
         }
       } else {
-        const unidadeDetectadaDireta1a = detectarUnidadeDireta(textoFinal, blocoAnteriorAgente);
+        const unidadeDetectadaDireta1a = detectarUnidadeDireta(textoUnidade, blocoAnteriorAgente);
         let avaliacaoSemantica1a: AvaliacaoSelecaoUnidade = AVALIACAO_SELECAO_UNIDADE_DEFAULT;
 
         if (!unidadeDetectadaDireta1a) {
-          avaliacaoSemantica1a = await avaliarSelecaoUnidade(textoFinal, openaiKey, historico, registrarConsumoRota);
+          avaliacaoSemantica1a = await avaliarSelecaoUnidade(textoRota, openaiKey, historicoRota, registrarConsumoRota);
         }
 
-        const decisaoPrimeira = decidirPrimeiraMensagem(unidadeDetectadaDireta1a, avaliacaoSemantica1a, textoFinal);
+        const decisaoPrimeira = decidirPrimeiraMensagem(unidadeDetectadaDireta1a, avaliacaoSemantica1a, textoRota, cortesiaRota);
         if (decisaoPrimeira.unidadeSelecionada) {
           // AUD-07: unidade já citada na própria 1ª mensagem — resolve direto e segue pro
           // fluxo normal (RAG/GPT) em vez de mandar o menu e forçar uma rodada extra.
@@ -3696,7 +3872,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
           // cair aqui de novo — não precisa da flag.
           metadataAtual = {
             ...metadataAtual,
-            ...pendenteSeMenuDeUnidades(respostaFinal, textoFinal),
+            ...pendenteSeMenuDeUnidades(respostaFinal, textoRota),
             aguardando_unidade: decisaoPrimeira.aguardandoUnidade,
             ...(decisaoPrimeira.aguardandoUnidade ? {} : { conversa_engajada: true }),
           };
@@ -3714,6 +3890,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         }
       }
     }
+
+    // S-INST-QUAL-05: a rajada resolveu a unidade e um pedido veio numa mensagem ANTERIOR ("Queria
+    // natação na Barra" + "Oi boa tarde") — responde o pedido, não o resumo geral da unidade.
+    if (trocouUnidade && !trocaComPedidoEspecifico && rajadaAnteriores.length && rajadaTemPedido(rajadaAnteriores)) trocaComPedidoEspecifico = true;
 
     // 6. Contexto RAG
     let contextRAG = "";
@@ -3844,7 +4024,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // no mesmo trecho) para um ganho marginal, já que ela só dispara numa fração dos turnos.
       const [conteudoPrograma, embedding] = await Promise.all([
         carregarProgramacaoMensal(supabase, unidadeEfetiva),
-        gerarEmbedding(textoFinal, openaiKey, registrarConsumoEmbedding),
+        gerarEmbedding(textoRota, openaiKey, registrarConsumoEmbedding),
       ]);
 
       let instrucaoArea = "";
@@ -3880,7 +4060,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // este bloco so garante que o dado exato da atividade pedida esta disponivel com certeza,
       // em vez de depender so do que sobrar nos ~40+ chunks do resumo geral.
       if (trocaComPedidoEspecifico || trocouUnidade) {
-        const buscaEspecifica = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
+        const buscaEspecifica = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoRota, historico);
         const conteudoAtividadeEspecifica = buscaEspecifica.conteudo;
         resolucaoAtividade = buscaEspecifica.resolucao;
         if (conteudoAtividadeEspecifica) {
@@ -3912,7 +4092,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       reiniciarBlocos(true);
       // S-WM-72 (R8): aplica também o contexto da sessão (idade, gênero, turno).
       const itensComContexto = filtrarItensPorContexto(await carregarItensProgramacaoRede(supabase, !supabaseOverride), (metadataAtual.prog_contexto ?? {}) as Record<string, unknown>);
-      const blocoRede = montarBlocoRedeComAtividadeDaSessao(itensComContexto, textoFinal, historico);
+      const blocoRede = montarBlocoRedeComAtividadeDaSessao(itensComContexto, textoRota, historico);
       outrasUnidadesComAtividade = blocoRede !== "";
       if (blocoRede) {
         adicionarBloco("programacao_rede", blocoProgramacaoRedeTexto(blocoRede));
@@ -3938,9 +4118,9 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // primeira devolve null (short-circuit do `??` preservado pelo `?? await`).
       // S-INST-QUAL-03: as duas funcoes devolvem tambem o motivo do null; o `??` continua
       // garantindo que a segunda so roda quando a primeira nao achou.
-      const buscaMetadata = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoFinal, historico);
+      const buscaMetadata = await buscarAtividadeDeterministica(supabase, unidadeEfetiva as string, textoRota, historico);
       const conteudoAtividadeMetadata = buscaMetadata.conteudo;
-      const buscaTexto = conteudoAtividadeMetadata ? null : await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoFinal, historico);
+      const buscaTexto = conteudoAtividadeMetadata ? null : await buscarAtividadeEspecifica(supabase, unidadeEfetiva as string, textoRota, historico);
       const conteudoAtividade = conteudoAtividadeMetadata ?? buscaTexto?.conteudo ?? null;
       resolucaoAtividade = combinarResolucaoAtividade(buscaMetadata.resolucao, buscaTexto?.resolucao);
       if (conteudoAtividadeMetadata) logRAG = { camada: "deterministica_metadata" };
@@ -3951,7 +4131,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       if (conteudoAtividade) {
         adicionarBloco("atividade_contexto", "\n\n--- CONTEXTO (atividade especifica) ---\n" + conteudoAtividade);
       } else {
-        const embedding = await gerarEmbedding(textoFinal, openaiKey, registrarConsumoEmbedding);
+        const embedding = await gerarEmbedding(textoRota, openaiKey, registrarConsumoEmbedding);
         const { data: chunksPrograma, error: erroPrograma } = await supabase.rpc("buscar_chunks_similares", {
           query_embedding: "[" + embedding.join(",") + "]",
           p_tipos: ["monthly_program", "eventos_pontuais", "FAQ"],
@@ -3980,10 +4160,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // mensagem — nunca mais pelo resumo_rede. Sem match de título = não é pergunta de
       // programação (ou a atividade não existe neste mês): segue só com FAQ, e a instrução de
       // pergunta geral proíbe citar atividade/dia/horário sem esse bloco.
-      const palavrasProgramacao = palavrasChaveProgramacao(textoFinal);
+      const palavrasProgramacao = palavrasChaveProgramacao(textoRota);
       const [itensRede, embedding] = await Promise.all([
         palavrasProgramacao.length > 0 ? carregarItensProgramacaoRede(supabase) : Promise.resolve([] as ItemProgramacao[]),
-        gerarEmbedding(textoFinal, openaiKey, registrarConsumoEmbedding),
+        gerarEmbedding(textoRota, openaiKey, registrarConsumoEmbedding),
       ]);
       const blocoProgramacaoRede = montarBlocoProgramacaoRede(itensRede, palavrasProgramacao);
       const { data: chunksFaq, error: erroFaq } = await supabase.rpc("buscar_chunks_similares", {
@@ -4012,7 +4192,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       for (const b of blocosRede) adicionarBloco(b.nome, "\n\n" + b.texto);
     } else {
       const fontes = RAG_FONTES_POR_AGENTE[agente_tipo] || ["FAQ"];
-      const embedding = await gerarEmbedding(textoFinal, openaiKey, registrarConsumoEmbedding);
+      const embedding = await gerarEmbedding(textoRota, openaiKey, registrarConsumoEmbedding);
       const { data: chunks, error: erroChunks } = await supabase.rpc("buscar_chunks_similares", {
         query_embedding: "[" + embedding.join(",") + "]",
         p_tipos: fontes,

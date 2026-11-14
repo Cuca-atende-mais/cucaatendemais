@@ -3505,7 +3505,9 @@ Deno.test("Hotfix 05/11: '6️⃣' no menu de unidades responde pela rede inteir
 });
 
 Deno.test("Hotfix 05/11: só cumprimento puro é cortesia", () => {
-  for (const f of ["oi", "Bom dia", "Boa tarde !", "ok", "valeu", "obrigada", "tudo bem?", "🙏🏻", "?", "Opa"]) assertEquals(ehCortesiaPura(f), true, f);
+  for (const f of ["oi", "Bom dia", "Boa tarde !", "ok", "valeu", "obrigada", "tudo bem?", "🙏🏻", "Opa"]) assertEquals(ehCortesiaPura(f), true, f);
+  // S-INST-QUAL-05: "?" sozinho deixou de ser cortesia (ver index.inst-qual-05.test.ts)
+  assertEquals(ehCortesiaPura("?"), false);
   // mensagens reais que receberam só "Em que mais posso te ajudar? 😊" entre 03 e 05/11
   for (const f of ["7 anos", "70 anos de idade", "Quer aprender natação", "link de inscrição", "Curso de fotografgia", "queria fazer a inscrição", "E tenho interesse em técnicas vocais", "Tô tentando acessar minha conta no portal e aparece erro", "sim", "1 e 2", "Informações"]) {
     assertEquals(ehCortesiaPura(f), false, f);
