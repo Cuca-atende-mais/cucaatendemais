@@ -1,0 +1,32 @@
+{
+ "id": "F6-05",
+ "categoria": "F6",
+ "descricao": "Troca de unidade com pedido sem '?' (endereço do Pici, unidade salva Barra)",
+ "origem": "S-INST-QUAL-06 (regra do '?')",
+ "data_simulada": "2026-11-10T15:00:00.000Z",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Barra",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "tem futsal na Barra?",
+   "minutos_antes": 6
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Tem sim! No Cuca Barra o futsal é às terças e quintas. Quer saber mais alguma coisa? 😊",
+   "minutos_antes": 5
+  }
+ ],
+ "mensagem": "e o endereço do Cuca Pici",
+ "esperado": {
+  "deve_conter": [
+   "matos dourado"
+  ]
+ }
+}

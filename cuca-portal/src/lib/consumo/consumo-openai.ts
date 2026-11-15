@@ -28,6 +28,7 @@ export const FEATURE_LABEL: Record<string, string> = {
     classificador_emprego: "Institucional (classificador de emprego)",
     classificacao_rota: "Institucional (escolha da unidade)",
     interpretacao_programacao: "Institucional (leitura da pergunta de programação)",
+    leitura_rota: "Institucional (leitura do turno, rota estruturada)",
 }
 
 /** O worker grava sem `agente_tipo`: as linhas sem agente são dele, não "desconhecidas". */

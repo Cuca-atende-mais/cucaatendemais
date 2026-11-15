@@ -1,7 +1,7 @@
 {
  "id": "AT-05",
  "categoria": "atendente",
- "descricao": "Resposta que não está na base → atendente, sem inventar",
+ "descricao": "Resposta que não está na base → não inventa: diz que não encontrou e passa o contato da unidade, sem atendente (decisão do Junior, 14/11)",
  "origem": "Revisão 28/10",
  "conversa_curta": null,
  "data_simulada": "2026-11-11T15:00:00-03:00",
@@ -12,6 +12,12 @@
  "historico": [],
  "mensagem": "O Cuca Barra tem estacionamento para carro?",
  "esperado": {
-  "handover": true
+  "handover": false,
+  "deve_conter": [
+   "\\(85\\) ?9?\\d{4}-?\\d{4}"
+  ],
+  "nao_deve_conter": [
+   "atendente"
+  ]
  }
 }

@@ -11,6 +11,7 @@
 //   deno run --allow-all eval/run_eval.ts --rotulo teste --simulado         # sem custo: OpenAI simulada
 // Opções: --repeticoes N (padrão 3) · --casos <regex do id> · --teto-usd N (para ao passar do teto)
 //         --comparar eval/resultados/<arquivo>.json (aplica o critério "sem piora" contra uma base)
+//         --rota-estruturada on (S-INST-QUAL-06: liga a chave `rota_estruturada` no catálogo; padrão: desligada)
 // Saída: eval/resultados/AAAA-MM-DD-<rotulo>.md (relatório) e .json (bruto). Fora do git.
 
 import { handler, redefinirCachePrecos } from "../index.ts";
@@ -29,6 +30,7 @@ const REPETICOES = Number(argumento("repeticoes") ?? 3);
 const FILTRO = argumento("casos") ? new RegExp(argumento("casos")!) : null;
 const TETO_USD = argumento("teto-usd") ? Number(argumento("teto-usd")) : null;
 const COMPARAR = argumento("comparar");
+const ROTA_ESTRUTURADA = argumento("rota-estruturada") === "on";
 if (!ROTULO) {
   console.error("Uso: deno run --allow-all eval/run_eval.ts --rotulo <nome> [--simulado] [--repeticoes N] [--casos regex] [--teto-usd N] [--comparar base.json]");
   Deno.exit(1);
@@ -42,6 +44,8 @@ if (!CHAVE) {
 // ── arquivos ─────────────────────────────────────────────────────────────────────────────
 const BASE = new URL("./", import.meta.url);
 const catalogo: Catalogo = JSON.parse(await Deno.readTextFile(new URL("dados/catalogo.json", BASE)));
+// S-INST-QUAL-06: a chave fica só na memória desta rodada; o catálogo em disco não muda.
+if (ROTA_ESTRUTURADA) catalogo.comum.system_config = [...catalogo.comum.system_config, { chave: "rota_estruturada", valor: "on" }];
 const casos: Caso[] = [];
 for await (const e of Deno.readDir(new URL("casos/", BASE))) {
   if (e.isFile && e.name.endsWith(".json")) casos.push(JSON.parse(await Deno.readTextFile(new URL("casos/" + e.name, BASE))));
@@ -62,6 +66,7 @@ let chamadasDoCaso: ChamadaIA[] = [];
 function tipoDaChamada(url: string, corpo: string): string {
   if (url.includes("/v1/embeddings")) return "embedding";
   if (corpo.includes("CLASSIFICADOR DE EMPREGO")) return "classificador_emprego";
+  if (corpo.includes("LEITURA DO TURNO (rota estruturada)")) return "leitura_rota";
   if (corpo.includes("Você interpreta mensagens de leads")) return "interpretacao_programacao";
   if (corpo.includes("Um lead da rede CUCA está conversando com a Maria")) return "classificacao_rota";
   return "chat";
@@ -80,6 +85,7 @@ function respostaSimulada(tipo: string, corpo: Record<string, unknown>): Respons
   switch (tipo) {
     case "embedding": return new Response(JSON.stringify({ model: "text-embedding-3-small", data: [{ embedding: vetorSimulado(String(corpo.input)) }], usage: { prompt_tokens: 10, total_tokens: 10 } }), { status: 200 });
     case "classificador_emprego": return chat(JSON.stringify({ fala_de_emprego: false, vaga_sem_tipo: false, outra_pergunta: null }));
+    case "leitura_rota": return chat(JSON.stringify({ tipo: "pedido_novo", assunto: "institucional", unidade_citada: null, escopo: "nao_disse" }));
     case "interpretacao_programacao": return chat(JSON.stringify({ tipo: "nao_programacao", atividade: null, termos_busca: [], area: null, contexto: {}, escopo: null }));
     case "classificacao_rota": return chat(JSON.stringify({ unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false }));
     default: return chat("[simulado] resposta do modelo");
@@ -107,7 +113,7 @@ globalThis.fetch = (async (entrada: string | URL | Request, init?: RequestInit) 
 }) as typeof fetch;
 
 // ── execução ─────────────────────────────────────────────────────────────────────────────
-type Execucao = SaidaExecucao & { passou: boolean; falhas: string[]; custo_usd: number; data_atual_no_prompt: string | null; buscas: unknown[]; chamadas: Record<string, number>; erro?: string };
+type Execucao = SaidaExecucao & { passou: boolean; falhas: string[]; custo_usd: number; data_atual_no_prompt: string | null; buscas: unknown[]; chamadas: Record<string, number>; erro?: string; rota_fallback?: boolean | null };
 
 function montarHistorico(caso: Caso, agora: number) {
   const linhas = caso.historico.map((m) => ({ remetente: m.remetente, conteudo: m.conteudo, created_at: new Date(agora - m.minutos_antes * 60000).toISOString() }));
@@ -153,13 +159,15 @@ async function executar(caso: Caso): Promise<Execucao> {
   const chamadas: Record<string, number> = {};
   for (const c of chamadasDoCaso) chamadas[c.tipo] = (chamadas[c.tipo] ?? 0) + 1;
   const buscas = falso.captura.buscas.map((b) => ({ ...b.params, trechos: b.resultado.map((r) => ({ chunk_id: r.chunk_id, fonte_tipo: r.fonte_tipo, similaridade: Number(r.similaridade.toFixed(4)), inicio: r.conteudo.slice(0, 80) })) }));
-  return { ...saida, ...avaliacao, custo_usd: custo, data_atual_no_prompt: dataAtual, buscas, chamadas, erro };
+  // S-INST-QUAL-06: true = a leitura do turno falhou (erro/timeout/JSON) e a rota antiga respondeu.
+  const rotaFallback = (logsBusca.at(-1)?.rota_fallback as boolean | null | undefined) ?? null;
+  return { ...saida, ...avaliacao, custo_usd: custo, data_atual_no_prompt: dataAtual, buscas, chamadas, erro, rota_fallback: rotaFallback };
 }
 
 const bruto: { caso: Caso; execucoes: Execucao[]; resultado: ResultadoCaso }[] = [];
 let custoTotal = 0;
 let parouNoTeto = false;
-console.log(`Gabarito: ${selecionados.length} casos × ${REPETICOES} execuções${SIMULADO ? " (SIMULADO, sem custo)" : ""}`);
+console.log(`Gabarito: ${selecionados.length} casos × ${REPETICOES} execuções${SIMULADO ? " (SIMULADO, sem custo)" : ""}${ROTA_ESTRUTURADA ? " — rota estruturada LIGADA" : ""}`);
 casosLoop:
 for (const caso of selecionados) {
   const execucoes: Execucao[] = [];
@@ -188,14 +196,20 @@ if (COMPARAR) {
 const hoje = new Date().toISOString().slice(0, 10);
 const nome = `${hoje}-${ROTULO}`;
 await Deno.mkdir(new URL("resultados/", BASE), { recursive: true });
-await Deno.writeTextFile(new URL(`resultados/${nome}.json`, BASE), JSON.stringify({ rotulo: ROTULO, data: new Date().toISOString(), simulado: SIMULADO, repeticoes: REPETICOES, custo_usd: custoTotal, parou_no_teto: parouNoTeto, catalogo_exportado_em: catalogo.exportado_em, resultados, taxas, comparacao, detalhes: bruto }, null, 1));
+await Deno.writeTextFile(new URL(`resultados/${nome}.json`, BASE), JSON.stringify({ rotulo: ROTULO, data: new Date().toISOString(), simulado: SIMULADO, rota_estruturada: ROTA_ESTRUTURADA, repeticoes: REPETICOES, custo_usd: custoTotal, parou_no_teto: parouNoTeto, catalogo_exportado_em: catalogo.exportado_em, resultados, taxas, comparacao, detalhes: bruto }, null, 1));
 
 const linhas: string[] = [];
 linhas.push(`# Gabarito do Institucional — ${ROTULO} (${hoje})`, "");
 linhas.push(`- Modo: ${SIMULADO ? "**SIMULADO** (OpenAI falsa, sem custo; mede só o encanamento)" : "OpenAI real"}`);
 linhas.push(`- Casos: ${resultados.length} · execuções por caso: ${REPETICOES} · um caso passa com ${minimoDeAcertos(REPETICOES)} de ${REPETICOES} acertos`);
 linhas.push(`- Custo da rodada (registrado pelo próprio motor): US$ ${custoTotal.toFixed(4)}${parouNoTeto ? ` — **parou no teto de US$ ${TETO_USD}**` : ""}`);
-linhas.push(`- Catálogo exportado em: ${catalogo.exportado_em}`, "");
+linhas.push(`- Catálogo exportado em: ${catalogo.exportado_em}`);
+if (ROTA_ESTRUTURADA) {
+  const execucoes = bruto.flatMap((b) => b.execucoes);
+  const planoB = bruto.filter((b) => b.execucoes.some((e) => e.rota_fallback === true)).map((b) => b.caso.id);
+  linhas.push(`- Rota estruturada ligada · execuções no plano B (leitura falhou, rota antiga respondeu): ${execucoes.filter((e) => e.rota_fallback === true).length} de ${execucoes.length}${planoB.length ? " (" + planoB.join(", ") + ")" : ""}`);
+}
+linhas.push("");
 linhas.push("## Taxa de acerto por categoria", "", "| Categoria | Passaram | Total | Taxa |", "|---|---:|---:|---:|");
 for (const [k, v] of Object.entries(taxas).sort()) linhas.push(`| ${k} | ${v.passaram} | ${v.total} | ${(v.taxa * 100).toFixed(0)}% |`);
 const depois07 = resultados.filter((r) => r.depois_da_07);
@@ -208,7 +222,7 @@ if (comparacao) {
 linhas.push("", "## Caso a caso", "", "| Caso | Categoria | Acertos | Resultado | Rota | Falhas (1ª execução que falhou) |", "|---|---|---:|---|---|---|");
 for (const b of bruto) {
   const falha = b.execucoes.find((e) => !e.passou);
-  linhas.push(`| ${b.caso.id} | ${b.caso.categoria}${b.caso.depois_da_07 ? " (07)" : ""} | ${b.resultado.acertos}/${b.resultado.execucoes} | ${b.resultado.passou ? "passou" : "**falhou**"} | ${b.execucoes[0]?.camada ?? "-"} | ${falha ? falha.falhas.join("; ").replace(/\|/g, "\\|") : ""} |`);
+  linhas.push(`| ${b.caso.id} | ${b.caso.categoria}${b.caso.depois_da_07 ? " (07)" : ""} | ${b.resultado.acertos}/${b.resultado.execucoes} | ${b.resultado.passou ? "passou" : "**falhou**"} | ${b.execucoes[0]?.camada ?? "-"}${b.execucoes.some((e) => e.rota_fallback === true) ? " (plano B)" : ""} | ${falha ? falha.falhas.join("; ").replace(/\|/g, "\\|") : ""} |`);
 }
 await Deno.writeTextFile(new URL(`resultados/${nome}.md`, BASE), linhas.join("\n") + "\n");
 console.log(`\nRelatório: eval/resultados/${nome}.md · custo US$ ${custoTotal.toFixed(4)}`);

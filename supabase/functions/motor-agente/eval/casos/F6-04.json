@@ -1,0 +1,18 @@
+{
+ "id": "F6-04",
+ "categoria": "F6",
+ "descricao": "1ª mensagem com unidade + pedido sem '?' (endereço do Jangurussu)",
+ "origem": "S-INST-QUAL-06 (regra do '?')",
+ "data_simulada": "2026-11-10T15:00:00.000Z",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Boa tarde, queria saber o endereço do Cuca Jangurussu",
+ "esperado": {
+  "deve_conter": [
+   "leonel brizola"
+  ]
+ }
+}
