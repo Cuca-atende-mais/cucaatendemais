@@ -336,6 +336,19 @@ const PADROES_HANDOVER_INSTITUCIONAL = [
   // "posso chamar uma equipe pra jogar na quadra?" nao sao pedido de atendimento.
   new RegExp("\\bchamar\\s+" + ARTIGO_PESSOA + CARGO_PESSOA + "\\b"),
   new RegExp("\\bligar\\s+(para|pra|pro)\\s+" + ARTIGO_PESSOA + CARGO_PESSOA + "\\b"),
+  // S-INST-QUAL-06 (decisão do Junior, 14/11): "humano", "atendente" e "alguém" num pedido, mesmo
+  // dentro de outra frase ("não tem humano aí?", "tem alguém aí pra me ajudar?", "Atendente!").
+  // "humano" no singular: "recursos/direitos humanos" (plural) não casa; "ser humano" fica de fora.
+  /(?<!\bser )\bhumano\b/,
+  // "atendente" só como pedido (sozinho, ou com tem/cadê/chama/quero...), nunca como emprego
+  // ("vaga de atendente", "quero ser atendente", "trabalhar como atendente").
+  /^(?!.*\b(vagas?|emprego|empregos|trabalh\w*|curriculo|contrat\w*|cargo|ser atendente|como atendente)\b)(.*\b(tem|ha|cade|chama|chame|chamar|quero|queria|preciso|gostaria|falar|fala|me passa\w*|me transfer\w*)\b.{0,20})?\batendente\b/,
+  /\b(tem|ha|existe) (algum |alguma )?alguem\b.{0,30}\b(ai|aqui|ae|ajudar|atender|responder|falar)\b/,
+  /\bnao tem (ninguem|alguem)\b.{0,30}\b(ai|aqui|ae|ajudar|atender|responder|falar)\b/,
+  /\bpessoa de verdade\b/,
+  // plural só logo depois de tem/há/cadê ("tem humanos aí?", "cadê os humanos?"); "tem curso de
+  // recursos humanos?" não casa.
+  /\b(tem|ha|existe|existem|cade)\s+(os |algum |alguns |uns )?humanos\b/,
 ];
 
 const PADROES_NEGACAO_HANDOVER_INSTITUCIONAL = [
@@ -353,6 +366,86 @@ export function deveAcionarHandoverInstitucional(texto: string, agenteTipo: stri
   if (!normalizado) return false;
   if (PADROES_NEGACAO_HANDOVER_INSTITUCIONAL.some((padrao) => padrao.test(normalizado))) return false;
   return PADROES_HANDOVER_INSTITUCIONAL.some((padrao) => padrao.test(normalizado));
+}
+
+// ── S-INST-QUAL-06 (decisão do Junior, 14/11): horário do atendente e falta de informação ──────
+// O atendente do Institucional é o mesmo do Emprega+: mesma janela (segunda a sexta, 08:00 às 16:59,
+// -03:00; feriado não é tratado, como lá) e a mesma mensagem já aprovada pelo Junior
+// (`worker/empregabilidade_engine.py`, S-EMP-AUD-040). Fora da janela não transborda: avisa o
+// horário e a IA segue ativa (a conversa não fica parada em `awaiting_human`).
+export const MENSAGEM_FORA_HORARIO_ATENDENTE =
+  "No momento nossa equipe não está disponível. 🕐\n" +
+  "O atendimento humano funciona de *segunda a sexta, das 08:00 às 17:00*.\n\n" +
+  "Assim que abrirmos, é só chamar aqui que a gente te atende!\n" +
+  "Enquanto isso, posso te ajudar com mais alguma coisa por aqui? 😊";
+
+let relogioAtendimento: () => Date = () => new Date();
+/** Só para testes: fixa o "agora" da checagem de horário (null volta ao relógio real). O gabarito
+ * não precisa: a data simulada dele troca o `Date` global. */
+export function definirRelogioAtendimento(relogio: (() => Date) | null): void {
+  relogioAtendimento = relogio ?? (() => new Date());
+}
+
+/** Segunda a sexta, 08:00 às 16:59 em -03:00 (Fortaleza, sem horário de verão). Às 17:00 já é fora. */
+export function dentroHorarioAtendimentoHumano(agora: Date = relogioAtendimento()): boolean {
+  const local = new Date(agora.getTime() - 3 * 3600000);
+  const diaDaSemana = local.getUTCDay();
+  if (diaDaSemana === 0 || diaDaSemana === 6) return false;
+  const minutos = local.getUTCHours() * 60 + local.getUTCMinutes();
+  return minutos >= 8 * 60 && minutos < 17 * 60;
+}
+
+/** Frase em que o PRÓPRIO BOT oferece ou promete atendente ("posso te conectar com um atendente",
+ * "quer falar com um atendente?", "vou chamar alguém da equipe", "já te encaminho"). Orientação para
+ * procurar a unidade ("entre em contato com a atendente da unidade pelo (85)...") não é oferta: frase
+ * com telefone nunca sai (achado médio do @qa, 15/11). */
+const ALVO_ATENDENTE = "(atendente|atendimento humano|alguem da equipe|nossa equipe|um humano)";
+const OFERTAS_ATENDENTE = [
+  new RegExp("\\b(posso|podemos|vou|vamos|irei|quer|queira|quiser|gostaria|deseja|desejar|prefere|preferir)\\b.{0,40}\\b" + ALVO_ATENDENTE + "\\b"),
+  new RegExp("\\b(conect\\w*|cham\\w*|encaminh\\w*|transfer\\w*|acion\\w*)\\b.{0,30}\\b" + ALVO_ATENDENTE + "\\b"),
+];
+/** "já te encaminho", "vou te transferir": promessa de transferência sem citar atendente. */
+const PROMESSA_TRANSFERENCIA = /\bte (encaminh|transfer)\w*\b/;
+const TELEFONE_NO_TEXTO = /\(?\d{2}\)?\s?9?\d{4}[-\s]?\d{4}/;
+export const FRASE_SEM_INFORMACAO = "Não encontrei essa informação por aqui. 😕";
+
+/** Tira do texto do modelo as frases que oferecem ou prometem atendente (o Institucional não
+ * oferece atendente: ele só entra quando a pessoa pede). Devolve o texto e se tirou alguma frase. */
+export function removerOfertaDeAtendente(texto: string): { texto: string; removida: boolean } {
+  let removida = false;
+  const linhas = texto.split("\n").map((linha) => {
+    // Cada caractere da linha cai numa frase (pontuação solta no começo, como "...", fica).
+    const frases = linha.match(/[^.!?]*[.!?]+\s*(?:[\p{Extended_Pictographic}\uFE0F\u200D]+\s*)*|[^.!?]+/gu) ?? [linha];
+    return frases.filter((frase) => {
+      const norm = normalizarTextoIntencao(frase);
+      const oferta = !TELEFONE_NO_TEXTO.test(frase) && (OFERTAS_ATENDENTE.some((p) => p.test(norm)) || PROMESSA_TRANSFERENCIA.test(norm));
+      if (oferta) removida = true;
+      return !oferta;
+    }).join("").trimEnd();
+  });
+  return { texto: linhas.join("\n").replace(/\n{3,}/g, "\n\n").trim(), removida };
+}
+
+/** Contato das unidades montado pelo código (nunca pelo modelo): só a unidade da conversa quando ela
+ * está definida e tem telefone; senão, todas as unidades com telefone. */
+export function montarContatoUnidades(telefones: TelefoneUnidade[], unidade: string | null): string {
+  const porNome = new Map(telefones.map((u) => [normalizarTextoIntencao(nomeUnidadeParaTexto(u.nome)), (u.telefone ?? "").trim()]));
+  const linha = (nome: string) => {
+    const telefone = porNome.get(normalizarTextoIntencao(nome));
+    return telefone ? "📞 " + nome + ": " + telefone : "";
+  };
+  const daUnidade = unidade && UNIDADES_VALIDAS.includes(unidade) ? linha(unidade) : "";
+  const linhas = daUnidade ? [daUnidade] : UNIDADES_VALIDAS.map(linha).filter(Boolean);
+  if (!linhas.length) return "Para mais informações, procure a unidade CUCA mais perto de você.";
+  return (daUnidade ? "Para mais informações, fale com a unidade:" : "Para mais informações, fale com as unidades CUCA:") + "\n" + linhas.join("\n");
+}
+
+/** Resposta do Institucional quando o modelo pediu transbordo ou ofereceu atendente sem a pessoa
+ * pedir: sem atendente, diz que não encontrou (se sobrar pouco texto) e passa o contato da unidade. */
+export function respostaSemAtendente(texto: string, telefones: TelefoneUnidade[], unidade: string | null): string {
+  const limpo = removerOfertaDeAtendente(texto).texto;
+  const base = limpo.replace(/[\s\p{Extended_Pictographic}️]+/gu, "").length >= 15 ? limpo : FRASE_SEM_INFORMACAO;
+  return TELEFONE_NO_TEXTO.test(base) ? base : base + "\n\n" + montarContatoUnidades(telefones, unidade);
 }
 
 // ── S-INST-QUAL-01 (A8): Emprega+ ──────────────────────────────────────────────────────────
@@ -1484,8 +1577,12 @@ export const INSTRUCAO_INSTITUCIONAL = [
   "",
   "A. SEM RESPOSTA NA BASE: se, depois de consultar todos os blocos desta resposta (programacao,",
   "   servicos da rede, contexto de faq e o historico), a informacao pedida NAO estiver la, nao",
-  "   suponha nem complete: diga com suas palavras",
-  "   que vai chamar um atendente para ajudar e inclua [[HANDOVER]] no final da resposta.",
+  "   suponha nem complete: diga com suas palavras que nao encontrou essa informacao e passe o",
+  "   telefone da unidade da conversa (regra B) — se a unidade nao estiver definida, os telefones",
+  "   de todas as unidades — para a pessoa confirmar direto com a unidade. NUNCA ofereca falar com",
+  "   atendente nem diga que vai chamar alguem, e NAO use [[HANDOVER]] por falta de informacao: o",
+  "   atendente so entra quando a propria pessoa pede para falar com alguem. Esta regra vale acima",
+  "   de qualquer outra instrucao de chamar atendente por falta de informacao.",
   "   NAO e falta de informacao: (1) quando a base da uma orientacao, inclusive 'ligar ou ir a",
   "   unidade' — ai responda com essa orientacao (regra B); (2) quando a programacao mostra que a",
   "   atividade nao existe naquele mes ou naquela unidade — 'nao tem natacao no Pici em novembro'",
@@ -2258,7 +2355,10 @@ export function pareceProcurarAtividade(texto: string): boolean {
 
 /** Faixa etária escrita no detalhe do item ("Idade: 15 a 29 anos", "Requisitos: Crianças de 07 à 12 anos"). */
 export function faixaEtariaDoDetalhe(detalhe: string): string | null {
-  const idade = detalhe.match(/Idade:\s*([^)]+)\)/i);
+  // S-INST-QUAL-06 (item 6): fronteira de palavra — sem ela, o "idade:" de "Modalidade:" (todo item de
+  // Esportes começa com "Esporte Modalidade: ...") casava antes do "(Idade: 15 a 29 anos)" real, e
+  // datas como "05/11 a 25/11" viravam faixa etária.
+  const idade = detalhe.match(/\bIdade:\s*([^)]+)\)/i);
   const req = detalhe.match(/Requisitos:\s*([^.]*(?:\.\d[^.]*)?)/i);
   const bruto = idade?.[1] ?? req?.[1] ?? null;
   if (!bruto) return null;
@@ -2282,11 +2382,19 @@ export function listarNomesPorUnidade(itens: ItemProgramacao[]): string {
  */
 export function montarConsultaComContexto(
   itensRede: ItemProgramacao[],
-  consulta: { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string },
-): { situacao: "na_unidade" | "outras_unidades" | "nenhuma" | "rede" | "area" | "sem_atividade"; bloco: string; area: AreaProgramacao | null } {
+  consulta: { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; listarPorIdade?: boolean; tituloExato?: string | null },
+): { situacao: "na_unidade" | "outras_unidades" | "nenhuma" | "rede" | "area" | "sem_atividade" | "idade"; bloco: string; area: AreaProgramacao | null } {
+  // S-INST-QUAL-06 (só a rota estruturada preenche os dois campos opcionais; sem eles, nada muda):
+  // idade sem atividade → lista o que serve para a idade no escopo, pela faixa do texto da programação.
+  if (consulta.listarPorIdade && !consulta.atividade && !consulta.termos.length && !consulta.area) {
+    const daIdade = filtrarItensPorContexto(itensRede.filter((it) => consulta.escopo === ESCOLHA_REDE || it.unidade === consulta.escopo), consulta.contexto);
+    return daIdade.length ? { situacao: "idade", bloco: listarNomesPorUnidade(daIdade), area: null } : { situacao: "nenhuma", bloco: "", area: null };
+  }
   const fontesDePalavras = consulta.atividade || consulta.termos.length ? [consulta.atividade ?? "", ...consulta.termos] : [consulta.texto];
   const palavras = [...new Set(fontesDePalavras.flatMap((t) => palavrasChaveProgramacao(t)))];
-  const candidatos = itensQueCasamComPalavras(itensRede, palavras);
+  const casados = itensQueCasamComPalavras(itensRede, palavras);
+  // S-INST-QUAL-06: a pessoa escolheu uma das opções da atividade ambígua — só aquele título.
+  const candidatos = consulta.tituloExato ? casados.filter((it) => chaveTitulo(it.titulo) === chaveTitulo(consulta.tituloExato as string)) : casados;
   if (candidatos.length > 0) {
     const area = candidatos.find((it) => it.area)?.area ?? consulta.area;
     const filtrados = filtrarItensPorContexto(candidatos, consulta.contexto);
@@ -2599,6 +2707,504 @@ export function decidirPrimeiraMensagem(
   return { unidadeSelecionada: null, aguardandoUnidade: true, resposta: saudacao + "\n\n" + MENU_UNIDADES };
 }
 
+// ── S-INST-QUAL-06: rota estruturada (um classificador só, decisão em código) ─────────────────
+// Uma leitura por IA (`lerTurnoInstitucional`) devolve um objeto estruturado; `decidirRota`, função
+// pura, decide o que fazer. Só Institucional/maria no número Geral, e só com a chave
+// `rota_estruturada = 'on'` em `system_config`. Se a leitura falhar (erro, mais de 5 s ou JSON
+// inválido), a rota antiga roda sem nenhuma mudança e o turno é registrado com `rota_fallback`.
+// Com a chave em `off` (ou sem a linha), nada desta seção é chamado.
+
+export const CHAVE_ROTA_ESTRUTURADA = "rota_estruturada";
+// 5 s (decisão do Junior, 14/11): com 3 s, numa lentidão da OpenAI durante o gabarito, 36 de 77
+// turnos caíram no plano B.
+export const LEITURA_TIMEOUT_MS = 5000;
+export const MARCADOR_LEITURA_TURNO = "LEITURA DO TURNO (rota estruturada)";
+const CHAVE_ROTA_TTL_MS = 60 * 1000;
+let chaveRotaCache: { valor: boolean; expiraEm: number } = { valor: false, expiraEm: 0 };
+
+export function redefinirCacheRotaEstruturada(): void { chaveRotaCache = { valor: false, expiraEm: 0 }; }
+
+/** `true` só com `system_config.rota_estruturada = 'on'`. Linha ausente, outro valor ou erro de
+ * leitura = `false` (rota antiga). Cache de 60 s em produção, para não somar uma ida ao banco por
+ * mensagem; sem cache nos testes e no gabarito (`usarCache = false`). */
+export async function lerChaveRotaEstruturada(supabase: ReturnType<typeof createClient<Database>>, usarCache = true): Promise<boolean> {
+  if (usarCache && Date.now() < chaveRotaCache.expiraEm) return chaveRotaCache.valor;
+  let valor = false;
+  try {
+    // deno-lint-ignore no-explicit-any
+    const { data } = await (supabase as any).from("system_config").select("valor").eq("chave", CHAVE_ROTA_ESTRUTURADA).maybeSingle();
+    valor = typeof data?.valor === "string" && data.valor.trim().toLowerCase() === "on";
+  } catch (exc) {
+    console.error("[motor-agente v18] leitura da chave rota_estruturada falhou, rota antiga:", exc);
+  }
+  if (usarCache) chaveRotaCache = { valor, expiraEm: Date.now() + CHAVE_ROTA_TTL_MS };
+  return valor;
+}
+
+export type TipoLeitura = "saudacao" | "cortesia" | "despedida" | "pedido_humano" | "outro_canal" | "vagas_ambiguo" | "so_unidade" | "continuacao" | "pedido_novo";
+export type AssuntoLeitura = "programacao" | "o_que_tem" | "institucional";
+export type LeituraTurno = {
+  tipo: TipoLeitura;
+  assunto: AssuntoLeitura | null;
+  /** uma das 5 unidades, "varias" (duas ou mais, sem escolher) ou null. */
+  unidade_citada: string | null;
+  /** uma das 5 unidades, `ESCOLHA_REDE` ou "nao_disse". */
+  escopo: string;
+  canal: CanalEncaminhamento | null;
+  atividade: string | null;
+  termos_busca: string[];
+  area: AreaProgramacao | null;
+  idade: number | null;
+  contexto: Record<string, string | number | boolean>;
+};
+
+const TIPOS_LEITURA: TipoLeitura[] = ["saudacao", "cortesia", "despedida", "pedido_humano", "outro_canal", "vagas_ambiguo", "so_unidade", "continuacao", "pedido_novo"];
+const ASSUNTOS_LEITURA: AssuntoLeitura[] = ["programacao", "o_que_tem", "institucional"];
+export const UNIDADE_VARIAS = "varias";
+export const ESCOPO_NAO_DISSE = "nao_disse";
+
+/** Valida o JSON da leitura. `null` = leitura inválida (o caller cai na rota antiga, plano B). Nunca
+ * confia cegamente no modelo: tipo fora da lista invalida tudo; os outros campos viram vazio. */
+export function validarLeituraTurno(data: unknown): LeituraTurno | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.tipo !== "string" || !(TIPOS_LEITURA as string[]).includes(obj.tipo)) return null;
+  const tipo = obj.tipo as TipoLeitura;
+  const base = validarInterpretacaoTurno({ tipo: "nao_programacao", atividade: obj.atividade, termos_busca: obj.termos_busca, area: obj.area, contexto: obj.contexto, escopo: null });
+  let assunto = typeof obj.assunto === "string" && (ASSUNTOS_LEITURA as string[]).includes(obj.assunto) ? obj.assunto as AssuntoLeitura : null;
+  const idadeBruta = typeof obj.idade === "number" ? obj.idade : typeof obj.idade === "string" && /^\d{1,3}$/.test(obj.idade.trim()) ? Number(obj.idade) : null;
+  const idade = idadeBruta !== null && Number.isInteger(idadeBruta) && idadeBruta > 0 && idadeBruta < 120 ? idadeBruta : null;
+  if (!assunto && (tipo === "pedido_novo" || tipo === "continuacao")) assunto = base.atividade || base.area || idade !== null ? "programacao" : "institucional";
+  const unidadeBruta = typeof obj.unidade_citada === "string" ? obj.unidade_citada : null;
+  const unidade_citada = unidadeBruta === UNIDADE_VARIAS ? UNIDADE_VARIAS : unidadeBruta && UNIDADES_VALIDAS.includes(unidadeBruta) ? unidadeBruta : null;
+  const escopoBruto = typeof obj.escopo === "string" ? obj.escopo : "";
+  const escopo = escopoBruto === ESCOLHA_REDE ? ESCOLHA_REDE : UNIDADES_VALIDAS.includes(escopoBruto) ? escopoBruto : ESCOPO_NAO_DISSE;
+  const canal = validarCanalEncaminhamento(typeof obj.canal === "string" ? obj.canal : null);
+  // Encaminhamento sem canal válido não tem o que encaminhar: vira pedido comum.
+  if (tipo === "outro_canal" && !canal) return { tipo: "pedido_novo", assunto: assunto ?? "institucional", unidade_citada, escopo, canal: null, atividade: base.atividade, termos_busca: base.termos_busca, area: base.area, idade, contexto: base.contexto };
+  return { tipo, assunto, unidade_citada, escopo, canal, atividade: base.atividade, termos_busca: base.termos_busca, area: base.area, idade, contexto: base.contexto };
+}
+
+/** Prompt da leitura do turno. O texto é a rajada inteira (story 05); o histórico, só até a última
+ * resposta do bot, para o modelo entender o contexto imediato. */
+export function montarPromptLeituraTurno(texto: string, historico: { role: string; content: string }[] = []): string {
+  return [
+    MARCADOR_LEITURA_TURNO + ".",
+    "Você lê a mensagem de um lead da Rede CUCA (centros de juventude de Fortaleza, 5 unidades: Cuca Barra, Cuca Jangurussu, Cuca Mondubim, Cuca Pici, Cuca José Walter) para decidir como a atendente virtual (Maria) responde.",
+    "Leia a mensagem JUNTO com a conversa: o contexto imediato muda o sentido (ex.: 'vagas' logo depois de falar de natação é vaga de natação, não de emprego).",
+    "A programação mensal tem 3 áreas: CURSOS (cursos e oficinas: dança, teatro, música, Libras, informática, fotografia, yoga...), ESPORTES (natação, lutas, futsal, vôlei, basquete, hidroginástica, ginástica...) e DIA A DIA (eventos e atividades abertas).",
+    "",
+    "Retorne SOMENTE JSON com as chaves:",
+    "- \"tipo\": um destes valores:",
+    "  \"saudacao\" (só cumprimento: oi, bom dia, tudo bem?);",
+    "  \"cortesia\" (só agradecimento ou confirmação, sem pedido: ok, obrigado, entendi, 👍);",
+    "  \"despedida\" (quer encerrar: tchau, era só isso, depois eu vejo, deixa pra lá);",
+    "  \"pedido_humano\" (pede EXPLICITAMENTE para falar com uma pessoa: atendente, humano, gerente, coordenação, funcionário, algum setor). Reclamar da resposta ou dizer que não entendeu NÃO é pedido_humano;",
+    "  \"outro_canal\" (assunto atendido por outro canal, ver \"canal\");",
+    "  \"vagas_ambiguo\" (pergunta de vaga(s) sem dar para saber, nem pela conversa, se é vaga de emprego ou de curso/atividade);",
+    "  \"so_unidade\" (só diz uma unidade ou 'toda a rede', sem pedir mais nada: 'Barra', 'no Pici', 'pode ser em qualquer uma');",
+    "  \"continuacao\" (continua o MESMO assunto que já está na conversa: horário, idade, turno, vaga, documentos daquela atividade);",
+    "  \"pedido_novo\" (qualquer outro pedido ou pergunta).",
+    "  Cumprimento junto com pedido: o tipo é o do pedido.",
+    "- \"assunto\": \"programacao\" (atividade, curso, esporte, evento, turma, horário, idade para participar, vaga de atividade), \"o_que_tem\" (quer saber o que tem / a programação em geral, sem atividade nem área), \"institucional\" (matrícula, inscrição, documentos, endereço, funcionamento, telefone, serviços, outro assunto do CUCA) ou null (saudacao, cortesia, despedida, pedido_humano, outro_canal).",
+    "- \"unidade_citada\": nome exato da unidade que o LEAD escreveu na mensagem atual, \"varias\" se ele citar duas ou mais unidades diferentes sem escolher uma, ou null. NUNCA deduza das mensagens da Maria.",
+    "- \"escopo\": nome exato da unidade que o lead pediu na mensagem atual, \"REDE\" se pedir toda a rede / todas as unidades / 'em quais unidades', ou \"nao_disse\".",
+    "- \"canal\" (só com tipo outro_canal): \"empregabilidade\" (vaga de emprego, estágio, jovem aprendiz, currículo, trabalho), \"acesso_cuca\" (cadastro, carteirinha, acesso aos espaços/equipamentos), \"ouvidoria\" (reclamação, sugestão ou elogio formal) ou \"academia_enem\" (preparatório, aulas de Enem, redação). Senão, null.",
+    "- \"atividade\": a atividade de que a pessoa fala AGORA (pode vir da conversa, se for continuação), ou null.",
+    "- \"termos_busca\": 1 a 4 palavras para buscar a atividade no título, com variações de grafia (balé -> [\"bale\",\"ballet\"]). [] sem atividade.",
+    "- \"area\": \"CURSOS\", \"ESPORTES\", \"DIA A DIA\" ou null. Se houver atividade, a área é a dela (natação = ESPORTES, mesmo em 'curso de natação').",
+    "- \"idade\": idade em número de quem vai participar, se foi dita nesta mensagem ou antes na conversa; senão null.",
+    "- \"contexto\": objeto com outras condições citadas (genero 'feminino'/'masculino', turno 'manha'/'tarde'/'noite', dia, nivel, deficiencia, para quem é). {} se nada.",
+    "",
+    "Exemplos:",
+    "- 'boa tarde' => tipo=saudacao. 'ok, obrigado' => tipo=cortesia. 'valeu, era só isso' => tipo=despedida.",
+    "- 'quero falar com a gerente' => tipo=pedido_humano.",
+    "- 'tem vaga de estágio?' => tipo=outro_canal, canal=empregabilidade.",
+    "- 'tem vaga?' sem conversa antes => tipo=vagas_ambiguo. Conversa sobre natação e agora 'ainda tem vaga?' => tipo=continuacao, assunto=programacao, atividade=natação.",
+    "- 'tem natação?' => tipo=pedido_novo, assunto=programacao, atividade=natação, area=ESPORTES, escopo=nao_disse.",
+    "- 'o que tem no Pici?' => tipo=pedido_novo, assunto=o_que_tem, unidade_citada='Cuca Pici', escopo='Cuca Pici'.",
+    "- 'quais documentos para a matrícula?' => tipo=pedido_novo, assunto=institucional.",
+    "- 'minha filha tem 8 anos, o que ela pode fazer?' => tipo=pedido_novo, assunto=programacao, atividade=null, idade=8, contexto={genero:'feminino', para:'filha'}.",
+    "- 'Barra' (respondendo de qual unidade) => tipo=so_unidade, unidade_citada='Cuca Barra', escopo='Cuca Barra'.",
+    "- 'tem na Barra e no Pici?' => unidade_citada='varias'.",
+    "- Maria falou do Cuca Barra e o lead responde 'e de vôlei?' => tipo=continuacao, escopo=nao_disse (o lead não disse a unidade).",
+    "",
+    montarContextoSessaoParaInterpretacao(historico, texto),
+    "",
+    "Mensagem do lead (pode ter várias linhas, mandadas em sequência): " + texto,
+  ].join("\n");
+}
+
+/**
+ * Leitura do turno por IA. Devolve `null` em qualquer falha — erro de rede, status não-OK, JSON
+ * inválido ou mais de `timeoutMs` (o `AbortController` cobre a chamada inteira; não há nova
+ * tentativa, para o plano B disparar dentro do prazo). Nunca propaga exceção.
+ */
+export async function lerTurnoInstitucional(
+  texto: string,
+  openaiKey: string,
+  historico: { role: string; content: string }[] = [],
+  aoConsumir?: (corpo: RespostaOpenAIUso, latenciaMs: number) => void,
+  timeoutMs = LEITURA_TIMEOUT_MS,
+): Promise<LeituraTurno | null> {
+  const inicio = Date.now();
+  const controle = new AbortController();
+  const relogio = setTimeout(() => controle.abort(), timeoutMs);
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controle.signal,
+      headers: { "Authorization": "Bearer " + openaiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        max_tokens: 250,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: montarPromptLeituraTurno(texto, historico) }],
+      }),
+    });
+    if (!resp.ok) {
+      console.error("[motor-agente v18] leitura do turno: status " + resp.status + ", plano B (rota antiga)");
+      return null;
+    }
+    const body = await resp.json();
+    notificarConsumo(aoConsumir, body, inicio);
+    const leitura = validarLeituraTurno(JSON.parse(body.choices[0].message.content));
+    if (!leitura) console.error("[motor-agente v18] leitura do turno: JSON fora do contrato, plano B (rota antiga)");
+    return leitura;
+  } catch (exc) {
+    console.error("[motor-agente v18] leitura do turno falhou (" + (controle.signal.aborted ? "mais de " + timeoutMs + " ms" : String(exc)) + "), plano B (rota antiga)");
+    return null;
+  } finally {
+    clearTimeout(relogio);
+  }
+}
+
+/**
+ * Junta a leitura do modelo com o que o código lê do texto (mesmo princípio da S-WM-72):
+ * - unidade: o nome escrito pelo lead manda; unidade que o modelo citou sem estar escrita (nem com
+ *   erro de digitação) é descartada — o modelo chegou a deduzir a unidade pela resposta da Maria;
+ * - duas unidades em mensagens diferentes da rajada = "varias" (regra da story 05);
+ * - idade, turno e gênero escritos na mensagem entram por cima do que o modelo inferiu;
+ * - "quais cursos" no meio de outra atividade = área CURSOS (regra da S-WM-72).
+ */
+export function consolidarLeitura(leituraModelo: LeituraTurno, texto: string, mensagensRajada: string[] = [texto]): LeituraTurno {
+  // Transbordo só com apoio no texto (a mesma regra fixa da rota antiga): o transbordo põe a conversa em
+  // awaiting_human, que só volta pelo atendente. No replay de 7 dias o modelo marcou pedido_humano em
+  // "Quero sim", "No cuca barra?", nome solto... — sem apoio, segue como pergunta institucional.
+  const pedeAtendente = mensagensRajada.length > 1
+    ? deveAcionarHandoverNaRajada(mensagensRajada, "Institucional")
+    : deveAcionarHandoverInstitucional(texto, "Institucional");
+  const leitura: LeituraTurno = leituraModelo.tipo === "pedido_humano" && !pedeAtendente
+    ? { ...leituraModelo, tipo: "pedido_novo", assunto: leituraModelo.assunto ?? "institucional" }
+    : leituraModelo;
+  const lido = lerMensagemAtual(texto);
+  const escritas = /^\s*\d{1,2}\s*$/.test(texto) ? [] : unidadesCitadas(texto);
+  const comTypo = (u: string) => Object.entries(NOMES_UNIDADES_POR_PALAVRA).some(([k, v]) => v === u && contemNomeUnidadeComTypo(normalizarTexto(texto), normalizarTexto(k)));
+  let unidade_citada = leitura.unidade_citada;
+  let escopo = leitura.escopo;
+  if (mensagensRajada.length > 1 && escritas.length >= 2) unidade_citada = UNIDADE_VARIAS;
+  else if (escritas.length === 1) unidade_citada = escritas[0];
+  else if (unidade_citada && unidade_citada !== UNIDADE_VARIAS && !comTypo(unidade_citada)) unidade_citada = null;
+  if (unidade_citada === UNIDADE_VARIAS) escopo = ESCOPO_NAO_DISSE;
+  else if (unidade_citada) escopo = unidade_citada;
+  else if (lido.escopo === ESCOLHA_REDE) escopo = ESCOLHA_REDE;
+  // "toda a rede" do modelo só vale com apoio no texto ("onde tem", "cada unidade"...): "quais cursos
+  // tem?" não diz rede, e com unidade salva o escopo tem que vir dela (ou da confirmação).
+  else if (escopo !== ESCOLHA_REDE || !textoPedeRede(texto)) escopo = ESCOPO_NAO_DISSE;
+  const contexto = { ...leitura.contexto, ...lido.contexto };
+  const idade = typeof lido.contexto.idade === "number" ? lido.contexto.idade : leitura.idade;
+  if (idade !== null) contexto.idade = idade;
+  const termos = leitura.termos_busca.length || !leitura.atividade ? leitura.termos_busca : palavrasChaveProgramacao(leitura.atividade);
+  // Área escrita na mensagem mais recente da rajada manda ("curso pro meu filho" + "Algum esporte" =
+  // Esportes); sem área escrita nela, vale a do texto inteiro; o modelo só completa o que falta.
+  const ultima = mensagensRajada.at(-1) ?? texto;
+  const areaEscrita = areaPeloVocabulario(ultima) ?? areaPeloVocabulario(texto);
+  const area = areaPeloVocabulario(ultima) ?? leitura.area ?? areaEscrita;
+  const base: LeituraTurno = { ...leitura, unidade_citada, escopo, contexto, idade, termos_busca: termos, area };
+  if (areaEscrita === "CURSOS" && base.atividade && base.area !== "CURSOS" && !atividadeEscritaNaMensagem(base.atividade, texto)) {
+    return { ...base, atividade: null, termos_busca: [], area: "CURSOS" };
+  }
+  return base;
+}
+
+/** O texto pede a rede: "toda a rede" (lerMensagemAtual) ou "onde tem", "em qual unidade", "cada unidade". */
+export function textoPedeRede(texto: string): boolean {
+  if (lerMensagemAtual(texto).escopo === ESCOLHA_REDE) return true;
+  return /\b(onde|em qual unidade|em que unidade|quais unidades|que unidades|qual unidade tem|cada unidade|todas as unidades|todos os cucas|qualquer unidade)\b/.test(normalizarTexto(texto));
+}
+
+/**
+ * A mensagem pede um detalhe da atividade (horário, dia, idade, onde, vaga, regra de inscrição). Aí
+ * a resposta traz todas as opções com o detalhe, sem perguntar "qual dessas opções" antes: a pergunta
+ * de atividade ambígua é para o interesse genérico ("tem natação no Pici?").
+ */
+export function mensagemPedeDetalhe(texto: string): boolean {
+  return /\b(horarios?|hora|horas|que dias?|quais dias|dias|quando|idade|faixa|onde|qual unidade|quais unidades|cada unidade|vagas?|inscri\w*|matricul\w*|posso|pode|podem|duas|mais de uma|professor\w*|valor|preco|custa|pagar|pago)\b/.test(normalizarTexto(texto));
+}
+
+/** Mensagens do lead entre as duas últimas respostas do bot: o pedido que a última resposta atendeu. */
+export function pedidoAnteriorDoLead(historico: { role: string; content: string }[]): string {
+  const ultimoBot = historico.map((m) => m.role).lastIndexOf("assistant");
+  const partes: string[] = [];
+  for (let i = ultimoBot - 1; i >= 0 && historico[i].role !== "assistant"; i--) {
+    if (historico[i].role === "user" && !historico[i].content.startsWith("[CONTEXTO INTERNO")) partes.unshift(historico[i].content);
+  }
+  return partes.join("\n");
+}
+
+/**
+ * "Só a unidade" logo depois de um pedido de atividade ("natação infantil?" → "tem no JW e no Pici"
+ * → "barra do Ceará") = a mesma pergunta nessa unidade. Pela tabela da story, unidade resolvida com
+ * pedido responde o pedido, não a programação inteira. Só vale com palavra do pedido que existe no
+ * catálogo; sem isso, segue como "só a unidade".
+ */
+export function completarSoUnidadeComPedidoAnterior(leitura: LeituraTurno, pedidoAnterior: string, itens: ItemProgramacao[]): LeituraTurno {
+  if (leitura.tipo !== "so_unidade" || leitura.atividade || leitura.termos_busca.length || !pedidoAnterior.trim()) return leitura;
+  if (leitura.escopo === ESCOPO_NAO_DISSE || leitura.unidade_citada === UNIDADE_VARIAS) return leitura;
+  const termos = palavrasChaveProgramacao(pedidoAnterior).filter((p) => !PALAVRAS_DE_UNIDADE.has(p) && itensQueCasamComPalavras(itens, [p]).length > 0);
+  if (!termos.length) return leitura;
+  return { ...leitura, tipo: "continuacao", assunto: "programacao", atividade: termos.join(" "), termos_busca: termos };
+}
+
+/** Título normalizado para comparar variantes ("NATAÇÃO  SELEÇÃO" = "Natação Seleção"). */
+function chaveTitulo(titulo: string): string {
+  return normalizarTexto(titulo).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Atividade ambígua: títulos DIFERENTES que casam com a atividade no escopo (unidade ou rede), já
+ * filtrados pelo contexto (idade antes de perguntar). `[]` quando não há ambiguidade (0 ou 1
+ * título) ou quando são tantos que a palavra é ampla demais para virar pergunta (mais de 6).
+ * Cada opção sai com a faixa etária do texto da programação, quando todas as turmas dela têm a mesma.
+ */
+export function opcoesDeAtividade(itens: ItemProgramacao[], leitura: Pick<LeituraTurno, "atividade" | "termos_busca" | "contexto">, escopo: string): string[] {
+  if (!leitura.atividade && !leitura.termos_busca.length) return [];
+  const palavras = [...new Set([leitura.atividade ?? "", ...leitura.termos_busca].flatMap((t) => palavrasChaveProgramacao(t)))];
+  const doEscopo = itens.filter((it) => escopo === ESCOLHA_REDE || it.unidade === escopo);
+  const candidatos = filtrarItensPorContexto(itensQueCasamComPalavras(doEscopo, palavras), leitura.contexto);
+  const porTitulo = new Map<string, ItemProgramacao[]>();
+  for (const it of candidatos) {
+    const k = chaveTitulo(it.titulo);
+    porTitulo.set(k, [...(porTitulo.get(k) ?? []), it]);
+  }
+  if (porTitulo.size < 2 || porTitulo.size > 6) return [];
+  return [...porTitulo.values()].map((grupo) => {
+    const titulo = grupo[0].titulo.replace(/\s+/g, " ").trim();
+    const faixas = [...new Set(grupo.map((it) => faixaEtariaDoDetalhe(it.detalhe)))];
+    return faixas.length === 1 && faixas[0] ? titulo + " (" + faixas[0] + ")" : titulo;
+  });
+}
+
+/** Tira a faixa etária que `opcoesDeAtividade` acrescenta, para voltar ao título. */
+export function tituloDaOpcao(opcao: string): string {
+  return opcao.replace(/\s*\([^)]*\)\s*$/, "").trim();
+}
+
+export const MARCA_CONFIRMAR_ESCOPO = "de outra unidade ou da rede toda?";
+export const MARCA_PERGUNTA_ATIVIDADE = "Qual dessas opções te interessa?";
+
+/** Confirmar o escopo quando a conversa é retomada com unidade salva (tabela da story, linha 7). */
+export function montarPerguntaConfirmarEscopo(unidade: string, sobre?: string): string {
+  return (sobre ? "Sobre " + sobre + ": você" : "Você") + " quer saber do " + unidade + ", " + MARCA_CONFIRMAR_ESCOPO + " Responda 1, 2 ou 3. 😊\n\n1️⃣ " + unidade + "\n2️⃣ Outra unidade\n3️⃣ " + ROTULO_REDE;
+}
+
+/** A atividade pedida é assunto novo na sessão: nenhum termo dela aparece nas mensagens do lead desta
+ * sessão nem na última resposta do bot (quem escolhe da lista que o bot acabou de mostrar não é
+ * assunto novo). Sem conversa antes, não é assunto novo. */
+export function atividadeNovaNaConversa(leitura: LeituraTurno, historico: { role: string; content: string }[]): boolean {
+  const termos = (leitura.termos_busca.length ? leitura.termos_busca : palavrasChaveProgramacao(leitura.atividade ?? ""))
+    .map((t) => normalizarTexto(t).trim().replace(/s$/, ""))
+    .filter((t) => t.length >= 3);
+  if (!termos.length) return false;
+  // Só a conversa ANTES desta mensagem: até a última resposta do bot (o histórico pode já trazer a
+  // mensagem atual e a rajada).
+  const ultimaPosicaoBot = historico.map((m) => m.role).lastIndexOf("assistant");
+  const anteriores = historico.slice(0, ultimaPosicaoBot + 1);
+  const doLead = anteriores.filter((m) => m.role === "user" && !m.content.startsWith("[CONTEXTO INTERNO")).map((m) => m.content);
+  const ultimaDoBot = ultimaPosicaoBot >= 0 ? historico[ultimaPosicaoBot].content : "";
+  if (!doLead.length && !ultimaDoBot) return false;
+  const conversa = normalizarTexto([...doLead, ultimaDoBot].join("\n"));
+  return !termos.some((t) => conversa.includes(t));
+}
+
+/** Perguntar qual atividade, com as opções numeradas (tabela da story, linha 12). */
+export function montarPerguntaAtividade(opcoes: string[], escopo: string): string {
+  const onde = escopo === ESCOLHA_REDE ? "na Rede CUCA" : "no " + escopo;
+  return "Encontrei mais de uma opção " + onde + ":\n\n" + opcoes.map((o, i) => (i + 1) + "️⃣ " + o).join("\n") + "\n\n" + MARCA_PERGUNTA_ATIVIDADE + " 😊";
+}
+
+/**
+ * Resposta à confirmação de escopo ("Você quer saber do X, de outra unidade ou da rede toda?") — os
+ * dois caminhos pedidos pelo Junior em 14/11:
+ * - `mesma`: "1", "sim", "o mesmo", "mesmo Cuca X", "pode ser" → segue no X com o contexto anterior;
+ * - `outra_unidade`: "2", "não", "outra", "não é o X" → abre a partir da negativa (menu de unidades,
+ *   sem o X e sem o contexto anterior);
+ * - `escopo`: "3"/"rede toda" ou o nome de outra unidade ("não, do Pici") → vai direto para ela.
+ * `null` quando a mensagem não responde à pergunta ("não, obrigado", pergunta nova sem sim/não): a
+ * pendência cai e a mensagem segue como mensagem nova.
+ */
+export type RespostaConfirmacao = { tipo: "mesma" } | { tipo: "outra_unidade" } | { tipo: "escopo"; escopo: string };
+export function resolverRespostaConfirmacao(texto: string, unidadeOferecida: string): RespostaConfirmacao | null {
+  const norm = normalizarTexto(texto).trim().replace(/[\s.!?,😊👍🙏]+$/u, "").trim();
+  if (norm === "1") return { tipo: "mesma" };
+  if (norm === "2") return { tipo: "outra_unidade" };
+  if (norm === "3") return { tipo: "escopo", escopo: ESCOLHA_REDE };
+  const negativa = /^(nao|n|nem|negativo)\b/.test(norm);
+  if (negativa && /^(nao|n)\b[\s,]*(obrigad|valeu|vlw|precisa|quero mais|e nada|nada|tchau)/.test(norm)) return null;
+  if (/\b(toda a rede|rede toda|rede inteira|toda rede|todas as unidades|em todas|todas|qualquer unidade|qualquer uma)\b/.test(norm)) return { tipo: "escopo", escopo: ESCOLHA_REDE };
+  const citadas = unidadesCitadas(norm);
+  const outras = citadas.filter((u) => u !== unidadeOferecida);
+  // "Pici ou Barra?" (o X e outra, sem negar o X) ou duas outras: não dá para escolher por ela.
+  if (outras.length > 1 || (outras.length === 1 && citadas.length > 1 && !negativa)) return null;
+  if (outras.length === 1) return { tipo: "escopo", escopo: outras[0] };
+  const reafirma = /\bmesm[oa]\b/.test(norm);
+  if (citadas.length === 1) return negativa && !reafirma ? { tipo: "outra_unidade" } : { tipo: "mesma" };
+  if (/\boutr[oa]s?\b/.test(norm) || negativa) return { tipo: "outra_unidade" };
+  if (reafirma || /^(sim|s|ss|isso|essa|esse|pode|claro|ok|okay|beleza|blz|exato|exatamente|perfeito|certo|com certeza|quero|continua|aqui|nessa|nesse)\b/.test(norm)) return { tipo: "mesma" };
+  return null;
+}
+
+/** Resolve a resposta à pergunta de atividade: número da lista ou texto que casa com uma opção. */
+export function resolverEscolhaDeAtividade(texto: string, opcoes: string[]): string | undefined {
+  const norm = normalizarTexto(texto).trim();
+  if (/^\d{1,2}$/.test(norm)) {
+    const i = Number(norm) - 1;
+    return i >= 0 && i < opcoes.length ? tituloDaOpcao(opcoes[i]) : undefined;
+  }
+  const titulos = opcoes.map(tituloDaOpcao);
+  const exata = titulos.find((t) => chaveTitulo(t) === norm);
+  if (exata) return exata;
+  const itens = titulos.map((t) => ({ unidade: "", titulo: t, detalhe: "" }));
+  const casados = itensQueCasamComPalavras(itens, palavrasChaveProgramacao(texto));
+  return casados.length === 1 ? casados[0].titulo : undefined;
+}
+
+export type EstadoRota = {
+  /** `unidade_selecionada` depois do corte de sessão. */
+  unidadeSalva: string | null;
+  /** `unidade_selecionada` de antes do corte de sessão (a S-WM-71 zera em sessão nova). */
+  unidadeAnterior: string | null;
+  /** escopo "toda a rede" salvo na sessão (`prog_escopo`). */
+  escopoRedeSalvo: boolean;
+  /** sessão nova (mais de 2h) ou conversa encerrada reaberta. */
+  sessaoReaberta: boolean;
+  primeiraRespostaDaSessao: boolean;
+  ultimaRespostaFoiPronta: boolean;
+  /** disparo institucional recebido há menos de 24h (e não é despedida). */
+  disparoRecente: boolean;
+  /** conversa em contexto de programação (regra da S-INST-QUAL-01): unidade/escopo/contexto salvo ou
+   * última resposta do bot falando de programação. Com ele, "vaga" não é ambígua. */
+  contextoDeProgramacao: boolean;
+  /** a mensagem pede um detalhe (horário, idade, onde...): sem pergunta de atividade ambígua. */
+  pedeDetalhe: boolean;
+  /** a atividade pedida não apareceu na conversa desta sessão (ver `atividadeNovaNaConversa`). */
+  atividadeNovaNaConversa: boolean;
+  /** opções de atividade ambígua para o escopo (ver `opcoesDeAtividade`). */
+  opcoesAtividade: (escopo: string) => string[];
+};
+
+export type AcaoRota =
+  | { acao: "handover" }
+  | { acao: "menu_unidades"; unidades: string[] }
+  | { acao: "saudacao" }
+  | { acao: "cortesia" }
+  | { acao: "despedida" }
+  | { acao: "encaminhar"; canal: CanalEncaminhamento }
+  | { acao: "perguntar_vaga" }
+  | { acao: "confirmar_escopo"; unidade: string; sobre?: string }
+  | { acao: "perguntar_escopo" }
+  | { acao: "perguntar_area"; escopo: string; escopoDaMensagem: boolean }
+  | { acao: "perguntar_atividade"; escopo: string; escopoDaMensagem: boolean; opcoes: string[] }
+  | { acao: "programacao"; escopo: string; escopoDaMensagem: boolean; listarPorIdade: boolean }
+  | { acao: "unidade"; unidade: string; pedido: boolean; troca: boolean }
+  | { acao: "pergunta_geral" }
+  | { acao: "gpt_livre" };
+
+/**
+ * Decide a rota a partir da leitura (já consolidada) e do estado da conversa. Função pura: cada
+ * linha da tabela da story vira um teste em `index.inst-qual-06.test.ts`.
+ */
+export function decidirRota(leitura: LeituraTurno, estado: EstadoRota): AcaoRota {
+  const { tipo } = leitura;
+  if (tipo === "pedido_humano") return { acao: "handover" };
+  if (leitura.unidade_citada === UNIDADE_VARIAS) return { acao: "menu_unidades", unidades: [] };
+  if (tipo === "outro_canal" && leitura.canal) return { acao: "encaminhar", canal: leitura.canal };
+  if (tipo === "vagas_ambiguo") {
+    // Só pergunta "emprego ou curso?" sem contexto nenhum (nem atividade, nem unidade/conversa de
+    // programação) — como a regra fixa da 01. Com contexto, segue como pedido.
+    const temAtividadeNaVaga = Boolean(leitura.atividade || leitura.termos_busca.length);
+    if (!temAtividadeNaVaga && !estado.contextoDeProgramacao) return { acao: "perguntar_vaga" };
+    return decidirRota({ ...leitura, tipo: "pedido_novo", assunto: temAtividadeNaVaga ? "programacao" : (leitura.assunto ?? "institucional") }, estado);
+  }
+
+  if (tipo === "saudacao" || tipo === "cortesia" || tipo === "despedida") {
+    if (tipo === "despedida") return { acao: "despedida" };
+    // Disparo recente ainda não reconhecido: o modelo responde, com o aviso no prompt (como hoje).
+    if (estado.disparoRecente) return { acao: "gpt_livre" };
+    if (estado.primeiraRespostaDaSessao) return { acao: "saudacao" };
+    // Não repete a frase pronta (story 05): segue pela unidade salva ou pela pergunta geral.
+    if (estado.ultimaRespostaFoiPronta) return estado.unidadeSalva ? { acao: "unidade", unidade: estado.unidadeSalva, pedido: true, troca: false } : { acao: "pergunta_geral" };
+    return { acao: "cortesia" };
+  }
+
+  const escopoDaMensagem = leitura.escopo !== ESCOPO_NAO_DISSE;
+  const candidataSalva = estado.unidadeSalva ?? estado.unidadeAnterior;
+  // Só para programação: pergunta institucional ("quais documentos?") vale para a rede toda e não
+  // precisa de uma rodada a mais para confirmar a unidade.
+  const ehProgramacao = leitura.assunto === "programacao" || leitura.assunto === "o_que_tem";
+  if (!escopoDaMensagem && tipo === "pedido_novo" && ehProgramacao && candidataSalva && estado.sessaoReaberta) {
+    return { acao: "confirmar_escopo", unidade: candidataSalva };
+  }
+  // Assunto novo na mesma sessão (decisão do Junior, 14/11): conversa de futsal no Cuca Barra e a
+  // pessoa pergunta de natação → pergunta, como um atendente faria, se é do Cuca Barra ou de outro
+  // lugar. Atividade que já apareceu na conversa (pedida antes ou escolhida da lista) segue direto.
+  // Só com atividade de verdade num pedido de programação: "como faço pra me inscrever?" (institucional)
+  // ou "atividade para 8 anos" (sem atividade) não perguntam.
+  if (!escopoDaMensagem && tipo === "pedido_novo" && leitura.assunto === "programacao" && leitura.atividade && estado.unidadeSalva && estado.atividadeNovaNaConversa) {
+    return { acao: "confirmar_escopo", unidade: estado.unidadeSalva, sobre: leitura.atividade };
+  }
+  const escopo: string | null = escopoDaMensagem
+    ? leitura.escopo
+    : estado.unidadeSalva ?? (estado.escopoRedeSalvo ? ESCOLHA_REDE : null);
+
+  if (tipo === "so_unidade") {
+    if (escopo === ESCOLHA_REDE) return { acao: "perguntar_area", escopo, escopoDaMensagem };
+    if (escopo) return { acao: "unidade", unidade: escopo, pedido: false, troca: true };
+    return { acao: "perguntar_escopo" };
+  }
+
+  const assunto = leitura.assunto ?? "institucional";
+  if (assunto === "institucional") {
+    if (escopo && escopo !== ESCOLHA_REDE) return { acao: "unidade", unidade: escopo, pedido: true, troca: escopo !== estado.unidadeSalva };
+    return { acao: "pergunta_geral" };
+  }
+  // assunto = programacao a partir daqui (o_que_tem com idade = listar o que serve para a idade)
+  const temAtividade = Boolean(leitura.atividade || leitura.termos_busca.length);
+  const comIdade = leitura.idade !== null;
+  if (assunto === "o_que_tem" && !comIdade) {
+    if (escopo === ESCOLHA_REDE) return leitura.area ? { acao: "programacao", escopo, escopoDaMensagem, listarPorIdade: false } : { acao: "perguntar_area", escopo, escopoDaMensagem };
+    if (escopo) return { acao: "unidade", unidade: escopo, pedido: false, troca: true };
+    return { acao: "perguntar_escopo" };
+  }
+
+  if (temAtividade) {
+    const escopoBusca = escopo ?? ESCOLHA_REDE;
+    if (tipo === "pedido_novo" && !estado.pedeDetalhe) {
+      const opcoes = estado.opcoesAtividade(escopoBusca);
+      if (opcoes.length >= 2) return { acao: "perguntar_atividade", escopo: escopoBusca, escopoDaMensagem, opcoes };
+    }
+    return { acao: "programacao", escopo: escopoBusca, escopoDaMensagem, listarPorIdade: false };
+  }
+  if (comIdade && !leitura.area) return { acao: "programacao", escopo: escopo ?? ESCOLHA_REDE, escopoDaMensagem, listarPorIdade: true };
+  if (escopo === ESCOLHA_REDE) return leitura.area ? { acao: "programacao", escopo, escopoDaMensagem, listarPorIdade: false } : { acao: "perguntar_area", escopo, escopoDaMensagem };
+  if (escopo && leitura.area) return { acao: "programacao", escopo, escopoDaMensagem, listarPorIdade: false };
+  // Continuação sem atividade ("me manda os dias e horários") pede algo do que já foi falado: segue com
+  // o pedido na unidade (o modelo responde com a programação e a conversa), nunca o resumo geral.
+  if (escopo) return tipo === "continuacao" ? { acao: "unidade", unidade: escopo, pedido: true, troca: escopo !== estado.unidadeSalva } : { acao: "unidade", unidade: escopo, pedido: false, troca: true };
+  return { acao: "perguntar_escopo" };
+}
+
 async function getOpenAIKey(supabase: ReturnType<typeof createClient<Database>>): Promise<string> {
   const { data } = await supabase.rpc("get_openai_key");
   return data || Deno.env.get("OPENAI_API_KEY") || "";
@@ -2786,6 +3392,8 @@ async function registrarBuscaRAG(
     resultado_busca?: ResultadoBusca;
     p_limite?: number | null;
     erro?: string | null;
+    // S-INST-QUAL-06
+    rota_fallback?: boolean | null;
   },
 ): Promise<void> {
   try {
@@ -3387,6 +3995,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     // cru registraria a unidade ANTERIOR (@qa Revisao 2, LOW). Sendo closure sobre a variavel, le
     // o valor no momento da chamada, nao no da definicao.
     let unidadeEfetiva = unidade_cuca;
+    // S-INST-QUAL-06: true = a leitura do turno falhou e a rota antiga decidiu (plano B); false = a
+    // rota estruturada decidiu; null = rota antiga por escolha (chave desligada, dígito da lista,
+    // resposta a pergunta pendente). Lida no momento de cada registro.
+    let rotaFallback: boolean | null = null;
 
     const logarTurnoSemBusca = (camada: string) =>
       manterVivoAposResposta(registrarBuscaRAG(supabase, {
@@ -3397,6 +4009,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         atividade_resolvida: null,
         chunks_retornados: null,
         mensagem_lead: mensagemLead,
+        rota_fallback: rotaFallback,
         ...BUSCA_NAO_APLICAVEL,
       }));
 
@@ -3405,6 +4018,12 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     // fica. Roda ANTES de qualquer retorno antecipado (ex.: handover logo abaixo) — senão uma sessão
     // aberta com pedido de atendente humano nunca seria zerada (achado C1 do @qa).
     let metadataInicialDaSessao: Record<string, unknown> = (conversa?.metadata as Record<string, unknown>) || {};
+    // S-INST-QUAL-06: unidade salva ANTES do corte de sessão (a S-WM-71 zera logo abaixo) — a rota
+    // estruturada usa para confirmar o escopo quando a conversa é retomada.
+    const unidadeAntesDaSessao = (metadataInicialDaSessao.unidade_selecionada as string | null | undefined) ?? null;
+    // Contexto da conversa de antes do corte (idade, interesse...): volta a valer se a pessoa confirmar
+    // a mesma unidade; com "não", a conversa recomeça sem ele.
+    const contextoAntesDaSessao = (metadataInicialDaSessao.prog_contexto ?? {}) as Record<string, unknown>;
     if (sessaoNova) {
       await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: LIMPEZA_ESTADO_SESSAO });
       metadataInicialDaSessao = { ...metadataInicialDaSessao, ...LIMPEZA_ESTADO_SESSAO };
@@ -3414,7 +4033,16 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     const pedeTransbordo = rajadaAnteriores.length
       ? deveAcionarHandoverNaRajada(mensagensRajada, agente_tipo)
       : deveAcionarHandoverInstitucional(textoFinal, agente_tipo);
+    // S-INST-QUAL-06 (decisão do Junior, 14/11): fora do horário do atendente (o mesmo do Emprega+),
+    // o pedido de atendente recebe o horário e a IA segue ativa — sem `awaiting_human`.
+    const responderForaDoHorario = async (): Promise<Response> => {
+      const resposta = MENSAGEM_FORA_HORARIO_ATENDENTE;
+      await salvarMensagemAgente(supabase, conversa!.id, lead.id, resposta);
+      logarTurnoSemBusca("handover_fora_horario");
+      return new Response(JSON.stringify({ success: true, agente_usado: agente_tipo, handover: false, encerrado: false, resposta, mensagens: [resposta] }), { headers: { "Content-Type": "application/json" } });
+    };
     if (pedeTransbordo) {
+      if (!dentroHorarioAtendimentoHumano()) return await responderForaDoHorario();
       const resposta = "Vou te encaminhar para um atendente humano, só um momento!";
       await salvarMensagemAgente(supabase, conversa.id, lead.id, resposta);
       const { error: handoverError } = await supabase.from("conversas").update({ status: "awaiting_human", updated_at: new Date().toISOString() }).eq("id", conversa.id);
@@ -3460,6 +4088,16 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     const registrarConsumoRota = criarRegistroConsumo("classificacao_rota", "gpt-4o-mini");
     const registrarConsumoInterpretacao = criarRegistroConsumo("interpretacao_programacao", "gpt-4o-mini");
     const registrarConsumoEmbedding = criarRegistroConsumo("embedding", EMBEDDING_MODEL);
+    const registrarConsumoLeitura = criarRegistroConsumo("leitura_rota", "gpt-4o-mini");
+    // S-INST-QUAL-06: rota estruturada — só Institucional/maria no número Geral, com a chave ligada.
+    // A leitura é feita no máximo uma vez por turno (memorizada) e sobre a rajada (story 05).
+    const rotaNovaLigada = ehAgenteDeProgramacao && unidade_cuca === 'Geral' && await lerChaveRotaEstruturada(supabase, !supabaseOverride);
+    let leituraPromessa: Promise<LeituraTurno | null> | null = null;
+    const obterLeitura = (): Promise<LeituraTurno | null> => leituraPromessa ??= lerTurnoInstitucional(textoRota, openaiKey, historicoRota, registrarConsumoLeitura)
+      .then((l) => {
+        rotaFallback = l === null;
+        return l ? consolidarLeitura(l, textoRota, mensagensRajada) : null;
+      });
     const decisaoEmprego = await decidirEmprego(
       textoRota,
       agente_tipo,
@@ -3468,7 +4106,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     );
     const classificacaoEmprego = decisaoEmprego.classificacao;
     if (decisaoEmprego.fonte === "lista") console.log("[motor-agente v18] Emprego decidido pela lista de reserva: " + classificacaoEmprego);
-    if (classificacaoEmprego === "emprego" || classificacaoEmprego === "vagas_ambiguo") {
+    // S-INST-QUAL-06: com a rota estruturada, "vagas" sem contexto é decidido pela leitura (que lê a
+    // conversa: "vagas" depois de natação é vaga de natação). Se a leitura falhar, vale o de antes.
+    const vagasPelaLeitura = classificacaoEmprego === "vagas_ambiguo" && rotaNovaLigada && (await obterLeitura()) !== null;
+    if (classificacaoEmprego === "emprego" || (classificacaoEmprego === "vagas_ambiguo" && !vagasPelaLeitura)) {
       const resposta = classificacaoEmprego === "emprego"
         ? montarMensagemEncaminhamento("empregabilidade", await buscarNumeroCanal(supabase, "empregabilidade"))
         : PERGUNTA_VAGA_AMBIGUA;
@@ -3517,6 +4158,9 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     // (1ª mensagem ou dentro de aguardando_unidade) — sinaliza pro Passo 6 buscar RAG geral
     // (FAQ isolado) em vez de early-return com o menu.
     let perguntaGeralAtiva = false;
+    // S-INST-QUAL-06: true quando a rota estruturada decidiu o turno — pula o interpretador da
+    // S-WM-72 (B) e a seção 5b; o Passo 6 lê as mesmas variáveis que a 5b preencheria.
+    let rotaDecidida = false;
     // Fix CRITICAL (S-WM-21, achado do @qa Quinn): `conversa.metadata` é a foto de ANTES desta
     // requisição — nunca é atualizada em memória depois de um `.update()`. `.update({metadata:
     // {...}})` no Supabase SUBSTITUI a coluna JSONB inteira (não faz merge no banco). Um turno
@@ -3538,8 +4182,9 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     // Roda antes da seção 5b e só assume o turno quando tem certeza: resposta à pergunta de
     // escopo/área que ELE fez, ou mensagem com cara de programação que o interpretador semântico
     // classifica como pergunta/continuação. Em qualquer outro caso, a seção 5b de hoje segue igual.
-    type ConsultaProgramacao = { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; perguntaOriginal: boolean };
-    type PendenteProgramacao = { texto: string; atividade: string | null; termos?: string[]; area: AreaProgramacao | null; contexto?: Record<string, unknown>; aguardando_area?: boolean };
+    type ConsultaProgramacao = { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; perguntaOriginal: boolean; listarPorIdade?: boolean; tituloExato?: string | null };
+    // S-INST-QUAL-06: `leitura`, `confirmar_escopo` e `aguardando_atividade` só são gravados pela rota estruturada.
+    type PendenteProgramacao = { texto: string; atividade: string | null; termos?: string[]; area: AreaProgramacao | null; contexto?: Record<string, unknown>; aguardando_area?: boolean; leitura?: LeituraTurno; confirmar_escopo?: string; contexto_anterior?: Record<string, unknown>; aguardando_atividade?: { opcoes: string[]; escopo: string } };
     let consultaProgramacao: ConsultaProgramacao | null = null;
     const usarCacheProgramacao = !supabaseOverride;
     if (ehAgenteDeProgramacao && unidade_cuca === 'Geral') {
@@ -3572,9 +4217,171 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         return saudacao + aviso + "De qual unidade você quer saber" + (sobre ? " sobre " + sobre : "") + "? Se preferir, vejo em toda a Rede CUCA 😊";
       };
 
+      // ── S-INST-QUAL-06: rota estruturada — executa a ação de `decidirRota` ─────────────────────
+      // Respostas prontas voltam como Response (fim do turno). As outras ações preenchem as mesmas
+      // variáveis que a 5b e a S-WM-72 preenchem, e o Passo 6 segue como sempre.
+      const estadoRota = (l: LeituraTurno, itens: ItemProgramacao[], textoDoPedido: string = textoRota): EstadoRota => ({
+        unidadeSalva: (metadataAtual.unidade_selecionada as string | null | undefined) ?? null,
+        unidadeAnterior: unidadeAntesDaSessao,
+        escopoRedeSalvo: metadataAtual.prog_escopo === ESCOLHA_REDE,
+        sessaoReaberta: sessaoNova || (conversaJustCreated && !conversaGenuinamenteNova),
+        primeiraRespostaDaSessao,
+        ultimaRespostaFoiPronta: ultimaRespostaFoiFrasePronta(historico),
+        disparoRecente: deveReconhecerDisparoRecente(metadataAtual.ultimo_disparo as { enviado_em?: string } | undefined, false),
+        contextoDeProgramacao: conversaEmProgramacaoEmprego,
+        pedeDetalhe: mensagemPedeDetalhe(textoDoPedido),
+        atividadeNovaNaConversa: atividadeNovaNaConversa(l, historicoRota),
+        opcoesAtividade: (escopo: string) => opcoesDeAtividade(itens, l, escopo),
+      });
+      const itensParaLeitura = async (l: LeituraTurno) => l.atividade || l.termos_busca.length ? await carregarItensProgramacaoRede(supabase, usarCacheProgramacao) : [];
+      const pendenteDaLeitura = (l: LeituraTurno, textoPedido: string, extra: Record<string, unknown> = {}) => ({ texto: textoPedido, atividade: l.atividade, termos: l.termos_busca, area: l.area, contexto: { ...contextoSessao, ...l.contexto }, leitura: l, ...extra });
+      const responderJson = (corpo: Record<string, unknown>) => new Response(JSON.stringify({ success: true, ...corpo }), { headers: { "Content-Type": "application/json" } });
+      const executarAcao = async (acao: AcaoRota, l: LeituraTurno, textoPedido: string): Promise<Response | null> => {
+        const contexto = { ...contextoSessao, ...l.contexto };
+        const comEscopo = (escopo: string, daMensagem: boolean) => daMensagem ? patchEscopo(escopo) : {};
+        switch (acao.acao) {
+          case "handover": {
+            if (!dentroHorarioAtendimentoHumano()) return await responderForaDoHorario();
+            const resposta = "Vou te encaminhar para um atendente humano, só um momento!";
+            await salvarMensagemAgente(supabase, conversa!.id, lead.id, resposta);
+            const { error: handoverError } = await supabase.from("conversas").update({ status: "awaiting_human", updated_at: new Date().toISOString() }).eq("id", conversa!.id);
+            if (handoverError) console.error("[motor-agente v18] Falha ao marcar conversa como awaiting_human conversa_id=" + conversa!.id + " erro=" + handoverError.message);
+            logarTurnoSemBusca("handover");
+            return responderJson({ agente_usado: agente_tipo, handover: true, encerrado: false, resposta, mensagens: [resposta] });
+          }
+          case "menu_unidades": {
+            const unidades = unidadesCitadas(textoPedido);
+            const resposta = evitarRepeticaoLiteral((unidades.length >= 2 ? "Vi que você citou mais de uma unidade (" + unidades.join(" e ") + ").\n\n" : "") + MENU_UNIDADES, historico);
+            await gravarMetadata({ prog_pendente: pendenteDaLeitura(l, textoPedido), prog_contexto: contexto, aguardando_unidade: true, conversa_engajada: true });
+            await salvarMensagemAgente(supabase, conversa!.id, lead.id, resposta);
+            logarTurnoSemBusca("ambiguidade_unidade");
+            return responderJson({ resposta, handover: false });
+          }
+          case "saudacao":
+            return await responderPerguntaPronta(SAUDACOES_ABERTURA[Math.floor(Math.random() * SAUDACOES_ABERTURA.length)] + "\n\nEm que posso te ajudar? 😊", {}, "resposta_canned");
+          case "cortesia":
+            return await responderPerguntaPronta("Em que mais posso te ajudar? 😊", {}, "resposta_canned");
+          case "despedida": {
+            const resposta = "Que bom poder ajudar! 😊 Se precisar de mais alguma coisa, é só chamar por aqui. Até logo! 👋";
+            await gravarMetadata({ conversa_engajada: true, aguardando_unidade: false, prog_pendente: null });
+            await salvarMensagemAgente(supabase, conversa!.id, lead.id, resposta);
+            await supabase.from("conversas").update({ status: "encerrada", updated_at: new Date().toISOString() }).eq("id", conversa!.id);
+            logarTurnoSemBusca("encerramento");
+            return responderJson({ resposta, handover: false, encerrado: true });
+          }
+          case "encaminhar": {
+            const numero = await buscarNumeroCanal(supabase, acao.canal);
+            const telefones = acao.canal === "acesso_cuca" && !numero ? await buscarTelefonesUnidades(supabase) : [];
+            return await responderPerguntaPronta(montarMensagemEncaminhamento(acao.canal, numero, telefones), {}, acao.canal === "empregabilidade" ? "emprega_mais" : "encaminhamento");
+          }
+          case "perguntar_vaga":
+            return await responderPerguntaPronta(PERGUNTA_VAGA_AMBIGUA, {}, "vagas_ambiguo");
+          case "confirmar_escopo":
+            // A pergunta é uma bifurcação: o contexto de antes fica guardado à parte e só volta se a
+            // pessoa confirmar a mesma unidade. Enquanto isso, vale só o que a mensagem atual disse.
+            return await responderPerguntaPronta(montarPerguntaConfirmarEscopo(acao.unidade, acao.sobre), {
+              prog_pendente: { ...pendenteDaLeitura(l, textoPedido, { confirmar_escopo: acao.unidade, contexto_anterior: { ...contextoAntesDaSessao, ...contextoSessao } }), contexto: { ...l.contexto } },
+              prog_contexto: { ...l.contexto },
+            }, "confirmar_escopo");
+          case "perguntar_escopo":
+            return await responderPerguntaPronta(montarPerguntaEscopo(introducaoPergunta(l.atividade ?? (l.area ? ROTULO_AREA[l.area] : ""))), { prog_pendente: pendenteDaLeitura(l, textoPedido), prog_contexto: contexto }, "pergunta_escopo");
+          case "perguntar_area":
+            return await responderPerguntaPronta(PERGUNTA_AREA, { ...comEscopo(acao.escopo, acao.escopoDaMensagem), prog_pendente: { ...pendenteDaLeitura(l, textoPedido), aguardando_area: true }, prog_contexto: contexto }, "pergunta_area");
+          case "perguntar_atividade":
+            return await responderPerguntaPronta(montarPerguntaAtividade(acao.opcoes, acao.escopo), { ...comEscopo(acao.escopo, acao.escopoDaMensagem), prog_pendente: pendenteDaLeitura(l, textoPedido, { aguardando_atividade: { opcoes: acao.opcoes, escopo: acao.escopo } }), prog_contexto: contexto }, "atividade_ambigua");
+          case "programacao":
+            await gravarMetadata({ ...comEscopo(acao.escopo, acao.escopoDaMensagem), prog_pendente: null, conversa_engajada: true, aguardando_unidade: false, ...(descreverContexto(l.contexto) ? { prog_contexto: contexto } : {}) });
+            consultaProgramacao = { texto: textoPedido, atividade: l.atividade, termos: l.termos_busca, area: l.area, contexto, escopo: acao.escopo, perguntaOriginal: textoPedido !== textoRota, listarPorIdade: acao.listarPorIdade };
+            rotaDecidida = true;
+            return null;
+          case "unidade":
+            await gravarMetadata({ ...patchEscopo(acao.unidade), prog_pendente: null, conversa_engajada: true, aguardando_unidade: false });
+            unidadeEfetiva = acao.unidade;
+            // Programação inteira (resumo geral) só quando a pessoa só escolheu a unidade ou pediu "o
+            // que tem"; com pedido, o Passo 6 responde o pedido (nunca a programação inteira).
+            trocouUnidade = acao.troca || !acao.pedido;
+            trocaComPedidoEspecifico = acao.pedido;
+            rotaDecidida = true;
+            return null;
+          case "pergunta_geral":
+            await gravarMetadata({ prog_pendente: null, conversa_engajada: true, aguardando_unidade: false });
+            perguntaGeralAtiva = true;
+            rotaDecidida = true;
+            return null;
+          case "gpt_livre":
+            await gravarMetadata({ conversa_engajada: true, aguardando_unidade: false });
+            rotaDecidida = true;
+            return null;
+        }
+      };
+
+      // Escopo escolhido para a pergunta pendente (menu de unidades ou confirmação de escopo): grava e
+      // responde a pergunta que ficou esperando.
+      const seguirComEscopo = async (escolha: string, pend: PendenteProgramacao, patchExtra: Record<string, unknown> = {}): Promise<Response | null> => {
+        await gravarMetadata({ ...patchEscopo(escolha), ...patchExtra, prog_pendente: null, conversa_engajada: true, aguardando_unidade: false });
+        // S-INST-QUAL-06: pergunta pendente da rota estruturada — decide de novo com o escopo escolhido
+        // (atividade ambígua, idade, programação). Só esses três desfechos; os outros seguem como antes.
+        if (pend.leitura && rotaNovaLigada) {
+          const l: LeituraTurno = { ...pend.leitura, escopo: escolha, unidade_citada: null };
+          const acao = decidirRota(l, estadoRota(l, await itensParaLeitura(l), pend.texto));
+          if (acao.acao === "programacao" || acao.acao === "perguntar_atividade" || acao.acao === "perguntar_area") {
+            const r = await executarAcao(acao, l, pend.texto);
+            if (r) return r;
+          }
+        }
+        const semAtividadeNemArea = !pend.atividade && !(pend.termos?.length) && !pend.area;
+        if (!consultaProgramacao && escolha === ESCOLHA_REDE && semAtividadeNemArea && ehPerguntaGeralDeProgramacao(pend.texto)) {
+          // R5: pergunta geral sem área + toda a rede → pergunta a área (3 áreas reais).
+          return await responderPerguntaPronta(PERGUNTA_AREA, { prog_pendente: { ...pend, aguardando_area: true } }, "pergunta_area");
+        }
+        if (!consultaProgramacao) consultaProgramacao = { texto: pend.texto, atividade: pend.atividade, termos: pend.termos ?? [], area: pend.area, contexto: pend.contexto ?? contextoSessao, escopo: escolha, perguntaOriginal: true };
+        return null;
+      };
+
       // A) resposta à pergunta pronta do turno anterior
       if (pendente) {
-        if (pendente.aguardando_area && blocoAnteriorAgente.includes("Qual área te interessa")) {
+        if (pendente.aguardando_atividade && blocoAnteriorAgente.includes(MARCA_PERGUNTA_ATIVIDADE)) {
+          // S-INST-QUAL-06: resposta à pergunta de atividade ambígua (número da lista ou nome).
+          const escolhida = resolverEscolhaDeAtividade(textoFinal, pendente.aguardando_atividade.opcoes);
+          if (escolhida) {
+            consultaProgramacao = { texto: pendente.texto, atividade: escolhida, termos: palavrasChaveProgramacao(escolhida), area: pendente.area, contexto: pendente.contexto ?? contextoSessao, escopo: pendente.aguardando_atividade.escopo, perguntaOriginal: true, tituloExato: escolhida };
+            await gravarMetadata({ prog_pendente: null, conversa_engajada: true, aguardando_unidade: false });
+          } else {
+            await gravarMetadata({ prog_pendente: null });
+          }
+        } else if (pendente.confirmar_escopo && blocoAnteriorAgente.includes(MARCA_CONFIRMAR_ESCOPO)) {
+          // S-INST-QUAL-06: resposta à confirmação de escopo — bifurcação (decisão do Junior, 14/11).
+          const { confirmar_escopo: oferecida, contexto_anterior: contextoAnterior, ...semConfirmacao } = pendente;
+          const r = resolverRespostaConfirmacao(textoFinal, oferecida);
+          if (r?.tipo === "outra_unidade") {
+            // "não"/"outra": abre a partir da negativa — sai a unidade de antes e o contexto de antes;
+            // a pergunta continua pendente e é respondida quando a pessoa escolher no menu.
+            const resposta = evitarRepeticaoLiteral(MENU_UNIDADES, historico);
+            await gravarMetadata({ unidade_selecionada: null, prog_escopo: null, prog_contexto: semConfirmacao.contexto ?? {}, prog_pendente: semConfirmacao, aguardando_unidade: true, conversa_engajada: true });
+            await salvarMensagemAgente(supabase, conversa!.id, lead.id, resposta);
+            logarTurnoSemBusca("pergunta_escopo");
+            return responderJson({ resposta, handover: false });
+          }
+          if (r) {
+            // "sim"/"o mesmo": a conversa de antes continua valendo (unidade + contexto); outra unidade
+            // ou a rede: só o que a pessoa disse agora.
+            const escolha = r.tipo === "mesma" ? oferecida : r.escopo;
+            const contextoEscolhido = r.tipo === "mesma" ? { ...(contextoAnterior ?? {}), ...(semConfirmacao.contexto ?? {}) } : { ...(semConfirmacao.contexto ?? {}) };
+            const pend: PendenteProgramacao = { ...semConfirmacao, contexto: contextoEscolhido, ...(semConfirmacao.leitura ? { leitura: { ...semConfirmacao.leitura, contexto: contextoEscolhido as LeituraTurno["contexto"] } } : {}) };
+            const temPerguntaNova = palavrasChaveProgramacao(textoFinal).length > 0 && respostaTrazPerguntaNova(textoFinal, pend, await carregarItensProgramacaoRede(supabase, usarCacheProgramacao));
+            if (temPerguntaNova) {
+              // "sim, e tem judô?": vale a unidade escolhida e a pergunta nova segue como mensagem nova.
+              await gravarMetadata({ ...patchEscopo(escolha), prog_pendente: null, prog_contexto: contextoEscolhido, conversa_engajada: true, aguardando_unidade: false });
+            } else {
+              const resposta = await seguirComEscopo(escolha, pend, { prog_contexto: contextoEscolhido });
+              if (resposta) return resposta;
+            }
+          } else {
+            // Não respondeu à pergunta: a pendência cai e a mensagem segue como mensagem nova. A unidade
+            // de antes também sai (só voltaria com o "sim"), igual à conversa retomada depois de 2h.
+            await gravarMetadata({ prog_pendente: null, unidade_selecionada: null, prog_escopo: null });
+          }
+        } else if (pendente.aguardando_area && blocoAnteriorAgente.includes("Qual área te interessa")) {
           const area = resolverEscolhaDeArea(textoFinal, blocoAnteriorAgente);
           if (area) {
             consultaProgramacao = { texto: pendente.texto, atividade: null, termos: [], area, contexto: pendente.contexto ?? contextoSessao, escopo: escopoSessao ?? ESCOLHA_REDE, perguntaOriginal: true };
@@ -3584,15 +4391,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
           // C1: o lead ignorou o menu e fez outra pergunta — a antiga sai, a nova segue como mensagem nova (B).
           await gravarMetadata({ prog_pendente: null });
         } else if (blocoAnteriorAgente.includes(ROTULO_REDE)) {
-          const escolha = resolverEscolhaDeEscopo(textoFinal, blocoAnteriorAgente, metadataAtual.unidade_selecionada as string | null);
+          const escolha = resolverEscolhaDeEscopo(textoFinal, blocoAnteriorAgente, metadataAtual.unidade_selecionada as string | null | undefined);
           if (escolha) {
-            await gravarMetadata({ ...patchEscopo(escolha), prog_pendente: null, conversa_engajada: true, aguardando_unidade: false });
-            const semAtividadeNemArea = !pendente.atividade && !(pendente.termos?.length) && !pendente.area;
-            if (escolha === ESCOLHA_REDE && semAtividadeNemArea && ehPerguntaGeralDeProgramacao(pendente.texto)) {
-              // R5: pergunta geral sem área + toda a rede → pergunta a área (3 áreas reais).
-              return await responderPerguntaPronta(PERGUNTA_AREA, { prog_pendente: { ...pendente, aguardando_area: true } }, "pergunta_area");
-            }
-            consultaProgramacao = { texto: pendente.texto, atividade: pendente.atividade, termos: pendente.termos ?? [], area: pendente.area, contexto: pendente.contexto ?? contextoSessao, escopo: escolha, perguntaOriginal: true };
+            const resposta = await seguirComEscopo(escolha, pendente);
+            if (resposta) return resposta;
           }
         } else {
           // A última mensagem do bot já não é a pergunta pronta — pendência velha não vale mais.
@@ -3608,8 +4410,25 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         if (linha) consultaProgramacao = { texto: linha, atividade: linha, termos: [], area: null, contexto: contextoSessao, escopo: ESCOLHA_REDE, perguntaOriginal: true };
       }
 
+      // S-INST-QUAL-06) rota estruturada: leitura única do turno + `decidirRota`. Fica de fora o
+      // número que responde a uma lista mostrada pelo bot (resolvido pelo código, como antes) e o que
+      // a pendência (A/A2) já resolveu. Leitura que falha → rota antiga (B e 5b), `rota_fallback`.
+      const digitoDaLista = /^\d{1,2}$/.test(textoFinal.trim()) && linhaNumeradaDaLista(textoFinal.trim(), blocoAnteriorAgente) !== "";
+      if (!consultaProgramacao && rotaNovaLigada && !digitoDaLista) {
+        const lida = await obterLeitura();
+        if (lida) {
+          const pedidoAnterior = lida.tipo === "so_unidade" && !lida.atividade ? pedidoAnteriorDoLead(historicoRota) : "";
+          const leitura = pedidoAnterior ? completarSoUnidadeComPedidoAnterior(lida, pedidoAnterior, await carregarItensProgramacaoRede(supabase, usarCacheProgramacao)) : lida;
+          const textoDoPedido = leitura !== lida ? pedidoAnterior + "\n" + textoRota : textoRota;
+          const acao = decidirRota(leitura, estadoRota(leitura, await itensParaLeitura(leitura), textoDoPedido));
+          console.log("[motor-agente v18] Rota estruturada: tipo=" + leitura.tipo + " assunto=" + leitura.assunto + " escopo=" + leitura.escopo + " atividade=" + leitura.atividade + " idade=" + leitura.idade + " -> " + acao.acao);
+          const resposta = await executarAcao(acao, leitura, textoDoPedido);
+          if (resposta) return resposta;
+        }
+      }
+
       // B) mensagem nova com cara de programação → interpretador semântico
-      if (!consultaProgramacao && !ehSelecaoMenu(textoFinal) && !pedidoOutrasUnidades) {
+      if (!consultaProgramacao && !rotaDecidida && !ehSelecaoMenu(textoFinal) && !pedidoOutrasUnidades) {
         const podeTerSinal = palavrasChaveProgramacao(textoFinal).length > 0 || areaPeloVocabulario(textoFinal) !== null || ehPerguntaGeralDeProgramacao(textoFinal);
         const itensRede = podeTerSinal ? await carregarItensProgramacaoRede(supabase, usarCacheProgramacao) : [];
         if ((podeTerSinal && temSinalDeProgramacao(textoFinal, itensRede)) || escopoSessao === ESCOLHA_REDE) {
@@ -3637,7 +4456,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       if (consultaProgramacao) unidadeEfetiva = consultaProgramacao.escopo === ESCOLHA_REDE ? ROTULO_REDE : consultaProgramacao.escopo;
     }
 
-    if (unidade_cuca === 'Geral' && !consultaProgramacao) {
+    if (unidade_cuca === 'Geral' && !consultaProgramacao && !rotaDecidida) {
       const unidadeSalva = metadataAtual.unidade_selecionada as string | undefined;
       const aguardando = metadataAtual.aguardando_unidade as boolean | undefined;
       // S-INST-QUAL-05: dígito solto continua resolvido pela lista mostrada (só a mensagem atual);
@@ -4006,6 +4825,8 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         nenhuma: "Nao foi encontrado(a) " + sobre + (contextoTxt ? " para esse contexto (" + contextoTxt + ")" : "") + " em nenhuma unidade na programacao deste mes (a busca foi feita em todas as unidades). Diga isso com suas palavras e pergunte se e onde a pessoa quer saber de outras opcoes de " + (r.area ? ROTULO_AREA[r.area] : "programacao") + (contextoTxt ? " para esse contexto" : "") + " — no " + (c.escopo === ESCOLHA_REDE ? "uma unidade especifica" : nomeEscopo + ", em outra unidade") + " ou em toda a Rede CUCA. NUNCA responda so 'nao tem'.",
         area: "Liste so os nomes das atividades do bloco '--- PROGRAMACAO VIGENTE ---' (area " + (r.area ? ROTULO_AREA[r.area] : "") + ", " + nomeEscopo + "), de forma compacta, e pergunte qual interessa para mostrar dias e horarios. Nao liste atividades de outras areas.",
         sem_atividade: "Responda a pergunta usando o FAQ e os servicos da rede, se cobrirem; para programacao, pergunte qual atividade ou area a pessoa procura. Nao invente atividades.",
+        // S-INST-QUAL-06: só a rota estruturada chega aqui (listarPorIdade).
+        idade: "Liste, de forma compacta, os nomes das atividades do bloco '--- PROGRAMACAO VIGENTE ---' (" + nomeEscopo + "), que ja foram filtradas pela idade informada, e pergunte qual interessa para mostrar dias e horarios. Nao liste atividades fora do bloco.",
       };
       const semDado = Object.keys(c.contexto).filter((k) => CONTEXTO_SEM_DADO.some((x) => k.startsWith(x)));
       instrucaoConsultaProgramacao = "INSTRUCAO CRITICA (programacao com contexto): " + porSituacao[r.situacao]
@@ -4234,6 +5055,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       chunks_retornados: logRAG.chunksRetornados ?? null,
       mensagem_lead: mensagemLead,
       resolucao_atividade: resolucaoAtividade,
+      rota_fallback: rotaFallback,
       ...buscaRAG,
     }));
 
@@ -4369,6 +5191,15 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     let handover = false; let encerrado = false;
     const avaliacaoHandover = removerTag(resposta, "handover");
     if (avaliacaoHandover.encontrada) { handover = true; resposta = avaliacaoHandover.texto; }
+    // S-INST-QUAL-06 (decisão do Junior, 14/11): no Institucional o atendente só entra por pedido
+    // explícito da pessoa (que já transbordou lá em cima, com a checagem de horário). Falta de
+    // informação não transborda nem oferece atendente: o modelo diz que não encontrou e o código
+    // passa o contato da unidade. Vale também quando o modelo oferece atendente sem a tag.
+    if (isAgenteProgramacao && (handover || removerOfertaDeAtendente(resposta).removida)) {
+      if (handover) console.log("[motor-agente v18] [[HANDOVER]] do modelo sem pedido explicito: sem transbordo, contato da unidade");
+      handover = false;
+      resposta = respostaSemAtendente(resposta, await buscarTelefonesUnidades(supabase), unidadeEfetiva ?? null);
+    }
     const avaliacaoEncerrar = removerTag(resposta, "encerrar");
     if (avaliacaoEncerrar.encontrada) { encerrado = true; resposta = avaliacaoEncerrar.texto; }
 

@@ -3,7 +3,7 @@
 // docs/qa/AUDITORIA-motor-agente-institucional-2026-07-07.md. Eles descrevem o
 // comportamento DESEJADO/correto — se o bug ainda não foi corrigido, o teste FALHA.
 // Isso é intencional: é uma suíte "vermelha" servindo de checklist executável.
-import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assert, assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   contemPalavra,
   ehCortesiaPura,
@@ -53,7 +53,13 @@ import {
   consolidarInterpretacao,
   respostaTrazPerguntaNova,
   atividadeEscritaNaMensagem,
+  definirRelogioAtendimento,
 } from "./index.ts";
+
+// S-INST-QUAL-06: transbordo só dentro do horário do atendente (seg a sex, 08:00–16:59). Relógio fixo
+// numa quarta às 15:00 para os testes de transbordo não dependerem da hora em que a suíte roda.
+const QUARTA_15H = () => new Date("2026-11-11T15:00:00-03:00");
+definirRelogioAtendimento(QUARTA_15H);
 
 // ── Mock mínimo e encadeável do client Supabase, usado pelos testes AUD-04 abaixo ───────────
 // Mesmo espírito do MagicMock encadeável do lado pytest (worker/tests/test_meta_adapter_inbound.py),
@@ -1123,8 +1129,11 @@ Deno.test("Item 2 / AC5: split acontece DEPOIS da tag [[HANDOVER]] — a tag cru
   await comFetchMockado(async () => {
     const resp = await handler(requestFake("preciso resolver uma situação com a equipe"), supabaseMock);
     const body = await resp.json();
-    assertEquals(body.handover, true, "handover continua sendo detectado normalmente");
-    assertEquals(body.mensagens.length, 3, "a tag removida ainda deixa uma resposta listável de 3 partes");
+    // S-INST-QUAL-06 (decisão do Junior, 14/11): no Institucional, [[HANDOVER]] do modelo sem pedido
+    // explícito não transborda; a oferta/promessa de atendente sai e o contato da unidade entra.
+    assertEquals(body.handover, false, "Institucional não transborda por [[HANDOVER]] do modelo sem pedido explícito");
+    assert(body.mensagens.length >= 2, "a lista continua sendo enviada");
+    assertEquals((body.mensagens as string[]).some((p) => /atendente|encaminho/i.test(p)), false, "a oferta e a promessa de atendente saem");
     for (const parte of body.mensagens as string[]) {
       assertEquals(parte.includes("[[HANDOVER]]"), false, "AC5: a tag crua não pode sobreviver em NENHUMA parte — o split só pode acontecer depois da remoção da tag");
     }
@@ -1142,7 +1151,9 @@ Deno.test("S-WM-64 / Institucional: erro ao marcar awaiting_human é logado em v
 
   const { resultado, linhas } = await comConsoleLogCapturado(() =>
     comFetchMockado(async () => {
-      const resp = await handler(requestFake("preciso resolver uma situação com a equipe"), supabaseMock);
+      // S-INST-QUAL-06: no Institucional o transbordo só vem do pedido explícito (o [[HANDOVER]] do
+      // modelo sem pedido não transborda mais) — o registro de erro é o mesmo nos dois caminhos.
+      const resp = await handler(requestFake("quero falar com um atendente"), supabaseMock);
       const body = await resp.json();
       assertEquals(resp.status, 200, "a story não muda o fluxo de resposta do Institucional");
       assertEquals(body.handover, true);

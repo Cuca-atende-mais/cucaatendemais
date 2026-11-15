@@ -1,7 +1,7 @@
 {
  "id": "AT-04",
  "categoria": "atendente",
- "descricao": "Psicossocial → atendente (seção reservada, sem confirmação da gestão)",
+ "descricao": "Psicossocial → não está na base: diz que não encontrou e passa o contato das unidades, sem atendente (decisão do Junior, 14/11)",
  "origem": "Revisão 28/10",
  "conversa_curta": null,
  "data_simulada": "2026-11-11T15:00:00-03:00",
@@ -12,6 +12,12 @@
  "historico": [],
  "mensagem": "Tem atendimento psicossocial?",
  "esperado": {
-  "handover": true
+  "handover": false,
+  "deve_conter": [
+   "\\(85\\) ?9?\\d{4}-?\\d{4}"
+  ],
+  "nao_deve_conter": [
+   "atendente"
+  ]
  }
 }

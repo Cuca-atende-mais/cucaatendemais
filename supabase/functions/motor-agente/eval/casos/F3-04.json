@@ -1,0 +1,43 @@
+{
+ "id": "F3-04",
+ "categoria": "F3",
+ "descricao": "Conversa encerrada há 40 min (Barra) e reaberta com pedido novo: confirmar o escopo",
+ "origem": "S-INST-QUAL-06 (linha 7: conversa reaberta com unidade salva)",
+ "data_simulada": "2026-11-10T15:00:00.000Z",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Barra",
+   "conversa_engajada": true
+  },
+  "status": "encerrada"
+ },
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "tem futsal na Barra?",
+   "minutos_antes": 42
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Tem sim! No Cuca Barra o futsal é às terças e quintas. 😊",
+   "minutos_antes": 41
+  },
+  {
+   "remetente": "lead",
+   "conteudo": "obrigado, era só isso",
+   "minutos_antes": 40
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "Que bom poder ajudar! 😊 Se precisar de mais alguma coisa, é só chamar por aqui. Até logo! 👋",
+   "minutos_antes": 39
+  }
+ ],
+ "mensagem": "tem judô?",
+ "esperado": {
+  "deve_conter": [
+   "outra unidade|rede toda|toda a rede|qual unidade|de qual unidade"
+  ]
+ }
+}

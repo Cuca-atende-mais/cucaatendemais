@@ -24,7 +24,13 @@ import {
   trocarRajadaNoHistorico,
   ultimaRespostaFoiFrasePronta,
   unidadesCitadas,
+  definirRelogioAtendimento,
 } from "./index.ts";
+
+// S-INST-QUAL-06: transbordo só dentro do horário do atendente (seg a sex, 08:00–16:59). Relógio fixo
+// numa quarta às 15:00 para os testes de transbordo não dependerem da hora em que a suíte roda.
+const QUARTA_15H = () => new Date("2026-11-11T15:00:00-03:00");
+definirRelogioAtendimento(QUARTA_15H);
 
 const FRASE_PRONTA = "Em que mais posso te ajudar? 😊";
 const AVALIACAO_VAZIA = { unidade: null, quer_sair: false, mudou_de_assunto: false, pergunta_geral: false, pedido_depende_unidade: false };
