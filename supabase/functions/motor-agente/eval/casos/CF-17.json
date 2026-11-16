@@ -1,0 +1,25 @@
+{
+ "id": "CF-17",
+ "categoria": "conteudo_fixo",
+ "descricao": "Proposta de atração: falar com a unidade, sem e-mail",
+ "origem": "S-INST-QUAL-07 (caso novo; resposta esperada aprovada pelo Junior em 15/11)",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Jangurussu",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [],
+ "mensagem": "Sou artista e quero me apresentar no Cuca. Como mando minha proposta?",
+ "esperado": {
+  "deve_conter": [
+   "99796-?0190"
+  ],
+  "nao_deve_conter": [
+   "@gmail"
+  ]
+ }
+}

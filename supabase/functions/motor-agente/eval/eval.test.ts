@@ -4,6 +4,7 @@ import { avaliarExecucao, type Caso, compararComBase, dadosPessoaisEm, minimoDeA
 import { buscarChunksSimilaresLocal, similaridadeCosseno } from "./lib/busca_local.ts";
 import { comDataSimulada } from "./lib/data_simulada.ts";
 import { type Catalogo, criarSupabaseFalso } from "./lib/mock_supabase.ts";
+import { aplicarBase07, aplicarPrompt07, FAQS_DESATIVADAS_NA_07, TROCA_GUARDRAIL_07 } from "./lib/base07.ts";
 
 const CATEGORIAS = new Set(["F1", "F3", "F4", "F5", "F6", "busca_unidade", "conteudo_fixo", "seguranca_encaminhamento", "atendente"]);
 
@@ -133,6 +134,41 @@ Deno.test("mock: aplica filtros, ordem, limite e single; grava inserções; recu
   assertThrows(() => cliente.from("tabela_que_nao_existe"));
   await assertRejects(async () => { await cliente.rpc("rpc_desconhecida"); });
   await assertRejects(async () => { await cliente.from("ai_usage_logs").select("x"); });
+});
+
+// ── S-INST-QUAL-07: base nova só na memória ──────────────────────────────────────────────
+Deno.test("base 07: troca o servicos_rede que o motor lê e tira as 3 FAQs (documentos e trechos)", async () => {
+  const faq = FAQS_DESATIVADAS_NA_07[0];
+  const catalogo: Catalogo = structuredClone(CATALOGO_MINIMO);
+  catalogo.comum.documentos.push(
+    { id: "sr", tipo: "servicos_rede", unidade_cuca: null, conteudo: "texto antigo", metadados: null, created_at: "2026-09-02T00:00:00Z" },
+    { id: faq, tipo: "FAQ", unidade_cuca: null, conteudo: "faq antiga", metadados: null, created_at: "2026-02-19T00:00:00Z" },
+  );
+  catalogo.comum.trechos.push({ id: "tf", documento_id: faq, conteudo: "faq antiga", metadados: null, embedding: [1, 0] });
+  aplicarBase07(catalogo, "Telefones das unidades: texto novo");
+  const { cliente } = criarSupabaseFalso(catalogo, "2026-09", { metadata: {}, status: "ativa", historico: [] }, "k");
+  // mesma consulta de carregarServicosRede (motor-agente)
+  const doc = await cliente.from("documentos_rag").select("conteudo").eq("tipo", "servicos_rede").eq("ativo", true).order("created_at", { ascending: false }).limit(1).single();
+  assertEquals((doc as { data: { conteudo: string } }).data.conteudo, "Telefones das unidades: texto novo");
+  assert(!catalogo.comum.documentos.some((d) => d.id === faq), "FAQ continuou no catálogo");
+  assert(!catalogo.comum.trechos.some((t) => t.documento_id === faq), "trecho da FAQ continuou na busca");
+  assertThrows(() => aplicarBase07({ ...structuredClone(CATALOGO_MINIMO) }, "x"));
+});
+
+Deno.test("prompt 07: troca o guardrail uma vez só, igual à migration, e para se o trecho sumiu", async () => {
+  const catalogo: Catalogo = structuredClone(CATALOGO_MINIMO);
+  catalogo.comum.prompts_agentes = [{ agente_tipo: "Institucional", prompt_sistema: "A\n" + TROCA_GUARDRAIL_07.antigo + "\n    \"Não consigo te ajudar\"" }];
+  aplicarPrompt07(catalogo);
+  aplicarPrompt07(catalogo); // de novo: não duplica
+  const texto = String(catalogo.comum.prompts_agentes[0].prompt_sistema);
+  assertEquals(texto.split("É assunto do CUCA").length - 1, 1);
+  assert(texto.includes(TROCA_GUARDRAIL_07.novo));
+  catalogo.comum.prompts_agentes[0].prompt_sistema = "sem guardrail";
+  assertThrows(() => aplicarPrompt07(catalogo));
+  // a migration leva exatamente os mesmos textos
+  const sql = await Deno.readTextFile(new URL("../../../../cuca-portal/supabase/migrations/20261116000000_inst_qual_07_base_institucional.sql", import.meta.url));
+  assert(sql.includes("$g$" + TROCA_GUARDRAIL_07.antigo + "$g$"), "texto antigo diferente na migration");
+  assert(sql.includes("$g$" + TROCA_GUARDRAIL_07.novo + "$g$"), "texto novo diferente na migration");
 });
 
 // ── data simulada ────────────────────────────────────────────────────────────────────────
