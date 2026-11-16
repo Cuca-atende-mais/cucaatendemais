@@ -1,0 +1,22 @@
+{
+ "id": "CF-18",
+ "categoria": "conteudo_fixo",
+ "descricao": "Visita guiada: ligar para a unidade, com o telefone",
+ "origem": "S-INST-QUAL-07 (caso novo; resposta esperada aprovada pelo Junior em 15/11)",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Pici",
+   "conversa_engajada": true
+  }
+ },
+ "historico": [],
+ "mensagem": "Quero agendar uma visita guiada da minha escola no Cuca Pici",
+ "esperado": {
+  "deve_conter": [
+   "99796-?0354"
+  ]
+ }
+}

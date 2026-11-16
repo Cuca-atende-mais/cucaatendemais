@@ -1,0 +1,24 @@
+{
+ "id": "AT-07",
+ "categoria": "atendente",
+ "descricao": "Pergunta sobre a unidade que a base não responde (coworking) → 'não encontrei' + telefone da unidade, nunca a recusa de escopo (guardrail da 07)",
+ "origem": "S-INST-QUAL-07 (caso novo, de pergunta real de 13/11; aprovado pelo Junior em 16/11)",
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "estado": {
+  "metadata": {}
+ },
+ "historico": [],
+ "mensagem": "Tem coworking no Cuca José Walter?",
+ "esperado": {
+  "handover": false,
+  "deve_conter": [
+   "99796-?0198"
+  ],
+  "nao_deve_conter": [
+   "nao consigo te ajudar",
+   "atendente"
+  ]
+ }
+}

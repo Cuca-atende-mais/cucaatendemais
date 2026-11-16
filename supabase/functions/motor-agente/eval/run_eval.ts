@@ -18,6 +18,7 @@ import { handler, redefinirCachePrecos } from "../index.ts";
 import { avaliarExecucao, type Caso, compararComBase, minimoDeAcertos, type ResultadoCaso, type SaidaExecucao, taxaPorCategoria } from "./lib/avaliar.ts";
 import { comDataSimulada } from "./lib/data_simulada.ts";
 import { type Catalogo, CONVERSA_ID, criarSupabaseFalso, TELEFONE_FALSO } from "./lib/mock_supabase.ts";
+import { aplicarBase07, aplicarPrompt07 } from "./lib/base07.ts";
 
 // ── argumentos ───────────────────────────────────────────────────────────────────────────
 function argumento(nome: string): string | undefined {
@@ -31,8 +32,14 @@ const FILTRO = argumento("casos") ? new RegExp(argumento("casos")!) : null;
 const TETO_USD = argumento("teto-usd") ? Number(argumento("teto-usd")) : null;
 const COMPARAR = argumento("comparar");
 const ROTA_ESTRUTURADA = argumento("rota-estruturada") === "on";
+// S-INST-QUAL-07: mede a base institucional nova ANTES de publicar (decisão técnica 6: nunca contra o
+// banco). Troca o texto do `servicos_rede` pelo do arquivo e tira as 3 FAQs que a 07 desativa, só na
+// memória desta rodada.
+const BASE_07 = argumento("base-07");
+// S-INST-QUAL-07 (15/11): troca do guardrail de escopo do prompt_sistema, também só na memória.
+const PROMPT_07 = Deno.args.includes("--prompt-07");
 if (!ROTULO) {
-  console.error("Uso: deno run --allow-all eval/run_eval.ts --rotulo <nome> [--simulado] [--repeticoes N] [--casos regex] [--teto-usd N] [--comparar base.json]");
+  console.error("Uso: deno run --allow-all eval/run_eval.ts --rotulo <nome> [--simulado] [--repeticoes N] [--casos regex] [--teto-usd N] [--comparar base.json] [--rota-estruturada on] [--base-07 arquivo.txt] [--prompt-07]");
   Deno.exit(1);
 }
 const CHAVE = SIMULADO ? "chave-simulada" : Deno.env.get("OPENAI_API_KEY") ?? "";
@@ -46,6 +53,12 @@ const BASE = new URL("./", import.meta.url);
 const catalogo: Catalogo = JSON.parse(await Deno.readTextFile(new URL("dados/catalogo.json", BASE)));
 // S-INST-QUAL-06: a chave fica só na memória desta rodada; o catálogo em disco não muda.
 if (ROTA_ESTRUTURADA) catalogo.comum.system_config = [...catalogo.comum.system_config, { chave: "rota_estruturada", valor: "on" }];
+if (BASE_07) {
+  const texto = (await Deno.readTextFile(BASE_07)).trim();
+  if (!texto.includes("Telefones das unidades")) throw new Error("--base-07: o texto precisa da lista 'Telefones das unidades' (regra B do motor)");
+  aplicarBase07(catalogo, texto);
+}
+if (PROMPT_07) aplicarPrompt07(catalogo);
 const casos: Caso[] = [];
 for await (const e of Deno.readDir(new URL("casos/", BASE))) {
   if (e.isFile && e.name.endsWith(".json")) casos.push(JSON.parse(await Deno.readTextFile(new URL("casos/" + e.name, BASE))));
@@ -196,7 +209,7 @@ if (COMPARAR) {
 const hoje = new Date().toISOString().slice(0, 10);
 const nome = `${hoje}-${ROTULO}`;
 await Deno.mkdir(new URL("resultados/", BASE), { recursive: true });
-await Deno.writeTextFile(new URL(`resultados/${nome}.json`, BASE), JSON.stringify({ rotulo: ROTULO, data: new Date().toISOString(), simulado: SIMULADO, rota_estruturada: ROTA_ESTRUTURADA, repeticoes: REPETICOES, custo_usd: custoTotal, parou_no_teto: parouNoTeto, catalogo_exportado_em: catalogo.exportado_em, resultados, taxas, comparacao, detalhes: bruto }, null, 1));
+await Deno.writeTextFile(new URL(`resultados/${nome}.json`, BASE), JSON.stringify({ rotulo: ROTULO, data: new Date().toISOString(), simulado: SIMULADO, rota_estruturada: ROTA_ESTRUTURADA, repeticoes: REPETICOES, custo_usd: custoTotal, parou_no_teto: parouNoTeto, catalogo_exportado_em: catalogo.exportado_em, base_07: BASE_07 ?? null, prompt_07: PROMPT_07, resultados, taxas, comparacao, detalhes: bruto }, null, 1));
 
 const linhas: string[] = [];
 linhas.push(`# Gabarito do Institucional — ${ROTULO} (${hoje})`, "");
@@ -204,6 +217,8 @@ linhas.push(`- Modo: ${SIMULADO ? "**SIMULADO** (OpenAI falsa, sem custo; mede s
 linhas.push(`- Casos: ${resultados.length} · execuções por caso: ${REPETICOES} · um caso passa com ${minimoDeAcertos(REPETICOES)} de ${REPETICOES} acertos`);
 linhas.push(`- Custo da rodada (registrado pelo próprio motor): US$ ${custoTotal.toFixed(4)}${parouNoTeto ? ` — **parou no teto de US$ ${TETO_USD}**` : ""}`);
 linhas.push(`- Catálogo exportado em: ${catalogo.exportado_em}`);
+if (BASE_07) linhas.push(`- Base institucional da S-INST-QUAL-07 aplicada só nesta rodada: \`${BASE_07}\` (sem as 3 FAQs institucionais)`);
+if (PROMPT_07) linhas.push("- Guardrail de escopo do prompt_sistema com a troca da S-INST-QUAL-07, só nesta rodada");
 if (ROTA_ESTRUTURADA) {
   const execucoes = bruto.flatMap((b) => b.execucoes);
   const planoB = bruto.filter((b) => b.execucoes.some((e) => e.rota_fallback === true)).map((b) => b.caso.id);
