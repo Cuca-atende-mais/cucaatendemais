@@ -1,0 +1,27 @@
+{
+ "id": "DS-02",
+ "categoria": "busca_unidade",
+ "descricao": "Cursos aos sábados no Pici: lista o Tech Start",
+ "origem": "S-INST-QUAL-13 (16/11): pergunta real de 15/11 e caso QA-HR-03 da revisão da S-08",
+ "previa": null,
+ "conversa_curta": null,
+ "data_simulada": "2026-11-11T15:00:00-03:00",
+ "mes_catalogo": "2026-11",
+ "historico": [],
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Pici",
+   "conversa_engajada": true
+  }
+ },
+ "mensagem": "Quais são os cursos que tem aos sábados?",
+ "esperado": {
+  "deve_conter": [
+   "tech start"
+  ],
+  "nao_deve_conter": [
+   "nao (encontrei|ha|tem|temos|existem) cursos"
+  ]
+ },
+ "observacao": "Resposta esperada a aprovar pelo Junior (S-13)."
+}
