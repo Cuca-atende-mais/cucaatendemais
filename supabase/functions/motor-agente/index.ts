@@ -3816,6 +3816,63 @@ async function carregarServicosRede(supabase: ReturnType<typeof createClient<Dat
   return doc?.conteudo || "";
 }
 
+// ── S-INST-QUAL-08: avisos da rede com data de validade ───────────────────────────────────
+/** Data de hoje em Fortaleza (AAAA-MM-DD). Nunca `toISOString()`: depois das 21h em Fortaleza o UTC
+ * já está no dia seguinte. */
+export function hojeFortalezaISO(agora: Date = new Date()): string {
+  const partes = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Fortaleza", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(agora);
+  const p = (tipo: string) => partes.find((x) => x.type === tipo)?.value ?? "";
+  return `${p("year")}-${p("month")}-${p("day")}`;
+}
+
+export type AvisoValido = { titulo: string; conteudo: string; valido_ate: string };
+const DATA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Avisos que vão ao bot hoje: categoria `geral` (sem categoria conta como geral; `matricula` é da
+ * S-INST-QUAL-10), sem unidade, `valido_de <= hoje <= valido_ate` (datas inclusivas, AAAA-MM-DD).
+ * Fim ausente ou mal formado: fora (na dúvida, o aviso não vai). Início ausente: já começou; início
+ * mal formado: fora. Não depende do cron que desativa os vencidos (ele só arruma a tela). Qualquer
+ * resultado que não seja lista vira lista vazia.
+ */
+export function avisosValidos(lista: unknown, hoje: string): AvisoValido[] {
+  if (!Array.isArray(lista)) return [];
+  const validos: AvisoValido[] = [];
+  for (const item of lista) {
+    if (!item || typeof item !== "object") continue;
+    const d = item as { titulo?: unknown; conteudo?: unknown; metadados?: unknown; unidade_cuca?: unknown };
+    if (d.unidade_cuca) continue;
+    const m = (d.metadados && typeof d.metadados === "object" ? d.metadados : {}) as Record<string, unknown>;
+    const categoria = typeof m.categoria === "string" && m.categoria ? m.categoria : "geral";
+    if (categoria !== "geral") continue;
+    const ate = m.valido_ate;
+    if (typeof ate !== "string" || !DATA_ISO.test(ate) || ate < hoje) continue;
+    const de = m.valido_de;
+    if (de !== undefined && de !== null && de !== "") {
+      if (typeof de !== "string" || !DATA_ISO.test(de) || de > hoje) continue;
+    }
+    const conteudo = typeof d.conteudo === "string" ? d.conteudo.trim() : "";
+    if (!conteudo) continue;
+    validos.push({ titulo: typeof d.titulo === "string" ? d.titulo.trim() : "", conteudo, valido_ate: ate });
+  }
+  return validos;
+}
+
+/** Bloco "AVISOS" do contexto: vai inteiro, logo depois da base institucional. "" sem aviso válido. */
+export function montarBlocoAvisos(avisos: AvisoValido[]): string {
+  if (!avisos.length) return "";
+  const linhas = avisos.map((a) => {
+    const [ano, mes, dia] = a.valido_ate.split("-");
+    return `- ${a.titulo ? a.titulo + ": " : ""}${a.conteudo} (válido até ${dia}/${mes}/${ano})`;
+  });
+  return "\n\n--- AVISOS DA REDE (valem hoje para todas as unidades; num mesmo assunto, o aviso vale mais que os serviços da rede acima) ---\n" + linhas.join("\n");
+}
+
+async function carregarAvisos(supabase: ReturnType<typeof createClient<Database>>, hoje: string): Promise<AvisoValido[]> {
+  const { data } = await supabase.from("documentos_rag").select("titulo, conteudo, metadados, unidade_cuca").eq("tipo", "aviso").eq("ativo", true).order("created_at", { ascending: true });
+  return avisosValidos(data, hoje);
+}
+
 // PREMISSA (S-WM-17): esta function espera ser chamada DEPOIS que o lead, a conversa e a
 // mensagem do lead já foram persistidos por quem a invoca (hoje, só o worker Meta —
 // worker/meta_adapter_inbound.py::_chamar_motor_agente). A busca de lead/conversa abaixo
@@ -4726,7 +4783,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     const adicionarBloco = (nome: string, texto: string) => { if (texto) blocosContexto.push({ nome, texto }); };
     const reiniciarBlocos = (comServicos: boolean) => {
       blocosContexto.length = 0;
-      if (comServicos) adicionarBloco("servicos_rede", contextServicos);
+      if (comServicos) {
+        adicionarBloco("servicos_rede", contextServicos);
+        adicionarBloco("avisos", contextAvisos);
+      }
     };
     // S-WM-AUD-007 / Plano 012: os pontos abaixo SO escrevem nesta variavel — nenhum deles muda
     // `contextRAG`, condicao ou fluxo. O insert acontece uma unica vez, no fim do Passo 6.5.
@@ -4762,6 +4822,8 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     // branch de agentes sem programação usa `reiniciarBlocos(false)`, como antes.
     const servicosRedeConteudo = isAgenteProgramacao ? await carregarServicosRede(supabase) : "";
     const contextServicos = servicosRedeConteudo ? "\n\n--- SERVICOS DA REDE (comuns + excecoes por unidade) ---\n" + servicosRedeConteudo : "";
+    // S-INST-QUAL-08: avisos `geral` válidos hoje (Fortaleza), inteiros, sempre junto da base institucional.
+    const contextAvisos = isAgenteProgramacao ? montarBlocoAvisos(await carregarAvisos(supabase, hojeFortalezaISO())) : "";
     const ultimaMsgAgente = [...historico].reverse().find((m) => m.role === 'assistant');
     // Item 3 (S-WM-21, cont. VAL-08): dígito solto só conta como seleção de menu de categorias
     // se o ESTADO da conversa confirma que a resposta anterior do agente foi de fato um menu de

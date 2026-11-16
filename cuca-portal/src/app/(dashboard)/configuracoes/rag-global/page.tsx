@@ -25,6 +25,7 @@ import {
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { format } from "date-fns"
+import { AvisosRede } from "./avisos-rede"
 import { ptBR } from "date-fns/locale"
 
 type Documento = {
@@ -285,6 +286,9 @@ export default function RagGlobalPage() {
                     Após criar, clique em <strong>Indexar</strong> para processar no RAG.
                 </span>
             </div>
+
+            {/* S-INST-QUAL-08: avisos da rede com validade */}
+            <AvisosRede />
 
             {/* Tabela */}
             <Card>
