@@ -2383,7 +2383,26 @@ export function listarNomesPorUnidade(itens: ItemProgramacao[]): string {
 export function montarConsultaComContexto(
   itensRede: ItemProgramacao[],
   consulta: { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; listarPorIdade?: boolean; tituloExato?: string | null },
-): { situacao: "na_unidade" | "outras_unidades" | "nenhuma" | "rede" | "area" | "sem_atividade" | "idade"; bloco: string; area: AreaProgramacao | null } {
+): { situacao: "na_unidade" | "outras_unidades" | "nenhuma" | "rede" | "area" | "sem_atividade" | "idade" | ResultadoConsultaDia["situacao"]; bloco: string; area: AreaProgramacao | null; dia?: string; foraDoContexto?: string } {
+  // S-INST-QUAL-13: com dia da semana na pergunta, as palavras de dia ("sábados", "fim de semana") não
+  // são atividade. Sem nenhuma palavra que identifique atividade, a consulta é pelo dia (antes caía em
+  // "nenhuma" quando o modelo punha "sábados" em termos_busca — 15/11, Jangurussu e sem unidade).
+  const dias = diasDoContexto(consulta.contexto);
+  if (dias && !consulta.tituloExato) {
+    const uteis = (fontes: string[]) => [...new Set(fontes.flatMap((t) => palavrasChaveProgramacao(t)))].filter((p) => !PALAVRAS_DE_DIA.has(p) && !PALAVRAS_DE_UNIDADE.has(p));
+    const daLeitura = consulta.atividade || consulta.termos.length ? uteis([consulta.atividade ?? "", ...consulta.termos]) : [];
+    if (daLeitura.length) {
+      // Atividade lida junto com o dia ("natação no sábado", "tem xadrez no sábado?"): caminho da
+      // atividade, só com as palavras que não são de dia nem de unidade (sem casar = "nenhuma", como antes).
+      consulta = { ...consulta, atividade: null, termos: daLeitura };
+    } else {
+      // Sem atividade na leitura: palavra que sobra do texto ("walter", "funcionando") só vira atividade
+      // se casar com um título; senão, é consulta pelo dia.
+      const doTexto = uteis([consulta.texto]);
+      if (itensQueCasamComPalavras(itensRede, doTexto).length === 0) return consultaPorDia(itensRede, consulta, dias);
+      consulta = { ...consulta, atividade: null, termos: doTexto };
+    }
+  }
   // S-INST-QUAL-06 (só a rota estruturada preenche os dois campos opcionais; sem eles, nada muda):
   // idade sem atividade → lista o que serve para a idade no escopo, pela faixa do texto da programação.
   if (consulta.listarPorIdade && !consulta.atividade && !consulta.termos.length && !consulta.area) {
@@ -2425,6 +2444,199 @@ export function montarConsultaComContexto(
 /** Contexto que a programação NÃO traz — nunca vira filtro nem afirmação de adequação. */
 export const CONTEXTO_SEM_DADO = ["deficiencia", "acessibilidade", "dificuldade", "local", "bairro", "saude", "condicao"];
 
+// ── S-INST-QUAL-13: dia da semana ───────────────────────────────────────────────────────────
+// "Quais cursos tem aos sábados?" respondia "não encontrei" porque o dia não filtrava nada. O dia
+// está escrito no detalhe de cada item, em três formatos: "Período: 07/11/2026 a 28/11/2026 (Sáb)"
+// (cursos), "Dias: Ter e Qui" (esportes) e "Data: 07/11 a 28/11 (Sábado)" / "(Quinta-feira)" (Dia a Dia).
+export type DiaSemana = "seg" | "ter" | "qua" | "qui" | "sex" | "sab" | "dom";
+const DIAS_ORDEM: DiaSemana[] = ["seg", "ter", "qua", "qui", "sex", "sab", "dom"];
+export const NOME_DIA: Record<DiaSemana, string> = { seg: "segunda", ter: "terça", qua: "quarta", qui: "quinta", sex: "sexta", sab: "sábado", dom: "domingo" };
+// Palavras de dia que não identificam atividade — só saem das palavras-chave quando há dia na pergunta
+// (fora disso a lista geral não muda: "FIM DE ANO" ou "FEIRA DE CIÊNCIAS" continuam casando).
+const PALAVRAS_DE_DIA = new Set(["fds", "seg", "segunda", "ter", "terca", "qua", "quarta", "qui", "quinta", "sex", "sexta", "sab", "sabado", "dom", "domingo", "fim", "fins", "final", "finais", "semana", "feira", "feiras"]);
+const RE_FIM_DE_SEMANA = /\b(fim|fins|final|finais) de semana\b|\bfds\b/;
+const RE_DIA_EXTENSO = "(segunda|terca|quarta|quinta|sexta|sabado|domingo)s?(?:[- ]feiras?)?";
+
+function diaPelaPalavra(p: string): DiaSemana | null {
+  const d = p.slice(0, 3) as DiaSemana;
+  return DIAS_ORDEM.includes(d) ? d : null;
+}
+
+/** "segunda a sexta" → seg, ter, qua, qui, sex (na ordem da semana). */
+function diasDoIntervalo(de: DiaSemana, ate: DiaSemana): DiaSemana[] {
+  const i = DIAS_ORDEM.indexOf(de);
+  const j = DIAS_ORDEM.indexOf(ate);
+  return i <= j ? DIAS_ORDEM.slice(i, j + 1) : [];
+}
+
+/** Dias citados num texto curto (o campo de dia do item ou o `contexto.dia` do modelo): abreviados ou por extenso. */
+function diasNoTextoCurto(texto: string): Set<DiaSemana> {
+  const norm = normalizarTexto(texto);
+  const dias = new Set<DiaSemana>();
+  if (RE_FIM_DE_SEMANA.test(norm)) { dias.add("sab"); dias.add("dom"); }
+  for (const m of norm.matchAll(/\b(segunda|terca|quarta|quinta|sexta|sabado|domingo|seg|ter|qua|qui|sex|sab|dom)s?\b/g)) {
+    const d = diaPelaPalavra(m[1]);
+    if (d) dias.add(d);
+  }
+  return dias;
+}
+
+/** Dias em que o item acontece, lidos só dos campos de data/dia do detalhe (nunca de "Informações"); null = sem dia legível. */
+export function diasDoItem(detalhe: string): Set<DiaSemana> | null {
+  const dias = new Set<DiaSemana>();
+  for (const m of normalizarTexto(detalhe).matchAll(/\b(?:periodo|data|dias?)\s*:\s*([^.]*)/g)) {
+    for (const d of diasNoTextoCurto(m[1])) dias.add(d);
+  }
+  return dias.size ? dias : null;
+}
+
+/** Dias pedidos no contexto (`contexto.dia`, texto ou lista); null = sem dia. */
+export function diasDoContexto(contexto: Record<string, unknown>): Set<DiaSemana> | null {
+  const v = contexto.dia;
+  const texto = Array.isArray(v) ? v.map(String).join(" e ") : typeof v === "string" ? v : "";
+  const dias = texto ? diasNoTextoCurto(texto) : new Set<DiaSemana>();
+  return dias.size ? dias : null;
+}
+
+/**
+ * Dias citados na MENSAGEM do lead. Mais rígido que o texto curto: sábado e domingo valem sozinhos,
+ * mas segunda a sexta só com "-feira" ou depois de "na/nas/às/aos/de/toda/todas/e/ou/até" — "a segunda
+ * opção" e "quinta série" não são dia. Abreviação só "sáb"/"sab". "segunda a sexta" vira o intervalo.
+ */
+export function diasDaMensagem(texto: string): Set<DiaSemana> {
+  const norm = normalizarTexto(texto);
+  const dias = new Set<DiaSemana>();
+  if (RE_FIM_DE_SEMANA.test(norm)) { dias.add("sab"); dias.add("dom"); }
+  for (const m of norm.matchAll(new RegExp("\\b" + RE_DIA_EXTENSO + "\\s+(?:a|ate)\\s+" + RE_DIA_EXTENSO + "\\b", "g"))) {
+    const de = diaPelaPalavra(m[1]);
+    const ate = diaPelaPalavra(m[2]);
+    if (de && ate) for (const d of diasDoIntervalo(de, ate)) dias.add(d);
+  }
+  for (const m of norm.matchAll(/\b(sabado|domingo|sab)s?\b/g)) {
+    const d = diaPelaPalavra(m[1]);
+    if (d) dias.add(d);
+  }
+  for (const m of norm.matchAll(/\b(segunda|terca|quarta|quinta|sexta)s?[- ]feiras?\b/g)) {
+    const d = diaPelaPalavra(m[1]);
+    if (d) dias.add(d);
+  }
+  // "na quinta série", "na segunda vez", "a terça parte": ordinal, não dia.
+  for (const m of norm.matchAll(/\b(?:na|nas|as|aos|de|toda|todas|e|ou|ate)\s+(segunda|terca|quarta|quinta|sexta)s?\b(?!\s+(?:serie|series|ano|anos|vez|vezes|opcao|turma|etapa|parte|fase|lugar|colocad))/g)) {
+    const d = diaPelaPalavra(m[1]);
+    if (d) dias.add(d);
+  }
+  return dias;
+}
+
+/**
+ * Contexto do modelo com o dia só quando a mensagem ATUAL fala de dia ("tem curso sexta?", "e quarta?",
+ * "fds"): aí o modelo pega formas que `diasDaMensagem` recusa de propósito. Sem palavra de dia na
+ * mensagem, o dia do modelo veio de mensagens anteriores e sai.
+ */
+export function contextoDoModeloComDiaDaMensagem<T extends Record<string, unknown>>(contextoModelo: T, texto: string): T {
+  const falaDeDia = diasDaMensagem(texto).size > 0 || /\b(fds|seg|qua|qui|sex|sab|segunda|terca|quarta|quinta|sexta|sabado|domingo)s?\b/.test(normalizarTexto(texto));
+  return falaDeDia ? contextoModelo : semDia(contextoModelo);
+}
+
+/** "sábado", "sábado e domingo", "terça, quarta e quinta" (na ordem da semana). */
+export function descreverDias(dias: Set<DiaSemana>): string {
+  const nomes = DIAS_ORDEM.filter((d) => dias.has(d)).map((d) => NOME_DIA[d]);
+  return nomes.length <= 1 ? (nomes[0] ?? "") : nomes.slice(0, -1).join(", ") + " e " + nomes[nomes.length - 1];
+}
+
+/**
+ * O dia vale só para o turno em que a pessoa o escreveu: nunca é herdado da sessão (`prog_contexto`)
+ * nem do que o modelo leu de mensagens anteriores. "o que tem sábado?" seguido de "e natação?" não
+ * filtra a natação pelo sábado (comportamento de antes da S-13; decisão a confirmar com o Junior).
+ */
+export function semDia<T extends Record<string, unknown>>(contexto: T | null | undefined): T {
+  const { dia: _dia, ...resto } = (contexto ?? {}) as Record<string, unknown>;
+  return resto as T;
+}
+
+/** Item que acontece num dos dias pedidos (dia confirmado no detalhe). */
+function itemNoDia(it: ItemProgramacao, dias: Set<DiaSemana>): boolean {
+  const d = diasDoItem(it.detalhe);
+  return d !== null && [...dias].some((x) => d.has(x));
+}
+
+/** Resumo de uma linha: título, área, quando e horário — para citar as outras áreas do mesmo dia (P2). */
+function resumoItemNoDia(it: ItemProgramacao): string {
+  const quando = it.detalhe.match(/\b(?:Per[ií]odo|Data|Dias?)\s*:\s*([^.]*)/i)?.[1]?.trim();
+  const horario = it.detalhe.match(/Hor[aá]rio:\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:as|às|a)\s*\d{1,2}:\d{2}(?::\d{2})?)/i)?.[1]?.trim();
+  // Dia a Dia: o título é o programa ("COMUNIDADE EM PAUTA") e a atividade do dia vem em "Atividade:".
+  const atividade = it.detalhe.match(/\bAtividade:\s*([^.]*)/)?.[1]?.trim();
+  const nome = atividade && normalizarTexto(atividade) !== normalizarTexto(it.titulo) ? it.titulo + ": " + atividade : it.titulo;
+  return nome + (it.area ? " (" + ROTULO_AREA[it.area] + ")" : "") + (quando ? " — " + quando : "") + (horario ? ", " + horario : "");
+}
+
+type ResultadoConsultaDia = { situacao: "dia_na_unidade" | "dia_outras_unidades" | "dia_rede" | "dia_fora_do_contexto" | "dia_nenhuma"; bloco: string; area: AreaProgramacao | null; dia: string; foraDoContexto?: string };
+
+/**
+ * S-INST-QUAL-13 (P1 e P2, Junior, 16/11): pergunta por dia da semana sem atividade ("quais cursos tem aos
+ * sábados?", "o que tem no domingo?"). Só entram itens com o dia confirmado no detalhe — afirmar "tem no
+ * sábado" exige o dado. O resto do contexto (idade, gênero, turno) também vale.
+ * - unidade com a área no dia: lista;
+ * - unidade sem, outras com (P1): diz que a unidade não tem e lista as outras unidades;
+ * - em todos os casos com área, as outras áreas da unidade no mesmo dia vão numa linha (P2).
+ */
+export function consultaPorDia(
+  itensRede: ItemProgramacao[],
+  consulta: { area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string },
+  dias: Set<DiaSemana>,
+): ResultadoConsultaDia {
+  const area = consulta.area;
+  const dia = descreverDias(dias);
+  const rotulo = area ? ROTULO_AREA[area] : "atividades";
+  const doDia = itensRede.filter((it) => itemNoDia(it, dias));
+  const comContexto = filtrarItensPorContexto(doDia, consulta.contexto);
+  const daArea = (it: ItemProgramacao) => !area || it.area === area;
+  const alvo = comContexto.filter(daArea);
+  const outroContexto = descreverContexto(semDia(consulta.contexto));
+  const foraDoContexto = doDia.filter(daArea).filter((it) => !comContexto.includes(it));
+  const nota = (itens: ItemProgramacao[]) => itens.length && outroContexto
+    ? "\n\nTem " + rotulo + " no " + dia + ", mas NAO para o contexto informado (" + outroContexto + ") — nao diga que essas unidades nao tem:\n" + formatarItensPorUnidade(itens, itens)
+    : "";
+  const outrasAreas = (pred: (it: ItemProgramacao) => boolean, titulo: string) => {
+    if (!area) return "";
+    const itens = comContexto.filter((it) => it.area !== area && pred(it));
+    return itens.length ? "\n\n" + titulo + ":\n" + itens.map((it) => "• " + (consulta.escopo === ESCOLHA_REDE ? it.unidade + ": " : "") + resumoItemNoDia(it)).join("\n") : "";
+  };
+
+  // Tem no dia, mas nada serve para o resto do contexto (ex.: "turno: noite" da conversa): nunca "nenhuma".
+  const soForaDoContexto = (itens: ItemProgramacao[], extra: string): ResultadoConsultaDia => ({
+    situacao: "dia_fora_do_contexto",
+    bloco: "Tem " + rotulo + " no " + dia + ", mas NAO para o contexto informado (" + outroContexto + "):\n" + formatarItensPorUnidade(itens, itens) + extra,
+    area,
+    dia,
+    foraDoContexto: outroContexto,
+  });
+  if (consulta.escopo === ESCOLHA_REDE) {
+    if (alvo.length) return { situacao: "dia_rede", bloco: rotulo + " no " + dia + ", por unidade:\n" + formatarItensPorUnidade(alvo, alvo) + nota(foraDoContexto), area, dia };
+    const p2Rede = outrasAreas(() => true, "Outras atividades no " + dia + " na rede (outras areas)");
+    if (foraDoContexto.length && outroContexto) return soForaDoContexto(foraDoContexto, p2Rede);
+    return { situacao: "dia_nenhuma", bloco: p2Rede.trim(), area, dia };
+  }
+  const unidade = consulta.escopo;
+  const naUnidade = alvo.filter((it) => it.unidade === unidade);
+  const p2 = outrasAreas((it) => it.unidade === unidade, "Outras atividades no " + unidade + " no " + dia + " (outras areas)");
+  if (naUnidade.length) {
+    return { situacao: "dia_na_unidade", bloco: rotulo + " no " + dia + " no " + unidade + ":\n" + formatarItensPorUnidade(naUnidade, naUnidade) + p2, area, dia };
+  }
+  const outras = alvo.filter((it) => it.unidade !== unidade);
+  const foraNaUnidade = foraDoContexto.filter((it) => it.unidade === unidade);
+  if (outras.length) {
+    return {
+      situacao: "dia_outras_unidades",
+      bloco: "No " + unidade + " NAO ha " + rotulo + " no " + dia + " na programacao deste mes.\n\n" + rotulo + " no " + dia + " em outras unidades:\n" + formatarItensPorUnidade(outras, outras) + p2 + nota(foraNaUnidade),
+      area,
+      dia,
+    };
+  }
+  if (foraDoContexto.length && outroContexto) return soForaDoContexto(foraDoContexto, p2);
+  return { situacao: "dia_nenhuma", bloco: p2.trim(), area, dia };
+}
+
 /**
  * S-WM-72 (R4): aplica o contexto que EXISTE nos dados — idade (faixa no detalhe), gênero
  * ("Público: Feminino/Masculino/Misto") e turno (primeiro horário do detalhe). Item sem o dado
@@ -2436,7 +2648,13 @@ export function filtrarItensPorContexto(itens: ItemProgramacao[], contexto: Reco
   const idade = typeof contexto.idade === "number" ? contexto.idade : typeof contexto.idade === "string" && /^\d{1,3}$/.test(contexto.idade.trim()) ? Number(contexto.idade) : null;
   const genero = typeof contexto.genero === "string" ? normalizarTexto(contexto.genero) : "";
   const turno = typeof contexto.turno === "string" ? normalizarTexto(contexto.turno) : "";
+  // S-INST-QUAL-13: dia da semana. Item sem dia legível fica, como na idade e no turno.
+  const dias = diasDoContexto(contexto);
   return itens.filter((it) => {
+    if (dias) {
+      const diasItem = diasDoItem(it.detalhe);
+      if (diasItem && ![...dias].some((d) => diasItem.has(d))) return false;
+    }
     if (idade !== null) {
       const faixa = faixaEtariaDoDetalhe(it.detalhe);
       if (faixa && faixaAceitaIdade(faixa, idade) === false) return false;
@@ -2485,6 +2703,9 @@ export function lerMensagemAtual(texto: string): { escopo: string | null; contex
   else if (/\b(de|pela|a) manha\b|\bmatutin|\bcedo\b/.test(norm)) contexto.turno = "manha";
   if (/\bfeminin|\bmeninas\b|\bmulheres\b/.test(norm)) contexto.genero = "feminino";
   else if (/\bmasculin|\bmeninos\b|\bhomens\b/.test(norm)) contexto.genero = "masculino";
+  // S-INST-QUAL-13: dia da semana escrito na mensagem ("aos sábados", "no domingo", "fim de semana").
+  const dias = diasDaMensagem(texto);
+  if (dias.size) contexto.dia = descreverDias(dias);
   return { escopo: unidade ?? (rede ? ESCOLHA_REDE : null), contexto };
 }
 
@@ -2494,7 +2715,8 @@ export function consolidarInterpretacao(interp: InterpretacaoTurno, texto: strin
   const lido = lerMensagemAtual(texto);
   // O modelo às vezes devolve a atividade sem as variações de grafia — a busca usa a própria atividade.
   const termos = interp.termos_busca.length || !interp.atividade ? interp.termos_busca : palavrasChaveProgramacao(interp.atividade);
-  const base = { ...interp, termos_busca: termos, escopo: lido.escopo, contexto: { ...interp.contexto, ...lido.contexto } };
+  // S-INST-QUAL-13: o dia vem só da mensagem atual (o modelo lê a sessão inteira e repetiria o de antes).
+  const base = { ...interp, termos_busca: termos, escopo: lido.escopo, contexto: { ...contextoDoModeloComDiaDaMensagem(interp.contexto, texto), ...lido.contexto } };
   // "quais cursos tem?" no meio da conversa de natação: a palavra "curso" define a área — não existe
   // curso de modalidade esportiva. Só quando a atividade NÃO está escrita na mensagem (veio da
   // conversa) e não é ela mesma um curso; "tem curso de natação?" continua natação (Esportes).
@@ -2912,7 +3134,8 @@ export function consolidarLeitura(leituraModelo: LeituraTurno, texto: string, me
   // "toda a rede" do modelo só vale com apoio no texto ("onde tem", "cada unidade"...): "quais cursos
   // tem?" não diz rede, e com unidade salva o escopo tem que vir dela (ou da confirmação).
   else if (escopo !== ESCOLHA_REDE || !textoPedeRede(texto)) escopo = ESCOPO_NAO_DISSE;
-  const contexto = { ...leitura.contexto, ...lido.contexto };
+  // S-INST-QUAL-13: o dia vem só da mensagem atual (o modelo lê a sessão inteira e repetiria o de antes).
+  const contexto = { ...contextoDoModeloComDiaDaMensagem(leitura.contexto, texto), ...lido.contexto };
   const idade = typeof lido.contexto.idade === "number" ? lido.contexto.idade : leitura.idade;
   if (idade !== null) contexto.idade = idade;
   const termos = leitura.termos_busca.length || !leitura.atividade ? leitura.termos_busca : palavrasChaveProgramacao(leitura.atividade);
@@ -2963,7 +3186,13 @@ export function completarSoUnidadeComPedidoAnterior(leitura: LeituraTurno, pedid
   if (leitura.tipo !== "so_unidade" || leitura.atividade || leitura.termos_busca.length || !pedidoAnterior.trim()) return leitura;
   if (leitura.escopo === ESCOPO_NAO_DISSE || leitura.unidade_citada === UNIDADE_VARIAS) return leitura;
   const termos = palavrasChaveProgramacao(pedidoAnterior).filter((p) => !PALAVRAS_DE_UNIDADE.has(p) && itensQueCasamComPalavras(itens, [p]).length > 0);
-  if (!termos.length) return leitura;
+  if (!termos.length) {
+    // S-INST-QUAL-13: "quais cursos tem aos sábados?" → "não tem no JW; tem no Mondubim e no Pici" →
+    // "Pici" = cursos aos sábados no Pici (a pergunta anterior traz o dia e a área).
+    const dias = diasDaMensagem(pedidoAnterior);
+    if (!dias.size) return leitura;
+    return { ...leitura, tipo: "continuacao", assunto: "programacao", area: areaPeloVocabulario(pedidoAnterior) ?? leitura.area, contexto: { ...leitura.contexto, dia: descreverDias(dias) } };
+  }
   return { ...leitura, tipo: "continuacao", assunto: "programacao", atividade: termos.join(" "), termos_busca: termos };
 }
 
@@ -4080,7 +4309,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     const unidadeAntesDaSessao = (metadataInicialDaSessao.unidade_selecionada as string | null | undefined) ?? null;
     // Contexto da conversa de antes do corte (idade, interesse...): volta a valer se a pessoa confirmar
     // a mesma unidade; com "não", a conversa recomeça sem ele.
-    const contextoAntesDaSessao = (metadataInicialDaSessao.prog_contexto ?? {}) as Record<string, unknown>;
+    const contextoAntesDaSessao = semDia(metadataInicialDaSessao.prog_contexto as Record<string, unknown> | null); // S-INST-QUAL-13
     if (sessaoNova) {
       await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: LIMPEZA_ESTADO_SESSAO });
       metadataInicialDaSessao = { ...metadataInicialDaSessao, ...LIMPEZA_ESTADO_SESSAO };
@@ -4247,8 +4476,11 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     if (ehAgenteDeProgramacao && unidade_cuca === 'Geral') {
       const pendente = (metadataAtual.prog_pendente ?? null) as PendenteProgramacao | null;
       const escopoSessao: string | null = (metadataAtual.unidade_selecionada as string | null) || (metadataAtual.prog_escopo === ESCOLHA_REDE ? ESCOLHA_REDE : null);
-      const contextoSessao = (metadataAtual.prog_contexto ?? {}) as Record<string, unknown>;
-      const gravarMetadata = async (patch: Record<string, unknown>) => {
+      // S-INST-QUAL-13: o dia guardado na sessão não vale para os turnos seguintes (ver `semDia`).
+      const contextoSessao = semDia(metadataAtual.prog_contexto as Record<string, unknown> | null);
+      const gravarMetadata = async (patchRecebido: Record<string, unknown>) => {
+        // S-INST-QUAL-13: o dia não fica no contexto da sessão (vale só no turno em que foi escrito).
+        const patch = patchRecebido.prog_contexto ? { ...patchRecebido, prog_contexto: semDia(patchRecebido.prog_contexto as Record<string, unknown>) } : patchRecebido;
         metadataAtual = { ...metadataAtual, ...patch };
         await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: metadataAtual as unknown as Database["public"]["Functions"]["merge_conversa_metadata"]["Args"]["p_patch"] });
       };
@@ -4887,6 +5119,12 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         nenhuma: "Nao foi encontrado(a) " + sobre + (contextoTxt ? " para esse contexto (" + contextoTxt + ")" : "") + " em nenhuma unidade na programacao deste mes (a busca foi feita em todas as unidades). Diga isso com suas palavras e pergunte se e onde a pessoa quer saber de outras opcoes de " + (r.area ? ROTULO_AREA[r.area] : "programacao") + (contextoTxt ? " para esse contexto" : "") + " — no " + (c.escopo === ESCOLHA_REDE ? "uma unidade especifica" : nomeEscopo + ", em outra unidade") + " ou em toda a Rede CUCA. NUNCA responda so 'nao tem'.",
         area: "Liste so os nomes das atividades do bloco '--- PROGRAMACAO VIGENTE ---' (area " + (r.area ? ROTULO_AREA[r.area] : "") + ", " + nomeEscopo + "), de forma compacta, e pergunte qual interessa para mostrar dias e horarios. Nao liste atividades de outras areas.",
         sem_atividade: "Responda a pergunta usando o FAQ e os servicos da rede, se cobrirem; para programacao, pergunte qual atividade ou area a pessoa procura. Nao invente atividades.",
+        // S-INST-QUAL-13 (P1 e P2): pergunta por dia da semana, conferida na programação do mês.
+        dia_na_unidade: "Responda usando o bloco '--- PROGRAMACAO VIGENTE ---': liste o que o " + nomeEscopo + " tem de " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " no " + r.dia + ", com dias e horarios. Se o bloco trouxer 'Outras atividades', cite-as em uma linha no fim.",
+        dia_outras_unidades: "O " + nomeEscopo + " nao tem " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " no " + r.dia + " na programacao deste mes. Diga isso e informe, usando so o bloco '--- PROGRAMACAO VIGENTE ---', quais unidades tem " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " no " + r.dia + "; pergunte se a pessoa quer saber de alguma delas, " + opcoesNumeradas + ". Se o bloco trouxer 'Outras atividades no " + nomeEscopo + "', cite-as em uma linha. NUNCA diga que a rede nao tem " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " no " + r.dia + ".",
+        dia_fora_do_contexto: "No " + r.dia + " tem " + (r.area ? ROTULO_AREA[r.area] : "atividades") + ", mas nada para o contexto da conversa (" + (r.foraDoContexto ?? "") + "). Diga isso e mostre, usando so o bloco '--- PROGRAMACAO VIGENTE ---', o que tem no " + r.dia + " (unidade, dias e horarios); pergunte se algum desses serve. NUNCA diga que nao tem " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " no " + r.dia + ".",
+        dia_rede: "Responda usando o bloco '--- PROGRAMACAO VIGENTE ---', dizendo em quais unidades tem " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " no " + r.dia + ", com dias e horarios.",
+        dia_nenhuma: "Nenhuma unidade " + (c.escopo === ESCOLHA_REDE ? "da rede" : "(conferido no " + nomeEscopo + " e nas outras)") + " tem " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " no " + r.dia + " na programacao deste mes. Diga isso com suas palavras; se o bloco '--- PROGRAMACAO VIGENTE ---' trouxer outras atividades no " + r.dia + ", cite-as em uma linha. Pergunte se a pessoa quer saber de " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " em outros dias. A programacao e a do mes atual: nao fale de meses anteriores.",
         // S-INST-QUAL-06: só a rota estruturada chega aqui (listarPorIdade).
         idade: "Liste, de forma compacta, os nomes das atividades do bloco '--- PROGRAMACAO VIGENTE ---' (" + nomeEscopo + "), que ja foram filtradas pela idade informada, e pergunte qual interessa para mostrar dias e horarios. Nao liste atividades fora do bloco.",
       };
@@ -4896,7 +5134,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         + (semDado.length ? " A programacao NAO informa adequacao para: " + semDado.join(", ") + " — nunca afirme que a atividade e adequada; diga que a programacao nao traz essa informacao e sugira confirmar com a unidade." : "")
         + " Se a pergunta tambem tiver uma parte que nao e programacao (ex.: matricula, documentos), responda essa parte com o FAQ e os servicos da rede.";
       logRAG = { camada: "programacao_contexto", atividadeResolvida: c.atividade };
-      console.log("[motor-agente v18] Consulta S-WM-72: situacao=" + r.situacao + " escopo=" + nomeEscopo + " atividade=" + c.atividade + " contexto=" + contextoTxt);
+      console.log("[motor-agente v18] Consulta S-WM-72: situacao=" + r.situacao + " escopo=" + nomeEscopo + " atividade=" + c.atividade + " contexto=" + contextoTxt + (r.dia ? " dia=" + r.dia : ""));
     } else if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
       // S-WM-43 (PERF-02, Par 3): carregarProgramacaoMensal e gerarEmbedding não dependem de
       // dado um do outro (o embedding usa textoFinal, não conteudoPrograma) — paralelizados.
@@ -4974,7 +5212,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // o que a pessoa procura, nunca a frase de recusa de assunto fora do CUCA.
       reiniciarBlocos(true);
       // S-WM-72 (R8): aplica também o contexto da sessão (idade, gênero, turno).
-      const itensComContexto = filtrarItensPorContexto(await carregarItensProgramacaoRede(supabase, !supabaseOverride), (metadataAtual.prog_contexto ?? {}) as Record<string, unknown>);
+      const itensComContexto = filtrarItensPorContexto(await carregarItensProgramacaoRede(supabase, !supabaseOverride), semDia(metadataAtual.prog_contexto as Record<string, unknown> | null));
       const blocoRede = montarBlocoRedeComAtividadeDaSessao(itensComContexto, textoRota, historico);
       outrasUnidadesComAtividade = blocoRede !== "";
       if (blocoRede) {
