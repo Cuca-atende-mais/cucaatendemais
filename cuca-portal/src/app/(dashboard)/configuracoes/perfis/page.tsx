@@ -30,6 +30,7 @@ import toast from "react-hot-toast"
 import { ACOES_CRUD, GRUPOS_PROGRAMACAO_MENSAL, type CampoPermissao, type GrupoPermissao } from "@/lib/rbac/catalogo-programacao-mensal"
 import { GRUPOS_PROGRAMACAO_PONTUAL } from "@/lib/rbac/catalogo-programacao-pontual"
 import { GRUPOS_DIVULGACAO_RAG_GLOBAL, completarVerDivulgacao } from "@/lib/rbac/catalogo-divulgacao-rag-global"
+import { GRUPOS_AVISOS } from "@/lib/rbac/catalogo-avisos"
 import { GRUPOS_EMPREGABILIDADE_GESTAO } from "@/lib/rbac/catalogo-empregabilidade-gestao"
 import { GRUPOS_PLANEJAMENTO } from "@/lib/rbac/catalogo-planejamento"
 import { limitarAcoes, linhaCompleta, marcarCampo, marcarLinha } from "@/lib/rbac/matriz-permissoes"
@@ -123,6 +124,8 @@ const MODULE_GROUPS: GrupoPermissao[] = [
     },
     // S-PROG-16: substitui "Divulgação & RAG Global" (módulos antigos `divulgacao` e `programacao_rag_global`).
     ...GRUPOS_DIVULGACAO_RAG_GLOBAL,
+    // S-INST-QUAL-08: avisos da rede com validade (tela da Base de Conhecimento Global).
+    ...GRUPOS_AVISOS,
     {
         category: 'Módulo Técnico',
         modules: [
