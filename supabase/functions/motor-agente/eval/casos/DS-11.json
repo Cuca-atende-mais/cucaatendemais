@@ -1,0 +1,53 @@
+{
+ "previa": null,
+ "conversa_curta": null,
+ "mes_catalogo": "2026-11",
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Quais são os cursos que tem aos sábados?",
+   "minutos_antes": 3
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "No Cuca José Walter não há Cursos e Oficinas aos sábados na programação deste mês. \n\nPorém, em outras unidades, temos as seguintes opções:\n\n**Cuca Mondubim:**\n1️⃣ Curso dBásico e Libras III — Sábados, 09:00 às 12:00. \n\n**Cuca Pici:**\n2️⃣ Tech Start: Automatize, Inove e Lucre com Python & Inteligência Artificial — Sábados, 08:00 às 12:00.\n3️⃣ Tech Start: Automatize, Inove e Lucre com Python & Inteligência Artificial — Sábados, 13:00 às 17:00.\n\nQuer saber mais detalhes de algum desses cursos? 😊",
+   "minutos_antes": 2
+  }
+ ],
+ "id": "DS-11",
+ "categoria": "busca_unidade",
+ "descricao": "Achado 1 da S-14: lista de P1 numerada por curso, com a unidade como título (resposta real de 17/11); a pessoa responde '2' → cursos no sábado no Pici",
+ "origem": "S-INST-QUAL-15 (17/11): revisão da S-14, rodada real de DS-01",
+ "data_simulada": "2026-11-16T15:00:00-03:00",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca José Walter",
+   "conversa_engajada": true,
+   "prog_contexto": {
+    "dia": "sábado"
+   },
+   "prog_ultima_consulta": {
+    "texto": "Quais são os cursos que tem aos sábados?",
+    "atividade": null,
+    "termos": [],
+    "area": "CURSOS",
+    "contexto": {
+     "dia": "sábado"
+    },
+    "tituloExato": null,
+    "marca": "no cuca jose walter nao ha cursos e oficinas aos sabados na "
+   }
+  }
+ },
+ "mensagem": "2",
+ "esperado": {
+  "deve_conter": [
+   "tech start"
+  ],
+  "nao_deve_conter": [
+   "qual area",
+   "nao (tem|ha) curso"
+  ]
+ },
+ "observacao": "Resposta esperada definida na S-15 e aprovada em 17/11. Só mede de verdade na rodada real. A linha 2 não cita unidade: a unidade vem do título 'Cuca Pici' acima dela."
+}
