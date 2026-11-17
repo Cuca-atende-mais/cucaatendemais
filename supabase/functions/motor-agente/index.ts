@@ -2294,7 +2294,36 @@ export function unidadeDaListaDaConsulta(numero: string, blocoAnterior: string, 
   const linha = linhaNumeradaDaLista(numero, blocoAnterior);
   if (!linha) return null;
   const unidades = unidadesCitadas(linha);
-  return unidades.length === 1 ? unidades[0] : null;
+  if (unidades.length === 1) return unidades[0];
+  if (unidades.length > 1) return null;
+  return unidadeDoTituloAcima(blocoAnterior, linha);
+}
+
+/** Linha de item de lista: numerada (1️⃣, "1.", "1)") ou com marcador ("•", "-"). */
+function ehLinhaDeItemNumeradoOuMarcado(linha: string): boolean {
+  const t = linha.trim().replace(/\*\*/g, "").trim();
+  return /^\d{1,2}(?:️?⃣|[.)])/.test(t) || /^[•\-–]\s/.test(t);
+}
+
+/**
+ * S-INST-QUAL-15 (achado 1): lista numerada por curso, com a unidade como título ("**Cuca Pici:**" e,
+ * embaixo, "2️⃣ Tech Start…"). Sobe a partir da linha do número, passando por outros itens e linhas
+ * vazias, até o primeiro título: linha curta, sem número, que cita exatamente uma unidade. Qualquer
+ * outra frase no caminho (ex.: "Porém, em outras unidades, temos:" ou a abertura "No Cuca José Walter
+ * não há…", que cita a unidade CONSULTADA) encerra a busca sem unidade.
+ */
+function unidadeDoTituloAcima(bloco: string, linhaDoNumero: string): string | null {
+  const linhas = bloco.split("\n");
+  const i = linhas.indexOf(linhaDoNumero);
+  for (let k = i - 1; k >= 0; k--) {
+    const l = linhas[k].trim();
+    if (!l || ehLinhaDeItemNumeradoOuMarcado(l)) continue;
+    const titulo = l.replace(/\*\*/g, "").replace(/[:：]\s*$/, "").trim();
+    const unidades = unidadesCitadas(titulo);
+    const curto = titulo.length <= 40 && titulo.split(/\s+/).length <= 5 && !/[.?!]/.test(titulo);
+    return curto && unidades.length === 1 ? unidades[0] : null;
+  }
+  return null;
 }
 
 /** Texto da linha N de uma lista numerada (1️⃣, "1.", "1)", com ou sem negrito). */
@@ -2407,7 +2436,7 @@ export function listarNomesPorUnidade(itens: ItemProgramacao[]): string {
  * - nada: "sem_atividade".
  */
 export type ConsultaComContexto = { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; listarPorIdade?: boolean; tituloExato?: string | null; filtroHerdado?: string[] };
-export type ResultadoConsultaComContexto = { situacao: "na_unidade" | "outras_unidades" | "nenhuma" | "rede" | "area" | "sem_atividade" | "idade" | "contexto" | "filtro_herdado" | ResultadoConsultaDia["situacao"]; bloco: string; area: AreaProgramacao | null; dia?: string; foraDoContexto?: string; filtro?: string };
+export type ResultadoConsultaComContexto = { situacao: "na_unidade" | "outras_unidades" | "nenhuma" | "rede" | "area" | "sem_atividade" | "idade" | "contexto" | "filtro_herdado" | ResultadoConsultaDia["situacao"]; bloco: string; area: AreaProgramacao | null; dia?: string; foraDoContexto?: string; filtro?: string; outrasAtividades?: OutrasAtividadesDoDia };
 
 /**
  * S-INST-QUAL-14 (decisão c): dia ou turno que vieram da conversa (não da mensagem atual) e deixam a
@@ -2549,6 +2578,12 @@ export function diasDoContexto(contexto: Record<string, unknown>): Set<DiaSemana
 }
 
 /**
+ * S-INST-QUAL-15 (achado 3): palavras que, logo depois de "segunda"/"2ª"…, fazem dele ordinal e não dia
+ * ("2ª via", "2º grau", "na segunda semana", "de segunda mão"). Uma lista só para as duas regras.
+ */
+const EXCECOES_ORDINAL_DIA = "serie|series|ano|anos|vez|vezes|opcao|opcoes|turma|turmas|etapa|etapas|parte|partes|fase|fases|lugar|colocad\\w*|mao|maos|via|vias|grau|graus|semana|semanas|chamada|chamadas|edicao|edicoes";
+
+/**
  * Dias citados na MENSAGEM do lead. Mais rígido que o texto curto: sábado e domingo valem sozinhos,
  * mas segunda a sexta só com "-feira" ou depois de "na/nas/às/aos/de/toda/todas/e/ou/até" — "a segunda
  * opção" e "quinta série" não são dia. Abreviação só "sáb"/"sab". "segunda a sexta" vira o intervalo.
@@ -2565,7 +2600,7 @@ export function diasDaMensagem(texto: string, agora: Date = new Date()): Set<Dia
   if (/\bsabadao\b/.test(norm)) dias.add("sab");
   const ORDINAL_DIA: Record<string, DiaSemana> = { "2": "seg", "3": "ter", "4": "qua", "5": "qui", "6": "sex" };
   for (const m of norm.matchAll(/(?:^|[^\d])([2-6])\s*[ªº°ao]?\s*-?\s*feiras?\b/g)) dias.add(ORDINAL_DIA[m[1]]);
-  for (const m of norm.matchAll(/\b(?:na|nas|as|aos|de|toda|todas|e|ou|ate)\s+([2-6])\s*[ªº°](?!\s*(?:serie|ano|vez|opcao|turma|etapa|fase|lugar))/g)) dias.add(ORDINAL_DIA[m[1]]);
+  for (const m of norm.matchAll(new RegExp("\\b(?:na|nas|as|aos|de|toda|todas|e|ou|ate)\\s+([2-6])\\s*[ªº°](?!\\s*(?:" + EXCECOES_ORDINAL_DIA + ")\\b)", "g"))) dias.add(ORDINAL_DIA[m[1]]);
   // Dia útil solto no fim da pergunta ou junto do turno ("tem natação segunda?", "quarta à tarde"):
   // nunca depois de artigo ("a segunda?", "quero a quinta" = opção da lista).
   for (const m of norm.matchAll(/\b(segunda|terca|quarta|quinta|sexta)s?\b(?=\s*(?:[?!.,]|$|(?:a|de|pela|no|na)\s+(?:tarde|noite|manha)\b))/g)) {
@@ -2588,7 +2623,7 @@ export function diasDaMensagem(texto: string, agora: Date = new Date()): Set<Dia
     if (d) dias.add(d);
   }
   // "na quinta série", "na segunda vez", "a terça parte": ordinal, não dia.
-  for (const m of norm.matchAll(/\b(?:na|nas|as|aos|de|toda|todas|e|ou|ate)\s+(segunda|terca|quarta|quinta|sexta)s?\b(?!\s+(?:serie|series|ano|anos|vez|vezes|opcao|turma|etapa|parte|fase|lugar|colocad|mao|maos))/g)) {
+  for (const m of norm.matchAll(new RegExp("\\b(?:na|nas|as|aos|de|toda|todas|e|ou|ate)\\s+(segunda|terca|quarta|quinta|sexta)s?\\b(?!\\s+(?:" + EXCECOES_ORDINAL_DIA + "))", "g"))) {
     const d = diaPelaPalavra(m[1]);
     if (d) dias.add(d);
   }
@@ -2826,7 +2861,67 @@ function resumoItemNoDia(it: ItemProgramacao): string {
   return nome + (it.area ? " (" + ROTULO_AREA[it.area] + ")" : "") + (quando ? " — " + quando : "") + (horario ? ", " + horario : "");
 }
 
-type ResultadoConsultaDia = { situacao: "dia_na_unidade" | "dia_outras_unidades" | "dia_rede" | "dia_fora_do_contexto" | "dia_nenhuma"; bloco: string; area: AreaProgramacao | null; dia: string; foraDoContexto?: string };
+const PALAVRAS_MINUSCULAS_NO_NOME = new Set(["de", "da", "do", "das", "dos", "e", "em", "com", "para", "a", "o", "as", "os", "no", "na"]);
+
+/** "VENHA JOGAR" → "Venha Jogar"; nome já em caixa mista fica como está. */
+export function nomeLegivelDaAtividade(nome: string): string {
+  const limpo = nome.replace(/\s+/g, " ").trim();
+  if (limpo !== limpo.toUpperCase()) return limpo;
+  return limpo.toLowerCase().split(" ").map((p, i) => (i > 0 && PALAVRAS_MINUSCULAS_NO_NOME.has(p) ? p : p.charAt(0).toUpperCase() + p.slice(1))).join(" ");
+}
+
+/** Nomes das atividades do P2, sem repetir turmas do mesmo título; no Dia a Dia vale a atividade do dia. */
+function nomesDasAtividades(itens: ItemProgramacao[], comUnidade: boolean): string[] {
+  const nomes: string[] = [];
+  for (const it of itens) {
+    // "Atividade:" só vale como nome quando é curta (no Dia a Dia, "Aulão de Capoeira"); nos Especiais
+    // ela traz a descrição inteira ("A TEMPORADA DE DANÇA NA REDE CUCA É UMA AÇÃO…") e vale o título.
+    const atividade = it.detalhe.match(/\bAtividade:\s*([^.]*)/)?.[1]?.trim();
+    const atividadeCurta = atividade && atividade.length <= 50 && atividade.split(/\s+/).length <= 6 && !atividade.includes(",") ? atividade : null;
+    const base = nomeLegivelDaAtividade(atividadeCurta && normalizarTexto(atividadeCurta) !== normalizarTexto(it.titulo) ? atividadeCurta : it.titulo);
+    const nome = comUnidade ? base + " (" + it.unidade + ")" : base;
+    if (base && !nomes.some((n) => chaveTitulo(n) === chaveTitulo(nome))) nomes.push(nome);
+  }
+  return nomes;
+}
+
+/** A resposta já cita alguma das atividades do P2 (pelo nome, sem acento nem caixa)? */
+function respostaCitaAlguma(resposta: string, nomes: string[]): boolean {
+  const norm = normalizarTexto(resposta).replace(/\s+/g, " ");
+  return nomes.some((n) => {
+    // Sem a unidade entre parênteses e sem o número do fim ("Temporada da Dança 2026" = "temporada da
+    // danca"); só as três primeiras palavras, para aceitar o nome citado de forma mais curta.
+    const chave = normalizarTexto(n.replace(/\s*\([^)]*\)\s*$/, "")).replace(/[^a-z0-9\s]/g, " ").replace(/(\s+\d+)+\s*$/, "").trim().split(/\s+/).slice(0, 3).join(" ");
+    return chave.length >= 3 && norm.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").includes(chave);
+  });
+}
+
+/**
+ * S-INST-QUAL-15 (achado 2, escolha b): o P2 da S-13 ("o que a unidade tem no dia em outras áreas")
+ * deixa de depender do modelo. Se a resposta não citar nenhuma das atividades, o código acrescenta uma
+ * frase com os nomes, antes da pergunta final (ou no fim, se não houver pergunta no último parágrafo).
+ */
+export function garantirOutrasAtividadesDoDia(resposta: string, p2: OutrasAtividadesDoDia | null | undefined): string {
+  if (!p2 || !p2.nomes.length || !resposta.trim() || respostaCitaAlguma(resposta, p2.nomes)) return resposta;
+  const limite = 4;
+  const lista = p2.nomes.slice(0, limite);
+  const nomes = lista.length === 1 ? lista[0] : lista.slice(0, -1).join(", ") + " e " + lista[lista.length - 1];
+  const frase = (p2.onde === "na rede" ? "Na rede" : p2.onde.charAt(0).toUpperCase() + p2.onde.slice(1)) + ", no " + p2.dia + ", também tem: " + nomes + (p2.nomes.length > limite ? ", entre outras" : "") + ".";
+  // Entra antes do fechamento: o último parágrafo curto com pergunta, exclamação, emoji no fim ou
+  // despedida ("Se precisar de mais alguma informação…"). Sem fechamento, vai no fim.
+  const paragrafos = resposta.trimEnd().split(/\n\s*\n/);
+  const ultimo = paragrafos[paragrafos.length - 1].trim();
+  const ehFechamento = ultimo.length <= 200 && (ultimo.includes("?") || /[!\u{1F300}-\u{1FAFF}\u2600-\u27BF]\s*$/u.test(ultimo) || /^(se |qualquer |caso )/i.test(ultimo));
+  if (paragrafos.length > 1 && ehFechamento) {
+    return [...paragrafos.slice(0, -1), frase, ultimo].join("\n\n");
+  }
+  return resposta.trimEnd() + "\n\n" + frase;
+}
+
+/** S-INST-QUAL-15 (achado 2): o P2 em forma de dado — onde, em que dia e os nomes das atividades. */
+export type OutrasAtividadesDoDia = { onde: string; dia: string; nomes: string[] };
+
+type ResultadoConsultaDia = { situacao: "dia_na_unidade" | "dia_outras_unidades" | "dia_rede" | "dia_fora_do_contexto" | "dia_nenhuma"; bloco: string; area: AreaProgramacao | null; dia: string; foraDoContexto?: string; outrasAtividades?: OutrasAtividadesDoDia };
 
 /**
  * S-INST-QUAL-13 (P1 e P2, Junior, 16/11): pergunta por dia da semana sem atividade ("quais cursos tem aos
@@ -2853,14 +2948,20 @@ export function consultaPorDia(
   const nota = (itens: ItemProgramacao[]) => itens.length && outroContexto
     ? "\n\nTem " + rotulo + " no " + dia + ", mas NAO para o contexto informado (" + outroContexto + ") — nao diga que essas unidades nao tem:\n" + formatarItensPorUnidade(itens, itens)
     : "";
-  const outrasAreas = (pred: (it: ItemProgramacao) => boolean, titulo: string) => {
+  // S-INST-QUAL-15 (achado 2): além do texto do bloco, guarda os nomes do P2 para o código garantir a
+  // frase na resposta quando o modelo não os citar.
+  let outrasAtividades: OutrasAtividadesDoDia | undefined;
+  const outrasAreas = (pred: (it: ItemProgramacao) => boolean, titulo: string, onde: string) => {
     if (!area) return "";
     const itens = comContexto.filter((it) => it.area !== area && pred(it));
-    return itens.length ? "\n\n" + titulo + ":\n" + itens.map((it) => "• " + (consulta.escopo === ESCOLHA_REDE ? it.unidade + ": " : "") + resumoItemNoDia(it)).join("\n") : "";
+    if (!itens.length) return "";
+    outrasAtividades = { onde, dia, nomes: nomesDasAtividades(itens, consulta.escopo === ESCOLHA_REDE) };
+    return "\n\n" + titulo + ":\n" + itens.map((it) => "• " + (consulta.escopo === ESCOLHA_REDE ? it.unidade + ": " : "") + resumoItemNoDia(it)).join("\n");
   };
+  const comP2 = (r: ResultadoConsultaDia): ResultadoConsultaDia => (outrasAtividades ? { ...r, outrasAtividades } : r);
 
   // Tem no dia, mas nada serve para o resto do contexto (ex.: "turno: noite" da conversa): nunca "nenhuma".
-  const soForaDoContexto = (itens: ItemProgramacao[], extra: string): ResultadoConsultaDia => ({
+  const soForaDoContexto = (itens: ItemProgramacao[], extra: string): ResultadoConsultaDia => comP2({
     situacao: "dia_fora_do_contexto",
     bloco: "Tem " + rotulo + " no " + dia + ", mas NAO para o contexto informado (" + outroContexto + "):\n" + formatarItensPorUnidade(itens, itens) + extra,
     area,
@@ -2869,28 +2970,28 @@ export function consultaPorDia(
   });
   if (consulta.escopo === ESCOLHA_REDE) {
     if (alvo.length) return { situacao: "dia_rede", bloco: rotulo + " no " + dia + ", por unidade:\n" + formatarItensPorUnidade(alvo, alvo) + nota(foraDoContexto), area, dia };
-    const p2Rede = outrasAreas(() => true, "Outras atividades no " + dia + " na rede (outras areas)");
+    const p2Rede = outrasAreas(() => true, "Outras atividades no " + dia + " na rede (outras areas)", "na rede");
     if (foraDoContexto.length && outroContexto) return soForaDoContexto(foraDoContexto, p2Rede);
-    return { situacao: "dia_nenhuma", bloco: p2Rede.trim(), area, dia };
+    return comP2({ situacao: "dia_nenhuma", bloco: p2Rede.trim(), area, dia });
   }
   const unidade = consulta.escopo;
   const naUnidade = alvo.filter((it) => it.unidade === unidade);
-  const p2 = outrasAreas((it) => it.unidade === unidade, "Outras atividades no " + unidade + " no " + dia + " (outras areas)");
+  const p2 = outrasAreas((it) => it.unidade === unidade, "Outras atividades no " + unidade + " no " + dia + " (outras areas)", "no " + unidade);
   if (naUnidade.length) {
-    return { situacao: "dia_na_unidade", bloco: rotulo + " no " + dia + " no " + unidade + ":\n" + formatarItensPorUnidade(naUnidade, naUnidade) + p2, area, dia };
+    return comP2({ situacao: "dia_na_unidade", bloco: rotulo + " no " + dia + " no " + unidade + ":\n" + formatarItensPorUnidade(naUnidade, naUnidade) + p2, area, dia });
   }
   const outras = alvo.filter((it) => it.unidade !== unidade);
   const foraNaUnidade = foraDoContexto.filter((it) => it.unidade === unidade);
   if (outras.length) {
-    return {
+    return comP2({
       situacao: "dia_outras_unidades",
       bloco: "No " + unidade + " NAO ha " + rotulo + " no " + dia + " na programacao deste mes.\n\n" + rotulo + " no " + dia + " em outras unidades:\n" + formatarItensPorUnidade(outras, outras) + p2 + nota(foraNaUnidade),
       area,
       dia,
-    };
+    });
   }
   if (foraDoContexto.length && outroContexto) return soForaDoContexto(foraDoContexto, p2);
-  return { situacao: "dia_nenhuma", bloco: p2.trim(), area, dia };
+  return comP2({ situacao: "dia_nenhuma", bloco: p2.trim(), area, dia });
 }
 
 /**
@@ -5404,6 +5505,8 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     let instrucaoConsultaProgramacao = "";
     // S-INST-QUAL-14 (V4): consulta cuja resposta mostra a lista de unidades — guardada no fim do turno.
     let consultaComListaDeUnidades: Omit<UltimaConsultaProgramacao, "marca"> | null = null;
+    // S-INST-QUAL-15 (achado 2): o P2 da consulta por dia, garantido na resposta depois do modelo.
+    let outrasAtividadesDoDia: OutrasAtividadesDoDia | null = null;
     if (consultaProgramacao) {
       const c = consultaProgramacao;
       reiniciarBlocos(true);
@@ -5448,6 +5551,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         + (semDado.length ? " A programacao NAO informa adequacao para: " + semDado.join(", ") + " — nunca afirme que a atividade e adequada; diga que a programacao nao traz essa informacao e sugira confirmar com a unidade." : "")
         + " Se a pergunta tambem tiver uma parte que nao e programacao (ex.: matricula, documentos), responda essa parte com o FAQ e os servicos da rede.";
       logRAG = { camada: "programacao_contexto", atividadeResolvida: c.atividade };
+      outrasAtividadesDoDia = r.outrasAtividades ?? null;
       if (SITUACOES_COM_LISTA_DE_UNIDADES.includes(r.situacao)) consultaComListaDeUnidades = { texto: c.texto, atividade: c.atividade, termos: c.termos, area: c.area ?? r.area, contexto: c.contexto, tituloExato: c.tituloExato ?? null };
       console.log("[motor-agente v18] Consulta S-WM-72: situacao=" + r.situacao + " escopo=" + nomeEscopo + " atividade=" + c.atividade + " contexto=" + contextoTxt + (r.dia ? " dia=" + r.dia : ""));
     } else if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
@@ -5855,6 +5959,14 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         // mantém o texto do GPT como resposta normal em vez de inventar um encaminhamento.
         resposta = avaliacaoEncaminhar.texto;
       }
+    }
+
+    // S-INST-QUAL-15 (achado 2): se o modelo não citou o que a unidade (ou a rede) tem no dia em outras
+    // áreas, o código acrescenta a frase — só na resposta normal (sem transbordo, encerramento ou encaminhamento).
+    if (outrasAtividadesDoDia && !handover && !encerrado && !avaliacaoEncaminhar.encontrada) {
+      const comP2 = garantirOutrasAtividadesDoDia(resposta, outrasAtividadesDoDia);
+      if (comP2 !== resposta) console.log("[motor-agente v18] P2 acrescentado pelo codigo (" + outrasAtividadesDoDia.onde + ", " + outrasAtividadesDoDia.dia + ")");
+      resposta = comP2;
     }
 
     // GPT pode responder só com a tag, sem texto (ex.: "[[ENCERRAR]]"). resposta="" nesse ponto
