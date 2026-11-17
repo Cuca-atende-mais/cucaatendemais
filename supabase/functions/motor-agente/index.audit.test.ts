@@ -4,6 +4,7 @@
 // comportamento DESEJADO/correto — se o bug ainda não foi corrigido, o teste FALHA.
 // Isso é intencional: é uma suíte "vermelha" servindo de checklist executável.
 import { assert, assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { comDataSimulada } from "./eval/lib/data_simulada.ts";
 import {
   contemPalavra,
   ehCortesiaPura,
@@ -1446,6 +1447,9 @@ Deno.test("S-WM-49 VAL-20: handler repassa histórico ao avaliarSelecaoUnidade e
 // Achado 2026-10-09: o contrato do S-WM-32 mudou — pergunta de rede sem unidade NÃO usa mais o
 // resumo_rede (documento à parte, ficou com dado de julho em outubro). A fonte de programação é
 // só o monthly_program ativo de cada unidade, filtrado pelas palavras da pergunta.
+// S-INST-QUAL-14: a programação de teste é de outubro; item com a data inteira passada sai das listas.
+// Os testes que dependem dela rodam com a data fixa dentro do período (sem depender do dia real).
+const DURANTE_PROGRAMACAO_OUTUBRO = Date.parse("2026-10-15T12:00:00-03:00");
 const PROGRAMACAO_MONDUBIM_TESTE = "PROGRAMAÇÃO MENSAL DE OUTUBRO DE 2026 — Cuca Mondubim\n== CURSOS ==\n• Curso de Libras Básico II\n  Detalhes: Curso: Curso de Libras Básico II. Educador: Surdan. Vagas: 15. Período: 07/10/2026 a 30/10/2026 (Qua e Sex). Horário: 09:00 às 12:00. Ementa: texto longo. A quantidade de vagas muda com frequencia; oriente a pessoa a procurar a unidade CUCA para verificar a disponibilidade.\n  Horário: 09:00:00 às 12:00:00\n• Violão Fácil\n  Detalhes: Curso: Violão Fácil. Educador: X. Horário: 09:00 às 12:00.\n";
 const PROGRAMACAO_BARRA_TESTE = "PROGRAMAÇÃO MENSAL DE OUTUBRO DE 2026 — Cuca Barra\n== ESPORTES ==\n• JUDÔ\n  Detalhes: Esporte Modalidade: JUDÔ - Turma TURMA 1. Dias: Ter e Qui. Horário: 18:00 às 19:00.\n";
 
@@ -1459,7 +1463,7 @@ function respostasRedeComMonthlyProgram(metadata: Record<string, unknown>): Reco
   return respostas;
 }
 
-Deno.test("Achado 2026-10-09: pergunta de rede na 1ª mensagem usa só o monthly_program ativo (+ FAQ), nunca resumo_rede nem busca vetorial de programação sem unidade", async () => {
+Deno.test("Achado 2026-10-09: pergunta de rede na 1ª mensagem usa só o monthly_program ativo (+ FAQ), nunca resumo_rede nem busca vetorial de programação sem unidade", () => comDataSimulada(DURANTE_PROGRAMACAO_OUTUBRO, async () => {
   const chamadas: ChamadaRegistrada[] = [];
   const supabaseMock = criarSupabaseMock(respostasRedeComMonthlyProgram({}), chamadas);
 
@@ -1487,7 +1491,7 @@ Deno.test("Achado 2026-10-09: pergunta de rede na 1ª mensagem usa só o monthly
     ((c.args?.[0] as { p_tipos?: string[] })?.p_tipos ?? []).some((t) => t === "monthly_program" || t === "eventos_pontuais")
   );
   assertEquals(chamouBuscaVetorialSemUnidadeParaProgramacao, false, "buscar_chunks_similares NUNCA pode ser chamado com p_unidade_cuca:null para monthly_program/eventos_pontuais");
-});
+}));
 
 Deno.test("Achado 2026-10-09: pergunta de rede dentro de aguardando_unidade também usa o monthly_program ativo", async () => {
   const chamadas: ChamadaRegistrada[] = [];
@@ -1502,7 +1506,7 @@ Deno.test("Achado 2026-10-09: pergunta de rede dentro de aguardando_unidade tamb
   assertStringIncludes(promptFinal, "Cuca Barra:\\n• JUDÔ — Esporte Modalidade: JUDÔ", "judô da Barra deveria vir do monthly_program ativo também no branch aguardando_unidade");
 });
 
-Deno.test("Achado 2026-10-09: pergunta de rede dentro de conversa_engajada (3º branch) também usa o monthly_program ativo", async () => {
+Deno.test("Achado 2026-10-09: pergunta de rede dentro de conversa_engajada (3º branch) também usa o monthly_program ativo", () => comDataSimulada(DURANTE_PROGRAMACAO_OUTUBRO, async () => {
   const chamadas: ChamadaRegistrada[] = [];
   const supabaseMock = criarSupabaseMock(respostasRedeComMonthlyProgram({ conversa_engajada: true }), chamadas);
 
@@ -1513,7 +1517,7 @@ Deno.test("Achado 2026-10-09: pergunta de rede dentro de conversa_engajada (3º 
   assertEquals(resp.status, 200, "handler não deveria falhar nesse cenário (ver body em caso de 500)");
   const promptFinal = bodiesEnviados.find((b) => b.includes("PROGRAMACAO VIGENTE DA REDE")) ?? "";
   assertStringIncludes(promptFinal, "Curso de Libras Básico II");
-});
+}));
 
 Deno.test("Achado 2026-10-09: atividade que não existe na programação vigente → sem bloco de programação e com instrução de honestidade", async () => {
   const chamadas: ChamadaRegistrada[] = [];
@@ -2997,7 +3001,7 @@ Deno.test("S-WM-71 AC7: unidade Barra + atividade que a Barra tem → sem bloco 
   assertEquals(promptFinal.includes("nao foi encontrada pelo nome na programacao da UNIDADE atual"), false);
 });
 
-Deno.test("S-WM-71 AC8/AC11: 'procure em outras unidades' depois de perguntar de libras → busca na rede, sem recusa", async () => {
+Deno.test("S-WM-71 AC8/AC11: 'procure em outras unidades' depois de perguntar de libras → busca na rede, sem recusa", () => comDataSimulada(DURANTE_PROGRAMACAO_OUTUBRO, async () => {
   const chamadas: ChamadaRegistrada[] = [];
   const respostas = respostasS71ComUnidade();
   respostas["mensagens"] = mensagensS71([
@@ -3018,7 +3022,7 @@ Deno.test("S-WM-71 AC8/AC11: 'procure em outras unidades' depois de perguntar de
   assertEquals(String(corpo.resposta ?? "").includes("Só pra confirmar"), false, "não cai no menu de ambiguidade");
   const buscaSemUnidade = chamadas.some((c) => c.tabela === "rpc:buscar_chunks_similares" && (c.args?.[0] as { p_unidade_cuca?: unknown })?.p_unidade_cuca === null);
   assertEquals(buscaSemUnidade, false, "AC11: nenhuma busca vetorial sem unidade");
-});
+}));
 
 Deno.test("S-WM-71 AC9: 'procure em outras unidades' sem atividade na sessão → pergunta o que procura, nunca recusa", async () => {
   const chamadas: ChamadaRegistrada[] = [];
@@ -3561,7 +3565,7 @@ Deno.test("Hotfix 05/11: 'em outra rede cuca?' é pedido de outras unidades (Gl�
   for (const f of ["tem em outro horário?", "outra turma", "a rede cuca é da prefeitura?"]) assertEquals(pedeOutrasUnidades(f), false, f);
 });
 
-Deno.test("Hotfix 05/11: 'Em outra rede cuca?' depois de perguntar de libras → busca na rede (handler)", async () => {
+Deno.test("Hotfix 05/11: 'Em outra rede cuca?' depois de perguntar de libras → busca na rede (handler)", () => comDataSimulada(DURANTE_PROGRAMACAO_OUTUBRO, async () => {
   const chamadas: ChamadaRegistrada[] = [];
   const respostas = respostasS71ComUnidade();
   respostas["mensagens"] = mensagensS71([
@@ -3578,7 +3582,7 @@ Deno.test("Hotfix 05/11: 'Em outra rede cuca?' depois de perguntar de libras →
   const promptFinal = bodiesEnviados.find((b) => b.includes("a pessoa pediu para procurar em outras unidades")) ?? "";
   assertStringIncludes(promptFinal, "Curso de Libras Básico II", "acha a atividade da sessão nas outras unidades");
   assertStringIncludes(promptFinal, "NUNCA diga que OUTRAS unidades ou a rede nao tem uma atividade");
-});
+}));
 
 Deno.test("Hotfix 05/11 (revisão): atividade que não existe em nenhuma unidade — a instrução diz que a rede toda foi vista, sem brigar com a regra 9", async () => {
   const chamadas: ChamadaRegistrada[] = [];

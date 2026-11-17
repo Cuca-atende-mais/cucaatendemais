@@ -1,0 +1,41 @@
+{
+ "previa": null,
+ "conversa_curta": null,
+ "mes_catalogo": "2026-11",
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "tem hora pintada no sábado?",
+   "minutos_antes": 3
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "No sábado o Cuca Barra não tem a Hora Pintada. Quer ver outro dia?",
+   "minutos_antes": 2
+  }
+ ],
+ "id": "DS-07",
+ "categoria": "busca_unidade",
+ "descricao": "V7: com o sábado guardado, 'pode ser qualquer dia' tira o filtro",
+ "origem": "S-INST-QUAL-14 (16/11): varredura de pontas soltas da programação por dia",
+ "data_simulada": "2026-11-16T15:00:00-03:00",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Barra",
+   "conversa_engajada": true,
+   "prog_contexto": {
+    "dia": "sábado"
+   }
+  }
+ },
+ "mensagem": "pode ser qualquer dia",
+ "esperado": {
+  "deve_conter": [
+   "quinta"
+  ],
+  "nao_deve_conter": [
+   "nao (tem|ha) hora pintada"
+  ]
+ },
+ "observacao": "Resposta esperada definida na S-14 e aprovada em 17/11. Só mede de verdade na rodada real (a simulada não exercita o caminho do dia). A Hora Pintada da Barra é às quintas (05/11 a 26/11)."
+}

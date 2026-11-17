@@ -22,6 +22,7 @@ import {
   montarConsultaComContexto,
   semDia,
 } from "./index.ts";
+import { comDataSimulada } from "./eval/lib/data_simulada.ts";
 
 // ── Programação de teste (formato de novembro) ──────────────────────────────────────────────
 const PROGRAMACAO: Record<string, string> = {
@@ -287,7 +288,13 @@ function supabaseMock(dados: Record<string, unknown>, chamadas: Chamada[]): any 
 
 type Msg = { conteudo: string; remetente: string; minutos: number };
 const INICIO: Msg[] = [{ conteudo: "oi", remetente: "lead", minutos: 5 }, { conteudo: "Olá! Em que posso te ajudar? 😊", remetente: "agente", minutos: 4 }];
-async function rodar(atual: string, metadata: Record<string, unknown>, leituraModelo: Record<string, unknown>, anteriores: Msg[] = INICIO) {
+// S-INST-QUAL-14: itens com data passada saem das listas — o motor roda com a data fixa de 16/11/2026
+// (dia em que a programação de teste foi copiada), para o resultado não depender do dia real.
+const DATA_DOS_TESTES = Date.parse("2026-11-16T15:00:00-03:00");
+function rodar(atual: string, metadata: Record<string, unknown>, leituraModelo: Record<string, unknown>, anteriores: Msg[] = INICIO) {
+  return comDataSimulada(DATA_DOS_TESTES, () => rodarNaData(atual, metadata, leituraModelo, anteriores));
+}
+async function rodarNaData(atual: string, metadata: Record<string, unknown>, leituraModelo: Record<string, unknown>, anteriores: Msg[]) {
   const agora = Date.now();
   const msgs = [
     ...anteriores,
@@ -347,10 +354,10 @@ const LEITURA_15_11 = { tipo: "pedido_novo", assunto: "programacao", escopo: "na
 Deno.test("AC2 (handler): José Walter salvo + 'cursos aos sábados' → bloco e instrução de P1/P2 no prompt", async () => {
   const { prompts, chamadas } = await rodar("Quais são os cursos que tem aos sábados?", { unidade_selecionada: "Cuca José Walter", conversa_engajada: true }, LEITURA_15_11);
   assertEquals(prompts.length, 1);
-  // o dia não vai para o contexto da sessão (vale só neste turno)
+  // S-INST-QUAL-14 (decisão do Junior, 16/11): o dia fica guardado na conversa (antes, só neste turno)
   const patches = chamadas.filter((c) => c.tabela === "rpc:merge_conversa_metadata").map((c) => (c.arg as { p_patch: Record<string, unknown> }).p_patch);
   assert(patches.length > 0);
-  assert(patches.every((m) => !(m.prog_contexto as Record<string, unknown> | undefined)?.dia), "prog_contexto gravado sem dia");
+  assert(patches.some((m) => (m.prog_contexto as Record<string, unknown> | undefined)?.dia === "sábado"), "prog_contexto gravado com o dia");
   const p = JSON.parse(prompts[0]).messages.map((m: { content: string }) => m.content).join("\n");
   assertStringIncludes(p, "--- PROGRAMACAO VIGENTE (programacao mensal ativa, filtrada pela pergunta e pelo contexto: dia: sábado) ---");
   assertStringIncludes(p, "No Cuca José Walter NAO ha Cursos e Oficinas no sábado");
@@ -371,12 +378,12 @@ Deno.test("AC4 (handler): rede salva + 'e aos sábados que curso tem pra fazer?'
   assert(!p.includes("a busca foi feita em todas as unidades"));
 });
 
-Deno.test("Handler: o dia não é herdado da sessão (prog_contexto com dia não filtra o turno seguinte)", async () => {
+Deno.test("Handler (S-INST-QUAL-14 muda a regra da 13): o dia guardado na conversa filtra o turno seguinte", async () => {
   const { prompts } = await rodar("quais cursos tem?", { unidade_selecionada: "Cuca José Walter", conversa_engajada: true, prog_contexto: { dia: "sábado" } }, { tipo: "pedido_novo", assunto: "programacao", escopo: "nao_disse", area: "CURSOS", contexto: {} });
   assertEquals(prompts.length, 1);
   const p = JSON.parse(prompts[0]).messages.map((m: { content: string }) => m.content).join("\n");
-  assert(!p.includes("no sábado"), "sem filtro de sábado");
-  assertStringIncludes(p, "A voz como");
+  assertStringIncludes(p, "No Cuca José Walter NAO ha Cursos e Oficinas no sábado");
+  assert(!p.includes("A voz como"), "curso de terça e quinta não entra com o sábado da conversa");
 });
 
 const textoDoPrompt = (prompts: string[]) => JSON.parse(prompts[0]).messages.map((m: { content: string }) => m.content).join("\n");

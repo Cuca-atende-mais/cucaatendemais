@@ -17,12 +17,13 @@
  "mensagem": "Quais são os cursos que tem aos sábados?",
  "esperado": {
   "deve_conter": [
-   "mondubim|pici"
+   "mondubim|pici",
+   "venha jogar|temporada"
   ],
   "nao_deve_conter": [
    "meses anteriores",
    "nao encontrei cursos[^.]*(rede|unidades do cuca)"
   ]
  },
- "observacao": "Resposta esperada a aprovar pelo Junior (S-13)."
+ "observacao": "Resposta esperada revisada na S-14 (P2: o que a unidade tem no sábado em outras áreas) e aprovada em 17/11."
 }
