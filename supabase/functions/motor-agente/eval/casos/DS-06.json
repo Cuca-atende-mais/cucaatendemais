@@ -1,0 +1,42 @@
+{
+ "previa": null,
+ "conversa_curta": null,
+ "mes_catalogo": "2026-11",
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "O que tem no sábado?",
+   "minutos_antes": 3
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "No sábado, o Cuca Barra tem o Venha Jogar, das 9h às 17h, e turmas de esporte. Quer saber de alguma?",
+   "minutos_antes": 2
+  }
+ ],
+ "id": "DS-06",
+ "categoria": "busca_unidade",
+ "descricao": "V5: depois de falar do sábado na Barra, 'e natação?' → natação infantil do sábado",
+ "origem": "S-INST-QUAL-14 (16/11): varredura de pontas soltas da programação por dia",
+ "data_simulada": "2026-11-16T15:00:00-03:00",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca Barra",
+   "conversa_engajada": true,
+   "prog_contexto": {
+    "dia": "sábado"
+   }
+  }
+ },
+ "mensagem": "e natação?",
+ "esperado": {
+  "deve_conter": [
+   "natacao infantil",
+   "sab"
+  ],
+  "nao_deve_conter": [
+   "nao (tem|ha) natacao"
+  ]
+ },
+ "observacao": "Resposta esperada definida na S-14 e aprovada em 17/11. Só mede de verdade na rodada real (a simulada não exercita o caminho do dia). Na Barra, a Natação Infantil é no sábado (turmas 1 a 3)."
+}

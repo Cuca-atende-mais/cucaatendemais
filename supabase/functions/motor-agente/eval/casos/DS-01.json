@@ -17,12 +17,13 @@
  "mensagem": "Quais são os cursos que tem aos sábados?",
  "esperado": {
   "deve_conter": [
-   "mondubim|pici"
+   "mondubim|pici",
+   "venha jogar|capoeira|temporada"
   ],
   "nao_deve_conter": [
    "meses anteriores",
    "nao encontrei cursos[^.]*(rede|unidades do cuca)"
   ]
  },
- "observacao": "Resposta esperada a aprovar pelo Junior (S-13). Programação de novembro: curso no sábado só no Mondubim (Libras III) e no Pici (Tech Start); no JW, sábado tem Venha Jogar e Comunidade em Pauta (28/11)."
+ "observacao": "Resposta esperada revisada na S-14 (P2: o que a unidade tem no sábado em outras áreas) e aprovada em 17/11. Programação de novembro: curso no sábado só no Mondubim (Libras III) e no Pici (Tech Start); no JW, sábado tem Venha Jogar e Comunidade em Pauta (28/11)."
 }

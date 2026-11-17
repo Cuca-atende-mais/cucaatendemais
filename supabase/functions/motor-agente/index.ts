@@ -2085,7 +2085,7 @@ export const LIMITE_SESSAO_MS = 2 * 60 * 60 * 1000;
  * `ultimo_disparo` e qualquer outra chave ficam intactas. */
 export const LIMPEZA_ESTADO_SESSAO: {
   unidade_selecionada: null; aguardando_unidade: boolean; menu_categoria_ativo: boolean; conversa_engajada: boolean;
-  prog_pendente: null; prog_escopo: null; prog_contexto: null;
+  prog_pendente: null; prog_escopo: null; prog_contexto: null; prog_ultima_consulta: null;
 } = {
   unidade_selecionada: null,
   aguardando_unidade: false,
@@ -2095,6 +2095,8 @@ export const LIMPEZA_ESTADO_SESSAO: {
   prog_pendente: null,
   prog_escopo: null,
   prog_contexto: null,
+  // S-INST-QUAL-14: a consulta que montou a lista de unidades ("2") também não atravessa sessões.
+  prog_ultima_consulta: null,
 };
 
 /**
@@ -2271,6 +2273,30 @@ export function textoDaLinhaNumerada(numero: string, bloco: string): string {
   return linhaNumeradaDaLista(numero, bloco).replace(/^[\s\d\ufe0f\u20e3.)*]+/, "").replace(/\*\*/g, "").split(/\s+[—–-]\s+/)[0].trim();
 }
 
+/**
+ * S-INST-QUAL-14 (V4): a consulta de programação cuja resposta mostrou uma lista de unidades
+ * (`outras_unidades`, `dia_outras_unidades`), guardada para o número que vier a seguir. `marca` é o
+ * começo da resposta do bot: o número só vale se a última resposta for essa mesma.
+ */
+export type UltimaConsultaProgramacao = { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; tituloExato?: string | null; marca: string };
+
+/** Situações da consulta cuja resposta traz a lista numerada de unidades. */
+export const SITUACOES_COM_LISTA_DE_UNIDADES = ["outras_unidades", "dia_outras_unidades"];
+
+/** Começo da resposta usado como marca (sem espaços repetidos, sem emoji de número). */
+export function marcaDaResposta(resposta: string): string {
+  return normalizarTexto(resposta).replace(/\s+/g, " ").trim().slice(0, 60);
+}
+
+/** Unidade da linha N da lista, se a última resposta do bot for a da consulta guardada; null senão. */
+export function unidadeDaListaDaConsulta(numero: string, blocoAnterior: string, consulta: UltimaConsultaProgramacao): string | null {
+  if (!consulta.marca || !normalizarTexto(blocoAnterior).replace(/\s+/g, " ").includes(consulta.marca)) return null;
+  const linha = linhaNumeradaDaLista(numero, blocoAnterior);
+  if (!linha) return null;
+  const unidades = unidadesCitadas(linha);
+  return unidades.length === 1 ? unidades[0] : null;
+}
+
 /** Texto da linha N de uma lista numerada (1️⃣, "1.", "1)", com ou sem negrito). */
 function linhaNumeradaDaLista(numero: string, bloco: string): string {
   for (const l of bloco.split("\n")) {
@@ -2380,10 +2406,32 @@ export function listarNomesPorUnidade(itens: ItemProgramacao[]): string {
  * - só área: lista os nomes da área no escopo (com o contexto aplicado);
  * - nada: "sem_atividade".
  */
-export function montarConsultaComContexto(
-  itensRede: ItemProgramacao[],
-  consulta: { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; listarPorIdade?: boolean; tituloExato?: string | null },
-): { situacao: "na_unidade" | "outras_unidades" | "nenhuma" | "rede" | "area" | "sem_atividade" | "idade" | ResultadoConsultaDia["situacao"]; bloco: string; area: AreaProgramacao | null; dia?: string; foraDoContexto?: string } {
+export type ConsultaComContexto = { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; listarPorIdade?: boolean; tituloExato?: string | null; filtroHerdado?: string[] };
+export type ResultadoConsultaComContexto = { situacao: "na_unidade" | "outras_unidades" | "nenhuma" | "rede" | "area" | "sem_atividade" | "idade" | "contexto" | "filtro_herdado" | ResultadoConsultaDia["situacao"]; bloco: string; area: AreaProgramacao | null; dia?: string; foraDoContexto?: string; filtro?: string };
+
+/**
+ * S-INST-QUAL-14 (decisão c): dia ou turno que vieram da conversa (não da mensagem atual) e deixam a
+ * resposta vazia → refaz sem eles e devolve `filtro_herdado`: a resposta diz que filtrou e mostra o
+ * que existe nos outros dias/horários, nunca só "não tem".
+ */
+export function montarConsultaComContexto(itensRede: ItemProgramacao[], consulta: ConsultaComContexto): ResultadoConsultaComContexto {
+  const r = montarConsultaComContextoSemHeranca(itensRede, consulta);
+  const herdado = consulta.filtroHerdado ?? [];
+  if (!herdado.length || (r.situacao !== "nenhuma" && r.situacao !== "dia_nenhuma")) return r;
+  const contextoSemFiltro: Record<string, unknown> = { ...consulta.contexto };
+  const doFiltro: Record<string, unknown> = {};
+  for (const k of herdado) {
+    doFiltro[k] = consulta.contexto[k];
+    delete contextoSemFiltro[k];
+    if (k === "dia") delete contextoSemFiltro.data;
+  }
+  const r2 = montarConsultaComContextoSemHeranca(itensRede, { ...consulta, contexto: contextoSemFiltro });
+  if (!r2.bloco || r2.situacao === "nenhuma" || r2.situacao === "dia_nenhuma" || r2.situacao === "sem_atividade") return r;
+  const filtro = descreverContexto(doFiltro);
+  return { situacao: "filtro_herdado", bloco: "Com o filtro da conversa (" + filtro + ") nao ha nada. Sem esse filtro, tem:\n" + r2.bloco, area: r2.area, filtro };
+}
+
+function montarConsultaComContextoSemHeranca(itensRede: ItemProgramacao[], consulta: ConsultaComContexto): ResultadoConsultaComContexto {
   // S-INST-QUAL-13: com dia da semana na pergunta, as palavras de dia ("sábados", "fim de semana") não
   // são atividade. Sem nenhuma palavra que identifique atividade, a consulta é pelo dia (antes caía em
   // "nenhuma" quando o modelo punha "sábados" em termos_busca — 15/11, Jangurussu e sem unidade).
@@ -2407,7 +2455,9 @@ export function montarConsultaComContexto(
   // idade sem atividade → lista o que serve para a idade no escopo, pela faixa do texto da programação.
   if (consulta.listarPorIdade && !consulta.atividade && !consulta.termos.length && !consulta.area) {
     const daIdade = filtrarItensPorContexto(itensRede.filter((it) => consulta.escopo === ESCOLHA_REDE || it.unidade === consulta.escopo), consulta.contexto);
-    return daIdade.length ? { situacao: "idade", bloco: listarNomesPorUnidade(daIdade), area: null } : { situacao: "nenhuma", bloco: "", area: null };
+    // S-INST-QUAL-14: a mesma lista serve para o turno da conversa ("o que tem de noite?"), sem idade.
+    const situacaoLista = consulta.contexto.idade !== undefined && consulta.contexto.idade !== null ? "idade" : "contexto";
+    return daIdade.length ? { situacao: situacaoLista, bloco: listarNomesPorUnidade(daIdade), area: null } : { situacao: "nenhuma", bloco: "", area: null };
   }
   const fontesDePalavras = consulta.atividade || consulta.termos.length ? [consulta.atividade ?? "", ...consulta.termos] : [consulta.texto];
   const palavras = [...new Set(fontesDePalavras.flatMap((t) => palavrasChaveProgramacao(t)))];
@@ -2503,10 +2553,27 @@ export function diasDoContexto(contexto: Record<string, unknown>): Set<DiaSemana
  * mas segunda a sexta só com "-feira" ou depois de "na/nas/às/aos/de/toda/todas/e/ou/até" — "a segunda
  * opção" e "quinta série" não são dia. Abreviação só "sáb"/"sab". "segunda a sexta" vira o intervalo.
  */
-export function diasDaMensagem(texto: string): Set<DiaSemana> {
+export function diasDaMensagem(texto: string, agora: Date = new Date()): Set<DiaSemana> {
   const norm = normalizarTexto(texto);
   const dias = new Set<DiaSemana>();
   if (RE_FIM_DE_SEMANA.test(norm)) { dias.add("sab"); dias.add("dom"); }
+  // S-INST-QUAL-14: "hoje"/"amanhã" pela data de Fortaleza; "durante a semana", "dias de semana" e
+  // "dia útil" = segunda a sexta; "sabadão"; "2ª/3ª… feira" (o NFD não decompõe "ª"/"º").
+  const dataRelativa = dataRelativaDaMensagem(texto, agora);
+  if (dataRelativa) dias.add(diaDaSemanaDaData(dataRelativa));
+  if (/\bdurante a semana\b|\bdias? de semana\b|\bdias? ute?is\b|\bdia util\b|\bem dia de semana\b/.test(norm)) for (const d of diasDoIntervalo("seg", "sex")) dias.add(d);
+  if (/\bsabadao\b/.test(norm)) dias.add("sab");
+  const ORDINAL_DIA: Record<string, DiaSemana> = { "2": "seg", "3": "ter", "4": "qua", "5": "qui", "6": "sex" };
+  for (const m of norm.matchAll(/(?:^|[^\d])([2-6])\s*[ªº°ao]?\s*-?\s*feiras?\b/g)) dias.add(ORDINAL_DIA[m[1]]);
+  for (const m of norm.matchAll(/\b(?:na|nas|as|aos|de|toda|todas|e|ou|ate)\s+([2-6])\s*[ªº°](?!\s*(?:serie|ano|vez|opcao|turma|etapa|fase|lugar))/g)) dias.add(ORDINAL_DIA[m[1]]);
+  // Dia útil solto no fim da pergunta ou junto do turno ("tem natação segunda?", "quarta à tarde"):
+  // nunca depois de artigo ("a segunda?", "quero a quinta" = opção da lista).
+  for (const m of norm.matchAll(/\b(segunda|terca|quarta|quinta|sexta)s?\b(?=\s*(?:[?!.,]|$|(?:a|de|pela|no|na)\s+(?:tarde|noite|manha)\b))/g)) {
+    const antes = norm.slice(0, m.index ?? 0);
+    if (/\b(a|o|da|do|essa|esta|aquela|uma|um)\s+$/.test(antes)) continue;
+    const d = diaPelaPalavra(m[1]);
+    if (d) dias.add(d);
+  }
   for (const m of norm.matchAll(new RegExp("\\b" + RE_DIA_EXTENSO + "\\s+(?:a|ate)\\s+" + RE_DIA_EXTENSO + "\\b", "g"))) {
     const de = diaPelaPalavra(m[1]);
     const ate = diaPelaPalavra(m[2]);
@@ -2521,7 +2588,7 @@ export function diasDaMensagem(texto: string): Set<DiaSemana> {
     if (d) dias.add(d);
   }
   // "na quinta série", "na segunda vez", "a terça parte": ordinal, não dia.
-  for (const m of norm.matchAll(/\b(?:na|nas|as|aos|de|toda|todas|e|ou|ate)\s+(segunda|terca|quarta|quinta|sexta)s?\b(?!\s+(?:serie|series|ano|anos|vez|vezes|opcao|turma|etapa|parte|fase|lugar|colocad))/g)) {
+  for (const m of norm.matchAll(/\b(?:na|nas|as|aos|de|toda|todas|e|ou|ate)\s+(segunda|terca|quarta|quinta|sexta)s?\b(?!\s+(?:serie|series|ano|anos|vez|vezes|opcao|turma|etapa|parte|fase|lugar|colocad|mao|maos))/g)) {
     const d = diaPelaPalavra(m[1]);
     if (d) dias.add(d);
   }
@@ -2534,7 +2601,7 @@ export function diasDaMensagem(texto: string): Set<DiaSemana> {
  * mensagem, o dia do modelo veio de mensagens anteriores e sai.
  */
 export function contextoDoModeloComDiaDaMensagem<T extends Record<string, unknown>>(contextoModelo: T, texto: string): T {
-  const falaDeDia = diasDaMensagem(texto).size > 0 || /\b(fds|seg|qua|qui|sex|sab|segunda|terca|quarta|quinta|sexta|sabado|domingo)s?\b/.test(normalizarTexto(texto));
+  const falaDeDia = diasDaMensagem(texto).size > 0 || /\b(fds|seg|qua|qui|sex|sab|segunda|terca|quarta|quinta|sexta|sabado|domingo|hoje|amanha|sabadao)s?\b/.test(normalizarTexto(texto));
   return falaDeDia ? contextoModelo : semDia(contextoModelo);
 }
 
@@ -2545,19 +2612,208 @@ export function descreverDias(dias: Set<DiaSemana>): string {
 }
 
 /**
- * O dia vale só para o turno em que a pessoa o escreveu: nunca é herdado da sessão (`prog_contexto`)
- * nem do que o modelo leu de mensagens anteriores. "o que tem sábado?" seguido de "e natação?" não
- * filtra a natação pelo sábado (comportamento de antes da S-13; decisão a confirmar com o Junior).
+ * Contexto sem o dia (e sem a data de "hoje"/"amanhã"). S-INST-QUAL-14: o dia agora fica guardado na
+ * conversa (`prog_contexto`); `semDia` só tira o dia que o MODELO leu de mensagens anteriores (o da
+ * conversa vem do que foi gravado, não do modelo) e descreve o contexto que não é dia.
  */
 export function semDia<T extends Record<string, unknown>>(contexto: T | null | undefined): T {
-  const { dia: _dia, ...resto } = (contexto ?? {}) as Record<string, unknown>;
+  const { dia: _dia, data: _data, ...resto } = (contexto ?? {}) as Record<string, unknown>;
   return resto as T;
 }
 
-/** Item que acontece num dos dias pedidos (dia confirmado no detalhe). */
-function itemNoDia(it: ItemProgramacao, dias: Set<DiaSemana>): boolean {
+// ── S-INST-QUAL-14: datas dos itens, "hoje"/"amanhã" e filtro da conversa ─────────────────────
+const DATA_ISO_CONTEXTO = /^\d{4}-\d{2}-\d{2}$/;
+
+function isoDe(ano: number, mes: number, dia: number): string {
+  return String(ano).padStart(4, "0") + "-" + String(mes).padStart(2, "0") + "-" + String(dia).padStart(2, "0");
+}
+
+/** Dia da semana de uma data AAAA-MM-DD (meio-dia UTC: sem risco de fuso). */
+export function diaDaSemanaDaData(iso: string): DiaSemana {
+  const d = new Date(iso + "T12:00:00Z").getUTCDay(); // 0 = domingo
+  return (["dom", "seg", "ter", "qua", "qui", "sex", "sab"] as DiaSemana[])[d];
+}
+
+function somarDias(iso: string, n: number): string {
+  const d = new Date(iso + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Datas (AAAA-MM-DD) escritas nos campos `Período:` e `Data:` do detalhe, em ordem. Sem ano
+ * ("Data: 12/11"), vale o ano que deixa a data mais perto de hoje — na virada do ano, "02/01" visto
+ * em 20/12 é do ano seguinte e "20/12" visto em 05/01 é do ano anterior.
+ */
+export function datasDoItem(detalhe: string, hojeISO: string): string[] {
+  const anoHoje = Number(hojeISO.slice(0, 4));
+  const hoje = Date.parse(hojeISO + "T12:00:00Z");
+  const datas: string[] = [];
+  for (const campo of normalizarTexto(detalhe).matchAll(/\b(?:periodo|data)\s*:\s*([^.]*)/g)) {
+    for (const m of campo[1].matchAll(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\b/g)) {
+      const dia = Number(m[1]);
+      const mes = Number(m[2]);
+      if (dia < 1 || dia > 31 || mes < 1 || mes > 12) continue;
+      if (m[3]) {
+        datas.push(isoDe(Number(m[3]), mes, dia));
+        continue;
+      }
+      const candidatos = [anoHoje - 1, anoHoje, anoHoje + 1].map((a) => isoDe(a, mes, dia));
+      candidatos.sort((a, b) => Math.abs(Date.parse(a + "T12:00:00Z") - hoje) - Math.abs(Date.parse(b + "T12:00:00Z") - hoje));
+      datas.push(candidatos[0]);
+    }
+  }
+  return datas;
+}
+
+/** Item cuja data inteira já passou (todas as datas antes de hoje). Item sem data nunca vence. */
+export function itemVencido(detalhe: string, hojeISO: string): boolean {
+  const datas = datasDoItem(detalhe, hojeISO);
+  return datas.length > 0 && datas.every((d) => d < hojeISO);
+}
+
+/** Itens que ainda valem hoje (decisão a do Junior, 16/11: atividade com data passada não é oferecida). */
+export function itensVigentes<T extends { detalhe: string }>(itens: T[], hojeISO: string): T[] {
+  return itens.filter((it) => !itemVencido(it.detalhe, hojeISO));
+}
+
+/**
+ * O item acontece na data pedida ("hoje"/"amanhã")? `null` = item sem data escrita (só o dia da
+ * semana decide). Intervalo ("07/11 a 28/11") vale se a data estiver dentro dele; datas soltas
+ * ("12/11 e 19/11"), só se uma delas for a data. O dia da semana do item é conferido à parte.
+ */
+export function itemAconteceNaData(detalhe: string, dataISO: string): boolean | null {
+  const datas = datasDoItem(detalhe, dataISO);
+  if (!datas.length) return null;
+  const temIntervalo = /\b\d{1,2}\/\d{1,2}(?:\/\d{4})?\s+a\s+\d{1,2}\/\d{1,2}/.test(normalizarTexto(detalhe));
+  if (temIntervalo) return dataISO >= datas[0] && dataISO <= datas[datas.length - 1];
+  return datas.includes(dataISO);
+}
+
+/** Data de "hoje" ou "amanhã" (Fortaleza) quando a mensagem pede por ela; null sem pedido. */
+export function dataRelativaDaMensagem(texto: string, agora: Date = new Date()): string | null {
+  const norm = normalizarTexto(texto).trim();
+  const hoje = hojeFortalezaISO(agora);
+  // Só quando a palavra pede a programação do dia: no fim da pergunta ("tem natação hoje?"), depois de
+  // "tem/acontece/pra..." ("o que tem amanhã") ou antes de "tem"/turno ("hoje à noite"). "Queria saber
+  // hoje sobre natação", "hoje em dia", "até hoje" e "até amanhã" (despedida) não filtram nada.
+  const pede = (p: string) =>
+    new RegExp("\\b" + p + "\\s*[?!.]*$").test(norm) ||
+    new RegExp("\\b(tem|teve|acontece|rola|abre|aberto|aberta|funciona|programacao|pra|para|de)\\s+" + p + "\\b").test(norm) ||
+    new RegExp("\\b" + p + "\\s+(tem|acontece|rola|abre|funciona|a tarde|a noite|de manha|pela manha|de tarde|de noite)\\b").test(norm);
+  if (/\bate amanha\b|\bhoje em dia\b|\bate hoje\b|\bde hoje em diante\b/.test(norm)) return null;
+  if (pede("amanha")) return somarDias(hoje, 1);
+  if (pede("hoje")) return hoje;
+  return null;
+}
+
+/** Data AAAA-MM-DD do contexto (`contexto.data`, gravada com "hoje"/"amanhã"); null sem data. */
+export function dataDoContexto(contexto: Record<string, unknown>): string | null {
+  return typeof contexto.data === "string" && DATA_ISO_CONTEXTO.test(contexto.data) ? contexto.data : null;
+}
+
+/** "hoje"/"amanhã" de um dia que já passou não valem mais: sai o dia e a data (ex.: conversa retomada). */
+export function semDataVencida<T extends Record<string, unknown>>(contexto: T, hojeISO: string): T {
+  const data = dataDoContexto(contexto);
+  if (!data || data >= hojeISO) return contexto;
+  const { dia: _dia, data: _data, ...resto } = contexto as Record<string, unknown>;
+  return resto as T;
+}
+
+/** Turno válido do contexto ("manha" | "tarde" | "noite"); null sem turno. */
+function turnoDoContexto(contexto: Record<string, unknown>): string | null {
+  const t = typeof contexto.turno === "string" ? normalizarTexto(contexto.turno) : "";
+  return t === "manha" || t === "tarde" || t === "noite" ? t : null;
+}
+
+/** O contexto filtra por dia ou turno (o "filtro da conversa" da S-INST-QUAL-14). */
+export function temFiltroDeDiaOuTurno(contexto: Record<string, unknown>): boolean {
+  return diasDoContexto(contexto) !== null || turnoDoContexto(contexto) !== null;
+}
+
+const RE_PALAVRA_DE_DIA = /\b(dia|dias|data|semana|fds|hoje|amanha|segunda|terca|quarta|quinta|sexta|sabado|sabados|domingo|domingos)\b/;
+const RE_PALAVRA_DE_TURNO = /\b(horario|horarios|hora|horas|turno|turnos|periodo|manha|tarde|noite)\b/;
+
+/** Última pergunta da resposta do bot (o trecho que termina no último "?"). */
+function ultimaPerguntaDoBot(bloco: string): string {
+  const norm = normalizarTexto(bloco);
+  const fim = norm.lastIndexOf("?");
+  if (fim < 0) return "";
+  const antes = norm.slice(0, fim);
+  const inicio = Math.max(antes.lastIndexOf("."), antes.lastIndexOf("!"), antes.lastIndexOf("\n"), antes.lastIndexOf("?"));
+  return antes.slice(inicio + 1);
+}
+
+/**
+ * Pedido para tirar o filtro de dia e/ou de turno (decisão c do Junior, 16/11):
+ * - "qualquer dia", "todos os dias", "não importa o dia" tiram o dia; "qualquer horário/turno" tiram o
+ *   turno; "qualquer dia e horário", os dois;
+ * - "tanto faz"/"não importa"/"pode ser qualquer" só tiram o que a PRÓPRIA mensagem cita (dia ou
+ *   horário): "não importa a idade" e "pode ser qualquer unidade" não mexem no filtro;
+ * - "tanto faz" sozinho só vale como resposta a uma pergunta do bot sobre dia ou horário ("quer ver
+ *   outro dia?", "de manhã ou à tarde?"). Responder à lista de unidades ou à pergunta de unidade não
+ *   tira nada — a lista sempre cita o dia, mas não pergunta por ele.
+ */
+export function pedidoDeTirarFiltro(texto: string, ultimoBlocoBot: string): { dia: boolean; turno: boolean } {
+  const norm = normalizarTexto(texto);
+  let dia = /\bqualquer (dia|data)\b|\btodos os dias\b|\bnao importa o dia\b|\btanto faz o dia\b/.test(norm);
+  let turno = /\bqualquer (horario|hora|turno|periodo)\b|\bqualquer dia (e|ou) (horario|hora|turno)\b|\btodos os horarios\b|\bnao importa o (horario|turno)\b|\btanto faz o (horario|turno)\b/.test(norm);
+  if (/\btanto faz\b|\bnao importa\b|\bpode ser qualquer\b/.test(norm)) {
+    const resto = norm.replace(/\b(tanto faz|nao importa|pode ser|qualquer|o|a|os|as|pra|para|mim|por|isso|entao|sim|ok)\b|[^a-z0-9\s]/g, " ").trim();
+    if (RE_PALAVRA_DE_DIA.test(resto)) dia = true;
+    if (RE_PALAVRA_DE_TURNO.test(resto)) turno = true;
+    if (!resto) {
+      const pergunta = ultimaPerguntaDoBot(ultimoBlocoBot);
+      if (/\b(qual|que|outro|outros|algum|em qual|em que) (dia|dias|data)\b|\bque dia\b|\bdia da semana\b/.test(pergunta)) dia = true;
+      if (/\b(qual|que|outro|outros|algum|em qual|em que) (horario|horarios|turno|turnos|periodo)\b|\bmanha ou (a )?tarde\b|\btarde ou (a )?noite\b|\bmanha, tarde ou noite\b/.test(pergunta)) turno = true;
+    }
+  }
+  return { dia, turno };
+}
+
+/**
+ * Contexto da conversa depois desta mensagem (S-INST-QUAL-14, decisões do Junior de 16/11):
+ * - o dia e o turno guardados continuam valendo (mudar de atividade não tira o filtro);
+ * - dia ou turno novos substituem os guardados (não somam); dia novo sem data tira a data de "hoje";
+ * - o pedido de tirar o filtro apaga o dia/turno guardados e também o que o modelo repetiu de
+ *   mensagens anteriores — só fica o que a própria mensagem escreveu.
+ */
+export function mesclarContextoDaConversa(
+  sessao: Record<string, unknown>,
+  novo: Record<string, unknown>,
+  tirar: { dia: boolean; turno: boolean } = { dia: false, turno: false },
+  daMensagem: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const base: Record<string, unknown> = { ...sessao };
+  const doTurno: Record<string, unknown> = { ...novo };
+  if (tirar.dia) {
+    delete base.dia;
+    delete base.data;
+    if (daMensagem.dia === undefined) { delete doTurno.dia; delete doTurno.data; }
+  }
+  if (tirar.turno) {
+    delete base.turno;
+    if (daMensagem.turno === undefined) delete doTurno.turno;
+  }
+  const r: Record<string, unknown> = { ...base, ...doTurno };
+  if (doTurno.dia !== undefined && doTurno.data === undefined) delete r.data;
+  return r;
+}
+
+/** Chaves do filtro (dia, turno) que vieram da conversa e não da mensagem atual. */
+export function filtroHerdadoDoContexto(contexto: Record<string, unknown>, daMensagem: Record<string, unknown>, leituraDoTurno: Record<string, unknown> = {}): string[] {
+  const herdado: string[] = [];
+  // O dia do modelo só fica quando a mensagem atual fala de dia (contextoDoModeloComDiaDaMensagem): é da mensagem.
+  if (diasDoContexto(contexto) && daMensagem.dia === undefined && leituraDoTurno.dia === undefined) herdado.push("dia");
+  if (turnoDoContexto(contexto) && daMensagem.turno === undefined) herdado.push("turno");
+  return herdado;
+}
+
+/** Item que acontece num dos dias pedidos (dia confirmado no detalhe) e, com "hoje"/"amanhã", na data. */
+function itemNoDia(it: ItemProgramacao, dias: Set<DiaSemana>, dataISO: string | null = null): boolean {
   const d = diasDoItem(it.detalhe);
-  return d !== null && [...dias].some((x) => d.has(x));
+  if (d === null || ![...dias].some((x) => d.has(x))) return false;
+  return dataISO === null || itemAconteceNaData(it.detalhe, dataISO) !== false;
 }
 
 /** Resumo de uma linha: título, área, quando e horário — para citar as outras áreas do mesmo dia (P2). */
@@ -2588,7 +2844,7 @@ export function consultaPorDia(
   const area = consulta.area;
   const dia = descreverDias(dias);
   const rotulo = area ? ROTULO_AREA[area] : "atividades";
-  const doDia = itensRede.filter((it) => itemNoDia(it, dias));
+  const doDia = itensRede.filter((it) => itemNoDia(it, dias, dataDoContexto(consulta.contexto)));
   const comContexto = filtrarItensPorContexto(doDia, consulta.contexto);
   const daArea = (it: ItemProgramacao) => !area || it.area === area;
   const alvo = comContexto.filter(daArea);
@@ -2650,11 +2906,14 @@ export function filtrarItensPorContexto(itens: ItemProgramacao[], contexto: Reco
   const turno = typeof contexto.turno === "string" ? normalizarTexto(contexto.turno) : "";
   // S-INST-QUAL-13: dia da semana. Item sem dia legível fica, como na idade e no turno.
   const dias = diasDoContexto(contexto);
+  // S-INST-QUAL-14: "hoje"/"amanhã" gravam a data; item com data escrita só fica se acontecer nela.
+  const data = dataDoContexto(contexto);
   return itens.filter((it) => {
     if (dias) {
       const diasItem = diasDoItem(it.detalhe);
       if (diasItem && ![...dias].some((d) => diasItem.has(d))) return false;
     }
+    if (data && itemAconteceNaData(it.detalhe, data) === false) return false;
     if (idade !== null) {
       const faixa = faixaEtariaDoDetalhe(it.detalhe);
       if (faixa && faixaAceitaIdade(faixa, idade) === false) return false;
@@ -2691,7 +2950,7 @@ export function descreverContexto(contexto: Record<string, unknown>): string {
  *   pela resposta da Maria; aqui só vale o que o lead escreveu;
  * - contexto: idade, turno e gênero ditos na própria mensagem (o modelo às vezes não os põe).
  */
-export function lerMensagemAtual(texto: string): { escopo: string | null; contexto: Record<string, string | number> } {
+export function lerMensagemAtual(texto: string, agora: Date = new Date()): { escopo: string | null; contexto: Record<string, string | number> } {
   const norm = normalizarTexto(texto);
   const unidade = /^\s*\d{1,2}\s*$/.test(norm) ? undefined : detectarUnidadeDireta(texto);
   const rede = /\b(toda a rede|rede toda|rede inteira|toda rede|todas as unidades|em todas|em quais (unidades|cucas)|nas outras unidades|outros cucas|qualquer unidade)\b/.test(norm);
@@ -2704,8 +2963,11 @@ export function lerMensagemAtual(texto: string): { escopo: string | null; contex
   if (/\bfeminin|\bmeninas\b|\bmulheres\b/.test(norm)) contexto.genero = "feminino";
   else if (/\bmasculin|\bmeninos\b|\bhomens\b/.test(norm)) contexto.genero = "masculino";
   // S-INST-QUAL-13: dia da semana escrito na mensagem ("aos sábados", "no domingo", "fim de semana").
-  const dias = diasDaMensagem(texto);
+  const dias = diasDaMensagem(texto, agora);
   if (dias.size) contexto.dia = descreverDias(dias);
+  // S-INST-QUAL-14: "hoje"/"amanhã" gravam também a data, para o item de data marcada (Dia a Dia).
+  const data = dataRelativaDaMensagem(texto, agora);
+  if (data && dias.size === 1) contexto.data = data;
   return { escopo: unidade ?? (rede ? ESCOLHA_REDE : null), contexto };
 }
 
@@ -3331,6 +3593,8 @@ export type EstadoRota = {
   atividadeNovaNaConversa: boolean;
   /** opções de atividade ambígua para o escopo (ver `opcoesDeAtividade`). */
   opcoesAtividade: (escopo: string) => string[];
+  /** S-INST-QUAL-14: a conversa (ou a mensagem) filtra por dia ou turno. Sem o campo, nada muda. */
+  filtroDaConversa?: boolean;
 };
 
 export type AcaoRota =
@@ -3397,8 +3661,13 @@ export function decidirRota(leitura: LeituraTurno, estado: EstadoRota): AcaoRota
     ? leitura.escopo
     : estado.unidadeSalva ?? (estado.escopoRedeSalvo ? ESCOLHA_REDE : null);
 
+  // S-INST-QUAL-14: com dia ou turno na conversa, a pergunta sem atividade nem área numa unidade vai
+  // para a lista filtrada (consulta por dia, ou lista pelo contexto), nunca para a programação inteira.
+  const listaFiltrada = (unidade: string): AcaoRota => ({ acao: "programacao", escopo: unidade, escopoDaMensagem, listarPorIdade: true });
+
   if (tipo === "so_unidade") {
     if (escopo === ESCOLHA_REDE) return { acao: "perguntar_area", escopo, escopoDaMensagem };
+    if (escopo && estado.filtroDaConversa) return listaFiltrada(escopo);
     if (escopo) return { acao: "unidade", unidade: escopo, pedido: false, troca: true };
     return { acao: "perguntar_escopo" };
   }
@@ -3413,6 +3682,7 @@ export function decidirRota(leitura: LeituraTurno, estado: EstadoRota): AcaoRota
   const comIdade = leitura.idade !== null;
   if (assunto === "o_que_tem" && !comIdade) {
     if (escopo === ESCOLHA_REDE) return leitura.area ? { acao: "programacao", escopo, escopoDaMensagem, listarPorIdade: false } : { acao: "perguntar_area", escopo, escopoDaMensagem };
+    if (escopo && estado.filtroDaConversa) return leitura.area ? { acao: "programacao", escopo, escopoDaMensagem, listarPorIdade: false } : listaFiltrada(escopo);
     if (escopo) return { acao: "unidade", unidade: escopo, pedido: false, troca: true };
     return { acao: "perguntar_escopo" };
   }
@@ -3430,6 +3700,7 @@ export function decidirRota(leitura: LeituraTurno, estado: EstadoRota): AcaoRota
   if (escopo && leitura.area) return { acao: "programacao", escopo, escopoDaMensagem, listarPorIdade: false };
   // Continuação sem atividade ("me manda os dias e horários") pede algo do que já foi falado: segue com
   // o pedido na unidade (o modelo responde com a programação e a conversa), nunca o resumo geral.
+  if (escopo && escopo !== ESCOLHA_REDE && tipo !== "continuacao" && estado.filtroDaConversa) return listaFiltrada(escopo);
   if (escopo) return tipo === "continuacao" ? { acao: "unidade", unidade: escopo, pedido: true, troca: escopo !== estado.unidadeSalva } : { acao: "unidade", unidade: escopo, pedido: false, troca: true };
   return { acao: "perguntar_escopo" };
 }
@@ -3737,6 +4008,11 @@ export function removerVagasDoTexto(texto: string): string {
   return texto.replace(/\s*Vagas:[^.\n]*\.?/gi, "");
 }
 
+/** S-INST-QUAL-14: tira os trechos (programação, eventos) cuja data inteira já passou. Trecho sem data fica. */
+export function semTrechosVencidos<T extends { conteudo: string }>(chunks: T[] | null | undefined, hojeISO: string = hojeFortalezaISO()): T[] {
+  return (chunks ?? []).filter((c) => !itemVencido(c.conteudo, hojeISO));
+}
+
 function formatarChunks(chunks: { conteudo: string; fonte_tipo?: string }[]): string {
   return chunks.map((c) => {
     const conteudo = removerVagasDoTexto(c.conteudo);
@@ -3797,7 +4073,13 @@ async function carregarProgramacaoMensal(supabase: ReturnType<typeof createClien
   // trazendo "Vagas: N" de todos os ~40 chunks.
   // PLANO-026: cabeçalho repetido sai dos trechos e aparece uma vez no topo (ver
   // consolidarCabecalhoProgramacao). Só neste caminho — a busca vetorial continua com o cabeçalho.
-  return consolidarCabecalhoProgramacao(chunks.map((c: { conteudo: string }) => removerVagasDoTexto(c.conteudo)));
+  // S-INST-QUAL-14 (decisão a): cada trecho do monthly_program traz um item só (conferido nas 5 unidades
+  // em 16/11): o trecho com a data inteira passada sai. Antes do cabeçalho, que é lido dos 2 primeiros.
+  const hoje = hojeFortalezaISO();
+  const vigentes = chunks.filter((c: { conteudo: string }) => !itemVencido(c.conteudo, hoje));
+  if (vigentes.length < chunks.length) console.log("[motor-agente v18] Programacao: " + (chunks.length - vigentes.length) + " itens com data passada fora (" + unidade + ")");
+  if (vigentes.length === 0) return "";
+  return consolidarCabecalhoProgramacao(vigentes.map((c: { conteudo: string }) => removerVagasDoTexto(c.conteudo)));
 }
 
 // S-PROG-10 (item 3): nomes de mês por extenso, em português. Array JS/TS é indexado a partir de
@@ -3930,7 +4212,9 @@ async function buscarAtividadeEspecifica(supabase: ReturnType<typeof createClien
   if (!atividade) return { conteudo: null, resolucao: resolucao.ambigua ? "ambigua" : "nao_encontrada" };
 
   const atividadeNorm = normalizarTexto(atividade);
-  const relevantes = conteudos.filter((c) => normalizarTexto(c).includes(atividadeNorm));
+  // S-INST-QUAL-14: trecho com a data inteira passada não entra.
+  const hoje = hojeFortalezaISO();
+  const relevantes = conteudos.filter((c) => normalizarTexto(c).includes(atividadeNorm) && !itemVencido(c, hoje));
   if (relevantes.length === 0) return { conteudo: null, resolucao: "nao_encontrada" };
 
   console.log("[motor-agente v18] Busca deterministica de atividade: \"" + atividade + "\" (" + relevantes.length + " chunks, unidade=" + unidade + ", origem=" + resolucao.origem + ")");
@@ -4012,10 +4296,12 @@ const TTL_CACHE_PROGRAMACAO_MS = 90 * 1000;
 let cacheItensProgramacao: { em: number; itens: ItemProgramacao[] } | null = null;
 
 async function carregarItensProgramacaoRede(supabase: ReturnType<typeof createClient<Database>>, usarCache = false): Promise<ItemProgramacao[]> {
-  if (usarCache && cacheItensProgramacao && Date.now() - cacheItensProgramacao.em < TTL_CACHE_PROGRAMACAO_MS) return cacheItensProgramacao.itens;
+  // S-INST-QUAL-14 (decisão a): item com a data inteira passada sai. O corte é feito a cada chamada,
+  // fora do cache, para o "hoje" nunca ficar congelado no cache.
+  if (usarCache && cacheItensProgramacao && Date.now() - cacheItensProgramacao.em < TTL_CACHE_PROGRAMACAO_MS) return itensVigentes(cacheItensProgramacao.itens, hojeFortalezaISO());
   const itens = await carregarItensProgramacaoRedeSemCache(supabase);
   if (usarCache) cacheItensProgramacao = { em: Date.now(), itens };
-  return itens;
+  return itensVigentes(itens, hojeFortalezaISO());
 }
 
 async function carregarItensProgramacaoRedeSemCache(supabase: ReturnType<typeof createClient<Database>>): Promise<ItemProgramacao[]> {
@@ -4309,7 +4595,8 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     const unidadeAntesDaSessao = (metadataInicialDaSessao.unidade_selecionada as string | null | undefined) ?? null;
     // Contexto da conversa de antes do corte (idade, interesse...): volta a valer se a pessoa confirmar
     // a mesma unidade; com "não", a conversa recomeça sem ele.
-    const contextoAntesDaSessao = semDia(metadataInicialDaSessao.prog_contexto as Record<string, unknown> | null); // S-INST-QUAL-13
+    // S-INST-QUAL-14: o dia volta junto com o turno; "hoje"/"amanhã" de um dia que já passou, não.
+    const contextoAntesDaSessao = semDataVencida((metadataInicialDaSessao.prog_contexto ?? {}) as Record<string, unknown>, hojeFortalezaISO());
     if (sessaoNova) {
       await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: LIMPEZA_ESTADO_SESSAO });
       metadataInicialDaSessao = { ...metadataInicialDaSessao, ...LIMPEZA_ESTADO_SESSAO };
@@ -4468,7 +4755,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     // Roda antes da seção 5b e só assume o turno quando tem certeza: resposta à pergunta de
     // escopo/área que ELE fez, ou mensagem com cara de programação que o interpretador semântico
     // classifica como pergunta/continuação. Em qualquer outro caso, a seção 5b de hoje segue igual.
-    type ConsultaProgramacao = { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; perguntaOriginal: boolean; listarPorIdade?: boolean; tituloExato?: string | null };
+    type ConsultaProgramacao = { texto: string; atividade: string | null; termos: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown>; escopo: string; perguntaOriginal: boolean; listarPorIdade?: boolean; tituloExato?: string | null; filtroHerdado?: string[] };
     // S-INST-QUAL-06: `leitura`, `confirmar_escopo` e `aguardando_atividade` só são gravados pela rota estruturada.
     type PendenteProgramacao = { texto: string; atividade: string | null; termos?: string[]; area: AreaProgramacao | null; contexto?: Record<string, unknown>; aguardando_area?: boolean; leitura?: LeituraTurno; confirmar_escopo?: string; contexto_anterior?: Record<string, unknown>; aguardando_atividade?: { opcoes: string[]; escopo: string } };
     let consultaProgramacao: ConsultaProgramacao | null = null;
@@ -4476,15 +4763,23 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     if (ehAgenteDeProgramacao && unidade_cuca === 'Geral') {
       const pendente = (metadataAtual.prog_pendente ?? null) as PendenteProgramacao | null;
       const escopoSessao: string | null = (metadataAtual.unidade_selecionada as string | null) || (metadataAtual.prog_escopo === ESCOLHA_REDE ? ESCOLHA_REDE : null);
-      // S-INST-QUAL-13: o dia guardado na sessão não vale para os turnos seguintes (ver `semDia`).
-      const contextoSessao = semDia(metadataAtual.prog_contexto as Record<string, unknown> | null);
-      const gravarMetadata = async (patchRecebido: Record<string, unknown>) => {
-        // S-INST-QUAL-13: o dia não fica no contexto da sessão (vale só no turno em que foi escrito).
-        const patch = patchRecebido.prog_contexto ? { ...patchRecebido, prog_contexto: semDia(patchRecebido.prog_contexto as Record<string, unknown>) } : patchRecebido;
+      // S-INST-QUAL-14 (decisões do Junior, 16/11): o dia e o turno guardados continuam valendo nas
+      // perguntas seguintes; "hoje"/"amanhã" de um dia que já passou saem; "qualquer dia/horário" e
+      // "tanto faz" (sobre dia ou horário) tiram o filtro — e isso é gravado já, em qualquer caminho.
+      const contextoGravado = (metadataAtual.prog_contexto ?? {}) as Record<string, unknown>;
+      const tirarFiltro = pedidoDeTirarFiltro(textoRota, blocoAnteriorAgente);
+      const contextoSessao = mesclarContextoDaConversa(semDataVencida(contextoGravado, hojeFortalezaISO()), {}, tirarFiltro);
+      /** Contexto da conversa depois da leitura desta mensagem (ver `mesclarContextoDaConversa`). */
+      const contextoDoTurno = (novo: Record<string, unknown>, textoPedido: string = textoRota) => mesclarContextoDaConversa(contextoSessao, novo, tirarFiltro, lerMensagemAtual(textoPedido).contexto);
+      const gravarMetadata = async (patch: Record<string, unknown>) => {
         metadataAtual = { ...metadataAtual, ...patch };
         await supabase.rpc('merge_conversa_metadata', { p_conversa_id: conversa!.id, p_patch: metadataAtual as unknown as Database["public"]["Functions"]["merge_conversa_metadata"]["Args"]["p_patch"] });
       };
       // R9: mesmo contrato dos outros retornos antecipados.
+      if (JSON.stringify(contextoSessao) !== JSON.stringify(contextoGravado)) {
+        console.log("[motor-agente v18] Filtro da conversa: " + (tirarFiltro.dia || tirarFiltro.turno ? "pedido para tirar " + [tirarFiltro.dia ? "dia" : "", tirarFiltro.turno ? "turno" : ""].filter(Boolean).join(" e ") : "data de hoje/amanha vencida"));
+        await gravarMetadata({ prog_contexto: contextoSessao });
+      }
       const responderPerguntaPronta = async (resposta: string, patch: Record<string, unknown>, camada: string) => {
         const respostaFinal = evitarRepeticaoLiteral(resposta, historico);
         await gravarMetadata({ ...patch, conversa_engajada: true, aguardando_unidade: false });
@@ -4521,12 +4816,13 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         pedeDetalhe: mensagemPedeDetalhe(textoDoPedido),
         atividadeNovaNaConversa: atividadeNovaNaConversa(l, historicoRota),
         opcoesAtividade: (escopo: string) => opcoesDeAtividade(itens, l, escopo),
+        filtroDaConversa: temFiltroDeDiaOuTurno(contextoDoTurno(l.contexto, textoDoPedido)), // S-INST-QUAL-14
       });
       const itensParaLeitura = async (l: LeituraTurno) => l.atividade || l.termos_busca.length ? await carregarItensProgramacaoRede(supabase, usarCacheProgramacao) : [];
-      const pendenteDaLeitura = (l: LeituraTurno, textoPedido: string, extra: Record<string, unknown> = {}) => ({ texto: textoPedido, atividade: l.atividade, termos: l.termos_busca, area: l.area, contexto: { ...contextoSessao, ...l.contexto }, leitura: l, ...extra });
+      const pendenteDaLeitura = (l: LeituraTurno, textoPedido: string, extra: Record<string, unknown> = {}) => ({ texto: textoPedido, atividade: l.atividade, termos: l.termos_busca, area: l.area, contexto: contextoDoTurno(l.contexto, textoPedido), leitura: l, ...extra });
       const responderJson = (corpo: Record<string, unknown>) => new Response(JSON.stringify({ success: true, ...corpo }), { headers: { "Content-Type": "application/json" } });
       const executarAcao = async (acao: AcaoRota, l: LeituraTurno, textoPedido: string): Promise<Response | null> => {
-        const contexto = { ...contextoSessao, ...l.contexto };
+        const contexto = contextoDoTurno(l.contexto, textoPedido);
         const comEscopo = (escopo: string, daMensagem: boolean) => daMensagem ? patchEscopo(escopo) : {};
         switch (acao.acao) {
           case "handover": {
@@ -4580,7 +4876,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
             return await responderPerguntaPronta(montarPerguntaAtividade(acao.opcoes, acao.escopo), { ...comEscopo(acao.escopo, acao.escopoDaMensagem), prog_pendente: pendenteDaLeitura(l, textoPedido, { aguardando_atividade: { opcoes: acao.opcoes, escopo: acao.escopo } }), prog_contexto: contexto }, "atividade_ambigua");
           case "programacao":
             await gravarMetadata({ ...comEscopo(acao.escopo, acao.escopoDaMensagem), prog_pendente: null, conversa_engajada: true, aguardando_unidade: false, ...(descreverContexto(l.contexto) ? { prog_contexto: contexto } : {}) });
-            consultaProgramacao = { texto: textoPedido, atividade: l.atividade, termos: l.termos_busca, area: l.area, contexto, escopo: acao.escopo, perguntaOriginal: textoPedido !== textoRota, listarPorIdade: acao.listarPorIdade };
+            consultaProgramacao = { texto: textoPedido, atividade: l.atividade, termos: l.termos_busca, area: l.area, contexto, escopo: acao.escopo, perguntaOriginal: textoPedido !== textoRota, listarPorIdade: acao.listarPorIdade, filtroHerdado: filtroHerdadoDoContexto(contexto, lerMensagemAtual(textoPedido).contexto, l.contexto) };
             rotaDecidida = true;
             return null;
           case "unidade":
@@ -4702,6 +4998,19 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // S-INST-QUAL-06) rota estruturada: leitura única do turno + `decidirRota`. Fica de fora o
       // número que responde a uma lista mostrada pelo bot (resolvido pelo código, como antes) e o que
       // a pendência (A/A2) já resolveu. Leitura que falha → rota antiga (B e 5b), `rota_fallback`.
+      // S-INST-QUAL-14 (V4): número que responde à lista de unidades de uma consulta de programação
+      // ("não tem no JW; tem no 1️⃣ Mondubim 2️⃣ Pici") repete a MESMA consulta na unidade da linha —
+      // dia, turno, área e atividade —, em vez de cair na lista antiga e mandar a programação inteira.
+      const ultimaConsulta = (metadataAtual.prog_ultima_consulta ?? null) as UltimaConsultaProgramacao | null;
+      if (!consultaProgramacao && !pendente && ultimaConsulta && /^\d{1,2}$/.test(textoFinal.trim())) {
+        const unidadeDaLinha = unidadeDaListaDaConsulta(textoFinal.trim(), blocoAnteriorAgente, ultimaConsulta);
+        if (unidadeDaLinha) {
+          consultaProgramacao = { texto: ultimaConsulta.texto, atividade: ultimaConsulta.atividade, termos: ultimaConsulta.termos, area: ultimaConsulta.area, contexto: ultimaConsulta.contexto, escopo: unidadeDaLinha, perguntaOriginal: true, tituloExato: ultimaConsulta.tituloExato ?? null };
+          await gravarMetadata({ ...patchEscopo(unidadeDaLinha), prog_pendente: null, conversa_engajada: true, aguardando_unidade: false });
+          console.log("[motor-agente v18] Numero da lista de unidades da consulta: " + unidadeDaLinha + " (repete a consulta anterior)");
+        }
+      }
+
       const digitoDaLista = /^\d{1,2}$/.test(textoFinal.trim()) && linhaNumeradaDaLista(textoFinal.trim(), blocoAnteriorAgente) !== "";
       if (!consultaProgramacao && rotaNovaLigada && !digitoDaLista) {
         const lida = await obterLeitura();
@@ -4722,7 +5031,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         const itensRede = podeTerSinal ? await carregarItensProgramacaoRede(supabase, usarCacheProgramacao) : [];
         if ((podeTerSinal && temSinalDeProgramacao(textoFinal, itensRede)) || escopoSessao === ESCOLHA_REDE) {
           const interp = consolidarInterpretacao(await interpretarTurnoProgramacao(textoFinal, openaiKey, historico, registrarConsumoInterpretacao), textoFinal);
-          const contexto = { ...contextoSessao, ...interp.contexto };
+          const contexto = contextoDoTurno(interp.contexto); // S-INST-QUAL-14: mesma regra da rota estruturada
           console.log("[motor-agente v18] Interpretacao S-WM-72: tipo=" + interp.tipo + " atividade=" + interp.atividade + " area=" + interp.area + " escopo=" + interp.escopo + " contexto=" + descreverContexto(contexto));
           if (interp.tipo === "pergunta_programacao" || interp.tipo === "continuacao") {
             const area = interp.area ?? areaPeloVocabulario(textoFinal);
@@ -4737,7 +5046,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
             if (escopo === ESCOLHA_REDE && !interp.atividade && !interp.termos_busca.length && !area) {
               return await responderPerguntaPronta(PERGUNTA_AREA, { prog_pendente: { texto: textoFinal, atividade: null, area: null, contexto, aguardando_area: true }, prog_contexto: contexto }, "pergunta_area");
             }
-            consultaProgramacao = { texto: textoFinal, atividade: interp.atividade, termos: interp.termos_busca, area, contexto, escopo, perguntaOriginal: false };
+            consultaProgramacao = { texto: textoFinal, atividade: interp.atividade, termos: interp.termos_busca, area, contexto, escopo, perguntaOriginal: false, filtroHerdado: filtroHerdadoDoContexto(contexto, lerMensagemAtual(textoFinal).contexto, interp.contexto) };
           }
           if (descreverContexto(interp.contexto)) await gravarMetadata({ prog_contexto: contexto });
         }
@@ -5093,6 +5402,8 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
 
     // S-WM-72: instrução da consulta de programação com contexto (vazia fora desse ramo).
     let instrucaoConsultaProgramacao = "";
+    // S-INST-QUAL-14 (V4): consulta cuja resposta mostra a lista de unidades — guardada no fim do turno.
+    let consultaComListaDeUnidades: Omit<UltimaConsultaProgramacao, "marca"> | null = null;
     if (consultaProgramacao) {
       const c = consultaProgramacao;
       reiniciarBlocos(true);
@@ -5127,6 +5438,9 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         dia_nenhuma: "Nenhuma unidade " + (c.escopo === ESCOLHA_REDE ? "da rede" : "(conferido no " + nomeEscopo + " e nas outras)") + " tem " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " no " + r.dia + " na programacao deste mes. Diga isso com suas palavras; se o bloco '--- PROGRAMACAO VIGENTE ---' trouxer outras atividades no " + r.dia + ", cite-as em uma linha. Pergunte se a pessoa quer saber de " + (r.area ? ROTULO_AREA[r.area] : "atividades") + " em outros dias. A programacao e a do mes atual: nao fale de meses anteriores.",
         // S-INST-QUAL-06: só a rota estruturada chega aqui (listarPorIdade).
         idade: "Liste, de forma compacta, os nomes das atividades do bloco '--- PROGRAMACAO VIGENTE ---' (" + nomeEscopo + "), que ja foram filtradas pela idade informada, e pergunte qual interessa para mostrar dias e horarios. Nao liste atividades fora do bloco.",
+        // S-INST-QUAL-14: lista pelo turno/dia da conversa, sem idade; e filtro herdado que esvaziou a resposta.
+        contexto: "Liste, de forma compacta, os nomes das atividades do bloco '--- PROGRAMACAO VIGENTE ---' (" + nomeEscopo + "), que ja foram filtradas pelo contexto da conversa (" + contextoTxt + "), e pergunte qual interessa para mostrar dias e horarios. Nao liste atividades fora do bloco.",
+        filtro_herdado: "Nesta conversa a pessoa tinha pedido " + (r.filtro ?? "") + ", e com esse filtro nao ha " + sobre + " no " + nomeEscopo + ". Diga isso com suas palavras (ex.: 'nesse dia nao tem') e mostre, usando so o bloco '--- PROGRAMACAO VIGENTE ---', o que tem fora desse filtro, com dias e horarios; pergunte se algum serve. NUNCA diga que nao tem " + sobre + " na rede.",
       };
       const semDado = Object.keys(c.contexto).filter((k) => CONTEXTO_SEM_DADO.some((x) => k.startsWith(x)));
       instrucaoConsultaProgramacao = "INSTRUCAO CRITICA (programacao com contexto): " + porSituacao[r.situacao]
@@ -5134,6 +5448,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         + (semDado.length ? " A programacao NAO informa adequacao para: " + semDado.join(", ") + " — nunca afirme que a atividade e adequada; diga que a programacao nao traz essa informacao e sugira confirmar com a unidade." : "")
         + " Se a pergunta tambem tiver uma parte que nao e programacao (ex.: matricula, documentos), responda essa parte com o FAQ e os servicos da rede.";
       logRAG = { camada: "programacao_contexto", atividadeResolvida: c.atividade };
+      if (SITUACOES_COM_LISTA_DE_UNIDADES.includes(r.situacao)) consultaComListaDeUnidades = { texto: c.texto, atividade: c.atividade, termos: c.termos, area: c.area ?? r.area, contexto: c.contexto, tituloExato: c.tituloExato ?? null };
       console.log("[motor-agente v18] Consulta S-WM-72: situacao=" + r.situacao + " escopo=" + nomeEscopo + " atividade=" + c.atividade + " contexto=" + contextoTxt + (r.dia ? " dia=" + r.dia : ""));
     } else if (temUnidadeDefinida && isAgenteProgramacao && precisaVisaoGeral) {
       // S-WM-43 (PERF-02, Par 3): carregarProgramacaoMensal e gerarEmbedding não dependem de
@@ -5200,11 +5515,12 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         p_limite: 3,
       });
       buscaRAG = classificarResultadoBusca(chunksEventos, erroEventos, 3);
-      if (chunksEventos && chunksEventos.length > 0) {
-        adicionarBloco("eventos_faq", "\n\n--- EVENTOS E FAQ ---\n" + formatarChunks(chunksEventos));
+      const chunksEventosVigentes = semTrechosVencidos(chunksEventos); // S-INST-QUAL-14
+      if (chunksEventosVigentes.length > 0) {
+        adicionarBloco("eventos_faq", "\n\n--- EVENTOS E FAQ ---\n" + formatarChunks(chunksEventosVigentes));
         // So marca vetorial se a camada deterministica nao tiver respondido antes — o que manda
         // e a fonte da ATIVIDADE, nao o complemento de eventos.
-        if (logRAG.camada === "nao_aplicavel") logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksEventos) };
+        if (logRAG.camada === "nao_aplicavel") logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksEventosVigentes) };
       }
     } else if (temUnidadeDefinida && isAgenteProgramacao && pedidoOutrasUnidades) {
       // S-WM-71 (Item 3): "procure em outras unidades" — busca a atividade da sessão na rede
@@ -5212,7 +5528,7 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       // o que a pessoa procura, nunca a frase de recusa de assunto fora do CUCA.
       reiniciarBlocos(true);
       // S-WM-72 (R8): aplica também o contexto da sessão (idade, gênero, turno).
-      const itensComContexto = filtrarItensPorContexto(await carregarItensProgramacaoRede(supabase, !supabaseOverride), semDia(metadataAtual.prog_contexto as Record<string, unknown> | null));
+      const itensComContexto = filtrarItensPorContexto(await carregarItensProgramacaoRede(supabase, !supabaseOverride), (metadataAtual.prog_contexto ?? {}) as Record<string, unknown>); // S-INST-QUAL-14: com o dia
       const blocoRede = montarBlocoRedeComAtividadeDaSessao(itensComContexto, textoRota, historico);
       outrasUnidadesComAtividade = blocoRede !== "";
       if (blocoRede) {
@@ -5263,9 +5579,11 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         // VAL-02/VAL-04: quantos chunks a busca de acompanhamento realmente trouxe - sem isso,
         // "o GPT respondeu errado" e "a busca nao trouxe o chunk certo" eram indistinguiveis no log.
         console.log("[motor-agente v18] Busca vetorial acompanhamento: " + (chunksPrograma?.length ?? 0) + " chunks (unidade=" + unidadeEfetiva + ")");
-        if (chunksPrograma && chunksPrograma.length > 0) {
-          adicionarBloco("contexto_vetorial", "\n\n--- CONTEXTO ---\n" + formatarChunks(chunksPrograma));
-          logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksPrograma) };
+        // S-INST-QUAL-14: trecho de programação ou evento com a data inteira passada não vai ao modelo.
+        const chunksProgramaVigentes = semTrechosVencidos(chunksPrograma);
+        if (chunksProgramaVigentes.length > 0) {
+          adicionarBloco("contexto_vetorial", "\n\n--- CONTEXTO ---\n" + formatarChunks(chunksProgramaVigentes));
+          logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunksProgramaVigentes) };
         } else {
           logRAG = { camada: "sem_match_rag" };
         }
@@ -5325,6 +5643,16 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
       if (chunks && chunks.length > 0) {
         adicionarBloco("contexto_vetorial", "\n\n--- CONTEXTO ---\n" + formatarChunks(chunks));
         logRAG = { camada: "vetorial", chunksRetornados: mapearChunks(chunks) };
+      }
+    }
+
+    // S-INST-QUAL-14 (V6): fora da consulta filtrada (programação inteira, acompanhamento), o dia e o
+    // turno da conversa vão como instrução — o modelo recebe o texto inteiro e filtra por ele.
+    if (!consultaProgramacao && isAgenteProgramacao && temUnidadeDefinida && unidade_cuca === "Geral") {
+      const ctx = (metadataAtual.prog_contexto ?? {}) as Record<string, unknown>;
+      if (temFiltroDeDiaOuTurno(ctx)) {
+        const filtro = descreverContexto({ dia: ctx.dia, data: ctx.data, turno: ctx.turno });
+        instrucaoConsultaProgramacao = "INSTRUCAO (filtro da conversa): nesta conversa a pessoa pediu " + filtro + ". Se a pergunta for sobre programacao, considere so as atividades desse dia/horario; se nao houver nenhuma, diga isso e mostre o que tem em outros dias ou horarios — nunca responda so que nao tem.";
       }
     }
 
@@ -5544,6 +5872,17 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
     // pra nenhum consumidor que só lê `resposta` quebrar.
     const mensagens = dividirRespostaEmPartes(resposta);
     resposta = mensagens.join("\n\n");
+
+    // S-INST-QUAL-14 (V4): guarda a consulta que montou a lista de unidades, com o começo desta resposta
+    // como marca, para o número do próximo turno ("2"). Qualquer outra resposta apaga a anterior.
+    if (isAgenteProgramacao && unidade_cuca === "Geral") {
+      const anterior = metadataAtual.prog_ultima_consulta ?? null;
+      const nova = consultaComListaDeUnidades && !handover && !encerrado ? { ...consultaComListaDeUnidades, marca: marcaDaResposta(resposta) } : null;
+      if (nova || anterior) {
+        metadataAtual = { ...metadataAtual, prog_ultima_consulta: nova };
+        await supabase.rpc("merge_conversa_metadata", { p_conversa_id: conversa!.id, p_patch: metadataAtual as unknown as Database["public"]["Functions"]["merge_conversa_metadata"]["Args"]["p_patch"] });
+      }
+    }
 
     // 13. Salvar — 1 linha por parte efetivamente gerada, preservando a ordem. Sem isso, o
     // histórico lido no próximo turno (Passo 4, linha ~645) ficaria com 1 linha concatenada

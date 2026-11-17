@@ -1,0 +1,53 @@
+{
+ "previa": null,
+ "conversa_curta": null,
+ "mes_catalogo": "2026-11",
+ "historico": [
+  {
+   "remetente": "lead",
+   "conteudo": "Quais são os cursos que tem aos sábados?",
+   "minutos_antes": 3
+  },
+  {
+   "remetente": "agente",
+   "conteudo": "No Cuca José Walter não tem curso no sábado. Tem nestas unidades:\n1️⃣ Cuca Mondubim\n2️⃣ Cuca Pici\nQuer saber de alguma?",
+   "minutos_antes": 2
+  }
+ ],
+ "id": "DS-08",
+ "categoria": "busca_unidade",
+ "descricao": "V4: lista de P1 (cursos no sábado) e a pessoa responde '2' → cursos no sábado no Pici",
+ "origem": "S-INST-QUAL-14 (16/11): varredura de pontas soltas da programação por dia",
+ "data_simulada": "2026-11-16T15:00:00-03:00",
+ "estado": {
+  "metadata": {
+   "unidade_selecionada": "Cuca José Walter",
+   "conversa_engajada": true,
+   "prog_contexto": {
+    "dia": "sábado"
+   },
+   "prog_ultima_consulta": {
+    "texto": "Quais são os cursos que tem aos sábados?",
+    "atividade": null,
+    "termos": [],
+    "area": "CURSOS",
+    "contexto": {
+     "dia": "sábado"
+    },
+    "tituloExato": null,
+    "marca": "no cuca jose walter nao tem curso no sabado. tem nestas unid"
+   }
+  }
+ },
+ "mensagem": "2",
+ "esperado": {
+  "deve_conter": [
+   "tech start"
+  ],
+  "nao_deve_conter": [
+   "qual area",
+   "nao (tem|ha) curso"
+  ]
+ },
+ "observacao": "Resposta esperada definida na S-14 e aprovada em 17/11. Só mede de verdade na rodada real (a simulada não exercita o caminho do dia). No Pici, o curso de sábado é o Tech Start (Python e IA)."
+}
