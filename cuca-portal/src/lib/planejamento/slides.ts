@@ -1,14 +1,18 @@
-// S-PLA-05: regras puras dos slides do projeto (sem React, sem Supabase). Uma fonte de verdade: este
-// módulo decide QUAIS slides existem e O QUE cada um mostra; a tela (componentes) e o PDF (react-pdf)
-// só desenham. Assim os dois nunca divergem.
+// S-PLA-05 / S-PLA-09: regras puras dos slides do projeto (sem React, sem Supabase). Uma fonte de
+// verdade: este módulo decide QUAIS slides existem e O QUE cada um mostra; a tela (componentes) e o PDF
+// (react-pdf) só desenham. Assim os dois nunca divergem.
 //
 // - Só há slides com a ficha final (D7). Ficha parcial → nenhum slide.
-// - Slide sem dado não aparece; nunca há "não informado" nem "R$ 0,00" solto (AC4).
-// - Texto longo: na tela é cortado com reticências; no PDF o resto vai para slides de continuação (AC5).
+// - Slide sem dado não aparece; nunca há "não informado" nem "R$ 0,00" solto (S-PLA-05, AC4).
+// - S-PLA-09: tudo o que foi digitado aparece, como foi digitado. Nada é cortado com reticências: o
+//   que não cabe num slide continua no seguinte ("… continuação"), na tela e no PDF, com os mesmos
+//   slides nos dois. O que cabe é medido pela ALTURA que o texto ocupa (`medida.ts`), não pelo número
+//   de caracteres. A única mudança no texto é de espaço em branco, para a diagramação.
 // - O texto daqui não usa símbolos que a fonte padrão do PDF não desenha (setas, "✔", emojis): o
 //   desenho cuida disso com formas.
 
-import { mesesDoPeriodo, rotuloPeriodo } from "./lista"
+import { mesesDoPeriodo } from "./lista"
+import { alturaTexto, cortarPorAltura, larguraTexto, type Fonte } from "./medida"
 import {
     ANO_PLANEJAMENTO, camposDaSituacao, rotuloCategoria, rotuloFrequencia, rotuloSituacao, rotuloTipo,
     type FilhasProjeto, type LinhaProjeto, type Situacao2026,
@@ -21,6 +25,24 @@ import {
 export const LARGURA_SLIDE = 960
 export const ALTURA_SLIDE = 540
 
+// Área do conteúdo dos slides com título (entre o título e o rodapé). Os desenhos usam as mesmas medidas.
+export const CORPO = { esquerda: 56, topo: 108, largura: 848, altura: 368 } as const
+
+// Medidas compartilhadas com os desenhos (tela e PDF). Mudar aqui muda nos dois.
+export const LAYOUT = {
+    alturaLinha: 1.45, // texto corrido
+    rotulo: { tamanho: 10, espaco: 6 }, // rótulo em maiúsculas acima de cada bloco
+    margemBloco: 16,
+    continuacao: 13.5,
+    porque: { colunaSelo: 280, vao: 40, topo: 10, tamanhos: [17, 15, 13] },
+    objetivos: { geral: 17, alturaGeral: 1.35, borda: 20, margemGeral: 18, vao: 30, caixa: 250, caixaPadding: 16, item: 12.5, check: 24, margemItem: 7 },
+    execucao: { colunaItens: 300, vao: 30, item: 12.5, caixaPadding: 16 },
+    orcamento: { colunaResumo: 260, vao: 28, rosca: 130, fonte: 10.5, alturaFonte: 1.3, paddingLinha: 5, cabecalho: 22, colunas: { qtd: 56, unitario: 96, total: 96, categoria: 92 }, vaoColuna: 8 },
+    metas: { grade: 416, lista: 848, alturaGrade: 176, vao: 16, padding: 14, numero: 26, vaoNumero: 12, rotulo: 8.5, texto: 11.5, alturaTexto: 1.3, seta: 13 },
+    aprendizados: { colunaBarras: 300, vao: 34, texto: 12 },
+    observacoes: { recuo: 22, tamanhos: [17, 15, 13] },
+} as const
+
 // ── Entrada ──────────────────────────────────────────────────────────────────────────────────
 
 export type SetorSlides = { id: string; nome: string; cor: string }
@@ -30,6 +52,8 @@ export type DadosSlides = {
     setor: SetorSlides | null
     unidades: { id: string; nome: string }[]
 }
+// Desde a S-PLA-09 os dois modos geram exatamente os mesmos slides. O parâmetro continua para não
+// mudar quem chama (página dos slides e exportação do PDF).
 export type ModoSlides = "tela" | "pdf"
 
 // ── Saída ────────────────────────────────────────────────────────────────────────────────────
@@ -39,17 +63,20 @@ export type Cartao = { rotulo: string; valor: string }
 export type MetaSlide = { meta: string | null; indicador: string | null; esperado: string | null }
 export type Fatia = { chave: string; rotulo: string; valor: number; valorTexto: string; percentual: number; cor: string }
 export type Barra = { rotulo: string; valor: number; valorTexto: string; proporcao: number }
+export type LinhaOrcamento = { item: string; categoria: string; quantidade: string; unitario: string; total: string }
+export type ResumoOrcamento = { total: string; fatias: Fatia[] }
+export type LayoutCapa = { tamanho: number; topo: number; respiro: number }
 
 export type ConteudoSlide =
-    | { tipo: "capa"; nome: string; tipoProjeto: string; responsavel: string | null }
+    | { tipo: "capa"; nome: string; tipoProjeto: string; responsavel: string | null; layout: LayoutCapa }
     | { tipo: "numeros"; cartoes: Cartao[] }
-    | { tipo: "porque"; situacao: Situacao2026; selo: string; blocos: Bloco[] }
-    | { tipo: "objetivos"; objetivoGeral: string | null; especificos: string[]; maisEspecificos: number; publico: string | null; faixa: string | null }
+    | { tipo: "porque"; situacao: Situacao2026; selo: string; blocos: Bloco[]; tamanho: number }
+    | { tipo: "objetivos"; objetivoGeral: string | null; especificos: string[]; publico: string | null; faixa: string | null }
     | { tipo: "execucao"; linhaDoTempo: { anoTodo: boolean; meses: number[] } | null; periodo: string | null; itens: Bloco[]; como: string | null }
-    | { tipo: "orcamento"; total: string; fatias: Fatia[]; maiores: Cartao[] }
+    | { tipo: "orcamento"; resumo: ResumoOrcamento | null; itens: LinhaOrcamento[]; parte: number }
     | { tipo: "metas"; metas: MetaSlide[]; parte: number; partes: number; inicio: number; layout: "grade" | "lista" }
     | { tipo: "aprendizados"; barras: Barra[]; blocos: Bloco[] }
-    | { tipo: "observacoes"; texto: string }
+    | { tipo: "observacoes"; texto: string; tamanho: number }
     | { tipo: "encerramento"; responsavel: string | null; contato: string | null }
     | { tipo: "continuacao"; de: TipoSlide; blocos: Bloco[] }
 
@@ -80,97 +107,77 @@ export const TITULOS: Record<TipoSlide, string> = {
     continuacao: "Continuação",
 }
 
-// ── Limites de texto (em caracteres) por campo ──────────────────────────────────────────────
-// Medidos para a grade 960 × 540 com a tipografia dos componentes. Acima do limite: reticências
-// na tela; no PDF, o resto vai para a continuação.
-
-export const LIMITES = {
-    porqueUnico: 700,
-    porqueDuplo: 340,
-    objetivoGeral: 240,
-    especifico: 110,
-    especificosPorSlide: 5,
-    publico: 150,
-    itemExecucao: 110,
-    como: 360,
-    meta: 110,
-    aprendizado: 230,
-    observacoes: 950,
-    continuacao: 1200,
-} as const
-
 export const METAS_POR_SLIDE = 4
-// Meta com algum campo acima disto não cabe no cartão da grade 2 × 2: as metas passam a 2 por slide,
-// em cartões da largura toda.
-export const META_CURTA = 55
-export const METAS_POR_SLIDE_LISTA = 2
-// No PDF, uma sobra menor que isto fica no próprio slide (os limites têm folga para ela): evita um
-// slide de continuação com uma palavra só.
-export const FOLGA_PDF = 30
-export const MAIORES_ITENS = 5
 
-// ── Utilitários de texto ─────────────────────────────────────────────────────────────────────
+// ── Texto ────────────────────────────────────────────────────────────────────────────────────
 
-const limpo = (v: string | null | undefined): string | null => {
-    const t = (v ?? "").replace(/\r\n?/g, "\n").trim()
+// Só espaço em branco muda (AC6c): tabulação vira espaço, espaços seguidos viram um, espaço no início
+// e no fim de cada linha sai e mais de uma linha em branco seguida vira uma. Nenhuma letra muda.
+export function limparEspacos(v: string | null | undefined): string | null {
+    const t = (v ?? "")
+        .replace(/\r\n?/g, "\n")
+        .replace(/[\t ]/g, " ")
+        .replace(/ {2,}/g, " ")
+        .split("\n").map(l => l.trim()).join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
     return t === "" ? null : t
 }
+const limpo = limparEspacos
 
-// Corta em até `limite` caracteres, de preferência num espaço. Devolve [parte, resto].
-export function cortarTexto(texto: string, limite: number): [string, string] {
-    if (texto.length <= limite) return [texto, ""]
-    const janela = texto.slice(0, limite + 1)
-    const espaco = Math.max(janela.lastIndexOf(" "), janela.lastIndexOf("\n"))
-    const corte = espaco >= limite * 0.6 ? espaco : limite
-    return [texto.slice(0, corte).trimEnd(), texto.slice(corte).trimStart()]
+const corrido = (tamanho: number): Fonte => ({ tamanho, altura: LAYOUT.alturaLinha })
+const ALTURA_ROTULO = LAYOUT.rotulo.tamanho * 1.25 + LAYOUT.rotulo.espaco
+
+// Altura de um bloco "RÓTULO + texto" com a margem de baixo.
+export function alturaBloco(texto: string, largura: number, tamanho: number): number {
+    return ALTURA_ROTULO + alturaTexto(texto, largura, corrido(tamanho)) + LAYOUT.margemBloco
 }
 
-// Tela: corta com reticências.
-export function truncar(texto: string, limite: number): string {
-    if (texto.length <= limite) return texto
-    return `${cortarTexto(texto, limite - 1)[0]}…`
-}
-
-// Acumula o que não coube no slide (só no PDF).
-class Sobras {
-    blocos: Bloco[] = []
-    constructor(private modo: ModoSlides) {}
-    texto(rotulo: string, valor: string, limite: number): string {
-        if (valor.length <= limite) return valor
-        if (this.modo === "tela") return truncar(valor, limite)
-        if (valor.length <= limite + FOLGA_PDF) return valor
-        const [parte, resto] = cortarTexto(valor, limite)
-        this.blocos.push({ rotulo, texto: resto })
-        return `${parte}…`
-    }
-    lista(rotulo: string, itens: string[], porSlide: number, limiteItem: number): { visiveis: string[]; mais: number } {
-        const cortados = itens.map(i => this.texto(rotulo, i, limiteItem))
-        if (cortados.length <= porSlide) return { visiveis: cortados, mais: 0 }
-        if (this.modo === "tela") return { visiveis: cortados.slice(0, porSlide), mais: cortados.length - porSlide }
-        this.blocos.push({ rotulo, texto: itens.slice(porSlide).map(i => `• ${i}`).join("\n") })
-        return { visiveis: cortados.slice(0, porSlide), mais: 0 }
-    }
-}
-
-// Reparte os blocos que sobraram em slides de continuação (cada um cabe em `LIMITES.continuacao`).
-export function paginarContinuacao(blocos: Bloco[], limite: number = LIMITES.continuacao): Bloco[][] {
-    const paginas: Bloco[][] = []
-    let atual: Bloco[] = []
-    let usado = 0
-    const fechar = () => { if (atual.length) paginas.push(atual); atual = []; usado = 0 }
+// Encaixa blocos, em ordem, numa altura. O primeiro que não cabe inteiro é cortado (o resto e todos
+// os seguintes vão para `sobra`), para a leitura seguir na ordem.
+export function encaixarBlocos(blocos: Bloco[], largura: number, tamanho: number, altura: number): { cabem: Bloco[]; sobra: Bloco[] } {
+    const cabem: Bloco[] = []
+    const sobra: Bloco[] = []
+    let livre = altura
+    const linha = tamanho * LAYOUT.alturaLinha
     for (const b of blocos) {
-        let resto = b.texto
-        while (resto) {
-            const espaco = limite - usado - 40 // o rótulo também ocupa lugar
-            if (espaco < 200 && atual.length) { fechar(); continue }
-            const [parte, sobra] = cortarTexto(resto, Math.max(espaco, 200))
-            atual.push({ rotulo: b.rotulo, texto: parte })
-            usado += parte.length + 40
-            resto = sobra
-            if (resto) fechar()
+        if (sobra.length) { sobra.push(b); continue }
+        const disponivel = livre - ALTURA_ROTULO - LAYOUT.margemBloco
+        if (disponivel < linha) { sobra.push(b); continue }
+        const [parte, resto] = cortarPorAltura(b.texto, largura, corrido(tamanho), disponivel)
+        if (parte) {
+            cabem.push({ rotulo: b.rotulo, texto: parte })
+            livre -= alturaBloco(parte, largura, tamanho)
         }
+        if (resto) sobra.push({ rotulo: b.rotulo, texto: resto })
     }
-    fechar()
+    return { cabem, sobra }
+}
+
+// Maior tamanho de letra (da lista) em que todos os blocos cabem; senão, o menor.
+function escolherTamanho(blocos: Bloco[], largura: number, altura: number, tamanhos: readonly number[]): number {
+    for (const t of tamanhos) if (blocos.reduce((s, b) => s + alturaBloco(b.texto, largura, t), 0) <= altura) return t
+    return tamanhos[tamanhos.length - 1]
+}
+
+// Reparte os blocos que sobraram em slides de continuação, pela altura.
+export function paginarContinuacao(blocos: Bloco[]): Bloco[][] {
+    const paginas: Bloco[][] = []
+    let fila = blocos.filter(b => b.texto)
+    while (fila.length) {
+        let { cabem, sobra } = encaixarBlocos(fila, CORPO.largura, LAYOUT.continuacao, CORPO.altura)
+        if (!cabem.length) {
+            // Página vazia e nada coube (texto sem quebra possível): força o corte por linha.
+            const b = fila[0]
+            const fonte = corrido(LAYOUT.continuacao)
+            const linhas = Math.max(1, Math.floor((CORPO.altura - ALTURA_ROTULO - LAYOUT.margemBloco) / (fonte.tamanho * fonte.altura)))
+            const tamanho = Math.max(1, Math.floor(b.texto.length * linhas / Math.max(1, alturaTexto(b.texto, CORPO.largura, fonte) / (fonte.tamanho * fonte.altura))))
+            cabem = [{ rotulo: b.rotulo, texto: b.texto.slice(0, tamanho) }]
+            sobra = [{ rotulo: b.rotulo, texto: b.texto.slice(tamanho) }, ...fila.slice(1)].filter(x => x.texto)
+        }
+        paginas.push(cabem)
+        fila = sobra
+    }
     return paginas
 }
 
@@ -184,6 +191,7 @@ const numero = (v: number | string | null | undefined): number | null => {
 export const inteiroBR = (n: number) => Math.round(n).toLocaleString("pt-BR")
 // Sem o espaço especial do toLocaleString de moeda (o PDF desenha melhor um espaço comum).
 export const reais = (n: number) => `R$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const quantidadeBR = (n: number) => n.toLocaleString("pt-BR", { maximumFractionDigits: 2 })
 
 const COR_PADRAO = "#1e3a8a"
 
@@ -264,6 +272,8 @@ export function angulosDasFatias(fatias: { valor: number }[]): { inicio: number;
     })
 }
 
+// ── Capa ─────────────────────────────────────────────────────────────────────────────────────
+
 // Tamanho do nome do projeto na capa, conforme o comprimento (o nome nunca é cortado). Maiúscula
 // ocupa mais espaço que minúscula, então pesa mais na conta.
 export function tamanhoTituloCapa(nome: string): number {
@@ -276,25 +286,39 @@ export function tamanhoTituloCapa(nome: string): number {
     return 24
 }
 
-// Topo do bloco de texto da capa: sobe quando o nome é grande, para caber tudo.
-export function topoCapa(nome: string): number {
-    return tamanhoTituloCapa(nome) <= 30 ? 116 : 140
-}
-// Espaço acima e abaixo da barrinha da capa: menor quando o nome ocupa muitas linhas.
-export function respiroCapa(nome: string): number {
-    return tamanhoTituloCapa(nome) <= 24 ? 14 : 22
+export const CAPA = { largura: 470, rodape: 52, alturaTitulo: 1.1 } as const
+
+// Altura do bloco de texto da capa (rótulo, nome, barrinha, selos e responsável).
+function alturaCapa(nome: string, responsavel: string | null, tamanho: number, respiro: number): number {
+    const titulo = alturaTexto(nome, CAPA.largura, { tamanho, altura: CAPA.alturaTitulo, negrito: true })
+    const resp = responsavel ? respiro + 4 + ALTURA_ROTULO + alturaTexto(responsavel, CAPA.largura, { tamanho: 16, altura: 1.25, negrito: true }) : 0
+    return 12 * 1.25 + LAYOUT.rotulo.espaco + 6 + titulo + 2 * respiro + 5 + 30 + resp
 }
 
-// Tamanho do texto corrido conforme a quantidade (texto curto fica maior, com menos espaço vazio).
-export function tamanhoTexto(caracteres: number): number {
-    if (caracteres <= 250) return 17
-    if (caracteres <= 500) return 15
-    return 13
+// Tamanho do nome, topo do bloco e respiro: começa pelo tamanho pelo comprimento e diminui até o
+// bloco inteiro caber acima do rodapé (nome e responsável inteiros, sem corte).
+export function layoutCapa(nome: string, responsavel: string | null): LayoutCapa {
+    const tamanhos = [54, 44, 36, 30, 24, 20, 18, 16, 14, 12, 11, 10]
+    const inicial = tamanhoTituloCapa(nome)
+    let ultimo: LayoutCapa = { tamanho: inicial, topo: 116, respiro: 14 }
+    for (const tamanho of tamanhos.filter(t => t <= inicial)) {
+        const respiro = tamanho <= 24 ? 14 : 22
+        // Nunca acima de 116: o logo da capa ocupa até 104.
+        for (const topo of tamanho <= 30 ? [116] : [140, 116]) {
+            ultimo = { tamanho, topo, respiro }
+            if (topo + alturaCapa(nome, responsavel, tamanho, respiro) <= ALTURA_SLIDE - CAPA.rodape) return ultimo
+        }
+    }
+    return ultimo
 }
 
-// Valor dos cartões de números: diminui para caber numa linha.
-export function tamanhoValorCartao(valor: string): number {
-    return valor.length > 9 ? 26 : 34
+// ── Cartões de números ───────────────────────────────────────────────────────────────────────
+
+// Valor dos cartões: o maior tamanho em que o valor cabe numa linha, conforme a quantidade de cartões.
+export function tamanhoValorCartao(valor: string, quantidade: number): number {
+    const largura = (CORPO.largura - 20 * (quantidade - 1)) / Math.max(1, quantidade) - 36 - 4
+    for (const t of [34, 30, 26, 22, 18, 16, 14, 12]) if (larguraTexto(valor, t, true) <= largura) return t
+    return 12
 }
 
 // ── Nomes de arquivo ─────────────────────────────────────────────────────────────────────────
@@ -312,10 +336,28 @@ export function nomeArquivoFicha(setor: string, projeto: string, ano = ANO_PLANE
     return `ficha-planejamento-${ano}_${slug(setor)}_${slug(projeto)}.pdf`
 }
 
-// ── Montagem ─────────────────────────────────────────────────────────────────────────────────
+// ── Datas ────────────────────────────────────────────────────────────────────────────────────
+
+function dataBR(v: string | null | undefined): string | null {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v ?? "")
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : null
+}
+
+// Datas como foram digitadas (AC4): "10/04/2027", "06/08/2027 a 03/09/2027", "Ano todo". Só uma
+// data → ela sozinha. Final antes da inicial → as duas, na ordem digitada.
+export function periodoExato(p: Pick<LinhaProjeto, "periodo_ano_todo" | "data_inicio" | "data_fim">): string | null {
+    if (p.periodo_ano_todo) return "Ano todo"
+    const ini = dataBR(p.data_inicio)
+    const fim = dataBR(p.data_fim)
+    if (ini && fim) return ini === fim ? ini : `${ini} a ${fim}`
+    return ini ?? fim
+}
+
+// ── Orçamento ────────────────────────────────────────────────────────────────────────────────
 
 type ItemOrcamento = { nome: string; categoria: string; valor: number }
 
+// Itens com valor (quantidade × valor unitário), para o total e a rosca.
 export function itensDoOrcamento(filhas: FilhasProjeto): ItemOrcamento[] {
     return [...filhas.orcamento].sort((a, b) => a.ordem - b.ordem).map(o => {
         const q = numero(o.quantidade) ?? 0
@@ -345,10 +387,90 @@ export function agruparPorCategoria(itens: ItemOrcamento[], cor: string): Fatia[
     }))
 }
 
+const VAZIO = "—"
+
+// Todas as linhas do orçamento, como foram digitadas (AC3). Campo vazio = "—"; linha toda vazia sai.
+export function linhasDoOrcamento(filhas: FilhasProjeto): LinhaOrcamento[] {
+    return [...filhas.orcamento].sort((a, b) => a.ordem - b.ordem).flatMap(o => {
+        const item = limpo(o.item)
+        const q = numero(o.quantidade)
+        const v = numero(o.valor_unitario)
+        if (!item && !o.categoria && q === null && v === null) return []
+        return [{
+            item: item ?? VAZIO,
+            categoria: o.categoria ? (rotuloCategoria(o.categoria) || o.categoria) : VAZIO,
+            quantidade: q === null ? VAZIO : quantidadeBR(q),
+            unitario: v === null ? VAZIO : reais(v),
+            total: q === null || v === null ? VAZIO : reais(Math.round(q * v * 100) / 100),
+        }]
+    })
+}
+
+const O = LAYOUT.orcamento
+const fonteTabela: Fonte = { tamanho: O.fonte, altura: O.alturaFonte }
+// Largura da coluna do item numa tabela de largura `largura`.
+export function larguraColunaItem(largura: number): number {
+    const c = O.colunas
+    return largura - c.qtd - c.unitario - c.total - c.categoria - 4 * O.vaoColuna
+}
+// Altura de uma linha da tabela: a célula mais alta manda.
+export function alturaLinhaOrcamento(l: LinhaOrcamento, largura: number): number {
+    const c = O.colunas
+    const linhas = Math.max(
+        alturaTexto(l.item, larguraColunaItem(largura), fonteTabela),
+        alturaTexto(l.categoria, c.categoria, fonteTabela),
+        alturaTexto(l.quantidade, c.qtd, fonteTabela),
+        alturaTexto(l.unitario, c.unitario, fonteTabela),
+        alturaTexto(l.total, c.total, fonteTabela),
+    )
+    return linhas + 2 * O.paddingLinha + 1
+}
+export const larguraTabelaComResumo = CORPO.largura - O.colunaResumo - O.vao
+
+// ── Metas ────────────────────────────────────────────────────────────────────────────────────
+
+const M = LAYOUT.metas
+type ParteMeta = "meta" | "indicador" | "esperado"
+const PARTES_META: { chave: ParteMeta; rotulo: string; negrito: boolean }[] = [
+    { chave: "meta", rotulo: "meta", negrito: true },
+    { chave: "indicador", rotulo: "como será medido", negrito: false },
+    { chave: "esperado", rotulo: "esperado", negrito: true },
+]
+const larguraTextoMeta = (largura: number) => largura - 2 * M.padding - 2 - M.numero - M.vaoNumero
+const fonteMeta = (negrito: boolean): Fonte => ({ tamanho: M.texto, altura: M.alturaTexto, negrito })
+
+export function alturaMeta(m: MetaSlide, largura: number): number {
+    const presentes = PARTES_META.filter(p => m[p.chave])
+    const conteudo = presentes.reduce((s, p) => s + M.rotulo * 1.25 + alturaTexto(m[p.chave] as string, larguraTextoMeta(largura), fonteMeta(p.negrito)), 0)
+        + Math.max(0, presentes.length - 1) * M.seta
+    return Math.max(M.numero, conteudo) + 2 * M.padding + 2
+}
+
 export function metasValidas(filhas: FilhasProjeto): MetaSlide[] {
     return [...filhas.metas].sort((a, b) => a.ordem - b.ordem)
         .map(m => ({ meta: limpo(m.meta), indicador: limpo(m.indicador), esperado: limpo(m.resultado_esperado) }))
         .filter(m => m.meta || m.indicador || m.esperado)
+}
+
+// Meta grande demais para um slide inteiro: o que cabe fica no cartão, o resto vai para a continuação.
+function cortarMeta(m: MetaSlide, n: number, altura: number): { meta: MetaSlide; sobra: Bloco[] } {
+    const largura = larguraTextoMeta(M.lista)
+    let livre = altura - 2 * M.padding - 2
+    const saida: MetaSlide = { meta: null, indicador: null, esperado: null }
+    const sobra: Bloco[] = []
+    for (const p of PARTES_META) {
+        const texto = m[p.chave]
+        if (!texto) continue
+        if (sobra.length) { sobra.push({ rotulo: `Meta ${n} — ${p.rotulo}`, texto }); continue }
+        const disponivel = livre - M.rotulo * 1.25 - M.seta
+        const [parte, resto] = disponivel > 0 ? cortarPorAltura(texto, largura, fonteMeta(p.negrito), disponivel) : ["", texto]
+        if (parte) {
+            saida[p.chave] = parte
+            livre -= M.rotulo * 1.25 + M.seta + alturaTexto(parte, largura, fonteMeta(p.negrito))
+        }
+        if (resto) sobra.push({ rotulo: `Meta ${n} — ${p.rotulo}`, texto: resto })
+    }
+    return { meta: saida, sobra }
 }
 
 function faixaEtaria(min: number | null, max: number | null): string | null {
@@ -357,7 +479,10 @@ function faixaEtaria(min: number | null, max: number | null): string | null {
     return min !== null ? `A partir de ${min} anos` : `Até ${max} anos`
 }
 
-export function montarSlides(dados: DadosSlides, modo: ModoSlides): ResultadoSlides {
+// ── Montagem ─────────────────────────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- o modo é aceito por compatibilidade; os dois são iguais (S-PLA-09)
+export function montarSlides(dados: DadosSlides, _modo: ModoSlides = "tela"): ResultadoSlides {
     const p = dados.projeto
     if (p.ficha !== "final") return { tipo: "ficha_parcial" }
 
@@ -367,30 +492,29 @@ export function montarSlides(dados: DadosSlides, modo: ModoSlides): ResultadoSli
     const encerrado = situacao === "encerrado"
     const saida: ConteudoSlide[] = []
 
-    // Adiciona o slide e, no PDF, as continuações do que não coube nele.
-    const adicionar = (conteudo: ConteudoSlide, sobras: Sobras) => {
+    // Adiciona o slide e, logo depois, as continuações do que não coube nele.
+    const adicionar = (conteudo: ConteudoSlide, sobra: Bloco[]) => {
         saida.push(conteudo)
-        for (const blocos of paginarContinuacao(sobras.blocos)) saida.push({ tipo: "continuacao", de: conteudo.tipo, blocos })
+        for (const blocos of paginarContinuacao(sobra)) saida.push({ tipo: "continuacao", de: conteudo.tipo, blocos })
     }
-    const novo = () => new Sobras(modo)
 
     const itensOrc = itensDoOrcamento(dados.filhas)
     const totalOrc = Math.round(itensOrc.reduce((s, i) => s + i.valor, 0) * 100) / 100
     const metas = metasValidas(dados.filhas)
-    const periodo = rotuloPeriodo(p) || null
+    const periodo = periodoExato(p)
     const duracao = limpo(p.duracao)
-
-    // 1. Capa
-    // O responsável aparece inteiro no Encerramento; na capa, até 40 caracteres.
     const responsavel = limpo(p.responsavel_nome)
-    saida.push({ tipo: "capa", nome: p.nome, tipoProjeto: rotuloTipo(p.tipo), responsavel: responsavel ? truncar(responsavel, 40) : null })
+    const nome = limpo(p.nome) ?? p.nome
+
+    // 1. Capa (nome e responsável inteiros; o tamanho do nome se ajusta para caber)
+    saida.push({ tipo: "capa", nome, tipoProjeto: rotuloTipo(p.tipo), responsavel, layout: layoutCapa(nome, responsavel) })
 
     // 2. Números (com pelo menos 2 preenchidos)
     if (!encerrado) {
         const cartoes: Cartao[] = []
         if (p.participantes_estimados !== null) cartoes.push({ rotulo: "Participantes estimados", valor: inteiroBR(p.participantes_estimados) })
         if (totalOrc > 0) cartoes.push({ rotulo: "Orçamento total", valor: reais(totalOrc) })
-        if (duracao) cartoes.push({ rotulo: "Duração", valor: truncar(duracao, 40) })
+        if (duracao) cartoes.push({ rotulo: "Duração", valor: duracao })
         else if (periodo) cartoes.push({ rotulo: "Período", valor: periodo })
         if (metas.length > 0) cartoes.push({ rotulo: metas.length === 1 ? "Meta" : "Metas", valor: String(metas.length) })
         if (cartoes.length >= 2) saida.push({ tipo: "numeros", cartoes })
@@ -398,41 +522,30 @@ export function montarSlides(dados: DadosSlides, modo: ModoSlides): ResultadoSli
 
     // 3. Por que este projeto (com a situação preenchida)
     if (situacao) {
-        const s = novo()
+        const P = LAYOUT.porque
         const campos = camposDaSituacao(situacao)
         const brutos: Bloco[] = []
         const mudancas = limpo(p.mudancas_2026)
         const justificativa = limpo(p.justificativa_2026)
         if (campos.mudancas && mudancas) brutos.push({ rotulo: "O que muda", texto: mudancas })
         if (campos.justificativa && justificativa) brutos.push({ rotulo: campos.rotuloJustificativa.replace(" (justificativa)", ""), texto: justificativa })
-        const limite = brutos.length > 1 ? LIMITES.porqueDuplo : LIMITES.porqueUnico
-        const blocos = brutos.map(b => ({ rotulo: b.rotulo, texto: s.texto(b.rotulo, b.texto, limite) }))
-        adicionar({ tipo: "porque", situacao, selo: rotuloSituacao(situacao).toUpperCase(), blocos }, s)
+        const largura = CORPO.largura - P.colunaSelo - P.vao
+        const altura = CORPO.altura - P.topo
+        const tamanho = escolherTamanho(brutos, largura, altura, P.tamanhos)
+        const { cabem, sobra } = encaixarBlocos(brutos, largura, tamanho, altura)
+        adicionar({ tipo: "porque", situacao, selo: rotuloSituacao(situacao).toUpperCase(), blocos: cabem, tamanho }, sobra)
     }
 
     if (!encerrado) {
         // 4. Objetivos e público
         const objetivoGeral = limpo(p.objetivo_geral)
         const especificos = [...dados.filhas.objetivos].sort((a, b) => a.ordem - b.ordem).map(o => limpo(o.texto)).filter((t): t is string => !!t)
-        if (objetivoGeral || especificos.length > 0) {
-            const s = novo()
-            const lista = s.lista("Objetivos específicos", especificos, LIMITES.especificosPorSlide, LIMITES.especifico)
-            const publico = limpo(p.publico_alvo)
-            adicionar({
-                tipo: "objetivos",
-                objetivoGeral: objetivoGeral ? s.texto("Objetivo geral", objetivoGeral, LIMITES.objetivoGeral) : null,
-                especificos: lista.visiveis,
-                maisEspecificos: lista.mais,
-                publico: publico ? s.texto("Público-alvo", publico, LIMITES.publico) : null,
-                faixa: faixaEtaria(p.faixa_etaria_min, p.faixa_etaria_max),
-            }, s)
-        }
+        if (objetivoGeral || especificos.length > 0) adicionar(...slideObjetivos(objetivoGeral, especificos, limpo(p.publico_alvo), faixaEtaria(p.faixa_etaria_min, p.faixa_etaria_max)))
 
         // 5. Como vai acontecer
         const onde = mesesDoPeriodo(p)
         const como = limpo(p.como_sera_realizado)
         if (onde.tipo !== "sem_periodo" || como) {
-            const s = novo()
             const itens: Bloco[] = []
             const frequencia = p.frequencia === "outra" ? (limpo(p.frequencia_outra) ?? "Outra") : (rotuloFrequencia(p.frequencia) || null)
             const nomesUnidades = (p.locais_unidades ?? []).map(id => dados.unidades.find(u => u.id === id)?.nome).filter((n): n is string => !!n)
@@ -441,36 +554,21 @@ export function montarSlides(dados: DadosSlides, modo: ModoSlides): ResultadoSli
             if (frequencia) itens.push({ rotulo: "Frequência", texto: frequencia })
             if (dias) itens.push({ rotulo: "Dias e horários", texto: dias })
             if (local) itens.push({ rotulo: "Local", texto: local })
-            adicionar({
-                tipo: "execucao",
-                linhaDoTempo: onde.tipo === "ano_todo" ? { anoTodo: true, meses: [] } : onde.tipo === "meses" ? { anoTodo: false, meses: onde.meses } : null,
-                periodo: onde.tipo === "sem_periodo" ? null : [periodo, duracao && duracao !== periodo ? duracao : null].filter(Boolean).join(" · "),
-                itens: itens.map(i => ({ rotulo: i.rotulo, texto: s.texto(i.rotulo, i.texto, LIMITES.itemExecucao) })),
-                como: como ? s.texto("Como será realizado", como, LIMITES.como) : null,
-            }, s)
+            const linhaDoTempo = onde.tipo === "ano_todo" ? { anoTodo: true, meses: [] } : onde.tipo === "meses" ? { anoTodo: false, meses: onde.meses } : null
+            const textoPeriodo = onde.tipo === "sem_periodo" ? null : [periodo, duracao && duracao !== periodo ? duracao : null].filter(Boolean).join(" · ") || null
+            adicionar(...slideExecucao(linhaDoTempo, textoPeriodo, itens, como))
         }
 
-        // 6. Orçamento (com pelo menos 1 item de valor)
-        if (totalOrc > 0) {
-            const maiores = itensOrc.filter(i => i.valor > 0).sort((a, b) => b.valor - a.valor).slice(0, MAIORES_ITENS)
-                .map(i => ({ rotulo: truncar(i.nome, 60), valor: reais(i.valor) }))
-            saida.push({ tipo: "orcamento", total: reais(totalOrc), fatias: agruparPorCategoria(itensOrc, cor), maiores })
+        // 6. Orçamento (com pelo menos 1 linha com algum dado), todas as linhas
+        const linhas = linhasDoOrcamento(dados.filhas)
+        if (linhas.length > 0) {
+            const resumo = totalOrc > 0 ? { total: reais(totalOrc), fatias: agruparPorCategoria(itensOrc, cor) } : null
+            for (const s of slidesOrcamento(resumo, linhas)) saida.push(s)
         }
 
-        // 7. Metas: 4 por slide (grade 2 × 2); com alguma meta longa, 2 por slide (largura toda)
-        const longas = metas.some(m => [m.meta, m.indicador, m.esperado].some(t => (t?.length ?? 0) > META_CURTA))
-        const layout: "grade" | "lista" = longas ? "lista" : "grade"
-        const porSlide = longas ? METAS_POR_SLIDE_LISTA : METAS_POR_SLIDE
-        const partes = Math.ceil(metas.length / porSlide)
-        for (let i = 0; i < partes; i++) {
-            const s = novo()
-            const doSlide = metas.slice(i * porSlide, (i + 1) * porSlide).map((m, j) => {
-                const n = i * porSlide + j + 1
-                const corta = (rotulo: string, v: string | null) => (v ? s.texto(`Meta ${n} — ${rotulo}`, v, LIMITES.meta) : null)
-                return { meta: corta("meta", m.meta), indicador: corta("como será medido", m.indicador), esperado: corta("esperado", m.esperado) }
-            })
-            adicionar({ tipo: "metas", metas: doSlide, parte: i + 1, partes, inicio: i * porSlide + 1, layout }, s)
-        }
+        // 7. Metas: grade 2 × 2 quando todas cabem no cartão pequeno; senão, cartões da largura toda,
+        //    quantos couberem por slide.
+        if (metas.length > 0) for (const s of slidesMetas(metas)) adicionar(s.slide, s.sobra)
     }
 
     // 8. O que aprendemos em 2026 (situação diferente de Novo e algum dado de 2026)
@@ -482,7 +580,6 @@ export function montarSlides(dados: DadosSlides, modo: ModoSlides): ResultadoSli
             { rotulo: "O que melhorar", texto: limpo(p.resultados_2026_melhorar) ?? "" },
         ].filter(b => b.texto !== "")
         if (atendidos !== null || brutos.length > 0) {
-            const s = novo()
             const barras: Barra[] = []
             if (atendidos !== null) {
                 const valores = [{ rotulo: "2026 atendidos", valor: atendidos }]
@@ -490,29 +587,33 @@ export function montarSlides(dados: DadosSlides, modo: ModoSlides): ResultadoSli
                 const maior = Math.max(...valores.map(v => v.valor), 1)
                 for (const v of valores) barras.push({ ...v, valorTexto: inteiroBR(v.valor), proporcao: v.valor / maior })
             }
-            adicionar({
-                tipo: "aprendizados",
-                barras,
-                blocos: brutos.map(b => ({ rotulo: b.rotulo, texto: s.texto(b.rotulo, b.texto, LIMITES.aprendizado) })),
-            }, s)
+            const A = LAYOUT.aprendizados
+            const largura = barras.length ? CORPO.largura - A.colunaBarras - A.vao : CORPO.largura
+            const { cabem, sobra } = encaixarBlocos(brutos, largura, A.texto, CORPO.altura)
+            adicionar({ tipo: "aprendizados", barras, blocos: cabem }, sobra)
         }
     }
 
     // 9. Riscos e observações
     const observacoes = limpo(p.observacoes)
     if (!encerrado && observacoes) {
-        const s = novo()
-        adicionar({ tipo: "observacoes", texto: s.texto("Observações", observacoes, LIMITES.observacoes) }, s)
+        const Ob = LAYOUT.observacoes
+        const largura = CORPO.largura - Ob.recuo
+        let tamanho: number = Ob.tamanhos[Ob.tamanhos.length - 1]
+        for (const t of Ob.tamanhos) if (alturaTexto(observacoes, largura, corrido(t)) <= CORPO.altura) { tamanho = t; break }
+        const [parte, resto] = cortarPorAltura(observacoes, largura, corrido(tamanho), CORPO.altura)
+        adicionar({ tipo: "observacoes", texto: parte || observacoes, tamanho }, parte && resto ? [{ rotulo: "Observações", texto: resto }] : [])
     }
 
     // 10. Encerramento
-    saida.push({ tipo: "encerramento", responsavel: limpo(p.responsavel_nome), contato: limpo(p.responsavel_contato) })
+    saida.push({ tipo: "encerramento", responsavel, contato: limpo(p.responsavel_contato) })
 
     const slides: Slide[] = saida.map((c, i) => ({
         ...c,
         id: `${c.tipo}-${i}`,
         titulo: c.tipo === "continuacao"
             ? `${TITULOS[c.de]} … continuação`
+            : c.tipo === "orcamento" && c.parte > 1 ? `${TITULOS.orcamento} … continuação`
             : c.tipo === "metas" && c.partes > 1 ? `${TITULOS.metas} (${c.parte}/${c.partes})` : TITULOS[c.tipo],
     }))
 
@@ -524,6 +625,145 @@ export function montarSlides(dados: DadosSlides, modo: ModoSlides): ResultadoSli
         rodape: setorNome ? `Planejamento ${ANO_PLANEJAMENTO} · ${setorNome}` : `Planejamento ${ANO_PLANEJAMENTO}`,
         slides,
     }
+}
+
+// Objetivos e público: objetivo geral em cima; embaixo, os específicos e a caixa de público. O que
+// não cabe continua no slide seguinte, na ordem: objetivo geral, específicos, público.
+function slideObjetivos(geral: string | null, especificos: string[], publico: string | null, faixa: string | null): [ConteudoSlide, Bloco[]] {
+    const L = LAYOUT.objetivos
+    const temCaixa = !!(publico || faixa)
+    const temLinha = especificos.length > 0 || temCaixa
+    const sobra: Bloco[] = []
+    const fonteGeral: Fonte = { tamanho: L.geral, altura: L.alturaGeral }
+    const larguraGeral = CORPO.largura - L.borda
+    const larguraItem = (temCaixa ? CORPO.largura - L.vao - L.caixa : CORPO.largura) - L.check
+    const larguraCaixa = L.caixa - 2 * L.caixaPadding
+    const alturaFaixa = faixa ? ALTURA_ROTULO + 20 * 1.25 : 0
+    const alturaItem = (t: string) => alturaTexto(t, larguraItem, corrido(L.item)) + L.margemItem
+
+    // Altura que a linha de baixo precisaria, para reservar espaço para ela (até 40% do slide).
+    const precisaLinha = Math.max(
+        especificos.length ? ALTURA_ROTULO + especificos.reduce((s, t) => s + alturaItem(t), 0) : 0,
+        temCaixa ? 2 * L.caixaPadding + (publico ? alturaBloco(publico, larguraCaixa, L.item) : 0) + alturaFaixa : 0,
+    )
+    const reserva = temLinha ? Math.min(precisaLinha, CORPO.altura * 0.4) : 0
+
+    let objetivoGeral: string | null = null
+    let usado = 0
+    if (geral) {
+        const extra = ALTURA_ROTULO + L.margemGeral
+        let [parte, resto] = cortarPorAltura(geral, larguraGeral, fonteGeral, CORPO.altura - reserva - extra)
+        // Não coube nem com a reserva: o geral ocupa o slide todo e a linha de baixo vai para a continuação.
+        if (resto && reserva > 0) [parte, resto] = cortarPorAltura(geral, larguraGeral, fonteGeral, CORPO.altura - extra)
+        if (parte) { objetivoGeral = parte; usado = extra + alturaTexto(parte, larguraGeral, fonteGeral) }
+        if (resto) sobra.push({ rotulo: "Objetivo geral", texto: resto })
+    }
+    const livre = CORPO.altura - usado
+    const linhaCheia = sobra.length > 0
+
+    // Específicos, um a um, enquanto couberem (com o geral cortado, todos vão para a continuação).
+    const visiveis: string[] = []
+    const restantes: string[] = []
+    let livreItens = livre - ALTURA_ROTULO
+    for (const t of especificos) {
+        if (linhaCheia || restantes.length) { restantes.push(t); continue }
+        const h = alturaItem(t)
+        if (h <= livreItens) { visiveis.push(t); livreItens -= h; continue }
+        const [parte, resto] = cortarPorAltura(t, larguraItem, corrido(L.item), livreItens - L.margemItem)
+        if (parte) { visiveis.push(parte); restantes.push(resto) } else restantes.push(t)
+    }
+    if (restantes.length) sobra.push({ rotulo: "Objetivos específicos", texto: restantes.map(t => `• ${t}`).join("\n") })
+
+    // Público-alvo e faixa etária na caixa.
+    let publicoVisivel: string | null = null
+    if (publico) {
+        const disponivel = livre - 2 * L.caixaPadding - alturaFaixa - ALTURA_ROTULO - LAYOUT.margemBloco
+        const [parte, resto] = linhaCheia || disponivel <= 0 ? ["", publico] : cortarPorAltura(publico, larguraCaixa, corrido(L.item), disponivel)
+        publicoVisivel = parte || null
+        if (resto) sobra.push({ rotulo: "Público-alvo", texto: resto })
+    }
+    const faixaVisivel = linhaCheia || livre < 2 * L.caixaPadding + alturaFaixa ? null : faixa
+    if (faixa && !faixaVisivel) sobra.push({ rotulo: "Faixa etária", texto: faixa })
+
+    return [{ tipo: "objetivos", objetivoGeral, especificos: visiveis, publico: publicoVisivel, faixa: faixaVisivel }, sobra]
+}
+
+// Altura do topo do "Como vai acontecer" (linha do tempo e período).
+export function alturaLinhaDoTempo(periodo: string | null): number {
+    return 14 + 5 + 9.5 * 1.25 + (periodo ? 10 + alturaTexto(periodo, CORPO.largura, { tamanho: 15, altura: 1.25, negrito: true }) : 0) + 20
+}
+
+function slideExecucao(linhaDoTempo: { anoTodo: boolean; meses: number[] } | null, periodo: string | null, itens: Bloco[], como: string | null): [ConteudoSlide, Bloco[]] {
+    const E = LAYOUT.execucao
+    const altura = CORPO.altura - (linhaDoTempo ? alturaLinhaDoTempo(periodo) : 0)
+    const larguraComo = (itens.length ? CORPO.largura - E.colunaItens - E.vao : CORPO.largura) - 2 * E.caixaPadding
+    const coluna = encaixarBlocos(itens, E.colunaItens, E.item, altura)
+    const sobra = [...coluna.sobra]
+    let comoVisivel: string | null = null
+    if (como) {
+        const caixa = encaixarBlocos([{ rotulo: "Como será realizado", texto: como }], larguraComo, E.item, altura - 2 * E.caixaPadding)
+        comoVisivel = caixa.cabem[0]?.texto ?? null
+        sobra.push(...caixa.sobra)
+    }
+    return [{ tipo: "execucao", linhaDoTempo, periodo, itens: coluna.cabem, como: comoVisivel }, sobra]
+}
+
+// Orçamento: no primeiro slide, o resumo (total e rosca) ao lado da tabela; os itens que não cabem
+// seguem em tabelas da largura toda.
+function slidesOrcamento(resumo: ResumoOrcamento | null, linhas: LinhaOrcamento[]): ConteudoSlide[] {
+    const slides: ConteudoSlide[] = []
+    let fila = linhas
+    let parte = 1
+    while (fila.length) {
+        const comResumo = parte === 1 && resumo !== null
+        const largura = comResumo ? larguraTabelaComResumo : CORPO.largura
+        let livre = CORPO.altura - O.cabecalho
+        const desta: LinhaOrcamento[] = []
+        for (const l of fila) {
+            const h = alturaLinhaOrcamento(l, largura)
+            if (desta.length && h > livre) break
+            desta.push(l)
+            livre -= h
+        }
+        slides.push({ tipo: "orcamento", resumo: comResumo ? resumo : null, itens: desta, parte })
+        fila = fila.slice(desta.length)
+        parte++
+    }
+    return slides
+}
+
+function slidesMetas(metas: MetaSlide[]): { slide: ConteudoSlide; sobra: Bloco[] }[] {
+    const grade = metas.every(m => alturaMeta(m, M.grade) <= M.alturaGrade)
+    const grupos: { metas: MetaSlide[]; inicio: number; sobra: Bloco[] }[] = []
+    if (grade) {
+        for (let i = 0; i < metas.length; i += METAS_POR_SLIDE) grupos.push({ metas: metas.slice(i, i + METAS_POR_SLIDE), inicio: i + 1, sobra: [] })
+    } else {
+        const disponivel = CORPO.altura + 6 // os cartões sobem 6 (como na grade)
+        let atual: { metas: MetaSlide[]; inicio: number; sobra: Bloco[] } = { metas: [], inicio: 1, sobra: [] }
+        let livre = disponivel
+        metas.forEach((m, i) => {
+            const h = alturaMeta(m, M.lista)
+            if (atual.metas.length && h + M.vao > livre) {
+                grupos.push(atual)
+                atual = { metas: [], inicio: i + 1, sobra: [] }
+                livre = disponivel
+            }
+            if (!atual.metas.length && h > disponivel) {
+                const c = cortarMeta(m, i + 1, disponivel)
+                atual.metas.push(c.meta)
+                atual.sobra.push(...c.sobra)
+                livre = 0
+            } else {
+                atual.metas.push(m)
+                livre -= h + M.vao
+            }
+        })
+        if (atual.metas.length) grupos.push(atual)
+    }
+    return grupos.map((g, i) => ({
+        slide: { tipo: "metas", metas: g.metas, parte: i + 1, partes: grupos.length, inicio: g.inicio, layout: grade ? "grade" : "lista" },
+        sobra: g.sobra,
+    }))
 }
 
 export const MENSAGEM_FICHA_PARCIAL = "Este projeto está salvo parcialmente. Os slides só são gerados depois do Salvar projeto"
