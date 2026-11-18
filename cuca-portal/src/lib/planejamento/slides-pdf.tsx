@@ -2,17 +2,19 @@ import type { ReactNode } from "react"
 import type { TextProps } from "@react-pdf/renderer"
 import { Circle, Document, G, Image, Page, Path, Polygon, StyleSheet, Svg, Text, View } from "@react-pdf/renderer"
 import {
-    ALTURA_SLIDE, LARGURA_SLIDE, MESES_CURTOS, angulosDasFatias, caminhoRosca, separadoresRosca, tamanhoTexto, respiroCapa, tamanhoTituloCapa, tamanhoValorCartao, topoCapa,
-    type Apresentacao, type Slide,
+    ALTURA_SLIDE, CAPA, CORPO, LARGURA_SLIDE, LAYOUT, MESES_CURTOS, angulosDasFatias, caminhoRosca, larguraColunaItem, larguraTabelaComResumo,
+    separadoresRosca, tamanhoValorCartao,
+    type Apresentacao, type LinhaOrcamento, type Slide,
 } from "./slides"
 
-// S-PLA-05 (AC7): PDF dos slides, um por página, em 960 × 540 pontos (16:9). Só desenha: o conteúdo
-// vem de `montarSlides(..., "pdf")`. Fonte padrão do PDF (Helvetica): o texto do módulo não usa setas
-// nem "✔"; setas, checks e faixas são desenhados com formas.
+// S-PLA-05 (AC7) / S-PLA-09: PDF dos slides, um por página, em 960 × 540 pontos (16:9). Só desenha: o
+// conteúdo vem de `montarSlides`, que já mediu o que cabe em cada slide. Fonte padrão do PDF
+// (Helvetica): o texto do módulo não usa setas nem "✔"; setas, checks e faixas são desenhados com formas.
 // Importado sob demanda (só ao exportar), junto com o @react-pdf/renderer.
 // A página não usa `wrap={false}`: no @react-pdf 4, isso com um <Svg> na página quebra a geração
-// ("unsupported number: Infinity"). Quem garante "um slide = uma página" são os limites de texto do
-// módulo, conferidos em teste (slides-pdf.test.ts conta as páginas).
+// ("unsupported number: Infinity"). O corpo do slide é uma caixa de posição fixa (a área de conteúdo):
+// o que cabe nela é decidido pela medida de `montarSlides`, e a conferência de que nada passa da caixa
+// é feita pela posição real dos textos no PDF gerado (ver `slides-pdf.test.ts`).
 
 const ESCURO = "#0f172a"
 const TEXTO = "#334155"
@@ -22,11 +24,11 @@ const FUNDO = "#f8fafc"
 
 const s = StyleSheet.create({
     pagina: { width: LARGURA_SLIDE, height: ALTURA_SLIDE, backgroundColor: "#ffffff", fontFamily: "Helvetica", color: TEXTO, position: "relative" },
-    corpo: { position: "absolute", left: 56, right: 56, top: 108, bottom: 64 },
+    corpo: { position: "absolute", left: CORPO.esquerda, top: CORPO.topo, width: CORPO.largura, height: CORPO.altura },
     titulo: { position: "absolute", left: 56, top: 40, fontFamily: "Helvetica-Bold", fontSize: 22, color: ESCURO, letterSpacing: 0.5 },
     rodape: { position: "absolute", left: 56, bottom: 26, fontSize: 10, color: CINZA },
-    rotulo: { fontFamily: "Helvetica-Bold", fontSize: 10, letterSpacing: 1, color: CINZA, marginBottom: 6 },
-    texto: { fontSize: 14, lineHeight: 1.45, color: TEXTO },
+    rotulo: { fontFamily: "Helvetica-Bold", fontSize: LAYOUT.rotulo.tamanho, lineHeight: 1.25, letterSpacing: 1, color: CINZA, marginBottom: LAYOUT.rotulo.espaco },
+    texto: { fontSize: 14, lineHeight: LAYOUT.alturaLinha, color: TEXTO },
 })
 
 // Sem hifenização (a padrão é do inglês e parte palavras em português no lugar errado). Vale só aqui.
@@ -45,10 +47,10 @@ function Moldura({ ctx, titulo, children }: { ctx: Ctx; titulo: string; children
             <View style={{ position: "absolute", left: 56, top: 74, width: 40, height: 4, borderRadius: 2, backgroundColor: ctx.a.cor }} />
             {/* eslint-disable-next-line jsx-a11y/alt-text -- Image do PDF (react-pdf) não tem alt */}
             <Image src={ctx.logo} style={{ position: "absolute", right: 48, top: 30, width: 46, height: 46 }} />
-            <View style={s.corpo}>{children}</View>
             <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 6, backgroundColor: ctx.a.cor }} />
             <T style={s.rodape}>{ctx.a.rodape}</T>
             <T style={{ ...s.rodape, left: undefined, right: 56 }}>{`${ctx.numero} / ${ctx.total}`}</T>
+            <View style={s.corpo}>{children}</View>
         </Page>
     )
 }
@@ -71,7 +73,7 @@ function Faixa({ cor }: { cor: string }) {
 
 function Check({ cor, tamanho = 18 }: { cor: string; tamanho?: number }) {
     return (
-        <Svg style={{ width: tamanho, height: tamanho }} viewBox="0 0 20 20">
+        <Svg style={{ width: tamanho, height: tamanho, marginTop: 2 }} viewBox="0 0 20 20">
             <Circle cx={10} cy={10} r={10} fill={cor} />
             <Path d="M5.5 10.5 L8.6 13.4 L14.5 7" stroke="#ffffff" strokeWidth={2.2} fill="none" />
         </Svg>
@@ -89,126 +91,139 @@ function Seta({ cor }: { cor: string }) {
 function Selo({ cor, corTexto, texto, tamanho = 30 }: { cor: string; corTexto: string; texto: string; tamanho?: number }) {
     return (
         <View style={{ backgroundColor: cor, borderRadius: 14, paddingVertical: 18, paddingHorizontal: 22, alignSelf: "flex-start" }}>
-            <T style={{ fontFamily: "Helvetica-Bold", fontSize: tamanho, color: corTexto, letterSpacing: 1 }}>{texto}</T>
+            <T style={{ fontFamily: "Helvetica-Bold", fontSize: tamanho, color: corTexto, letterSpacing: 1, lineHeight: 1.15 }}>{texto}</T>
         </View>
     )
 }
 
 function BlocoTexto({ rotulo, texto, cor, tamanho = 14 }: { rotulo: string; texto: string; cor: string; tamanho?: number }) {
     return (
-        <View style={{ marginBottom: 16 }}>
+        <View style={{ marginBottom: LAYOUT.margemBloco }}>
             <T style={{ ...s.rotulo, color: cor }}>{rotulo.toUpperCase()}</T>
             <T style={{ ...s.texto, fontSize: tamanho }}>{texto}</T>
         </View>
     )
 }
 
-function Conteudo({ slide, ctx }: { slide: Slide; ctx: Ctx }) {
+const O = LAYOUT.orcamento
+const celula = { fontSize: O.fonte, lineHeight: O.alturaFonte, color: TEXTO }
+
+function TabelaOrcamento({ itens, largura }: { itens: LinhaOrcamento[]; largura: number }) {
+    const c = O.colunas
+    const colunas = [
+        { chave: "item", titulo: "ITEM", largura: larguraColunaItem(largura), direita: false },
+        { chave: "categoria", titulo: "CATEGORIA", largura: c.categoria, direita: false },
+        { chave: "quantidade", titulo: "QTD", largura: c.qtd, direita: true },
+        { chave: "unitario", titulo: "VALOR UNIT.", largura: c.unitario, direita: true },
+        { chave: "total", titulo: "TOTAL", largura: c.total, direita: true },
+    ] as const
+    return (
+        <View style={{ width: largura }}>
+            <View style={{ flexDirection: "row", gap: O.vaoColuna, height: O.cabecalho, alignItems: "center", borderBottomWidth: 1, borderBottomColor: BORDA }}>
+                {colunas.map(col => <T key={col.chave} style={{ width: col.largura, fontFamily: "Helvetica-Bold", fontSize: 8.5, lineHeight: 1.25, letterSpacing: 0.8, color: CINZA, textAlign: col.direita ? "right" : "left" }}>{col.titulo}</T>)}
+            </View>
+            {itens.map((l, i) => (
+                <View key={i} style={{ flexDirection: "row", gap: O.vaoColuna, paddingVertical: O.paddingLinha, borderBottomWidth: 1, borderBottomColor: BORDA }}>
+                    {colunas.map(col => (
+                        <T key={col.chave} style={{ ...celula, width: col.largura, textAlign: col.direita ? "right" : "left", color: col.chave === "total" ? ESCURO : TEXTO, fontFamily: col.chave === "total" ? "Helvetica-Bold" : "Helvetica" }}>{l[col.chave]}</T>
+                    ))}
+                </View>
+            ))}
+        </View>
+    )
+}
+
+// Conteúdo da área do corpo (slides com título). Separado da moldura para o teste medir o corpo sozinho.
+function Corpo({ slide, ctx }: { slide: Slide; ctx: Ctx }): ReactNode {
     const { cor, corTexto } = ctx.a
     switch (slide.tipo) {
         case "capa":
-        case "encerramento": {
-            const capa = slide.tipo === "capa"
-            return (
-                <Page size={{ width: LARGURA_SLIDE, height: ALTURA_SLIDE }} style={s.pagina}>
-                    <Faixa cor={cor} />
-                    {/* eslint-disable-next-line jsx-a11y/alt-text -- Image do PDF (react-pdf) não tem alt */}
-                    <Image src={ctx.logo} style={{ position: "absolute", left: 56, top: 40, width: 64, height: 64 }} />
-                    <View style={{ position: "absolute", left: 56, top: capa ? topoCapa(slide.nome) : 140, width: 470 }}>
-                        <T style={{ ...s.rotulo, color: cor, fontSize: 12 }}>{capa ? `PLANEJAMENTO 2027 · ${ctx.a.setor.toUpperCase()}` : "PLANEJAMENTO 2027"}</T>
-                        {capa ? (
-                            <T style={{ fontFamily: "Helvetica-Bold", fontSize: tamanhoTituloCapa(slide.nome), color: ESCURO, lineHeight: 1.1, marginTop: 6 }}>{slide.nome}</T>
-                        ) : (
-                            <>
-                                <T style={{ fontFamily: "Helvetica-Bold", fontSize: 60, color: ESCURO, marginTop: 6 }}>Obrigado</T>
-                                <T style={{ fontSize: 18, color: CINZA, marginTop: 4 }}>pela atenção</T>
-                            </>
-                        )}
-                        <View style={{ width: 56, height: 5, borderRadius: 3, backgroundColor: cor, marginTop: capa ? respiroCapa(slide.nome) : 22, marginBottom: capa ? respiroCapa(slide.nome) : 22 }} />
-                        {capa ? (
-                            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-                                {ctx.a.setor ? <View style={{ backgroundColor: cor, borderRadius: 12, paddingVertical: 6, paddingHorizontal: 12 }}><T style={{ fontFamily: "Helvetica-Bold", fontSize: 12, color: corTexto }}>{ctx.a.setor}</T></View> : null}
-                                <View style={{ borderWidth: 1, borderColor: BORDA, borderRadius: 12, paddingVertical: 6, paddingHorizontal: 12 }}><T style={{ fontSize: 12, color: TEXTO }}>{slide.tipoProjeto}</T></View>
-                            </View>
-                        ) : null}
-                        {(capa ? slide.responsavel : slide.responsavel || slide.contato) ? (
-                            <View style={{ marginTop: capa ? respiroCapa(slide.nome) + 4 : 26 }}>
-                                <T style={s.rotulo}>RESPONSÁVEL</T>
-                                {slide.responsavel ? <T style={{ fontSize: 16, color: ESCURO, fontFamily: "Helvetica-Bold" }}>{slide.responsavel}</T> : null}
-                                {slide.tipo === "encerramento" && slide.contato ? <T style={{ fontSize: 14, color: TEXTO, marginTop: 4 }}>{slide.contato}</T> : null}
-                            </View>
-                        ) : null}
-                    </View>
-                    <T style={{ ...s.rodape }}>{ctx.a.rodape}</T>
-                </Page>
-            )
-        }
+        case "encerramento":
+            return null
         case "numeros":
             return (
-                <Moldura ctx={ctx} titulo={slide.titulo}>
+                <>
                     <View style={{ flexDirection: "row", gap: 20, marginTop: 40 }}>
                         {slide.cartoes.map(c => (
                             <View key={c.rotulo} style={{ flex: 1, borderWidth: 1, borderColor: BORDA, borderRadius: 14, paddingVertical: 36, paddingHorizontal: 18, alignItems: "center", backgroundColor: "#ffffff" }}>
                                 <View style={{ width: 34, height: 4, borderRadius: 2, backgroundColor: cor, marginBottom: 22 }} />
-                                <T style={{ fontFamily: "Helvetica-Bold", fontSize: tamanhoValorCartao(c.valor), color: cor, textAlign: "center" }}>{c.valor}</T>
+                                <T style={{ fontFamily: "Helvetica-Bold", fontSize: tamanhoValorCartao(c.valor, slide.cartoes.length), lineHeight: 1.15, color: cor, textAlign: "center" }}>{c.valor}</T>
                                 <T style={{ fontSize: 12, color: CINZA, marginTop: 10, textAlign: "center" }}>{c.rotulo}</T>
                             </View>
                         ))}
                     </View>
-                </Moldura>
+                </>
             )
-        case "porque":
+        case "porque": {
+            const P = LAYOUT.porque
+            if (slide.blocos.length === 0) {
+                // Sem texto (ex.: "Mantém"): o selo no centro do slide, em destaque.
+                return (
+                    <>
+                        <View style={{ height: "100%", alignItems: "center", justifyContent: "center" }}>
+                            <T style={{ ...s.rotulo, fontSize: 12, marginBottom: 14 }}>SITUAÇÃO EM RELAÇÃO A 2026</T>
+                            <View style={{ backgroundColor: cor, borderRadius: 18, paddingVertical: 26, paddingHorizontal: 44 }}>
+                                <T style={{ fontFamily: "Helvetica-Bold", fontSize: slide.selo.length > 10 ? 36 : 48, lineHeight: 1.15, color: corTexto, letterSpacing: 2 }}>{slide.selo}</T>
+                            </View>
+                        </View>
+                    </>
+                )
+            }
             return (
-                <Moldura ctx={ctx} titulo={slide.titulo}>
-                    <View style={{ flexDirection: "row", gap: 40 }}>
-                        <View style={{ width: 280, paddingTop: 10 }}>
+                <>
+                    <View style={{ flexDirection: "row", gap: P.vao }}>
+                        <View style={{ width: P.colunaSelo, paddingTop: P.topo }}>
                             <T style={s.rotulo}>SITUAÇÃO EM RELAÇÃO A 2026</T>
                             <Selo cor={cor} corTexto={corTexto} texto={slide.selo} tamanho={slide.selo.length > 10 ? 22 : 30} />
                         </View>
-                        <View style={{ flex: 1, paddingTop: 10 }}>
-                            {slide.blocos.map(b => <BlocoTexto key={b.rotulo} rotulo={b.rotulo} texto={b.texto} cor={cor} tamanho={tamanhoTexto(slide.blocos.reduce((t, x) => t + x.texto.length, 0))} />)}
+                        <View style={{ flex: 1, paddingTop: P.topo }}>
+                            {slide.blocos.map(b => <BlocoTexto key={b.rotulo} rotulo={b.rotulo} texto={b.texto} cor={cor} tamanho={slide.tamanho} />)}
                         </View>
                     </View>
-                </Moldura>
+                </>
             )
-        case "objetivos":
+        }
+        case "objetivos": {
+            const L = LAYOUT.objetivos
             return (
-                <Moldura ctx={ctx} titulo={slide.titulo}>
+                <>
                     {slide.objetivoGeral ? (
-                        <View style={{ borderLeftWidth: 4, borderLeftColor: cor, paddingLeft: 16, marginBottom: 18 }}>
+                        <View style={{ borderLeftWidth: 4, borderLeftColor: cor, paddingLeft: L.borda - 4, marginBottom: L.margemGeral }}>
                             <T style={s.rotulo}>OBJETIVO GERAL</T>
-                            <T style={{ fontSize: 17, lineHeight: 1.35, color: ESCURO }}>{slide.objetivoGeral}</T>
+                            <T style={{ fontSize: L.geral, lineHeight: L.alturaGeral, color: ESCURO }}>{slide.objetivoGeral}</T>
                         </View>
                     ) : null}
-                    <View style={{ flexDirection: "row", gap: 30 }}>
+                    <View style={{ flexDirection: "row", gap: L.vao }}>
                         {slide.especificos.length > 0 ? (
                             <View style={{ flex: 1 }}>
                                 <T style={s.rotulo}>OBJETIVOS ESPECÍFICOS</T>
                                 {slide.especificos.map((o, i) => (
-                                    <View key={i} style={{ flexDirection: "row", gap: 10, marginBottom: 7, alignItems: "flex-start" }}>
+                                    <View key={i} style={{ flexDirection: "row", gap: L.check - 14, marginBottom: L.margemItem, alignItems: "flex-start" }}>
                                         <Check cor={cor} tamanho={14} />
-                                        <T style={{ ...s.texto, fontSize: 12.5, flex: 1 }}>{o}</T>
+                                        <T style={{ ...s.texto, fontSize: L.item, flex: 1 }}>{o}</T>
                                     </View>
                                 ))}
                             </View>
                         ) : null}
                         {slide.publico || slide.faixa ? (
-                            <View style={{ width: 250, backgroundColor: FUNDO, borderRadius: 12, padding: 16, alignSelf: "flex-start" }}>
-                                {slide.publico ? <BlocoTexto rotulo="Público-alvo" texto={slide.publico} cor={cor} tamanho={12.5} /> : null}
+                            <View style={{ width: L.caixa, backgroundColor: FUNDO, borderRadius: 12, padding: L.caixaPadding, alignSelf: "flex-start", marginLeft: slide.especificos.length > 0 ? 0 : "auto" }}>
+                                {slide.publico ? <BlocoTexto rotulo="Público-alvo" texto={slide.publico} cor={cor} tamanho={L.item} /> : null}
                                 {slide.faixa ? (
                                     <View>
                                         <T style={{ ...s.rotulo, color: cor }}>FAIXA ETÁRIA</T>
-                                        <T style={{ fontFamily: "Helvetica-Bold", fontSize: 20, color: ESCURO }}>{slide.faixa}</T>
+                                        <T style={{ fontFamily: "Helvetica-Bold", fontSize: 20, lineHeight: 1.25, color: ESCURO }}>{slide.faixa}</T>
                                     </View>
                                 ) : null}
                             </View>
                         ) : null}
                     </View>
-                </Moldura>
+                </>
             )
-        case "execucao":
+        }
+        case "execucao": {
+            const E = LAYOUT.execucao
             return (
-                <Moldura ctx={ctx} titulo={slide.titulo}>
+                <>
                     {slide.linhaDoTempo ? (
                         <View style={{ marginBottom: 20 }}>
                             <View style={{ flexDirection: "row", gap: 4 }}>
@@ -217,71 +232,70 @@ function Conteudo({ slide, ctx }: { slide: Slide; ctx: Ctx }) {
                                     return (
                                         <View key={m} style={{ flex: 1, alignItems: "center" }}>
                                             <View style={{ width: "100%", height: 14, borderRadius: 4, backgroundColor: ativo ? cor : BORDA }} />
-                                            <T style={{ fontSize: 9.5, marginTop: 5, color: ativo ? ESCURO : CINZA, fontFamily: ativo ? "Helvetica-Bold" : "Helvetica" }}>{m}</T>
+                                            <T style={{ fontSize: 9.5, lineHeight: 1.25, marginTop: 5, color: ativo ? ESCURO : CINZA, fontFamily: ativo ? "Helvetica-Bold" : "Helvetica" }}>{m}</T>
                                         </View>
                                     )
                                 })}
                             </View>
-                            {slide.periodo ? <T style={{ fontFamily: "Helvetica-Bold", fontSize: 15, color: ESCURO, marginTop: 10 }}>{slide.periodo}</T> : null}
+                            {slide.periodo ? <T style={{ fontFamily: "Helvetica-Bold", fontSize: 15, lineHeight: 1.25, color: ESCURO, marginTop: 10 }}>{slide.periodo}</T> : null}
                         </View>
                     ) : null}
-                    <View style={{ flexDirection: "row", gap: 30 }}>
+                    <View style={{ flexDirection: "row", gap: E.vao }}>
                         {slide.itens.length > 0 ? (
-                            <View style={{ width: 300 }}>
-                                {slide.itens.map(i => <BlocoTexto key={i.rotulo} rotulo={i.rotulo} texto={i.texto} cor={cor} tamanho={12.5} />)}
+                            <View style={{ width: E.colunaItens }}>
+                                {slide.itens.map(i => <BlocoTexto key={i.rotulo} rotulo={i.rotulo} texto={i.texto} cor={cor} tamanho={E.item} />)}
                             </View>
                         ) : null}
                         {slide.como ? (
-                            <View style={{ flex: 1, backgroundColor: FUNDO, borderRadius: 12, padding: 16, alignSelf: "flex-start" }}>
-                                <BlocoTexto rotulo="Como será realizado" texto={slide.como} cor={cor} tamanho={12.5} />
+                            <View style={{ flex: 1, backgroundColor: FUNDO, borderRadius: 12, padding: E.caixaPadding, alignSelf: "flex-start" }}>
+                                <BlocoTexto rotulo="Como será realizado" texto={slide.como} cor={cor} tamanho={E.item} />
                             </View>
                         ) : null}
                     </View>
-                </Moldura>
-            )
-        case "orcamento": {
-            const angulos = angulosDasFatias(slide.fatias)
-            return (
-                <Moldura ctx={ctx} titulo={slide.titulo}>
-                    <View style={{ flexDirection: "row", gap: 28 }}>
-                        <View style={{ width: 210, alignItems: "center" }}>
-                            <Svg style={{ width: 200, height: 200 }} viewBox="0 0 200 200">
-                                {slide.fatias.map((x, i) => (
-                                    <Path key={x.chave} d={caminhoRosca(100, 100, 96, 58, angulos[i].inicio, angulos[i].fim)} fill={x.cor} />
-                                ))}
-                                {separadoresRosca(100, 100, 96, 58, angulos).map((d, i) => <Path key={`sep-${i}`} d={d} stroke="#ffffff" strokeWidth={2} />)}
-                            </Svg>
-                        </View>
-                        <View style={{ width: 210, paddingTop: 6 }}>
-                            {slide.fatias.slice(0, 7).map(x => (
-                                <View key={x.chave} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                                    <View style={{ width: 11, height: 11, borderRadius: 2, backgroundColor: x.cor }} />
-                                    <T style={{ fontSize: 11.5, color: ESCURO, flex: 1 }}>{x.rotulo}</T>
-                                    <T style={{ fontSize: 11.5, color: CINZA }}>{`${String(x.percentual).replace(".", ",")}%`}</T>
-                                </View>
-                            ))}
-                        </View>
-                        <View style={{ flex: 1 }}>
-                            <View style={{ backgroundColor: cor, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 18, marginBottom: 14 }}>
-                                <T style={{ fontSize: 10.5, color: corTexto, letterSpacing: 1 }}>TOTAL ESTIMADO</T>
-                                <T style={{ fontFamily: "Helvetica-Bold", fontSize: slide.total.length > 16 ? 20 : 26, color: corTexto, marginTop: 4 }}>{slide.total}</T>
-                            </View>
-                            <T style={s.rotulo}>MAIORES ITENS</T>
-                            {slide.maiores.map((m, i) => (
-                                <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", gap: 8, borderBottomWidth: 1, borderBottomColor: BORDA, paddingVertical: 5 }}>
-                                    <T style={{ fontSize: 11, color: TEXTO, flex: 1 }}>{m.rotulo}</T>
-                                    <T style={{ fontSize: 11, color: ESCURO, fontFamily: "Helvetica-Bold" }}>{m.valor}</T>
-                                </View>
-                            ))}
-                        </View>
-                    </View>
-                </Moldura>
+                </>
             )
         }
-        case "metas":
+        case "orcamento": {
+            const resumo = slide.resumo
+            if (!resumo) return <><TabelaOrcamento itens={slide.itens} largura={CORPO.largura} /></>
+            const angulos = angulosDasFatias(resumo.fatias)
+            const r = O.rosca / 2
             return (
-                <Moldura ctx={ctx} titulo={slide.titulo}>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 16, marginTop: -6 }}>
+                <>
+                    <View style={{ flexDirection: "row", gap: O.vao }}>
+                        <View style={{ width: O.colunaResumo }}>
+                            <View style={{ backgroundColor: cor, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 18, marginBottom: 14 }}>
+                                <T style={{ fontSize: 10.5, lineHeight: 1.25, color: corTexto, letterSpacing: 1 }}>TOTAL ESTIMADO</T>
+                                <T style={{ fontFamily: "Helvetica-Bold", fontSize: resumo.total.length > 16 ? 20 : 26, lineHeight: 1.2, color: corTexto, marginTop: 4 }}>{resumo.total}</T>
+                            </View>
+                            <View style={{ flexDirection: "row", gap: 12, alignItems: "flex-start" }}>
+                                <Svg style={{ width: O.rosca, height: O.rosca }} viewBox={`0 0 ${O.rosca} ${O.rosca}`}>
+                                    {resumo.fatias.map((x, i) => (
+                                        <Path key={x.chave} d={caminhoRosca(r, r, r - 2, r * 0.6, angulos[i].inicio, angulos[i].fim)} fill={x.cor} />
+                                    ))}
+                                    {separadoresRosca(r, r, r - 2, r * 0.6, angulos).map((d, i) => <Path key={`sep-${i}`} d={d} stroke="#ffffff" strokeWidth={2} />)}
+                                </Svg>
+                                <View style={{ flex: 1 }}>
+                                    {resumo.fatias.map(x => (
+                                        <View key={x.chave} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                                            <View style={{ width: 9, height: 9, borderRadius: 2, backgroundColor: x.cor }} />
+                                            <T style={{ fontSize: 9.5, lineHeight: 1.25, color: ESCURO, flex: 1 }}>{x.rotulo}</T>
+                                            <T style={{ fontSize: 9.5, lineHeight: 1.25, color: CINZA }}>{`${String(x.percentual).replace(".", ",")}%`}</T>
+                                        </View>
+                                    ))}
+                                </View>
+                            </View>
+                        </View>
+                        <TabelaOrcamento itens={slide.itens} largura={larguraTabelaComResumo} />
+                    </View>
+                </>
+            )
+        }
+        case "metas": {
+            const M = LAYOUT.metas
+            return (
+                <>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: M.vao, marginTop: -6 }}>
                         {slide.metas.map((m, i) => {
                             const n = slide.inicio + i
                             const partes = [
@@ -290,16 +304,16 @@ function Conteudo({ slide, ctx }: { slide: Slide; ctx: Ctx }) {
                                 m.esperado ? { r: "ESPERADO", t: m.esperado, forte: true } : null,
                             ].filter((x): x is { r: string; t: string; forte: boolean } => x !== null)
                             return (
-                                <View key={i} style={{ width: slide.layout === "grade" ? 416 : 848, height: 176, borderWidth: 1, borderColor: BORDA, borderRadius: 12, padding: 14, flexDirection: "row", gap: 12 }}>
-                                    <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: cor, alignItems: "center", justifyContent: "center" }}>
+                                <View key={i} style={{ width: slide.layout === "grade" ? M.grade : M.lista, height: slide.layout === "grade" ? M.alturaGrade : undefined, borderWidth: 1, borderColor: BORDA, borderRadius: 12, padding: M.padding, flexDirection: "row", gap: M.vaoNumero }}>
+                                    <View style={{ width: M.numero, height: M.numero, borderRadius: M.numero / 2, backgroundColor: cor, alignItems: "center", justifyContent: "center" }}>
                                         <T style={{ fontFamily: "Helvetica-Bold", fontSize: 12, color: corTexto }}>{String(n)}</T>
                                     </View>
                                     <View style={{ flex: 1 }}>
                                         {partes.map((x, j) => (
                                             <View key={x.r}>
                                                 {j > 0 ? <Seta cor={cor} /> : null}
-                                                <T style={{ fontFamily: "Helvetica-Bold", fontSize: 8.5, letterSpacing: 1, color: CINZA }}>{x.r}</T>
-                                                <T style={{ fontSize: 11.5, lineHeight: 1.3, color: x.forte ? ESCURO : TEXTO, fontFamily: x.forte ? "Helvetica-Bold" : "Helvetica" }}>{x.t}</T>
+                                                <T style={{ fontFamily: "Helvetica-Bold", fontSize: M.rotulo, lineHeight: 1.25, letterSpacing: 1, color: CINZA }}>{x.r}</T>
+                                                <T style={{ fontSize: M.texto, lineHeight: M.alturaTexto, color: x.forte ? ESCURO : TEXTO, fontFamily: x.forte ? "Helvetica-Bold" : "Helvetica" }}>{x.t}</T>
                                             </View>
                                         ))}
                                     </View>
@@ -307,14 +321,16 @@ function Conteudo({ slide, ctx }: { slide: Slide; ctx: Ctx }) {
                             )
                         })}
                     </View>
-                </Moldura>
+                </>
             )
-        case "aprendizados":
+        }
+        case "aprendizados": {
+            const A = LAYOUT.aprendizados
             return (
-                <Moldura ctx={ctx} titulo={slide.titulo}>
-                    <View style={{ flexDirection: "row", gap: 34 }}>
+                <>
+                    <View style={{ flexDirection: "row", gap: A.vao }}>
                         {slide.barras.length > 0 ? (
-                            <View style={{ width: 300, paddingTop: 6 }}>
+                            <View style={{ width: A.colunaBarras, paddingTop: 6 }}>
                                 <T style={s.rotulo}>PARTICIPANTES</T>
                                 {slide.barras.map((b, i) => (
                                     <View key={b.rotulo} style={{ marginBottom: 18 }}>
@@ -328,26 +344,76 @@ function Conteudo({ slide, ctx }: { slide: Slide; ctx: Ctx }) {
                             </View>
                         ) : null}
                         <View style={{ flex: 1 }}>
-                            {slide.blocos.map(b => <BlocoTexto key={b.rotulo} rotulo={b.rotulo} texto={b.texto} cor={cor} tamanho={12} />)}
+                            {slide.blocos.map(b => <BlocoTexto key={b.rotulo} rotulo={b.rotulo} texto={b.texto} cor={cor} tamanho={A.texto} />)}
                         </View>
                     </View>
-                </Moldura>
+                </>
             )
+        }
         case "observacoes":
             return (
-                <Moldura ctx={ctx} titulo={slide.titulo}>
-                    <View style={{ borderLeftWidth: 4, borderLeftColor: cor, paddingLeft: 18 }}>
-                        <T style={{ ...s.texto, fontSize: tamanhoTexto(slide.texto.length) }}>{slide.texto}</T>
+                <>
+                    <View style={{ borderLeftWidth: 4, borderLeftColor: cor, paddingLeft: LAYOUT.observacoes.recuo - 4 }}>
+                        <T style={{ ...s.texto, fontSize: slide.tamanho }}>{slide.texto}</T>
                     </View>
-                </Moldura>
+                </>
             )
         case "continuacao":
             return (
-                <Moldura ctx={ctx} titulo={slide.titulo}>
-                    {slide.blocos.map((b, i) => <BlocoTexto key={i} rotulo={b.rotulo} texto={b.texto} cor={cor} tamanho={13.5} />)}
-                </Moldura>
+                <>
+                    {slide.blocos.map((b, i) => <BlocoTexto key={i} rotulo={b.rotulo} texto={b.texto} cor={cor} tamanho={LAYOUT.continuacao} />)}
+                </>
             )
     }
+}
+
+function CapaOuEncerramento({ slide, ctx }: { slide: Extract<Slide, { tipo: "capa" | "encerramento" }>; ctx: Ctx }) {
+    const { cor, corTexto } = ctx.a
+    switch (slide.tipo) {
+        case "capa":
+        case "encerramento": {
+            const capa = slide.tipo === "capa"
+            const respiro = capa ? slide.layout.respiro : 22
+            return (
+                <Page size={{ width: LARGURA_SLIDE, height: ALTURA_SLIDE }} style={s.pagina}>
+                    <Faixa cor={cor} />
+                    {/* eslint-disable-next-line jsx-a11y/alt-text -- Image do PDF (react-pdf) não tem alt */}
+                    <Image src={ctx.logo} style={{ position: "absolute", left: 56, top: 40, width: 64, height: 64 }} />
+                    <View style={{ position: "absolute", left: 56, top: capa ? slide.layout.topo : 140, width: CAPA.largura }}>
+                        <T style={{ ...s.rotulo, color: cor, fontSize: 12 }}>{capa && ctx.a.setor ? `PLANEJAMENTO 2027 · ${ctx.a.setor.toUpperCase()}` : "PLANEJAMENTO 2027"}</T>
+                        {capa ? (
+                            <T style={{ fontFamily: "Helvetica-Bold", fontSize: slide.layout.tamanho, color: ESCURO, lineHeight: CAPA.alturaTitulo, marginTop: 6 }}>{slide.nome}</T>
+                        ) : (
+                            <>
+                                <T style={{ fontFamily: "Helvetica-Bold", fontSize: 60, color: ESCURO, marginTop: 6 }}>Obrigado</T>
+                                <T style={{ fontSize: 18, color: CINZA, marginTop: 4 }}>pela atenção</T>
+                            </>
+                        )}
+                        <View style={{ width: 56, height: 5, borderRadius: 3, backgroundColor: cor, marginTop: respiro, marginBottom: respiro }} />
+                        {capa ? (
+                            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+                                {ctx.a.setor ? <View style={{ backgroundColor: cor, borderRadius: 12, paddingVertical: 6, paddingHorizontal: 12 }}><T style={{ fontFamily: "Helvetica-Bold", fontSize: 12, color: corTexto }}>{ctx.a.setor}</T></View> : null}
+                                <View style={{ borderWidth: 1, borderColor: BORDA, borderRadius: 12, paddingVertical: 6, paddingHorizontal: 12 }}><T style={{ fontSize: 12, color: TEXTO }}>{slide.tipoProjeto}</T></View>
+                            </View>
+                        ) : null}
+                        {(capa ? slide.responsavel : slide.responsavel || slide.contato) ? (
+                            <View style={{ marginTop: capa ? respiro + 4 : 26 }}>
+                                <T style={s.rotulo}>RESPONSÁVEL</T>
+                                {slide.responsavel ? <T style={{ fontSize: 16, lineHeight: 1.25, color: ESCURO, fontFamily: "Helvetica-Bold" }}>{slide.responsavel}</T> : null}
+                                {slide.tipo === "encerramento" && slide.contato ? <T style={{ fontSize: 14, lineHeight: 1.25, color: TEXTO, marginTop: 4 }}>{slide.contato}</T> : null}
+                            </View>
+                        ) : null}
+                    </View>
+                    <T style={{ ...s.rodape }}>{ctx.a.rodape}</T>
+                </Page>
+            )
+        }
+    }
+}
+
+function Conteudo({ slide, ctx }: { slide: Slide; ctx: Ctx }) {
+    if (slide.tipo === "capa" || slide.tipo === "encerramento") return <CapaOuEncerramento slide={slide} ctx={ctx} />
+    return <Moldura ctx={ctx} titulo={slide.titulo}><Corpo slide={slide} ctx={ctx} /></Moldura>
 }
 
 export function SlidesPdfDocument({ apresentacao, logo, titulo }: { apresentacao: Apresentacao; logo: string; titulo: string }) {
@@ -356,6 +422,21 @@ export function SlidesPdfDocument({ apresentacao, logo, titulo }: { apresentacao
         <Document title={titulo} author="Rede Cuca" creator="Cuca Atende+">
             {apresentacao.slides.map((slide, i) => (
                 <Conteudo key={slide.id} slide={slide} ctx={{ a: apresentacao, logo, numero: i + 1, total }} />
+            ))}
+        </Document>
+    )
+}
+
+// Só para teste: o corpo de cada slide com título numa página do tamanho exato da área de conteúdo.
+// Se algum corpo passar da área, essa página quebra em duas (o teste compara a contagem).
+export function CorposPdfDocument({ apresentacao, logo }: { apresentacao: Apresentacao; logo: string }) {
+    const comCorpo = apresentacao.slides.filter(sl => sl.tipo !== "capa" && sl.tipo !== "encerramento")
+    return (
+        <Document>
+            {comCorpo.map((slide, i) => (
+                <Page key={slide.id} size={{ width: CORPO.largura, height: CORPO.altura }} style={{ fontFamily: "Helvetica", color: TEXTO }}>
+                    <Corpo slide={slide} ctx={{ a: apresentacao, logo, numero: i + 1, total: comCorpo.length }} />
+                </Page>
             ))}
         </Document>
     )

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest"
 import type { FilhasProjeto, LinhaProjeto } from "./projeto"
 import {
-    LIMITES, MENSAGEM_FICHA_PARCIAL, acaoDaTecla, agruparPorCategoria, navegar, separadoresRosca, angulosDasFatias, caminhoRosca, corTextoSobre, cortarTexto,
-    itensDoOrcamento, montarSlides, nomeArquivoFicha, nomeArquivoSlides, paginarContinuacao, slug, tamanhoTituloCapa,
-    tonsDaCor, truncar, type DadosSlides, type ResultadoSlides, type Slide,
+    ALTURA_SLIDE, CORPO, MENSAGEM_FICHA_PARCIAL, acaoDaTecla, agruparPorCategoria, alturaBloco, navegar, separadoresRosca, angulosDasFatias, caminhoRosca, corTextoSobre,
+    itensDoOrcamento, layoutCapa, limparEspacos, linhasDoOrcamento, montarSlides, nomeArquivoFicha, nomeArquivoSlides, paginarContinuacao, periodoExato, slug,
+    tamanhoTituloCapa, tamanhoValorCartao, tonsDaCor, LAYOUT, type DadosSlides, type ResultadoSlides, type Slide,
 } from "./slides"
 
 function linha(p: Partial<LinhaProjeto> = {}): LinhaProjeto {
@@ -96,12 +96,22 @@ describe("quais slides aparecem", () => {
             { rotulo: "Período", valor: "Ano todo" },
         ])
     })
-    it("orçamento com itens todos de valor zero: sem slide e sem \"R$ 0,00\" solto", () => {
-        const r = montarSlides(dados({ participantes_estimados: 10, duracao: "1 dia" }, { orcamento: orc(["Lanche", "alimentacao", null, 5], ["Cadeiras", "espaco", 0, 0]) }), "tela")
-        expect(tipos(r)).not.toContain("orcamento")
+    it("orçamento sem nenhum valor: o slide aparece com a lista, sem total, sem rosca e sem cartão de orçamento (S-PLA-09 AC3)", () => {
+        const r = montarSlides(dados({ participantes_estimados: 10, duracao: "1 dia" }, { orcamento: orc(["Medalhas", "material", 100, null], ["30000", null, null, null]) }), "tela")
+        const o = doTipo(r, "orcamento")
+        expect(o).toHaveLength(1)
+        expect(o[0].resumo).toBeNull()
+        expect(o[0].itens).toEqual([
+            { item: "Medalhas", categoria: "Material", quantidade: "100", unitario: "—", total: "—" },
+            { item: "30000", categoria: "—", quantidade: "—", unitario: "—", total: "—" },
+        ])
+        expect(doTipo(r, "numeros")[0].cartoes.map(c => c.rotulo)).not.toContain("Orçamento total")
         expect(JSON.stringify(r)).not.toContain("R$ 0,00")
     })
-    it("Por que: selo da situação; Mantém sem textos fica só com o selo", () => {
+    it("orçamento: linha toda vazia não aparece; sem nenhuma linha com dado, sem slide", () => {
+        expect(tipos(montarSlides(dados({}, { orcamento: orc([null, null, null, null], ["  ", null, null, null]) }), "tela"))).not.toContain("orcamento")
+    })
+    it("Por que: selo da situação; Mantém sem textos fica só com o selo (desenhado no centro)", () => {
         const r = montarSlides(dados({ situacao_2026: "mantem" }), "tela")
         expect(doTipo(r, "porque")[0]).toMatchObject({ selo: "MANTÉM", blocos: [] })
         const ajustes = montarSlides(completo(), "tela")
@@ -112,7 +122,7 @@ describe("quais slides aparecem", () => {
     it("Como vai acontecer: linha do tempo pelos meses do período; Ano todo; só \"como\" sem período", () => {
         const r = montarSlides(completo(), "tela")
         expect(doTipo(r, "execucao")[0]).toMatchObject({
-            linhaDoTempo: { anoTodo: false, meses: [6, 7, 8] }, periodo: "Jun–Ago/2027 · 2 meses",
+            linhaDoTempo: { anoTodo: false, meses: [6, 7, 8] }, periodo: "10/06/2027 a 05/08/2027 · 2 meses",
             itens: [{ rotulo: "Frequência", texto: "Semanal" }, { rotulo: "Dias e horários", texto: "Sábados, 8h" }, { rotulo: "Local", texto: "Cuca Barra" }],
         })
         expect(doTipo(montarSlides(dados({ periodo_ano_todo: true }), "tela"), "execucao")[0].linhaDoTempo).toEqual({ anoTodo: true, meses: [] })
@@ -127,10 +137,14 @@ describe("quais slides aparecem", () => {
         expect(m).toHaveLength(1)
         expect(m[0].metas).toEqual([{ meta: "Atender 500", indicador: null, esperado: null }])
     })
-    it("meta longa: 2 por slide, em cartões da largura toda; numeração segue", () => {
-        const longas = metas(5).map(m => ({ ...m, indicador: "x".repeat(80) }))
+    it("meta que não cabe no cartão pequeno: cartões da largura toda, quantos couberem; numeração segue; nada cortado", () => {
+        const texto = "Garantir que 75% das atrações culturais e esportivas sejam compostas por artistas, grupos e coletivos da própria juventude de Fortaleza, com acompanhamento mensal das inscrições, relatórios por unidade, registro fotográfico das apresentações e avaliação com os coletivos ao final de cada etapa"
+        const longas = metas(5).map(m => ({ ...m, meta: "7", indicador: texto }))
         const m = doTipo(montarSlides(dados({}, { metas: longas }), "tela"), "metas")
-        expect(m.map(s => [s.layout, s.metas.length, s.inicio])).toEqual([["lista", 2, 1], ["lista", 2, 3], ["lista", 1, 5]])
+        expect(m.every(s => s.layout === "lista")).toBe(true)
+        expect(m.flatMap(s => s.metas.map(x => x.indicador))).toEqual(Array(5).fill(texto))
+        expect(m.flatMap(s => s.metas.map(x => x.meta))).toEqual(Array(5).fill("7"))
+        expect(m.map(s => s.inicio)).toEqual(m.reduce<number[]>((acc, s, i) => [...acc, i === 0 ? 1 : acc[i - 1] + m[i - 1].metas.length], []))
     })
     it("mais de 4 metas continuam em outro slide", () => {
         const r = montarSlides(dados({}, { metas: metas(9) }), "tela")
@@ -154,46 +168,61 @@ describe("quais slides aparecem", () => {
     })
 })
 
-describe("texto longo (AC5)", () => {
+describe("texto longo (S-PLA-09: nada cortado, tela = PDF)", () => {
     const longo = (n: number) => Array.from({ length: n }, (_, i) => `palavra${i}`).join(" ")
+    const textos = (r: ResultadoSlides) => JSON.stringify(ok(r).slides)
 
-    it("na tela: corta com reticências e não cria slide a mais", () => {
-        const r = montarSlides(dados({ observacoes: longo(400) }), "tela")
-        const o = doTipo(r, "observacoes")[0]
-        expect(o.texto.length).toBeLessThanOrEqual(LIMITES.observacoes)
-        expect(o.texto.endsWith("…")).toBe(true)
-        expect(tipos(r)).not.toContain("continuacao")
+    it("tela e PDF geram exatamente os mesmos slides", () => {
+        const d = dados({ observacoes: longo(400), objetivo_geral: longo(300), como_sera_realizado: longo(200) }, { objetivos: Array.from({ length: 12 }, (_, i) => ({ ordem: i + 1, texto: longo(25) })) })
+        expect(montarSlides(d, "tela")).toEqual(montarSlides(d, "pdf"))
     })
-    it("no PDF: o resto vai para continuação logo depois, e nada se perde", () => {
+    it("nenhuma reticência colocada pelo sistema; o resto vai para a continuação logo depois, e nada se perde", () => {
         const texto = longo(400)
-        const r = montarSlides(dados({ observacoes: texto }), "pdf")
+        const r = montarSlides(dados({ observacoes: texto }), "tela")
+        expect(textos(r)).not.toContain("…\"")
         const t = tipos(r)
         const i = t.indexOf("observacoes")
         expect(t[i + 1]).toBe("continuacao")
         const cont = ok(r).slides.filter(s => s.tipo === "continuacao")
         expect(cont[0].titulo).toBe("Riscos e observações … continuação")
-        const juntado = [doTipo(r, "observacoes")[0].texto.replace(/…$/, ""), ...cont.flatMap(c => c.tipo === "continuacao" ? c.blocos.map(b => b.texto) : [])].join(" ")
+        const juntado = [doTipo(r, "observacoes")[0].texto, ...cont.flatMap(c => c.tipo === "continuacao" ? c.blocos.map(b => b.texto) : [])].join(" ")
         expect(juntado.split(/\s+/)).toEqual(texto.split(" "))
     })
-    it("lista de objetivos longa: tela mostra 5 e conta o resto; PDF leva o resto para a continuação", () => {
-        const objetivos = Array.from({ length: 8 }, (_, i) => ({ ordem: i + 1, texto: `Objetivo ${i + 1}` }))
-        const tela = doTipo(montarSlides(dados({}, { objetivos }), "tela"), "objetivos")[0]
-        expect([tela.especificos.length, tela.maisEspecificos]).toEqual([5, 3])
-        const pdf = montarSlides(dados({}, { objetivos }), "pdf")
-        expect(doTipo(pdf, "objetivos")[0].maisEspecificos).toBe(0)
-        expect(doTipo(pdf, "continuacao")[0].blocos).toEqual([{ rotulo: "Objetivos específicos", texto: "• Objetivo 6\n• Objetivo 7\n• Objetivo 8" }])
+    it("corte prefere o fim do parágrafo: nunca fica uma palavra solta (caso \"Promover…\")", () => {
+        const p1 = "O evento é realizado em alusão ao Dia Internacional da Juventude, comemorado no dia 12 de agosto. ".repeat(4).trim()
+        const p2 = "Promover a maior virada cultural, esportiva e de cidadania da cidade de Fortaleza, com programação gratuita. ".repeat(6).trim()
+        const r = montarSlides(dados({ objetivo_geral: `${p1}\n\n${p2}` }, { objetivos: Array.from({ length: 5 }, (_, i) => ({ ordem: i + 1, texto: `Objetivo ${i + 1}` })) }), "tela")
+        const o = doTipo(r, "objetivos")[0]
+        const cont = doTipo(r, "continuacao")
+        if (cont.length) {
+            expect(o.objetivoGeral === null || !/Promover$/.test(o.objetivoGeral)).toBe(true)
+            const tudo = [o.objetivoGeral ?? "", ...cont.flatMap(c => c.blocos.filter(b => b.rotulo === "Objetivo geral").map(b => b.texto))].join("\n\n")
+            expect(tudo.replace(/\s+/g, " ")).toBe(`${p1} ${p2}`.replace(/\s+/g, " "))
+        }
     })
-    it("cortarTexto prefere espaço; truncar respeita o limite", () => {
-        expect(cortarTexto("abcde fgh ijk", 8)).toEqual(["abcde", "fgh ijk"])
-        expect(cortarTexto("abcdefghij", 4)).toEqual(["abcd", "efghij"])
-        expect(truncar("curto", 10)).toBe("curto")
-        expect(truncar("um texto bem comprido aqui", 12)).toBe("um texto…")
+    it("objetivos específicos: todos aparecem (no slide ou na continuação), sem \"… e mais N\"", () => {
+        const poucos = Array.from({ length: 8 }, (_, i) => ({ ordem: i + 1, texto: `Objetivo ${i + 1}` }))
+        expect(doTipo(montarSlides(dados({}, { objetivos: poucos }), "tela"), "objetivos")[0].especificos).toHaveLength(8)
+        const muitos = Array.from({ length: 30 }, (_, i) => ({ ordem: i + 1, texto: `Objetivo específico número ${i + 1} com um texto de tamanho médio` }))
+        const r = montarSlides(dados({}, { objetivos: muitos }), "tela")
+        const visiveis = doTipo(r, "objetivos")[0].especificos
+        const resto = doTipo(r, "continuacao").flatMap(c => c.blocos.filter(b => b.rotulo === "Objetivos específicos").flatMap(b => b.texto.split("\n").map(l => l.replace(/^• /, ""))))
+        expect([...visiveis, ...resto]).toEqual(muitos.map(o => o.texto))
     })
-    it("paginarContinuacao não passa do limite por página e mantém a ordem", () => {
-        const paginas = paginarContinuacao([{ rotulo: "A", texto: longo(500) }, { rotulo: "B", texto: "fim" }], 800)
+    it("paginarContinuacao: cada página cabe na área do slide (pela altura) e a ordem é mantida", () => {
+        const paginas = paginarContinuacao([{ rotulo: "A", texto: longo(900) }, { rotulo: "B", texto: Array.from({ length: 40 }, (_, i) => `linha ${i}`).join("\n") }, { rotulo: "C", texto: "fim" }])
         expect(paginas.length).toBeGreaterThan(2)
-        for (const pg of paginas) expect(pg.reduce((s, b) => s + b.texto.length, 0)).toBeLessThanOrEqual(800)
-        expect(paginas.at(-1)?.at(-1)).toEqual({ rotulo: "B", texto: "fim" })
+        for (const pg of paginas) expect(pg.reduce((s, b) => s + alturaBloco(b.texto, CORPO.largura, LAYOUT.continuacao), 0)).toBeLessThanOrEqual(CORPO.altura)
+        expect(paginas.at(-1)?.at(-1)).toEqual({ rotulo: "C", texto: "fim" })
+        expect(paginas.flat().filter(b => b.rotulo === "B").map(b => b.texto).join("\n")).toBe(Array.from({ length: 40 }, (_, i) => `linha ${i}`).join("\n"))
+    })
+    it("só espaço em branco muda: tabulação, espaços seguidos, linhas em branco a mais e espaço nas pontas; letras e \"-----\" ficam", () => {
+        expect(limparEspacos("  a\t b  c \n\n\n\n -----  \r\nfim ")).toBe("a b c\n\n-----\nfim")
+        expect(limparEspacos(" \t \n ")).toBeNull()
+        expect(limparEspacos("começa minúsculo")).toBe("começa minúsculo")
+        const r = montarSlides(dados({ nome: "OLIMPIADAS DA JUVENTUDE  DE FORTALEZA", observacoes: "-----" }), "tela")
+        expect(doTipo(r, "capa")[0].nome).toBe("OLIMPIADAS DA JUVENTUDE DE FORTALEZA")
+        expect(doTipo(r, "observacoes")[0].texto).toBe("-----")
     })
 })
 
@@ -204,11 +233,23 @@ describe("orçamento", () => {
         expect(fatias.map(x => [x.rotulo, x.valor, x.percentual])).toEqual([["Transporte", 300, 54.5], ["Material", 200, 36.4], ["Sem categoria", 50, 9.1]])
         expect(fatias[0].cor).toBe("#16a34a")
     })
-    it("os 5 maiores itens, com nome do item (ou da categoria)", () => {
-        const r = montarSlides(dados({}, { orcamento: orc(["a", "material", 1, 1], ["b", "material", 1, 2], ["c", "material", 1, 3], [null, "transporte", 1, 4], ["e", "material", 1, 5], ["f", "material", 1, 6]) }), "tela")
-        const o = doTipo(r, "orcamento")[0]
-        expect(o.maiores.map(m => m.rotulo)).toEqual(["f", "e", "Transporte", "c", "b"])
-        expect(o.total).toBe("R$ 21,00")
+    it("todas as linhas, na ordem da ficha, como digitadas; total e rosca só com os itens de valor", () => {
+        const linhas = orc(["a", "material", 1, 1], ["b", "material", 1, 2], ["c", "material", 1, 3], [null, "transporte", 1, 4], ["e", "material", 1, 5], ["f", "material", 1, 6], ["Arbitragem", "servicos", null, null])
+        const o = doTipo(montarSlides(dados({}, { orcamento: linhas }), "tela"), "orcamento")[0]
+        expect(o.resumo?.total).toBe("R$ 21,00")
+        expect(o.resumo?.fatias.map(x => x.rotulo)).toEqual(["Material", "Transporte"])
+        expect(o.itens.map(l => l.item)).toEqual(["a", "b", "c", "—", "e", "f", "Arbitragem"])
+        expect(o.itens[6]).toEqual({ item: "Arbitragem", categoria: "Serviços", quantidade: "—", unitario: "—", total: "—" })
+        expect(linhasDoOrcamento({ ...semFilhas(), orcamento: orc(["Lanche", "alimentacao", 250, 20.5]) })[0]).toEqual({ item: "Lanche", categoria: "Alimentação", quantidade: "250", unitario: "R$ 20,50", total: "R$ 5.125,00" })
+    })
+    it("muitos itens continuam em \"Orçamento … continuação\" (resumo só no primeiro); nome de item longo inteiro", () => {
+        const nomeLongo = "equipe geral - coordenação/ produção/ comunicação/ jurados/ apresentadores e equipe de apoio nas unidades"
+        const linhas = orc(...Array.from({ length: 40 }, (_, i) => [i === 0 ? nomeLongo : String(i + 1), "servicos", 1, 100] as [string, string, number, number]))
+        const o = doTipo(montarSlides(dados({}, { orcamento: linhas }), "tela"), "orcamento")
+        expect(o.length).toBeGreaterThan(1)
+        expect(o[0].resumo).not.toBeNull()
+        expect(o.slice(1).every(x => x.resumo === null && x.titulo === "Orçamento … continuação")).toBe(true)
+        expect(o.flatMap(x => x.itens.map(l => l.item))).toEqual([nomeLongo, ...Array.from({ length: 39 }, (_, i) => String(i + 2))])
     })
     it("rosca com uma categoria só (100%) desenha a volta inteira", () => {
         const [a] = angulosDasFatias([{ valor: 10 }])
@@ -254,8 +295,30 @@ describe("cores, capa e arquivos", () => {
         expect(doTipo(montarSlides(dados({ nome }), "tela"), "capa")[0].nome).toBe(nome)
         const longo = "Responsável ".repeat(10).trim()
         const r = montarSlides(dados({ responsavel_nome: longo }), "pdf")
-        expect(doTipo(r, "capa")[0].responsavel?.length).toBeLessThanOrEqual(40)
+        expect(doTipo(r, "capa")[0].responsavel).toBe(longo)
         expect(doTipo(r, "encerramento")[0].responsavel).toBe(longo)
+    })
+    it("capa: o nome diminui até o bloco caber acima do rodapé, com nome e responsável inteiros", () => {
+        expect(layoutCapa("Sarau", "Ana")).toEqual({ tamanho: 54, topo: 140, respiro: 22 })
+        const grande = layoutCapa("X".repeat(200), "R".repeat(120))
+        expect(grande.tamanho).toBeLessThan(24)
+        expect(grande.topo).toBeLessThan(ALTURA_SLIDE)
+    })
+    it("cartões de números: o valor cabe numa linha conforme a quantidade de cartões", () => {
+        expect(tamanhoValorCartao("30.000", 4)).toBe(34)
+        expect(tamanhoValorCartao("R$ 238.420,00", 4)).toBeLessThan(tamanhoValorCartao("R$ 238.420,00", 2))
+        expect(tamanhoValorCartao("R$ 238.420,00", 4)).toBeGreaterThanOrEqual(16)
+    })
+    it("datas exatas: um dia, período, uma data só, final antes da inicial, ano todo", () => {
+        const base = { periodo_ano_todo: false, data_inicio: null, data_fim: null }
+        expect(periodoExato({ ...base, data_inicio: "2027-04-10", data_fim: "2027-04-10" })).toBe("10/04/2027")
+        expect(periodoExato({ ...base, data_inicio: "2027-08-06", data_fim: "2027-09-03" })).toBe("06/08/2027 a 03/09/2027")
+        expect(periodoExato({ ...base, data_fim: "2027-09-03" })).toBe("03/09/2027")
+        expect(periodoExato({ ...base, data_inicio: "2027-09-03", data_fim: "2027-08-06" })).toBe("03/09/2027 a 06/08/2027")
+        expect(periodoExato({ ...base, periodo_ano_todo: true })).toBe("Ano todo")
+        expect(periodoExato(base)).toBeNull()
+        const r = montarSlides(dados({ participantes_estimados: 10, data_inicio: "2027-04-10", data_fim: "2027-04-10" }), "tela")
+        expect(doTipo(r, "numeros")[0].cartoes[1]).toEqual({ rotulo: "Período", valor: "10/04/2027" })
     })
     it("nome do arquivo: planejamento-2027_{setor}_{nome}.pdf, sem acento e com _ só entre as partes", () => {
         expect(nomeArquivoSlides("Educação e Tecnologia", "Olimpíadas da Rede: 2ª edição!")).toBe("planejamento-2027_educacao-e-tecnologia_olimpiadas-da-rede-2a-edicao.pdf")

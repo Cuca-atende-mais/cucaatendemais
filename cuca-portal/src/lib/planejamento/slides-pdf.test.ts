@@ -4,13 +4,15 @@ import { createElement } from "react"
 import { describe, expect, it } from "vitest"
 import { renderToBuffer } from "@react-pdf/renderer"
 import type { FilhasProjeto, LinhaProjeto } from "./projeto"
-import { FOLGA_PDF, LIMITES, montarSlides, type DadosSlides } from "./slides"
-import { SlidesPdfDocument } from "./slides-pdf"
+import { montarSlides, type DadosSlides } from "./slides"
+import { CorposPdfDocument, SlidesPdfDocument } from "./slides-pdf"
 import { FichaPdfDocument } from "./ficha-pdf"
 
-// S-PLA-05 (AC7, AC8, DoD): gera os PDFs de verdade com dados de exemplo e confere que cada slide vira
-// exatamente uma página (texto que estoura criaria página a mais). Com PLA_PDF_EXEMPLOS=<pasta>, grava
-// os arquivos para conferência visual.
+// S-PLA-05 (AC7, AC8, DoD) / S-PLA-09 (AC7): gera os PDFs de verdade com dados de exemplo e confere:
+// - cada slide vira exatamente uma página;
+// - nenhum corpo de slide passa da área de conteúdo: o corpo de cada slide é desenhado sozinho numa
+//   página do tamanho exato da área (848 × 368); se passar, essa página quebra em duas.
+// Com PLA_PDF_EXEMPLOS=<pasta>, grava os arquivos para conferência visual.
 
 const LOGO = join(__dirname, "..", "..", "..", "public", "logo-rede-cuca.png")
 const PASTA = process.env.PLA_PDF_EXEMPLOS
@@ -97,32 +99,61 @@ const CASOS: { nome: string; dados: DadosSlides }[] = [
     },
 ]
 
-// Pior caso: todo texto exatamente no limite do campo + a folga (fica inteiro no slide), em MAIÚSCULAS
-// (mais largas que o texto comum na Helvetica). Se algum slide transbordar, o PDF ganha página a mais.
+// Pior caso: textos muito longos, em MAIÚSCULAS (mais largas que o texto comum na Helvetica), nome de
+// 200 caracteres, responsável de 120, valores máximos. Nada é cortado: tudo continua em outros slides.
 const MAIUSCULAS = "PROGRAMAÇÃO ESPORTIVA COM MODALIDADES COLETIVAS E INDIVIDUAIS NAS UNIDADES DA REDE "
 const caps = (n: number) => MAIUSCULAS.repeat(Math.ceil(n / MAIUSCULAS.length)).slice(0, n).trimEnd().padEnd(n, "M")
-const cheio = (limite: number) => caps(limite + FOLGA_PDF)
 CASOS.push({
     nome: "pior-caso-maiusculas",
     dados: {
         projeto: linha({
             nome: caps(200),
             responsavel_nome: caps(120), responsavel_contato: caps(60),
-            mudancas_2026: cheio(LIMITES.porqueDuplo), justificativa_2026: cheio(LIMITES.porqueDuplo),
-            objetivo_geral: cheio(LIMITES.objetivoGeral), publico_alvo: cheio(LIMITES.publico),
+            mudancas_2026: caps(900), justificativa_2026: caps(900),
+            objetivo_geral: caps(800), publico_alvo: caps(500),
             participantes_estimados: 2_000_000_000, duracao: caps(40),
-            frequencia: "outra", frequencia_outra: cheio(LIMITES.itemExecucao), dias_horarios: cheio(LIMITES.itemExecucao),
-            local_outro: true, local_outro_texto: cheio(LIMITES.itemExecucao), como_sera_realizado: cheio(LIMITES.como),
+            frequencia: "outra", frequencia_outra: caps(300), dias_horarios: caps(300),
+            local_outro: true, local_outro_texto: caps(300), como_sera_realizado: caps(1500),
             resultados_2026_participantes: 1_999_999_999,
-            resultados_2026_principais: cheio(LIMITES.aprendizado), resultados_2026_funcionou: cheio(LIMITES.aprendizado),
-            resultados_2026_melhorar: cheio(LIMITES.aprendizado), observacoes: cheio(LIMITES.observacoes),
+            resultados_2026_principais: caps(700), resultados_2026_funcionou: caps(700),
+            resultados_2026_melhorar: caps(700), observacoes: caps(2500),
         }),
         filhas: {
-            objetivos: Array.from({ length: 5 }, (_, i) => ({ ordem: i + 1, texto: cheio(LIMITES.especifico) })),
+            objetivos: Array.from({ length: 9 }, (_, i) => ({ ordem: i + 1, texto: caps(220) })),
             orcamento: Array.from({ length: 7 }, (_, i) => ({ ordem: i + 1, item: caps(200), categoria: (["material", "espaco", "transporte", "alimentacao", "divulgacao", "servicos", "outros"] as const)[i], quantidade: 9_999_999, valor_unitario: 99_999 })),
-            metas: Array.from({ length: 4 }, (_, i) => ({ ordem: i + 1, meta: cheio(LIMITES.meta), indicador: cheio(LIMITES.meta), resultado_esperado: cheio(LIMITES.meta) })),
+            metas: Array.from({ length: 6 }, (_, i) => ({ ordem: i + 1, meta: caps(300), indicador: caps(300), resultado_esperado: caps(300) })),
         },
         setor: { id: "educacao_tecnologia", nome: "Educação e Tecnologia", cor: "#0891b2" },
+        unidades: UNIDADES,
+    },
+})
+
+// Padrões encontrados nos projetos reais (varredura de 2026-11-18), com dados sintéticos.
+const linhasCurtas = Array.from({ length: 45 }, (_, i) => i % 7 === 0 ? "" : `Atividade ${i}: oficina prática com os estudantes.`).join("\n")
+CASOS.push({
+    nome: "padroes-reais",
+    dados: {
+        projeto: linha({
+            nome: "OLIMPIADAS DA JUVENTUDE  DE FORTALEZA 2027", situacao_2026: "mantem", mudancas_2026: null, justificativa_2026: null,
+            objetivo_geral: "O evento é realizado em alusão ao Dia Internacional da Juventude.\n \t\nPromover a maior virada cultural,  esportiva e de cidadania da cidade, com 35 horas de programação gratuita.",
+            publico_alvo: "Sendo 100% aberto a comunidade.", data_inicio: "2027-08-06", data_fim: "2027-09-03", duracao: "4 semanas", frequencia: "semanal", dias_horarios: "36h",
+            como_sera_realizado: linhasCurtas, observacoes: "-----", resultados_2026_principais: "-----",
+        }),
+        filhas: {
+            objetivos: [],
+            orcamento: [
+                { ordem: 1, item: "30000", categoria: null, quantidade: null, valor_unitario: null },
+                { ordem: 2, item: "MEDALHAS", categoria: "material", quantidade: 750, valor_unitario: null },
+                ...Array.from({ length: 16 }, (_, i) => ({ ordem: i + 3, item: String(i + 1), categoria: (["servicos", "material", "alimentacao", "outros", "espaco", "transporte", "divulgacao"] as const)[i % 7], quantidade: i + 1, valor_unitario: 100 * (i + 1) })),
+                { ordem: 20, item: "Item sem categoria", categoria: null, quantidade: 1, valor_unitario: 50 },
+                { ordem: 21, item: null, categoria: null, quantidade: null, valor_unitario: null },
+            ],
+            metas: [
+                { ordem: 1, meta: "7", indicador: "Garantir que 75% das atrações culturais e esportivas (música, dança, literatura) sejam compostas por artistas, grupos e coletivos da própria juventude de Fortaleza", resultado_esperado: null },
+                { ordem: 2, meta: "8", indicador: "Atender 750 participantes no Circuito de Corridas da Rede Cuca", resultado_esperado: "750" },
+            ],
+        },
+        setor: { id: "cultura", nome: "Cultura", cor: "#db2777" },
         unidades: UNIDADES,
     },
 })
@@ -133,18 +164,27 @@ function paginas(pdf: Buffer): number {
 
 describe("PDF dos slides (AC7)", () => {
     for (const caso of CASOS) {
-        it(`${caso.nome}: um slide por página, sem página a mais`, async () => {
+        it(`${caso.nome}: um slide por página, e nenhum corpo passa da área de conteúdo`, async () => {
             const r = montarSlides(caso.dados, "pdf")
             if (r.tipo !== "ok") throw new Error("esperava slides")
             const pdf = await renderToBuffer(createElement(SlidesPdfDocument, { apresentacao: r, logo: LOGO, titulo: caso.nome }) as never)
             expect(pdf.subarray(0, 4).toString()).toBe("%PDF")
             expect(paginas(pdf)).toBe(r.slides.length)
+            const corpos = await renderToBuffer(createElement(CorposPdfDocument, { apresentacao: r, logo: LOGO }) as never)
+            expect(paginas(corpos)).toBe(r.slides.filter(sl => sl.tipo !== "capa" && sl.tipo !== "encerramento").length)
             if (PASTA) {
                 mkdirSync(PASTA, { recursive: true })
                 writeFileSync(join(PASTA, `slides-${caso.nome}.pdf`), pdf)
             }
-        }, 30_000)
+        }, 60_000)
     }
+    it("o detector pega estouro: um corpo maior que a área vira duas páginas", async () => {
+        const r = montarSlides(CASOS[0].dados, "pdf")
+        if (r.tipo !== "ok") throw new Error("esperava slides")
+        const grande = { ...r, slides: [{ tipo: "observacoes" as const, texto: Array.from({ length: 40 }, (_, i) => `linha ${i}`).join("\n"), tamanho: 13, id: "o", titulo: "Obs" }] }
+        const pdf = await renderToBuffer(createElement(CorposPdfDocument, { apresentacao: grande, logo: LOGO }) as never)
+        expect(paginas(pdf)).toBeGreaterThan(1)
+    }, 30_000)
 })
 
 describe("PDF da ficha (AC8)", () => {
