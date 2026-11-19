@@ -2511,7 +2511,8 @@ function montarConsultaComContextoSemHeranca(itensRede: ItemProgramacao[], consu
     return { situacao: "nenhuma", bloco: notaForaDoContexto.trim(), area };
   }
   // Atividade identificada (pelo interpretador) que não casa com nenhum título da rede: nenhuma
-  // unidade tem — o bot oferece a mesma área, nunca só "não tem".
+  // unidade tem — o bot oferece a mesma área, nunca só "não tem". (Hotfix 17/11/2026: termos que não
+  // identificam atividade já saem antes, em `semTermosGenericos`, nos dois caminhos que montam a consulta.)
   if (consulta.atividade || consulta.termos.length) return { situacao: "nenhuma", bloco: "", area: consulta.area };
   if (consulta.area) {
     const daArea = filtrarItensPorContexto(itensRede.filter((it) => it.area === consulta.area && (consulta.escopo === ESCOLHA_REDE || it.unidade === consulta.escopo)), consulta.contexto);
@@ -3512,6 +3513,38 @@ export function consolidarLeitura(leituraModelo: LeituraTurno, texto: string, me
     return { ...base, atividade: null, termos_busca: [], area: "CURSOS" };
   }
   return base;
+}
+
+/**
+ * Hotfix 17/11/2026: tira da leitura o que não identifica atividade. "Os cursos já começaram?" vinha
+ * com termos ["cursos","começaram"]: a lista não vazia fazia o bot pular a pergunta da unidade, ir
+ * para a rede inteira e responder que não havia cursos em nenhuma unidade. Mesmo defeito em "E os
+ * esportes?" e "Que tipos tem disponiveis." (16/11).
+ * - atividade feita só de palavras genéricas ("esportes", "cursos") vira sem atividade, e a área sai
+ *   dela quando o modelo não deu;
+ * - sem atividade, termo só fica se casar com algum título da programação (a mesma regra da
+ *   S-INST-QUAL-13 para a palavra que sobra do texto).
+ * Atividade com nome de verdade não muda: "forró" sem título na rede continua "não tem". Com dia
+ * na pergunta nada muda (a consulta por dia já trata as palavras que sobram). Sem itens carregados,
+ * os termos ficam como estão.
+ */
+export function semTermosGenericos<T extends { atividade: string | null; termos_busca: string[]; area: AreaProgramacao | null; contexto: Record<string, unknown> }>(leitura: T, itens: ItemProgramacao[]): T {
+  if (!leitura.atividade && !leitura.termos_busca.length) return leitura;
+  if (diasDoContexto(leitura.contexto)) return leitura;
+  let { atividade, area } = leitura;
+  if (atividade && palavrasChaveProgramacao(atividade).length === 0) {
+    area = area ?? areaPeloVocabulario(atividade);
+    atividade = null;
+  }
+  if (atividade) return leitura;
+  const termos = itens.length
+    ? leitura.termos_busca.filter((t) => {
+      const palavras = palavrasChaveProgramacao(t);
+      return palavras.length > 0 && itensQueCasamComPalavras(itens, palavras).length > 0;
+    })
+    : leitura.termos_busca.filter((t) => palavrasChaveProgramacao(t).length > 0);
+  if (atividade === leitura.atividade && area === leitura.area && termos.length === leitura.termos_busca.length) return leitura;
+  return { ...leitura, atividade, area, termos_busca: termos };
 }
 
 /** O texto pede a rede: "toda a rede" (lerMensagemAtual) ou "onde tem", "em qual unidade", "cada unidade". */
@@ -5117,10 +5150,12 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         const lida = await obterLeitura();
         if (lida) {
           const pedidoAnterior = lida.tipo === "so_unidade" && !lida.atividade ? pedidoAnteriorDoLead(historicoRota) : "";
-          const leitura = pedidoAnterior ? completarSoUnidadeComPedidoAnterior(lida, pedidoAnterior, await carregarItensProgramacaoRede(supabase, usarCacheProgramacao)) : lida;
-          const textoDoPedido = leitura !== lida ? pedidoAnterior + "\n" + textoRota : textoRota;
+          const completada = pedidoAnterior ? completarSoUnidadeComPedidoAnterior(lida, pedidoAnterior, await carregarItensProgramacaoRede(supabase, usarCacheProgramacao)) : lida;
+          const textoDoPedido = completada !== lida ? pedidoAnterior + "\n" + textoRota : textoRota;
+          // Hotfix 17/11/2026: termos que não identificam atividade saem antes de decidir a rota.
+          const leitura = semTermosGenericos(completada, await itensParaLeitura(completada));
           const acao = decidirRota(leitura, estadoRota(leitura, await itensParaLeitura(leitura), textoDoPedido));
-          console.log("[motor-agente v18] Rota estruturada: tipo=" + leitura.tipo + " assunto=" + leitura.assunto + " escopo=" + leitura.escopo + " atividade=" + leitura.atividade + " idade=" + leitura.idade + " -> " + acao.acao);
+          console.log("[motor-agente v18] Rota estruturada: tipo=" + leitura.tipo + " assunto=" + leitura.assunto + " escopo=" + leitura.escopo + " atividade=" + leitura.atividade + " termos=" + leitura.termos_busca.join("|") + " idade=" + leitura.idade + " -> " + acao.acao);
           const resposta = await executarAcao(acao, leitura, textoDoPedido);
           if (resposta) return resposta;
         }
@@ -5131,7 +5166,10 @@ async function processarMensagem(req: Request, supabaseOverride: ReturnType<type
         const podeTerSinal = palavrasChaveProgramacao(textoFinal).length > 0 || areaPeloVocabulario(textoFinal) !== null || ehPerguntaGeralDeProgramacao(textoFinal);
         const itensRede = podeTerSinal ? await carregarItensProgramacaoRede(supabase, usarCacheProgramacao) : [];
         if ((podeTerSinal && temSinalDeProgramacao(textoFinal, itensRede)) || escopoSessao === ESCOLHA_REDE) {
-          const interp = consolidarInterpretacao(await interpretarTurnoProgramacao(textoFinal, openaiKey, historico, registrarConsumoInterpretacao), textoFinal);
+          const interpConsolidada = consolidarInterpretacao(await interpretarTurnoProgramacao(textoFinal, openaiKey, historico, registrarConsumoInterpretacao), textoFinal);
+          // Hotfix 17/11/2026: mesma limpeza da rota estruturada (termos que não identificam atividade).
+          const itensLimpeza = interpConsolidada.atividade || interpConsolidada.termos_busca.length ? (itensRede.length ? itensRede : await carregarItensProgramacaoRede(supabase, usarCacheProgramacao)) : [];
+          const interp = semTermosGenericos(interpConsolidada, itensLimpeza);
           const contexto = contextoDoTurno(interp.contexto); // S-INST-QUAL-14: mesma regra da rota estruturada
           console.log("[motor-agente v18] Interpretacao S-WM-72: tipo=" + interp.tipo + " atividade=" + interp.atividade + " area=" + interp.area + " escopo=" + interp.escopo + " contexto=" + descreverContexto(contexto));
           if (interp.tipo === "pergunta_programacao" || interp.tipo === "continuacao") {
