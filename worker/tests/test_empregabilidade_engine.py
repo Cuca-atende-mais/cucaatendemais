@@ -1768,6 +1768,9 @@ class TestAguardandoRetornoSelecao:
         selecao/route.ts e no notify_loop, :2679), a mensagem manual do usuário
         deve mostrar a confirmação e avançar pra menu_pos_vaga, preservando
         empresa_id."""
+        # S-EMP-GES-11: este caminho agora avisa o transbordo; aqui só importa a confirmação
+        # (o aviso tem testes próprios em TestEmpGes11AvisoTransbordo).
+        monkeypatch.setattr(emp, "_avisar_transbordo_vaga_criada", AsyncMock(return_value=True))
         estado, fake_get, fake_set = _fluxo_mock("aguardando_retorno_selecao", {
             "perfil": "empresa", "empresa_id": "e1", "empresa_nome": "ACME",
             "empresa_nome_exibicao": "ACME", "cnpj": "12345678000199",
@@ -2852,6 +2855,7 @@ class _TabelaFake:
         return self
 
     def order(self, *args, **kwargs):
+        self.banco.order_calls.append((self.nome, args, kwargs))
         return self
 
     def limit(self, valor):
@@ -2894,11 +2898,21 @@ class _SupabaseFakeBloco6:
         self.empresas = []
         # S-EMP-AUD-023 passo 3
         self.inserts = []
+        # S-EMP-GES-11: ordem da consulta do loop e status da vaga antes do aviso ao transbordo
+        self.order_calls = []
+        self.vagas_status = {}
+        self.vagas_status_erro = False
 
     def table(self, nome):
         return _TabelaFake(nome, self)
 
     def resultado_para(self, tabela: _TabelaFake):
+        if tabela.nome == "vagas" and tabela.select_cols == "status":
+            if self.vagas_status_erro:
+                raise RuntimeError("falha simulada ao ler vagas.status")
+            vaga_id = next((valor for tipo, coluna, valor in tabela.filters if tipo == "eq" and coluna == "id"), None)
+            status = self.vagas_status.get(vaga_id)
+            return _ResultadoFake({"status": status} if status else None)
         if tabela.nome == "vagas" and tabela.select_cols == "coleta_curriculo":
             vaga_id = next((valor for tipo, coluna, valor in tabela.filters if tipo == "eq" and coluna == "id"), None)
             return _ResultadoFake({"coleta_curriculo": self.coleta_curriculo_por_vaga.get(vaga_id, True)})
@@ -4336,7 +4350,10 @@ class TestBloco6RotearPorIntencao:
 class TestBloco6NotifyLoop:
 
     @pytest.mark.asyncio
-    async def test_notify_tick_usa_limit_e_busca_telefones_em_lote(self, monkeypatch):
+    async def test_notify_tick_filtra_etapa_no_banco_e_busca_telefones_em_lote(self, monkeypatch):
+        """S-EMP-GES-11 (AC1, AC2): antes exigia `("conversas", 200)` — o lote de 200 sem
+        ordem e sem filtro de etapa era a causa do aviso perdido. Agora a etapa é filtrada no
+        banco, com ordem estável e teto folgado."""
         estado, fake_get, fake_set = _fluxo_mock("", {})
         monkeypatch.setattr(emp, "_get_fluxo", fake_get)
         monkeypatch.setattr(emp, "_set_fluxo", fake_set)
@@ -4372,7 +4389,12 @@ class TestBloco6NotifyLoop:
 
         await emp._empregabilidade_notify_tick()
 
-        assert ("conversas", 200) in fake.limit_calls
+        assert ("conversas", emp._NOTIFY_TETO_CONVERSAS) in fake.limit_calls
+        assert ("conversas", 200) not in fake.limit_calls
+        assert ("conversas", "metadata->empreg_fluxo->>etapa", list(emp._ETAPAS_NOTIFY_PORTAL)) in fake.in_calls
+        assert ("conversas", "status", ["ativa", "aberta"]) in fake.in_calls
+        ordens = [args for nome, args, _ in fake.order_calls if nome == "conversas"]
+        assert ordens == [("updated_at",), ("id",)]
         assert ("leads", "id", ["lead-1"]) in fake.in_calls
         assert mock_enviar.await_count == 1
 
@@ -7464,10 +7486,22 @@ class TestVagaCriadaNotificaForaDoHorario:
     não existe caminho pelo qual o gate desta story possa alcançá-lo."""
 
     def test_notify_tick_nunca_chama_acionar_transbordo(self):
+        """S-EMP-GES-11: o loop passou a avisar pelo helper `_avisar_transbordo_vaga_criada`,
+        que chama `_notificar_transbordo` direto. A prova estrutural segue nos dois níveis."""
         import inspect
         codigo_fonte = inspect.getsource(emp._empregabilidade_notify_tick)
         assert "_acionar_transbordo_empregabilidade" not in codigo_fonte
-        assert "_notificar_transbordo" in codigo_fonte
+        assert "_avisar_transbordo_vaga_criada" in codigo_fonte
+
+    def test_helper_do_aviso_nao_passa_pelo_gate_de_horario(self):
+        """S-EMP-GES-11 (AC11): o caminho de resposta também ganhou o aviso, pelo mesmo
+        helper. O helper chama `_notificar_transbordo` direto, sem o gate de horário."""
+        import inspect
+        codigo_helper = inspect.getsource(emp._avisar_transbordo_vaga_criada)
+        assert "_notificar_transbordo" in codigo_helper
+        assert "_acionar_transbordo_empregabilidade" not in codigo_helper
+        assert "_dentro_horario_atendimento" not in codigo_helper
+        assert "_avisar_transbordo_vaga_criada" in inspect.getsource(emp._processar_empresa)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -8052,3 +8086,267 @@ class TestConfirmacaoPresencaSelecaoPausada:
 
         mock_candidaturas.update.assert_called_once_with({"confirmacao_presenca": "confirmado"})
         rotear.assert_not_awaited()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-GES-11 — aviso de vaga/seleção criada sempre chega ao transbordo
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VAGA_GES11 = "00000000-0000-0000-0000-000000000169"
+
+
+def _conversa_ges11(etapa: str) -> dict:
+    return {
+        "id": "conv-1",
+        "origem_id": "PHONE_ID",
+        "lead_id": "lead-1",
+        "metadata": {"empreg_fluxo": {
+            "etapa": etapa,
+            "empresa_id": "emp-1",
+            "empresa_nome": "ECOFOR AMBIENTAL LTDA",
+            "empresa_nome_exibicao": "ECOFOR",
+            "vaga_criada_id": _VAGA_GES11,
+            "vaga_numero": 169,
+            "vaga_titulo": "Seleção Agente de Limpeza",
+        }},
+    }
+
+
+def _fluxo_ges11(etapa: str) -> dict:
+    return dict(_conversa_ges11(etapa)["metadata"]["empreg_fluxo"])
+
+
+class TestEmpGes11AvisoTransbordo:
+    """S-EMP-GES-11 — AC1/AC2 (consulta), AC5/AC6 (aviso nos dois caminhos, uma vez só),
+    AC8 (só pre_cadastro), AC9 (falha no aviso não atrapalha a confirmação)."""
+
+    def _preparar_loop(self, monkeypatch, etapa_conversa: str, etapa_fluxo_atual: str, status_vaga):
+        fluxo_atual = _fluxo_ges11(etapa_conversa)
+        fluxo_atual["etapa"] = etapa_fluxo_atual
+        estado, fake_get, fake_set = _fluxo_mock(etapa_fluxo_atual, fluxo_atual)
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        fake.conversas = [_conversa_ges11(etapa_conversa)]
+        fake.leads = [{"id": "lead-1", "telefone": "558599990000"}]
+        if status_vaga:
+            fake.vagas_status = {_VAGA_GES11: status_vaga}
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        import meta_adapter_inbound
+        mock_notificar = AsyncMock(return_value=True)
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", mock_notificar)
+        return estado, mock_enviar, mock_notificar, fake
+
+    def _preparar_resposta(self, monkeypatch, etapa: str, status_vaga):
+        estado, fake_get, fake_set = _fluxo_mock(etapa, _fluxo_ges11(etapa) | {"perfil": "empresa", "etapa": etapa})
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=True)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+
+        fake = _SupabaseFakeBloco6()
+        if status_vaga:
+            fake.vagas_status = {_VAGA_GES11: status_vaga}
+        monkeypatch.setattr(emp, "supabase", fake)
+
+        import meta_adapter_inbound
+        mock_notificar = AsyncMock(return_value=True)
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", mock_notificar)
+        return estado, mock_enviar, mock_notificar, fake
+
+    @staticmethod
+    def _assert_aviso_correto(mock_notificar, titulo: str, empresa: str = "ECOFOR"):
+        mock_notificar.assert_awaited_once()
+        kwargs = mock_notificar.await_args.kwargs
+        assert kwargs["conversa_id"] == "conv-1"
+        assert kwargs["modulo"] == "Empregabilidade"
+        assert kwargs["unidade_cuca"] is None
+        assert kwargs["phone_number_id_origem"] == "PHONE_ID"
+        assert kwargs["tag_finalidade"] == "VagaCriada"
+        assert kwargs["parametros_override"] == [empresa, titulo]
+
+    # ── AC2: teto com log ─────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_teto_atingido_gera_log_de_aviso(self, monkeypatch, caplog):
+        estado, mock_enviar, mock_notificar, fake = self._preparar_loop(
+            monkeypatch, "aguardando_retorno_selecao", "aguardando_retorno_selecao", "pre_cadastro",
+        )
+        monkeypatch.setattr(emp, "_NOTIFY_TETO_CONVERSAS", 1)
+        with caplog.at_level("WARNING"):
+            await emp._empregabilidade_notify_tick()
+        assert any("Teto de 1 conversas atingido" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_abaixo_do_teto_nao_gera_log(self, monkeypatch, caplog):
+        self._preparar_loop(
+            monkeypatch, "aguardando_retorno_selecao", "aguardando_retorno_selecao", "pre_cadastro",
+        )
+        with caplog.at_level("WARNING"):
+            await emp._empregabilidade_notify_tick()
+        assert not any("Teto de" in r.getMessage() for r in caplog.records)
+
+    # ── Loop: confirmação + aviso ─────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_loop_selecao_criada_confirma_e_avisa_transbordo(self, monkeypatch):
+        estado, mock_enviar, mock_notificar, _ = self._preparar_loop(
+            monkeypatch, "aguardando_retorno_selecao", "aguardando_retorno_selecao", "pre_cadastro",
+        )
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        assert "Processo seletivo cadastrado" in mock_enviar.await_args.args[3]
+        assert estado["etapa"] == "menu_empresa_acoes"
+        self._assert_aviso_correto(mock_notificar, "Seleção Agente de Limpeza")
+
+    @pytest.mark.asyncio
+    async def test_loop_vaga_criada_confirma_e_avisa_transbordo(self, monkeypatch):
+        estado, mock_enviar, mock_notificar, _ = self._preparar_loop(
+            monkeypatch, "aguardando_retorno_vaga", "aguardando_retorno_vaga", "pre_cadastro",
+        )
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        assert "Vaga cadastrada" in mock_enviar.await_args.args[3]
+        assert estado["etapa"] == "menu_empresa_acoes"
+        self._assert_aviso_correto(mock_notificar, "Seleção Agente de Limpeza")
+
+    @pytest.mark.asyncio
+    async def test_loop_vaga_ja_publicada_confirma_sem_avisar(self, monkeypatch):
+        """AC8 / D2: vaga `aberta` (a equipe já publicou) não gera "aguardando análise". A
+        confirmação à empresa sai do mesmo jeito (D4: pendência atrasada é enviada)."""
+        estado, mock_enviar, mock_notificar, _ = self._preparar_loop(
+            monkeypatch, "aguardando_retorno_vaga", "aguardando_retorno_vaga", "aberta",
+        )
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        assert estado["etapa"] == "menu_empresa_acoes"
+        mock_notificar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_loop_falha_ao_ler_status_nao_avisa_e_nao_quebra(self, monkeypatch):
+        """AC8 + AC9: sem conseguir ler o status, não avisa; confirmação e etapa seguem."""
+        estado, mock_enviar, mock_notificar, fake = self._preparar_loop(
+            monkeypatch, "aguardando_retorno_selecao", "aguardando_retorno_selecao", "pre_cadastro",
+        )
+        fake.vagas_status_erro = True
+        await emp._empregabilidade_notify_tick()
+
+        assert mock_enviar.await_count == 1
+        assert estado["etapa"] == "menu_empresa_acoes"
+        mock_notificar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_loop_perdeu_a_corrida_nao_avisa(self, monkeypatch):
+        """AC6 / defeito 3: o caminho de resposta já trocou a etapa (menu_pos_vaga) entre a
+        leitura do loop e a gravação. `_set_fluxo_async` devolve False e o loop não avisa —
+        quem avisou foi o caminho de resposta."""
+        estado, mock_enviar, mock_notificar, _ = self._preparar_loop(
+            monkeypatch, "aguardando_retorno_selecao", "menu_pos_vaga", "pre_cadastro",
+        )
+        await emp._empregabilidade_notify_tick()
+
+        assert estado["etapa"] == "menu_pos_vaga", "a etapa do caminho de resposta não pode ser sobrescrita"
+        mock_notificar.assert_not_awaited()
+
+    # ── Caminho de resposta (AC5, AC6) ────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_resposta_selecao_confirma_e_avisa_transbordo(self, monkeypatch):
+        estado, mock_enviar, mock_notificar, _ = self._preparar_resposta(
+            monkeypatch, "aguardando_retorno_selecao", "pre_cadastro",
+        )
+        await emp._processar_empresa(
+            "Deu certo o agendamento?", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert "Processo seletivo cadastrado" in mock_enviar.await_args.args[3]
+        assert estado["etapa"] == "menu_pos_vaga"
+        self._assert_aviso_correto(mock_notificar, "Seleção Agente de Limpeza")
+
+    @pytest.mark.asyncio
+    async def test_resposta_vaga_confirma_e_avisa_transbordo(self, monkeypatch):
+        estado, mock_enviar, mock_notificar, _ = self._preparar_resposta(
+            monkeypatch, "aguardando_retorno_vaga", "pre_cadastro",
+        )
+        await emp._processar_empresa(
+            "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert "Vaga cadastrada" in mock_enviar.await_args.args[3]
+        assert estado["etapa"] == "menu_pos_vaga"
+        self._assert_aviso_correto(mock_notificar, "Seleção Agente de Limpeza")
+
+    @pytest.mark.asyncio
+    async def test_resposta_vaga_ja_publicada_nao_avisa(self, monkeypatch):
+        estado, mock_enviar, mock_notificar, _ = self._preparar_resposta(
+            monkeypatch, "aguardando_retorno_vaga", "aberta",
+        )
+        await emp._processar_empresa(
+            "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+        assert estado["etapa"] == "menu_pos_vaga"
+        mock_notificar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_resposta_perdeu_a_corrida_nao_avisa(self, monkeypatch):
+        """AC6: se o loop gravou a etapa primeiro, a gravação com etapa esperada devolve
+        False e o caminho de resposta não avisa (quem avisou foi o loop)."""
+        estado, mock_enviar, mock_notificar, _ = self._preparar_resposta(
+            monkeypatch, "aguardando_retorno_selecao", "pre_cadastro",
+        )
+        mock_set = AsyncMock(return_value=False)
+        monkeypatch.setattr(emp, "_set_fluxo_async", mock_set)
+
+        await emp._processar_empresa(
+            "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+        )
+
+        assert mock_set.await_args.kwargs.get("etapa_esperada") == "aguardando_retorno_selecao"
+        mock_notificar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_resposta_grava_com_etapa_esperada_nos_dois_casos(self, monkeypatch):
+        for etapa in ("aguardando_retorno_vaga", "aguardando_retorno_selecao"):
+            self._preparar_resposta(monkeypatch, etapa, "pre_cadastro")
+            mock_set = AsyncMock(return_value=True)
+            monkeypatch.setattr(emp, "_set_fluxo_async", mock_set)
+            await emp._processar_empresa(
+                "oi", "558599990000", "PHONE_ID", "token", "lead-1", "conv-1", "Barra",
+            )
+            assert mock_set.await_args.kwargs.get("etapa_esperada") == etapa
+
+    # ── AC9: helper nunca propaga exceção ─────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_helper_nao_propaga_excecao_do_notificar(self, monkeypatch):
+        fake = _SupabaseFakeBloco6()
+        fake.vagas_status = {_VAGA_GES11: "pre_cadastro"}
+        monkeypatch.setattr(emp, "supabase", fake)
+        import meta_adapter_inbound
+        monkeypatch.setattr(
+            meta_adapter_inbound, "_notificar_transbordo", AsyncMock(side_effect=RuntimeError("boom")),
+        )
+        resultado = await emp._avisar_transbordo_vaga_criada(
+            "conv-1", _VAGA_GES11, "ECOFOR", "Seleção", phone_number_id_origem="PHONE_ID",
+        )
+        assert resultado is False
+
+    @pytest.mark.asyncio
+    async def test_helper_vaga_inexistente_nao_avisa(self, monkeypatch):
+        fake = _SupabaseFakeBloco6()
+        monkeypatch.setattr(emp, "supabase", fake)
+        import meta_adapter_inbound
+        mock_notificar = AsyncMock(return_value=True)
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", mock_notificar)
+        resultado = await emp._avisar_transbordo_vaga_criada(
+            "conv-1", _VAGA_GES11, "ECOFOR", "Seleção", phone_number_id_origem="PHONE_ID",
+        )
+        assert resultado is False
+        mock_notificar.assert_not_awaited()

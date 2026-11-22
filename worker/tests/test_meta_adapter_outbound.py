@@ -755,7 +755,8 @@ class TestLoopProativo:
         # As 3 simulações abaixo precisam bater com as consultas REAIS do tick
         # (empregabilidade_engine._empregabilidade_notify_tick). Quando o código evoluiu,
         # elas ficaram para trás e o mock devolvia vazio, fazendo o loop não enviar nada:
-        #   1. conversas: ganhou .limit(200) no fim da cadeia (engine ~6336)
+        #   1. conversas: S-EMP-GES-11 trocou o .limit(200) por filtro de etapa no banco +
+        #      ordem estável + teto: .eq().in_(status).in_(etapa).order().order().limit()
         #   2. telefone do lead: passou a ser busca em lote .in_("id", [...]) (engine ~6361),
         #      não mais .eq().single() um a um
         #   3. antes de gravar, _set_fluxo_async relê o estado e compara com etapa_esperada
@@ -763,7 +764,8 @@ class TestLoopProativo:
         #      que o estado mudou por baixo e decide NÃO gravar — proteção correta contra
         #      escrita conflitante, que o mock antigo disparava sem querer.
         mock_conversas = MagicMock()
-        mock_conversas.select.return_value.eq.return_value.in_.return_value.limit.return_value.execute.return_value.data = conversas_fake
+        (mock_conversas.select.return_value.eq.return_value.in_.return_value.in_.return_value
+            .order.return_value.order.return_value.limit.return_value.execute.return_value.data) = conversas_fake
 
         mock_leads = MagicMock()
         mock_leads.select.return_value.in_.return_value.execute.return_value.data = [
