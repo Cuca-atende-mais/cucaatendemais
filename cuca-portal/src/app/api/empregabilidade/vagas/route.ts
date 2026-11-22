@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 import { validarDataSelecaoPrevista } from "@/lib/empregabilidade/data-selecao-prevista"
+import { avisarWorkerVagaCriada } from "@/lib/empregabilidade/vaga-criada-worker"
 
 export async function POST(request: NextRequest) {
     // Rota pública: acesso via link gerado pelo worker (empresa_id validado abaixo)
@@ -96,35 +97,14 @@ export async function POST(request: NextRequest) {
 
         if (error) throw error
 
-        // Notificar o worker: buscar conversa da empresa e registrar vaga_criada_id no metadata
-        try {
-            const { data: conversas } = await supabaseAdmin
-                .from("conversas")
-                .select("id, metadata")
-                .filter("metadata->empreg_fluxo->>empresa_id", "eq", empresa_id)
-                .in("status", ["ativa", "aberta"])
-                .order("updated_at", { ascending: false })
-                .limit(1)
-
-            if (conversas && conversas.length > 0) {
-                const conversa = conversas[0]
-                const metadata = conversa.metadata || {}
-                const empreg_fluxo = metadata.empreg_fluxo || {}
-                metadata.empreg_fluxo = {
-                    ...empreg_fluxo,
-                    vaga_criada_id: data.id,
-                    vaga_numero: data.numero_vaga,
-                    vaga_titulo: data.titulo,
-                }
-                await supabaseAdmin
-                    .from("conversas")
-                    .update({ metadata })
-                    .eq("id", conversa.id)
-            }
-        } catch (notifyErr) {
-            // Não bloqueia o retorno — o worker reprocessará na próxima mensagem
-            console.warn("[vagas/route] Erro ao notificar worker:", notifyErr)
-        }
+        // S-EMP-GES-12: avisa o worker na hora (confirmação à empresa + aviso ao transbordo),
+        // para cada vaga criada pelo link — inclusive da 2ª em diante. Se falhar, grava a
+        // marcação na conversa como antes. Nunca lança: a resposta ao formulário não depende disso.
+        await avisarWorkerVagaCriada(
+            supabaseAdmin, empresa_id,
+            { id: data.id, numero_vaga: data.numero_vaga, titulo: data.titulo },
+            "vagas/route",
+        )
 
         return NextResponse.json({ id: data.id, numero_vaga: data.numero_vaga })
     } catch (err: any) {

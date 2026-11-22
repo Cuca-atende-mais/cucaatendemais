@@ -596,6 +596,37 @@ async def retomar_disparo_academia_enem_endpoint(disparo_id: str, request: Reque
     return {"status": "retomada_iniciada"}
 
 
+@app.post("/empregabilidade/vaga-criada")
+async def empregabilidade_vaga_criada_endpoint(request: Request):
+    """S-EMP-GES-12: o portal chama este endpoint logo depois de a empresa criar uma vaga ou
+    seleção pelo link (`vagas/route.ts`, `selecao/route.ts`). Manda a confirmação à empresa e o
+    aviso ao transbordo na hora, para cada vaga criada — inclusive da 2ª em diante pelo mesmo
+    link. Autenticação M2M igual a /retomar-disparo: 503 sem WEBHOOK_INTERNAL_TOKEN no worker,
+    403 com x-internal-token ausente/inválido. Corpo: {"vaga_id", "conversa_id"}. Regras de
+    envio, etapa e códigos 404/409/502 em `processar_vaga_criada_portal`."""
+    expected = os.getenv("WEBHOOK_INTERNAL_TOKEN")
+    if not expected:
+        logger.error("[vaga-criada] WEBHOOK_INTERNAL_TOKEN não configurada no worker — rejeitando.")
+        return Response(status_code=503, content="internal token not configured")
+    if request.headers.get("x-internal-token") != expected:
+        logger.warning("[vaga-criada] token interno inválido — requisição rejeitada (403).")
+        return Response(status_code=403, content="Token inválido")
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"erro": "corpo inválido"})
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=400, content={"erro": "corpo inválido"})
+    vaga_id = payload.get("vaga_id")
+    conversa_id = payload.get("conversa_id")
+    if not vaga_id or not conversa_id or not isinstance(vaga_id, str) or not isinstance(conversa_id, str):
+        return JSONResponse(status_code=400, content={"erro": "vaga_id e conversa_id são obrigatórios"})
+
+    from empregabilidade_engine import processar_vaga_criada_portal  # noqa: PLC0415
+    status_code, corpo = await processar_vaga_criada_portal(vaga_id, conversa_id)
+    return JSONResponse(status_code=status_code, content=corpo)
+
+
 @app.post("/buscar-vagas")
 async def buscar_vagas_endpoint(request: Request):
     """S18-02: Busca vagas abertas em todas as CUCAs para o motor-agente."""

@@ -37,6 +37,10 @@ vi.mock("@/lib/supabase/server", () => ({
 
 vi.mock("@/lib/empregabilidade/link-assinado", () => ({ verificarLinkParams: () => ({ valido: true }) }))
 
+// S-EMP-GES-12: o aviso ao worker é testado no próprio helper; aqui só se confere quando a rota o chama.
+const avisar = vi.fn(async () => "worker")
+vi.mock("@/lib/empregabilidade/vaga-criada-worker", () => ({ avisarWorkerVagaCriada: (...a: unknown[]) => avisar(...(a as [])) }))
+
 import { POST } from "./route"
 import { dataMinimaSelecaoEvento, somarDiasISO } from "@/lib/empregabilidade/data-selecao-evento"
 
@@ -56,7 +60,7 @@ function requisicao(corpo: Record<string, unknown>) {
 }
 
 describe("POST /api/empregabilidade/selecao", () => {
-    beforeEach(() => { inserts.length = 0 })
+    beforeEach(() => { inserts.length = 0; avisar.mockClear() })
 
     for (const recebido of [true, false, undefined, "sim"]) {
         it(`grava coleta_curriculo = false quando recebe ${JSON.stringify(recebido)}`, async () => {
@@ -66,4 +70,29 @@ describe("POST /api/empregabilidade/selecao", () => {
             expect(inserts[0]).toMatchObject({ tipo: "selecao_evento", coleta_curriculo: false })
         })
     }
+
+    // S-EMP-GES-12 (AC8, AC10, AC11)
+    it("com link: avisa o worker com empresa e vaga criadas", async () => {
+        const res = await POST(requisicao({ link_params: { empresa_id: "e1", sig: "x", exp: "9999999999" } }))
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ id: "v1", numero_vaga: 10 })
+        expect(avisar).toHaveBeenCalledTimes(1)
+        const args = avisar.mock.calls[0] as unknown as unknown[]
+        expect(args[1]).toBe("e1")
+        expect(args[2]).toEqual({ id: "v1", numero_vaga: 10, titulo: "Processo Seletivo — Empresa" })
+        expect(args[3]).toBe("selecao/route")
+    })
+
+    it("sem link (modal do painel): não avisa o worker nem mexe na conversa da empresa", async () => {
+        const res = await POST(requisicao({}))
+        expect(res.status).toBe(200)
+        expect(avisar).not.toHaveBeenCalled()
+    })
+
+    it("com link e aviso falhando: a resposta ao formulário não muda", async () => {
+        avisar.mockResolvedValueOnce("erro")
+        const res = await POST(requisicao({ link_params: { empresa_id: "e1", sig: "x", exp: "9999999999" } }))
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ id: "v1", numero_vaga: 10 })
+    })
 })
