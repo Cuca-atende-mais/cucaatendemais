@@ -2910,14 +2910,21 @@ async def _processar_empresa(
                 "3️⃣ Encerrar\n\n"
                 "Responda com *1*, *2* ou *3*."
             )
-            await _set_fluxo_async(conversa_id, {
+            _gravou = await _set_fluxo_async(conversa_id, {
                 "etapa": "menu_pos_vaga",
                 "empresa_id": empresa_id,
                 "empresa_nome": fluxo_atual.get("empresa_nome", ""),
                 "empresa_nome_exibicao": empresa_nome_exibicao,
                 "cnpj": fluxo_atual.get("cnpj"),
                 "ultima_vaga_id": vaga_criada_id,
-            })
+            }, etapa_esperada="aguardando_retorno_vaga")
+            # S-EMP-GES-11: a empresa respondeu antes do loop proativo — este caminho também
+            # avisa o transbordo, mas só se "ganhou" a etapa (na corrida, um só dos dois avisa).
+            if _gravou:
+                await _avisar_transbordo_vaga_criada(
+                    conversa_id, vaga_criada_id, empresa_nome_exibicao, vaga_titulo,
+                    phone_number_id_origem=instance_name, unidade_cuca=None,
+                )
         else:
             # Formulário ainda não preenchido — reenviar link como lembrete
             empresa_id = fluxo.get("empresa_id")
@@ -3003,14 +3010,20 @@ async def _processar_empresa(
                 "3️⃣ Encerrar\n\n"
                 "Responda com *1*, *2* ou *3*."
             )
-            await _set_fluxo_async(conversa_id, {
+            _gravou = await _set_fluxo_async(conversa_id, {
                 "etapa": "menu_pos_vaga",
                 "empresa_id": empresa_id,
                 "empresa_nome": fluxo_atual.get("empresa_nome", ""),
                 "empresa_nome_exibicao": empresa_nome_exibicao,
                 "cnpj": fluxo_atual.get("cnpj"),
                 "ultima_vaga_id": selecao_criada_id,
-            })
+            }, etapa_esperada="aguardando_retorno_selecao")
+            # S-EMP-GES-11: mesmo aviso ao transbordo do caso "vaga" acima.
+            if _gravou:
+                await _avisar_transbordo_vaga_criada(
+                    conversa_id, selecao_criada_id, empresa_nome_exibicao, selecao_titulo,
+                    phone_number_id_origem=instance_name, unidade_cuca=None,
+                )
         else:
             # Formulário ainda não preenchido — reenviar link como lembrete
             empresa_id = fluxo.get("empresa_id")
@@ -6339,14 +6352,88 @@ async def _rotear_por_intencao(
 # Loop proativo: detecta vagas criadas e notifica empresa via WhatsApp
 # ---------------------------------------------------------------------------
 
+# S-EMP-GES-11: teto folgado da consulta do loop. Com o filtro de etapa no banco, o conjunto
+# real é pequeno (~42 conversas em 19/11/2026); o teto só existe para não ler sem limite e,
+# se for atingido, gera log de aviso em vez de cortar em silêncio.
+_NOTIFY_TETO_CONVERSAS = 1000
+
+
+async def _avisar_transbordo_vaga_criada(
+    conversa_id: str,
+    vaga_id: str,
+    empresa_nome: str,
+    titulo: str,
+    phone_number_id_origem: str,
+    unidade_cuca: str | None = None,
+) -> bool:
+    """S-EMP-GES-11: avisa o contato de transbordo da Empregabilidade que há vaga/seleção
+    criada pela empresa aguardando análise (template `transbordo_vaga_00`, S-EMP-AUD-027).
+
+    Só avisa se a vaga ainda estiver em `pre_cadastro` (D2): o texto do template diz
+    "aguardando análise", e uma vaga que a equipe já publicou não precisa de aviso. Se a
+    leitura do status falhar, não avisa. Nunca propaga exceção — o aviso é best-effort e não
+    pode impedir a confirmação à empresa nem a troca de etapa (AC9)."""
+    try:
+        def _buscar_status():
+            res = supabase.table("vagas").select("status").eq("id", vaga_id).maybe_single().execute()
+            data = getattr(res, "data", None) if res is not None else None
+            if isinstance(data, list):  # defensivo: mocks podem devolver lista
+                data = data[0] if data else {}
+            return data or {}
+
+        vaga = await _supabase_to_thread(_buscar_status)
+        status = vaga.get("status")
+        if status != "pre_cadastro":
+            logger.info(
+                "[empreg-notify] Aviso ao transbordo não enviado: vaga %s com status %r (só pre_cadastro avisa)",
+                vaga_id, status,
+            )
+            return False
+
+        from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
+        return await _notificar_transbordo(
+            conversa_id=conversa_id,
+            modulo="Empregabilidade",
+            unidade_cuca=unidade_cuca or None,
+            phone_number_id_origem=phone_number_id_origem,
+            lead_identificacao="",
+            tag_finalidade="VagaCriada",
+            parametros_override=[empresa_nome, titulo],
+        )
+    except Exception as exc:
+        logger.warning(
+            "[empreg-notify] Falha ao avisar o transbordo da vaga %s (conversa %s): %s",
+            vaga_id, conversa_id, exc,
+        )
+        return False
+
+
 async def _empregabilidade_notify_tick():
     """Executa uma iteração do loop proativo de empregabilidade."""
     def _buscar_conversas_pendentes():
-        return supabase.table("conversas").select(
-            "id, metadata, origem_id, lead_id"
-        ).eq("agente_tipo", "Empregabilidade").in_("status", ["ativa", "aberta"]).limit(200).execute()
+        # S-EMP-GES-11: a etapa é filtrada no próprio banco, com ordem estável. Antes eram
+        # 200 conversas quaisquer (sem ordem) de ~2.300 abertas, e as que esperavam aviso
+        # podiam ficar fora do lote indefinidamente. Lê tudo antes de processar (sem paginar
+        # enquanto envia: cada conversa processada sai do filtro).
+        return (
+            supabase.table("conversas")
+            .select("id, metadata, origem_id, lead_id")
+            .eq("agente_tipo", "Empregabilidade")
+            .in_("status", ["ativa", "aberta"])
+            .in_("metadata->empreg_fluxo->>etapa", list(_ETAPAS_NOTIFY_PORTAL))
+            .order("updated_at")
+            .order("id")
+            .limit(_NOTIFY_TETO_CONVERSAS)
+            .execute()
+        )
 
     res = await _supabase_to_thread(_buscar_conversas_pendentes)
+    if len(res.data or []) >= _NOTIFY_TETO_CONVERSAS:
+        logger.warning(
+            "[empreg-notify] Teto de %s conversas atingido na consulta do loop — pode haver "
+            "conversas esperando aviso fora deste lote",
+            _NOTIFY_TETO_CONVERSAS,
+        )
 
     conversas_elegiveis = []
     lead_ids = []
@@ -6411,7 +6498,7 @@ async def _empregabilidade_notify_tick():
                 conversa_id=conversa_id, lead_id=lead_id,
             )
             if _ok:
-                await _set_fluxo_async(conversa_id, {
+                _gravou = await _set_fluxo_async(conversa_id, {
                     "perfil": "empresa",
                     "etapa": "menu_empresa_acoes",
                     "empresa_id": empresa_id,
@@ -6423,19 +6510,15 @@ async def _empregabilidade_notify_tick():
                 logger.info(f"[empreg-notify] Notificação de criação enviada para conversa {conversa_id} — vaga {numero_ref}")
                 # S-EMP-AUD-027: avisa o contato de transbordo da Empregabilidade (mesmo contato
                 # que já recebe pedido de atendente humano, modulo="Empregabilidade") pra equipe
-                # decidir publicar a vaga ou contatar a empresa. Best-effort — _notificar_transbordo
-                # nunca propaga exceção, então uma falha aqui não afeta a confirmação já enviada
-                # acima nem o avanço de etapa já persistido.
-                from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
-                await _notificar_transbordo(
-                    conversa_id=conversa_id,
-                    modulo="Empregabilidade",
-                    unidade_cuca=unidade_cuca or None,
-                    phone_number_id_origem=instance_name,
-                    lead_identificacao="",
-                    tag_finalidade="VagaCriada",
-                    parametros_override=[empresa_nome, vaga_titulo],
-                )
+                # decidir publicar a vaga ou contatar a empresa. Best-effort — nunca propaga
+                # exceção. S-EMP-GES-11: só avisa quem "ganhou" a etapa (se o caminho de
+                # resposta trocou a etapa antes, é ele quem avisa) e só se a vaga ainda estiver
+                # em pre_cadastro.
+                if _gravou:
+                    await _avisar_transbordo_vaga_criada(
+                        conversa_id, vaga_criada_id, empresa_nome, vaga_titulo,
+                        phone_number_id_origem=instance_name, unidade_cuca=unidade_cuca or None,
+                    )
 
         # --- SQS-49: Notificação de seleção por evento criada ---
         elif etapa_c == "aguardando_retorno_selecao":
@@ -6456,7 +6539,7 @@ async def _empregabilidade_notify_tick():
                 conversa_id=conversa_id, lead_id=lead_id,
             )
             if _ok:
-                await _set_fluxo_async(conversa_id, {
+                _gravou = await _set_fluxo_async(conversa_id, {
                     "perfil": "empresa",
                     "etapa": "menu_empresa_acoes",
                     "empresa_id": empresa_id,
@@ -6466,17 +6549,12 @@ async def _empregabilidade_notify_tick():
                     "ultima_vaga_id": selecao_criada_id,
                 }, etapa_esperada=etapa_c)
                 logger.info(f"[empreg-notify] Seleção por evento confirmada para conversa {conversa_id} — ref {numero_ref}")
-                # S-EMP-AUD-027: mesmo aviso de transbordo do caso "vaga criada" acima.
-                from meta_adapter_inbound import _notificar_transbordo  # noqa: PLC0415
-                await _notificar_transbordo(
-                    conversa_id=conversa_id,
-                    modulo="Empregabilidade",
-                    unidade_cuca=unidade_cuca or None,
-                    phone_number_id_origem=instance_name,
-                    lead_identificacao="",
-                    tag_finalidade="VagaCriada",
-                    parametros_override=[empresa_nome, selecao_titulo],
-                )
+                # S-EMP-AUD-027 + S-EMP-GES-11: mesmo aviso de transbordo do caso "vaga criada" acima.
+                if _gravou:
+                    await _avisar_transbordo_vaga_criada(
+                        conversa_id, selecao_criada_id, empresa_nome, selecao_titulo,
+                        phone_number_id_origem=instance_name, unidade_cuca=unidade_cuca or None,
+                    )
 
         # --- Notificação de edição confirmada ---
         elif etapa_c == "aguardando_retorno_edicao":
