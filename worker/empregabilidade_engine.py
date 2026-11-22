@@ -6358,6 +6358,38 @@ async def _rotear_por_intencao(
 _NOTIFY_TETO_CONVERSAS = 1000
 
 
+_ETAPAS_AGUARDANDO_FORMULARIO = ("aguardando_retorno_vaga", "aguardando_retorno_selecao")
+
+
+def _texto_confirmacao_vaga_criada(
+    eh_selecao: bool, titulo: str, numero_ref: str, com_menu: bool = True
+) -> str:
+    """S-EMP-GES-12: texto da confirmação de vaga/seleção criada, usado pelo loop de avisos e
+    pelo endpoint `/empregabilidade/vaga-criada` (fonte única; antes ficava escrito dentro do
+    loop). `com_menu=False` (D1) tira o bloco final "O que deseja fazer agora?" + menu: usado
+    quando a conversa não está esperando o formulário (2ª vaga em diante pelo mesmo link) e a
+    etapa não é trocada, para a empresa não responder ao menu achando que é outra etapa.
+    O caminho de resposta (`_processar_empresa`) tem texto e menu próprios e não usa isto."""
+    if eh_selecao:
+        texto = (
+            f"✅ *Processo seletivo cadastrado com sucesso!*\n\n"
+            f"📋 *Título:* {titulo}\n"
+            f"🔢 *Número de referência:* {numero_ref}\n\n"
+            "A seleção já está visível para todas as unidades da rede CUCA. "
+            "Os candidatos poderão se inscrever e a equipe irá gerenciar as candidaturas pelo portal."
+        )
+    else:
+        texto = (
+            f"✅ *Vaga cadastrada com sucesso!*\n\n"
+            f"📋 *Título:* {titulo}\n"
+            f"🔢 *Número da vaga:* {numero_ref}\n\n"
+            "Nossa equipe irá revisar e publicar a vaga em breve."
+        )
+    if com_menu:
+        texto += f"\n\nO que deseja fazer agora?\n{_MENU_ACOES_EMPRESA}"
+    return texto
+
+
 async def _avisar_transbordo_vaga_criada(
     conversa_id: str,
     vaga_id: str,
@@ -6406,6 +6438,151 @@ async def _avisar_transbordo_vaga_criada(
             vaga_id, conversa_id, exc,
         )
         return False
+
+
+async def processar_vaga_criada_portal(vaga_id: str, conversa_id: str) -> tuple[int, dict]:
+    """S-EMP-GES-12: chamado pelo portal (`POST /empregabilidade/vaga-criada`) logo depois de a
+    empresa criar uma vaga/seleção pelo link. Cada formulário enviado vira um envio, seja a 1ª
+    ou a 13ª vaga pelo mesmo link — antes, da 2ª em diante, a marcação caía numa etapa que
+    ninguém lia e nem a empresa nem o transbordo eram avisados.
+
+    Devolve (status HTTP, corpo):
+    - 404: vaga ou conversa não existe; 409: a conversa é de outra empresa. Nada é enviado.
+    - Conversa esperando o formulário (`aguardando_retorno_*`, 1ª vaga): confirma com menu,
+      troca a etapa para `menu_empresa_acoes` (mesmos campos do loop, com `etapa_esperada`) e,
+      avisa o transbordo se ganhou a gravação — ou se perdeu para quem tratou OUTRA vaga
+      (`ultima_vaga_id` diferente; ex.: dois formulários ao mesmo tempo). Se perdeu para quem
+      tratou esta mesma vaga, não avisa (ele já avisou). Se a confirmação falhar → 502, sem aviso e
+      sem trocar etapa: o portal grava a marcação e o loop/caminho de resposta entregam depois.
+    - Outra etapa (2ª vaga em diante): confirma sem o menu (D1), não troca a etapa e avisa o
+      transbordo mesmo se a confirmação falhar (aqui não há rede de segurança). 200.
+    - Erro inesperado → 500. Logs só com ids."""
+    try:
+        def _buscar_vaga():
+            return (
+                supabase.table("vagas")
+                .select("id, titulo, numero_vaga, tipo, status, empresa_id")
+                .eq("id", vaga_id).maybe_single().execute()
+            )
+
+        def _buscar_conversa():
+            return (
+                supabase.table("conversas")
+                .select("id, metadata, origem_id, lead_id, status, agente_tipo")
+                .eq("id", conversa_id).maybe_single().execute()
+            )
+
+        def _dado(res):
+            data = getattr(res, "data", None) if res is not None else None
+            if isinstance(data, list):  # defensivo: mocks podem devolver lista
+                data = data[0] if data else None
+            return data or None
+
+        vaga = _dado(await _supabase_to_thread(_buscar_vaga))
+        if not vaga:
+            logger.warning("[vaga-criada] vaga %s não encontrada", vaga_id)
+            return 404, {"erro": "vaga não encontrada"}
+        conversa = _dado(await _supabase_to_thread(_buscar_conversa))
+        if not conversa:
+            logger.warning("[vaga-criada] conversa %s não encontrada (vaga %s)", conversa_id, vaga_id)
+            return 404, {"erro": "conversa não encontrada"}
+
+        fluxo = ((conversa.get("metadata") or {}).get("empreg_fluxo")) or {}
+        if str(fluxo.get("empresa_id") or "") != str(vaga.get("empresa_id") or ""):
+            logger.warning(
+                "[vaga-criada] conversa %s não é da empresa da vaga %s — nada enviado",
+                conversa_id, vaga_id,
+            )
+            return 409, {"erro": "conversa de outra empresa"}
+
+        etapa = fluxo.get("etapa", "")
+        aguardando = etapa in _ETAPAS_AGUARDANDO_FORMULARIO
+        instance_name = conversa.get("origem_id") or ""
+        lead_id = conversa.get("lead_id") or ""
+
+        phone = ""
+        if lead_id:
+            def _buscar_telefone():
+                return supabase.table("leads").select("telefone").eq("id", lead_id).maybe_single().execute()
+            lead = _dado(await _supabase_to_thread(_buscar_telefone)) or {}
+            phone = lead.get("telefone") or ""
+
+        eh_selecao = vaga.get("tipo") == "selecao_evento"
+        titulo = vaga.get("titulo") or ("Processo Seletivo" if eh_selecao else "")
+        numero = vaga.get("numero_vaga")
+        numero_ref = f"#{numero}" if numero else f"...{str(vaga_id)[-6:].upper()}"
+        empresa_nome = fluxo.get("empresa_nome_exibicao") or fluxo.get("empresa_nome", "")
+
+        confirmacao = False
+        if instance_name and phone:
+            confirmacao = await _enviar(
+                instance_name, "", phone,
+                _texto_confirmacao_vaga_criada(eh_selecao, titulo, numero_ref, com_menu=aguardando),
+                conversa_id=conversa_id, lead_id=lead_id,
+            )
+        else:
+            logger.warning(
+                "[vaga-criada] conversa %s sem origem_id ou sem telefone — confirmação não enviada",
+                conversa_id,
+            )
+
+        etapa_trocada = False
+        aviso = False
+        if aguardando:
+            if not confirmacao:
+                logger.warning(
+                    "[vaga-criada] confirmação falhou (conversa %s, vaga %s) — portal grava a marcação",
+                    conversa_id, vaga_id,
+                )
+                return 502, {"confirmacao": False, "aviso_transbordo": False, "etapa_trocada": False}
+            etapa_trocada = await _set_fluxo_async(conversa_id, {
+                "perfil": "empresa",
+                "etapa": "menu_empresa_acoes",
+                "empresa_id": fluxo.get("empresa_id"),
+                "empresa_nome": fluxo.get("empresa_nome", ""),
+                "empresa_nome_exibicao": empresa_nome,
+                "cnpj": fluxo.get("cnpj"),
+                "ultima_vaga_id": vaga_id,
+            }, etapa_esperada=etapa)
+            if etapa_trocada:
+                avisar = True
+            else:
+                # Perdeu a gravação. Quem ganhou só avisou ESTA vaga se gravou `ultima_vaga_id`
+                # igual a ela (loop/caminho de resposta consumindo a marcação desta vaga). Se o
+                # vencedor tratou outra vaga — ex.: dois formulários enviados ao mesmo tempo em
+                # duas abas (O1 do @qa) — o aviso desta ninguém mandou: avisa aqui.
+                try:
+                    fluxo_atual = await _get_fluxo_async(conversa_id)
+                    avisar = str(fluxo_atual.get("ultima_vaga_id") or "") != str(vaga_id)
+                except Exception as exc_fluxo:
+                    # Na dúvida, aviso em dobro é melhor que aviso perdido.
+                    logger.warning(
+                        "[vaga-criada] não releu a conversa %s após perder a etapa (vaga %s): %s",
+                        conversa_id, vaga_id, exc_fluxo,
+                    )
+                    avisar = True
+            if avisar:
+                aviso = await _avisar_transbordo_vaga_criada(
+                    conversa_id, vaga_id, empresa_nome, titulo,
+                    phone_number_id_origem=instance_name, unidade_cuca=None,
+                )
+        elif instance_name:
+            aviso = await _avisar_transbordo_vaga_criada(
+                conversa_id, vaga_id, empresa_nome, titulo,
+                phone_number_id_origem=instance_name, unidade_cuca=None,
+            )
+
+        logger.info(
+            "[vaga-criada] conversa %s vaga %s: confirmacao=%s aviso=%s etapa_trocada=%s",
+            conversa_id, vaga_id, confirmacao, aviso, etapa_trocada,
+        )
+        return 200, {"confirmacao": confirmacao, "aviso_transbordo": aviso, "etapa_trocada": etapa_trocada}
+    except Exception as exc:
+        logger.error(
+            "[vaga-criada] erro inesperado (conversa %s, vaga %s): %s",
+            conversa_id, vaga_id, exc, exc_info=True,
+        )
+        return 500, {"erro": "erro interno"}
 
 
 async def _empregabilidade_notify_tick():
@@ -6490,11 +6667,7 @@ async def _empregabilidade_notify_tick():
 
             _ok = await _enviar(
                 instance_name, token, phone,
-                f"✅ *Vaga cadastrada com sucesso!*\n\n"
-                f"📋 *Título:* {vaga_titulo}\n"
-                f"🔢 *Número da vaga:* {numero_ref}\n\n"
-                "Nossa equipe irá revisar e publicar a vaga em breve.\n\n"
-                f"O que deseja fazer agora?\n{_MENU_ACOES_EMPRESA}",
+                _texto_confirmacao_vaga_criada(False, vaga_titulo, numero_ref),
                 conversa_id=conversa_id, lead_id=lead_id,
             )
             if _ok:
@@ -6530,12 +6703,7 @@ async def _empregabilidade_notify_tick():
             numero_ref = f"#{selecao_numero}" if selecao_numero else f"...{selecao_criada_id[-6:].upper()}"
             _ok = await _enviar(
                 instance_name, token, phone,
-                f"✅ *Processo seletivo cadastrado com sucesso!*\n\n"
-                f"📋 *Título:* {selecao_titulo}\n"
-                f"🔢 *Número de referência:* {numero_ref}\n\n"
-                "A seleção já está visível para todas as unidades da rede CUCA. "
-                "Os candidatos poderão se inscrever e a equipe irá gerenciar as candidaturas pelo portal.\n\n"
-                f"O que deseja fazer agora?\n{_MENU_ACOES_EMPRESA}",
+                _texto_confirmacao_vaga_criada(True, selecao_titulo, numero_ref),
                 conversa_id=conversa_id, lead_id=lead_id,
             )
             if _ok:

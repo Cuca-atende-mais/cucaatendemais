@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 import { validarDatasSelecaoEvento } from "@/lib/empregabilidade/data-selecao-evento"
+import { avisarWorkerVagaCriada } from "@/lib/empregabilidade/vaga-criada-worker"
 
 export async function POST(request: NextRequest) {
     const supabaseAdmin = createClient(
@@ -120,33 +121,17 @@ export async function POST(request: NextRequest) {
 
         if (error) throw error
 
-        // Notificar worker via metadata da conversa (mesmo mecanismo de vagas normais)
-        try {
-            const { data: conversas } = await supabaseAdmin
-                .from("conversas")
-                .select("id, metadata")
-                .filter("metadata->empreg_fluxo->>empresa_id", "eq", empresa_id)
-                .in("status", ["ativa", "aberta"])
-                .order("updated_at", { ascending: false })
-                .limit(1)
-
-            if (conversas && conversas.length > 0) {
-                const conversa = conversas[0]
-                const metadata = conversa.metadata || {}
-                const empreg_fluxo = metadata.empreg_fluxo || {}
-                metadata.empreg_fluxo = {
-                    ...empreg_fluxo,
-                    vaga_criada_id: data.id,
-                    vaga_numero: data.numero_vaga,
-                    vaga_titulo: data.titulo,
-                }
-                await supabaseAdmin
-                    .from("conversas")
-                    .update({ metadata })
-                    .eq("id", conversa.id)
-            }
-        } catch (notifyErr) {
-            console.warn("[selecao/route] Erro ao notificar worker:", notifyErr)
+        // S-EMP-GES-12: só o formulário da empresa (com link) avisa o worker. A seleção criada
+        // pela equipe no modal do painel (sem link) não mexe mais na conversa da empresa — antes
+        // gravava a marcação ali, e a empresa podia receber a confirmação de uma seleção que não
+        // criou. Com link: confirmação + aviso ao transbordo na hora; se falhar, grava a marcação
+        // como antes. Nunca lança.
+        if (link_params) {
+            await avisarWorkerVagaCriada(
+                supabaseAdmin, empresa_id,
+                { id: data.id, numero_vaga: data.numero_vaga, titulo: data.titulo },
+                "selecao/route",
+            )
         }
 
         return NextResponse.json({ id: data.id, numero_vaga: data.numero_vaga })

@@ -8350,3 +8350,367 @@ class TestEmpGes11AvisoTransbordo:
         )
         assert resultado is False
         mock_notificar.assert_not_awaited()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S-EMP-GES-12 — confirmação e aviso ao transbordo no momento em que a vaga nasce
+# (endpoint /empregabilidade/vaga-criada chamado pelo portal; link reaproveitado)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VAGA_GES12 = "00000000-0000-0000-0000-000000000172"
+
+
+class _SupabaseFakeGes12:
+    """Banco mínimo para `processar_vaga_criada_portal`: vaga, conversa, telefone do lead e o
+    `vagas.status` lido por `_avisar_transbordo_vaga_criada`."""
+
+    def __init__(self, vaga=None, conversa=None, telefone="558599990000"):
+        self.vaga = vaga
+        self.conversa = conversa
+        self.telefone = telefone
+        self.execute_calls = []
+        self.in_calls = []
+        self.limit_calls = []
+        self.order_calls = []
+        self.inserts = []
+
+    def table(self, nome):
+        return _TabelaFake(nome, self)
+
+    def resultado_para(self, tabela):
+        def _id():
+            return next((v for tipo, col, v in tabela.filters if tipo == "eq" and col == "id"), None)
+
+        if tabela.nome == "vagas" and tabela.select_cols == "status":
+            if self.vaga and self.vaga["id"] == _id():
+                return _ResultadoFake({"status": self.vaga.get("status")})
+            return _ResultadoFake(None)
+        if tabela.nome == "vagas":
+            return _ResultadoFake(self.vaga if self.vaga and self.vaga["id"] == _id() else None)
+        if tabela.nome == "conversas":
+            return _ResultadoFake(self.conversa if self.conversa and self.conversa["id"] == _id() else None)
+        if tabela.nome == "leads":
+            return _ResultadoFake({"telefone": self.telefone} if self.telefone else None)
+        return _ResultadoFake([])
+
+
+_SupabaseFakeGes12.__module__ = "unittest.mock"
+
+
+def _vaga_ges12(tipo="vaga_normal", status="pre_cadastro", empresa_id="emp-1"):
+    return {
+        "id": _VAGA_GES12, "titulo": "Auxiliar Administrativo", "numero_vaga": 172,
+        "tipo": tipo, "status": status, "empresa_id": empresa_id,
+    }
+
+
+def _conversa_ges12(etapa: str, empresa_id="emp-1", origem_id="PHONE_ID") -> dict:
+    return {
+        "id": "conv-1", "origem_id": origem_id, "lead_id": "lead-1",
+        "status": "ativa", "agente_tipo": "Empregabilidade",
+        "metadata": {"empreg_fluxo": {
+            "perfil": "empresa", "etapa": etapa, "empresa_id": empresa_id,
+            "empresa_nome": "ECOFOR AMBIENTAL LTDA", "empresa_nome_exibicao": "ECOFOR", "cnpj": "123",
+        }},
+    }
+
+
+class TestEmpGes12VagaCriadaNaHora:
+    """S-EMP-GES-12 — AC2-AC7 (processar_vaga_criada_portal) e AC3/D1 (texto compartilhado)."""
+
+    def _preparar(self, monkeypatch, etapa, vaga=None, conversa=None, telefone="558599990000",
+                  enviar_ok=True, etapa_atual=None, ultima_vaga_atual=None):
+        conversa = conversa if conversa is not None else _conversa_ges12(etapa)
+        fluxo = dict(conversa["metadata"]["empreg_fluxo"]) if conversa else {}
+        if etapa_atual is not None:
+            fluxo["etapa"] = etapa_atual
+        if ultima_vaga_atual is not None:
+            # Estado gravado por quem ganhou a etapa (a conversa lida pelo endpoint não muda).
+            fluxo["ultima_vaga_id"] = ultima_vaga_atual
+        estado, fake_get, fake_set = _fluxo_mock(fluxo.get("etapa", etapa), fluxo)
+        monkeypatch.setattr(emp, "_get_fluxo", fake_get)
+        monkeypatch.setattr(emp, "_set_fluxo", fake_set)
+        mock_enviar = AsyncMock(return_value=enviar_ok)
+        monkeypatch.setattr(emp, "_enviar", mock_enviar)
+        fake = _SupabaseFakeGes12(vaga=vaga if vaga is not None else _vaga_ges12(), conversa=conversa, telefone=telefone)
+        monkeypatch.setattr(emp, "supabase", fake)
+        import meta_adapter_inbound
+        mock_notificar = AsyncMock(return_value=True)
+        monkeypatch.setattr(meta_adapter_inbound, "_notificar_transbordo", mock_notificar)
+        return estado, mock_enviar, mock_notificar
+
+    @staticmethod
+    def _assert_aviso(mock_notificar, titulo="Auxiliar Administrativo"):
+        mock_notificar.assert_awaited_once()
+        kw = mock_notificar.await_args.kwargs
+        assert kw["conversa_id"] == "conv-1"
+        assert kw["modulo"] == "Empregabilidade"
+        assert kw["unidade_cuca"] is None
+        assert kw["phone_number_id_origem"] == "PHONE_ID"
+        assert kw["tag_finalidade"] == "VagaCriada"
+        assert kw["parametros_override"] == ["ECOFOR", titulo]
+
+    # ── Conferências (AC2) ───────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_vaga_inexistente_404_sem_envio(self, monkeypatch):
+        _, mock_enviar, mock_notificar = self._preparar(monkeypatch, "aguardando_retorno_vaga")
+        status, _ = await emp.processar_vaga_criada_portal("vaga-que-nao-existe", "conv-1")
+        assert status == 404
+        mock_enviar.assert_not_awaited()
+        mock_notificar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_conversa_inexistente_404_sem_envio(self, monkeypatch):
+        _, mock_enviar, mock_notificar = self._preparar(monkeypatch, "aguardando_retorno_vaga")
+        status, _ = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-outra")
+        assert status == 404
+        mock_enviar.assert_not_awaited()
+        mock_notificar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_conversa_de_outra_empresa_409_sem_envio(self, monkeypatch):
+        _, mock_enviar, mock_notificar = self._preparar(
+            monkeypatch, "aguardando_retorno_vaga", vaga=_vaga_ges12(empresa_id="emp-2"),
+        )
+        status, _ = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+        assert status == 409
+        mock_enviar.assert_not_awaited()
+        mock_notificar.assert_not_awaited()
+
+    # ── 1ª vaga pelo link: conversa esperando o formulário (AC4/AC5) ─────
+
+    @pytest.mark.asyncio
+    async def test_primeira_vaga_confirma_com_menu_troca_etapa_e_avisa(self, monkeypatch):
+        estado, mock_enviar, mock_notificar = self._preparar(monkeypatch, "aguardando_retorno_vaga")
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200
+        assert corpo == {"confirmacao": True, "aviso_transbordo": True, "etapa_trocada": True}
+        args = mock_enviar.await_args.args
+        assert args[0] == "PHONE_ID" and args[2] == "558599990000"
+        assert args[3] == emp._texto_confirmacao_vaga_criada(False, "Auxiliar Administrativo", "#172", com_menu=True)
+        assert mock_enviar.await_args.kwargs == {"conversa_id": "conv-1", "lead_id": "lead-1"}
+        assert estado == {
+            "perfil": "empresa", "etapa": "menu_empresa_acoes", "empresa_id": "emp-1",
+            "empresa_nome": "ECOFOR AMBIENTAL LTDA", "empresa_nome_exibicao": "ECOFOR",
+            "cnpj": "123", "ultima_vaga_id": _VAGA_GES12,
+        }
+        self._assert_aviso(mock_notificar)
+
+    @pytest.mark.asyncio
+    async def test_primeira_selecao_usa_texto_de_selecao(self, monkeypatch):
+        vaga = _vaga_ges12(tipo="selecao_evento") | {"titulo": "Processo Seletivo — ECOFOR"}
+        estado, mock_enviar, mock_notificar = self._preparar(monkeypatch, "aguardando_retorno_selecao", vaga=vaga)
+        status, _ = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200
+        texto = mock_enviar.await_args.args[3]
+        assert texto.startswith("✅ *Processo seletivo cadastrado com sucesso!*")
+        assert "O que deseja fazer agora?" in texto
+        assert estado["etapa"] == "menu_empresa_acoes"
+        self._assert_aviso(mock_notificar, titulo="Processo Seletivo — ECOFOR")
+
+    @pytest.mark.asyncio
+    async def test_primeira_vaga_confirmacao_falha_502_sem_aviso_sem_trocar_etapa(self, monkeypatch):
+        estado, _, mock_notificar = self._preparar(monkeypatch, "aguardando_retorno_vaga", enviar_ok=False)
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 502
+        assert corpo["aviso_transbordo"] is False
+        assert estado["etapa"] == "aguardando_retorno_vaga"
+        mock_notificar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_primeira_vaga_sem_telefone_conta_como_falha(self, monkeypatch):
+        estado, mock_enviar, mock_notificar = self._preparar(monkeypatch, "aguardando_retorno_vaga", telefone="")
+        status, _ = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 502
+        mock_enviar.assert_not_awaited()
+        mock_notificar.assert_not_awaited()
+        assert estado["etapa"] == "aguardando_retorno_vaga"
+
+    @pytest.mark.asyncio
+    async def test_primeira_vaga_perdeu_a_corrida_nao_avisa(self, monkeypatch):
+        """O caminho de resposta trocou a etapa (menu_pos_vaga) antes, consumindo a marcação
+        DESTA vaga (`ultima_vaga_id` = esta vaga): `_set_fluxo_async` devolve False, a etapa
+        dele fica e só ele avisa."""
+        estado, _, mock_notificar = self._preparar(
+            monkeypatch, "aguardando_retorno_vaga", etapa_atual="menu_pos_vaga",
+            conversa=_conversa_ges12("aguardando_retorno_vaga"), ultima_vaga_atual=_VAGA_GES12,
+        )
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200
+        assert corpo == {"confirmacao": True, "aviso_transbordo": False, "etapa_trocada": False}
+        assert estado["etapa"] == "menu_pos_vaga"
+        mock_notificar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_primeira_vaga_perdeu_para_outra_vaga_avisa_mesmo_assim(self, monkeypatch):
+        """O1 do @qa: dois formulários enviados ao mesmo tempo (duas abas). A outra chamada
+        ganhou a etapa com `ultima_vaga_id` da OUTRA vaga — o aviso desta ninguém mandou."""
+        estado, _, mock_notificar = self._preparar(
+            monkeypatch, "aguardando_retorno_vaga", etapa_atual="menu_empresa_acoes",
+            conversa=_conversa_ges12("aguardando_retorno_vaga"), ultima_vaga_atual="vaga-da-outra-aba",
+        )
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200
+        assert corpo == {"confirmacao": True, "aviso_transbordo": True, "etapa_trocada": False}
+        assert estado["etapa"] == "menu_empresa_acoes"
+        assert estado["ultima_vaga_id"] == "vaga-da-outra-aba", "a etapa do vencedor não é regravada"
+        self._assert_aviso(mock_notificar)
+
+    @pytest.mark.asyncio
+    async def test_primeira_vaga_perdeu_e_vencedor_sem_ultima_vaga_avisa(self, monkeypatch):
+        """Quem ganhou não registrou vaga nenhuma (ex.: outra transição de etapa): ninguém
+        avisou esta vaga, então avisa."""
+        _, _, mock_notificar = self._preparar(
+            monkeypatch, "aguardando_retorno_vaga", etapa_atual="solicitar_cnpj",
+            conversa=_conversa_ges12("aguardando_retorno_vaga"),
+        )
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200 and corpo["aviso_transbordo"] is True
+        self._assert_aviso(mock_notificar)
+
+    @pytest.mark.asyncio
+    async def test_primeira_vaga_perdeu_e_releitura_falha_avisa(self, monkeypatch):
+        """Se não der para reler a conversa depois de perder a etapa, avisa: aviso em dobro é
+        melhor que aviso perdido. Responde 200, não 500 (a confirmação já saiu)."""
+        _, _, mock_notificar = self._preparar(
+            monkeypatch, "aguardando_retorno_vaga", etapa_atual="menu_pos_vaga",
+            conversa=_conversa_ges12("aguardando_retorno_vaga"), ultima_vaga_atual=_VAGA_GES12,
+        )
+        chamadas = {"n": 0}
+        get_original = emp._get_fluxo_async
+
+        async def _get_que_falha_na_releitura(conversa_id):
+            chamadas["n"] += 1
+            if chamadas["n"] >= 2:  # 1ª = conferência dentro de _set_fluxo_async; 2ª = releitura
+                raise RuntimeError("banco fora")
+            return await get_original(conversa_id)
+
+        monkeypatch.setattr(emp, "_get_fluxo_async", _get_que_falha_na_releitura)
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200
+        assert corpo == {"confirmacao": True, "aviso_transbordo": True, "etapa_trocada": False}
+        self._assert_aviso(mock_notificar)
+
+    @pytest.mark.asyncio
+    async def test_vaga_ja_publicada_confirma_sem_avisar(self, monkeypatch):
+        estado, mock_enviar, mock_notificar = self._preparar(
+            monkeypatch, "aguardando_retorno_vaga", vaga=_vaga_ges12(status="aberta"),
+        )
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200
+        assert corpo["confirmacao"] is True and corpo["aviso_transbordo"] is False
+        assert estado["etapa"] == "menu_empresa_acoes"
+        mock_notificar.assert_not_awaited()
+
+    # ── 2ª vaga em diante: conversa fora da espera (AC4/AC5, D1) ─────────
+
+    @pytest.mark.asyncio
+    async def test_segunda_vaga_confirma_sem_menu_nao_troca_etapa_e_avisa(self, monkeypatch):
+        estado, mock_enviar, mock_notificar = self._preparar(monkeypatch, "menu_empresa_acoes")
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200
+        assert corpo == {"confirmacao": True, "aviso_transbordo": True, "etapa_trocada": False}
+        texto = mock_enviar.await_args.args[3]
+        assert texto == emp._texto_confirmacao_vaga_criada(False, "Auxiliar Administrativo", "#172", com_menu=False)
+        assert "O que deseja fazer agora?" not in texto
+        assert "Cadastrar nova vaga" not in texto
+        assert estado["etapa"] == "menu_empresa_acoes"
+        assert "ultima_vaga_id" not in estado, "a etapa/fluxo não pode ser regravado"
+        self._assert_aviso(mock_notificar)
+
+    @pytest.mark.asyncio
+    async def test_segunda_vaga_no_meio_de_outra_etapa_nao_atropela(self, monkeypatch):
+        estado, mock_enviar, mock_notificar = self._preparar(monkeypatch, "editando_vaga_escolha")
+        status, _ = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200
+        assert estado["etapa"] == "editando_vaga_escolha"
+        assert "O que deseja fazer agora?" not in mock_enviar.await_args.args[3]
+        self._assert_aviso(mock_notificar)
+
+    @pytest.mark.asyncio
+    async def test_segunda_vaga_confirmacao_falha_avisa_mesmo_assim(self, monkeypatch):
+        _, _, mock_notificar = self._preparar(monkeypatch, "menu_empresa_acoes", enviar_ok=False)
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+
+        assert status == 200
+        assert corpo == {"confirmacao": False, "aviso_transbordo": True, "etapa_trocada": False}
+        self._assert_aviso(mock_notificar)
+
+    @pytest.mark.asyncio
+    async def test_segunda_vaga_ja_publicada_nao_avisa(self, monkeypatch):
+        _, _, mock_notificar = self._preparar(
+            monkeypatch, "menu_empresa_acoes", vaga=_vaga_ges12(status="aberta"),
+        )
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+        assert status == 200 and corpo["aviso_transbordo"] is False
+        mock_notificar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_numero_ausente_usa_final_do_id(self, monkeypatch):
+        _, mock_enviar, _ = self._preparar(
+            monkeypatch, "menu_empresa_acoes", vaga=_vaga_ges12() | {"numero_vaga": None},
+        )
+        await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+        assert "...000172" in mock_enviar.await_args.args[3]
+
+    @pytest.mark.asyncio
+    async def test_erro_inesperado_devolve_500(self, monkeypatch):
+        self._preparar(monkeypatch, "aguardando_retorno_vaga")
+
+        class _Quebrado:
+            def table(self, nome):
+                raise RuntimeError("banco fora")
+
+        _Quebrado.__module__ = "unittest.mock"
+        monkeypatch.setattr(emp, "supabase", _Quebrado())
+        status, corpo = await emp.processar_vaga_criada_portal(_VAGA_GES12, "conv-1")
+        assert status == 500 and corpo == {"erro": "erro interno"}
+
+    # ── AC3: texto do loop idêntico ao de antes ──────────────────────────
+
+    def test_texto_do_loop_vaga_igual_ao_anterior(self):
+        esperado = (
+            "✅ *Vaga cadastrada com sucesso!*\n\n"
+            "📋 *Título:* Auxiliar\n"
+            "🔢 *Número da vaga:* #7\n\n"
+            "Nossa equipe irá revisar e publicar a vaga em breve.\n\n"
+            f"O que deseja fazer agora?\n{emp._MENU_ACOES_EMPRESA}"
+        )
+        assert emp._texto_confirmacao_vaga_criada(False, "Auxiliar", "#7") == esperado
+
+    def test_texto_do_loop_selecao_igual_ao_anterior(self):
+        esperado = (
+            "✅ *Processo seletivo cadastrado com sucesso!*\n\n"
+            "📋 *Título:* PS\n"
+            "🔢 *Número de referência:* #8\n\n"
+            "A seleção já está visível para todas as unidades da rede CUCA. "
+            "Os candidatos poderão se inscrever e a equipe irá gerenciar as candidaturas pelo portal.\n\n"
+            f"O que deseja fazer agora?\n{emp._MENU_ACOES_EMPRESA}"
+        )
+        assert emp._texto_confirmacao_vaga_criada(True, "PS", "#8") == esperado
+
+    def test_texto_sem_menu_so_tira_o_bloco_final(self):
+        com = emp._texto_confirmacao_vaga_criada(False, "Auxiliar", "#7")
+        sem = emp._texto_confirmacao_vaga_criada(False, "Auxiliar", "#7", com_menu=False)
+        assert com == sem + f"\n\nO que deseja fazer agora?\n{emp._MENU_ACOES_EMPRESA}"
+        assert sem.endswith("Nossa equipe irá revisar e publicar a vaga em breve.")
+
+    def test_caminho_de_resposta_nao_usa_o_texto_compartilhado(self):
+        """O caminho de resposta tem texto e menu próprios (menu_pos_vaga) e fica fora da
+        extração (validação do @po)."""
+        import inspect
+        fonte = inspect.getsource(emp._processar_empresa)
+        assert "_texto_confirmacao_vaga_criada" not in fonte
+        assert "Guarde esse número para acompanhar as candidaturas" in fonte
