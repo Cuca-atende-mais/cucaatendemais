@@ -60,6 +60,13 @@ export const PLA_CALENDARIO = {
     ver: "pla_calendario_ver",
 } as const
 
+// S-PLA-10: Calendário Geral (pedido da direção). Só leitura, mesma RLS de setor; uma permissão por ação.
+export const PLA_CALGERAL = {
+    ver: "pla_calgeral_ver",
+    pdf: "pla_calgeral_pdf",
+    xlsx: "pla_calgeral_xlsx",
+} as const
+
 // S-PLA-08: painel de indicadores (só leitura). A exclusividade vem do perfil: só quem a Rede Cuca marcar.
 export const PLA_INDIC = {
     ver: "pla_indic_ver",
@@ -119,6 +126,9 @@ export const GRUPOS_PLANEJAMENTO: GrupoPermissao[] = [
         category: "Planejamento 2027 — Calendário",
         modules: [
             { id: PLA_CALENDARIO.ver, label: "Ver o menu Calendário 2027 (projetos dos seus setores no ano e no mês)", acoes: ACAO_UNICA },
+            { id: PLA_CALGERAL.ver, label: "Ver o menu Calendário Geral (o ano inteiro numa grade, com as atividades de cada mês dos seus setores)", acoes: ACAO_UNICA },
+            { id: PLA_CALGERAL.pdf, label: "Exportar o Calendário Geral em PDF (exige \"Ver o menu Calendário Geral\")", acoes: ACAO_UNICA },
+            { id: PLA_CALGERAL.xlsx, label: "Exportar o Calendário Geral em Excel (.xlsx; exige \"Ver o menu Calendário Geral\")", acoes: ACAO_UNICA },
         ],
     },
     {
