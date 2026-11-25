@@ -13,6 +13,9 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Loader2, Save, AlertCircle, Trash2 } from "lucide-react"
 import { useUser } from "@/lib/auth/user-provider"
 import { validarDataSelecaoPrevista, hojeBrasilISO } from "@/lib/empregabilidade/data-selecao-prevista"
+import { CamposUnidadesVaga, useErrosUnidades, type UnidadeOpcao } from "@/components/empregabilidade/campos-unidades-vaga"
+import { LiberadoPorVaga } from "@/components/empregabilidade/quadro-unidades-vaga"
+import { temErros, validarUnidadesVaga } from "@/lib/empregabilidade/unidades-vaga"
 
 interface VagaModalProps {
     open: boolean
@@ -65,7 +68,8 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [fetching, setFetching] = useState(false)
     const [erro, setErro] = useState("")
     const [empresas, setEmpresas] = useState<Empresa[]>([])
-    const [unidadesMap, setUnidadesMap] = useState<Record<string, string>>({})
+    // S-EMP-GES-13: só unidades ativas aparecem para escolha (o servidor e o banco recusam as demais).
+    const [unidadesAtivas, setUnidadesAtivas] = useState<UnidadeOpcao[]>([])
 
     const [empresaId, setEmpresaId] = useState("")
     const [titulo, setTitulo] = useState("")
@@ -75,7 +79,6 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [beneficios, setBeneficios] = useState("")
     const [tipoContrato, setTipoContrato] = useState("clt")
     const [local, setLocal] = useState("")
-    const [unidadeCucaId, setUnidadeCucaId] = useState("")
     const [totalVagas, setTotalVagas] = useState("1")
     const [status, setStatus] = useState("pre_cadastro")
     const [faixaEtaria, setFaixaEtaria] = useState("")
@@ -101,8 +104,13 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const [cargaTrabSabado, setCargaTrabSabado] = useState(false)
     const [cargaSabadoAte, setCargaSabadoAte] = useState("12:00")
 
-    // Roteamento Multi-Tenant (SQS-41)
+    // S-EMP-GES-13: Unidade de Tratamento (sucessora da "Ancoragem", só unidade específica) e Unidade de
+    // Currículos (unidade_destino, SQS-41: Toda a Rede ou unidade). Vaga antiga sem unidade de
+    // tratamento continua salvando sem ela (D12): `tratamentoOriginal` diz se a vaga já tinha.
+    const [unidadeTratamento, setUnidadeTratamento] = useState("")
+    const [tratamentoOriginal, setTratamentoOriginal] = useState<string | null>(null)
     const [unidadeDestino, setUnidadeDestino] = useState("")
+    const errosUnidades = useErrosUnidades()
 
     // Setor / Área da vaga
     const [setoresMarcados, setSetoresMarcados] = useState<string[]>([])
@@ -126,12 +134,8 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
             const { data: empData } = await supabase.from('empresas').select('*').eq('ativa', true)
             if (empData) setEmpresas(empData)
 
-            const { data: udData } = await supabase.from('unidades_cuca').select('id, nome')
-            if (udData) {
-                const map: Record<string, string> = {}
-                udData.forEach(u => map[u.id] = u.nome)
-                setUnidadesMap(map)
-            }
+            const { data: udData } = await supabase.from('unidades_cuca').select('id, nome').eq('ativo', true).order('nome')
+            if (udData) setUnidadesAtivas(udData.map(u => ({ id: u.id, nome: u.nome })))
 
             if (vaga) {
                 setEmpresaId(vaga.empresa_id)
@@ -142,7 +146,6 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setBeneficios(vaga.beneficios || "")
                 setTipoContrato(vaga.tipo_contrato || "clt")
                 setLocal(vaga.local || "")
-                setUnidadeCucaId(vaga.unidade_cuca || "")
                 setTotalVagas(vaga.total_vagas.toString())
                 setStatus(vaga.status)
                 setFaixaEtaria(vaga.faixa_etaria || "")
@@ -154,7 +157,9 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 setTelefoneResponsavel(vaga.telefone_responsavel || "")
                 setEscolaridadeMinima(vaga.escolaridade_minima || "")
                 setDataSelecaoPrevista(vaga.data_selecao_prevista || "")
-                setUnidadeDestino((vaga as any).unidade_destino || "")
+                setUnidadeDestino(vaga.unidade_destino || "")
+                setUnidadeTratamento(vaga.unidade_tratamento || "")
+                setTratamentoOriginal(vaga.unidade_tratamento ?? null)
                 setSetoresMarcados((vaga as any).setor || [])
                 setPcdVaga(vaga.pcd_vaga || false)
                 setPcdTipo(vaga.pcd_tipo || "")
@@ -180,10 +185,11 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     const resetForm = () => {
         setEmpresaId(""); setTitulo(""); setDescricao(""); setRequisitos("")
         setSalario(""); setBeneficios(""); setTipoContrato("clt"); setLocal("")
-        setUnidadeCucaId(""); setTotalVagas("1"); setStatus("pre_cadastro")
+        setTotalVagas("1"); setStatus("pre_cadastro")
         setFaixaEtaria(""); setLocalEntrevista("na_empresa"); setEnderecoEntrevista("")
         setTipoSelecao("presencial"); setExpansiva(false); setEmailContatoEmpresa("")
         setTelefoneResponsavel(""); setEscolaridadeMinima(""); setUnidadeDestino(""); setSetoresMarcados([])
+        setUnidadeTratamento(""); setTratamentoOriginal(null); errosUnidades.zerar()
         setDataSelecaoPrevista("")
         setPcdVaga(false); setPcdTipo(""); setPcdHomologado(false)
         setCargaTipo("horario_comercial"); setCargaHoras(""); setCargaEscalaT("")
@@ -192,11 +198,12 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
     }
 
     const handleSave = async () => {
-        if (!empresaId || !titulo || !descricao || !unidadeCucaId) return
-        if (!unidadeDestino) {
-            setErro("Selecione a unidade de destino da vaga. Este campo é obrigatório.")
+        // S-EMP-GES-13 (AC9, AC11): as duas unidades são obrigatórias na criação.
+        if (errosUnidades.mostrar(validarUnidadesVaga({ tratamento: unidadeTratamento, curriculos: unidadeDestino }))) {
+            setErro("")
             return
         }
+        if (!empresaId || !titulo || !descricao) return
         if (setoresMarcados.length === 0) {
             setErro("Selecione pelo menos uma área da vaga. Este campo é obrigatório.")
             return
@@ -233,7 +240,8 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                 carga_horaria: cargaHoraria || null,
                 local: local || null,
                 data_selecao_prevista: dataSelecaoValidada.valor,
-                unidade_cuca: unidadesMap[unidadeCucaId] || unidadeCucaId,
+                // unidade_cuca recebe o nome da Unidade de Tratamento pelo gatilho do banco.
+                unidade_tratamento: unidadeTratamento,
                 unidade_destino: unidadeDestino,
                 setor: setoresMarcados,
                 total_vagas: parseInt(totalVagas) || 1,
@@ -279,8 +287,15 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
 
     const handleSaveStatus = async () => {
         if (!vaga) return
-        if (!unidadeDestino) {
-            setErro("Selecione a unidade de destino da vaga. Este campo é obrigatório.")
+        // S-EMP-GES-13 (AC13): vaga que já tem unidade de tratamento não pode ficar sem; vaga antiga
+        // sem unidade salva normalmente sem ela.
+        const errosU = validarUnidadesVaga(
+            { tratamento: unidadeTratamento, curriculos: unidadeDestino },
+            { obrigatoria: { tratamento: tratamentoOriginal !== null } },
+        )
+        if (temErros(errosU)) {
+            errosUnidades.mostrar(errosU)
+            setErro("")
             return
         }
         if (setoresMarcados.length === 0) {
@@ -290,11 +305,11 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
         setErro("")
         setLoading(true)
         try {
-            // Salvar nome da unidade (não o UUID) para compatibilidade com o worker
-            const unidadeNome = unidadesMap[unidadeCucaId] || unidadeCucaId
+            // S-EMP-GES-13: não grava mais unidade_cuca daqui; o banco copia o nome da Unidade de
+            // Tratamento quando ela é escolhida ou trocada. Vaga antiga sem unidade não envia o campo.
             const { error } = await supabase.from('vagas').update({
                 status,
-                unidade_cuca: unidadeNome,
+                ...(unidadeTratamento ? { unidade_tratamento: unidadeTratamento } : {}),
                 unidade_destino: unidadeDestino,
                 setor: setoresMarcados,
                 expansiva,
@@ -338,31 +353,42 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                             </div>
                         )}
 
-                        {/* Empresa + Unidade */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Empresa */}
+                        <div className="grid gap-4">
                             <div className="space-y-2">
                                 <Label>Empresa Parceira {!camposEmpresaReadOnly && "*"}</Label>
                                 {camposEmpresaReadOnly ? (
                                     <p className="text-sm font-medium px-3 py-2 bg-muted rounded-md">{empresas.find(e => e.id === empresaId)?.nome || empresaId}</p>
                                 ) : (
                                     <Select value={empresaId} onValueChange={setEmpresaId}>
-                                        <SelectTrigger><SelectValue placeholder="Selecione a empresa" /></SelectTrigger>
+                                        <SelectTrigger className="w-full max-md:h-11"><SelectValue placeholder="Selecione a empresa" /></SelectTrigger>
                                         <SelectContent>
                                             {empresas.map(e => <SelectItem key={e.id} value={e.id}>{e.nome} - {e.cnpj}</SelectItem>)}
                                         </SelectContent>
                                     </Select>
                                 )}
                             </div>
-                            <div className="space-y-2">
-                                <Label>Unidade Rede CUCA (Ancoragem) *</Label>
-                                <Select value={unidadeCucaId} onValueChange={setUnidadeCucaId}>
-                                    <SelectTrigger><SelectValue placeholder="Selecione o equipamento" /></SelectTrigger>
-                                    <SelectContent>
-                                        {Object.keys(unidadesMap).map(id => <SelectItem key={id} value={id}>{unidadesMap[id]}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                            </div>
                         </div>
+
+                        {/* S-EMP-GES-13: Unidade de Tratamento + Unidade de Currículos (editáveis pelo CUCA) */}
+                        <CamposUnidadesVaga
+                            unidades={unidadesAtivas}
+                            tratamento={unidadeTratamento}
+                            curriculos={unidadeDestino}
+                            onTratamentoChange={setUnidadeTratamento}
+                            onCurriculosChange={setUnidadeDestino}
+                            erros={errosUnidades.erros}
+                            onLimparErro={errosUnidades.limpar}
+                            refTratamento={errosUnidades.refTratamento}
+                            refCurriculos={errosUnidades.refCurriculos}
+                            tratamentoObrigatorio={!vaga || tratamentoOriginal !== null}
+                            avisoVagaAntiga={!!vaga && tratamentoOriginal === null}
+                            idPrefixo="vaga-modal"
+                            ladoALado
+                        />
+
+                        {/* S-EMP-GES-13 (AC14): quem liberou a vaga, com data e hora (só na edição). */}
+                        {vaga && <LiberadoPorVaga vaga={vaga} />}
 
                         {/* Dados da vaga — somente leitura quando editando */}
                         <div className={`grid gap-4 ${camposEmpresaReadOnly ? "opacity-70 pointer-events-none" : ""}`}>
@@ -471,7 +497,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                             </div>
                         </div>
 
-                        {/* Status + Unidade Destino + Expansiva — editável pela CUCA */}
+                        {/* Status + Área + Expansiva — editável pela CUCA (as unidades ficam no topo, S-EMP-GES-13) */}
                         <div className="space-y-4 bg-muted/40 p-4 rounded-xl border">
                             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Controles da Rede CUCA</p>
 
@@ -505,23 +531,6 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                 </div>
                             </div>
 
-                            <div className="space-y-2">
-                                <Label>Unidade de Destino *</Label>
-                                <Select value={unidadeDestino} onValueChange={setUnidadeDestino}>
-                                    <SelectTrigger className={!unidadeDestino ? "border-amber-500/60" : ""}><SelectValue placeholder="Selecione a unidade de destino..." /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="global">🌐 Toda a Rede CUCA</SelectItem>
-                                        {Object.keys(unidadesMap).map(id => (
-                                            <SelectItem key={id} value={id}>{unidadesMap[id]}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <p className="text-xs text-muted-foreground">
-                                    {unidadeDestino === "global"
-                                        ? "Candidatos serão questionados sobre a unidade mais próxima pelo bot."
-                                        : "Candidatos serão encaminhados diretamente para esta unidade."}
-                                </p>
-                            </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
                                 <div className="space-y-2">
                                     <Label>Status da Vaga</Label>
@@ -617,7 +626,7 @@ export function VagaModal({ open, onOpenChange, onSuccess, vaga }: VagaModalProp
                                 <Button
                                     className="bg-cuca-blue hover:bg-sky-800 text-white"
                                     onClick={camposEmpresaReadOnly ? handleSaveStatus : handleSave}
-                                    disabled={loading || (!camposEmpresaReadOnly && (!empresaId || !titulo || !descricao || !unidadeCucaId || !dataSelecaoPrevista)) || !unidadeDestino || setoresMarcados.length === 0}
+                                    disabled={loading || (!camposEmpresaReadOnly && (!empresaId || !titulo || !descricao || !dataSelecaoPrevista)) || setoresMarcados.length === 0}
                                 >
                                     {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
                                     {camposEmpresaReadOnly ? "Salvar Alterações" : "Salvar Vaga"}

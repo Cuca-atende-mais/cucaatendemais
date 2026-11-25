@@ -139,6 +139,13 @@ export type Vaga = {
     observacoes_selecao: string | null
     // S-EMP-AUD-042: data prevista da seleção (bloqueante na criação; NULL em vagas antigas)
     data_selecao_prevista: string | null
+    // S-EMP-GES-04: quem liberou (colaborador) e quando
+    liberada_por?: string | null
+    liberada_em?: string | null
+    // S-EMP-GES-13: unidade que cuida da vaga (só unidade específica; NULL nas antigas sem unidade)
+    // e usuário do login que liberou. `unidade_destino` passa a ser exibido como "Unidade de Currículos".
+    unidade_tratamento?: string | null
+    liberada_por_usuario?: string | null
 }
 
 export type EmpregabilidadeFollowup = {

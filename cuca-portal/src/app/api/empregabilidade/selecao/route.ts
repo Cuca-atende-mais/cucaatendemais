@@ -7,6 +7,7 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 import { validarDatasSelecaoEvento } from "@/lib/empregabilidade/data-selecao-evento"
 import { avisarWorkerVagaCriada } from "@/lib/empregabilidade/vaga-criada-worker"
+import { validarUnidadesNoServidor } from "@/lib/empregabilidade/unidades-vaga"
 
 export async function POST(request: NextRequest) {
     const supabaseAdmin = createClient(
@@ -17,7 +18,8 @@ export async function POST(request: NextRequest) {
         const body = await request.json()
         const {
             empresa_id,
-            unidade_cuca,       // null quando "todas as unidades"
+            unidade_tratamento, // S-EMP-GES-13: unidade específica que cuida da seleção
+            unidade_destino,    // S-EMP-GES-13: Unidade de Currículos ("global" = Toda a Rede, ou UUID)
             cargos_lista,       // array: [{titulo, quantidade, faixa_etaria}]
             datas_selecao,      // array: [{data, hora}]
             email_responsavel,
@@ -52,6 +54,20 @@ export async function POST(request: NextRequest) {
             if (!user) {
                 return NextResponse.json({ error: "Não autenticado." }, { status: 401 })
             }
+        }
+
+        // S-EMP-GES-13 (AC10): as duas unidades são obrigatórias, com as mesmas frases da tela.
+        const unidades = await validarUnidadesNoServidor(
+            { tratamento: unidade_tratamento, curriculos: unidade_destino },
+            async (ids) => {
+                const { data: ativas, error: uErr } = await supabaseAdmin
+                    .from("unidades_cuca").select("id").eq("ativo", true).in("id", ids)
+                if (uErr) throw uErr
+                return (ativas ?? []).map(u => u.id as string)
+            },
+        )
+        if (!unidades.ok) {
+            return NextResponse.json({ error: unidades.erro }, { status: 400 })
         }
 
         if (!cargos_lista || !Array.isArray(cargos_lista) || cargos_lista.length === 0) {
@@ -99,9 +115,10 @@ export async function POST(request: NextRequest) {
                 cargos_lista,
                 datas_selecao,
                 faixa_etaria: cargos_lista[0]?.faixa_etaria || "A partir de 14 anos",
-                unidade_cuca: unidade_cuca || null,
-                // Seleções por evento são sempre visíveis para toda a rede
-                unidade_destino: "global",
+                // S-EMP-GES-13: unidade_cuca recebe o nome da Unidade de Tratamento pelo gatilho do
+                // banco; unidade_destino deixa de ser fixo em "global" e vem do formulário.
+                unidade_tratamento: unidades.tratamento,
+                unidade_destino: unidades.curriculos,
                 numero_vaga,
                 status: "pre_cadastro",
                 setor: [],

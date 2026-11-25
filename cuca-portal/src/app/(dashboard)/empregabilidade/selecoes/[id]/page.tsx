@@ -23,13 +23,14 @@ import {
 } from "@/components/ui/alert-dialog"
 import {
     ArrowLeft, Loader2, PenLine, Plus, Trash2, MessageSquare, Users, CalendarDays,
-    MapPin, Building2, FileText, Info, Briefcase, CheckCircle2, XCircle,
+    MapPin, Building2, FileText, Briefcase, CheckCircle2, XCircle,
     Send, RotateCcw, Phone,
 } from "lucide-react"
 import toast from "react-hot-toast"
 import { SelecaoModal } from "@/components/empregabilidade/selecao-modal"
 import { useUser } from "@/lib/auth/user-provider"
 import { mascaraTelefone } from "@/lib/utils"
+import { QuadroUnidadesVaga } from "@/components/empregabilidade/quadro-unidades-vaga"
 
 const STATUS_CANDIDATO = [
     { value: "pendente", label: "Pendente" },
@@ -271,10 +272,6 @@ export default function SelecaoDetalhePage() {
                                 <span>{vaga.local_entrevista}</span>
                             </div>
                         )}
-                        <div className="flex items-start gap-2 text-sm">
-                            <Info className="h-3.5 w-3.5 text-cuca-blue flex-shrink-0 mt-0.5" />
-                            <span>{vaga.unidade_destino === "global" ? "Toda a Rede CUCA" : (vaga.unidade_cuca || "Unidade não definida")}</span>
-                        </div>
                         {vaga.observacoes_selecao && (
                             <div className="flex items-start gap-2 text-sm sm:col-span-2 lg:col-span-3">
                                 <FileText className="h-3.5 w-3.5 text-cuca-blue flex-shrink-0 mt-0.5" />
@@ -282,6 +279,9 @@ export default function SelecaoDetalhePage() {
                             </div>
                         )}
                     </div>
+
+                    {/* S-EMP-GES-13 (AC14): Unidade de Tratamento, Unidade de Currículos e quem liberou */}
+                    <QuadroUnidadesVaga vaga={vaga} />
 
                     {/* Ações — inclui o CRUD de status que faltava */}
                     {podeEditar && (

@@ -15,6 +15,12 @@ import { AlertTriangle, Building2, Calendar, CheckCircle2, Loader2, MapPin, Plus
 import toast from "react-hot-toast"
 import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
 import { dataMinimaSelecaoEvento, validarDatasSelecaoEvento } from "@/lib/empregabilidade/data-selecao-evento"
+import { CamposUnidadesVaga, useErrosUnidades, type UnidadeOpcao } from "@/components/empregabilidade/campos-unidades-vaga"
+import {
+    MSG_UNIDADE_CURRICULOS_AUSENTE, MSG_UNIDADE_CURRICULOS_INVALIDA,
+    MSG_UNIDADE_TRATAMENTO_AUSENTE, MSG_UNIDADE_TRATAMENTO_INVALIDA,
+    primeiroErro, temErros, validarUnidadesVaga,
+} from "@/lib/empregabilidade/unidades-vaga"
 
 const FAIXAS_ETARIAS = [
     "A partir de 14 anos",
@@ -31,7 +37,6 @@ function cargoVazio(): CargoLinha {
 function SelecaoNovaContent() {
     const searchParams = useSearchParams()
     const empresaId = searchParams.get("empresa_id") || ""
-    const unidadeCucaParam = searchParams.get("unidade_cuca") || ""
     const emailParam = searchParams.get("email_responsavel") || ""
     const telParam = searchParams.get("telefone_responsavel") || ""
     const linkParams = serializarLinkParams(searchParams)
@@ -45,8 +50,13 @@ function SelecaoNovaContent() {
 
     const [cargos, setCargos] = useState<CargoLinha[]>([cargoVazio()])
     const [datasSelecao, setDatasSelecao] = useState<DataHora[]>([{ data: "", hora: "08:00" }])
-    const [unidades, setUnidades] = useState<any[]>([])
-    const [unidadeSelecionada, setUnidadeSelecionada] = useState(unidadeCucaParam)
+    // S-EMP-GES-13: Unidade de Tratamento (só unidade específica) e Unidade de Currículos
+    // (unidade_destino: Toda a Rede ou unidade), as duas obrigatórias. Substituem o antigo campo
+    // "Unidade CUCA da Seleção".
+    const [unidades, setUnidades] = useState<UnidadeOpcao[]>([])
+    const [unidadeTratamento, setUnidadeTratamento] = useState("")
+    const [unidadeDestino, setUnidadeDestino] = useState("")
+    const errosUnidades = useErrosUnidades()
     // SQS-56 (AC2): local + observações. S-EMP-GES-07: seleção não coleta currículo.
     const [localEntrevista, setLocalEntrevista] = useState("")
     const [observacoesSelecao, setObservacoesSelecao] = useState("")
@@ -64,7 +74,10 @@ function SelecaoNovaContent() {
 
             fetch("/api/empregabilidade/unidades")
             .then(r => r.json())
-            .then(d => setUnidades(Array.isArray(d) ? d : (d.unidades || [])))
+            .then(d => {
+                const lista: { id: string; nome: string }[] = Array.isArray(d) ? d : (d.unidades || [])
+                setUnidades(lista.map(u => ({ id: u.id, nome: u.nome })))
+            })
         }
         fetchDados()
     }, [empresaId, linkParams, searchParams])
@@ -87,6 +100,14 @@ function SelecaoNovaContent() {
         e.preventDefault()
         setErro("")
 
+        // S-EMP-GES-13 (AC9): mensagem abaixo do campo e foco no primeiro pendente.
+        const errosU = validarUnidadesVaga({ tratamento: unidadeTratamento, curriculos: unidadeDestino })
+        if (temErros(errosU)) {
+            errosUnidades.mostrar(errosU)
+            toast.error(primeiroErro(errosU)!)
+            return
+        }
+
         const cargosValidos = cargos.filter(c => c.titulo.trim())
         if (cargosValidos.length === 0) { setErro("Informe ao menos um cargo."); return }
         const datasValidas = datasSelecao.filter(d => d.data)
@@ -103,8 +124,8 @@ function SelecaoNovaContent() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     empresa_id: empresaId,
-                    unidade_cuca: unidadeSelecionada === "todas" ? null : (unidadeSelecionada || null),
-                    unidade_destino: "global",
+                    unidade_tratamento: unidadeTratamento,
+                    unidade_destino: unidadeDestino,
                     cargos_lista: cargosValidos.map(c => ({
                         titulo: c.titulo.trim(),
                         quantidade: parseInt(c.quantidade) || 1,
@@ -119,7 +140,14 @@ function SelecaoNovaContent() {
                 }),
             })
             const data = await res.json()
-            if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
+            if (!res.ok) {
+                if (data.error === MSG_UNIDADE_TRATAMENTO_AUSENTE || data.error === MSG_UNIDADE_TRATAMENTO_INVALIDA) {
+                    errosUnidades.mostrar({ tratamento: data.error })
+                } else if (data.error === MSG_UNIDADE_CURRICULOS_AUSENTE || data.error === MSG_UNIDADE_CURRICULOS_INVALIDA) {
+                    errosUnidades.mostrar({ curriculos: data.error })
+                }
+                throw new Error(data.error || `Erro ${res.status}`)
+            }
             setSuccess(true)
         } catch (err: any) {
             setErro(err.message)
@@ -192,26 +220,24 @@ function SelecaoNovaContent() {
 
                 <form onSubmit={handleSubmit} className="space-y-5">
 
-                    {/* Unidade CUCA */}
+                    {/* S-EMP-GES-13: Unidade de Tratamento + Unidade de Currículos — OBRIGATÓRIAS */}
                     <Card>
                         <CardHeader className="pb-3">
-                            <CardTitle className="text-base">Unidade CUCA da Seleção</CardTitle>
+                            <CardTitle className="text-base">Unidades CUCA da Seleção</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <Select value={unidadeSelecionada} onValueChange={setUnidadeSelecionada}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Selecione a unidade onde ocorrerá a seleção" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="todas">Todas as unidades</SelectItem>
-                                    {unidades.map((u: any) => (
-                                        <SelectItem key={u.id} value={u.nome}>{u.nome}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                            <p className="text-xs text-muted-foreground mt-2">
-                                As vagas ficam visíveis para toda a rede CUCA. Selecione "Todas as unidades" se a seleção puder ocorrer em qualquer unidade.
-                            </p>
+                            <CamposUnidadesVaga
+                                unidades={unidades}
+                                tratamento={unidadeTratamento}
+                                curriculos={unidadeDestino}
+                                onTratamentoChange={setUnidadeTratamento}
+                                onCurriculosChange={setUnidadeDestino}
+                                erros={errosUnidades.erros}
+                                onLimparErro={errosUnidades.limpar}
+                                refTratamento={errosUnidades.refTratamento}
+                                refCurriculos={errosUnidades.refCurriculos}
+                                idPrefixo="selecao-publica"
+                            />
                         </CardContent>
                     </Card>
 

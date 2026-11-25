@@ -26,6 +26,7 @@ import { mascaraTelefone, limparTelefone } from "@/lib/utils"
 import { NIVEIS_ESCOLARIDADE } from "@/constants/empregabilidade"
 import { talentosAprovadosNaVaga, textoContadores, type ContadoresSelecoes } from "@/lib/empregabilidade/contadores-selecoes"
 import { useContadoresSelecoes } from "@/lib/empregabilidade/use-contadores-selecoes"
+import { QuadroUnidadesVaga } from "@/components/empregabilidade/quadro-unidades-vaga"
 
 function formatarExperiencia(meses: number | null | undefined): string {
     if (!meses || meses === 0) return "Sem experiência informada"
@@ -517,7 +518,7 @@ export default function VagaDetalhesPage() {
                                 <Button 
                                     size="sm" 
                                     variant="outline" 
-                                    className="ml-2 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 h-11 md:h-7 text-xs"
+                                    className="md:ml-2 w-full sm:w-auto border-indigo-500/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 h-11 md:h-7 text-xs"
                                     onClick={solicitarFeedbackEmpresa}
                                 >
                                     <MessageSquare className="h-3 w-3 mr-1" />
@@ -538,7 +539,7 @@ export default function VagaDetalhesPage() {
                     </div>
 
                     {/* Linha 2: detalhes em grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                         {vaga?.tipo_contrato && (
                             <div className="flex items-center gap-2 text-sm">
                                 <Briefcase className="h-3.5 w-3.5 text-cuca-blue flex-shrink-0" />
@@ -569,14 +570,8 @@ export default function VagaDetalhesPage() {
                                 <span>{vaga.local}</span>
                             </div>
                         )}
-                        {vaga?.unidade_cuca && (
-                            <div className="flex items-center gap-2 text-sm">
-                                <Info className="h-3.5 w-3.5 text-cuca-blue flex-shrink-0" />
-                                <span>CUCA {vaga.unidade_cuca}</span>
-                            </div>
-                        )}
                         {vaga?.email_contato_empresa && (
-                            <div className="flex items-center gap-2 text-sm col-span-2">
+                            <div className="flex items-center gap-2 text-sm min-w-0 min-[420px]:col-span-2">
                                 <Mail className="h-3.5 w-3.5 text-cuca-blue flex-shrink-0" />
                                 <span className="truncate">{vaga.email_contato_empresa}</span>
                             </div>
@@ -600,6 +595,9 @@ export default function VagaDetalhesPage() {
                             </div>
                         )}
                     </div>
+
+                    {/* S-EMP-GES-13 (AC14): Unidade de Tratamento, Unidade de Currículos e quem liberou */}
+                    {vaga && <QuadroUnidadesVaga vaga={vaga} />}
 
                     {/* Benefícios */}
                     {vaga?.beneficios && (

@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { verificarLinkParams } from "@/lib/empregabilidade/link-assinado"
 import { validarDataSelecaoPrevista } from "@/lib/empregabilidade/data-selecao-prevista"
 import { avisarWorkerVagaCriada } from "@/lib/empregabilidade/vaga-criada-worker"
+import { validarUnidadesNoServidor } from "@/lib/empregabilidade/unidades-vaga"
 
 export async function POST(request: NextRequest) {
     // Rota pública: acesso via link gerado pelo worker (empresa_id validado abaixo)
@@ -17,7 +18,7 @@ export async function POST(request: NextRequest) {
             tipo_contrato, salario, total_vagas, escolaridade_minima,
             faixa_etaria, carga_horaria, local, local_entrevista,
             beneficios, limite_curriculos, tipo_selecao, unidade_cuca,
-            unidade_destino,
+            unidade_destino, unidade_tratamento,
             setor, email_responsavel, telefone_responsavel,
             pcd_vaga, pcd_tipo, pcd_homologado,
             data_selecao_prevista,
@@ -31,8 +32,19 @@ export async function POST(request: NextRequest) {
         if (!linkOk.valido) {
             return NextResponse.json({ error: "Link inválido ou expirado." }, { status: 403 })
         }
-        if (!unidade_destino) {
-            return NextResponse.json({ error: "Campo obrigatório ausente: unidade_destino não pode ser nulo ou vazio." }, { status: 400 })
+        // S-EMP-GES-13 (AC10): Unidade de Tratamento (unidade específica) e Unidade de Currículos
+        // (unidade_destino: Toda a Rede ou unidade) obrigatórias, com as mesmas frases da tela.
+        const unidades = await validarUnidadesNoServidor(
+            { tratamento: unidade_tratamento, curriculos: unidade_destino },
+            async (ids) => {
+                const { data: ativas, error: uErr } = await supabaseAdmin
+                    .from("unidades_cuca").select("id").eq("ativo", true).in("id", ids)
+                if (uErr) throw uErr
+                return (ativas ?? []).map(u => u.id as string)
+            },
+        )
+        if (!unidades.ok) {
+            return NextResponse.json({ error: unidades.erro }, { status: 400 })
         }
         if (!Array.isArray(setor) || setor.length === 0) {
             return NextResponse.json({ error: "Campo obrigatório ausente: setor deve ser um array com pelo menos uma categoria." }, { status: 400 })
@@ -79,8 +91,10 @@ export async function POST(request: NextRequest) {
                 beneficios: beneficios || null,
                 limite_curriculos: limite_curriculos ? parseInt(limite_curriculos) : null,
                 tipo_selecao: tipo_selecao || null,
+                // O banco copia o nome da Unidade de Tratamento para unidade_cuca (S-EMP-GES-13).
                 unidade_cuca: unidade_cuca || null,
-                unidade_destino: unidade_destino,
+                unidade_destino: unidades.curriculos,
+                unidade_tratamento: unidades.tratamento,
                 numero_vaga,
                 status: "pre_cadastro",
                 data_selecao_prevista: dataSelecaoValidada.valor,
