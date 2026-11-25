@@ -8,11 +8,17 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift, Copy, X, Clock, MapPin } from "lucide-react"
+import { Building2, Briefcase, CheckCircle2, Loader2, AlertTriangle, Gift, Copy, X, Clock } from "lucide-react"
 import toast from "react-hot-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { serializarLinkParams, validarLinkAssinadoNoServidor } from "@/lib/empregabilidade/link-assinado-client"
 import { validarDataSelecaoPrevista, hojeBrasilISO } from "@/lib/empregabilidade/data-selecao-prevista"
+import { CamposUnidadesVaga, useErrosUnidades, type UnidadeOpcao } from "@/components/empregabilidade/campos-unidades-vaga"
+import {
+    MSG_UNIDADE_CURRICULOS_AUSENTE, MSG_UNIDADE_CURRICULOS_INVALIDA,
+    MSG_UNIDADE_TRATAMENTO_AUSENTE, MSG_UNIDADE_TRATAMENTO_INVALIDA,
+    primeiroErro, temErros, validarUnidadesVaga,
+} from "@/lib/empregabilidade/unidades-vaga"
 
 const TIPOS_CONTRATO = ["CLT", "PJ", "Estágio", "Temporário", "Aprendiz", "Freelancer"]
 const ESCOLARIDADES = ["Fundamental Incompleto", "Fundamental Completo", "Médio Incompleto", "Médio Completo", "Superior Incompleto", "Superior Completo"]
@@ -72,13 +78,19 @@ function NovaVagaEmpresaContent() {
     const searchParams = useSearchParams()
     const empresaId = searchParams.get("empresa_id")
     const unidadeCuca = searchParams.get("unidade_cuca") || ""
-    const unidadeDestinoParam = searchParams.get("unidade_destino") || "global"
     const emailParam = searchParams.get("email_responsavel") || ""
     const telefoneParam = searchParams.get("telefone_responsavel") || ""
     const linkParams = serializarLinkParams(searchParams)
 
+    // S-EMP-GES-13: Unidade de Tratamento (só unidade específica) e Unidade de Currículos
+    // (unidade_destino: Toda a Rede ou unidade), as duas obrigatórias.
+    const [unidadeTratamento, setUnidadeTratamento] = useState<string>("")
     const [unidadeDestino, setUnidadeDestino] = useState<string>("")
-    const [unidadesOpcoes, setUnidadesOpcoes] = useState<{ value: string; label: string }[]>([])
+    const [unidades, setUnidades] = useState<UnidadeOpcao[]>([])
+    const errosUnidades = useErrosUnidades()
+    // Nome mostrado na tela de sucesso e no rótulo "Triagem pelo CUCA X": a Unidade de Tratamento
+    // escolhida; antes da escolha, a unidade da conversa que veio no link.
+    const nomeUnidadeTratamento = unidades.find(u => u.id === unidadeTratamento)?.nome || unidadeCuca
     const [empresa, setEmpresa] = useState<{ id: string; nome: string } | null>(null)
     const [loadingEmpresa, setLoadingEmpresa] = useState(true)
     const [empresaInvalida, setEmpresaInvalida] = useState(false)
@@ -150,13 +162,7 @@ function NovaVagaEmpresaContent() {
         fetch("/api/empregabilidade/unidades")
             .then(r => r.json())
             .then((data: { id: string; nome: string }[]) => {
-                if (Array.isArray(data)) {
-                    const opcoes = [
-                        { value: "global", label: "🌐 Toda a Rede CUCA" },
-                        ...data.map(u => ({ value: u.id, label: `📍 ${u.nome}` })),
-                    ]
-                    setUnidadesOpcoes(opcoes)
-                }
+                if (Array.isArray(data)) setUnidades(data.map(u => ({ id: u.id, nome: u.nome })))
             })
             .catch(() => {
                 // fallback: deixa lista vazia, usuário não consegue submeter sem selecionar
@@ -190,12 +196,15 @@ function NovaVagaEmpresaContent() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!titulo || !descricao || !tipoContrato) {
-            toast.error("Preencha pelo menos título, descrição e tipo de contrato.")
+        // S-EMP-GES-13 (AC9): mensagem abaixo do campo e foco no primeiro pendente.
+        const erros = validarUnidadesVaga({ tratamento: unidadeTratamento, curriculos: unidadeDestino })
+        if (temErros(erros)) {
+            errosUnidades.mostrar(erros)
+            toast.error(primeiroErro(erros)!)
             return
         }
-        if (!unidadeDestino) {
-            toast.error("Selecione a unidade de destino da vaga. Este campo é obrigatório.")
+        if (!titulo || !descricao || !tipoContrato) {
+            toast.error("Preencha pelo menos título, descrição e tipo de contrato.")
             return
         }
         if (setoresMarcados.length === 0) {
@@ -241,6 +250,7 @@ function NovaVagaEmpresaContent() {
                     limite_curriculos: limiteCurriculos ? parseInt(limiteCurriculos) : null,
                     tipo_selecao: tipoSelecao || null,
                     unidade_cuca: unidadeCuca || null,
+                    unidade_tratamento: unidadeTratamento,
                     unidade_destino: unidadeDestino,
                     setor: setoresMarcados,
                     email_responsavel: emailResponsavel,
@@ -252,7 +262,15 @@ function NovaVagaEmpresaContent() {
                 }),
             })
             const data = await res.json()
-            if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
+            if (!res.ok) {
+                // A rota devolve as mesmas frases da tela: mostra abaixo do campo certo.
+                if (data.error === MSG_UNIDADE_TRATAMENTO_AUSENTE || data.error === MSG_UNIDADE_TRATAMENTO_INVALIDA) {
+                    errosUnidades.mostrar({ tratamento: data.error })
+                } else if (data.error === MSG_UNIDADE_CURRICULOS_AUSENTE || data.error === MSG_UNIDADE_CURRICULOS_INVALIDA) {
+                    errosUnidades.mostrar({ curriculos: data.error })
+                }
+                throw new Error(data.error || `Erro ${res.status}`)
+            }
             const ref = data.numero_vaga ? `#${data.numero_vaga}` : data.id.slice(-6).toUpperCase()
             setNumeroVaga(ref)
             setVagaResumo({ titulo, tipo_contrato: tipoContrato, total_vagas: totalVagas, salario })
@@ -312,7 +330,7 @@ function NovaVagaEmpresaContent() {
                             <div className="flex justify-between text-sm"><span className="text-muted-foreground">Contrato</span><span className="font-medium">{vagaResumo.tipo_contrato}</span></div>
                             <div className="flex justify-between text-sm"><span className="text-muted-foreground">Posições</span><span className="font-medium">{vagaResumo.total_vagas}</span></div>
                             {vagaResumo.salario && <div className="flex justify-between text-sm"><span className="text-muted-foreground">Remuneração</span><span className="font-medium">{vagaResumo.salario}</span></div>}
-                            {unidadeCuca && <div className="flex justify-between text-sm"><span className="text-muted-foreground">Unidade</span><span className="font-medium">{unidadeCuca}</span></div>}
+                            {nomeUnidadeTratamento && <div className="flex justify-between gap-3 text-sm"><span className="text-muted-foreground">Unidade de tratamento</span><span className="font-medium text-right">{nomeUnidadeTratamento}</span></div>}
                         </div>
                     )}
                     <p className="text-xs text-muted-foreground mb-6">Guarde esse número para acompanhar o status pelo WhatsApp da unidade. Em breve você receberá uma confirmação.</p>
@@ -359,26 +377,19 @@ function NovaVagaEmpresaContent() {
                                 <Input id="titulo" value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Ex: Atendente de Loja, Auxiliar Administrativo" required />
                             </div>
 
-                            {/* Unidade de Destino — OBRIGATÓRIO */}
-                            <div className="space-y-2">
-                                <Label htmlFor="unidadeDestino" className="flex items-center gap-1.5">
-                                    <MapPin className="h-4 w-4 text-cuca-blue" />
-                                    Unidade de Destino da Vaga *
-                                </Label>
-                                <Select value={unidadeDestino} onValueChange={setUnidadeDestino} required>
-                                    <SelectTrigger id="unidadeDestino" className={`w-full ${!unidadeDestino ? "border-amber-500/60 focus:ring-amber-500" : ""}`}>
-                                        <SelectValue placeholder="Selecione para qual unidade é esta vaga..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {unidadesOpcoes.map(u => (
-                                            <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <p className="text-xs text-muted-foreground">
-                                    Escolha <strong>Toda a Rede CUCA</strong> se qualquer unidade pode atender esta vaga, ou selecione a unidade específica responsável pelo processo seletivo.
-                                </p>
-                            </div>
+                            {/* S-EMP-GES-13: Unidade de Tratamento + Unidade de Currículos — OBRIGATÓRIAS */}
+                            <CamposUnidadesVaga
+                                unidades={unidades}
+                                tratamento={unidadeTratamento}
+                                curriculos={unidadeDestino}
+                                onTratamentoChange={setUnidadeTratamento}
+                                onCurriculosChange={setUnidadeDestino}
+                                erros={errosUnidades.erros}
+                                onLimparErro={errosUnidades.limpar}
+                                refTratamento={errosUnidades.refTratamento}
+                                refCurriculos={errosUnidades.refCurriculos}
+                                idPrefixo="vaga-publica"
+                            />
 
                             {/* Descrição */}
                             <div className="space-y-2">
@@ -621,7 +632,7 @@ function NovaVagaEmpresaContent() {
                                 <Label className="text-base font-semibold">Tipo de Processo Seletivo</Label>
                                 <div className="space-y-2">
                                     {TIPOS_SELECAO.map(ts => {
-                                        const label = ts.value === "triagem_cuca" && unidadeCuca ? `Triagem Inicial pelo CUCA ${unidadeCuca}` : ts.label
+                                        const label = ts.value === "triagem_cuca" && nomeUnidadeTratamento ? `Triagem Inicial pelo ${nomeUnidadeTratamento}` : ts.label
                                         return (
                                             <label key={ts.value} className={`flex items-start gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${tipoSelecao === ts.value ? "border-cuca-blue bg-cuca-blue/10" : "border-border hover:border-cuca-blue/50"}`}>
                                                 <input type="radio" name="tipoSelecao" value={ts.value} checked={tipoSelecao === ts.value} onChange={() => setTipoSelecao(ts.value)} className="mt-0.5 accent-cuca-blue" />

@@ -16,6 +16,8 @@ import { Badge } from "@/components/ui/badge"
 import { Loader2, Plus, Save, Trash2, CalendarDays, Briefcase, MapPin } from "lucide-react"
 import toast from "react-hot-toast"
 import { dataMinimaSelecaoEvento, validarDatasSelecaoEvento } from "@/lib/empregabilidade/data-selecao-evento"
+import { CamposUnidadesVaga, useErrosUnidades } from "@/components/empregabilidade/campos-unidades-vaga"
+import { temErros, validarUnidadesVaga } from "@/lib/empregabilidade/unidades-vaga"
 
 interface SelecaoModalProps {
     open: boolean
@@ -43,7 +45,13 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
     const [unidades, setUnidades] = useState<Array<{ id: string; nome: string }>>([])
 
     const [empresaId, setEmpresaId] = useState("")
-    const [unidadeCuca, setUnidadeCuca] = useState("global")
+    // S-EMP-GES-13: Unidade de Tratamento (só unidade específica) e Unidade de Currículos
+    // (unidade_destino, deixa de ser fixa em "global"). Seleção antiga sem unidade de tratamento salva
+    // normalmente sem ela (D12).
+    const [unidadeTratamento, setUnidadeTratamento] = useState("")
+    const [tratamentoOriginal, setTratamentoOriginal] = useState<string | null>(null)
+    const [unidadeDestino, setUnidadeDestino] = useState("")
+    const errosUnidades = useErrosUnidades()
     const [status, setStatus] = useState("pre_cadastro")
     const [cargos, setCargos] = useState<CargoLinha[]>([cargoVazio()])
     const [datasSelecao, setDatasSelecao] = useState<DataHora[]>([{ data: "", hora: "08:00" }])
@@ -55,7 +63,7 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
         setFetching(true)
         Promise.all([
             supabase.from("empresas").select("id, nome, nome_fantasia").eq("ativa", true).order("nome"),
-            supabase.from("unidades_cuca").select("id, nome").order("nome"),
+            supabase.from("unidades_cuca").select("id, nome").eq("ativo", true).order("nome"),
         ]).then(([empRes, uniRes]) => {
             setEmpresas(empRes.data ?? [])
             setUnidades(uniRes.data ?? [])
@@ -66,7 +74,9 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
         if (!open) return
         if (selecao) {
             setEmpresaId(selecao.empresa_id)
-            setUnidadeCuca(selecao.unidade_cuca || "global")
+            setUnidadeTratamento(selecao.unidade_tratamento || "")
+            setTratamentoOriginal(selecao.unidade_tratamento ?? null)
+            setUnidadeDestino(selecao.unidade_destino || "global")
             setStatus(selecao.status)
             setCargos(
                 selecao.cargos_lista?.length
@@ -82,7 +92,9 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
             setLocalEntrevista(selecao.local_entrevista || "")
         } else {
             setEmpresaId("")
-            setUnidadeCuca("global")
+            setUnidadeTratamento("")
+            setTratamentoOriginal(null)
+            setUnidadeDestino("")
             setStatus("pre_cadastro")
             setCargos([cargoVazio()])
             setDatasSelecao([{ data: "", hora: "08:00" }])
@@ -90,6 +102,8 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
             setLocalEntrevista("")
         }
         setErro("")
+        errosUnidades.zerar()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, selecao])
 
     // ── Cargos ──────────────────────────────────────────────────────────────────
@@ -106,6 +120,13 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
 
     async function handleSave() {
         setErro("")
+        // S-EMP-GES-13 (AC9, AC12, AC13): obrigatórias na criação; na edição, a de tratamento só é
+        // exigida se a seleção já tinha uma.
+        const errosU = validarUnidadesVaga(
+            { tratamento: unidadeTratamento, curriculos: unidadeDestino },
+            { obrigatoria: { tratamento: !selecao || tratamentoOriginal !== null } },
+        )
+        if (temErros(errosU)) { errosUnidades.mostrar(errosU); return }
         const cargosValidos = cargos.filter(c => c.titulo.trim())
         if (!empresaId) { setErro("Selecione a empresa."); return }
         if (cargosValidos.length === 0) { setErro("Informe ao menos um cargo."); return }
@@ -122,8 +143,9 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
             if (selecao) {
                 // Edição: PATCH direto via supabase client (campos editáveis do selecao_evento)
                 const { error } = await supabase.from("vagas").update({
-                    unidade_cuca: unidadeCuca === "global" ? null : unidadeCuca,
-                    unidade_destino: "global",
+                    // unidade_cuca recebe o nome da Unidade de Tratamento pelo gatilho do banco.
+                    ...(unidadeTratamento ? { unidade_tratamento: unidadeTratamento } : {}),
+                    unidade_destino: unidadeDestino,
                     cargos_lista: cargosValidos,
                     datas_selecao: datasValidas,
                     status,
@@ -142,7 +164,8 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         empresa_id: empresaId,
-                        unidade_cuca: unidadeCuca === "global" ? null : unidadeCuca,
+                        unidade_tratamento: unidadeTratamento,
+                        unidade_destino: unidadeDestino,
                         cargos_lista: cargosValidos,
                         datas_selecao: datasValidas,
                         observacoes_selecao: observacoesSelecao || null,
@@ -209,20 +232,25 @@ export function SelecaoModal({ open, onOpenChange, onSuccess, selecao }: Selecao
                             )}
                         </div>
 
-                        {/* Unidade e Status */}
+                        {/* S-EMP-GES-13: Unidade de Tratamento + Unidade de Currículos */}
+                        <CamposUnidadesVaga
+                            unidades={unidades}
+                            tratamento={unidadeTratamento}
+                            curriculos={unidadeDestino}
+                            onTratamentoChange={setUnidadeTratamento}
+                            onCurriculosChange={setUnidadeDestino}
+                            erros={errosUnidades.erros}
+                            onLimparErro={errosUnidades.limpar}
+                            refTratamento={errosUnidades.refTratamento}
+                            refCurriculos={errosUnidades.refCurriculos}
+                            tratamentoObrigatorio={!isEdit || tratamentoOriginal !== null}
+                            avisoVagaAntiga={isEdit && tratamentoOriginal === null}
+                            idPrefixo="selecao-modal"
+                            ladoALado
+                        />
+
+                        {/* Status */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                                <Label>Unidade CUCA</Label>
-                                <Select value={unidadeCuca} onValueChange={setUnidadeCuca}>
-                                    <SelectTrigger><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="global">Toda a Rede CUCA</SelectItem>
-                                        {unidades.map(u => (
-                                            <SelectItem key={u.id} value={u.id}>{u.nome}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
                             {isEdit && (
                                 <div className="space-y-1">
                                     <Label>Status</Label>

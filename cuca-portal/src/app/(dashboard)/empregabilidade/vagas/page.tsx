@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { createClient } from "@/lib/supabase/client"
@@ -9,7 +9,6 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
     AlertDialog,
     AlertDialogAction,
@@ -20,14 +19,39 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, Globe, Trash2, Pencil } from "lucide-react"
+import { Search, Plus, Briefcase, FileText, CheckCircle2, AlertCircle, Users, Globe, Trash2, Pencil, Building, CalendarClock, UserCheck } from "lucide-react"
 import { VagaModal } from "@/components/empregabilidade/vaga-modal"
+import { DataGrid, type ColunaGrade } from "@/components/ui/data-grid"
 import toast from "react-hot-toast"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useUser } from "@/lib/auth/user-provider"
 import { SeloSemResposta, useDiasSemResposta } from "@/components/empregabilidade/selo-sem-resposta"
 import { VAGAS_KEY } from "@/hooks/queries/use-vagas"
+import { formatarDataISO } from "@/lib/empregabilidade/unidades-vaga"
+import { buscarLiberadoPor, textoLiberadaEm } from "@/lib/empregabilidade/liberado-por"
+
+function getStatusBadge(status: string) {
+    switch (status) {
+        case "aberta": return <Badge className="bg-green-600 text-white gap-1"><CheckCircle2 className="h-3 w-3" /> Aberta / Pública</Badge>
+        case "pre_cadastro": return <Badge variant="outline" className="text-amber-600 border-amber-600 bg-amber-50 gap-1"><FileText className="h-3 w-3" /> Rascunho</Badge>
+        case "preenchida": return <Badge variant="secondary" className="gap-1"><Users className="h-3 w-3" /> Preenchida</Badge>
+        case "cancelada": return <Badge variant="destructive" className="gap-1"><AlertCircle className="h-3 w-3" /> Cancelada</Badge>
+        default: return <Badge variant="outline">{status}</Badge>
+    }
+}
+
+/** S-EMP-GES-13: vaga antiga sem Unidade de Tratamento aparece marcada, sem bloqueio (D1, D12). */
+function SeloUnidadeTratamento({ id, nomes }: { id: string | null | undefined; nomes: Record<string, string> }) {
+    if (!id) {
+        return (
+            <Badge variant="outline" className="text-amber-700 dark:text-amber-400 border-amber-500/50 bg-amber-500/10 max-w-full" title="Vaga criada antes da unidade de tratamento">
+                <span className="truncate">Sem unidade</span>
+            </Badge>
+        )
+    }
+    return <span className="block truncate text-sm">{nomes[id] ?? "Unidade não encontrada"}</span>
+}
 
 export default function VagasPage() {
     const { hasPermission, profile, loading: authLoading } = useUser()
@@ -54,7 +78,7 @@ export default function VagasPage() {
             const empresasMap: Record<string, Empresa> = {}
             for (const e of emp ?? []) empresasMap[e.id] = e
 
-            // Unidades
+            // Unidades (todas, inclusive inativas, para o nome das vagas antigas)
             const { data: uds } = await supabase.from("unidades_cuca").select("id, nome")
             const unidadesMap: Record<string, string> = {}
             for (const u of uds ?? []) unidadesMap[u.id] = u.nome
@@ -71,9 +95,10 @@ export default function VagasPage() {
             // `.neq("tipo", "selecao_evento")` na query: NULL != 'x' não é
             // true no Postgres, então uma vaga_normal legada com tipo NULL
             // desapareceria silenciosamente da tela inteira.
-            let filtered = (data ?? []).filter(v => v.tipo !== "selecao_evento")
+            let filtered = ((data ?? []) as Vaga[]).filter(v => v.tipo !== "selecao_evento")
 
-            // Filtro de unidade (aba "Minha Unidade")
+            // Filtro de unidade (aba "Minha Unidade") — continua pela Unidade de Currículos
+            // (unidade_destino); trocar para a de Tratamento ficou fora da S-EMP-GES-13.
             if (abaFiltro === "minhas" && profile?.unidade_cuca && profile.unidade_cuca !== "Geral") {
                 const profileUnitName = profile.unidade_cuca.toLowerCase()
                 const profileUnitId = Object.entries(unidadesMap).find(
@@ -98,27 +123,30 @@ export default function VagasPage() {
                 )
             }
 
-            // Contagem de candidaturas
+            // Contagem de candidaturas + quem liberou (S-EMP-GES-13)
             const candidaturasCount: Record<string, number> = {}
+            let liberadoPor = new Map<string, string>()
             if (filtered.length > 0) {
-                const { data: cands } = await supabase
-                    .from("candidaturas")
-                    .select("vaga_id")
-                    .in("vaga_id", filtered.map(v => v.id))
+                const [{ data: cands }, mapa] = await Promise.all([
+                    supabase.from("candidaturas").select("vaga_id").in("vaga_id", filtered.map(v => v.id)),
+                    buscarLiberadoPor(supabase, filtered),
+                ])
                 for (const c of cands ?? []) {
                     candidaturasCount[c.vaga_id] = (candidaturasCount[c.vaga_id] || 0) + 1
                 }
+                liberadoPor = mapa
             }
 
-            return { vagas: filtered, empresasMap, unidadesMap, candidaturasCount }
+            return { vagas: filtered, empresasMap, unidadesMap, candidaturasCount, liberadoPor }
         },
     })
 
-    const vagas = data?.vagas ?? []
+    const vagas = useMemo(() => data?.vagas ?? [], [data])
     const diasSemResposta = useDiasSemResposta(vagas.map(v => v.id))
-    const empresasMap = data?.empresasMap ?? {}
-    const unidadesMap = data?.unidadesMap ?? {}
-    const candidaturasCount = data?.candidaturasCount ?? {}
+    const empresasMap = useMemo(() => data?.empresasMap ?? {}, [data])
+    const unidadesMap = useMemo(() => data?.unidadesMap ?? {}, [data])
+    const candidaturasCount = useMemo(() => data?.candidaturasCount ?? {}, [data])
+    const liberadoPor = useMemo(() => data?.liberadoPor ?? new Map<string, string>(), [data])
 
     // ─── Mutations ───────────────────────────────────────────────────────────
     const invalidate = () => qc.invalidateQueries({ queryKey: VAGAS_KEY })
@@ -132,8 +160,8 @@ export default function VagasPage() {
             if (!res.ok) throw new Error(json.error || "Erro desconhecido")
             toast.success(`Vaga excluída. ${json.candidaturasRemovidas} candidato(s) removido(s).`)
             invalidate()
-        } catch (err: any) {
-            toast.error(err.message || "Erro ao excluir vaga.")
+        } catch (err: unknown) {
+            toast.error((err instanceof Error && err.message) || "Erro ao excluir vaga.")
         } finally {
             setDeleteLoading(false)
             setDeletingVaga(null)
@@ -148,31 +176,130 @@ export default function VagasPage() {
     }
     const openNewModal = () => { setSelectedVaga(null); setIsModalOpen(true) }
 
-    const getStatusBadge = (status: string) => {
-        switch (status) {
-            case "aberta": return <Badge className="bg-green-600 text-white gap-1"><CheckCircle2 className="h-3 w-3" /> Aberta / Pública</Badge>
-            case "pre_cadastro": return <Badge variant="outline" className="text-amber-600 border-amber-600 bg-amber-50 gap-1"><FileText className="h-3 w-3" /> Rascunho</Badge>
-            case "preenchida": return <Badge variant="secondary" className="gap-1"><Users className="h-3 w-3" /> Preenchida</Badge>
-            case "cancelada": return <Badge variant="destructive" className="gap-1"><AlertCircle className="h-3 w-3" /> Cancelada</Badge>
-            default: return <Badge variant="outline">{status}</Badge>
+    const podeEditar = abaFiltro === "minhas"
+    const podeExcluir = abaFiltro === "minhas" && hasPermission("empreg_vagas", "delete")
+    const nomeEmpresa = (v: Vaga) => empresasMap[v.empresa_id]?.nome || "Desconhecida"
+
+    // S-EMP-GES-13 (AC15): colunas na ordem pedida pelo Junior. A Unidade de Currículos não aparece aqui
+    // (fica no detalhe da vaga e no modal, D6).
+    const colunas = useMemo<ColunaGrade<Vaga>[]>(() => {
+        const lista: ColunaGrade<Vaga>[] = [
+            {
+                id: "id", cabecalho: "ID", tamanho: 60, minimo: 56, maximo: 140, alinhar: "centro",
+                celula: v => v.numero_vaga
+                    ? <span className="font-mono text-xs font-semibold text-muted-foreground">#{v.numero_vaga}</span>
+                    : <span className="text-xs text-muted-foreground/50">—</span>,
+            },
+            {
+                id: "cargo", cabecalho: "Cargo", tamanho: 150, minimo: 120, maximo: 600,
+                titulo: v => v.titulo,
+                celula: v => (
+                    <div className="flex flex-col min-w-0">
+                        <span className="font-semibold truncate flex items-center gap-2">
+                            <span className="truncate">{v.titulo}</span>
+                            {v.expansiva && <Badge className="bg-cuca-yellow text-xs px-1.5 flex-shrink-0">Global</Badge>}
+                        </span>
+                        <span className="text-xs text-muted-foreground truncate">{v.total_vagas} vaga(s) · {v.faixa_etaria}</span>
+                    </div>
+                ),
+            },
+            {
+                id: "empresa", cabecalho: "Empresa", tamanho: 124, minimo: 100, maximo: 500,
+                titulo: v => nomeEmpresa(v),
+                celula: v => <span className="block truncate text-sm font-medium">{nomeEmpresa(v)}</span>,
+            },
+            {
+                id: "cadastro", cabecalho: "Dt. Cadastro", tamanho: 96, minimo: 88, maximo: 200,
+                celula: v => <span className="text-sm text-muted-foreground tabular-nums">{format(new Date(v.created_at), "dd/MM/yyyy", { locale: ptBR })}</span>,
+            },
+            {
+                id: "tratamento", cabecalho: "Unid. Tratamento", tamanho: 116, minimo: 96, maximo: 360,
+                titulo: v => (v.unidade_tratamento ? unidadesMap[v.unidade_tratamento] : "Vaga criada antes da unidade de tratamento"),
+                celula: v => <SeloUnidadeTratamento id={v.unidade_tratamento} nomes={unidadesMap} />,
+            },
+            {
+                id: "data_selecao", cabecalho: "Data prevista seleção", tamanho: 104, minimo: 88, maximo: 240,
+                celula: v => v.data_selecao_prevista
+                    ? <span className="text-sm tabular-nums">{formatarDataISO(v.data_selecao_prevista)}</span>
+                    : <span className="text-sm text-muted-foreground/60">—</span>,
+            },
+            {
+                id: "status", cabecalho: "Status", tamanho: 124, minimo: 110, maximo: 320,
+                celula: v => (
+                    <div className="flex flex-wrap items-center gap-1">
+                        {getStatusBadge(v.status)}
+                        <SeloSemResposta dias={diasSemResposta.get(v.id)} />
+                    </div>
+                ),
+            },
+            {
+                id: "liberado_por", cabecalho: "Liberado por", tamanho: 116, minimo: 90, maximo: 400,
+                titulo: v => textoLiberadaEm(v.liberada_em),
+                celula: v => {
+                    const nome = liberadoPor.get(v.id)
+                    return nome
+                        ? <span className="block truncate text-sm">{nome}</span>
+                        : <span className="text-sm text-muted-foreground/60">—</span>
+                },
+            },
+            {
+                id: "candidaturas", cabecalho: "Candidaturas", tamanho: 96, minimo: 90, maximo: 200, alinhar: "centro", interativa: true,
+                celula: v => (
+                    <Button
+                        size="sm"
+                        className="h-8 text-xs gap-1 px-2.5 bg-green-600 hover:bg-green-700 text-white border-none"
+                        onClick={() => router.push(`/empregabilidade/vagas/${v.id}`)}
+                        aria-label={`Ver ${candidaturasCount[v.id] ?? 0} candidatura(s) da vaga ${v.titulo}`}
+                    >
+                        <Users className="h-3.5 w-3.5" aria-hidden />
+                        {candidaturasCount[v.id] ?? 0}
+                    </Button>
+                ),
+            },
+            {
+                id: "editar", cabecalho: "Editar Status", tamanho: 88, minimo: 88, maximo: 200, alinhar: "centro", interativa: true,
+                celula: v => podeEditar ? (
+                    <Button variant="outline" size="sm" className="h-8 text-xs gap-1 px-2.5" onClick={() => openEditModal(v)} aria-label={`Editar a vaga ${v.titulo}`}>
+                        <Pencil className="h-3.5 w-3.5" aria-hidden /> Editar
+                    </Button>
+                ) : <span className="text-xs text-muted-foreground/50">—</span>,
+            },
+        ]
+        if (podeExcluir) {
+            lista.push({
+                id: "excluir", cabecalho: "Excluir", tamanho: 64, minimo: 56, maximo: 160, alinhar: "centro", interativa: true,
+                celula: v => (
+                    <Button
+                        variant="ghost" size="sm"
+                        className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10"
+                        title="Excluir vaga e candidatos"
+                        aria-label={`Excluir a vaga ${v.titulo}`}
+                        onClick={() => setDeletingVaga(v)}
+                    >
+                        <Trash2 className="h-4 w-4" aria-hidden />
+                    </Button>
+                ),
+            })
         }
-    }
+        return lista
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [empresasMap, unidadesMap, candidaturasCount, liberadoPor, diasSemResposta, podeEditar, podeExcluir])
 
     return (
         <>
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
             <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-                        <Briefcase className="h-8 w-8 text-cuca-blue" />
+                <div className="min-w-0">
+                    <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2">
+                        <Briefcase className="h-7 w-7 md:h-8 md:w-8 text-cuca-blue shrink-0" aria-hidden />
                         Vagas de Emprego
                     </h1>
                     <p className="text-muted-foreground">Gerencie o portfólio de oportunidades para juventude.</p>
                 </div>
                 {hasPermission("empreg_vagas", "create") && (
-                    <div className="flex items-center gap-2">
-                        <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold h-11 md:h-9" onClick={openNewModal}>
-                            <Plus className="mr-2 h-4 w-4" /> Cadastrar Vaga
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <Button className="bg-cuca-blue text-white hover:bg-sky-800 font-bold h-11 md:h-9 w-full sm:w-auto" onClick={openNewModal}>
+                            <Plus className="mr-2 h-4 w-4" aria-hidden /> Cadastrar Vaga
                         </Button>
                     </div>
                 )}
@@ -186,12 +313,12 @@ export default function VagasPage() {
             />
 
             <div className="flex items-center justify-between gap-4 flex-wrap mt-6">
-                <div className="flex items-center gap-1 bg-muted p-1 rounded-lg w-fit">
-                    <Button variant={abaFiltro === "minhas" ? "secondary" : "ghost"} size="sm" className="h-11 md:h-8 text-xs px-3" onClick={() => setAbaFiltro("minhas")}>
+                <div className="flex items-center gap-1 bg-muted p-1 rounded-lg w-full sm:w-fit">
+                    <Button variant={abaFiltro === "minhas" ? "secondary" : "ghost"} size="sm" className="h-11 md:h-8 text-xs px-3 flex-1 sm:flex-none" onClick={() => setAbaFiltro("minhas")}>
                         Minha Unidade
                     </Button>
-                    <Button variant={abaFiltro === "todas" ? "secondary" : "ghost"} size="sm" className="h-11 md:h-8 text-xs px-3 gap-1" onClick={() => setAbaFiltro("todas")}>
-                        <Globe className="h-3.5 w-3.5" /> Todas as Unidades
+                    <Button variant={abaFiltro === "todas" ? "secondary" : "ghost"} size="sm" className="h-11 md:h-8 text-xs px-3 gap-1 flex-1 sm:flex-none" onClick={() => setAbaFiltro("todas")}>
+                        <Globe className="h-3.5 w-3.5" aria-hidden /> Todas as Unidades
                     </Button>
                 </div>
                 {abaFiltro === "todas" && (
@@ -200,17 +327,18 @@ export default function VagasPage() {
 
                 <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
                     <div className="relative w-full sm:w-72">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
                         <Input
                             placeholder="Buscar vaga ou empresa..."
-                            className="pl-10 w-full h-9"
+                            aria-label="Buscar vaga ou empresa"
+                            className="pl-10 w-full h-11 md:h-9 text-base md:text-sm"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
-                    <div className="flex items-center gap-1 bg-muted p-1 rounded-lg">
+                    <div className="flex items-center gap-1 bg-muted p-1 rounded-lg w-full sm:w-auto">
                         {["all", "aberta", "pre_cadastro"].map(s => (
-                            <Button key={s} variant={statusFilter === s ? "secondary" : "ghost"} size="sm" onClick={() => setStatusFilter(s)} className="h-11 md:h-8 text-xs px-3">
+                            <Button key={s} variant={statusFilter === s ? "secondary" : "ghost"} size="sm" onClick={() => setStatusFilter(s)} className="h-11 md:h-8 text-xs px-3 flex-1 sm:flex-none">
                                 {s === "all" ? "Todas" : s === "aberta" ? "Abertas" : "Rascunhos"}
                             </Button>
                         ))}
@@ -218,189 +346,101 @@ export default function VagasPage() {
                 </div>
             </div>
 
-            {/* Tabela a partir de lg (1024px). table-fixed + larguras em % (padrão da página de
-                Seleções): sem isso, nome de empresa/cargo longo empurra a tabela pra fora da
-                tela em vez de truncar dentro da coluna. Em 1024 (~710px úteis com o menu lateral)
-                ficam Cargo, Empresa, Status, Candidaturas e as ações; #, Data do Cadastro e
-                Unidade Base aparecem a partir de xl (1280px). Abaixo de lg, a lista de cards. */}
-            <Card className="hidden lg:block border-none shadow-sm overflow-hidden mt-4">
-                <CardContent className="p-0">
-                    <Table className="table-fixed w-full" cabecalhoFixo>
-                        <TableHeader className="bg-muted/30">
-                            <TableRow>
-                                <TableHead className="hidden xl:table-cell w-[5%] text-center">#</TableHead>
-                                <TableHead className="w-[28%] xl:w-[20%]">Cargo</TableHead>
-                                <TableHead className="w-[20%] xl:w-[15%]">Empresa Parceira</TableHead>
-                                <TableHead className="hidden xl:table-cell w-[10%]">Data do Cadastro</TableHead>
-                                <TableHead className="hidden xl:table-cell w-[12%]">Unidade Base</TableHead>
-                                <TableHead className="w-[22%] xl:w-[16%]">Status</TableHead>
-                                <TableHead className="w-[12%] xl:w-[10%] text-center">Candidaturas</TableHead>
-                                <TableHead className="w-[14%] xl:w-[12%] text-center">Editar Status</TableHead>
-                                <TableHead className="w-10"></TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {isLoading ? (
-                                <TableRow><TableCell colSpan={9} className="text-center py-10 text-muted-foreground">Carregando...</TableCell></TableRow>
-                            ) : vagas.length === 0 ? (
-                                <TableRow><TableCell colSpan={9} className="text-center py-10 text-muted-foreground">Nenhuma vaga encontrada.</TableCell></TableRow>
-                            ) : vagas.map(v => (
-                                <TableRow key={v.id} className="hover:bg-muted/30">
-                                    <TableCell className="hidden xl:table-cell text-center">
-                                        {v.numero_vaga
-                                            ? <span className="text-xs font-mono font-semibold text-muted-foreground">#{v.numero_vaga}</span>
-                                            : <span className="text-xs text-muted-foreground/40">—</span>}
-                                    </TableCell>
-                                    <TableCell className="max-w-0">
-                                        <div className="flex flex-col min-w-0">
-                                            <span className="font-semibold truncate flex items-center gap-2">
-                                                <span className="truncate">{v.titulo}</span>
-                                                {v.expansiva && <Badge className="bg-cuca-yellow text-xs px-1.5 flex-shrink-0">Global</Badge>}
-                                            </span>
-                                            <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                                <Users className="h-3 w-3 flex-shrink-0" /> {v.total_vagas} vaga(s) | {v.faixa_etaria}
-                                            </span>
-                                        </div>
-                                    </TableCell>
-                                    <TableCell className="max-w-0">
-                                        <span className="font-medium text-sm truncate block">{empresasMap[v.empresa_id]?.nome || "Desconhecida"}</span>
-                                    </TableCell>
-                                    <TableCell className="hidden xl:table-cell text-sm text-muted-foreground whitespace-nowrap">
-                                        {format(new Date(v.created_at), "dd/MM/yyyy", { locale: ptBR })}
-                                    </TableCell>
-                                    <TableCell className="hidden xl:table-cell max-w-0">
-                                        {v.unidade_destino === "global" ? (
-                                            <Badge className="bg-cuca-blue/10 text-cuca-blue border-cuca-blue/30 gap-1"><Globe className="h-3 w-3 flex-shrink-0" /> <span className="truncate">Toda a Rede</span></Badge>
-                                        ) : v.unidade_destino && unidadesMap[v.unidade_destino] ? (
-                                            <Badge variant="outline" className="bg-muted/50 max-w-full"><span className="truncate">{unidadesMap[v.unidade_destino]}</span></Badge>
-                                        ) : (
-                                            <Badge variant="outline" className="text-amber-600 border-amber-500/40 bg-amber-50/50">Não definida</Badge>
-                                        )}
-                                    </TableCell>
-                                    <TableCell>
-                                        <div className="flex flex-wrap items-center gap-1">
-                                            {getStatusBadge(v.status)}
-                                            <SeloSemResposta dias={diasSemResposta.get(v.id)} />
-                                        </div>
-                                    </TableCell>
-                                    <TableCell className="text-center">
-                                        <Button
-                                            size="sm"
-                                            className="h-7 text-xs gap-1 px-2 bg-green-600 hover:bg-green-700 text-white border-none"
-                                            onClick={() => router.push(`/empregabilidade/vagas/${v.id}`)}
-                                        >
-                                            <Users className="h-3 w-3" />
-                                            {candidaturasCount[v.id] ?? 0}
-                                        </Button>
-                                    </TableCell>
-                                    <TableCell className="text-center">
-                                        {abaFiltro === "minhas" ? (
-                                            <Button
-                                                variant="outline" size="sm"
-                                                className="h-7 text-xs gap-1 px-2"
-                                                onClick={() => openEditModal(v)}
-                                            >
-                                                <Pencil className="h-3 w-3" /> Editar
-                                            </Button>
-                                        ) : (
-                                            <span className="text-xs text-muted-foreground/40">—</span>
-                                        )}
-                                    </TableCell>
-                                    <TableCell className="text-center">
-                                        {abaFiltro === "minhas" && hasPermission("empreg_vagas", "delete") && (
-                                            <Button
-                                                variant="ghost" size="sm"
-                                                className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
-                                                title="Excluir vaga e candidatos"
-                                                onClick={() => setDeletingVaga(v)}
-                                            >
-                                                <Trash2 className="h-3.5 w-3.5" />
-                                            </Button>
-                                        )}
-                                    </TableCell>
-                                </TableRow>
-                            ))}
-                        </TableBody>
-                    </Table>
-                </CardContent>
-            </Card>
+            {/* A partir de md: grade com colunas ajustáveis (S-EMP-GES-13, AC18). */}
+            <div className="hidden md:block">
+                <DataGrid
+                    dados={vagas}
+                    colunas={colunas}
+                    idLinha={v => v.id}
+                    chaveArmazenamento="cuca:grade:vagas:v1"
+                    rotulo="Vagas de emprego"
+                    carregando={isLoading}
+                    vazio="Nenhuma vaga encontrada."
+                />
+            </div>
 
-            {/* Abaixo de lg (celular e tablet): cada vaga vira um card, sem colunas disputando espaço horizontal. */}
-            <div className="lg:hidden space-y-3 mt-4">
+            {/* Abaixo de md (celular): cada vaga vira um cartão, com as mesmas informações da grade (AC20). */}
+            <div className="md:hidden space-y-3">
                 {isLoading ? (
                     <p className="text-center py-10 text-muted-foreground text-sm">Carregando...</p>
                 ) : vagas.length === 0 ? (
                     <p className="text-center py-10 text-muted-foreground text-sm">Nenhuma vaga encontrada.</p>
-                ) : vagas.map(v => (
-                    <Card key={v.id} className="border shadow-sm">
-                        <CardContent className="p-4 space-y-3">
-                            <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        {v.numero_vaga && (
-                                            <span className="text-xs font-mono font-semibold text-muted-foreground">#{v.numero_vaga}</span>
-                                        )}
-                                        <span className="font-semibold text-sm break-words">{v.titulo}</span>
-                                        {v.expansiva && <Badge className="bg-cuca-yellow text-xs px-1.5 shrink-0">Global</Badge>}
+                ) : vagas.map(v => {
+                    const nomeLiberou = liberadoPor.get(v.id)
+                    return (
+                        <Card key={v.id} className="border shadow-sm">
+                            <CardContent className="p-4 space-y-3">
+                                <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            {v.numero_vaga && (
+                                                <span className="text-xs font-mono font-semibold text-muted-foreground">#{v.numero_vaga}</span>
+                                            )}
+                                            <span className="font-semibold text-sm break-words">{v.titulo}</span>
+                                            {v.expansiva && <Badge className="bg-cuca-yellow text-xs px-1.5 shrink-0">Global</Badge>}
+                                        </div>
+                                        <p className="text-sm font-medium break-words mt-1">{nomeEmpresa(v)}</p>
                                     </div>
-                                    <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                                        <Users className="h-3 w-3 shrink-0" /> {v.total_vagas} vaga(s) | {v.faixa_etaria}
-                                    </p>
+                                    {podeExcluir && (
+                                        <Button
+                                            variant="ghost" size="sm"
+                                            className="h-11 w-11 p-0 -mr-2 -mt-2 text-destructive hover:bg-destructive/10 shrink-0"
+                                            title="Excluir vaga e candidatos"
+                                            aria-label={`Excluir a vaga ${v.titulo}`}
+                                            onClick={() => setDeletingVaga(v)}
+                                        >
+                                            <Trash2 className="h-4 w-4" aria-hidden />
+                                        </Button>
+                                    )}
                                 </div>
-                                {abaFiltro === "minhas" && hasPermission("empreg_vagas", "delete") && (
+
+                                <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                                    <div className="min-w-0">
+                                        <dt className="text-muted-foreground">Dt. Cadastro</dt>
+                                        <dd className="tabular-nums">{format(new Date(v.created_at), "dd/MM/yyyy", { locale: ptBR })}</dd>
+                                    </div>
+                                    <div className="min-w-0">
+                                        <dt className="text-muted-foreground flex items-center gap-1"><CalendarClock className="h-3 w-3" aria-hidden /> Seleção prevista</dt>
+                                        <dd className="tabular-nums">{v.data_selecao_prevista ? formatarDataISO(v.data_selecao_prevista) : "—"}</dd>
+                                    </div>
+                                    <div className="min-w-0">
+                                        <dt className="text-muted-foreground flex items-center gap-1"><Building className="h-3 w-3" aria-hidden /> Unid. Tratamento</dt>
+                                        <dd className="min-w-0"><SeloUnidadeTratamento id={v.unidade_tratamento} nomes={unidadesMap} /></dd>
+                                    </div>
+                                    <div className="min-w-0">
+                                        <dt className="text-muted-foreground flex items-center gap-1"><UserCheck className="h-3 w-3" aria-hidden /> Liberado por</dt>
+                                        <dd className="break-words" title={textoLiberadaEm(v.liberada_em)}>{nomeLiberou ?? "—"}</dd>
+                                    </div>
+                                </dl>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                    {getStatusBadge(v.status)}
+                                    <SeloSemResposta dias={diasSemResposta.get(v.id)} />
+                                </div>
+
+                                <div className="flex items-center gap-2 pt-1">
                                     <Button
-                                        variant="ghost" size="sm"
-                                        className="h-11 w-11 md:h-8 md:w-8 p-0 -mr-2 -mt-2 md:mr-0 md:mt-0 text-destructive hover:bg-destructive/10 shrink-0"
-                                        title="Excluir vaga e candidatos"
-                                        aria-label={`Excluir vaga ${v.titulo}`}
-                                        onClick={() => setDeletingVaga(v)}
+                                        size="sm"
+                                        className="h-11 text-xs gap-1 px-2.5 bg-green-600 hover:bg-green-700 text-white border-none flex-1"
+                                        onClick={() => router.push(`/empregabilidade/vagas/${v.id}`)}
                                     >
-                                        <Trash2 className="h-4 w-4" />
+                                        <Users className="h-3.5 w-3.5" aria-hidden />
+                                        {candidaturasCount[v.id] ?? 0} candidatura(s)
                                     </Button>
-                                )}
-                            </div>
-
-                            <p className="text-sm font-medium truncate">
-                                {empresasMap[v.empresa_id]?.nome || "Desconhecida"}
-                            </p>
-
-                            <div className="flex items-center gap-2 flex-wrap text-xs">
-                                <span className="text-muted-foreground whitespace-nowrap">
-                                    {format(new Date(v.created_at), "dd/MM/yyyy", { locale: ptBR })}
-                                </span>
-                                {v.unidade_destino === "global" ? (
-                                    <Badge className="bg-cuca-blue/10 text-cuca-blue border-cuca-blue/30 gap-1"><Globe className="h-3 w-3 shrink-0" /> Toda a Rede</Badge>
-                                ) : v.unidade_destino && unidadesMap[v.unidade_destino] ? (
-                                    <Badge variant="outline" className="bg-muted/50">{unidadesMap[v.unidade_destino]}</Badge>
-                                ) : (
-                                    <Badge variant="outline" className="text-amber-600 border-amber-500/40 bg-amber-50/50">Não definida</Badge>
-                                )}
-                                {getStatusBadge(v.status)}
-                                <SeloSemResposta dias={diasSemResposta.get(v.id)} />
-                            </div>
-
-                            <div className="flex items-center gap-2 pt-1">
-                                <Button
-                                    size="sm"
-                                    className="h-11 md:h-8 text-xs gap-1 px-2.5 bg-green-600 hover:bg-green-700 text-white border-none flex-1"
-                                    onClick={() => router.push(`/empregabilidade/vagas/${v.id}`)}
-                                >
-                                    <Users className="h-3.5 w-3.5" />
-                                    {candidaturasCount[v.id] ?? 0} candidatura(s)
-                                </Button>
-                                {abaFiltro === "minhas" && (
-                                    <Button
-                                        variant="outline" size="sm"
-                                        className="h-11 md:h-8 text-xs gap-1 px-2.5"
-                                        onClick={() => openEditModal(v)}
-                                    >
-                                        <Pencil className="h-3.5 w-3.5" /> Editar
-                                    </Button>
-                                )}
-                            </div>
-                        </CardContent>
-                    </Card>
-                ))}
+                                    {podeEditar && (
+                                        <Button
+                                            variant="outline" size="sm"
+                                            className="h-11 text-xs gap-1 px-2.5"
+                                            onClick={() => openEditModal(v)}
+                                        >
+                                            <Pencil className="h-3.5 w-3.5" aria-hidden /> Editar
+                                        </Button>
+                                    )}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )
+                })}
             </div>
         </div>
 

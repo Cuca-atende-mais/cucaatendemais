@@ -13,9 +13,25 @@ function consulta(resultado: unknown) {
     return q
 }
 
+// S-EMP-GES-13: unidades ativas do banco falso. `.in("id", ids)` devolve só as que existem.
+const UNIDADE_A = "ecbc8153-a94f-4d9b-9e61-7b0e0cd68740"
+const UNIDADE_B = "2a1f2bee-f89a-4d2b-b1bd-175c7c9e18d4"
+const consultasUnidades: string[][] = []
+function unidadesAtivas() {
+    let ids: string[] = []
+    const q: Record<string, unknown> = {}
+    q.select = () => q
+    q.eq = () => q
+    q.in = (_c: string, valores: string[]) => { ids = valores; consultasUnidades.push(valores); return q }
+    q.then = (resolve: (v: unknown) => unknown) =>
+        resolve({ data: ids.filter(id => id === UNIDADE_A || id === UNIDADE_B).map(id => ({ id })), error: null })
+    return q
+}
+
 vi.mock("@supabase/supabase-js", () => ({
     createClient: () => ({
         from(tabela: string) {
+            if (tabela === "unidades_cuca") return unidadesAtivas()
             if (tabela === "empresas") return consulta({ data: { id: "e1", nome: "Empresa", nome_fantasia: null }, error: null })
             if (tabela === "vagas") {
                 return {
@@ -52,6 +68,8 @@ function requisicao(corpo: Record<string, unknown>) {
         method: "POST",
         body: JSON.stringify({
             empresa_id: "e1",
+            unidade_tratamento: UNIDADE_A,
+            unidade_destino: "global",
             cargos_lista: [{ titulo: "Repositor", quantidade: 2, faixa_etaria: "A partir de 14 anos" }],
             datas_selecao: [{ data: DATA_VALIDA, hora: "08:00" }],
             ...corpo,
@@ -94,5 +112,33 @@ describe("POST /api/empregabilidade/selecao", () => {
         const res = await POST(requisicao({ link_params: { empresa_id: "e1", sig: "x", exp: "9999999999" } }))
         expect(res.status).toBe(200)
         expect(await res.json()).toEqual({ id: "v1", numero_vaga: 10 })
+    })
+
+    // S-EMP-GES-13 (AC8, AC10): Unidade de Currículos deixa de ser fixa em "global".
+    it("grava as duas unidades vindas do formulário", async () => {
+        const res = await POST(requisicao({ unidade_destino: UNIDADE_B }))
+        expect(res.status).toBe(200)
+        expect(inserts[0]).toMatchObject({ unidade_tratamento: UNIDADE_A, unidade_destino: UNIDADE_B })
+        expect(inserts[0]).not.toHaveProperty("unidade_cuca")
+    })
+
+    for (const [caso, corpo, mensagem] of [
+        ["sem Unidade de Tratamento", { unidade_tratamento: "" }, "Preencha a unidade de tratamento."],
+        ["sem Unidade de Currículos", { unidade_destino: undefined }, "Preencha a unidade de currículos."],
+        ["nome no lugar do id", { unidade_tratamento: "CUCA Barra" }, "Unidade de tratamento inválida. Escolha uma unidade da lista."],
+    ] as const) {
+        it(`${caso}: 400 com a mensagem da tela e nada gravado`, async () => {
+            const res = await POST(requisicao({ ...(corpo as Record<string, unknown>), link_params: { empresa_id: "e1", sig: "x", exp: "9999999999" } }))
+            expect(res.status).toBe(400)
+            expect(await res.json()).toEqual({ error: mensagem })
+            expect(inserts).toHaveLength(0)
+            expect(avisar).not.toHaveBeenCalled()
+        })
+    }
+
+    it("texto que não é UUID não chega a consultar as unidades", async () => {
+        consultasUnidades.length = 0
+        await POST(requisicao({ unidade_tratamento: "CUCA Barra" }))
+        expect(consultasUnidades).toHaveLength(0)
     })
 })
