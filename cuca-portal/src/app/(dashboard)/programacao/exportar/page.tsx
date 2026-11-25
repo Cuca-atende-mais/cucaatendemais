@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { AlertTriangle, FileSpreadsheet, Loader2, Lock } from "lucide-react"
+import { AlertTriangle, FileDown, FileSpreadsheet, Loader2, Lock } from "lucide-react"
 import toast from "react-hot-toast"
 import { cn } from "@/lib/utils"
 import { MESES_NOME_EXPORTACAO } from "@/lib/programacao/exportacao"
@@ -22,6 +22,8 @@ import { PGM_EXPORTACAO_CONSOLIDADA } from "@/lib/rbac/catalogo-programacao-mens
 // S-PROG-18: tela "Exportar planilha" — uma planilha por unidade com as 4 categorias em abas, no
 // visual da planilha da PICI. Mostra e exporta a programação em qualquer status (rascunho,
 // aguardando autorização, autorizada). O que se vê na tabela é exatamente o que vai para o arquivo.
+// S-PROG-20: também em PDF (A4 paisagem), com opção própria. As 4 categorias saem sempre, inclusive
+// vazias, e a categoria em rascunho leva a etiqueta "RASCUNHO" nos dois formatos.
 
 interface RespostaExportacao {
     unidades: string[]
@@ -29,6 +31,7 @@ interface RespostaExportacao {
     status: Record<string, StatusCategoria | null>
     atividades: AtividadeConsolidada[]
     podeExportar: boolean
+    podeExportarPdf?: boolean
 }
 
 // Padrão pedido pelo Junior: Outubro/2026. O seletor permite os outros meses.
@@ -53,7 +56,7 @@ export default function ExportarPlanilhaPage() {
     const [dados, setDados] = useState<RespostaExportacao | null>(null)
     const [carregando, setCarregando] = useState(false)
     const [erro, setErro] = useState<string | null>(null)
-    const [exportando, setExportando] = useState(false)
+    const [exportando, setExportando] = useState<"xlsx" | "pdf" | null>(null)
 
     useEffect(() => {
         if (carregandoUsuario || !podeVer) return
@@ -82,33 +85,61 @@ export default function ExportarPlanilhaPage() {
     }, [mes, ano, unidade, podeVer, carregandoUsuario])
 
     const abas = useMemo(
-        () => dados?.unidade ? montarAbasConsolidadas(dados.unidade, mes, ano, dados.atividades) : [],
+        () => dados?.unidade ? montarAbasConsolidadas(dados.unidade, mes, ano, dados.atividades, dados.status) : [],
         [dados, mes, ano],
     )
-    const totalAtividades = abas.reduce((s, a) => s + a.linhas.length, 0)
     const temNaoAutorizada = abas.some(a => a.linhas.length > 0 && dados?.status[a.categoria] !== "autorizada")
+
+    const baixar = (blob: Blob, nome: string) => {
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement("a")
+        link.href = url
+        link.download = nome
+        link.click()
+        URL.revokeObjectURL(url)
+    }
 
     const handleExportar = async () => {
         if (!dados?.unidade) return
-        setExportando(true)
+        setExportando("xlsx")
         try {
             const { gerarXlsxConsolidado } = await import("@/lib/programacao/gerar-xlsx-consolidado")
             const buffer = await gerarXlsxConsolidado(abas)
             const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
-            const url = URL.createObjectURL(blob)
-            const link = document.createElement("a")
-            link.href = url
-            link.download = nomeArquivoConsolidado(dados.unidade, mes, ano)
-            link.click()
-            URL.revokeObjectURL(url)
+            baixar(blob, nomeArquivoConsolidado(dados.unidade, mes, ano))
             toast.success("Planilha exportada")
         } catch (e) {
             console.error("Error in exportar planilha consolidada:", e)
             toast.error("Não foi possível gerar a planilha")
         } finally {
-            setExportando(false)
+            setExportando(null)
         }
     }
+
+    const handleExportarPdf = async () => {
+        if (!dados?.unidade) return
+        setExportando("pdf")
+        try {
+            const [{ pdf }, { ProgramacaoConsolidadaPdfDocument }] = await Promise.all([
+                import("@react-pdf/renderer"),
+                import("@/lib/programacao/gerar-pdf-consolidado"),
+            ])
+            const geradoEm = new Date().toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }).replace(",", "")
+            const blob = await pdf(
+                <ProgramacaoConsolidadaPdfDocument abas={abas} geradoEm={geradoEm} logo={`${window.location.origin}/logo-rede-cuca.png`} />,
+            ).toBlob()
+            baixar(blob, nomeArquivoConsolidado(dados.unidade, mes, ano, "pdf"))
+            toast.success("PDF exportado")
+        } catch (e) {
+            console.error("Error in exportar PDF consolidado:", e)
+            toast.error("Não foi possível gerar o PDF")
+        } finally {
+            setExportando(null)
+        }
+    }
+
+    // Decisão do Junior (S-PROG-20): as 4 categorias saem sempre — com 0 atividades, o arquivo sai vazio.
+    const exportarDesabilitado = exportando !== null || carregando || !dados?.unidade
 
     if (carregandoUsuario) {
         return <Skeleton className="h-64 w-full" />
@@ -139,12 +170,20 @@ export default function ExportarPlanilhaPage() {
                         autorizada ou não.
                     </p>
                 </div>
-                {dados?.podeExportar && (
-                    <Button onClick={handleExportar} disabled={exportando || carregando || totalAtividades === 0} className="gap-2">
-                        {exportando ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
-                        Exportar planilha (.xlsx)
-                    </Button>
-                )}
+                <div className="flex flex-wrap gap-2">
+                    {dados?.podeExportarPdf && (
+                        <Button variant="outline" onClick={handleExportarPdf} disabled={exportarDesabilitado} className="gap-2">
+                            {exportando === "pdf" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+                            {exportando === "pdf" ? "Gerando…" : "Exportar PDF"}
+                        </Button>
+                    )}
+                    {dados?.podeExportar && (
+                        <Button onClick={handleExportar} disabled={exportarDesabilitado} className="gap-2">
+                            {exportando === "xlsx" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+                            {exportando === "xlsx" ? "Gerando…" : "Exportar planilha (.xlsx)"}
+                        </Button>
+                    )}
+                </div>
             </div>
 
             <div className="flex flex-wrap items-end gap-3">
@@ -203,7 +242,7 @@ export default function ExportarPlanilhaPage() {
                     {temNaoAutorizada && (
                         <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                             <AlertTriangle className="h-4 w-4 shrink-0" />
-                            Contém programação ainda não autorizada — a planilha sai com o que está cadastrado agora.
+                            Contém programação ainda não autorizada — o arquivo sai com o que está cadastrado agora.
                         </div>
                     )}
 
@@ -233,7 +272,7 @@ export default function ExportarPlanilhaPage() {
                                     {aba.linhas.length === 0 ? (
                                         <Card>
                                             <CardContent className="py-12 text-center text-muted-foreground text-sm">
-                                                Nenhuma atividade de {aba.categoria} neste mês. A aba sai na planilha só com o título e o cabeçalho.
+                                                Nenhuma atividade de {aba.categoria} neste mês. A categoria sai assim mesmo: na planilha, só com o título e o cabeçalho; no PDF, com o aviso de que não há atividades.
                                             </CardContent>
                                         </Card>
                                     ) : (

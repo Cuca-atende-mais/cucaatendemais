@@ -40,6 +40,8 @@ export const PGM_GERAL = {
 export const PGM_EXPORTACAO_CONSOLIDADA = {
     ver: "pgm_exportacao_consolidada_ver",
     exportar: "pgm_exportacao_consolidada_exportar",
+    // S-PROG-20: PDF A4 paisagem — opção própria, desmarcada em todos os perfis (não reaproveita a da planilha).
+    pdf: "pgm_exportacao_consolidada_pdf",
 } as const
 
 export const PGM_DIVULGACAO = {
@@ -75,6 +77,7 @@ export const GRUPOS_PROGRAMACAO_MENSAL: GrupoPermissao[] = [
         modules: [
             { id: PGM_EXPORTACAO_CONSOLIDADA.ver, label: "Ver a tela de exportação consolidada", acoes: ACAO_UNICA },
             { id: PGM_EXPORTACAO_CONSOLIDADA.exportar, label: "Baixar a planilha consolidada", acoes: ACAO_UNICA },
+            { id: PGM_EXPORTACAO_CONSOLIDADA.pdf, label: "Baixar o PDF consolidado", acoes: ACAO_UNICA },
         ],
     },
     ...CATEGORIAS_PROGRAMACAO.map(c => {

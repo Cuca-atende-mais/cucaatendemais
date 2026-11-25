@@ -47,10 +47,12 @@ export async function GET(req: NextRequest) {
             unidadePedida,
         )
         const podeExportar = acesso.checar(PGM_EXPORTACAO_CONSOLIDADA.exportar, "read")
+        // S-PROG-20: PDF tem opção própria, conferida aqui no servidor como a da planilha.
+        const podeExportarPdf = acesso.checar(PGM_EXPORTACAO_CONSOLIDADA.pdf, "read")
         const statusVazio = Object.fromEntries(CATEGORIAS_PROGRAMACAO.map(c => [c.nome, null])) as Record<string, string | null>
 
         if (!unidade) {
-            return NextResponse.json({ unidades, unidade: null, status: statusVazio, atividades: [], podeExportar })
+            return NextResponse.json({ unidades, unidade: null, status: statusVazio, atividades: [], podeExportar, podeExportarPdf })
         }
 
         // Normalmente 1 campanha por unidade/mês (conferido em produção em 2026-09-25); se houver mais, junta.
@@ -74,7 +76,7 @@ export async function GET(req: NextRequest) {
             if (nome) status[nome] = s.status as string
         }
 
-        return NextResponse.json({ unidades, unidade, status, atividades: atividades ?? [], podeExportar })
+        return NextResponse.json({ unidades, unidade, status, atividades: atividades ?? [], podeExportar, podeExportarPdf })
     } catch (error) {
         console.error("Error in exportacao-consolidada:", error)
         const mensagem = error instanceof Error ? error.message : String(error)
