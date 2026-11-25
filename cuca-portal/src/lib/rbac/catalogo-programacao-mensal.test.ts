@@ -20,14 +20,14 @@ const tudo = { can_read: true, can_create: true, can_update: true, can_delete: t
 const nada = { can_read: false, can_create: false, can_update: false, can_delete: false }
 
 describe("catálogo de permissões da programação mensal", () => {
-    it("tem 6 gerais, 2 da exportação consolidada, 7 por categoria nas 4 categorias e 2 da Divulgação", () => {
-        expect(MODULOS_PROGRAMACAO_MENSAL).toHaveLength(6 + 2 + 4 * 7 + 2)
+    it("tem 6 gerais, 3 da exportação consolidada, 7 por categoria nas 4 categorias e 2 da Divulgação", () => {
+        expect(MODULOS_PROGRAMACAO_MENSAL).toHaveLength(6 + 3 + 4 * 7 + 2)
         expect(GRUPOS_PROGRAMACAO_MENSAL).toHaveLength(6)
     })
 
-    it("S-PROG-18: exportação consolidada tem grupo próprio, ação única e não é espelhada (nasce desmarcada)", () => {
+    it("S-PROG-18/20: exportação consolidada (planilha e PDF) tem grupo próprio, ação única e não é espelhada (nasce desmarcada)", () => {
         const grupo = GRUPOS_PROGRAMACAO_MENSAL.find(g => g.category === "Programação Mensal — Exportação consolidada")
-        expect(grupo?.modules.map(m => m.id)).toEqual([PGM_EXPORTACAO_CONSOLIDADA.ver, PGM_EXPORTACAO_CONSOLIDADA.exportar])
+        expect(grupo?.modules.map(m => m.id)).toEqual([PGM_EXPORTACAO_CONSOLIDADA.ver, PGM_EXPORTACAO_CONSOLIDADA.exportar, PGM_EXPORTACAO_CONSOLIDADA.pdf])
         for (const m of grupo!.modules) expect(m.acoes).toEqual(ACAO_UNICA)
         const espelhados = espelharPermissoes(tudo, tudo).map(l => l.module)
         for (const id of Object.values(PGM_EXPORTACAO_CONSOLIDADA)) {

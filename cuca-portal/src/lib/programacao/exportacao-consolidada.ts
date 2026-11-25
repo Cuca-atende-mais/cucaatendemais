@@ -9,7 +9,7 @@
  */
 import { MESES_NOME_EXPORTACAO } from "@/lib/programacao/exportacao"
 import { parsePeriodoCursos } from "@/lib/programacao/duplicar"
-import { slugDaCategoria } from "@/lib/programacao/permissoes-categoria"
+import { slugDaCategoria, type StatusCategoria } from "@/lib/programacao/permissoes-categoria"
 import type { SlugCategoria } from "@/lib/rbac/catalogo-programacao-mensal"
 
 export interface AtividadeConsolidada {
@@ -46,8 +46,11 @@ export interface AbaConsolidada {
     categoria: string
     /** Nome da aba no arquivo: `"{CATEGORIA} - {MÊS} {AA}"` — sem "/" (o Excel não aceita) e ≤ 31. */
     nomeAba: string
-    /** Linha 1, mesclada sobre todas as colunas: `"{MÊS} {ANO} - REDE CUCA {UNIDADE}"`. */
+    /** Linha 1, mesclada sobre todas as colunas: `"{MÊS} {ANO} - REDE CUCA {UNIDADE}"`; categoria em
+     * rascunho termina em `" - RASCUNHO"` (S-PROG-20). */
     titulo: string
+    /** S-PROG-20: `"RASCUNHO"` quando a categoria está em rascunho; `null` nos demais casos. */
+    etiqueta: string | null
     colunas: ColunaConsolidada[]
     linhas: string[][]
     cores: CoresAba
@@ -226,12 +229,23 @@ function nomeMes(mes: number): string {
     return (MESES_NOME_EXPORTACAO[mes] || String(mes)).toUpperCase()
 }
 
-/** Sempre as 4 abas, na ordem fixa — categoria sem atividade sai só com título e cabeçalho. */
+/** S-PROG-20 (decisão do Junior): só a categoria em rascunho leva etiqueta — aguardando autorização,
+ * autorizada e sem status saem sem. */
+export const ETIQUETA_RASCUNHO = "RASCUNHO"
+
+export function etiquetaDoStatus(status: StatusCategoria | string | null | undefined): string | null {
+    return status === "rascunho" ? ETIQUETA_RASCUNHO : null
+}
+
+/** Sempre as 4 abas, na ordem fixa, em qualquer status — categoria sem atividade sai só com título e
+ * cabeçalho. `status` (nome da categoria → status, como a rota devolve) é opcional: sem ele, nenhuma
+ * etiqueta e o resultado é o mesmo da S-PROG-18. */
 export function montarAbasConsolidadas(
     unidade: string,
     mes: number,
     ano: number,
     atividades: AtividadeConsolidada[],
+    status?: Record<string, StatusCategoria | string | null | undefined> | null,
 ): AbaConsolidada[] {
     const mesNome = nomeMes(mes)
     const anoCurto = String(ano).slice(-2)
@@ -240,10 +254,13 @@ export function montarAbasConsolidadas(
         const itens = atividades
             .filter(a => slugDaCategoria(a.categoria) === def.slug)
             .sort(def.ordenar)
+        const etiqueta = etiquetaDoStatus(status?.[def.nome])
         return {
             categoria: def.nome,
             nomeAba: `${def.nome} - ${mesNome} ${anoCurto}`,
-            titulo,
+            // A etiqueta vai no título, não no nome da aba (o Excel limita o nome a 31 caracteres).
+            titulo: etiqueta ? `${titulo} - ${etiqueta}` : titulo,
+            etiqueta,
             colunas: def.colunas,
             linhas: itens.map(def.extrator),
             cores: def.cores,
@@ -279,8 +296,8 @@ export function resolverUnidade(
     return { unidades, unidade, campanhaIds }
 }
 
-/** `Programacao_Consolidada_{Unidade}_{Mes}_{Ano}.xlsx` */
-export function nomeArquivoConsolidado(unidade: string, mes: number, ano: number): string {
+/** `Programacao_Consolidada_{Unidade}_{Mes}_{Ano}.xlsx` (ou `.pdf`, S-PROG-20). */
+export function nomeArquivoConsolidado(unidade: string, mes: number, ano: number, extensao: "xlsx" | "pdf" = "xlsx"): string {
     const mesNome = MESES_NOME_EXPORTACAO[mes] || String(mes)
-    return `Programacao_Consolidada_${texto(unidade).replace(/\s+/g, "_")}_${mesNome}_${ano}.xlsx`
+    return `Programacao_Consolidada_${texto(unidade).replace(/\s+/g, "_")}_${mesNome}_${ano}.${extensao}`
 }
